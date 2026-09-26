@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -516,3 +517,118 @@ def render_release_integrity(result: dict[str, Any]) -> str:
         "authority: no execution, publication, credential, or approval authority"
     )
     return "\n".join(lines)
+
+
+def _review_git_delta(root: Path, base: str) -> tuple[list[str], str | None]:
+    """Read a bounded Git delta without interpreting file content as instructions."""
+    if not isinstance(base, str) or not base or len(base) > 200 or "\0" in base:
+        return [], "Git base is missing or invalid."
+    try:
+        resolved = subprocess.run(
+            ["git", "rev-parse", "--verify", "--end-of-options", f"{base}^{{commit}}"],
+            cwd=root,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        oid = resolved.stdout.decode("ascii").strip()
+        if resolved.returncode or not re.fullmatch(r"[a-fA-F0-9]{40,64}", oid):
+            return [], "Git base does not resolve to one commit."
+        result = subprocess.run(
+            [
+                "git",
+                "diff",
+                "--name-status",
+                "--no-renames",
+                "-z",
+                oid,
+                "--",
+                "evidence/self-audit",
+            ],
+            cwd=root,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, UnicodeError, subprocess.TimeoutExpired):
+        return [], "Git history could not be inspected."
+    if result.returncode or len(result.stdout) > 1_000_000:
+        return [], "Git delta is unavailable or exceeds the review bound."
+    if not result.stdout:
+        return [], None
+    try:
+        parts = result.stdout.decode("utf-8").rstrip("\0").split("\0")
+    except UnicodeError:
+        return [], "Git delta contains a non-UTF-8 path."
+    if len(parts) % 2:
+        return [], "Git delta has an unexpected name-status shape."
+    changed = [
+        path
+        for status, path in zip(parts[::2], parts[1::2])
+        if status != "A" and re.search(r"\d{4}-\d{2}-\d{2}.*\.json$", path)
+    ]
+    return changed, None
+
+
+def _release_review_conflict(root: Path) -> tuple[bool, str | None]:
+    documents = []
+    for relative in ("CONTRIBUTING.md", "docs/RELEASE_CHANNELS.md"):
+        path = root / relative
+        try:
+            if path.stat().st_size > 1_000_000:
+                return False, f"{relative} exceeds the review bound."
+            documents.append(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError):
+            return False, f"{relative} could not be read."
+    combined = "\n".join(documents)
+    requires = bool(
+        re.search(
+            r"\b(?:every|each|all)\s+(?:public\s+)?releases?\s+requires?\s+approval\s+by\s+"
+            r"(?:a\s+)?human\s+other\s+than\b|(?<!longer )(?<!not )\brequires?\s+(?:a\s+)?second\s+human\b",
+            combined,
+            re.IGNORECASE,
+        )
+    )
+    waives = bool(
+        re.search(
+            r"\bno\s+longer\s+require\s+(?:a\s+)?second\s+human\b",
+            combined,
+            re.IGNORECASE,
+        )
+    )
+    return requires and waives, None
+
+
+def review_regression_audit(root: Path, base: str) -> dict[str, Any]:
+    """Catch dated-evidence rewrites and conflicting release-review rules in a PR."""
+    workspace = Path(root).resolve()
+    historical, git_error = _review_git_delta(workspace, base)
+    conflict, document_error = _release_review_conflict(workspace)
+    findings = [
+        {
+            "code": "HISTORICAL_EVIDENCE_MUTATED",
+            "path": path,
+            "action": "Restore the historical receipt and write a new dated reassessment.",
+        }
+        for path in historical
+    ]
+    if conflict:
+        findings.append(
+            {
+                "code": "RELEASE_REVIEW_POLICY_CONFLICT",
+                "path": "CONTRIBUTING.md; docs/RELEASE_CHANNELS.md",
+                "action": "Align both documents with the selected reviewer and provider gates.",
+            }
+        )
+    gaps = [item for item in (git_error, document_error) if item]
+    return {
+        "schema": "factory.review-regression-audit.v1",
+        "state": "INCOMPLETE" if gaps else "BLOCKED" if findings else "CLEAN",
+        "base": base,
+        "root": str(workspace),
+        "findings": findings,
+        "gaps": gaps,
+        "scope": "Dated self-audit JSON history and two release-review documents; text matching is bounded.",
+        "behavioral_checks": "Muse receipt freshness, ignored-policy binding, HMAC tampering, and on-demand lifecycle require adversarial tests in tests/test_langchain_plugin.py; this static check does not execute them.",
+        "authority": "Read-only diagnostic; no approval, merge, publication, or security certification.",
+    }

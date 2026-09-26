@@ -13,6 +13,13 @@ PyPI and Hugging Face environments no longer require a second human. Other
 provider gates retain their channel-specific configuration. Keep the release
 draft until applicable review, quality and publication checks are satisfied.
 
+The PR architecture job also runs `factory audit governance --base <base SHA>`.
+It blocks edits to dated self-audit JSON and the explicit conflicting
+second-human review rules that previously escaped review. Muse receipt
+freshness, policy binding, tamper resistance and on-demand lifecycle are
+checked by the adversarial plugin tests in CI. These checks are bounded and do
+not turn a source merge into release approval.
+
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
 | GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Dispatch `publish.yml` with an existing draft tag; its protected publisher attaches the verified bundle and publishes the release after PyPI | Public release URL and green workflow |

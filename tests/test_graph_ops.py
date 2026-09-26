@@ -1317,7 +1317,7 @@ def test_graph_ops_junit_reader_reports_every_case_and_rejects_missing_cases(
         '<testcase classname="suite" name="fail"><failure message="bad assertion"/></testcase>'
         '<testcase classname="suite" name="error"><error message="setup broke"/></testcase>'
         '<testcase classname="suite" name="skip"><skipped message="unsupported"/></testcase>'
-        '</testsuite></testsuites>',
+        "</testsuite></testsuites>",
         encoding="utf-8",
     )
     observed = read_junit_report(tmp_path)
@@ -1325,12 +1325,27 @@ def test_graph_ops_junit_reader_reports_every_case_and_rejects_missing_cases(
     assert observed["total_count"] == len(observed["cases"]) == 4
     assert observed["counts"] == {"passed": 1, "failed": 1, "error": 1, "skipped": 1}
     assert [case["status"] for case in observed["cases"]] == [
-        "passed", "failed", "error", "skipped"
+        "passed",
+        "failed",
+        "error",
+        "skipped",
     ]
     assert observed["candidate_binding"] == "UNBOUND"
 
-    report.write_text(report.read_text(encoding="utf-8").replace('tests="4"', 'tests="5"'), encoding="utf-8")
+    report.write_text(
+        report.read_text(encoding="utf-8").replace('tests="4"', 'tests="5"'),
+        encoding="utf-8",
+    )
     incomplete = read_junit_report(tmp_path)
     assert incomplete["state"] == "INCOMPLETE"
     assert incomplete["cases"] == []
     assert "Declared JUnit counts" in incomplete["reason"]
+
+    report.write_text(
+        '<testsuite tests="1"><testcase name="unknown" status="mystery"/></testsuite>',
+        encoding="utf-8",
+    )
+    unknown = read_junit_report(tmp_path)
+    assert unknown["state"] == "INCOMPLETE"
+    assert unknown["cases"] == []
+    assert "unrecognized status" in unknown["reason"]

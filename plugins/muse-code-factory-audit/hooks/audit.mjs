@@ -1,10 +1,11 @@
 // Bounded, read-only build audits for Muse Code's native plugin hooks.
 import { spawnSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import {
   appendFileSync,
   closeSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -583,7 +584,7 @@ function collectReceiptFindings(collection, result, lane, verifyCommand, normali
   }
 }
 
-function gitState(root) {
+export function gitState(root) {
   const invoke = (args) => spawnSync('git', args, {
     cwd: root, encoding: 'utf8', windowsHide: true, timeout: GIT_TIMEOUT_MS,
     maxBuffer: 8 * 1024 * 1024,
@@ -608,15 +609,59 @@ function gitState(root) {
       hash.update(relative).update(readFileSync(target));
     } catch { return null; }
   }
+  // Project audit policy is commonly ignored under .factory, yet it controls
+  // which Code Factory checks run. Bind both its presence and exact bytes.
+  const policyRelative = '.factory/review-audits.json';
+  const policyPath = path.join(root, policyRelative);
+  let policySha256 = null;
+  hash.update('\0factory-policy:').update(policyRelative);
+  try {
+    const info = lstatSync(policyPath);
+    const actual = realpathSync(policyPath);
+    const inside = path.relative(realpathSync(root), actual);
+    if (!info.isFile() || !inside || inside === '..' ||
+        inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside) ||
+        info.size > MAX_SPEC_BYTES) return null;
+    const content = readFileSync(policyPath);
+    if (content.length > MAX_SPEC_BYTES) return null;
+    policySha256 = createHash('sha256').update(content).digest('hex');
+    hash.update('present:').update(content);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') return null;
+    hash.update('absent');
+  }
   return {
     head: head.stdout.trim().toLowerCase(),
     worktreeSha256: hash.digest('hex'),
+    policySha256,
   };
 }
 
 function sameGitState(left, right) {
   return Boolean(left && right && left.head === right.head &&
-    left.worktreeSha256 === right.worktreeSha256);
+    left.worktreeSha256 === right.worktreeSha256 &&
+    left.policySha256 === right.policySha256);
+}
+
+function receiptPath(root) {
+  const workspace = realpathSync(root);
+  return path.join(STATE_DIR, 'receipts', `${createHash('sha256').update(workspace).digest('hex')}.json`);
+}
+
+export function receiptMac(payload, createKey = false) {
+  const keyPath = path.join(STATE_DIR, 'receipt-key.bin');
+  if (createKey) {
+    try {
+      writeFileSync(keyPath, randomBytes(32), { flag: 'wx', mode: 0o600 });
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+    }
+  }
+  const info = lstatSync(keyPath);
+  if (!info.isFile() || info.size !== 32) throw new Error('Invalid local audit key');
+  const key = readFileSync(keyPath);
+  if (key.length !== 32) throw new Error('Invalid local audit key');
+  return createHmac('sha256', key).update(payload).digest('hex');
 }
 
 function incompleteOutcomes() {
@@ -660,8 +705,12 @@ function saveReviewReceipt(root, summary, outcomes, findings, auditId, expectedS
   };
   const payload = JSON.stringify(receipt);
   if (Buffer.byteLength(payload, 'utf8') > MAX_RECEIPT_BYTES - 128) return { status: 'oversized' };
-  const sealed = { ...receipt, sha256: createHash('sha256').update(payload).digest('hex') };
-  const target = path.join(directory, `${createHash('sha256').update(workspace).digest('hex')}.json`);
+  const sealed = {
+    ...receipt,
+    sha256: createHash('sha256').update(payload).digest('hex'),
+    hmacSha256: receiptMac(payload, true),
+  };
+  const target = receiptPath(root);
   const temporary = `${target}.${randomUUID()}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(sealed)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
   renameSync(temporary, target);
@@ -681,6 +730,7 @@ function removeStaleState() {
   try {
     const cutoff = Date.now() - STATE_TTL_MS;
     for (const name of readdirSync(STATE_DIR).slice(0, 500)) {
+      if (name === 'receipt-key.bin') continue;
       const target = path.join(STATE_DIR, name);
       try {
         if (statSync(target).mtimeMs < cutoff) rmSync(target, { force: true });
@@ -706,9 +756,16 @@ export function buildAudit(event, dependencies = {}) {
   const auditId = randomUUID();
   let auditStatePath;
   try {
-    mkdirSync(STATE_DIR, { recursive: true });
-    auditStatePath = stateFile(event, root);
-    appendFileSync(auditStatePath, `${JSON.stringify({ phase: 'started', audit_id: auditId, at: new Date().toISOString() })}\n`, 'utf8');
+    mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+    // A fresh attempt supersedes the previous workspace result, even if this
+    // attempt later exceeds a bound or cannot persist its own receipt.
+    rmSync(receiptPath(root), { force: true });
+    // MCP on-demand calls have no Muse Stop event, so they never create turn
+    // enforcement files. The returned MCP result and workspace receipt apply.
+    if (!onDemand) {
+      auditStatePath = stateFile(event, root);
+      appendFileSync(auditStatePath, `${JSON.stringify({ phase: 'started', audit_id: auditId, at: new Date().toISOString() })}\n`, 'utf8');
+    }
   } catch (error) {
     emitOutput({
       continue: false,
@@ -853,13 +910,16 @@ export function buildAudit(event, dependencies = {}) {
         finalSummary = makeSummary();
       }
     }
-    appendFileSync(auditStatePath, `${JSON.stringify({
-      phase: 'completed', audit_id: auditId, summary: finalSummary, outcomes, at: new Date().toISOString(),
-    })}\n`, 'utf8');
+    if (!onDemand) {
+      appendFileSync(auditStatePath, `${JSON.stringify({
+        phase: 'completed', audit_id: auditId, summary: finalSummary, outcomes, at: new Date().toISOString(),
+      })}\n`, 'utf8');
+    }
     removeStaleState();
     stateSaved = true;
   } catch (error) {
     removeOwnReceipt(receiptTarget, auditId);
+    try { rmSync(receiptPath(root), { force: true }); } catch { /* already unavailable */ }
     finalSummary += `\nAudit summary enforcement state could not be saved: ${error.message}`;
   }
   const hookResult = {

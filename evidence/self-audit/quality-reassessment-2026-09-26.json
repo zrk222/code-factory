@@ -1,0 +1,34 @@
+{
+  "schema": "factory.quality-reassessment.v1",
+  "assessment_date": "2026-09-26",
+  "scope": "repository-wide static reassessment; this record summarizes the supplied scanner output and does not reproduce it",
+  "source_head": "9dbea18",
+  "source_state": "PR #110 candidate working tree, including uncommitted changes during this scan",
+  "scanner": {
+    "name": "ForgeLine repo-wide QA",
+    "commit": "recorded in ../forgeline-quality-fix; scanner source PR https://github.com/zrk222/code-factory-2-forge/pull/1",
+    "typescript_version": "5.9.3",
+    "command": "scripts/run_forgeline_qa.ps1 -ReportPath <report> -NodePath <native Node runtime>"
+  },
+  "result": {
+    "grade": "C",
+    "composite": 62.3,
+    "passed": false,
+    "findings": 164,
+    "max_complexity": 63,
+    "complexity_policy": "hard",
+    "security_score": 100,
+    "coverage_intent": 0.74,
+    "doc_ratio": 0.76
+  },
+  "interpretation": {
+    "complexity": "AST branch-count metric; not directly comparable to the separate deep-audit complexity-83 result",
+    "coverage_intent": "test-name intent signal; tests were not run by this scan",
+    "security_score": "no configured static patterns matched; not a security certification",
+    "behavioral_proof_status": "scanner metadata only; not behavioral test evidence",
+    "architecture_health": "separate file/line growth-budget gate"
+  },
+  "release_decision": "BLOCKED: repository-wide hard complexity gate remains unsatisfied",
+  "stability_across_release_cycles": "NOT_ESTABLISHED",
+  "full_scanner_report": "../cf-quality-pr110-corrected-final.json (local review input; not committed or summarized as runtime proof)"
+}

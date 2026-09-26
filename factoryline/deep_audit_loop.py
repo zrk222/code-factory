@@ -356,7 +356,8 @@ def _run_details(run: dict[str, Any]) -> dict[str, Any]:
                         else None,
                         "source_sha256": finding.get("source_sha256"),
                         "remediation": _label(
-                            finding.get("remediation"), "Inspect and repair this finding."
+                            finding.get("remediation"),
+                            "Inspect and repair this finding.",
                         ),
                     }
                 )
@@ -432,7 +433,6 @@ def deep_scan_projection(root: Path) -> tuple[dict[str, Any], str | None]:
     return projection, None
 
 
-
 REPORT_PATH = Path(".factory/test-reports/pytest.xml")
 MAX_REPORT_BYTES = 8 * 1024 * 1024
 MAX_CASES = 10_000
@@ -445,6 +445,10 @@ class _DepthLimitError(ValueError):
 
 class _CountMismatch(ValueError):
     """Raised when declared suite outcomes omit or contradict parsed cases."""
+
+
+class _UnknownTestStatus(ValueError):
+    """Raised when a runner supplies an outcome this reader cannot classify."""
 
 
 def _base_snapshot() -> dict:
@@ -503,8 +507,10 @@ def _case(element: ElementTree.Element, suite_name: str) -> dict:
     elif "skipped" in markers:
         status, result = "skipped", markers["skipped"]
     else:
-        declared_status = str(element.get("status") or "").lower()
-        status = declared_status if declared_status in {"failed", "error", "skipped"} else "passed"
+        declared_status = str(element.get("status") or "passed").lower()
+        if declared_status not in {"passed", "failed", "error", "skipped"}:
+            raise _UnknownTestStatus
+        status = declared_status
         result = None
     failure_summary = None
     if result is not None:
@@ -545,14 +551,19 @@ def read_junit_report(root: Path) -> dict:
         source = (workspace / REPORT_PATH).resolve()
         source.relative_to(workspace)
     except (OSError, RuntimeError, ValueError):
-        snapshot.update(state="INCOMPLETE", reason="The report path escapes the workspace or cannot be resolved.")
+        snapshot.update(
+            state="INCOMPLETE",
+            reason="The report path escapes the workspace or cannot be resolved.",
+        )
         return snapshot
 
     try:
         if not source.exists():
             return snapshot
         if not source.is_file():
-            snapshot.update(state="INCOMPLETE", reason="The report path is not a regular file.")
+            snapshot.update(
+                state="INCOMPLETE", reason="The report path is not a regular file."
+            )
             return snapshot
         with source.open("rb") as handle:
             content = handle.read(MAX_REPORT_BYTES + 1)
@@ -561,9 +572,11 @@ def read_junit_report(root: Path) -> dict:
         snapshot.update(state="INCOMPLETE", reason="The report could not be read.")
         return snapshot
 
-    snapshot["source_mtime_utc"] = datetime.fromtimestamp(
-        metadata.st_mtime, timezone.utc
-    ).isoformat().replace("+00:00", "Z")
+    snapshot["source_mtime_utc"] = (
+        datetime.fromtimestamp(metadata.st_mtime, timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     if len(content) > MAX_REPORT_BYTES:
         snapshot.update(
             state="INCOMPLETE",
@@ -575,13 +588,18 @@ def read_junit_report(root: Path) -> dict:
     try:
         content.decode("utf-8-sig")
     except UnicodeError:
-        snapshot.update(state="INCOMPLETE", reason="The XML report must be UTF-8 encoded.")
+        snapshot.update(
+            state="INCOMPLETE", reason="The XML report must be UTF-8 encoded."
+        )
         return snapshot
     if b"\x00" in content:
         snapshot.update(state="INCOMPLETE", reason="The XML report contains NUL bytes.")
         return snapshot
     if b"<!DOCTYPE" in content.upper() or b"<!ENTITY" in content.upper():
-        snapshot.update(state="INCOMPLETE", reason="XML declarations with entities or DTDs are not accepted.")
+        snapshot.update(
+            state="INCOMPLETE",
+            reason="XML declarations with entities or DTDs are not accepted.",
+        )
         return snapshot
 
     depth = 0
@@ -591,7 +609,9 @@ def read_junit_report(root: Path) -> dict:
     declared_results: dict[str, int] = {}
     root_tag: str | None = None
     try:
-        for event, element in ElementTree.iterparse(BytesIO(content), events=("start", "end")):
+        for event, element in ElementTree.iterparse(
+            BytesIO(content), events=("start", "end")
+        ):
             tag = _local_tag(element.tag)
             if event == "start":
                 depth += 1
@@ -608,7 +628,9 @@ def read_junit_report(root: Path) -> dict:
                         count = _declared_count(element.get(attribute))
                         if count is not None:
                             declared_results[status] = count
-                    snapshot["report_time"] = _bounded(element.get("timestamp"), 80) or None
+                    snapshot["report_time"] = (
+                        _bounded(element.get("timestamp"), 80) or None
+                    )
                 if tag == "testsuite":
                     suite_names.append(_bounded(element.get("name"), 240))
                     suite_checks.append(
@@ -624,7 +646,9 @@ def read_junit_report(root: Path) -> dict:
                         )
                     )
                     if snapshot["report_time"] is None:
-                        snapshot["report_time"] = _bounded(element.get("timestamp"), 80) or None
+                        snapshot["report_time"] = (
+                            _bounded(element.get("timestamp"), 80) or None
+                        )
                 continue
             if tag == "testcase":
                 case = _case(element, suite_names[-1] if suite_names else "")
@@ -652,7 +676,13 @@ def read_junit_report(root: Path) -> dict:
                     suite_names.pop()
                 element.clear()
             depth -= 1
-    except (_DepthLimitError, _CountMismatch, ElementTree.ParseError, ValueError) as exc:
+    except (
+        _DepthLimitError,
+        _CountMismatch,
+        _UnknownTestStatus,
+        ElementTree.ParseError,
+        ValueError,
+    ) as exc:
         snapshot.update(
             state="INCOMPLETE",
             counts={"passed": 0, "failed": 0, "error": 0, "skipped": 0},
@@ -664,19 +694,36 @@ def read_junit_report(root: Path) -> dict:
                 if isinstance(exc, _DepthLimitError)
                 else "Declared JUnit counts differ from parsed cases."
                 if isinstance(exc, _CountMismatch)
+                else "A JUnit test case has an unrecognized status."
+                if isinstance(exc, _UnknownTestStatus)
                 else "The XML report is malformed."
             ),
         )
         return snapshot
 
     if root_tag not in {"testsuite", "testsuites"}:
-        snapshot.update(state="INCOMPLETE", reason="The XML root is not a JUnit testsuite or testsuites element.")
+        snapshot.update(
+            state="INCOMPLETE",
+            reason="The XML root is not a JUnit testsuite or testsuites element.",
+        )
     elif snapshot["truncated"]:
-        snapshot.update(state="INCOMPLETE", reason="Some cases exceed the display limit; the complete count remains visible.")
+        snapshot.update(
+            state="INCOMPLETE",
+            reason="Some cases exceed the display limit; the complete count remains visible.",
+        )
     elif declared is not None and declared != snapshot["total_count"]:
-        snapshot.update(state="INCOMPLETE", reason="The declared test count differs from parsed test cases.")
-    elif any(snapshot["counts"][status] != count for status, count in declared_results.items()):
-        snapshot.update(state="INCOMPLETE", reason="Declared test outcomes differ from parsed case outcomes.")
+        snapshot.update(
+            state="INCOMPLETE",
+            reason="The declared test count differs from parsed test cases.",
+        )
+    elif any(
+        snapshot["counts"][status] != count
+        for status, count in declared_results.items()
+    ):
+        snapshot.update(
+            state="INCOMPLETE",
+            reason="Declared test outcomes differ from parsed case outcomes.",
+        )
     else:
         snapshot.update(
             state="OBSERVED",

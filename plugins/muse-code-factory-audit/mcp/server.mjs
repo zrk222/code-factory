@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 // Read-only access to bounded Muse audit receipts. Scanner text is data only.
 import readline from 'node:readline';
-import { spawnSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildAudit } from '../hooks/audit.mjs';
+import { buildAudit, gitState, receiptMac } from '../hooks/audit.mjs';
 
 const STATE_DIR = path.join(process.env.MUSE_PLUGIN_DATA_DIR || os.tmpdir(), 'cf-build-audit', 'receipts');
 const MAX_RECEIPT_BYTES = 8 * 1024 * 1024;
@@ -26,29 +25,6 @@ const tools = names.map((name) => ({
   annotations: { readOnlyHint: name !== 'cf_audit_run', destructiveHint: false, idempotentHint: name !== 'cf_audit_run', openWorldHint: false },
 }));
 
-function gitState(root) {
-  const invoke = (args) => spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true, timeout: 2000, maxBuffer: 8 * 1024 * 1024 });
-  const head = invoke(['rev-parse', '--verify', 'HEAD']);
-  const diff = invoke(['diff', '--binary', 'HEAD', '--']);
-  const untracked = invoke(['ls-files', '--others', '--exclude-standard', '-z']);
-  if ([head, diff, untracked].some((item) => item.status !== 0 || item.error) || !/^[a-f0-9]{40,64}$/i.test(head.stdout.trim())) return null;
-  const hash = createHash('sha256').update(diff.stdout);
-  let bytes = 0;
-  for (const relative of untracked.stdout.split('\0').filter(Boolean)) {
-    if (path.isAbsolute(relative) || relative.split(/[\\/]/).includes('..')) return null;
-    try {
-      const file = path.join(root, relative);
-      const inside = path.relative(root, realpathSync(file));
-      if (!inside || inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) return null;
-      const info = statSync(file);
-      bytes += info.size;
-      if (!info.isFile() || bytes > 8 * 1024 * 1024) return null;
-      hash.update(relative).update(readFileSync(file));
-    } catch { return null; }
-  }
-  return { head: head.stdout.trim().toLowerCase(), worktreeSha256: hash.digest('hex') };
-}
-
 function readReceipt(workspace) {
   const root = realpathSync(workspace);
   const state = gitState(root);
@@ -60,10 +36,20 @@ function readReceipt(workspace) {
     receipt = JSON.parse(readFileSync(file, 'utf8'));
   } catch { return { status: 'unavailable', reason: 'No readable audit receipt exists for this workspace; call cf_audit_run.' }; }
   if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return { status: 'unavailable', reason: 'Audit receipt is corrupt; rerun the audit.' };
-  const { sha256, ...body } = receipt;
-  const digest = createHash('sha256').update(JSON.stringify(body)).digest('hex');
-  if (receipt.schemaVersion !== 'muse.cf-build-review.v2' || sha256 !== digest || receipt.workspace !== root ||
+  const { sha256, hmacSha256, ...body } = receipt;
+  const payload = JSON.stringify(body);
+  const digest = createHash('sha256').update(payload).digest('hex');
+  let authenticated = false;
+  try {
+    const expected = receiptMac(payload);
+    authenticated = typeof hmacSha256 === 'string' && /^[a-f0-9]{64}$/.test(hmacSha256) &&
+      timingSafeEqual(Buffer.from(hmacSha256, 'hex'), Buffer.from(expected, 'hex'));
+  } catch {
+    return { status: 'unavailable', reason: 'The local audit key is unavailable or invalid; rerun the audit.' };
+  }
+  if (receipt.schemaVersion !== 'muse.cf-build-review.v2' || sha256 !== digest || !authenticated || receipt.workspace !== root ||
       receipt.head !== state.head || receipt.worktreeSha256 !== state.worktreeSha256 ||
+      receipt.policySha256 !== state.policySha256 ||
       !Number.isFinite(Date.parse(receipt.expiresAt)) || Date.parse(receipt.expiresAt) <= Date.now() ||
       typeof receipt.summary !== 'string' ||
       !receipt.findings || !Number.isSafeInteger(receipt.findings.total) || receipt.findings.total < 0 ||
@@ -78,6 +64,7 @@ function readReceipt(workspace) {
 function packet(name, receipt, args = {}) {
   const base = { schemaVersion: 'muse.cf-audit-tool.v1', status: 'current', workspace: receipt.workspace,
     head: receipt.head, auditId: receipt.auditId, createdAt: receipt.createdAt, outcomes: receipt.outcomes,
+    verification: 'local HMAC and Git snapshot only; not independent attestation',
     authority: 'Advisory bounded checks only; no release approval or full-depth penetration certification.' };
   const lines = receipt.summary.split('\n');
   const findingCount = { reported: receipt.findings.total, captured: receipt.findings.rows.length,

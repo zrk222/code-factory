@@ -333,7 +333,9 @@ def _append_product_graphs(
                     _edge(state, requirement, node_id, "assigned_to")
                 else:
                     state["slice_links_exact"] = False
-                    _record_error(state["errors"], plan_source, "SLICE_REQUIREMENT_UNKNOWN")
+                    _record_error(
+                        state["errors"], plan_source, "SLICE_REQUIREMENT_UNKNOWN"
+                    )
         for node_id, dependencies in planned_slices:
             for dependency in dependencies:
                 for dependency_id in slices.get(dependency, []):
@@ -2726,6 +2728,7 @@ def _append_deep_scan(state: dict[str, Any], root: Path) -> dict[str, Any]:
         )
     return projection
 
+
 def _append_repair_loops(
     state: dict[str, Any], root: Path, projection: dict | None = None
 ) -> dict[str, Any]:
@@ -4702,9 +4705,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     admissions = _append_admission_packets(state, workspace)
     test_report = read_junit_report(workspace)
     if test_report["state"] == "INCOMPLETE":
-        _record_error(
-            state["errors"], test_report["source"], "TEST_REPORT_INCOMPLETE"
-        )
+        _record_error(state["errors"], test_report["source"], "TEST_REPORT_INCOMPLETE")
     test_report_summary = {
         key: value for key, value in test_report.items() if key != "cases"
     }

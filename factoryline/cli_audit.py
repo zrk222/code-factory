@@ -19,10 +19,21 @@ def add_parser(sub: Any) -> None:
     )
     code_audit.add_argument(
         "tool",
-        choices=["patterns", "guard-paths", "all", "fingerprint", "security", "evals"],
+        choices=[
+            "patterns",
+            "guard-paths",
+            "all",
+            "fingerprint",
+            "security",
+            "evals",
+            "governance",
+        ],
     )
     code_audit.add_argument("--policy", default=".factory/review-audits.json")
     code_audit.add_argument("--root", default=".")
+    code_audit.add_argument(
+        "--base", default="origin/main", help="Git base for dated-evidence review"
+    )
     code_audit.add_argument(
         "--baseline",
         help="previous fingerprint receipt for deterministic drift comparison",
@@ -61,6 +72,23 @@ def _run_security(args: Any) -> int:
             )
         print(result["action_summary"])
     return 0 if result["state"] == "CLEAN" else 2 if result["state"] == "BLOCKED" else 1
+
+
+def _run_governance(args: Any) -> int:
+    from .release_integrity import review_regression_audit
+
+    result = review_regression_audit(Path(args.root), args.base)
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(
+            f"Review governance: {result['state']} ({len(result['findings'])} findings)"
+        )
+        for item in result["findings"]:
+            print(f"{item['code']}: {item['path']} — {item['action']}")
+        for gap in result["gaps"]:
+            print(f"INCOMPLETE: {gap}")
+    return 0 if result["state"] == "CLEAN" else 2
 
 
 def _run_fingerprint(args: Any) -> int:
@@ -114,6 +142,7 @@ def run(args: Any) -> int:
     handlers = {
         "evals": _run_evals,
         "security": _run_security,
+        "governance": _run_governance,
         "fingerprint": _run_fingerprint,
     }
     try:

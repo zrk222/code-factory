@@ -2,16 +2,71 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from factoryline.cli import main
-from factoryline.release_integrity import release_integrity, render_release_integrity
+from factoryline.release_integrity import (
+    release_integrity,
+    render_release_integrity,
+    review_regression_audit,
+)
 from factoryline.release_route_integrity import release_route_checks
 
 
 ROOT = Path(__file__).parents[1]
+
+
+def test_review_regression_audit_catches_devin_failure_classes(tmp_path: Path) -> None:
+    for args in (
+        ["init", "-q"],
+        ["config", "user.name", "Audit Test"],
+        ["config", "user.email", "audit@example.invalid"],
+    ):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+    evidence = tmp_path / "evidence" / "self-audit" / "quality-2026-09-25.json"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text('{"grade":"F"}\n', encoding="utf-8")
+    channels = tmp_path / "docs" / "RELEASE_CHANNELS.md"
+    channels.parent.mkdir()
+    channels.write_text(
+        "The owner selected a specialty AI reviewer.\n", encoding="utf-8"
+    )
+    contributing = tmp_path / "CONTRIBUTING.md"
+    contributing.write_text("A specialty AI agent reviews source.\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "baseline"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    assert review_regression_audit(tmp_path, "HEAD")["state"] == "CLEAN"
+    evidence.write_text('{"grade":"A"}\n', encoding="utf-8")
+    history = review_regression_audit(tmp_path, "HEAD")
+    assert history["state"] == "BLOCKED"
+    assert history["findings"][0]["code"] == "HISTORICAL_EVIDENCE_MUTATED"
+    evidence.write_text('{"grade":"F"}\n', encoding="utf-8")
+    contributing.write_text(
+        "Every public release requires approval by a human other than the initiator.\n",
+        encoding="utf-8",
+    )
+    channels.write_text(
+        "PyPI and Hugging Face no longer require a second human.\n", encoding="utf-8"
+    )
+    conflict = review_regression_audit(tmp_path, "HEAD")
+    assert conflict["state"] == "BLOCKED"
+    assert conflict["findings"][0]["code"] == "RELEASE_REVIEW_POLICY_CONFLICT"
+    assert review_regression_audit(tmp_path, "missing-ref")["state"] == "INCOMPLETE"
+    assert (
+        review_regression_audit(tmp_path, "--output=unexpected")["state"]
+        == "INCOMPLETE"
+    )
+
+
 WORKFLOWS = (
     "publish.yml",
     "openvsx.yml",

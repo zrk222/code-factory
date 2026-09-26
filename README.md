@@ -91,8 +91,8 @@ the coordinator records that assessment, separately from test evidence. It is
 not a second human approval. Provider publication and marketplace approval are
 separate outcomes. See [release channels](docs/RELEASE_CHANNELS.md).
 
-Architecture health checks growth budgets. The 2026-09-26 ForgeLine reassessment
-grades this checkout C (62.3/100; 162 findings), with the hard complexity gate
+Architecture health checks growth budgets. The [2026-09-26 ForgeLine reassessment](evidence/self-audit/quality-reassessment-2026-09-26.json)
+grades this checkout C (62.3/100; 164 findings), with the hard complexity gate
 still failing. This scanner uses AST branch count; the earlier deep-audit
 complexity-83 score uses a different metric, so the figures are not directly
 comparable. Its test-intent and security scores are static signals, not executed
