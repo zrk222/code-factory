@@ -188,20 +188,57 @@ def _fan_in_check(workflow: str) -> dict[str, Any]:
         and downloaded_artifacts == list(artifact_names)
         and pypi_position >= 0
         and public_release_position > pypi_position
-        and sum(
-            'git fetch --no-tags origin "refs/tags/${RELEASE_TAG}"'
-            in str(step.get("run", ""))
-            and "git rev-parse" in str(step.get("run", ""))
-            and step.get("env", {}).get("EXPECTED_COMMIT")
-            == "${{ needs.guard.outputs.candidate_commit }}"
-            for step in publish_steps
+        and all(
+            _tag_guard_precedes(step, action)
+            for step, action in (
+                (
+                    next(
+                        (
+                            item
+                            for item in publish_steps
+                            if "gh release upload" in str(item.get("run", ""))
+                        ),
+                        {},
+                    ),
+                    "gh release upload",
+                ),
+                (
+                    next(
+                        (
+                            item
+                            for item in publish_steps
+                            if "gh release edit" in str(item.get("run", ""))
+                        ),
+                        {},
+                    ),
+                    "gh release edit",
+                ),
+            )
         )
-        == 2
     )
     return _check(
         "RELEASE_FAN_IN_EXACT",
         passed,
         "draft-only dispatch, immutable tag builds, exact artifact fan-in, protected PyPI publish, and delayed public release",
+    )
+
+
+def _tag_guard_precedes(step: dict, action: str) -> bool:
+    script = str(step.get("run", ""))
+    fetch = 'git fetch --no-tags origin "refs/tags/${RELEASE_TAG}"'
+    comparison = (
+        '[[ "$(git rev-parse \'FETCH_HEAD^{commit}\')" == "$EXPECTED_COMMIT" ]] || {'
+    )
+    return (
+        fetch in script
+        and comparison in script
+        and "exit 1" in script
+        and script.index(fetch)
+        < script.index(comparison)
+        < script.index("exit 1")
+        < script.index(action)
+        and step.get("env", {}).get("EXPECTED_COMMIT")
+        == "${{ needs.guard.outputs.candidate_commit }}"
     )
 
 

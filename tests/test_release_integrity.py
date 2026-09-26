@@ -128,6 +128,7 @@ def test_release_integrity_rejects_missing_artifact_fan_in(tmp_path: Path) -> No
             '[[ "$GITHUB_REF" == "refs/heads/feature" ]]',
         ),
         ("--draft=false", "--draft=true"),
+        ('== "$EXPECTED_COMMIT"', '!= "$EXPECTED_COMMIT"'),
         ("workflow_dispatch:", "release:\n    types: [published]"),
         (
             "ref: ${{ needs.guard.outputs.candidate_commit }}",
