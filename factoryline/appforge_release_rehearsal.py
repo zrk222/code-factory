@@ -241,6 +241,24 @@ def _zealot_manifest(
             "APPFORGE_REHEARSAL_SECRET_IN_PROFILE",
             "beta-distribution manifest must not include credential-like keys",
         )
+    platform, artifact_sha, distribution = _validate_zealot_binding(manifest, candidate)
+    return {
+        "manifest_path": path.relative_to(root).as_posix(),
+        "manifest_sha256": _file_sha(path),
+        "platform": platform,
+        "artifact_sha256": artifact_sha,
+        "distribution_channel": _text(
+            distribution.get("channel"), "distribution.channel"
+        ),
+        "audience_ref": _text(
+            distribution.get("audience_ref"), "distribution.audience_ref"
+        ),
+    }
+
+
+def _validate_zealot_binding(
+    manifest: dict[str, Any], candidate: dict[str, str]
+) -> tuple[str, str, dict[str, Any]]:
     if (
         set(manifest) != {"schema", "candidate", "platform", "artifact", "distribution"}
         or manifest.get("candidate") != candidate
@@ -273,23 +291,19 @@ def _zealot_manifest(
             "APPFORGE_REHEARSAL_PROVIDER_INVALID",
             "artifact.sha256 must be 64 lowercase hexadecimal characters",
         )
-    return {
-        "manifest_path": path.relative_to(root).as_posix(),
-        "manifest_sha256": _file_sha(path),
-        "platform": platform,
-        "artifact_sha256": artifact_sha,
-        "distribution_channel": _text(
-            distribution.get("channel"), "distribution.channel"
-        ),
-        "audience_ref": _text(
-            distribution.get("audience_ref"), "distribution.audience_ref"
-        ),
-    }
+    return platform, artifact_sha, distribution
 
 
 def _profile(
     root: Path, profile: dict[str, Any], candidate: dict[str, str]
 ) -> dict[str, Any]:
+    provider, channel, config = _profile_header(profile, candidate)
+    return _provider_profile(root, provider, channel, config, candidate)
+
+
+def _profile_header(
+    profile: dict[str, Any], candidate: dict[str, str]
+) -> tuple[str, str, dict[str, Any]]:
     if _secret_keys(profile):
         raise RevenueForgeError(
             "APPFORGE_REHEARSAL_SECRET_IN_PROFILE",
@@ -327,19 +341,60 @@ def _profile(
         raise RevenueForgeError(
             "APPFORGE_REHEARSAL_PROVIDER_INVALID", "provider_config must be an object"
         )
+    return provider, channel, config
+
+
+def _fastlane_profile(
+    provider: str, channel: str, config: dict[str, Any]
+) -> dict[str, Any]:
+    if set(config) != {"lane"}:
+        raise RevenueForgeError(
+            "APPFORGE_REHEARSAL_PROVIDER_INVALID",
+            "Fastlane provider_config may contain only lane",
+        )
+    lane = _text(config.get("lane"), "provider_config.lane", limit=80)
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", lane):
+        raise RevenueForgeError(
+            "APPFORGE_REHEARSAL_PROVIDER_INVALID",
+            "Fastlane lane must be alphanumeric with underscores",
+        )
+    return {"provider": provider, "release_channel": channel, "lane": lane}
+
+
+def _asc_cli_profile(
+    provider: str, channel: str, config: dict[str, Any]
+) -> dict[str, Any]:
+    if set(config) != {"app_store_connect_app_id"}:
+        raise RevenueForgeError(
+            "APPFORGE_REHEARSAL_PROVIDER_INVALID",
+            "ASC CLI provider_config may contain only app_store_connect_app_id",
+        )
+    app_id = _text(
+        config.get("app_store_connect_app_id"),
+        "provider_config.app_store_connect_app_id",
+        limit=20,
+    )
+    if not app_id.isdecimal():
+        raise RevenueForgeError(
+            "APPFORGE_REHEARSAL_PROVIDER_INVALID",
+            "App Store Connect app id must be decimal",
+        )
+    return {
+        "provider": provider,
+        "release_channel": channel,
+        "app_store_connect_app_id": app_id,
+    }
+
+
+def _provider_profile(
+    root: Path,
+    provider: str,
+    channel: str,
+    config: dict[str, Any],
+    candidate: dict[str, str],
+) -> dict[str, Any]:
     if provider == "fastlane":
-        if set(config) != {"lane"}:
-            raise RevenueForgeError(
-                "APPFORGE_REHEARSAL_PROVIDER_INVALID",
-                "Fastlane provider_config may contain only lane",
-            )
-        lane = _text(config.get("lane"), "provider_config.lane", limit=80)
-        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", lane):
-            raise RevenueForgeError(
-                "APPFORGE_REHEARSAL_PROVIDER_INVALID",
-                "Fastlane lane must be alphanumeric with underscores",
-            )
-        return {"provider": provider, "release_channel": channel, "lane": lane}
+        return _fastlane_profile(provider, channel, config)
     if provider == "cider":
         return {
             "provider": provider,
@@ -363,26 +418,7 @@ def _profile(
             "release_channel": channel,
             **_zealot_manifest(root, config, candidate),
         }
-    if set(config) != {"app_store_connect_app_id"}:
-        raise RevenueForgeError(
-            "APPFORGE_REHEARSAL_PROVIDER_INVALID",
-            "ASC CLI provider_config may contain only app_store_connect_app_id",
-        )
-    app_id = _text(
-        config.get("app_store_connect_app_id"),
-        "provider_config.app_store_connect_app_id",
-        limit=20,
-    )
-    if not app_id.isdecimal():
-        raise RevenueForgeError(
-            "APPFORGE_REHEARSAL_PROVIDER_INVALID",
-            "App Store Connect app id must be decimal",
-        )
-    return {
-        "provider": provider,
-        "release_channel": channel,
-        "app_store_connect_app_id": app_id,
-    }
+    return _asc_cli_profile(provider, channel, config)
 
 
 def _matrix(channel: str) -> list[dict[str, str]]:
