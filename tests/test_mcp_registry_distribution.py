@@ -94,7 +94,8 @@ def test_registry_publication_is_post_pypi_oidc_and_fails_closed_on_drift() -> N
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
     assert "publish_mcp_registry:" in workflow
-    assert "needs: [publish]" in workflow
+    assert "needs: [guard, publish]" in workflow
+    assert "ref: ${{ needs.guard.outputs.candidate_commit }}" in workflow
     assert "id-token: write" in workflow
     assert "Validate release tag and MCP Registry metadata" in workflow
     assert "Wait for PyPI package and ownership marker" in workflow

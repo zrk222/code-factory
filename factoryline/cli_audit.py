@@ -33,80 +33,63 @@ def add_parser(sub: Any) -> None:
     code_audit.add_argument("--json", action="store_true")
 
 
-def run(args: Any) -> int:
-    """Run one audit command, importing the engine only after selection."""
-    from .review_audits import (
-        ReviewAuditError,
-        audit_code,
-        audit_fingerprint,
-        security_evals,
-        security_scan,
+def _run_evals(args: Any) -> int:
+    from .review_audits import security_evals
+
+    result = security_evals()
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(
+            f"Security evals: {result['state']} ({result['mutation_coverage']['caught']}/{result['mutation_coverage']['attempted']} adversarial rules caught)"
+        )
+        print(result["action_summary"])
+    return 0 if result["state"] == "PASS" else 2
+
+
+def _run_security(args: Any) -> int:
+    from .review_audits import security_scan
+
+    result = security_scan(Path(args.root))
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(f"Security audit: {result['state']} ({len(result['findings'])} findings)")
+        for item in result["findings"]:
+            print(
+                f"{item['severity']} {item['code']}: {item['path']}:{item['line']} — {item['message']}"
+            )
+        print(result["action_summary"])
+    return 0 if result["state"] == "CLEAN" else 2 if result["state"] == "BLOCKED" else 1
+
+
+def _run_fingerprint(args: Any) -> int:
+    from .review_audits import audit_fingerprint
+
+    result = audit_fingerprint(
+        Path(args.root),
+        args.policy,
+        baseline_path=Path(args.baseline) if args.baseline else None,
+        out_path=Path(args.out) if args.out else None,
+    )
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(f"Audit fingerprint: {result['state']} ({result['fingerprint_sha256']})")
+        print(result.get("action_summary", ""))
+    return (
+        0
+        if result["state"] == "CURRENT"
+        else 1
+        if result["state"] == "DRIFT_DETECTED"
+        else 2
     )
 
-    try:
-        if args.tool == "evals":
-            result = security_evals()
-            if args.json:
-                print(json.dumps(result, indent=2, sort_keys=True))
-            else:
-                print(
-                    f"Security evals: {result['state']} "
-                    f"({result['mutation_coverage']['caught']}/"
-                    f"{result['mutation_coverage']['attempted']} adversarial rules caught)"
-                )
-                print(result["action_summary"])
-            return 0 if result["state"] == "PASS" else 2
-        if args.tool == "security":
-            result = security_scan(Path(args.root))
-            if args.json:
-                print(json.dumps(result, indent=2, sort_keys=True))
-            else:
-                print(
-                    f"Security audit: {result['state']} "
-                    f"({len(result['findings'])} findings)"
-                )
-                for item in result["findings"]:
-                    print(
-                        f"{item['severity']} {item['code']}: "
-                        f"{item['path']}:{item['line']} — {item['message']}"
-                    )
-                print(result["action_summary"])
-            return (
-                0
-                if result["state"] == "CLEAN"
-                else 2
-                if result["state"] == "BLOCKED"
-                else 1
-            )
-        if args.tool == "fingerprint":
-            result = audit_fingerprint(
-                Path(args.root),
-                args.policy,
-                baseline_path=Path(args.baseline) if args.baseline else None,
-                out_path=Path(args.out) if args.out else None,
-            )
-            if args.json:
-                print(json.dumps(result, indent=2, sort_keys=True))
-            else:
-                print(
-                    f"Audit fingerprint: {result['state']} "
-                    f"({result['fingerprint_sha256']})"
-                )
-                print(result.get("action_summary", ""))
-            return (
-                0
-                if result["state"] == "CURRENT"
-                else 1
-                if result["state"] == "DRIFT_DETECTED"
-                else 2
-            )
-        result = audit_code(Path(args.root), args.policy, tool=args.tool)
-    except ReviewAuditError as exc:
-        print(
-            json.dumps({"state": "invalid", "code": exc.code, "message": str(exc)}),
-            file=sys.stderr,
-        )
-        return 2
+
+def _run_code(args: Any) -> int:
+    from .review_audits import audit_code
+
+    result = audit_code(Path(args.root), args.policy, tool=args.tool)
     if args.json:
         print(json.dumps(result, indent=2))
     else:
@@ -122,3 +105,22 @@ def run(args: Any) -> int:
             print(f"Unconfigured: {', '.join(result['unconfigured_tools'])}")
         print("Analysis only; declared policy is not authenticated approval.")
     return 0 if result["state"] == "no_structural_findings" else 2
+
+
+def run(args: Any) -> int:
+    """Run one audit command, importing the engine only after selection."""
+    from .review_audits import ReviewAuditError
+
+    handlers = {
+        "evals": _run_evals,
+        "security": _run_security,
+        "fingerprint": _run_fingerprint,
+    }
+    try:
+        return handlers.get(args.tool, _run_code)(args)
+    except ReviewAuditError as exc:
+        print(
+            json.dumps({"state": "invalid", "code": exc.code, "message": str(exc)}),
+            file=sys.stderr,
+        )
+        return 2

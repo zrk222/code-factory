@@ -84,6 +84,17 @@ def _changelog_contains_version(root: Path, version: str | None) -> bool:
     )
 
 
+def _parse_timestamp(value: Any) -> datetime | None:
+    """Read a timezone-aware ISO timestamp without guessing a local zone."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.astimezone(timezone.utc) if parsed.tzinfo else None
+
+
 def _module_classification(
     root: Path, relative: list[str]
 ) -> tuple[dict[str, int], dict[str, str]]:
@@ -284,6 +295,8 @@ def _release_train(root: Path, relative: list[str]) -> dict[str, Any]:
         if isinstance(cadence, dict)
         else None
     )
+    effective_at = cadence.get("effective_at") if isinstance(cadence, dict) else None
+    effective_time = _parse_timestamp(effective_at)
     valid = (
         train.get("schema") == "factory.release-train.v1"
         and isinstance(train.get("train_id"), str)
@@ -294,6 +307,7 @@ def _release_train(root: Path, relative: list[str]) -> dict[str, Any]:
         and max_releases > 0
         and type(minimum_days) is int
         and minimum_days > 0
+        and effective_time is not None
         and cadence.get("exception_requires") == "human-release-authority"
         and cadence.get("requires_changelog_entry") is True
         and isinstance(states, list)
@@ -305,6 +319,9 @@ def _release_train(root: Path, relative: list[str]) -> dict[str, Any]:
         "cadence": {
             "max_releases_30d": max_releases,
             "minimum_days_between_releases": minimum_days,
+            "effective_at": effective_time.isoformat().replace("+00:00", "Z")
+            if effective_time
+            else effective_at,
             "exception_requires": cadence.get("exception_requires"),
             "requires_changelog_entry": cadence.get("requires_changelog_entry"),
         },
@@ -317,6 +334,7 @@ def _cadence_projection(
     now: datetime,
     max_releases_30d: int = 4,
     minimum_days_between_releases: int = 7,
+    effective_at: datetime | None = None,
 ) -> dict[str, Any]:
     """Project a deterministic future release admission decision.
 
@@ -326,6 +344,11 @@ def _cadence_projection(
     It never deletes, rewrites, or reclassifies historical tags.
     """
     releases = sorted(releases, key=lambda item: item[1], reverse=True)
+    pre_policy_count = 0
+    if effective_at is not None:
+        effective_at = effective_at.astimezone(timezone.utc)
+        pre_policy_count = sum(1 for _, stamp in releases if stamp < effective_at)
+        releases = [item for item in releases if item[1] >= effective_at]
     recent = [item for item in releases if now - item[1] <= timedelta(days=30)]
     latest = releases[0] if releases else None
     cooldown_until = (
@@ -340,10 +363,20 @@ def _cadence_projection(
             days=30, microseconds=1
         )
     candidates = [value for value in (cooldown_until, window_until) if value]
+    if effective_at is not None and now < effective_at:
+        candidates.append(effective_at)
     next_eligible = max(candidates) if candidates else now
-    if not releases:
+    if not releases and effective_at is not None and now < effective_at:
+        state = "not_yet_effective"
+        reason = f"Release cadence begins at {effective_at.isoformat()}."
+    elif not releases:
         state = "no_tags"
-        reason = "No version tags were observed; the release train is eligible."
+        reason = (
+            f"No version tags have been created since {effective_at.isoformat()}; "
+            "the release train is eligible."
+            if effective_at and pre_policy_count
+            else "No version tags were observed; the release train is eligible."
+        )
     elif len(recent) >= max_releases_30d:
         state = "rate_limited"
         reason = (
@@ -371,6 +404,10 @@ def _cadence_projection(
     return {
         "available": True,
         "recent_count": len(recent),
+        "pre_policy_release_count": pre_policy_count,
+        "effective_at": effective_at.isoformat().replace("+00:00", "Z")
+        if effective_at
+        else None,
         "max_releases_30d": max_releases_30d,
         "minimum_days_between_releases": minimum_days_between_releases,
         "latest_tag": latest[0] if latest else None,
@@ -379,7 +416,7 @@ def _cadence_projection(
         "cooldown_until": iso(cooldown_until),
         "window_budget_until": iso(window_until),
         "next_eligible_at": iso(next_eligible),
-        "admission": state == "eligible",
+        "admission": state in {"eligible", "no_tags"},
         "state": state,
         "reason": reason,
     }
@@ -391,6 +428,8 @@ def _recent_release_tags(
     *,
     max_releases_30d: int = 4,
     minimum_days_between_releases: int = 7,
+    effective_at: datetime | None = None,
+    candidate_tag: str | None = None,
 ) -> dict[str, Any]:
     """Measure release-tag cadence and expose a forward release guard."""
     now = now or datetime.now(timezone.utc)
@@ -415,6 +454,8 @@ def _recent_release_tags(
     for line in completed.stdout.splitlines():
         try:
             name, stamp = line.split("\t", 1)
+            if name == candidate_tag:
+                continue
             releases.append(
                 (
                     name,
@@ -430,12 +471,30 @@ def _recent_release_tags(
         now=now,
         max_releases_30d=max_releases_30d,
         minimum_days_between_releases=minimum_days_between_releases,
+        effective_at=effective_at,
     )
 
 
-def release_cadence_status(root: Path, now: datetime | None = None) -> dict[str, Any]:
+def release_cadence_status(
+    root: Path, now: datetime | None = None, *, candidate_tag: str | None = None
+) -> dict[str, Any]:
     """Return release-train validity and its tag-derived admission projection."""
     root = Path(root).resolve()
+    if candidate_tag is not None:
+        if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", candidate_tag):
+            raise ValueError("candidate tag must use vMAJOR.MINOR.PATCH")
+
+        def commit(ref: str) -> str:
+            return subprocess.run(
+                ["git", "-C", str(root), "rev-parse", "--verify", ref],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            ).stdout.strip()
+
+        if commit(f"refs/tags/{candidate_tag}^{{commit}}") != commit("HEAD"):
+            raise ValueError("candidate tag must identify the checked-out commit")
     relative = [
         path.relative_to(root).as_posix()
         for path in _tracked_files(root)
@@ -464,6 +523,7 @@ def release_cadence_status(root: Path, now: datetime | None = None) -> dict[str,
         for key in (
             "max_releases_30d",
             "minimum_days_between_releases",
+            "effective_at",
             "exception_requires",
             "requires_changelog_entry",
         )
@@ -482,7 +542,10 @@ def release_cadence_status(root: Path, now: datetime | None = None) -> dict[str,
         now,
         max_releases_30d=cadence["max_releases_30d"],
         minimum_days_between_releases=cadence["minimum_days_between_releases"],
+        effective_at=_parse_timestamp(cadence["effective_at"]),
+        candidate_tag=candidate_tag,
     )
+    projection["excluded_candidate_tag"] = candidate_tag
     projection["release_train_status"] = train["status"]
     if not projection.get("available"):
         projection.update(

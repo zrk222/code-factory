@@ -24,33 +24,13 @@
     "cli_lines": 5000,
     "core_modules": 150
   },
-  "accepted_debt": {
-    "decision_id": "ARCH-BASELINE-2026-09-19-AGENTIC-DRIFT",
-    "owner": "human-release-authority",
-    "expires_at": "2026-12-31T23:59:59+00:00",
-    "reason": "Measured surface growth is intentionally accepted for the current lifecycle, receipt-index, governed-agent, version-bootstrap, cross-run audit fingerprint, deterministic security-quality scan, adversarial security-evaluation, repository-wide lint/format cleanup, bounded agentic control-plane, typed human-gated orchestrator request routing, task board, proof-coupled intent handoffs, route traces, task completion provenance, proof-delta retry guard, lifecycle telemetry, exact-hash receipt indexing, opt-in extended-assurance lanes, deterministic agentic-control drift detector, lazily loaded audit, quality-evidence, agent, capability-pack, RevenueForge/AppForge, SaaS proof, human-governance, GitHub evidence, IDE repair/JetBrains handshake, proof artifacts, enterprise receipt, enterprise operations, verifier-plane, MCP/Junie integration, release-control, evidence-chain, PR, app-builder, target-compilation, Studio, telemetry, Grill, AI-native blueprint parser/receipt, and update-notifier boundaries while the decomposition plan remains active; re-review is required at expiry.",
-    "codes": [
-      "E_ARCH_CLI_LINES_GROWTH",
-      "E_ARCH_MARKDOWN_FILES_GROWTH",
-      "E_ARCH_PYTHON_FILES_GROWTH",
-      "ARCH_CLI_MONOLITH",
-      "ARCH_CLI_COMMAND_SURFACE",
-      "ARCH_DOC_CODE_RATIO"
-    ],
-    "metrics": {
-      "cli_lines": 4984,
-      "cli_command_declarations": 184,
-      "markdown_files": 660,
-      "markdown_python_ratio": 1.4474,
-      "python_files": 456
-    }
-  },
   "release": {
     "max_releases_30d": 4,
     "minimum_days_between_releases": 7,
     "exception_requires": "human-release-authority",
     "requires_changelog_entry": true,
-    "require_train": true
+    "require_train": true,
+    "effective_at": "2026-09-21T15:01:54Z"
   },
   "documentation": {
     "require_index": true
@@ -60,25 +40,41 @@
       "id": "ARCH-CLI-01",
       "target": "factoryline/cli.py",
       "outcome": "Move command registration and dispatch into bounded modules while preserving the factory entry point.",
-      "acceptance": ["cli.py line count decreases", "existing CLI contract tests remain green", "each extracted command group has an owner"]
+      "acceptance": [
+        "cli.py line count decreases",
+        "existing CLI contract tests remain green",
+        "each extracted command group has an owner"
+      ]
     },
     {
       "id": "ARCH-SURFACE-01",
       "target": "factoryline package",
       "outcome": "Publish supported versus experimental module boundaries and stop unowned module accretion.",
-      "acceptance": ["new modules declare a boundary", "experimental adapters are opt-in", "public imports remain backward compatible"]
+      "acceptance": [
+        "new modules declare a boundary",
+        "experimental adapters are opt-in",
+        "public imports remain backward compatible"
+      ]
     },
     {
       "id": "ARCH-DOCS-01",
       "target": "Markdown corpus",
       "outcome": "Keep one canonical explanation per capability and link every new document to executable behavior or a decision.",
-      "acceptance": ["superseded docs are indexed or archived", "new docs include an evidence or decision link", "ratio does not grow without executable coverage"]
+      "acceptance": [
+        "superseded docs are indexed or archived",
+        "new docs include an evidence or decision link",
+        "ratio does not grow without executable coverage"
+      ]
     },
     {
       "id": "ARCH-RELEASE-01",
       "target": "release process",
       "outcome": "Adopt a release train with changelog-backed version bumps instead of agent-paced patch churn.",
-      "acceptance": ["release cadence is measured", "version bump has a changelog entry", "exceptions carry human release authority"]
+      "acceptance": [
+        "release cadence is measured",
+        "version bump has a changelog entry",
+        "exceptions carry human release authority"
+      ]
     }
   ],
   "governance": {

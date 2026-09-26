@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from pathlib import Path
 
@@ -36,9 +38,10 @@ def collect_pytest_readiness(test_paths: list[str]) -> dict[str, int]:
     results = _Results()
     # The readiness probe runs a nested pytest session from an arbitrary
     # temporary directory, so the repository's pyproject configuration is not
-    # discovered.  Keep the async fixture scope explicit here as well; this
-    # prevents pytest-asyncio's deprecation warning without globally filtering
-    # warnings from the probe.
+    # discovered. Preserve the project's fixture-loop setting when
+    # pytest-asyncio is available. Let pytest load the plugin normally when
+    # autoload is enabled; explicitly pass it only when the caller disabled
+    # plugin autoload.
     # Normalize absolute paths for Windows.  Pytest's nested invocation can
     # otherwise treat a backslash-containing drive path as a collection root
     # and walk the protected ``C:\\Documents and Settings`` junction.
@@ -49,18 +52,25 @@ def collect_pytest_readiness(test_paths: list[str]) -> dict[str, int]:
     # explicit file path.  The readiness probe only needs the named suites,
     # so a local root is both safer and deterministic.
     probe_root = str(Path(normalized_paths[0]).parent) if normalized_paths else "."
+    plugins: list[object] = [results]
+    pytest_args = [
+        "-q",
+        "--strict-markers",
+        "--strict-config",
+        "--rootdir",
+        probe_root,
+    ]
+    try:
+        import pytest_asyncio.plugin
+    except ImportError:
+        pass
+    else:
+        pytest_args.extend(["-o", "asyncio_default_fixture_loop_scope=function"])
+        if os.environ.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD"):
+            plugins.append(pytest_asyncio.plugin)
     exit_code = pytest.main(
-        [
-            "-q",
-            "--strict-markers",
-            "--strict-config",
-            "--rootdir",
-            probe_root,
-            "-o",
-            "asyncio_default_fixture_loop_scope=function",
-            *normalized_paths,
-        ],
-        plugins=[results],
+        [*pytest_args, *normalized_paths],
+        plugins=plugins,
     )
     return {
         "exit_code": int(exit_code),

@@ -11,7 +11,7 @@ def _manifest():
         "channel": "stable",
         "releases": [
             {
-                "version": "0.46.8",
+                "version": "0.46.9",
                 "released_at": "2026-09-22T00:00:00Z",
                 "summary": "Blueprint artifact-chain receipts.",
             },
@@ -27,9 +27,9 @@ def _manifest():
 def test_update_notice_is_deterministic_and_authority_free() -> None:
     notice = check_for_update("0.46.7", _manifest())
     assert notice["marker"] == "UPDATE_AVAILABLE"
-    assert notice["latest_version"] == "0.46.8"
+    assert notice["latest_version"] == "0.46.9"
     assert all(value is False for value in notice["authority"].values())
-    assert check_for_update("0.46.8", _manifest())["marker"] == "UP_TO_DATE"
+    assert check_for_update("0.46.9", _manifest())["marker"] == "UP_TO_DATE"
 
 
 def test_update_manifest_rejects_wrong_channel_or_invalid_version() -> None:

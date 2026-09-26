@@ -15,6 +15,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_support_sla_is_explicitly_proposed_until_activation_evidence_exists():
+    policy = json.loads(
+        (ROOT / "docs" / "SUPPORT_SLA_POLICY.json").read_text(encoding="utf-8")
+    )
+    assert policy["schema"] == "factory.support-sla.v1"
+    assert policy["status"] == "proposed"
+    assert policy["effective"] is False
+    assert policy["community"]["response_target"] is None
+    assert policy["enterprise"]["contract_required"] is True
+    assert len(policy["activation_evidence"]) >= 5
+
+
 def test_public_audit_condition_count_is_recomputed_from_source():
     module_path = ROOT / "scripts" / "audit_condition_inventory.py"
     spec = importlib.util.spec_from_file_location(
@@ -38,10 +50,13 @@ def test_public_audit_condition_count_is_recomputed_from_source():
     }
     claim = module.public_claim(result)
     breakdown = module.public_breakdown(result)
-    for relative in ("README.md", "docs/LLM_PRODUCT_CARD.md"):
+    for relative in ("docs/LLM_PRODUCT_CARD.md", "docs/AUDIT_CONDITION_INVENTORY.md"):
         content = (ROOT / relative).read_text(encoding="utf-8")
         assert claim in content
         assert breakdown in content
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "[Audit condition inventory](docs/AUDIT_CONDITION_INVENTORY.md)" in readme
+    assert claim not in readme
     for relative in (
         "docs/RELEASE_NOTES_0.46.3.md",
         "docs/RELEASE_NOTES_0.46.4.md",
@@ -73,10 +88,10 @@ def test_publication_versions_and_citation_are_synchronized():
     citation_version = _match(ROOT / "CITATION.cff", r"^version: ([^\s]+)$")
 
     assert pyproject_version == package_version == citation_version
-    assert (
-        _match(ROOT / "CITATION.cff", r"^date-released: (\d{4}-\d{2}-\d{2})$")
-        == "2026-09-13"
-    )
+    citation = (ROOT / "CITATION.cff").read_text(encoding="utf-8")
+    assert not re.search(r"^date-released:", citation, re.MULTILINE)
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "0.46.9 - 2026-09-25 (release candidate; publication gated)" in changelog
 
     descriptor = json.loads((ROOT / "mcp" / "server.json").read_text(encoding="utf-8"))
     package = descriptor["packages"][0]
@@ -157,25 +172,17 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
     intellij_readme = (ROOT / "editors" / "intellij" / "README.md").read_text(
         encoding="utf-8"
     )
+    concise_readme = " ".join(readme.split())
 
     value = "Catch AI-generated tests that could never fail — before review."
-    assert "engineering audit and orchestration system" in readme
-    assert "First Proof is one entry point" in readme
-    assert readme.index("Six audit lanes") < readme.index("factory first-proof")
-    assert 'factory mvp "Build an approval tracker" --root .' in readme
-    assert "See actual Factory Studio" in readme
-    assert "factory-studio-mvp-1280x800.png" in readme
-    assert readme.index(
-        'factory mvp "Build an approval tracker" --root .'
-    ) < readme.index("## Install")
-    assert "live Hugging Face Space" in readme
-    assert "Cursor or OpenCode MCP" in readme
-    assert "deterministic proof" in readme
-    assert "star Code Factory" in readme
-    assert "This optional link only opens the repository." in readme
-    assert "starter is never called production-ready" in readme
-    assert "offline-verifiable Survival Card" in readme
-    assert "factory gauntlet" in readme
+    assert "collecting local software review evidence" in concise_readme
+    assert "does not certify software" in concise_readme
+    assert "factory --help" in concise_readme
+    assert "factory guide" in concise_readme
+    assert "[repository self-audit receipt]" in concise_readme
+    assert "[Release channels and publication evidence]" in concise_readme
+    assert "143 coded rejection conditions" not in concise_readme
+    assert "Founding Proof Pro at $5.95" not in concise_readme
     assert (
         vscode_package["description"]
         == "Trace AI changes from intent through six audits to reviewable proof and a human-owned release decision."
@@ -219,7 +226,7 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
     ).read_text(encoding="utf-8")
     assert "Star Code Factory" in vscode_readme
     assert "Star Code Factory" in intellij_readme
-    for content in (readme, vscode_readme, intellij_plugin, intellij_readme):
+    for content in (vscode_readme, intellij_plugin, intellij_readme):
         assert "PRD Grill" in content
         assert "factory prd grill" in content
         assert "Proof Debt" in content
@@ -270,7 +277,15 @@ def test_publish_workflow_uses_trusted_publishing_without_stored_credentials():
     assert "  validate_vscode:" in workflow
     assert "  validate_intellij:" in workflow
     assert "  publish:" in workflow
-    assert "needs: [validate_python, validate_vscode, validate_intellij]" in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "release_tag:" in workflow
+    assert (
+        "needs: [guard, validate_python, validate_vscode, validate_intellij]"
+        in workflow
+    )
+    assert "ref: ${{ needs.guard.outputs.candidate_commit }}" in workflow
+    assert 'git merge-base --is-ancestor "$candidate_commit" origin/main' in workflow
+    assert "must exist and remain a draft" in workflow
     assert "environment: pypi" in workflow
     assert "id-token: write" in workflow
     assert "actions/setup-node@v7.0.0" in workflow
@@ -284,9 +299,15 @@ def test_publish_workflow_uses_trusted_publishing_without_stored_credentials():
     assert "attestations: true" in workflow
     assert "gradle/actions/setup-gradle@v6.2.0" in workflow
     assert ".[dev,enterprise,hosted]" in workflow
-    assert "name: release-python-${{ github.event.release.tag_name }}" in workflow
-    assert "name: release-vscode-${{ github.event.release.tag_name }}" in workflow
-    assert "name: release-intellij-${{ github.event.release.tag_name }}" in workflow
+    assert "name: release-python-${{ inputs.release_tag }}" in workflow
+    assert "name: release-vscode-${{ inputs.release_tag }}" in workflow
+    assert "name: release-intellij-${{ inputs.release_tag }}" in workflow
+    assert (
+        'gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false'
+        in workflow
+    )
+    assert workflow.index("environment: pypi") < workflow.index("gh release edit")
+    assert "github.event.release.tag_name" not in workflow
     assert "path: release-bundle/python" in workflow
     assert "path: release-bundle/editors" in workflow
     for forbidden in (
@@ -493,7 +514,7 @@ def test_hosted_release_and_editor_versions_are_declared():
         encoding="utf-8"
     )
 
-    assert project["version"] == "0.46.8"
+    assert project["version"] == "0.46.9"
     assert "hosted" in project["optional-dependencies"]
     assert vscode["version"] == "1.0.1"
     assert 'version = "1.0.1"' in gradle
@@ -712,7 +733,7 @@ def test_jetbrains_paid_launch_is_complete_but_cannot_activate_early():
         / "intellij"
         / "FactoryLineGitHubStarPrompt.kt"
     ).exists()
-    assert "Founding Proof Pro at $5.95" in readme
+    assert "Founding Proof Pro at $5.95" not in readme
     assert 'code="PFACTORYLINE"' in staged_xml
     assert 'release-date="20270101"' in staged_xml
     assert 'release-version="20271"' in staged_xml
@@ -848,7 +869,6 @@ def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():
     assert "graph_ops.html" in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
     for path in (
-        ROOT / "README.md",
         ROOT / "PUBLICATION_GUIDE.md",
         ROOT / "docs" / "ARCHITECTURE.md",
         ROOT / "docs" / "JETBRAINS_CONTROL_ROOM.md",
@@ -897,7 +917,7 @@ def test_release_history_lives_in_the_changelog_not_the_landing_page() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
-    assert "[CHANGELOG.md](CHANGELOG.md)" in readme
+    assert "[Changelog](CHANGELOG.md)" in readme
     assert "## New in 0.25.0:" not in readme
     assert "## New in 0.24.0:" not in readme
     for version in (
@@ -915,10 +935,8 @@ def test_release_history_lives_in_the_changelog_not_the_landing_page() -> None:
 
 
 def test_habituation_essay_is_explicit_about_its_evidence_boundary() -> None:
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
     essay = (ROOT / "docs" / "HABITUATION_ESSAY.md").read_text(encoding="utf-8")
 
-    assert "docs/HABITUATION_ESSAY.md" in readme
     assert "Treat it as a hypothesis, not a verdict" in essay
     assert "blocking policy is even eligible" in essay
     assert "does not rank people, compare teams, transmit observations" in essay

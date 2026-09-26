@@ -80,3 +80,31 @@ def test_mcp_dispatch_routes_to_read_only_status(tmp_path):
     assert body["marker"] == "DEEP_AUDIT_MCP_READ_ONLY"
     assert body["status"]["state"] == "NOT_RUN"
     assert not list(tmp_path.iterdir())
+
+
+def test_execution_cli_inventory_and_read_only_mcp(tmp_path, capsys, monkeypatch):
+    from test_deep_audit_contract import synthetic_execution
+
+    args, result = synthetic_execution(tmp_path, monkeypatch)
+    root = args[0]
+    assert main(["deep-audit", "inventory", "--root", str(root), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["state"] == "COMPLETE"
+    assert (
+        main(
+            [
+                "deep-audit",
+                "progress",
+                "--root",
+                str(root),
+                "--run-id",
+                result["run_id"],
+            ]
+        )
+        == 1
+    )
+    assert json.loads(capsys.readouterr().out)["state"] == "INCOMPLETE"
+    body = _deep_audit_status(root, {"run_id": result["run_id"]})
+    assert body["status"]["state"] == "INCOMPLETE"
+    assert body["repairs"]["review"] == "REQUIRED"
+    with pytest.raises(McpError):
+        _deep_audit_status(root, {"run_id": "../unsafe"})

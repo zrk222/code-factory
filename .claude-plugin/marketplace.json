@@ -24,6 +24,24 @@
         "name": "Richard Katz",
         "email": "rkatz22@gmail.com"
       }
+    },
+    {
+      "name": "code-factory-build-audit",
+      "source": "./plugins/muse-code-factory-audit",
+      "description": "Native Muse Code build audits with PRD/spec-driven AppForge and SaaS proof routing.",
+      "author": {
+        "name": "Richard Katz",
+        "email": "rkatz22@gmail.com"
+      }
+    },
+    {
+      "name": "expertise-agent-workflows",
+      "source": "./plugins/muse-expertise-agent-workflows",
+      "description": "Native Muse workflows for supplied-record Earnie, Cluso, and Surely business reviews, exposed as reviewed MCP tools.",
+      "author": {
+        "name": "Richard Katz",
+        "email": "rkatz22@gmail.com"
+      }
     }
   ]
 }

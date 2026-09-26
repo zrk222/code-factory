@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "expertise-agent-workflows",
+  "displayName": "Expertise Business Review Workflows",
+  "version": "0.1.0",
+  "description": "Three Muse-native, evidence-bounded workflows for vendor value, account impact, and portfolio hazard review.",
+  "compat": {
+    "source": "native",
+    "manifestDir": ".muse-plugin"
+  },
+  "capabilities": {
+    "skills": [
+      { "id": "expertise-agent-workflows", "path": "skills/expertise-agent-workflows/SKILL.md", "enabledDefault": true }
+    ],
+    "commands": [],
+    "hooks": [],
+    "mcpServers": [
+      { "id": "expertise-workflows", "transport": "stdio", "command": ["node", "mcp/server.mjs"] }
+    ],
+    "reminders": []
+  }
+}

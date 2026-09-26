@@ -16,3 +16,15 @@ Architect verdict: PASS
 
 - No analyzer execution, automatic repair, provider interaction, publication,
   deployment, merge, approval, or credential handling.
+
+
+## Executable audit extension (owner-authorized)
+
+- [x] E1 | slice=factoryline | files=factoryline/deep_audit_io.py,factoryline/deep_audit_contract.py | verify=`python -m pytest -q tests/test_deep_audit_contract.py` | Bind full inventory and pinned execution contracts.
+- [ ] E2 | slice=factoryline | files=factoryline/deep_audit.py,factoryline/deep_audit_sarif.py | verify=`python -m pytest -q tests/test_deep_audit_loop.py tests/test_deep_audit_sarif.py` | Run isolated adapters and retain progress, challenges and resolution evidence.
+- [ ] E3 | slice=factoryline | files=factoryline/deep_audit_attestation.py,factoryline/cli_deep_audit.py | verify=`python -m pytest -q tests/test_deep_audit_attestation.py tests/test_deep_audit_surfaces.py` | Authenticate reviewer origin and expose execution/status/cancel APIs.
+- [ ] E4 | slice=plugins | files=plugins/muse-code-factory-audit/hooks/audit.mjs,docs/DEEP_AUDIT_DECISIONS.md | verify=`python -m pytest -q tests/test_langchain_plugin.py` | Integrate current run evidence while preserving missing coverage and authority boundaries.
+
+Execution coordinator implementation and synthetic regression coverage are present.
+E2-E4 remain open for real adapter integration, final specialty re-review, and
+validated end-to-end evidence. Do not mark them complete from synthetic tests.

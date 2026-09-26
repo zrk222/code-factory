@@ -9,6 +9,16 @@ import factoryline.release_candidate as candidate
 from test_intake_admission import _intake
 
 
+def test_candidate_tag_must_match_package_version(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        candidate, "source_snapshot", lambda root: {"version": "0.46.9"}
+    )
+    with pytest.raises(ValueError, match="source package version"):
+        candidate.release_candidate_preflight(
+            tmp_path, Path("contract.json"), candidate_tag="v0.46.8"
+        )
+
+
 @pytest.fixture(autouse=True)
 def _eligible_release_cadence(monkeypatch) -> None:
     monkeypatch.setattr(
@@ -20,6 +30,15 @@ def _eligible_release_cadence(monkeypatch) -> None:
             "state": "eligible",
             "release_train_status": "valid",
             "reason": "fixture cadence admitted",
+        },
+    )
+    monkeypatch.setattr(
+        candidate,
+        "evaluate_architecture_health",
+        lambda _root, *, strict=False: {
+            "decision": "HEALTHY",
+            "regressions": [],
+            "baseline_debt": [],
         },
     )
 
@@ -185,6 +204,74 @@ def test_release_cadence_hold_blocks_candidate_preflight(
     assert any(
         item["id"] == "RELEASE_CADENCE_ADMISSION" and not item["passed"]
         for item in result["checks"]
+    )
+
+
+def test_architecture_health_debt_blocks_candidate_preflight(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _source(tmp_path)
+    monkeypatch.setattr(candidate, "_git_head", lambda _root: "a" * 40)
+    monkeypatch.setattr(
+        candidate,
+        "verify_release_contract",
+        lambda *args: {"ok": True, "marker": "RELEASE_CONTRACT_VALID"},
+    )
+    monkeypatch.setattr(
+        candidate,
+        "evaluate_architecture_health",
+        lambda _root, *, strict=False: {
+            "decision": "BLOCKED",
+            "regressions": [{"code": "E_ARCH_CLI_LINES_GROWTH"}],
+            "baseline_debt": [],
+        },
+    )
+    artifact_dir = tmp_path / "candidate"
+    artifact_dir.mkdir()
+    (artifact_dir / "factoryline_code_factory-0.46.3-py3-none-any.whl").write_bytes(
+        b"new"
+    )
+
+    result = candidate.release_candidate_preflight(
+        tmp_path, _contract(tmp_path), [artifact_dir]
+    )
+
+    assert result["ok"] is False
+    assert result["facts"]["architecture_health_admissible"] is False
+    assert any(
+        item["code"] == "E_RELEASE_ARCHITECTURE_HEALTH_BLOCKED"
+        for item in result["blockers"]
+    )
+
+
+def test_missing_architecture_policy_fails_candidate_preflight(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _source(tmp_path)
+    monkeypatch.setattr(candidate, "_git_head", lambda _root: "a" * 40)
+    monkeypatch.setattr(
+        candidate,
+        "verify_release_contract",
+        lambda *args: {"ok": True, "marker": "RELEASE_CONTRACT_VALID"},
+    )
+
+    def _missing_policy(_root: Path, *, strict: bool = False) -> dict[str, object]:
+        raise candidate.ArchitectureHealthError("architecture policy is missing")
+
+    monkeypatch.setattr(candidate, "evaluate_architecture_health", _missing_policy)
+    artifact_dir = tmp_path / "candidate"
+    artifact_dir.mkdir()
+    (artifact_dir / "factoryline_code_factory-0.46.3-py3-none-any.whl").write_bytes(
+        b"new"
+    )
+
+    result = candidate.release_candidate_preflight(
+        tmp_path, _contract(tmp_path), [artifact_dir]
+    )
+
+    assert result["ok"] is False
+    assert result["architecture_health"]["regressions"][0]["code"] == (
+        "E_ARCH_POLICY_UNAVAILABLE"
     )
 
 

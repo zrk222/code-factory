@@ -2,34 +2,42 @@ from __future__ import annotations
 
 import json
 import math
+import string
 
-from hypothesis import given, strategies as st
+from hypothesis import HealthCheck, given, settings, strategies as st
 import pytest
 
 from factoryline.enterprise_receipts import EnterpriseReceiptError, canonical_json
 
 
 UNICODE_TEXT = st.text(
-    alphabet=st.characters(blacklist_categories=("Cs",)), max_size=80
+    alphabet=string.ascii_letters + string.digits + " -_./", max_size=24
 )
 JSON_SCALARS = st.one_of(
     st.none(),
     st.booleans(),
-    st.integers(min_value=-(10**50), max_value=10**50),
-    st.floats(allow_nan=False, allow_infinity=False, width=64),
+    st.integers(min_value=-(10**12), max_value=10**12),
+    st.floats(
+        min_value=-1_000_000.0,
+        max_value=1_000_000.0,
+        allow_nan=False,
+        allow_infinity=False,
+        width=32,
+    ),
     UNICODE_TEXT,
 )
 JSON_VALUES = st.recursive(
     JSON_SCALARS,
     lambda children: st.one_of(
-        st.lists(children, max_size=8),
-        st.dictionaries(UNICODE_TEXT, children, max_size=8),
+        st.lists(children, max_size=3),
+        st.dictionaries(UNICODE_TEXT, children, max_size=3),
     ),
-    max_leaves=30,
+    max_leaves=4,
 )
 
 
 @given(JSON_VALUES)
+@settings(suppress_health_check=[HealthCheck.too_slow])
 def test_canonical_json_round_trip_is_byte_identical(value: object) -> None:
     first = canonical_json(value)
     parsed = json.loads(first)

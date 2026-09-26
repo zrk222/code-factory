@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "name": "code-factory-build-audit",
+  "displayName": "Code Factory Build Audit",
+  "version": "0.1.0",
+  "description": "Read-only Code Factory and ForgeLine audits after builds, with PRD/spec routing for AppForge and SaaS proof.",
+  "compat": {
+    "source": "native",
+    "manifestDir": ".muse-plugin"
+  },
+  "capabilities": {
+    "skills": [
+      {
+        "id": "cf-fl-build-audit",
+        "path": "skills/cf-fl-build-audit/SKILL.md",
+        "enabledDefault": true
+      }
+    ],
+    "commands": [],
+    "hooks": [
+      {
+        "id": "post-build-audit",
+        "event": "PostToolUse",
+        "command": ["node", "hooks/post-tool-use.mjs"],
+        "timeoutMs": 240000,
+        "statusMessage": "Running bounded Code Factory and ForgeLine checks; full-depth penetration remains incomplete"
+      },
+      {
+        "id": "failed-build-audit",
+        "event": "PostToolUseFailure",
+        "command": ["node", "hooks/post-tool-use-failure.mjs"],
+        "timeoutMs": 240000,
+        "statusMessage": "Checking bounded audit results and actionable resolutions after a failed build"
+      },
+      {
+        "id": "build-summary",
+        "event": "Stop",
+        "command": ["node", "hooks/stop.mjs"],
+        "timeoutMs": 10000,
+        "statusMessage": "Checking final audit outcomes and required next actions"
+      }
+    ],
+    "mcpServers": [],
+    "reminders": []
+  }
+}

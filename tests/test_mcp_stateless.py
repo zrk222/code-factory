@@ -532,3 +532,45 @@ def test_streamable_http_requires_matching_name_and_supported_version(
         server.shutdown()
         server.server_close()
         worker.join(timeout=3)
+
+
+def test_http_transport_stages_stay_within_complexity_budget():
+    """Count private helpers too so extraction cannot hide transport complexity."""
+    import ast
+    import inspect
+    import textwrap
+    from factoryline.mcp import (
+        _McpHttpHandler,
+        _validate_http_options,
+        _validate_http_address,
+    )
+
+    sources = [
+        _McpHttpHandler,
+        create_streamable_http_server,
+        _validate_http_options,
+        _validate_http_address,
+    ]
+    for target in sources:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(target)))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            complexity = 1
+            for child in ast.walk(node):
+                if isinstance(
+                    child,
+                    (
+                        ast.If,
+                        ast.For,
+                        ast.While,
+                        ast.ExceptHandler,
+                        ast.With,
+                        ast.Assert,
+                        ast.IfExp,
+                    ),
+                ):
+                    complexity += 1
+                elif isinstance(child, ast.BoolOp):
+                    complexity += len(child.values) - 1
+            assert complexity <= 10, (node.name, complexity)

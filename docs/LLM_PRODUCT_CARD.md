@@ -21,12 +21,15 @@ primary_question: Did the change fulfill approved intent, what could break, and 
 
 ## Current release preview
 
-Core 0.46.8, VS Code/Open VSX 1.0.1, and JetBrains 1.0.1 are preview targets,
-not publication claims. The change set emphasizes intent-to-proof agent
-handoffs, deterministic route traces, proof-delta retry stops, exact-hash
-receipt reuse and indexing, lifecycle telemetry, searchable audit rules, and
-optional local stateless MCP HTTP. The six mandatory audit lanes and human-owned
-release decision remain unchanged. The shared public preview is in
+Core 0.46.9 is an unpublished release candidate; VS Code/Open VSX 1.0.1 and
+JetBrains 1.0.1 remain preview targets. The candidate adds Muse Code native
+packages plus a standalone skills/hooks/MCP installation path for Muse builds
+without plugin commands, alongside bounded PRD/spec routing and workflow MCP
+tools. It also includes intent-to-proof agent handoffs, deterministic route
+traces, proof-delta retry stops, exact-hash receipt reuse and indexing,
+lifecycle telemetry, searchable audit rules, and optional local stateless MCP
+HTTP. The six mandatory audit lanes and human-owned release decision remain
+unchanged. The shared public preview is in
 [`CHANGELOG.md`](../CHANGELOG.md).
 
 ## What it does

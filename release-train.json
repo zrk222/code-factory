@@ -28,7 +28,8 @@
     "max_releases_30d": 4,
     "minimum_days_between_releases": 7,
     "exception_requires": "human-release-authority",
-    "requires_changelog_entry": true
+    "requires_changelog_entry": true,
+    "effective_at": "2026-09-21T15:01:54Z"
   },
   "publication_states": [
     "prepared",
@@ -42,6 +43,8 @@
   ],
   "invariants": [
     "A tag and artifact must bind to one commit before publication.",
+    "Every release candidate requires specialty AI review, passing required checks and resolved review findings before merge.",
+    "Specialty AI review is not human approval or security certification; protected publication environments remain separate controls.",
     "Uploaded, processing, and pending_review are not published.",
     "Provider credentials remain outside repository state.",
     "A release exception is never inferred from a green build."

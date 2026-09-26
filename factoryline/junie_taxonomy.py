@@ -182,6 +182,7 @@ _STAGES: tuple[dict[str, object], ...] = (
             "factory.appforge_fastlane_capture_status",
             "factory.appforge_submission_integrity_status",
             "factory.saas_status",
+            "factory.project_scope_review",
             "factory.revenue_status",
             "factory.revenue_memory",
         ),

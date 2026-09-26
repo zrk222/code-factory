@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "factoryline-code-factory"
-version = "0.46.8"
+version = "0.46.9"
 description = "Audit AI-built code with six evidence lanes, intent-to-proof traces, agent workflow receipts, and human-owned release gates."
 authors = [
   { name = "Richard Katz" },

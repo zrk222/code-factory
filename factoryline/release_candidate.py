@@ -23,7 +23,11 @@ except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
 
 from .release_contract import verify_release_contract
 from .intake_parameters import verify_intake_binding
-from .architecture_health import release_cadence_status
+from .architecture_health import (
+    ArchitectureHealthError,
+    evaluate_architecture_health,
+    release_cadence_status,
+)
 
 
 SCHEMA = "factory.release-candidate-preflight.v1"
@@ -318,13 +322,59 @@ def release_candidate_preflight(
     supply_chain_manifest: Path | None = None,
     intake_parameters: Path | None = None,
     require_intake: bool = False,
+    candidate_tag: str | None = None,
 ) -> dict[str, Any]:
     """Evaluate contract/source/artifact identity without external authority."""
     workspace = Path(root).resolve()
     source = source_snapshot(workspace)
-    release_cadence = release_cadence_status(workspace)
+    if candidate_tag is not None and candidate_tag != f"v{source.get('version')}":
+        raise ValueError("candidate tag must match the source package version")
+    release_cadence = (
+        release_cadence_status(workspace, candidate_tag=candidate_tag)
+        if candidate_tag is not None
+        else release_cadence_status(workspace)
+    )
+    try:
+        architecture_health = evaluate_architecture_health(workspace, strict=True)
+    except (
+        ArchitectureHealthError,
+        OSError,
+        TypeError,
+        ValueError,
+        AttributeError,
+    ) as exc:
+        architecture_health = {
+            "decision": "BLOCKED",
+            "regressions": [
+                {"code": "E_ARCH_POLICY_UNAVAILABLE", "detail": str(exc)[:240]}
+            ],
+            "baseline_debt": [],
+        }
+    architecture_codes = [
+        str(item.get("code", "E_ARCH_UNKNOWN"))
+        for group in ("regressions", "baseline_debt")
+        for item in architecture_health.get(group, [])
+        if isinstance(item, dict)
+    ]
+    architecture_admitted = architecture_health.get("decision") == "HEALTHY"
+    architecture_blocker = {
+        "code": "E_RELEASE_ARCHITECTURE_HEALTH_BLOCKED",
+        "detail": "strict architecture health is "
+        f"{architecture_health.get('decision', 'BLOCKED')}; resolve: "
+        + (", ".join(architecture_codes) or "policy unavailable"),
+    }
     checks: list[dict[str, Any]] = []
     blockers: list[dict[str, str]] = []
+    checks.append(
+        {
+            "id": "STRICT_ARCHITECTURE_HEALTH",
+            "passed": architecture_admitted,
+            "evidence": architecture_health.get("decision", "BLOCKED")
+            + (f" ({', '.join(architecture_codes)})" if architecture_codes else ""),
+        }
+    )
+    if not architecture_admitted:
+        blockers.append(architecture_blocker)
     try:
         contract_path = _inside(workspace, Path(contract), "release contract")
     except ValueError as exc:
@@ -354,6 +404,7 @@ def release_candidate_preflight(
             },
             "supply_chain": {"status": "NOT_REQUESTED"},
             "release_cadence": release_cadence,
+            "architecture_health": architecture_health,
             "facts": {
                 "contract_valid": False,
                 "artifact_versions_match": False,
@@ -363,9 +414,15 @@ def release_candidate_preflight(
                 "supply_chain_verified": None,
                 "intake_binding_verified": False,
                 "release_cadence_admissible": False,
+                "architecture_health_admissible": architecture_admitted,
             },
             "checks": [
                 {"id": "RELEASE_CONTRACT_VALID", "passed": False, "evidence": str(exc)},
+                {
+                    "id": "STRICT_ARCHITECTURE_HEALTH",
+                    "passed": architecture_admitted,
+                    "evidence": architecture_health.get("decision", "BLOCKED"),
+                },
                 {
                     "id": "RELEASE_CADENCE_ADMISSION",
                     "passed": False,
@@ -374,6 +431,7 @@ def release_candidate_preflight(
             ],
             "blockers": [
                 {"code": "RELEASE_CONTRACT_INVALID", "detail": str(exc)},
+                *([] if architecture_admitted else [architecture_blocker]),
                 {
                     "code": "E_RELEASE_CADENCE_BLOCKED",
                     "detail": release_cadence.get(
@@ -696,6 +754,7 @@ def release_candidate_preflight(
             else bool(intake_result.get("ok"))
         ),
         "release_cadence_admissible": cadence_admitted,
+        "architecture_health_admissible": architecture_admitted,
     }
     ok = bool(source.get("ok")) and binding_ok and not blockers
     body: dict[str, Any] = {
@@ -715,6 +774,7 @@ def release_candidate_preflight(
         "metadata": metadata,
         "supply_chain": supply_chain,
         "release_cadence": release_cadence,
+        "architecture_health": architecture_health,
         "intake_parameters": intake_result,
         "facts": facts,
         "checks": checks,
@@ -739,6 +799,7 @@ def write_release_candidate_preflight(
     supply_chain_manifest: Path | None = None,
     intake_parameters: Path | None = None,
     require_intake: bool = False,
+    candidate_tag: str | None = None,
 ) -> dict[str, Any]:
     """Write a candidate receipt atomically after running the pure preflight."""
     workspace = Path(root).resolve()
@@ -750,6 +811,7 @@ def write_release_candidate_preflight(
         supply_chain_manifest=supply_chain_manifest,
         intake_parameters=intake_parameters,
         require_intake=require_intake,
+        candidate_tag=candidate_tag,
     )
     destination = _inside(workspace, Path(out), "release preflight output")
     destination.parent.mkdir(parents=True, exist_ok=True)

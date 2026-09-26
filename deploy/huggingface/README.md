@@ -25,6 +25,13 @@ short_description: Trace AI changes from intent to reviewable proof.
 
 # Code Factory
 
+## 0.46.9 audit evidence preview
+
+Specialty AI audit evidence is available in [the reviewed change and findings](https://github.com/zrk222/code-factory/pull/108). The agent inspected source, identified defects, and reviewed their corrections. Test and CI receipts are separate evidence linked in the same change.
+
+The preview highlights audit progress, actionable repair tasks, source-bound evidence and specialty AI review. It is a static walkthrough, not a hosted repository scanner. CF pattern/guard-path audits need project policy; its security scan covers Python ASTs. ForgeLine repo-wide QA is static inventory. Agent review does not establish exhaustive native scanner coverage: Gitleaks per-file accounting remains incomplete.
+
+
 The current source preview connects the original request, agent handoffs,
 verification routes, current receipts, and human review. It also makes stale
 repair loops and missing evidence easier to spot. Six audit lanes stay in the

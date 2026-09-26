@@ -224,3 +224,35 @@ def test_runtime_plan_binding_matches_scope_digest_and_six_lanes(tmp_path):
     assert set(result["plan"]["lanes"][index]["kind"] for index in range(6)) == set(
         REQUIRED_AUDIT_LANES
     )
+
+
+def test_runtime_plan_private_stages_respect_complexity_limit():
+    import ast
+    import inspect
+    import textwrap
+    import factoryline.runtime_audit_contract as module
+
+    for name, value in vars(module).items():
+        if not (
+            name.startswith("_plan_") or name == "verify_runtime_audit_plan"
+        ) or not callable(value):
+            continue
+        tree = ast.parse(textwrap.dedent(inspect.getsource(value)))
+        count = 1
+        for node in ast.walk(tree):
+            if isinstance(
+                node,
+                (
+                    ast.If,
+                    ast.For,
+                    ast.While,
+                    ast.ExceptHandler,
+                    ast.With,
+                    ast.Assert,
+                    ast.IfExp,
+                ),
+            ):
+                count += 1
+            elif isinstance(node, ast.BoolOp):
+                count += len(node.values) - 1
+        assert count <= 10, (name, count)

@@ -1,5 +1,6 @@
 from copy import deepcopy
 import json
+from pathlib import Path
 
 import pytest
 
@@ -14,6 +15,14 @@ from factoryline.deep_audit_contract import verify_deep_audit_plan
 from factoryline.deep_audit_sarif import normalize_sarif
 from factoryline.deep_audit_io import digest
 from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
+
+
+def test_missing_nested_source_has_typed_error(tmp_path: Path) -> None:
+    from factoryline.deep_audit_io import local_file
+
+    with pytest.raises(RuntimeAuditError) as exc:
+        local_file(tmp_path, "missing/report.json")
+    assert exc.value.code == "E_SOURCE_MISSING"
 
 
 def inputs(tmp_path, *, clean=False, canary_kind="fail", canary_suppressed=False):

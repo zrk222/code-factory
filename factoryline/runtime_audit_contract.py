@@ -115,80 +115,7 @@ def _loopback(origin: str) -> bool:
     }
 
 
-def verify_runtime_audit_plan(
-    path: Path,
-    trust_root_path: Path,
-    trust_root_sha256: str,
-    workspace_root: Path,
-    environment_digest: str,
-    *,
-    now: datetime | None = None,
-    require_intake: bool = False,
-) -> dict[str, Any]:
-    """Verify a signed, expiring six-lane plan, its trust pin, sources, scenario, and environment binding."""
-    root = Path(workspace_root).resolve()
-    trust_path = Path(trust_root_path).resolve()
-    expected_trust = require_digest(trust_root_sha256, "trust_root_sha256")
-    _, trust_digest = read_stable_json(trust_path)
-    if trust_digest != expected_trust:
-        raise RuntimeAuditError(
-            "E_TRUST_ROOT_DRIFT", "trust-root bytes do not match the operator pin"
-        )
-    envelope, envelope_digest = read_stable_json(
-        Path(path), max_string_length=1_048_576
-    )
-    try:
-        encoded = envelope["payload"]
-        raw_payload = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
-        parsed_payload = parse_json_bytes(raw_payload)
-    except (KeyError, TypeError, ValueError) as exc:
-        raise RuntimeAuditError("E_PAYLOAD", "invalid strict signed payload") from exc
-    try:
-        verified = verify_signed_document(
-            Path(path),
-            payload_type=PLAN_TYPE,
-            schema=PLAN_SCHEMA,
-            trust_root_path=trust_path,
-        )
-    except (EnterpriseReceiptError, OSError) as exc:
-        raise RuntimeAuditError(getattr(exc, "code", "E_SIGNATURE"), str(exc)) from exc
-    plan = verified["payload"]
-    if (
-        plan != parsed_payload
-        or read_stable_json(trust_path)[1] != trust_digest
-        or read_stable_json(Path(path), max_string_length=1_048_576)[1]
-        != envelope_digest
-    ):
-        raise RuntimeAuditError(
-            "E_INPUT_CHANGED", "signed inputs changed while verifying"
-        )
-    exact_keys(
-        plan,
-        {
-            "schema",
-            "id",
-            "candidate_sha256",
-            "issued_at",
-            "expires_at",
-            "environment",
-            "sources",
-            "lanes",
-            "counterfactual_mesh",
-        },
-        optional={"runtime_boundary", "intake_parameters"},
-    )
-    require_str(plan["id"], "id", maximum=128)
-    require_digest(plan["candidate_sha256"], "candidate_sha256")
-    issued = _time(plan["issued_at"], "issued_at")
-    expires = _time(plan["expires_at"], "expires_at")
-    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    if issued > current:
-        raise RuntimeAuditError("E_FUTURE_PLAN", "issued_at is in the future")
-    if expires <= current or (expires - issued).total_seconds() > 86_400:
-        raise RuntimeAuditError(
-            "E_PLAN_EXPIRED", "plan is expired or valid for more than 24 hours"
-        )
-
+def _plan_environment(plan, environment_digest):
     environment = plan["environment"]
     if not isinstance(environment, dict):
         raise RuntimeAuditError("E_ENVIRONMENT", "environment must be an object")
@@ -214,6 +141,14 @@ def verify_runtime_audit_plan(
         raise RuntimeAuditError(
             "E_NONLOCAL_TARGET", "local_test permits loopback HTTP origins only"
         )
+    _plan_origins(origins)
+    if len(set(origins)) != len(origins):
+        raise RuntimeAuditError("E_DUPLICATE_ID", "duplicate origins")
+
+    return digest
+
+
+def _plan_origins(origins):
     for origin in origins:
         parsed = urlparse(origin)
         if (
@@ -228,9 +163,9 @@ def verify_runtime_audit_plan(
             raise RuntimeAuditError(
                 "E_ENVIRONMENT", "origins must be credential-free HTTP(S) origins"
             )
-    if len(set(origins)) != len(origins):
-        raise RuntimeAuditError("E_DUPLICATE_ID", "duplicate origins")
 
+
+def _plan_boundary(plan):
     # This optional block is the only way a signed plan can request a runtime
     # boundary.  Older six-lane plans remain wire-compatible; new strict plans
     # must make the requested assurance explicit before execution starts.
@@ -261,6 +196,8 @@ def verify_runtime_audit_plan(
                 "E_RUNTIME_BOUNDARY", "independent isolation requires an attestation"
             )
 
+
+def _plan_sources(plan, root):
     sources = plan["sources"]
     if not isinstance(sources, list) or not 1 <= len(sources) <= 128:
         raise RuntimeAuditError("E_SOURCES", "sources must contain 1..128 bindings")
@@ -291,6 +228,10 @@ def verify_runtime_audit_plan(
             "candidate digest must bind the sorted source manifest",
         )
 
+    return sources
+
+
+def _plan_mesh(plan):
     mesh = plan["counterfactual_mesh"]
     if not isinstance(mesh, dict):
         raise RuntimeAuditError(
@@ -315,6 +256,8 @@ def verify_runtime_audit_plan(
             "agent-proposed mesh scenarios cannot release work",
         )
 
+
+def _plan_lanes(plan):
     lanes = plan["lanes"]
     if not isinstance(lanes, list) or len(lanes) != 6:
         raise RuntimeAuditError("E_LANES", "exactly six lanes are required")
@@ -347,28 +290,34 @@ def verify_runtime_audit_plan(
             raise RuntimeAuditError("E_DUPLICATE_ID", lane_id)
         seen_ids.add(lane_id)
         seen_kinds.add(kind)
-        if require_str(lane["engine"], "lane.engine", maximum=80) not in ENGINES.get(
-            kind, set()
-        ):
-            raise RuntimeAuditError("E_ENGINE", "engine is not supported for the lane")
-        require_str(lane["engine_version"], "lane.engine_version", maximum=80)
-        require_int(
-            lane["timeout_seconds"], "lane.timeout_seconds", minimum=1, maximum=300
-        )
-        _argv(lane["target_argv"], "lane.target_argv")
-        _argv(lane["known_bad_argv"], "lane.known_bad_argv")
-        require_str(
-            lane["expected_negative_code"], "lane.expected_negative_code", maximum=128
-        )
-        if not isinstance(lane["config"], dict):
-            raise RuntimeAuditError("E_LANE", "lane config must be an object")
-        validate_lane_policy(kind, lane["config"])
-        if lane["target_argv"] == lane["known_bad_argv"]:
-            raise RuntimeAuditError(
-                "E_NEGATIVE_CONTROL", "target and known-bad commands must be distinct"
-            )
+        _plan_lane_engine(lane, kind)
     if seen_kinds != set(LANES):
         raise RuntimeAuditError("E_LANES", f"required lane kinds are {list(LANES)}")
+    return lanes
+
+
+def _plan_lane_engine(lane, kind):
+    if require_str(lane["engine"], "lane.engine", maximum=80) not in ENGINES.get(
+        kind, set()
+    ):
+        raise RuntimeAuditError("E_ENGINE", "engine is not supported for the lane")
+    require_str(lane["engine_version"], "lane.engine_version", maximum=80)
+    require_int(lane["timeout_seconds"], "lane.timeout_seconds", minimum=1, maximum=300)
+    _argv(lane["target_argv"], "lane.target_argv")
+    _argv(lane["known_bad_argv"], "lane.known_bad_argv")
+    require_str(
+        lane["expected_negative_code"], "lane.expected_negative_code", maximum=128
+    )
+    if not isinstance(lane["config"], dict):
+        raise RuntimeAuditError("E_LANE", "lane config must be an object")
+    validate_lane_policy(kind, lane["config"])
+    if lane["target_argv"] == lane["known_bad_argv"]:
+        raise RuntimeAuditError(
+            "E_NEGATIVE_CONTROL", "target and known-bad commands must be distinct"
+        )
+
+
+def _plan_intake(plan, root, sources, lanes, require_intake):
     intake_binding = plan.get("intake_parameters")
     if intake_binding is None:
         if require_intake:
@@ -433,6 +382,92 @@ def verify_runtime_audit_plan(
                 str(first.get("code", "E_INTAKE_PARAMETER_DRIFT")),
                 str(first.get("detail", "intake binding failed")),
             )
+    return intake_binding
+
+
+def _plan_lifetime(plan, now):
+    exact_keys(
+        plan,
+        {
+            "schema",
+            "id",
+            "candidate_sha256",
+            "issued_at",
+            "expires_at",
+            "environment",
+            "sources",
+            "lanes",
+            "counterfactual_mesh",
+        },
+        optional={"runtime_boundary", "intake_parameters"},
+    )
+    require_str(plan["id"], "id", maximum=128)
+    require_digest(plan["candidate_sha256"], "candidate_sha256")
+    issued = _time(plan["issued_at"], "issued_at")
+    expires = _time(plan["expires_at"], "expires_at")
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if issued > current:
+        raise RuntimeAuditError("E_FUTURE_PLAN", "issued_at is in the future")
+    if expires <= current or (expires - issued).total_seconds() > 86_400:
+        raise RuntimeAuditError(
+            "E_PLAN_EXPIRED", "plan is expired or valid for more than 24 hours"
+        )
+
+
+def verify_runtime_audit_plan(
+    path: Path,
+    trust_root_path: Path,
+    trust_root_sha256: str,
+    workspace_root: Path,
+    environment_digest: str,
+    *,
+    now: datetime | None = None,
+    require_intake: bool = False,
+) -> dict[str, Any]:
+    """Verify a signed, expiring six-lane plan, its trust pin, sources, scenario, and environment binding."""
+    root = Path(workspace_root).resolve()
+    trust_path = Path(trust_root_path).resolve()
+    expected_trust = require_digest(trust_root_sha256, "trust_root_sha256")
+    _, trust_digest = read_stable_json(trust_path)
+    if trust_digest != expected_trust:
+        raise RuntimeAuditError(
+            "E_TRUST_ROOT_DRIFT", "trust-root bytes do not match the operator pin"
+        )
+    envelope, envelope_digest = read_stable_json(
+        Path(path), max_string_length=1_048_576
+    )
+    try:
+        encoded = envelope["payload"]
+        raw_payload = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+        parsed_payload = parse_json_bytes(raw_payload)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeAuditError("E_PAYLOAD", "invalid strict signed payload") from exc
+    try:
+        verified = verify_signed_document(
+            Path(path),
+            payload_type=PLAN_TYPE,
+            schema=PLAN_SCHEMA,
+            trust_root_path=trust_path,
+        )
+    except (EnterpriseReceiptError, OSError) as exc:
+        raise RuntimeAuditError(getattr(exc, "code", "E_SIGNATURE"), str(exc)) from exc
+    plan = verified["payload"]
+    if (
+        plan != parsed_payload
+        or read_stable_json(trust_path)[1] != trust_digest
+        or read_stable_json(Path(path), max_string_length=1_048_576)[1]
+        != envelope_digest
+    ):
+        raise RuntimeAuditError(
+            "E_INPUT_CHANGED", "signed inputs changed while verifying"
+        )
+    _plan_lifetime(plan, now)
+    digest = _plan_environment(plan, environment_digest)
+    _plan_boundary(plan)
+    sources = _plan_sources(plan, root)
+    _plan_mesh(plan)
+    lanes = _plan_lanes(plan)
+    intake_binding = _plan_intake(plan, root, sources, lanes, require_intake)
     return {
         "schema": "factory.runtime-audit-plan-verification.v1",
         "verification": verified["verification"],

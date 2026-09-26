@@ -26,6 +26,34 @@ def test_audit_command_boundary_is_lazily_loaded() -> None:
     assert cli_audit.OWNER == "quality-security"
 
 
+def test_audit_cli_private_handlers_stay_bounded():
+    import ast
+    import inspect
+    from factoryline import cli_audit
+
+    for name, function in vars(cli_audit).items():
+        if name != "run" and not name.startswith("_run_"):
+            continue
+        count = 1
+        for node in ast.walk(ast.parse(inspect.getsource(function))):
+            if isinstance(
+                node,
+                (
+                    ast.If,
+                    ast.For,
+                    ast.While,
+                    ast.ExceptHandler,
+                    ast.With,
+                    ast.Assert,
+                    ast.IfExp,
+                ),
+            ):
+                count += 1
+            elif isinstance(node, ast.BoolOp):
+                count += len(node.values) - 1
+        assert count <= 10, (name, count)
+
+
 def workspace(root: Path, body: str = "require_auth()\nstore.delete()") -> Path:
     source = (
         "def safe():\n    require_auth()\n    store.delete()\n\ndef candidate():\n"

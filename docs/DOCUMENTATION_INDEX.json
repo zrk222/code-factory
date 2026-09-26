@@ -43,6 +43,10 @@
       "status": "historical"
     },
     {
+      "glob": "docs/RELEASE_HISTORY_*.md",
+      "status": "historical"
+    },
+    {
       "glob": "**/*.md",
       "status": "indexed"
     }

@@ -154,8 +154,10 @@ def test_github_per_seat_plan_is_scheduled_but_not_active_or_enforced():
     assert "feature-by-feature availability matrix" in guide
     assert "not active yet" in guide
     assert "GitHub repository metadata cannot collect payment" in guide
-    assert "Founding Proof Pro at $5.95" in readme
-    assert "standard Proof Pro is planned at **$9/month" in readme
+    assert "Founding Proof Pro" not in readme
+    assert "$5.95" not in readme
+    assert "standard Proof Pro" not in readme
+    assert "docs/COMMERCIAL_PACKAGING.md" in readme
 
 
 def test_open_vsx_services_are_scheduled_without_paywalling_the_extension():

@@ -794,3 +794,12 @@ Durable SpecLine gate receipts for focused feature work.
 
 - [2026-09-13 12:15] GATE spec revenueforge-integrity-v1 approver=human strict=True sha=e8524c020f88163f
 - [2026-09-13 12:17] GATE plan revenueforge-integrity-v1 approver=human tasks=6 sha=e8524c020f88163f
+
+- [2026-09-25 15:23] GATE spec deep-audit-attestation-v1 approver=human strict=True sha=6003f7bc3b7be4de
+- [2026-09-25 15:23] GATE plan deep-audit-attestation-v1 approver=human tasks=8 sha=6003f7bc3b7be4de
+- [2026-09-25] Deep execution extension: 50 focused contract/surface tests passed; strict spec and 4 validator mutations passed. Architecture HEALTHY without exceptions. Runner remains an unvalidated adapter coordinator, not full-depth certification. Specialty review found three validation gaps; fixes and regressions added, final specialty re-review unavailable due provider usage limit. ForgeLine repo-wide audit grade F remains unresolved. Clean dev-environment full suite and package build in progress. Historical evidence: https://github.com/zrk222/code-factory/pull/108
+
+- [2026-09-25] Historical clean-dev result: 1757 passing, 7 skipped, 1 docstring failure in 333.82s; subsequently superseded. Evidence: https://github.com/zrk222/code-factory/pull/108
+- [2026-09-25] Historical targeted checks for user intent to fix review regressions in PR108: 54 tests passed after docstring correction; Muse 9 tests passed, installed hook hash matched, wheel/sdist and twine passed. Evidence: https://github.com/zrk222/code-factory/pull/108
+
+- [2026-09-25] Quality refactor: MCP HTTP parsing/authentication/dispatch split into bounded stages; specialty review validation split by concern. Both modules individually ForgeLine A. Private-stage complexity checks enforce <=10. Repository-wide ForgeLine remains F, with raw-string fixture false positives and parser/complexity debt retained. Full clean-env suite 1759 passed, 7 skipped (374.46s); final affected rerun 92 passed (45.39s). No deployment or certification claimed. Historical evidence: https://github.com/zrk222/code-factory/pull/108

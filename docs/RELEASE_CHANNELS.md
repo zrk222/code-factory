@@ -1,17 +1,23 @@
 # Release Channels
 
-The 0.46.8 release preview targets FactoryLine for VS Code/Open VSX v1.0.1 and
-JetBrains v1.0.1 from one verified source state through channel-specific
-adapters. These are candidate versions, not publication claims. A successful
-GitHub release is not evidence that every moderated listing has accepted the
-artifact.
+Release workflows must bind artifacts to one source commit and pass the
+candidate preflight. The preflight now requires strict architecture health and
+release-cadence admission. A blocked preflight stops automated publication; it
+does not change the state of an already published GitHub release or a manually
+uploaded artifact.
+
+Before publication, a human other than the workflow initiator must review the
+candidate and receipts. Administrators must configure required reviewers and
+prevent self-review on every named environment below. The workflow's
+`github.actor` value identifies the initiator and is not an approval receipt.
+Keep the GitHub release in draft until that independent review is complete.
 
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
-| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Publish core tag `v0.46.8`; `publish.yml` attaches the verified bundle | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.46.8` | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Dispatch `publish.yml` with an existing draft tag; its protected publisher attaches the verified bundle and publishes the release after PyPI | Public release URL and green workflow |
+| PyPI | `factoryline-code-factory==0.46.9` candidate (not yet published) | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
-| Hugging Face | Static Code Factory Space | Push `deploy/huggingface/` to `main` | Green Space workflow and public Space |
+| Hugging Face | Static Code Factory Space | Manually dispatch the `huggingface` environment workflow | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
 | VS Code / Open VSX | `factoryline-vscode-1.0.1.vsix` | Upload through the Microsoft Marketplace website; use the protected publisher workflow for Open VSX | Installable VSIX and public marketplace version |
 | JetBrains | `factoryline-intellij-1.0.1.zip` | Use the separate protected JetBrains publisher workflow after its live binary-slot and metadata gates permit the update | Compatible ZIP plus an accepted Marketplace upload receipt; public availability still requires moderation |
@@ -19,11 +25,23 @@ artifact.
 
 The release pipeline never treats a queued review, draft listing, uploaded
 artifact, or workflow dispatch as a completed publication. Each channel is
-reported as published, pending review, blocked, or not configured.
+reported as published, pending review, blocked, or not configured. Direct
+marketplace uploads require the same second-human review outside GitHub Actions.
 
-The 0.46.8 preview remains blocked from publication unless cadence admission
-and any separately reviewed human-authority exception are evidenced. Do not
-weaken or skip the release-candidate preflight to force a provider upload.
+The 0.46.9 source candidate is unpublished. Release preflight must pass strict
+architecture health and prospective cadence, and the required independent
+review and protected provider gates must be satisfied before publication. Do
+not weaken or skip release preflight to force a provider upload.
+
+The release-train cap took effect at `2026-09-21T15:01:54Z`, the recorded
+commit time when the policy was added. The latest core tag (`v0.46.7`,
+2026-09-19) and the other tags already present at adoption remain visible as
+historical evidence; only tags created at or after the effective time count
+toward the prospective 4-per-30-day limit and 7-day interval. The publish
+workflow dispatches only from protected `main`, accepts only an existing draft
+release, validates the immutable tag, waits at the protected `pypi` environment,
+and marks the GitHub release public only after the approved PyPI publication
+succeeds.
 
 ### 0.46.0 core agent handoff evidence under Code Factory authority
 

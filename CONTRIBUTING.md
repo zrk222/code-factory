@@ -26,3 +26,16 @@ numbered packages installed from their matching source train.
   production changes.
 
 Open an issue before changing the receipt protocol or canonical stage order.
+
+## Independent release review
+
+Every public release requires approval by a human other than the workflow
+initiator. Repository administrators must configure a required reviewer and
+prevent self-review on each publishing environment (`pypi`, `vscode-marketplace`,
+`openvsx`, `jetbrains-marketplace`, and `huggingface`). A workflow name or an
+initiator value is not evidence that this protection is configured. Keep a
+release unpublished until a second human has reviewed the candidate and its
+receipts. Direct marketplace uploads need the same review outside Actions.
+
+Entries in `context/PROGRESS.md` record pipeline activity. `GATE`, `PROOF`, and
+`DONE` entries do not establish human authorship or independent review.
