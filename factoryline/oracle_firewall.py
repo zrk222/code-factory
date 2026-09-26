@@ -223,18 +223,14 @@ def _source_binding(root: Path, source: object, *, index: int) -> dict[str, str]
     }
 
 
-def _rule(
-    value: object, group: str, index: int, sources: dict[str, dict[str, str]]
-) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise OracleFirewallError(
-            "ORACLE_RULE_INVALID", f"{group}[{index}] must be an object"
-        )
-    rule_id = _identifier(value.get("id"), f"{group}[{index}].id")
-    statement = _text(value.get("statement"), f"{group}[{index}].statement")
-    origin = _text(value.get("origin"), f"{group}[{index}].origin", limit=64)
-    effect = _text(value.get("effect"), f"{group}[{index}].effect", limit=64)
-    source_id = _identifier(value.get("source_id"), f"{group}[{index}].source_id")
+def _validate_rule_authority(
+    origin: str,
+    effect: str,
+    source_id: str,
+    group: str,
+    index: int,
+    sources: dict[str, dict[str, str]],
+) -> None:
     if origin not in ORIGINS:
         raise OracleFirewallError(
             "ORACLE_PROVENANCE_INVALID", f"{group}[{index}] has unsupported origin"
@@ -257,6 +253,59 @@ def _rule(
             "ORACLE_PROVENANCE_INVALID",
             f"{group}[{index}] lacks human or trusted authority",
         )
+
+
+def _gate_rule_fields(value: dict[str, Any], group: str, index: int) -> dict[str, Any]:
+    comparator = _text(
+        value.get("comparison"), f"{group}[{index}].comparison", limit=32
+    )
+    if comparator not in {"gte", "lte", "equals", "present"}:
+        raise OracleFirewallError(
+            "ORACLE_GATE_INVALID", f"{group}[{index}].comparison is unsupported"
+        )
+    if comparator == "present":
+        if value.get("value") is not True:
+            raise OracleFirewallError(
+                "ORACLE_GATE_INVALID",
+                f"{group}[{index}].value must be true for present",
+            )
+    elif isinstance(value.get("value"), bool) or not isinstance(
+        value.get("value"), (str, int, float)
+    ):
+        raise OracleFirewallError(
+            "ORACLE_GATE_INVALID", f"{group}[{index}].value must be scalar"
+        )
+    return {"comparison": comparator, "value": value.get("value")}
+
+
+def _test_rule_path(value: dict[str, Any], group: str, index: int) -> str:
+    test_path = value.get("path")
+    if not isinstance(test_path, str) or not test_path.strip():
+        raise OracleFirewallError(
+            "ORACLE_RULE_INVALID", f"{group}[{index}].path is required"
+        )
+    safe = Path(test_path.replace("\\", "/"))
+    if safe.is_absolute() or ".." in safe.parts:
+        raise OracleFirewallError(
+            "ORACLE_PATH_OUT_OF_SCOPE",
+            f"{group}[{index}].path must be workspace relative",
+        )
+    return safe.as_posix()
+
+
+def _rule(
+    value: object, group: str, index: int, sources: dict[str, dict[str, str]]
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise OracleFirewallError(
+            "ORACLE_RULE_INVALID", f"{group}[{index}] must be an object"
+        )
+    rule_id = _identifier(value.get("id"), f"{group}[{index}].id")
+    statement = _text(value.get("statement"), f"{group}[{index}].statement")
+    origin = _text(value.get("origin"), f"{group}[{index}].origin", limit=64)
+    effect = _text(value.get("effect"), f"{group}[{index}].effect", limit=64)
+    source_id = _identifier(value.get("source_id"), f"{group}[{index}].source_id")
+    _validate_rule_authority(origin, effect, source_id, group, index, sources)
     critical = value.get("critical")
     if not isinstance(critical, bool):
         raise OracleFirewallError(
@@ -271,39 +320,9 @@ def _rule(
         "critical": critical,
     }
     if group == "gates":
-        comparator = _text(
-            value.get("comparison"), f"{group}[{index}].comparison", limit=32
-        )
-        if comparator not in {"gte", "lte", "equals", "present"}:
-            raise OracleFirewallError(
-                "ORACLE_GATE_INVALID", f"{group}[{index}].comparison is unsupported"
-            )
-        if comparator == "present":
-            if value.get("value") is not True:
-                raise OracleFirewallError(
-                    "ORACLE_GATE_INVALID",
-                    f"{group}[{index}].value must be true for present",
-                )
-        elif isinstance(value.get("value"), bool) or not isinstance(
-            value.get("value"), (str, int, float)
-        ):
-            raise OracleFirewallError(
-                "ORACLE_GATE_INVALID", f"{group}[{index}].value must be scalar"
-            )
-        result.update({"comparison": comparator, "value": value.get("value")})
+        result.update(_gate_rule_fields(value, group, index))
     if group == "tests":
-        test_path = value.get("path")
-        if not isinstance(test_path, str) or not test_path.strip():
-            raise OracleFirewallError(
-                "ORACLE_RULE_INVALID", f"{group}[{index}].path is required"
-            )
-        safe = Path(test_path.replace("\\", "/"))
-        if safe.is_absolute() or ".." in safe.parts:
-            raise OracleFirewallError(
-                "ORACLE_PATH_OUT_OF_SCOPE",
-                f"{group}[{index}].path must be workspace relative",
-            )
-        result["path"] = safe.as_posix()
+        result["path"] = _test_rule_path(value, group, index)
     return result
 
 
@@ -503,25 +522,31 @@ def _contract_identity(candidate: dict[str, Any]) -> tuple[str, int, str, str]:
     return contract_id, version, approved_by, rationale
 
 
-def _contract_scope(candidate: dict[str, Any]) -> list[str]:
-    raw_scope = candidate.get("scope_paths")
+def _validate_scope_list(raw_scope: object) -> list[Any]:
     if not isinstance(raw_scope, list) or not raw_scope or len(raw_scope) > 64:
         raise OracleFirewallError(
             "ORACLE_SCOPE_INVALID",
             "scope_paths must contain 1 through 64 workspace-relative paths",
         )
-    scope_paths: list[str] = []
-    for raw in raw_scope:
-        if not isinstance(raw, str) or not raw.strip():
-            raise OracleFirewallError(
-                "ORACLE_SCOPE_INVALID", "scope path must be non-empty"
-            )
-        path = Path(raw.replace("\\", "/"))
-        if path.is_absolute() or ".." in path.parts:
-            raise OracleFirewallError(
-                "ORACLE_SCOPE_INVALID", "scope paths must be workspace relative"
-            )
-        scope_paths.append(path.as_posix().rstrip("/") or ".")
+    return raw_scope
+
+
+def _normalize_scope_path(raw: object) -> str:
+    if not isinstance(raw, str) or not raw.strip():
+        raise OracleFirewallError(
+            "ORACLE_SCOPE_INVALID", "scope path must be non-empty"
+        )
+    path = Path(raw.replace("\\", "/"))
+    if path.is_absolute() or ".." in path.parts:
+        raise OracleFirewallError(
+            "ORACLE_SCOPE_INVALID", "scope paths must be workspace relative"
+        )
+    return path.as_posix().rstrip("/") or "."
+
+
+def _contract_scope(candidate: dict[str, Any]) -> list[str]:
+    raw_scope = _validate_scope_list(candidate.get("scope_paths"))
+    scope_paths = [_normalize_scope_path(raw) for raw in raw_scope]
     if len(set(scope_paths)) != len(scope_paths):
         raise OracleFirewallError("ORACLE_SCOPE_INVALID", "scope paths must be unique")
     return sorted(scope_paths)
@@ -592,8 +617,9 @@ def seal_oracle_contract(root: Path, input_path: Path, out: Path) -> dict[str, A
     return {**sealed, "path": path.relative_to(workspace).as_posix()}
 
 
-def _validate_contract_rules(root: Path, contract: dict[str, Any]) -> None:
-    """Reapply constructor rule constraints before trusting a local hash seal."""
+def _validated_contract_sources(
+    root: Path, contract: dict[str, Any]
+) -> dict[str, dict[str, str]]:
     raw_sources = contract.get("sources")
     if not isinstance(raw_sources, list) or not raw_sources:
         raise OracleFirewallError("ORACLE_SOURCE_INVALID", "sources are required")
@@ -605,22 +631,46 @@ def _validate_contract_rules(root: Path, contract: dict[str, Any]) -> None:
                 "ORACLE_SOURCE_INVALID", "duplicate source identifier"
             )
         sources[binding["id"]] = binding
+    return sources
+
+
+def _validate_original_intent_binding(
+    sources: dict[str, dict[str, str]], contract: dict[str, Any]
+) -> None:
     original = sources.get("original-intent")
     if not original or original["path"] != contract.get("handoff", {}).get("path"):
         raise OracleFirewallError(
             "ORACLE_SOURCE_INVALID", "original intent source must bind the handoff"
         )
+
+
+def _validate_contract_rule_groups(
+    contract: dict[str, Any], sources: dict[str, dict[str, str]]
+) -> None:
     rules = contract.get("rules")
     if not isinstance(rules, dict) or set(rules) != set(RULE_GROUPS):
         raise OracleFirewallError("ORACLE_RULE_INVALID", "all rule groups required")
     for group in RULE_GROUPS:
-        validated = _rules(rules[group], group, sources)
-        if group != "exceptions" and not any(
-            item["effect"] != "advisory" for item in validated
-        ):
-            raise OracleFirewallError(
-                "ORACLE_AUTHORITY_REQUIRED", "authoritative rule required"
-            )
+        _validate_contract_rule_group(group, rules[group], sources)
+
+
+def _validate_contract_rule_group(
+    group: str, value: object, sources: dict[str, dict[str, str]]
+) -> None:
+    validated = _rules(value, group, sources)
+    if group != "exceptions" and not any(
+        item["effect"] != "advisory" for item in validated
+    ):
+        raise OracleFirewallError(
+            "ORACLE_AUTHORITY_REQUIRED", "authoritative rule required"
+        )
+
+
+def _validate_contract_rules(root: Path, contract: dict[str, Any]) -> None:
+    """Reapply constructor rule constraints before trusting a local hash seal."""
+    sources = _validated_contract_sources(root, contract)
+    _validate_original_intent_binding(sources, contract)
+    _validate_contract_rule_groups(contract, sources)
 
 
 def _verify_sources(root: Path, contract: dict[str, Any]) -> list[dict[str, str]]:
@@ -725,6 +775,233 @@ def _source_justification(
     }
 
 
+def _rules_by_id(value: object) -> dict[str, dict[str, Any]]:
+    return {item["id"]: item for item in value if isinstance(item, dict)}
+
+
+def _difference_event(
+    code: str,
+    group: str,
+    rule_id: str,
+    prior: dict[str, Any] | None,
+    later: dict[str, Any] | None,
+    candidate: dict[str, Any],
+    *,
+    changed_fields: list[str] | None = None,
+) -> dict[str, Any]:
+    event = {
+        "code": code,
+        "group": group,
+        "rule_id": rule_id,
+        "before": prior,
+        "after": later,
+    }
+    if changed_fields is not None:
+        event["changed_fields"] = changed_fields
+    event["justification"] = _source_justification(candidate, later)
+    return event
+
+
+def _removed_rule_events(
+    group: str,
+    rule_id: str,
+    prior: dict[str, Any],
+    candidate: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if prior.get("effect") == "advisory":
+        review = _difference_event(
+            "advisory_rule_removed", group, rule_id, prior, None, candidate
+        )
+        return [], [review]
+    code = (
+        "negative_case_removed"
+        if group == "negative_cases"
+        else "required_rule_removed"
+    )
+    weakening = _difference_event(code, group, rule_id, prior, None, candidate)
+    return [weakening], []
+
+
+def _authority_weakening_events(
+    group: str,
+    rule_id: str,
+    prior: dict[str, Any],
+    later: dict[str, Any],
+    candidate: dict[str, Any],
+) -> tuple[list[dict[str, Any]], bool]:
+    weakening: list[dict[str, Any]] = []
+    weakened = False
+    if later.get("effect") == "advisory" and prior.get("effect") != "advisory":
+        weakening.append(
+            _difference_event(
+                "gate_effect_relaxed", group, rule_id, prior, later, candidate
+            )
+        )
+        weakened = True
+    if (
+        prior.get("origin") in AUTHORITY_ORIGINS
+        and later.get("origin") not in AUTHORITY_ORIGINS
+    ):
+        weakening.append(
+            _difference_event(
+                "provenance_downgraded", group, rule_id, prior, later, candidate
+            )
+        )
+        weakened = True
+    return weakening, weakened
+
+
+def _gate_threshold_lowered(
+    prior_value: Any, later_value: Any, comparison: str
+) -> bool:
+    return (
+        comparison == "gte"
+        and isinstance(prior_value, (int, float))
+        and isinstance(later_value, (int, float))
+        and later_value < prior_value
+    )
+
+
+def _gate_tolerance_widened(
+    prior_value: Any, later_value: Any, comparison: str
+) -> bool:
+    return (
+        comparison == "lte"
+        and isinstance(prior_value, (int, float))
+        and isinstance(later_value, (int, float))
+        and later_value > prior_value
+    )
+
+
+def _gate_weakening_events(
+    group: str,
+    rule_id: str,
+    prior: dict[str, Any],
+    later: dict[str, Any],
+    candidate: dict[str, Any],
+) -> list[dict[str, Any]]:
+    prior_value, later_value = prior.get("value"), later.get("value")
+    comparison = prior.get("comparison")
+    events = []
+    if _gate_threshold_lowered(prior_value, later_value, comparison):
+        events.append(
+            _difference_event(
+                "threshold_lowered", group, rule_id, prior, later, candidate
+            )
+        )
+    if _gate_tolerance_widened(prior_value, later_value, comparison):
+        events.append(
+            _difference_event(
+                "tolerance_widened", group, rule_id, prior, later, candidate
+            )
+        )
+    return events
+
+
+def _changed_rule_fields(
+    group: str, prior: dict[str, Any], later: dict[str, Any]
+) -> list[str]:
+    fields = list(SEMANTIC_RULE_FIELDS)
+    if group == "gates":
+        fields.extend(("comparison", "value"))
+    if group == "tests":
+        fields.append("path")
+    return [field for field in fields if prior.get(field) != later.get(field)]
+
+
+def _rewrite_code(group: str) -> str:
+    return (
+        "negative_proof_rewritten"
+        if group == "negative_cases"
+        else "test_rewritten"
+        if group == "tests"
+        else "blocking_rule_rewritten"
+    )
+
+
+def _existing_rule_events(
+    group: str,
+    rule_id: str,
+    prior: dict[str, Any],
+    later: dict[str, Any],
+    candidate: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    weakening, weakened = _authority_weakening_events(
+        group, rule_id, prior, later, candidate
+    )
+    changed_fields = _changed_rule_fields(group, prior, later)
+    gate_events = []
+    if group == "gates":
+        gate_events = _gate_weakening_events(group, rule_id, prior, later, candidate)
+    weakening.extend(gate_events)
+    weakened = weakened or bool(gate_events)
+    review = []
+    if changed_fields and not weakened:
+        review.append(
+            _difference_event(
+                _rewrite_code(group),
+                group,
+                rule_id,
+                prior,
+                later,
+                candidate,
+                changed_fields=changed_fields,
+            )
+        )
+    return weakening, review
+
+
+def _added_rule_events(
+    group: str,
+    rule_id: str,
+    later: dict[str, Any],
+    candidate: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if group == "exceptions":
+        event = _difference_event(
+            "exception_added", group, rule_id, None, later, candidate
+        )
+        return [event], []
+    code = "negative_case_added" if group == "negative_cases" else "blocking_rule_added"
+    event = _difference_event(code, group, rule_id, None, later, candidate)
+    return [], [event]
+
+
+def _semantic_group_differences(
+    group: str,
+    before: dict[str, Any],
+    after: dict[str, Any],
+    candidate: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    prior_rules = _rules_by_id(before.get(group, []))
+    candidate_rules = _rules_by_id(after.get(group, []))
+    weakening: list[dict[str, Any]] = []
+    review: list[dict[str, Any]] = []
+    for rule_id, prior in prior_rules.items():
+        later = candidate_rules.get(rule_id)
+        if later is None:
+            removed_weakening, removed_review = _removed_rule_events(
+                group, rule_id, prior, candidate
+            )
+            weakening.extend(removed_weakening)
+            review.extend(removed_review)
+            continue
+        rule_weakening, rule_review = _existing_rule_events(
+            group, rule_id, prior, later, candidate
+        )
+        weakening.extend(rule_weakening)
+        review.extend(rule_review)
+    for rule_id, later in candidate_rules.items():
+        if rule_id in prior_rules:
+            continue
+        added_weakening, added_review = _added_rule_events(
+            group, rule_id, later, candidate
+        )
+        weakening.extend(added_weakening)
+        review.extend(added_review)
+    return weakening, review
+
+
 def _semantic_differences(
     previous: dict[str, Any], candidate: dict[str, Any]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -740,169 +1017,11 @@ def _semantic_differences(
     before = previous.get("rules", {})
     after = candidate.get("rules", {})
     for group in RULE_GROUPS:
-        prior_rules = {
-            item["id"]: item for item in before.get(group, []) if isinstance(item, dict)
-        }
-        candidate_rules = {
-            item["id"]: item for item in after.get(group, []) if isinstance(item, dict)
-        }
-        for rule_id, prior in prior_rules.items():
-            later = candidate_rules.get(rule_id)
-            if later is None:
-                if prior.get("effect") == "advisory":
-                    review.append(
-                        {
-                            "code": "advisory_rule_removed",
-                            "group": group,
-                            "rule_id": rule_id,
-                            "before": prior,
-                            "after": None,
-                            "justification": _source_justification(candidate, None),
-                        }
-                    )
-                    continue
-                code = (
-                    "negative_case_removed"
-                    if group == "negative_cases"
-                    else "required_rule_removed"
-                )
-                weakening.append(
-                    {
-                        "code": code,
-                        "group": group,
-                        "rule_id": rule_id,
-                        "before": prior,
-                        "after": None,
-                        "justification": _source_justification(candidate, None),
-                    }
-                )
-                continue
-            weakened = False
-            if later.get("effect") == "advisory" and prior.get("effect") != "advisory":
-                weakening.append(
-                    {
-                        "code": "gate_effect_relaxed",
-                        "group": group,
-                        "rule_id": rule_id,
-                        "before": prior,
-                        "after": later,
-                        "justification": _source_justification(candidate, later),
-                    }
-                )
-                weakened = True
-            if (
-                prior.get("origin") in AUTHORITY_ORIGINS
-                and later.get("origin") not in AUTHORITY_ORIGINS
-            ):
-                weakening.append(
-                    {
-                        "code": "provenance_downgraded",
-                        "group": group,
-                        "rule_id": rule_id,
-                        "before": prior,
-                        "after": later,
-                        "justification": _source_justification(candidate, later),
-                    }
-                )
-                weakened = True
-            semantic_fields = list(SEMANTIC_RULE_FIELDS)
-            if group == "gates":
-                semantic_fields.extend(("comparison", "value"))
-            if group == "tests":
-                semantic_fields.append("path")
-            changed_fields = [
-                field
-                for field in semantic_fields
-                if prior.get(field) != later.get(field)
-            ]
-            if group == "gates":
-                prior_value, later_value = prior.get("value"), later.get("value")
-                comparison = prior.get("comparison")
-                if (
-                    comparison == "gte"
-                    and isinstance(prior_value, (int, float))
-                    and isinstance(later_value, (int, float))
-                    and later_value < prior_value
-                ):
-                    weakening.append(
-                        {
-                            "code": "threshold_lowered",
-                            "group": group,
-                            "rule_id": rule_id,
-                            "before": prior,
-                            "after": later,
-                            "justification": _source_justification(candidate, later),
-                        }
-                    )
-                    weakened = True
-                if (
-                    comparison == "lte"
-                    and isinstance(prior_value, (int, float))
-                    and isinstance(later_value, (int, float))
-                    and later_value > prior_value
-                ):
-                    weakening.append(
-                        {
-                            "code": "tolerance_widened",
-                            "group": group,
-                            "rule_id": rule_id,
-                            "before": prior,
-                            "after": later,
-                            "justification": _source_justification(candidate, later),
-                        }
-                    )
-                    weakened = True
-            if changed_fields and not weakened:
-                code = (
-                    "negative_proof_rewritten"
-                    if group == "negative_cases"
-                    else "test_rewritten"
-                    if group == "tests"
-                    else "blocking_rule_rewritten"
-                )
-                review.append(
-                    {
-                        "code": code,
-                        "group": group,
-                        "rule_id": rule_id,
-                        "before": prior,
-                        "after": later,
-                        "changed_fields": changed_fields,
-                        "justification": _source_justification(candidate, later),
-                    }
-                )
-        for rule_id, later in candidate_rules.items():
-            if rule_id in prior_rules:
-                continue
-            if group == "exceptions":
-                # An exception can suppress or train a later bypass, so an
-                # addition is itself a relaxation and cannot be auto-cleared.
-                weakening.append(
-                    {
-                        "code": "exception_added",
-                        "group": group,
-                        "rule_id": rule_id,
-                        "before": None,
-                        "after": later,
-                        "justification": _source_justification(candidate, later),
-                    }
-                )
-                continue
-            code = (
-                "negative_case_added"
-                if group == "negative_cases"
-                else "blocking_rule_added"
-            )
-            review.append(
-                {
-                    "code": code,
-                    "group": group,
-                    "rule_id": rule_id,
-                    "before": None,
-                    "after": later,
-                    "justification": _source_justification(candidate, later),
-                }
-            )
+        group_weakening, group_review = _semantic_group_differences(
+            group, before, after, candidate
+        )
+        weakening.extend(group_weakening)
+        review.extend(group_review)
     return weakening, review
 
 
@@ -1257,10 +1376,7 @@ def _verified_incident_contract(workspace: Path, contract_path: Path) -> dict[st
     return contract_result
 
 
-def _verified_incident_drift(
-    workspace: Path, contract_result: dict[str, Any], drift_path: Path
-) -> tuple[dict[str, Any], Path]:
-    drift, source = _read_json(workspace, Path(drift_path), DRIFT_SCHEMA)
+def _validate_incident_drift_state(drift: dict[str, Any]) -> None:
     required_state = (drift.get("marker"), drift.get("verdict"), drift.get("reason"))
     if not _valid_receipt(drift, DRIFT_SCHEMA, "drift_sha256") or required_state != (
         "E_ORACLE_WEAKENING",
@@ -1271,15 +1387,27 @@ def _verified_incident_drift(
             "ORACLE_INCIDENT_INVALID",
             "incident requires a hash-valid blocked weakening report",
         )
+
+
+def _incident_contracts(
+    drift: dict[str, Any],
+) -> tuple[object, object, object]:
     weakening = drift.get("weakening_findings")
     contracts = drift.get("contracts")
     prior = contracts.get("prior") if isinstance(contracts, dict) else None
     candidate = contracts.get("candidate") if isinstance(contracts, dict) else None
+    return weakening, prior, candidate
+
+
+def _validate_incident_weakening(weakening: object) -> None:
     if not isinstance(weakening, list) or not weakening:
         raise OracleFirewallError(
             "ORACLE_INCIDENT_INVALID",
             "incident report must contain a non-empty weakening finding set",
         )
+
+
+def _validate_incident_baseline(prior: object, contract_result: dict[str, Any]) -> None:
     if (
         not isinstance(prior, dict)
         or prior.get("contract_sha256")
@@ -1289,8 +1417,12 @@ def _verified_incident_drift(
             "ORACLE_INCIDENT_INVALID",
             "incident contract must be the report's verified baseline contract",
         )
+
+
+def _validate_incident_contract_paths(prior: object, candidate: object) -> None:
     if (
-        not isinstance(candidate, dict)
+        not isinstance(prior, dict)
+        or not isinstance(candidate, dict)
         or not isinstance(prior.get("path"), str)
         or not isinstance(candidate.get("path"), str)
     ):
@@ -1298,6 +1430,14 @@ def _verified_incident_drift(
             "ORACLE_INCIDENT_INVALID",
             "incident report must bind two local contract paths",
         )
+
+
+def _verify_incident_reconstruction(
+    workspace: Path,
+    drift: dict[str, Any],
+    prior: dict[str, Any],
+    candidate: dict[str, Any],
+) -> None:
     reconstructed = compare_oracle_contracts(
         workspace, Path(prior["path"]), Path(candidate["path"])
     )
@@ -1306,6 +1446,18 @@ def _verified_incident_drift(
             "ORACLE_INCIDENT_INVALID",
             "incident drift does not match the reconstructed contract comparison",
         )
+
+
+def _verified_incident_drift(
+    workspace: Path, contract_result: dict[str, Any], drift_path: Path
+) -> tuple[dict[str, Any], Path]:
+    drift, source = _read_json(workspace, Path(drift_path), DRIFT_SCHEMA)
+    _validate_incident_drift_state(drift)
+    weakening, prior, candidate = _incident_contracts(drift)
+    _validate_incident_weakening(weakening)
+    _validate_incident_baseline(prior, contract_result)
+    _validate_incident_contract_paths(prior, candidate)
+    _verify_incident_reconstruction(workspace, drift, prior, candidate)
     return drift, source
 
 
