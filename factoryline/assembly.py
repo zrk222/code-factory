@@ -106,19 +106,8 @@ def _meter_from_output(output: str) -> tuple[Meter, bool]:
     return Meter(), False
 
 
-def _forge_intent_trace(root: Path, feature: str, output: str) -> dict | None:
-    """Adapt one explicit Forge ship result into a Code Factory receipt.
-
-    REQ_INTENT_ADAPTER_CAPTURE · REQ_INTENT_ADAPTER_READ_ONLY ·
-    REQ_INTENT_ADAPTER_FAIL_CLOSED
-
-    ForgeLine owns its append-only ``.forge`` store.  FactoryLine must not
-    rewrite that store or infer a traceability result from a successful exit
-    code.  The adapter is emitted only when the CLI explicitly reports both
-    boolean fields and the corresponding Forge ship line is readable and
-    consistent.  Missing fields therefore leave the legacy fail-closed path
-    untouched.
-    """
+def _forge_ship_result(output: str) -> dict | None:
+    """Extract only an explicit Forge ship JSON result with two boolean claims."""
     payloads: list[dict] = []
     decoder = json.JSONDecoder()
     for offset, char in enumerate(output):
@@ -130,7 +119,7 @@ def _forge_intent_trace(root: Path, feature: str, output: str) -> dict | None:
             continue
         if isinstance(payload, dict):
             payloads.append(payload)
-    forge_result = next(
+    return next(
         (
             payload
             for payload in reversed(payloads)
@@ -139,9 +128,10 @@ def _forge_intent_trace(root: Path, feature: str, output: str) -> dict | None:
         ),
         None,
     )
-    if forge_result is None:  # REQ_INTENT_ADAPTER_FAIL_CLOSED
-        return None
 
+
+def _forge_receipt_lines(root: Path, feature: str) -> list[str] | None:
+    """Read a bounded Forge receipt log strictly beneath the requested root."""
     try:
         root_path = Path(root).resolve()
         receipt_path = (root_path / ".forge" / feature / "receipts.jsonl").resolve()
@@ -151,10 +141,13 @@ def _forge_intent_trace(root: Path, feature: str, output: str) -> dict | None:
     try:
         if receipt_path.stat().st_size > 1_048_576:
             return None
-        lines = receipt_path.read_text(encoding="utf-8").splitlines()
+        return receipt_path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError):
         return None
 
+
+def _latest_forge_ship(lines: list[str]) -> tuple[dict, str] | None:
+    """Find the last ship entry, refusing the whole log if any line is malformed."""
     latest: tuple[dict, str] | None = None
     for line in lines:
         if not line.strip():
@@ -165,14 +158,13 @@ def _forge_intent_trace(root: Path, feature: str, output: str) -> dict | None:
             return None
         if isinstance(value, dict) and value.get("phase") == "ship":
             latest = (value, line)
-    if latest is None:
-        return None
-    forge_receipt, raw_line = latest
-    if not isinstance(forge_receipt.get("shipped"), bool):
-        return None
-    if forge_receipt["shipped"] is not forge_result["shipped"]:
-        return None
+    return latest
 
+
+def _forge_trace_fields(
+    forge_receipt: dict, forge_result: dict
+) -> tuple[Any, Any, Any]:
+    """Prefer the local ship receipt's identity and timing fields."""
     intent_hash = forge_receipt.get("intent_hash")
     if not isinstance(intent_hash, str):
         intent_hash = (
@@ -194,6 +186,39 @@ def _forge_intent_trace(root: Path, feature: str, output: str) -> dict | None:
         timestamp = (
             forge_result.get("ts") if isinstance(forge_result.get("ts"), str) else None
         )
+    return intent_hash, obligations, timestamp
+
+
+def _forge_intent_trace(root: Path, feature: str, output: str) -> dict | None:
+    """Adapt one explicit Forge ship result into a Code Factory receipt.
+
+    REQ_INTENT_ADAPTER_CAPTURE · REQ_INTENT_ADAPTER_READ_ONLY ·
+    REQ_INTENT_ADAPTER_FAIL_CLOSED
+
+    ForgeLine owns its append-only ``.forge`` store.  FactoryLine must not
+    rewrite that store or infer a traceability result from a successful exit
+    code.  The adapter is emitted only when the CLI explicitly reports both
+    boolean fields and the corresponding Forge ship line is readable and
+    consistent.  Missing fields therefore leave the legacy fail-closed path
+    untouched.
+    """
+    forge_result = _forge_ship_result(output)
+    if forge_result is None:  # REQ_INTENT_ADAPTER_FAIL_CLOSED
+        return None
+    lines = _forge_receipt_lines(root, feature)
+    if lines is None:
+        return None
+    latest = _latest_forge_ship(lines)
+    if latest is None:
+        return None
+    forge_receipt, raw_line = latest
+    if not isinstance(forge_receipt.get("shipped"), bool):
+        return None
+    if forge_receipt["shipped"] is not forge_result["shipped"]:
+        return None
+    intent_hash, obligations, timestamp = _forge_trace_fields(
+        forge_receipt, forge_result
+    )
     return {
         "schema": "factoryline.intent-trace.v1",
         "source": "forgeline-cli",
@@ -319,6 +344,540 @@ def _release_contract_binding(
     return {"oracle_contract_sha256": oracle, "release_contract_policy_digest": policy}
 
 
+def _finish_activity(report: dict, activity: LiveActivity) -> None:
+    """Close the live activity with the report's terminal state."""
+    terminal = (
+        "halted"
+        if report.get("halted_at")
+        else "waiting_for_human"
+        if report.get("paused_at")
+        else "completed"
+    )
+    activity.finish(
+        terminal,
+        halted_at=report.get("halted_at"),
+        paused_at=report.get("paused_at"),
+    )
+
+
+def _assembly_agent_contract(root: Path, report: dict, activity: LiveActivity) -> bool:
+    """Bind a present agent contract or halt before any pipeline stage."""
+    contract_path = root / ".factory" / "agent-contract.json"
+    if not contract_path.is_file():
+        return True
+    try:
+        contract = validate_agent_contract(contract_path)
+    except AgentContractError as exc:
+        report["stages"].append(
+            {
+                "module": "factoryline",
+                "stage": "agent-contract",
+                "status": "failed",
+                "code": exc.code,
+                "message": exc.message,
+            }
+        )
+        activity.stage_finished("factoryline", "agent-contract", "failed")
+        report["halted_at"] = "factoryline:agent-contract"
+        _finish_activity(report, activity)
+        return False
+    report["agent_contract"] = {
+        "path": str(contract_path),
+        "digest": contract["contract_digest"],
+        "marker": "AGENT_CONTRACT_BOUND",
+    }
+    report["stages"].append(
+        {
+            "module": "factoryline",
+            "stage": "agent-contract",
+            "status": "ok",
+            "marker": "AGENT_CONTRACT_BOUND",
+        }
+    )
+    activity.stage_finished("factoryline", "agent-contract", "ok")
+    return True
+
+
+def _assembly_spec_bootstrap(
+    root: Path,
+    feature: str,
+    dry_run: bool,
+    installed: dict[str, ModuleStatus],
+    release_binding: dict[str, str],
+    report: dict,
+    activity: LiveActivity,
+) -> bool:
+    """Create a missing spec and pause for its author before the build chain."""
+    spec_path = root / "specs" / f"{feature}.md"
+    if dry_run or spec_path.exists() or not installed["specline"].installed:
+        return False
+    activity.stage_started("specline", "new")
+    with stopwatch() as sw:
+        ok, out = _run_cli(
+            MODULES["specline"]["cli"],
+            ["new", feature],
+            root,
+            heartbeat=activity.heartbeat,
+        )
+    Receipt(
+        module="specline",
+        stage="new",
+        feature=feature,
+        ok=ok,
+        inputs=dict(release_binding),
+        outputs={"log_tail": out[-2000:]},
+    ).write(root)
+    report["stages"].append(
+        {
+            "module": "specline",
+            "stage": "new",
+            "status": "ok" if ok else "failed",
+            "wall_ms": sw.wall_ms,
+        }
+    )
+    activity.stage_finished(
+        "specline", "new", "ok" if ok else "failed", wall_ms=sw.wall_ms
+    )
+    if not ok:
+        report["halted_at"] = "specline:new"
+    else:
+        report["paused_at"] = "author_spec"
+        report["next_command"] = (
+            f"edit specs/{feature}.md and plans/{feature}.md, then rerun factory assemble {feature}"
+        )
+    report["rollup"] = rollup_attributions(report["stages"])
+    _finish_activity(report, activity)
+    return True
+
+
+def _assembly_cdte_gate(
+    root: Path, feature: str, dry_run: bool, report: dict, activity: LiveActivity
+) -> bool:
+    """Pause before build stages when a declared NFR contradiction blocks."""
+    if dry_run:
+        return False
+    cdte_outcome = _cdte_gate(root, feature)
+    if cdte_outcome is None:
+        return False
+    report["stages"].append(cdte_outcome["stage"])
+    activity.stage_finished(
+        "factoryline", "cdte", "failed" if cdte_outcome["blocking"] else "ok"
+    )
+    report["cdte"] = cdte_outcome["summary"]
+    if not cdte_outcome["blocking"]:
+        return False
+    report["paused_at"] = "nfr_conflict"
+    if "run_id" in cdte_outcome["summary"]:
+        report["next_command"] = (
+            f"factory cdte resolve {cdte_outcome['summary']['run_id']} "
+            f"<conflict-id> --decision ... --approved-by ..."
+        )
+    else:
+        report["next_command"] = (
+            f"repair specs/{feature}.nfr.json, then rerun factory assemble {feature}"
+        )
+    report["rollup"] = rollup_attributions(report["stages"])
+    _finish_activity(report, activity)
+    return True
+
+
+@dataclass(frozen=True)
+class _AssemblyStage:
+    module: str
+    cli: str
+    args: list[str]
+    name: str
+    stage_id: str
+    required: bool
+    present: bool
+
+
+def _plan_assembly_stage(
+    root: Path,
+    feature: str,
+    module: str,
+    args_tmpl: list[str],
+    installed: dict[str, ModuleStatus],
+    release_contract_path: Path | None,
+) -> _AssemblyStage:
+    """Resolve one chain command, its exact receipt name, and contract scope."""
+    cli = MODULES[module]["cli"]
+    args = [arg.replace("{f}", feature) for arg in args_tmpl]
+    if module == "forgeline" and len(args) > 2 and args[2] == f"{feature}.ssat.yaml":
+        args[2] = str(_ssat_contract(root, feature).relative_to(root))
+    name = _receipt_stage(module, args)
+    stage_id = f"{module}:{name}"
+    return _AssemblyStage(
+        module,
+        cli,
+        args,
+        name,
+        stage_id,
+        _release_contract_requires(root, feature, stage_id, release_contract_path),
+        installed[module].installed,
+    )
+
+
+def _assembly_stage_failure(
+    stage: _AssemblyStage,
+    report: dict,
+    activity: LiveActivity,
+    reason: str,
+    marker: str,
+) -> None:
+    """Record a contract-required stage that cannot be fulfilled."""
+    report["stages"].append(
+        {
+            "module": stage.module,
+            "stage": stage.name,
+            "status": "failed",
+            "reason": reason,
+            "marker": marker,
+        }
+    )
+    activity.stage_finished(stage.module, stage.name, "failed")
+    report["halted_at"] = stage.stage_id
+
+
+def _assembly_scope_blocked(
+    root: Path,
+    feature: str,
+    stage: _AssemblyStage,
+    report: dict,
+    activity: LiveActivity,
+) -> bool:
+    """Fail before availability checks when a declared UI or spec is absent."""
+    if (
+        stage.module == "prestige"
+        and stage.required
+        and not (root / "smoke" / f"{feature}.ui").is_file()
+    ):
+        _assembly_stage_failure(
+            stage,
+            report,
+            activity,
+            "declared_ui_scope_missing",
+            "UI_SCOPE_REQUIRED_EVIDENCE_MISSING",
+        )
+        return True
+    if (
+        stage.module == "hsf"
+        and stage.required
+        and not (root / f"specs/{feature}.yaml").exists()
+    ):
+        _assembly_stage_failure(
+            stage,
+            report,
+            activity,
+            "declared_decision_spec_missing",
+            "DECISION_SPEC_REQUIRED_EVIDENCE_MISSING",
+        )
+        return True
+    return False
+
+
+def _assembly_availability_action(
+    root: Path,
+    feature: str,
+    stage: _AssemblyStage,
+    report: dict,
+    activity: LiveActivity,
+) -> str | None:
+    """Distinguish unavailable required gates from explicit optional skips."""
+    if not stage.present:
+        if stage.required:
+            _assembly_stage_failure(
+                stage,
+                report,
+                activity,
+                f"{stage.cli} not installed",
+                "REQUIRED_GATE_UNAVAILABLE",
+            )
+            return "halt"
+        report["stages"].append(
+            {
+                "module": stage.module,
+                "stage": stage.name,
+                "status": "skipped",
+                "reason": f"{stage.cli} not installed",
+            }
+        )
+        activity.stage_finished(stage.module, stage.name, "skipped")
+        return "skip"
+    if stage.module == "prestige" and not (root / "smoke" / f"{feature}.ui").is_file():
+        report["stages"].append(
+            {
+                "module": stage.module,
+                "stage": stage.name,
+                "status": "skipped",
+                "reason": "ui_scope_not_declared",
+                "marker": "UI_PRESTIGE_GATE_NOT_APPLICABLE",
+            }
+        )
+        activity.stage_finished(stage.module, stage.name, "skipped")
+        return "skip"
+    return None
+
+
+def _forge_architect_state(root: Path, feature: str) -> str | None:
+    """Read a prior Forge state for the architect pause without trusting malformed bytes."""
+    state_path = root / ".forge" / feature / "state.json"
+    if not state_path.exists():
+        return None
+    try:
+        return json.loads(state_path.read_text(encoding="utf-8")).get("state")
+    except (OSError, ValueError):
+        return None
+
+
+def _assembly_forge_architect(
+    root: Path,
+    feature: str,
+    dry_run: bool,
+    stage: _AssemblyStage,
+    release_binding: dict[str, str],
+    report: dict,
+    activity: LiveActivity,
+) -> bool:
+    """Pause for a missing SSAT or architecture approval after expansion."""
+    if dry_run or stage.module != "forgeline" or stage.name != "architect":
+        return False
+    ssat = _ssat_contract(root, feature)
+    state = _forge_architect_state(root, feature)
+    if not ssat.exists():
+        report["paused_at"] = "architecture_contract"
+        report["next_command"] = (
+            f"write specs/{feature}.ssat.yaml, then run forge expand {feature}"
+        )
+        activity.stage_finished(stage.module, stage.name, "skipped")
+        return True
+    if state in {None, "intent"}:
+        activity.stage_started(stage.module, "expand")
+        ok, out = _run_cli(
+            stage.cli, ["expand", feature], root, heartbeat=activity.heartbeat
+        )
+        Receipt(
+            module=stage.module,
+            stage="expand",
+            feature=feature,
+            ok=ok,
+            inputs=dict(release_binding),
+            outputs={"log_tail": out[-2000:]},
+        ).write(root)
+        report["stages"].append(
+            {
+                "module": stage.module,
+                "stage": "expand",
+                "status": "ok" if ok else "failed",
+            }
+        )
+        activity.stage_finished(stage.module, "expand", "ok" if ok else "failed")
+        report["paused_at"] = "architecture_approval"
+        report["next_command"] = f"forge gate architected {feature}"
+        return True
+    if state == "expanded":
+        report["paused_at"] = "architecture_approval"
+        report["next_command"] = f"forge gate architected {feature}"
+        activity.stage_finished(stage.module, stage.name, "skipped")
+        return True
+    return False
+
+
+def _assembly_forge_review(
+    root: Path,
+    feature: str,
+    dry_run: bool,
+    stage: _AssemblyStage,
+    report: dict,
+    activity: LiveActivity,
+) -> bool:
+    """Pause for implementation fill or halt on malformed Forge state."""
+    if dry_run or stage.module != "forgeline" or stage.name != "review":
+        return False
+    state_path = root / ".forge" / feature / "state.json"
+    if not state_path.exists():
+        return False
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8")).get("state")
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        AttributeError,
+        TypeError,
+    ):
+        _assembly_stage_failure(
+            stage, report, activity, "forge state is malformed", "FORGE_STATE_INVALID"
+        )
+        return True
+    if state == "scaffolded":
+        report["paused_at"] = "implementation_fill"
+        report["next_command"] = (
+            f"implement the scaffold, then run forge fill {feature} {feature}.ssat.yaml"
+        )
+        activity.stage_finished(stage.module, stage.name, "skipped")
+        return True
+    return False
+
+
+def _assembly_hsf_action(
+    root: Path,
+    feature: str,
+    dry_run: bool,
+    stage: _AssemblyStage,
+    report: dict,
+    activity: LiveActivity,
+) -> str | None:
+    """Skip an undeclared decision spec or fail a required compile stage."""
+    if dry_run or stage.module != "hsf" or stage.name != "compile":
+        return None
+    if (root / f"specs/{feature}.yaml").exists():
+        return None
+    if stage.required:
+        _assembly_stage_failure(
+            stage,
+            report,
+            activity,
+            "declared_decision_spec_missing",
+            "DECISION_SPEC_REQUIRED_EVIDENCE_MISSING",
+        )
+        return "halt"
+    report["stages"].append(
+        {
+            "module": stage.module,
+            "stage": stage.name,
+            "status": "skipped",
+            "reason": "no deterministic decision spec",
+        }
+    )
+    activity.stage_finished(stage.module, stage.name, "skipped")
+    return "skip"
+
+
+def _assembly_dry_run(
+    stage: _AssemblyStage, report: dict, activity: LiveActivity
+) -> None:
+    """Show an unexecuted command without creating a success receipt."""
+    report["stages"].append(
+        {
+            "module": stage.module,
+            "stage": stage.name,
+            "status": "would-run",
+            "cmd": f"{stage.cli} {' '.join(stage.args)}",
+        }
+    )
+    activity.stage_finished(stage.module, stage.name, "would-run")
+
+
+def _assembly_stage_outputs(
+    root: Path, feature: str, stage: _AssemblyStage, output: str
+) -> dict[str, Any]:
+    """Attach an intent trace only when Forge ship supplied explicit proof."""
+    outputs: dict[str, Any] = {"log_tail": output[-2000:]}
+    if stage.module == "forgeline" and stage.name == "ship":
+        intent_trace = _forge_intent_trace(root, feature, output)
+        if intent_trace is not None:
+            outputs["intent_trace"] = intent_trace
+    return outputs
+
+
+def _execute_assembly_stage(
+    root: Path,
+    feature: str,
+    stage: _AssemblyStage,
+    meterlog: MeterLog,
+    run_id: str,
+    release_binding: dict[str, str],
+    report: dict,
+    activity: LiveActivity,
+) -> bool:
+    """Execute one present stage and record its timing, meter, and receipt."""
+    activity.stage_started(stage.module, stage.name)
+    with stopwatch() as sw:
+        ok, out = _run_cli(stage.cli, stage.args, root, heartbeat=activity.heartbeat)
+    attribution_block = _attribution_from_output(out)
+    module_meter, usage_reported = _meter_from_output(out)
+    stage_meter = Meter(
+        wall_ms=sw.wall_ms,
+        model_calls=module_meter.model_calls,
+        tokens_in=module_meter.tokens_in,
+        tokens_out=module_meter.tokens_out,
+    )
+    meterlog.record(
+        StageTiming(
+            stage.module,
+            stage.name,
+            sw.wall_ms,
+            module_meter.model_calls,
+            module_meter.tokens_in,
+            module_meter.tokens_out,
+            ok,
+            usage_reported=usage_reported,
+            feature=feature,
+            run_id=run_id,
+        )
+    )
+    Receipt(
+        module=stage.module,
+        stage=stage.name,
+        feature=feature,
+        ok=ok,
+        inputs=dict(release_binding),
+        meter=stage_meter,
+        outputs=_assembly_stage_outputs(root, feature, stage, out),
+        attribution=attribution_block,
+    ).write(root)
+    report["stages"].append(
+        {
+            "module": stage.module,
+            "stage": stage.name,
+            "status": "ok" if ok else "failed",
+            "wall_ms": sw.wall_ms,
+            "attribution": attribution_block,
+        }
+    )
+    activity.stage_finished(
+        stage.module, stage.name, "ok" if ok else "failed", wall_ms=sw.wall_ms
+    )
+    if not ok:
+        report["halted_at"] = stage.stage_id
+    return ok
+
+
+def _assembly_stage_halts(
+    root: Path,
+    feature: str,
+    dry_run: bool,
+    stage: _AssemblyStage,
+    release_binding: dict[str, str],
+    meterlog: MeterLog,
+    run_id: str,
+    report: dict,
+    activity: LiveActivity,
+) -> bool:
+    """Apply stage gates in order; return whether the chain must stop."""
+    if _assembly_scope_blocked(root, feature, stage, report, activity):
+        return True
+    availability = _assembly_availability_action(root, feature, stage, report, activity)
+    if availability is not None:
+        return availability == "halt"
+    if _assembly_forge_architect(
+        root, feature, dry_run, stage, release_binding, report, activity
+    ):
+        return True
+    if _assembly_forge_review(root, feature, dry_run, stage, report, activity):
+        return True
+    hsf_action = _assembly_hsf_action(root, feature, dry_run, stage, report, activity)
+    if hsf_action is not None:
+        return hsf_action == "halt"
+    if dry_run:
+        _assembly_dry_run(stage, report, activity)
+        return False
+    return not _execute_assembly_stage(
+        root, feature, stage, meterlog, run_id, release_binding, report, activity
+    )
+
+
 def assemble(
     root: Path,
     feature: str,
@@ -347,392 +906,33 @@ def assemble(
     activity = LiveActivity(root, run_id, feature, len(chain))
     activity.start()
 
-    def finish_activity() -> None:
-        terminal = (
-            "halted"
-            if report.get("halted_at")
-            else "waiting_for_human"
-            if report.get("paused_at")
-            else "completed"
-        )
-        activity.finish(
-            terminal,
-            halted_at=report.get("halted_at"),
-            paused_at=report.get("paused_at"),
-        )
-
-    contract_path = root / ".factory" / "agent-contract.json"
-    if contract_path.is_file():
-        try:
-            contract = validate_agent_contract(contract_path)
-        except AgentContractError as exc:
-            report["stages"].append(
-                {
-                    "module": "factoryline",
-                    "stage": "agent-contract",
-                    "status": "failed",
-                    "code": exc.code,
-                    "message": exc.message,
-                }
-            )
-            activity.stage_finished("factoryline", "agent-contract", "failed")
-            report["halted_at"] = "factoryline:agent-contract"
-            finish_activity()
-            return report
-        report["agent_contract"] = {
-            "path": str(contract_path),
-            "digest": contract["contract_digest"],
-            "marker": "AGENT_CONTRACT_BOUND",
-        }
-        report["stages"].append(
-            {
-                "module": "factoryline",
-                "stage": "agent-contract",
-                "status": "ok",
-                "marker": "AGENT_CONTRACT_BOUND",
-            }
-        )
-        activity.stage_finished("factoryline", "agent-contract", "ok")
-
-    spec_path = root / "specs" / f"{feature}.md"
-    if not dry_run and not spec_path.exists() and installed["specline"].installed:
-        activity.stage_started("specline", "new")
-        with stopwatch() as sw:
-            ok, out = _run_cli(
-                MODULES["specline"]["cli"],
-                ["new", feature],
-                root,
-                heartbeat=activity.heartbeat,
-            )
-        Receipt(
-            module="specline",
-            stage="new",
-            feature=feature,
-            ok=ok,
-            inputs=dict(release_binding),
-            outputs={"log_tail": out[-2000:]},
-        ).write(root)
-        report["stages"].append(
-            {
-                "module": "specline",
-                "stage": "new",
-                "status": "ok" if ok else "failed",
-                "wall_ms": sw.wall_ms,
-            }
-        )
-        activity.stage_finished(
-            "specline", "new", "ok" if ok else "failed", wall_ms=sw.wall_ms
-        )
-        if not ok:
-            report["halted_at"] = "specline:new"
-        else:
-            report["paused_at"] = "author_spec"
-            report["next_command"] = (
-                f"edit specs/{feature}.md and plans/{feature}.md, then rerun factory assemble {feature}"
-            )
-        report["rollup"] = rollup_attributions(report["stages"])
-        finish_activity()
+    if not _assembly_agent_contract(root, report, activity):
+        return report
+    if _assembly_spec_bootstrap(
+        root, feature, dry_run, installed, release_binding, report, activity
+    ):
+        return report
+    if _assembly_cdte_gate(root, feature, dry_run, report, activity):
         return report
 
-    # ---------------------------------------------------------------------
-    # CDTE — contradiction gate.
-    #
-    # Runs after the spec exists and before any build stage. Deliberately
-    # model-free: constraints are read from a file that `factory cdte scan`
-    # wrote, so assembly stays deterministic and offline. A spec with no
-    # constraint file skips the gate rather than blocking on one.
-    # ---------------------------------------------------------------------
-    if not dry_run:
-        cdte_outcome = _cdte_gate(root, feature)
-        if cdte_outcome is not None:
-            report["stages"].append(cdte_outcome["stage"])
-            activity.stage_finished(
-                "factoryline", "cdte", "failed" if cdte_outcome["blocking"] else "ok"
-            )
-            if cdte_outcome["blocking"]:
-                report["cdte"] = cdte_outcome["summary"]
-                report["paused_at"] = "nfr_conflict"
-                if "run_id" in cdte_outcome["summary"]:
-                    report["next_command"] = (
-                        f"factory cdte resolve {cdte_outcome['summary']['run_id']} "
-                        f"<conflict-id> --decision ... --approved-by ..."
-                    )
-                else:
-                    report["next_command"] = (
-                        f"repair specs/{feature}.nfr.json, then rerun factory assemble {feature}"
-                    )
-                report["rollup"] = rollup_attributions(report["stages"])
-                finish_activity()
-                return report
-            report["cdte"] = cdte_outcome["summary"]
-
     for module, args_tmpl in chain:
-        cli = MODULES[module]["cli"]
-        present = installed[module].installed
-        args = [a.replace("{f}", feature) for a in args_tmpl]
-        if (
-            module == "forgeline"
-            and len(args) > 2
-            and args[2] == f"{feature}.ssat.yaml"
+        stage = _plan_assembly_stage(
+            root, feature, module, args_tmpl, installed, release_contract_path
+        )
+        if _assembly_stage_halts(
+            root,
+            feature,
+            dry_run,
+            stage,
+            release_binding,
+            meterlog,
+            run_id,
+            report,
+            activity,
         ):
-            args[2] = str(_ssat_contract(root, feature).relative_to(root))
-        stage_name = _receipt_stage(module, args)
-        stage_id = f"{module}:{stage_name}"
-        required_by_contract = _release_contract_requires(
-            root, feature, stage_id, release_contract_path
-        )
-        # Contract-declared scope is a hard requirement.  Check it before the
-        # generic availability skip so a missing producer or source can never
-        # masquerade as an optional gate.
-        if (
-            module == "prestige"
-            and required_by_contract
-            and not (root / "smoke" / f"{feature}.ui").is_file()
-        ):
-            report["stages"].append(
-                {
-                    "module": module,
-                    "stage": stage_name,
-                    "status": "failed",
-                    "reason": "declared_ui_scope_missing",
-                    "marker": "UI_SCOPE_REQUIRED_EVIDENCE_MISSING",
-                }
-            )
-            activity.stage_finished(module, stage_name, "failed")
-            report["halted_at"] = stage_id
-            break
-        if (
-            module == "hsf"
-            and required_by_contract
-            and not (root / f"specs/{feature}.yaml").exists()
-        ):
-            report["stages"].append(
-                {
-                    "module": module,
-                    "stage": stage_name,
-                    "status": "failed",
-                    "reason": "declared_decision_spec_missing",
-                    "marker": "DECISION_SPEC_REQUIRED_EVIDENCE_MISSING",
-                }
-            )
-            activity.stage_finished(module, stage_name, "failed")
-            report["halted_at"] = stage_id
-            break
-        if not present:
-            if required_by_contract:
-                report["stages"].append(
-                    {
-                        "module": module,
-                        "stage": stage_name,
-                        "status": "failed",
-                        "reason": f"{cli} not installed",
-                        "marker": "REQUIRED_GATE_UNAVAILABLE",
-                    }
-                )
-                activity.stage_finished(module, stage_name, "failed")
-                report["halted_at"] = stage_id
-                break
-            report["stages"].append(
-                {
-                    "module": module,
-                    "stage": stage_name,
-                    "status": "skipped",
-                    "reason": f"{cli} not installed",
-                }
-            )
-            activity.stage_finished(module, stage_name, "skipped")
-            continue
-        if module == "prestige":
-            ui_path = root / "smoke" / f"{feature}.ui"
-            if not ui_path.is_file():
-                report["stages"].append(
-                    {
-                        "module": module,
-                        "stage": stage_name,
-                        "status": "skipped",
-                        "reason": "ui_scope_not_declared",
-                        "marker": "UI_PRESTIGE_GATE_NOT_APPLICABLE",
-                    }
-                )
-                activity.stage_finished(module, stage_name, "skipped")
-                continue
-        if not dry_run and module == "forgeline" and stage_name == "architect":
-            ssat = _ssat_contract(root, feature)
-            state_path = root / ".forge" / feature / "state.json"
-            state = None
-            if state_path.exists():
-                try:
-                    state = json.loads(state_path.read_text(encoding="utf-8")).get(
-                        "state"
-                    )
-                except (OSError, ValueError):
-                    state = None
-            if not ssat.exists():
-                report["paused_at"] = "architecture_contract"
-                report["next_command"] = (
-                    f"write specs/{feature}.ssat.yaml, then run forge expand {feature}"
-                )
-                activity.stage_finished(module, stage_name, "skipped")
-                break
-            if state in {None, "intent"}:
-                activity.stage_started(module, "expand")
-                ok, out = _run_cli(
-                    cli, ["expand", feature], root, heartbeat=activity.heartbeat
-                )
-                Receipt(
-                    module=module,
-                    stage="expand",
-                    feature=feature,
-                    ok=ok,
-                    inputs=dict(release_binding),
-                    outputs={"log_tail": out[-2000:]},
-                ).write(root)
-                report["stages"].append(
-                    {
-                        "module": module,
-                        "stage": "expand",
-                        "status": "ok" if ok else "failed",
-                    }
-                )
-                activity.stage_finished(module, "expand", "ok" if ok else "failed")
-                report["paused_at"] = "architecture_approval"
-                report["next_command"] = f"forge gate architected {feature}"
-                break
-            if state == "expanded":
-                report["paused_at"] = "architecture_approval"
-                report["next_command"] = f"forge gate architected {feature}"
-                activity.stage_finished(module, stage_name, "skipped")
-                break
-        if not dry_run and module == "forgeline" and stage_name == "review":
-            state_path = root / ".forge" / feature / "state.json"
-            if state_path.exists():
-                try:
-                    state = json.loads(state_path.read_text(encoding="utf-8")).get(
-                        "state"
-                    )
-                except (
-                    OSError,
-                    UnicodeDecodeError,
-                    json.JSONDecodeError,
-                    AttributeError,
-                    TypeError,
-                ):
-                    report["stages"].append(
-                        {
-                            "module": module,
-                            "stage": stage_name,
-                            "status": "failed",
-                            "reason": "forge state is malformed",
-                            "marker": "FORGE_STATE_INVALID",
-                        }
-                    )
-                    activity.stage_finished(module, stage_name, "failed")
-                    report["halted_at"] = stage_id
-                    break
-                if state == "scaffolded":
-                    report["paused_at"] = "implementation_fill"
-                    report["next_command"] = (
-                        f"implement the scaffold, then run forge fill {feature} {feature}.ssat.yaml"
-                    )
-                    activity.stage_finished(module, stage_name, "skipped")
-                    break
-        if (
-            not dry_run
-            and module == "hsf"
-            and stage_name == "compile"
-            and not (root / f"specs/{feature}.yaml").exists()
-        ):
-            if required_by_contract:
-                report["stages"].append(
-                    {
-                        "module": module,
-                        "stage": stage_name,
-                        "status": "failed",
-                        "reason": "declared_decision_spec_missing",
-                        "marker": "DECISION_SPEC_REQUIRED_EVIDENCE_MISSING",
-                    }
-                )
-                activity.stage_finished(module, stage_name, "failed")
-                report["halted_at"] = f"{module}:{stage_name}"
-                break
-            report["stages"].append(
-                {
-                    "module": module,
-                    "stage": stage_name,
-                    "status": "skipped",
-                    "reason": "no deterministic decision spec",
-                }
-            )
-            activity.stage_finished(module, stage_name, "skipped")
-            continue
-        if dry_run:
-            report["stages"].append(
-                {
-                    "module": module,
-                    "stage": stage_name,
-                    "status": "would-run",
-                    "cmd": f"{cli} {' '.join(args)}",
-                }
-            )
-            activity.stage_finished(module, stage_name, "would-run")
-            continue
-        activity.stage_started(module, stage_name)
-        with stopwatch() as sw:
-            ok, out = _run_cli(cli, args, root, heartbeat=activity.heartbeat)
-        attribution_block = _attribution_from_output(out)
-        module_meter, usage_reported = _meter_from_output(out)
-        stage_meter = Meter(
-            wall_ms=sw.wall_ms,
-            model_calls=module_meter.model_calls,
-            tokens_in=module_meter.tokens_in,
-            tokens_out=module_meter.tokens_out,
-        )
-        meterlog.record(
-            StageTiming(
-                module,
-                stage_name,
-                sw.wall_ms,
-                module_meter.model_calls,
-                module_meter.tokens_in,
-                module_meter.tokens_out,
-                ok,
-                usage_reported=usage_reported,
-                feature=feature,
-                run_id=run_id,
-            )
-        )
-        outputs = {"log_tail": out[-2000:]}
-        if module == "forgeline" and stage_name == "ship":
-            intent_trace = _forge_intent_trace(root, feature, out)
-            if intent_trace is not None:
-                outputs["intent_trace"] = intent_trace
-        Receipt(
-            module=module,
-            stage=stage_name,
-            feature=feature,
-            ok=ok,
-            inputs=dict(release_binding),
-            meter=stage_meter,
-            outputs=outputs,
-            attribution=attribution_block,
-        ).write(root)
-        report["stages"].append(
-            {
-                "module": module,
-                "stage": stage_name,
-                "status": "ok" if ok else "failed",
-                "wall_ms": sw.wall_ms,
-                "attribution": attribution_block,
-            }
-        )
-        activity.stage_finished(
-            module, stage_name, "ok" if ok else "failed", wall_ms=sw.wall_ms
-        )
-        if not ok:
-            report["halted_at"] = f"{module}:{stage_name}"
             break
     report["rollup"] = rollup_attributions(report["stages"])
-    finish_activity()
+    _finish_activity(report, activity)
     return report
 
 
