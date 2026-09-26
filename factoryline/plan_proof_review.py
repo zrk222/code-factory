@@ -24,6 +24,9 @@ MAX_PLAN_ITEMS = 50
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 _PROVIDER = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _REVIEW_TIERS = frozenset({"light", "standard", "deep"})
+_PLAN_KEYS = {"schema", "provider", "plan_id", "approval", "items"}
+_PLAN_ITEM_KEYS = {"id", "paths", "test_paths", "review_tier", "review_owner"}
+_REQUIRED_PLAN_ITEM_KEYS = {"id", "paths", "test_paths", "review_tier"}
 AUTHORITY = {
     "execution": False,
     "approval": False,
@@ -113,11 +116,8 @@ def _load_plan(value: Path | dict[str, Any]) -> dict[str, Any]:
     return loaded
 
 
-def validate_agent_plan(value: Path | dict[str, Any]) -> dict[str, Any]:
-    """Validate and normalize one strict, human-approved agent-plan envelope."""
-    plan = _load_plan(value)
-    allowed = {"schema", "provider", "plan_id", "approval", "items"}
-    if set(plan) != allowed:
+def _validate_plan_identity(plan: dict[str, Any]) -> tuple[str, str]:
+    if set(plan) != _PLAN_KEYS:
         _reject(
             "agent plan must contain exactly schema, provider, plan_id, approval, and items"
         )
@@ -125,58 +125,77 @@ def validate_agent_plan(value: Path | dict[str, Any]) -> dict[str, Any]:
         _reject(f"schema must be {AGENT_PLAN_SCHEMA}")
     provider = _text(plan.get("provider"), "provider", pattern=_PROVIDER)
     plan_id = _text(plan.get("plan_id"), "plan_id", pattern=_IDENTIFIER)
-    approval = plan.get("approval")
-    if not isinstance(approval, dict) or set(approval) != {"state", "approved_by"}:
-        _reject("approval must contain exactly state and approved_by")
-    if approval.get("state") != "approved":
-        _reject("approval.state must be approved")
-    approved_by = _text(approval.get("approved_by"), "approval.approved_by")
-    items = plan.get("items")
-    if not isinstance(items, list) or not items or len(items) > MAX_PLAN_ITEMS:
-        _reject(f"items must be a non-empty array of at most {MAX_PLAN_ITEMS} entries")
+    return provider, plan_id
 
-    normalized_items: list[dict[str, Any]] = []
+
+def _validated_plan_approval(value: object) -> str:
+    if not isinstance(value, dict) or set(value) != {"state", "approved_by"}:
+        _reject("approval must contain exactly state and approved_by")
+    if value.get("state") != "approved":
+        _reject("approval.state must be approved")
+    return _text(value.get("approved_by"), "approval.approved_by")
+
+
+def _plan_item_list(value: object) -> list[object]:
+    if not isinstance(value, list) or not value or len(value) > MAX_PLAN_ITEMS:
+        _reject(f"items must be a non-empty array of at most {MAX_PLAN_ITEMS} entries")
+    return value
+
+
+def _normalize_plan_item(
+    item: object,
+    index: int,
+    item_ids: set[str],
+    source_paths: set[str],
+) -> dict[str, Any]:
+    if not isinstance(item, dict):
+        _reject(f"items[{index}] must be an object")
+    if set(item) - _PLAN_ITEM_KEYS or not _REQUIRED_PLAN_ITEM_KEYS.issubset(item):
+        _reject(f"items[{index}] contains unsupported or missing fields")
+    item_id = _text(item.get("id"), f"items[{index}].id", pattern=_IDENTIFIER)
+    if item_id in item_ids:
+        _reject("items contains duplicate item IDs")
+    item_ids.add(item_id)
+    paths = _paths(item.get("paths"), f"items[{index}].paths", allow_empty=False)
+    if source_paths.intersection(paths):
+        _reject("items contains duplicate planned paths")
+    source_paths.update(paths)
+    test_paths = _paths(
+        item.get("test_paths"), f"items[{index}].test_paths", allow_empty=True
+    )
+    review_tier = item.get("review_tier")
+    if review_tier not in _REVIEW_TIERS:
+        _reject(f"items[{index}].review_tier must be light, standard, or deep")
+    owner = item.get("review_owner")
+    if owner is not None:
+        owner = _text(owner, f"items[{index}].review_owner")
+    if review_tier == "deep" and not owner:
+        _reject(f"items[{index}].review_owner is required for deep review")
+    return {
+        "id": item_id,
+        "paths": paths,
+        "test_paths": test_paths,
+        "review_tier": review_tier,
+        "review_owner": owner,
+    }
+
+
+def _normalize_plan_items(items: list[object]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
     item_ids: set[str] = set()
     source_paths: set[str] = set()
     for index, item in enumerate(items):
-        if not isinstance(item, dict):
-            _reject(f"items[{index}] must be an object")
-        allowed_item = {"id", "paths", "test_paths", "review_tier", "review_owner"}
-        if set(item) - allowed_item or not {
-            "id",
-            "paths",
-            "test_paths",
-            "review_tier",
-        }.issubset(item):
-            _reject(f"items[{index}] contains unsupported or missing fields")
-        item_id = _text(item.get("id"), f"items[{index}].id", pattern=_IDENTIFIER)
-        if item_id in item_ids:
-            _reject("items contains duplicate item IDs")
-        item_ids.add(item_id)
-        paths = _paths(item.get("paths"), f"items[{index}].paths", allow_empty=False)
-        if source_paths.intersection(paths):
-            _reject("items contains duplicate planned paths")
-        source_paths.update(paths)
-        test_paths = _paths(
-            item.get("test_paths"), f"items[{index}].test_paths", allow_empty=True
-        )
-        review_tier = item.get("review_tier")
-        if review_tier not in _REVIEW_TIERS:
-            _reject(f"items[{index}].review_tier must be light, standard, or deep")
-        owner = item.get("review_owner")
-        if owner is not None:
-            owner = _text(owner, f"items[{index}].review_owner")
-        if review_tier == "deep" and not owner:
-            _reject(f"items[{index}].review_owner is required for deep review")
-        normalized_items.append(
-            {
-                "id": item_id,
-                "paths": paths,
-                "test_paths": test_paths,
-                "review_tier": review_tier,
-                "review_owner": owner,
-            }
-        )
+        normalized.append(_normalize_plan_item(item, index, item_ids, source_paths))
+    return normalized
+
+
+def validate_agent_plan(value: Path | dict[str, Any]) -> dict[str, Any]:
+    """Validate and normalize one strict, human-approved agent-plan envelope."""
+    plan = _load_plan(value)
+    provider, plan_id = _validate_plan_identity(plan)
+    approved_by = _validated_plan_approval(plan.get("approval"))
+    items = _plan_item_list(plan.get("items"))
+    normalized_items = _normalize_plan_items(items)
     return {
         "schema": AGENT_PLAN_SCHEMA,
         "provider": provider,
@@ -203,9 +222,9 @@ def _finding(kind: str, severity: str, message: str, **facts: Any) -> dict[str, 
     return {"kind": kind, "severity": severity, "message": message, "facts": facts}
 
 
-def _plan_findings(
+def _changed_path_alignment(
     plan: dict[str, Any], changed_paths: list[str]
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+) -> tuple[dict[str, Any], set[str], list[dict[str, Any]]]:
     matched: list[dict[str, str]] = []
     unplanned: list[str] = []
     changed_item_ids: set[str] = set()
@@ -230,6 +249,18 @@ def _plan_findings(
                 paths=unplanned,
             )
         )
+    alignment = {
+        "matched": matched,
+        "unplanned_changed_paths": unplanned,
+        "declared_unmodified_item_ids": declared_unmodified,
+    }
+    return alignment, changed_item_ids, findings
+
+
+def _declared_test_findings(
+    plan: dict[str, Any], changed_paths: list[str]
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
     for item in plan["items"]:
         source_changed = any(path in item["paths"] for path in changed_paths)
         test_changed = any(path in item["test_paths"] for path in changed_paths)
@@ -243,6 +274,13 @@ def _plan_findings(
                     test_paths=item["test_paths"],
                 )
             )
+    return findings
+
+
+def _deep_review_findings(
+    plan: dict[str, Any], changed_item_ids: set[str]
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
     for item in plan["items"]:
         if item["id"] in changed_item_ids and item["review_tier"] == "deep":
             findings.append(
@@ -254,11 +292,16 @@ def _plan_findings(
                     review_owner=item["review_owner"],
                 )
             )
-    return {
-        "matched": matched,
-        "unplanned_changed_paths": unplanned,
-        "declared_unmodified_item_ids": declared_unmodified,
-    }, findings
+    return findings
+
+
+def _plan_findings(
+    plan: dict[str, Any], changed_paths: list[str]
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    alignment, changed_item_ids, findings = _changed_path_alignment(plan, changed_paths)
+    findings.extend(_declared_test_findings(plan, changed_paths))
+    findings.extend(_deep_review_findings(plan, changed_item_ids))
+    return alignment, findings
 
 
 def _next_action(

@@ -116,16 +116,7 @@ def _identity_key(identity: str) -> str:
 # ---------------------------------------------------------------------------
 # Review events
 # ---------------------------------------------------------------------------
-def normalize_review(event: dict[str, Any]) -> dict[str, Any]:
-    """Validate one review event, raising HabituationError when unusable.
-
-    Refuses zero changed lines and non-positive durations rather than coercing
-    them: a review of nothing has no scrutiny ratio, and inventing one would
-    poison every window it lands in.
-    """
-    if not isinstance(event, dict):
-        raise HabituationError("REVIEW_INVALID", "review event must be an object")
-
+def _review_identity(event: dict[str, Any]) -> tuple[str, str, str]:
     review_id = event.get("review_id")
     if (
         not isinstance(review_id, str)
@@ -135,20 +126,21 @@ def normalize_review(event: dict[str, Any]) -> dict[str, Any]:
         raise HabituationError(
             "REVIEW_ID_INVALID", "review_id must match [a-z0-9][a-z0-9._/-]{0,119}"
         )
-
     reviewer = event.get("reviewer")
     if not isinstance(reviewer, str) or not reviewer.strip():
         raise HabituationError(
             "REVIEWER_REQUIRED", "review event needs a reviewer identity"
         )
-
     author_kind = event.get("author_kind")
     if author_kind not in AUTHOR_KINDS:
         raise HabituationError(
             "AUTHOR_KIND_INVALID",
             f"author_kind must be one of {', '.join(AUTHOR_KINDS)}",
         )
+    return review_id, reviewer, author_kind
 
+
+def _review_measurements(event: dict[str, Any]) -> tuple[int, int | float, int]:
     changed_lines = event.get("changed_lines")
     if (
         not isinstance(changed_lines, int)
@@ -158,7 +150,6 @@ def normalize_review(event: dict[str, Any]) -> dict[str, Any]:
         raise HabituationError(
             "CHANGED_LINES_INVALID", "changed_lines must be a positive integer"
         )
-
     seconds = event.get("review_seconds")
     if (
         isinstance(seconds, bool)
@@ -168,16 +159,37 @@ def normalize_review(event: dict[str, Any]) -> dict[str, Any]:
         raise HabituationError(
             "REVIEW_SECONDS_INVALID", "review_seconds must be a positive number"
         )
-
     comments = event.get("inline_comments", 0)
     if not isinstance(comments, int) or isinstance(comments, bool) or comments < 0:
         raise HabituationError(
             "COMMENTS_INVALID", "inline_comments must be a non-negative integer"
         )
+    return changed_lines, seconds, comments
 
+
+def _review_approval(event: dict[str, Any]) -> bool:
     approved = event.get("approved")
     if not isinstance(approved, bool):
         raise HabituationError("APPROVED_INVALID", "approved must be a boolean")
+    return approved
+
+
+def _review_ratios(
+    seconds: int | float, changed_lines: int, comments: int
+) -> tuple[Any, Any]:
+    scrutiny = _plain(_exact(seconds) / _exact(changed_lines) * _exact(100))
+    density = _plain(_exact(comments) / _exact(changed_lines) * _exact(100))
+    return scrutiny, density
+
+
+def normalize_review(event: dict[str, Any]) -> dict[str, Any]:
+    """Validate a review event and normalize its measurable evidence."""
+    if not isinstance(event, dict):
+        raise HabituationError("REVIEW_INVALID", "review event must be an object")
+    review_id, reviewer, author_kind = _review_identity(event)
+    changed_lines, seconds, comments = _review_measurements(event)
+    approved = _review_approval(event)
+    scrutiny_ratio, comment_density = _review_ratios(seconds, changed_lines, comments)
 
     return {
         "review_id": review_id,
@@ -187,10 +199,8 @@ def normalize_review(event: dict[str, Any]) -> dict[str, Any]:
         "review_seconds": _plain(_exact(seconds)),
         "inline_comments": comments,
         "approved": approved,
-        "scrutiny_ratio": _plain(_exact(seconds) / _exact(changed_lines) * _exact(100)),
-        "comment_density": _plain(
-            _exact(comments) / _exact(changed_lines) * _exact(100)
-        ),
+        "scrutiny_ratio": scrutiny_ratio,
+        "comment_density": comment_density,
         "observed_at": event.get("observed_at")
         or datetime.now(timezone.utc).isoformat(),
     }

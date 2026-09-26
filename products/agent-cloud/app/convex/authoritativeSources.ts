@@ -88,21 +88,35 @@ export const listWorkerDefinitions = query({
 
 type ObservationInput = { sourceId: Id<"authoritativeSources">; observationKey: string; outcome: "success" | "failure"; observedAt: number; latencyMs: number; sourcePublishedAt?: number; contentDigest?: string; failureCode?: "timeout" | "authentication" | "authorization" | "rate-limited" | "upstream-unavailable" | "invalid-response" | "license-unavailable" | "unknown" };
 
+function validateObservationTimes(args: ObservationInput) {
+  if (!Number.isFinite(args.observedAt) || args.observedAt < 0) throw new Error("E_INVALID_OBSERVED_AT");
+  if (args.sourcePublishedAt !== undefined && (!Number.isFinite(args.sourcePublishedAt) || args.sourcePublishedAt < 0 || args.sourcePublishedAt > args.observedAt)) throw new Error("E_INVALID_SOURCE_PUBLISHED_AT");
+}
+
+function validateFailureCode(args: ObservationInput) {
+  if (args.outcome === "failure" && !args.failureCode) throw new Error("E_SOURCE_FAILURE_CODE_REQUIRED");
+  if (args.outcome === "success" && args.failureCode) throw new Error("E_SOURCE_FAILURE_CODE_FORBIDDEN");
+}
+
+function observationStatePatch(args: ObservationInput, consecutiveFailures: number, contentDigest: string | undefined, now: number) {
+  return args.outcome === "success"
+    ? { status: "ready" as const, lastObservedAt: args.observedAt, lastSuccessfulAt: args.observedAt, lastContentDigest: contentDigest, consecutiveFailures: 0, updatedAt: now }
+    : { lastObservedAt: args.observedAt, consecutiveFailures: consecutiveFailures + 1, updatedAt: now };
+}
+
 async function persistObservation(ctx: MutationCtx, args: ObservationInput) {
   const source = await ctx.db.get(args.sourceId);
   if (!source) throw new Error("E_AUTHORITATIVE_SOURCE_NOT_FOUND");
   const observationKey = assertText(args.observationKey, "observation_key", 160);
   assertIntegerRange(args.latencyMs, "source_latency_ms", 0, 300_000);
-  if (!Number.isFinite(args.observedAt) || args.observedAt < 0) throw new Error("E_INVALID_OBSERVED_AT");
-  if (args.sourcePublishedAt !== undefined && (!Number.isFinite(args.sourcePublishedAt) || args.sourcePublishedAt < 0 || args.sourcePublishedAt > args.observedAt)) throw new Error("E_INVALID_SOURCE_PUBLISHED_AT");
+  validateObservationTimes(args);
   const existing = await ctx.db.query("sourceObservations").withIndex("by_source_key", (q) => q.eq("sourceId", source._id).eq("observationKey", observationKey)).unique();
   if (existing) return { marker: "SOURCE_OBSERVATION_REPLAY" as const, observationId: existing._id, status: source.status };
-  if (args.outcome === "failure" && !args.failureCode) throw new Error("E_SOURCE_FAILURE_CODE_REQUIRED");
-  if (args.outcome === "success" && args.failureCode) throw new Error("E_SOURCE_FAILURE_CODE_FORBIDDEN");
+  validateFailureCode(args);
   const contentDigest = args.contentDigest ? assertText(args.contentDigest, "source_content_digest", 160) : undefined;
   const now = Date.now();
   const observationId = await ctx.db.insert("sourceObservations", { workspaceId: source.workspaceId, agentSpecId: source.agentSpecId, sourceId: source._id, observationKey, outcome: args.outcome, observedAt: args.observedAt, latencyMs: args.latencyMs, sourcePublishedAt: args.sourcePublishedAt, contentDigest, failureCode: args.failureCode, createdAt: now });
-  await ctx.db.patch(source._id, args.outcome === "success" ? { status: "ready", lastObservedAt: args.observedAt, lastSuccessfulAt: args.observedAt, lastContentDigest: contentDigest, consecutiveFailures: 0, updatedAt: now } : { lastObservedAt: args.observedAt, consecutiveFailures: source.consecutiveFailures + 1, updatedAt: now });
+  await ctx.db.patch(source._id, observationStatePatch(args, source.consecutiveFailures, contentDigest, now));
   return { marker: "SOURCE_OBSERVATION_RECORDED" as const, observationId, status: args.outcome === "success" ? "ready" as const : source.status };
 }
 
