@@ -228,37 +228,45 @@ def _descriptor_digest(root: Path, value: object, label: str) -> str:
     return digest
 
 
+def _validate_env_name(key: object) -> str:
+    if (
+        not isinstance(key, str)
+        or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", key)
+        or SECRET_NAME.search(key)
+    ):
+        raise SeniorAssuranceError(
+            "E_REPLAY_SECRET",
+            f"secret-shaped environment name is not allowed: {key}",
+        )
+    return key
+
+
+def _validate_env_value(key: str, value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) > 256
+        or any(ord(char) < 32 for char in value)
+    ):
+        raise SeniorAssuranceError(
+            "E_REPLAY_ENV", f"environment value for {key} is invalid"
+        )
+    if SECRET_NAME.search(value):
+        raise SeniorAssuranceError(
+            "E_REPLAY_SECRET",
+            f"secret-shaped environment value is not allowed: {key}",
+        )
+    return value
+
+
 def _validate_env(value: object) -> dict[str, str]:
     if value is None:
         return {}
     if not isinstance(value, dict) or len(value) > MAX_ENV:
         raise SeniorAssuranceError("E_REPLAY_ENV", "env must be a bounded mapping")
-    result: dict[str, str] = {}
-    for key, item in value.items():
-        if (
-            not isinstance(key, str)
-            or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", key)
-            or SECRET_NAME.search(key)
-        ):
-            raise SeniorAssuranceError(
-                "E_REPLAY_SECRET",
-                f"secret-shaped environment name is not allowed: {key}",
-            )
-        if (
-            not isinstance(item, str)
-            or len(item) > 256
-            or any(ord(char) < 32 for char in item)
-        ):
-            raise SeniorAssuranceError(
-                "E_REPLAY_ENV", f"environment value for {key} is invalid"
-            )
-        if SECRET_NAME.search(item):
-            raise SeniorAssuranceError(
-                "E_REPLAY_SECRET",
-                f"secret-shaped environment value is not allowed: {key}",
-            )
-        result[key] = item
-    return result
+    return {
+        _validate_env_name(key): _validate_env_value(str(key), item)
+        for key, item in value.items()
+    }
 
 
 def _validate_argv(value: object) -> list[str]:
@@ -394,54 +402,45 @@ def _process_environment(normalized: dict[str, Any]) -> dict[str, str]:
     return result
 
 
-def _capture_process(source: Path, normalized: dict[str, Any]) -> dict[str, Any]:
-    """Run a bounded argv in a copied workspace and normalize its observations."""
-    started = time.monotonic()
-    outcome: dict[str, Any] = {
-        "timed_out": False,
-        "observed_exit": None,
-        "stdout": b"",
-        "stderr": b"",
-        "cleanup": False,
-        "failure_reason": None,
-    }
-    try:
-        with tempfile.TemporaryDirectory(prefix="factory-replay-") as temporary:
-            sandbox_root = Path(temporary) / "workspace"
-            _copy_source(source, sandbox_root)
-            result = run_cli_detailed(
-                normalized["argv"][0],
-                normalized["argv"][1:],
-                sandbox_root,
-                env=_process_environment(normalized),
-                timeout=normalized["timeout_seconds"],
-                max_stream_bytes=normalized["max_output_bytes"],
-            )
-            outcome.update(
-                {
-                    "observed_exit": result.get("exit_code"),
-                    "stdout": result.get("stdout", b"")[
-                        : normalized["max_output_bytes"]
-                    ],
-                    "stderr": result.get("stderr", b"")[
-                        : normalized["max_output_bytes"]
-                    ],
-                    "cleanup": bool(result.get("cleanup_confirmed"))
-                    and bool(result.get("streams_closed")),
-                }
-            )
-            reason = str(result.get("reason") or "")
-            if reason == "stage timed out":
-                outcome.update({"timed_out": True, "failure_reason": "TIMEOUT"})
-            elif reason:
-                outcome["failure_reason"] = reason.upper().replace(" ", "_")
-            elif not result.get("ok") and outcome["observed_exit"] is None:
-                outcome["failure_reason"] = "EXECUTION_ERROR:LAUNCH_FAILED"
-        outcome["cleanup"] = bool(outcome["cleanup"])
-    except OSError as exc:
-        outcome.update(
-            {"failure_reason": f"EXECUTION_ERROR:{type(exc).__name__}", "cleanup": True}
+def _execute_in_workspace(source: Path, normalized: dict[str, Any]) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="factory-replay-") as temporary:
+        sandbox_root = Path(temporary) / "workspace"
+        _copy_source(source, sandbox_root)
+        return run_cli_detailed(
+            normalized["argv"][0],
+            normalized["argv"][1:],
+            sandbox_root,
+            env=_process_environment(normalized),
+            timeout=normalized["timeout_seconds"],
+            max_stream_bytes=normalized["max_output_bytes"],
         )
+
+
+def _record_process_result(
+    result: dict[str, Any], normalized: dict[str, Any], outcome: dict[str, Any]
+) -> None:
+    outcome.update(
+        {
+            "observed_exit": result.get("exit_code"),
+            "stdout": result.get("stdout", b"")[: normalized["max_output_bytes"]],
+            "stderr": result.get("stderr", b"")[: normalized["max_output_bytes"]],
+            "cleanup": bool(result.get("cleanup_confirmed"))
+            and bool(result.get("streams_closed")),
+        }
+    )
+    reason = str(result.get("reason") or "")
+    if reason == "stage timed out":
+        outcome.update({"timed_out": True, "failure_reason": "TIMEOUT"})
+    elif reason:
+        outcome["failure_reason"] = reason.upper().replace(" ", "_")
+    elif not result.get("ok") and outcome["observed_exit"] is None:
+        outcome["failure_reason"] = "EXECUTION_ERROR:LAUNCH_FAILED"
+
+
+def _finalize_process_outcome(
+    outcome: dict[str, Any], normalized: dict[str, Any], started: float
+) -> dict[str, Any]:
+    outcome["cleanup"] = bool(outcome["cleanup"])
     outcome["duration_ms"] = max(0, int((time.monotonic() - started) * 1000))
     if (
         outcome["failure_reason"] is None
@@ -455,6 +454,27 @@ def _capture_process(source: Path, normalized: dict[str, Any]) -> dict[str, Any]
         "PASS" if outcome["failure_reason"] is None and outcome["cleanup"] else "FAIL"
     )
     return outcome
+
+
+def _capture_process(source: Path, normalized: dict[str, Any]) -> dict[str, Any]:
+    """Run a bounded argv in a copied workspace and normalize its observations."""
+    started = time.monotonic()
+    outcome: dict[str, Any] = {
+        "timed_out": False,
+        "observed_exit": None,
+        "stdout": b"",
+        "stderr": b"",
+        "cleanup": False,
+        "failure_reason": None,
+    }
+    try:
+        result = _execute_in_workspace(source, normalized)
+        _record_process_result(result, normalized, outcome)
+    except OSError as exc:
+        outcome.update(
+            {"failure_reason": f"EXECUTION_ERROR:{type(exc).__name__}", "cleanup": True}
+        )
+    return _finalize_process_outcome(outcome, normalized, started)
 
 
 def _bounded_output(value: object) -> bytes:
@@ -565,7 +585,7 @@ def run_replay(
     return _write_json(out, receipt)
 
 
-def _validate_repair_manifest(root: Path, value: dict[str, Any]) -> dict[str, Any]:
+def _repair_header(value: dict[str, Any]) -> tuple[str, str, list[Any]]:
     try:
         reject_secret_material(value)
         exact_keys(
@@ -598,6 +618,15 @@ def _validate_repair_manifest(root: Path, value: dict[str, Any]) -> dict[str, An
             )
     except RuntimeAuditError as exc:
         raise SeniorAssuranceError(exc.code, exc.message) from exc
+    return comparison_id, contract_sha256, negative_controls
+
+
+def _repair_manifests(
+    root: Path,
+    value: dict[str, Any],
+    contract_sha256: str,
+    negative_controls: list[Any],
+) -> dict[str, Any]:
     manifests = {
         "buggy": validate_replay_manifest(root, value["buggy"]),
         "fixed": validate_replay_manifest(root, value["fixed"]),
@@ -630,6 +659,10 @@ def _validate_repair_manifest(root: Path, value: dict[str, Any]) -> dict[str, An
             "E_REPAIR_EXPECTATIONS",
             "buggy and negative controls must fail while fixed must pass",
         )
+    return manifests
+
+
+def _repair_expectation_review(value: dict[str, Any]) -> tuple[bool, Any]:
     changed = value.get("expectations_changed", False)
     if not isinstance(changed, bool):
         raise SeniorAssuranceError(
@@ -648,6 +681,13 @@ def _validate_repair_manifest(root: Path, value: dict[str, Any]) -> dict[str, An
                 "E_EXPECTATION_REVIEW_REQUIRED",
                 "changed expectations require an approving reviewer and reason",
             )
+    return changed, review
+
+
+def _validate_repair_manifest(root: Path, value: dict[str, Any]) -> dict[str, Any]:
+    comparison_id, contract_sha256, negative_controls = _repair_header(value)
+    manifests = _repair_manifests(root, value, contract_sha256, negative_controls)
+    changed, review = _repair_expectation_review(value)
     return {
         "schema": REPAIR_SCHEMA,
         "comparison_id": comparison_id,
@@ -757,6 +797,117 @@ def _fingerprint(value: object) -> str | None:
     return _sha(value)
 
 
+def _reuse_receipt(
+    root: Path, gate_id: str, gate: dict[str, Any], explanation: dict[str, Any]
+) -> dict[str, Any] | None:
+    receipt_path_raw = gate.get("receipt_path")
+    if not isinstance(receipt_path_raw, str) or not receipt_path_raw.strip():
+        explanation["unknown_inputs"].append("receipt_path")
+        explanation["reason"] = "UNKNOWN_INPUT_REQUIRES_EXECUTION"
+        return None
+    receipt_path, relative = _inside(root, receipt_path_raw, f"{gate_id}.receipt_path")
+    if not receipt_path.is_file():
+        explanation.update({"reason": "RECEIPT_MISSING", "receipt_path": relative})
+        return None
+    try:
+        receipt, observed_file_sha = _load_json(receipt_path)
+    except SeniorAssuranceError:
+        explanation.update({"reason": "RECEIPT_UNREADABLE", "receipt_path": relative})
+        return None
+    explanation["receipt_path"] = relative
+    explanation["receipt_sha256"] = observed_file_sha
+    if gate.get("receipt_sha256") != observed_file_sha:
+        explanation.update({"reason": "RECEIPT_DIGEST_MISMATCH"})
+        return None
+    if receipt.get("status") != "green" or receipt.get("read_only") is not True:
+        explanation.update({"reason": "RECEIPT_NOT_GREEN_READ_ONLY"})
+        return None
+    return receipt
+
+
+def _reuse_fact_matches(field: str, expected: Any, observed: Any) -> bool:
+    if field.endswith("_sha256"):
+        return expected == observed
+    if field in {"toolchain", "environment"}:
+        return _fingerprint(expected) == _fingerprint(observed)
+    return True
+
+
+def _reuse_facts_match(
+    gate: dict[str, Any],
+    request: dict[str, Any],
+    receipt: dict[str, Any],
+    explanation: dict[str, Any],
+) -> bool:
+    required_facts = {
+        "policy_sha256": request.get("policy_sha256"),
+        "dependencies_sha256": request.get("dependencies_sha256"),
+        "toolchain": gate.get("toolchain"),
+        "environment": gate.get("environment"),
+    }
+    for field, expected in required_facts.items():
+        observed = receipt.get(field)
+        explanation["compared"][field] = {"expected": expected, "observed": observed}
+        if expected is None or observed is None:
+            explanation["unknown_inputs"].append(field)
+        elif not _reuse_fact_matches(field, expected, observed):
+            explanation["reason"] = "FINGERPRINT_MISMATCH"
+            return False
+    if explanation["unknown_inputs"]:
+        explanation["reason"] = "UNKNOWN_INPUT_REQUIRES_EXECUTION"
+        return False
+    return True
+
+
+def _reuse_input_paths(
+    receipt: dict[str, Any], explanation: dict[str, Any]
+) -> set[str] | None:
+    receipt_inputs = receipt.get("inputs", [])
+    if not isinstance(receipt_inputs, list):
+        explanation.update({"reason": "UNSAFE_RECEIPT_INPUT_REQUIRES_EXECUTION"})
+        return None
+    input_paths = {
+        item.get("path")
+        for item in receipt_inputs
+        if isinstance(item, dict) and isinstance(item.get("path"), str)
+    }
+    if any(
+        not isinstance(item, dict)
+        or not isinstance(item.get("path"), str)
+        or _normalize_workspace_path(item["path"]) is None
+        for item in receipt_inputs
+    ):
+        explanation.update({"reason": "UNSAFE_RECEIPT_INPUT_REQUIRES_EXECUTION"})
+        return None
+    return input_paths
+
+
+def _reuse_changed_paths(
+    request: dict[str, Any], explanation: dict[str, Any]
+) -> list[Any] | None:
+    changed = request.get("changed_paths", [])
+    if not isinstance(changed, list):
+        explanation.update({"reason": "INVALID_CHANGED_PATH_REQUIRES_EXECUTION"})
+        return None
+    return changed
+
+
+def _reuse_paths_unchanged(
+    changed: list[Any], input_paths: set[str], explanation: dict[str, Any]
+) -> bool:
+    for path in changed:
+        if not isinstance(path, str):
+            explanation.update({"reason": "INVALID_CHANGED_PATH_REQUIRES_EXECUTION"})
+            return False
+        if _normalize_workspace_path(path) is None:
+            explanation.update({"reason": "UNSAFE_CHANGED_PATH_REQUIRES_EXECUTION"})
+            return False
+        if any(_paths_intersect(path, input_path) for input_path in input_paths):
+            explanation.update({"reason": "CHANGED_INPUT_REQUIRES_EXECUTION"})
+            return False
+    return True
+
+
 def _reuse_gate(
     root: Path, gate: dict[str, Any], request: dict[str, Any]
 ) -> dict[str, Any]:
@@ -777,81 +928,19 @@ def _reuse_gate(
     if side_effects or not read_only:
         explanation.update({"decision": "BLOCK", "reason": "SIDE_EFFECT_REUSE_REFUSED"})
         return explanation
-    receipt_path_raw = gate.get("receipt_path")
-    if not isinstance(receipt_path_raw, str) or not receipt_path_raw.strip():
-        explanation["unknown_inputs"].append("receipt_path")
-        explanation["reason"] = "UNKNOWN_INPUT_REQUIRES_EXECUTION"
+    receipt = _reuse_receipt(root, gate_id, gate, explanation)
+    if receipt is None:
         return explanation
-    receipt_path, relative = _inside(root, receipt_path_raw, f"{gate_id}.receipt_path")
-    if not receipt_path.is_file():
-        explanation.update({"reason": "RECEIPT_MISSING", "receipt_path": relative})
+    if not _reuse_facts_match(gate, request, receipt, explanation):
         return explanation
-    try:
-        receipt, observed_file_sha = _load_json(receipt_path)
-    except SeniorAssuranceError:
-        explanation.update({"reason": "RECEIPT_UNREADABLE", "receipt_path": relative})
+    changed = _reuse_changed_paths(request, explanation)
+    if changed is None:
         return explanation
-    explanation["receipt_path"] = relative
-    explanation["receipt_sha256"] = observed_file_sha
-    if gate.get("receipt_sha256") != observed_file_sha:
-        explanation.update({"reason": "RECEIPT_DIGEST_MISMATCH"})
-        return explanation
-    if receipt.get("status") != "green" or receipt.get("read_only") is not True:
-        explanation.update({"reason": "RECEIPT_NOT_GREEN_READ_ONLY"})
-        return explanation
-    required_facts = {
-        "policy_sha256": request.get("policy_sha256"),
-        "dependencies_sha256": request.get("dependencies_sha256"),
-        "toolchain": gate.get("toolchain"),
-        "environment": gate.get("environment"),
-    }
-    for field, expected in required_facts.items():
-        observed = receipt.get(field)
-        explanation["compared"][field] = {"expected": expected, "observed": observed}
-        if expected is None or observed is None:
-            explanation["unknown_inputs"].append(field)
-        elif field.endswith("_sha256") and expected != observed:
-            explanation["reason"] = "FINGERPRINT_MISMATCH"
-            return explanation
-        elif field in {"toolchain", "environment"} and _fingerprint(
-            expected
-        ) != _fingerprint(observed):
-            explanation["reason"] = "FINGERPRINT_MISMATCH"
-            return explanation
-    if explanation["unknown_inputs"]:
-        explanation["reason"] = "UNKNOWN_INPUT_REQUIRES_EXECUTION"
-        return explanation
-    changed = request.get("changed_paths", [])
-    receipt_inputs = receipt.get("inputs", [])
-    if not isinstance(changed, list):
-        explanation.update({"reason": "INVALID_CHANGED_PATH_REQUIRES_EXECUTION"})
-        return explanation
-    if not isinstance(receipt_inputs, list):
-        explanation.update({"reason": "UNSAFE_RECEIPT_INPUT_REQUIRES_EXECUTION"})
-        return explanation
-    input_paths = {
-        item.get("path")
-        for item in receipt_inputs
-        if isinstance(item, dict) and isinstance(item.get("path"), str)
-    }
-    if any(
-        not isinstance(item, dict)
-        or not isinstance(item.get("path"), str)
-        or _normalize_workspace_path(item["path"]) is None
-        for item in receipt_inputs
+    input_paths = _reuse_input_paths(receipt, explanation)
+    if input_paths is None or not _reuse_paths_unchanged(
+        changed, input_paths, explanation
     ):
-        explanation.update({"reason": "UNSAFE_RECEIPT_INPUT_REQUIRES_EXECUTION"})
         return explanation
-    for path in changed:
-        if not isinstance(path, str):
-            explanation.update({"reason": "INVALID_CHANGED_PATH_REQUIRES_EXECUTION"})
-            return explanation
-        if _normalize_workspace_path(path) is None:
-            explanation.update({"reason": "UNSAFE_CHANGED_PATH_REQUIRES_EXECUTION"})
-            return explanation
-        if any(_paths_intersect(path, input_path) for input_path in input_paths):
-            explanation.update({"reason": "CHANGED_INPUT_REQUIRES_EXECUTION"})
-            return explanation
     explanation.update({"decision": "REUSE", "reason": "EXACT_EVIDENCE_REUSED"})
     return explanation
 
