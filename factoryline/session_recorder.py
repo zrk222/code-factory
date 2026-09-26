@@ -147,8 +147,7 @@ def _argv(value: object, field: str) -> list[str]:
     return list(value)
 
 
-def _validators(root: Path, path: Path) -> tuple[str, list[dict[str, Any]], str, str]:
-    value, resolved, relative = _load_json(root, path, "validator manifest")
+def _validator_entries(value: dict[str, Any]) -> tuple[str, list[Any]]:
     if (
         set(value) != {"schema", "verifier_subject", "validators"}
         or value.get("schema") != VALIDATOR_MANIFEST_SCHEMA
@@ -170,42 +169,50 @@ def _validators(root: Path, path: Path) -> tuple[str, list[dict[str, Any]], str,
             "SESSION_VALIDATORS_INVALID",
             "verifier_subject and 1 through 32 validators are required",
         )
+    return subject.strip(), entries
+
+
+def _validator_entry(item: Any, seen: set[str]) -> dict[str, Any]:
+    if not isinstance(item, dict) or set(item) != {"id", "argv", "timeout_seconds"}:
+        raise SessionRecorderError(
+            "SESSION_VALIDATORS_INVALID",
+            "each validator requires id, argv, and timeout_seconds",
+        )
+    validator_id, timeout = item.get("id"), item.get("timeout_seconds")
+    if (
+        not isinstance(validator_id, str)
+        or not _ID.fullmatch(validator_id)
+        or validator_id in seen
+    ):
+        raise SessionRecorderError(
+            "SESSION_VALIDATORS_INVALID",
+            "validator ids must be unique lowercase identifiers",
+        )
+    if (
+        isinstance(timeout, bool)
+        or not isinstance(timeout, int)
+        or not 1 <= timeout <= 900
+    ):
+        raise SessionRecorderError(
+            "SESSION_VALIDATORS_INVALID",
+            "validator timeout_seconds must be 1 through 900",
+        )
+    seen.add(validator_id)
+    return {
+        "id": validator_id,
+        "argv": _argv(item.get("argv"), "validator.argv"),
+        "timeout_seconds": timeout,
+    }
+
+
+def _validators(root: Path, path: Path) -> tuple[str, list[dict[str, Any]], str, str]:
+    value, resolved, relative = _load_json(root, path, "validator manifest")
+    subject, entries = _validator_entries(value)
     normalized: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in entries:
-        if not isinstance(item, dict) or set(item) != {"id", "argv", "timeout_seconds"}:
-            raise SessionRecorderError(
-                "SESSION_VALIDATORS_INVALID",
-                "each validator requires id, argv, and timeout_seconds",
-            )
-        validator_id, timeout = item.get("id"), item.get("timeout_seconds")
-        if (
-            not isinstance(validator_id, str)
-            or not _ID.fullmatch(validator_id)
-            or validator_id in seen
-        ):
-            raise SessionRecorderError(
-                "SESSION_VALIDATORS_INVALID",
-                "validator ids must be unique lowercase identifiers",
-            )
-        if (
-            isinstance(timeout, bool)
-            or not isinstance(timeout, int)
-            or not 1 <= timeout <= 900
-        ):
-            raise SessionRecorderError(
-                "SESSION_VALIDATORS_INVALID",
-                "validator timeout_seconds must be 1 through 900",
-            )
-        seen.add(validator_id)
-        normalized.append(
-            {
-                "id": validator_id,
-                "argv": _argv(item.get("argv"), "validator.argv"),
-                "timeout_seconds": timeout,
-            }
-        )
-    return subject.strip(), normalized, relative, _file_sha(resolved)
+        normalized.append(_validator_entry(item, seen))
+    return subject, normalized, relative, _file_sha(resolved)
 
 
 def _run(argv: list[str], root: Path, timeout: int) -> dict[str, Any]:
@@ -263,9 +270,9 @@ def _previous_session(root: Path) -> str | None:
     return latest[2] if latest else None
 
 
-def _admission_context(
-    workspace: Path, admission_path: Path, validator_manifest_path: Path
-) -> dict[str, Any]:
+def _load_ready_admission(
+    workspace: Path, admission_path: Path
+) -> tuple[dict[str, Any], str, dict[str, Any]]:
     admission, admission_file, admission_relative = _load_json(
         workspace, admission_path, "admission"
     )
@@ -280,22 +287,26 @@ def _admission_context(
         raise SessionRecorderError(
             "SESSION_AGENT_REQUIRED", "admission request must declare an agent identity"
         )
-    agent = normalize_agent_identity(request["agent"], "admission.request.agent")
-    verifier, validators, manifest, manifest_sha256 = _validators(
-        workspace, validator_manifest_path
-    )
-    if verifier == agent["subject"]:
-        raise SessionRecorderError(
-            "SESSION_VERIFIER_NOT_INDEPENDENT",
-            "verifier_subject must differ from the admitted agent",
-        )
-    scopes, budget = request.get("paths"), request.get("budget")
+    return request, admission_relative, ready
+
+
+def _admission_agent(request: dict[str, Any]) -> dict[str, Any]:
+    return normalize_agent_identity(request["agent"], "admission.request.agent")
+
+
+def _admission_scopes(request: dict[str, Any]) -> list[str]:
+    scopes = request.get("paths")
     if not isinstance(scopes, list) or not all(
         isinstance(item, str) for item in scopes
     ):
         raise SessionRecorderError(
             "SESSION_ADMISSION_INVALID", "admission request paths are invalid"
         )
+    return scopes
+
+
+def _admission_timeout(request: dict[str, Any]) -> int:
+    budget = request.get("budget")
     timeout = budget.get("max_wall_seconds") if isinstance(budget, dict) else None
     if (
         isinstance(timeout, bool)
@@ -306,6 +317,26 @@ def _admission_context(
             "SESSION_BUDGET_INVALID",
             "admission budget must provide max_wall_seconds from 1 through 3600",
         )
+    return int(timeout)
+
+
+def _admission_context(
+    workspace: Path, admission_path: Path, validator_manifest_path: Path
+) -> dict[str, Any]:
+    request, admission_relative, ready = _load_ready_admission(
+        workspace, admission_path
+    )
+    agent = _admission_agent(request)
+    verifier, validators, manifest, manifest_sha256 = _validators(
+        workspace, validator_manifest_path
+    )
+    if verifier == agent["subject"]:
+        raise SessionRecorderError(
+            "SESSION_VERIFIER_NOT_INDEPENDENT",
+            "verifier_subject must differ from the admitted agent",
+        )
+    scopes = _admission_scopes(request)
+    timeout = _admission_timeout(request)
     return {
         "admission_relative": admission_relative,
         "ready": ready,
