@@ -94,7 +94,7 @@ def _list_of_names(value: object, field: str) -> list[str]:
     return list(value)
 
 
-def _ruleset(value: object) -> dict[str, Any]:
+def _ruleset_shape(value: object) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != {
         "id",
         "name",
@@ -108,36 +108,60 @@ def _ruleset(value: object) -> dict[str, Any]:
         _reject(
             "GITHUB_ASSURANCE_INPUT_INVALID", "each ruleset must use the exact v1 shape"
         )
+    return value
+
+
+def _ruleset_id(value: dict[str, Any]) -> str:
     if not isinstance(value["id"], str) or not _RULESET_ID.fullmatch(value["id"]):
         _reject("GITHUB_ASSURANCE_INPUT_INVALID", "ruleset id is invalid")
+    return value["id"]
+
+
+def _ruleset_name(value: dict[str, Any]) -> str:
     if (
         not isinstance(value["name"], str)
         or not value["name"]
         or len(value["name"]) > 160
     ):
         _reject("GITHUB_ASSURANCE_INPUT_INVALID", "ruleset name is invalid")
+    return value["name"]
+
+
+def _ruleset_enforcement(value: dict[str, Any]) -> str:
     if value["enforcement"] not in {"active", "evaluate", "disabled"}:
         _reject("GITHUB_ASSURANCE_INPUT_INVALID", "ruleset enforcement is invalid")
+    return value["enforcement"]
+
+
+def _ruleset_boolean_controls(value: dict[str, Any]) -> tuple[bool, bool]:
     if not isinstance(value["require_signed_commits"], bool) or not isinstance(
         value["allow_force_pushes"], bool
     ):
         _reject("GITHUB_ASSURANCE_INPUT_INVALID", "ruleset booleans are invalid")
+    return value["require_signed_commits"], value["allow_force_pushes"]
+
+
+def _ruleset(value: object) -> dict[str, Any]:
+    values = _ruleset_shape(value)
+    identifier = _ruleset_id(values)
+    name = _ruleset_name(values)
+    enforcement = _ruleset_enforcement(values)
+    signed_commits, force_pushes = _ruleset_boolean_controls(values)
     return {
-        "id": value["id"],
-        "name": value["name"],
-        "enforcement": value["enforcement"],
-        "required_checks": _list_of_names(value["required_checks"], "required_checks"),
+        "id": identifier,
+        "name": name,
+        "enforcement": enforcement,
+        "required_checks": _list_of_names(values["required_checks"], "required_checks"),
         "required_workflows": _list_of_names(
-            value["required_workflows"], "required_workflows"
+            values["required_workflows"], "required_workflows"
         ),
-        "require_signed_commits": value["require_signed_commits"],
-        "allow_force_pushes": value["allow_force_pushes"],
-        "bypass_actors": _list_of_names(value["bypass_actors"], "bypass_actors"),
+        "require_signed_commits": signed_commits,
+        "allow_force_pushes": force_pushes,
+        "bypass_actors": _list_of_names(values["bypass_actors"], "bypass_actors"),
     }
 
 
-def _validate_policy_snapshot(value: object) -> dict[str, Any]:
-    """Validate a supplied, local GitHub policy export without contacting GitHub."""
+def _policy_snapshot_shape(value: object) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != {
         "schema",
         "captured_at",
@@ -154,6 +178,10 @@ def _validate_policy_snapshot(value: object) -> dict[str, Any]:
             "GITHUB_ASSURANCE_INPUT_INVALID",
             "a factory.github_policy_snapshot.v1 payload is required",
         )
+    return value
+
+
+def _policy_scope(value: dict[str, Any]) -> dict[str, str]:
     if not isinstance(value["scope"], dict) or set(value["scope"]) != {
         "owner",
         "repository",
@@ -171,6 +199,10 @@ def _validate_policy_snapshot(value: object) -> dict[str, Any]:
             "GITHUB_ASSURANCE_INPUT_INVALID",
             "snapshot scope owner/repository is invalid",
         )
+    return dict(value["scope"])
+
+
+def _policy_capture(value: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(value["capture"], dict) or set(value["capture"]) != {
         "source",
         "captured_by",
@@ -196,6 +228,10 @@ def _validate_policy_snapshot(value: object) -> dict[str, Any]:
         or len(capture["source_reference"]) > 240
     ):
         _reject("GITHUB_ASSURANCE_INPUT_INVALID", "capture reference is invalid")
+    return dict(capture)
+
+
+def _policy_rulesets(value: dict[str, Any]) -> list[dict[str, Any]]:
     rulesets = (
         [_ruleset(item) for item in value["rulesets"]]
         if isinstance(value["rulesets"], list)
@@ -210,11 +246,20 @@ def _validate_policy_snapshot(value: object) -> dict[str, Any]:
         )
     if len({item["id"] for item in rulesets}) != len(rulesets):
         _reject("GITHUB_ASSURANCE_INPUT_INVALID", "ruleset ids must be unique")
+    return rulesets
+
+
+def _validate_policy_snapshot(value: object) -> dict[str, Any]:
+    """Validate a supplied, local GitHub policy export without contacting GitHub."""
+    snapshot = _policy_snapshot_shape(value)
+    scope = _policy_scope(snapshot)
+    capture = _policy_capture(snapshot)
+    rulesets = _policy_rulesets(snapshot)
     return {
         "schema": GITHUB_POLICY_SNAPSHOT_SCHEMA,
-        "captured_at": _timestamp(value["captured_at"], "captured_at"),
-        "scope": dict(value["scope"]),
-        "capture": dict(capture),
+        "captured_at": _timestamp(snapshot["captured_at"], "captured_at"),
+        "scope": scope,
+        "capture": capture,
         "rulesets": rulesets,
     }
 
@@ -235,6 +280,110 @@ def _finding(
     }
 
 
+def _ruleset_security_drift(
+    ruleset_id: str, old: dict[str, Any], new: dict[str, Any]
+) -> list[dict[str, str]]:
+    findings = []
+    if old["enforcement"] == "active" and new["enforcement"] != "active":
+        findings.append(
+            _finding(
+                f"ruleset:{ruleset_id}:enforcement",
+                "high",
+                "An active baseline ruleset is no longer active.",
+                ruleset_id,
+            )
+        )
+    if old["require_signed_commits"] and not new["require_signed_commits"]:
+        findings.append(
+            _finding(
+                f"ruleset:{ruleset_id}:signed_commits",
+                "high",
+                "Signed-commit enforcement was removed.",
+                ruleset_id,
+            )
+        )
+    if not old["allow_force_pushes"] and new["allow_force_pushes"]:
+        findings.append(
+            _finding(
+                f"ruleset:{ruleset_id}:force_pushes",
+                "high",
+                "Force pushes were enabled.",
+                ruleset_id,
+            )
+        )
+    return findings
+
+
+def _removed_requirement_findings(
+    ruleset_id: str, kind: str, removed: set[str]
+) -> list[dict[str, str]]:
+    return [
+        _finding(
+            f"ruleset:{ruleset_id}:{kind}:{name}",
+            "high",
+            f"Required {kind} '{name}' was removed.",
+            ruleset_id,
+        )
+        for name in sorted(removed)
+    ]
+
+
+def _bypass_actor_findings(
+    ruleset_id: str, old_actors: list[str], new_actors: list[str]
+) -> list[dict[str, str]]:
+    return [
+        _finding(
+            f"ruleset:{ruleset_id}:bypass:{actor}",
+            "high",
+            f"New bypass actor '{actor}' was added.",
+            ruleset_id,
+        )
+        for actor in sorted(set(new_actors) - set(old_actors))
+    ]
+
+
+def _ruleset_drift_findings(
+    ruleset_id: str, old: dict[str, Any], new: dict[str, Any]
+) -> list[dict[str, str]]:
+    findings = _ruleset_security_drift(ruleset_id, old, new)
+    findings.extend(
+        _removed_requirement_findings(
+            ruleset_id,
+            "check",
+            set(old["required_checks"]) - set(new["required_checks"]),
+        )
+    )
+    findings.extend(
+        _removed_requirement_findings(
+            ruleset_id,
+            "workflow",
+            set(old["required_workflows"]) - set(new["required_workflows"]),
+        )
+    )
+    findings.extend(
+        _bypass_actor_findings(ruleset_id, old["bypass_actors"], new["bypass_actors"])
+    )
+    return findings
+
+
+def _removed_ruleset_finding(ruleset_id: str) -> dict[str, str]:
+    return _finding(
+        f"ruleset:{ruleset_id}:removed",
+        "high",
+        "A baseline ruleset is absent from the current supplied snapshot.",
+        ruleset_id,
+    )
+
+
+def _added_ruleset_finding(ruleset_id: str) -> dict[str, str]:
+    return _finding(
+        f"ruleset:{ruleset_id}:added",
+        "info",
+        "A new ruleset appears in the current supplied snapshot.",
+        ruleset_id,
+    )
+
+
 def _detect_policy_drift(baseline: object, current: object) -> list[dict[str, str]]:
     """Compare two validated snapshots using stable, fail-visible policy deltas."""
     before, after = (
@@ -246,99 +395,22 @@ def _detect_policy_drift(baseline: object, current: object) -> list[dict[str, st
             "GITHUB_ASSURANCE_SCOPE_MISMATCH",
             "baseline and current policy scopes must match",
         )
-    old, new = (
-        {item["id"]: item for item in before["rulesets"]},
-        {item["id"]: item for item in after["rulesets"]},
-    )
+    old = {item["id"]: item for item in before["rulesets"]}
+    new = {item["id"]: item for item in after["rulesets"]}
     findings: list[dict[str, str]] = []
     for ruleset_id, old_rule in sorted(old.items()):
         rule = new.get(ruleset_id)
         if rule is None:
-            findings.append(
-                _finding(
-                    f"ruleset:{ruleset_id}:removed",
-                    "high",
-                    "A baseline ruleset is absent from the current supplied snapshot.",
-                    ruleset_id,
-                )
-            )
+            findings.append(_removed_ruleset_finding(ruleset_id))
             continue
-        if old_rule["enforcement"] == "active" and rule["enforcement"] != "active":
-            findings.append(
-                _finding(
-                    f"ruleset:{ruleset_id}:enforcement",
-                    "high",
-                    "An active baseline ruleset is no longer active.",
-                    ruleset_id,
-                )
-            )
-        if old_rule["require_signed_commits"] and not rule["require_signed_commits"]:
-            findings.append(
-                _finding(
-                    f"ruleset:{ruleset_id}:signed_commits",
-                    "high",
-                    "Signed-commit enforcement was removed.",
-                    ruleset_id,
-                )
-            )
-        if not old_rule["allow_force_pushes"] and rule["allow_force_pushes"]:
-            findings.append(
-                _finding(
-                    f"ruleset:{ruleset_id}:force_pushes",
-                    "high",
-                    "Force pushes were enabled.",
-                    ruleset_id,
-                )
-            )
-        for name in sorted(
-            set(old_rule["required_checks"]) - set(rule["required_checks"])
-        ):
-            findings.append(
-                _finding(
-                    f"ruleset:{ruleset_id}:check:{name}",
-                    "high",
-                    f"Required check '{name}' was removed.",
-                    ruleset_id,
-                )
-            )
-        for name in sorted(
-            set(old_rule["required_workflows"]) - set(rule["required_workflows"])
-        ):
-            findings.append(
-                _finding(
-                    f"ruleset:{ruleset_id}:workflow:{name}",
-                    "high",
-                    f"Required workflow '{name}' was removed.",
-                    ruleset_id,
-                )
-            )
-        for actor in sorted(
-            set(rule["bypass_actors"]) - set(old_rule["bypass_actors"])
-        ):
-            findings.append(
-                _finding(
-                    f"ruleset:{ruleset_id}:bypass:{actor}",
-                    "high",
-                    f"New bypass actor '{actor}' was added.",
-                    ruleset_id,
-                )
-            )
-    for ruleset_id in sorted(set(new) - set(old)):
-        findings.append(
-            _finding(
-                f"ruleset:{ruleset_id}:added",
-                "info",
-                "A new ruleset appears in the current supplied snapshot.",
-                ruleset_id,
-            )
-        )
+        findings.extend(_ruleset_drift_findings(ruleset_id, old_rule, rule))
+    findings.extend(
+        _added_ruleset_finding(ruleset_id) for ruleset_id in sorted(set(new) - set(old))
+    )
     return sorted(findings, key=lambda item: (item["severity"] != "high", item["id"]))
 
 
-def _validate_assurance_exception(
-    value: object, *, policy_sha256: str, head_sha: str, now: datetime | None = None
-) -> dict[str, Any]:
-    """Validate a named, short-lived exception bound to exact policy and commit facts."""
+def _exception_shape(value: object) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != {
         "schema",
         "id",
@@ -352,6 +424,10 @@ def _validate_assurance_exception(
             "GITHUB_ASSURANCE_EXCEPTION_INVALID",
             "exception must use the exact v1 shape",
         )
+    return value
+
+
+def _exception_identity(value: dict[str, Any]) -> str:
     if (
         value["schema"] != GITHUB_ASSURANCE_EXCEPTION_SCHEMA
         or not isinstance(value["id"], str)
@@ -360,6 +436,10 @@ def _validate_assurance_exception(
         _reject(
             "GITHUB_ASSURANCE_EXCEPTION_INVALID", "exception schema or id is invalid"
         )
+    return value["id"]
+
+
+def _exception_approval(value: dict[str, Any]) -> dict[str, Any]:
     if (
         not isinstance(value["approval"], dict)
         or set(value["approval"]) != {"state", "approved_by"}
@@ -371,6 +451,10 @@ def _validate_assurance_exception(
             "GITHUB_ASSURANCE_EXCEPTION_INVALID",
             "exception requires one named approved-by actor",
         )
+    return dict(value["approval"])
+
+
+def _exception_policy_binding(value: dict[str, Any], policy_sha256: str) -> str:
     if value["policy_sha256"] != policy_sha256 or not _SHA.fullmatch(
         value["policy_sha256"]
     ):
@@ -378,11 +462,19 @@ def _validate_assurance_exception(
             "GITHUB_ASSURANCE_EXCEPTION_INVALID",
             "exception policy binding does not match this current snapshot",
         )
+    return policy_sha256
+
+
+def _exception_head_binding(value: dict[str, Any], head_sha: str) -> str:
     if value["head_sha"] != head_sha or not _HEAD.fullmatch(value["head_sha"]):
         _reject(
             "GITHUB_ASSURANCE_EXCEPTION_INVALID",
             "exception head binding does not match this pull-request head",
         )
+    return head_sha
+
+
+def _exception_expiry(value: dict[str, Any], now: datetime | None) -> str:
     expiry = _timestamp(value["expires_at"], "expires_at")
     parsed = datetime.fromisoformat(expiry)
     moment = now or datetime.now(timezone.utc)
@@ -396,19 +488,37 @@ def _validate_assurance_exception(
             "GITHUB_ASSURANCE_EXCEPTION_INVALID",
             "exception expiry cannot exceed 31 days",
         )
+    return expiry
+
+
+def _exception_finding_ids(value: dict[str, Any]) -> list[str]:
     finding_ids = _list_of_names(value["finding_ids"], "finding_ids")
     if not finding_ids:
         _reject(
             "GITHUB_ASSURANCE_EXCEPTION_INVALID",
             "exception must name at least one finding",
         )
+    return finding_ids
+
+
+def _validate_assurance_exception(
+    value: object, *, policy_sha256: str, head_sha: str, now: datetime | None = None
+) -> dict[str, Any]:
+    """Validate a named, short-lived exception bound to exact policy and commit facts."""
+    exception = _exception_shape(value)
+    identifier = _exception_identity(exception)
+    approval = _exception_approval(exception)
+    bound_policy_sha = _exception_policy_binding(exception, policy_sha256)
+    bound_head_sha = _exception_head_binding(exception, head_sha)
+    expiry = _exception_expiry(exception, now)
+    finding_ids = _exception_finding_ids(exception)
     return {
         "schema": GITHUB_ASSURANCE_EXCEPTION_SCHEMA,
-        "id": value["id"],
-        "approval": dict(value["approval"]),
+        "id": identifier,
+        "approval": approval,
         "expires_at": expiry,
-        "policy_sha256": policy_sha256,
-        "head_sha": head_sha,
+        "policy_sha256": bound_policy_sha,
+        "head_sha": bound_head_sha,
         "finding_ids": finding_ids,
     }
 
