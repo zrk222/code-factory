@@ -93,31 +93,11 @@ def _routes(root: Path) -> list[dict[str, str]]:
     for path in sorted(root.rglob("*.py")):
         if _SKIP.intersection(path.relative_to(root).parts):
             continue
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, SyntaxError):
+        tree = _parse_python_file(path)
+        if tree is None:
             continue
         for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            for decorator in node.decorator_list:
-                if not isinstance(decorator, ast.Call) or not isinstance(
-                    decorator.func, ast.Attribute
-                ):
-                    continue
-                method = decorator.func.attr.lower()
-                if method not in _ROUTE_METHODS or not decorator.args:
-                    continue
-                route = decorator.args[0]
-                if isinstance(route, ast.Constant) and isinstance(route.value, str):
-                    found.append(
-                        {
-                            "method": method.upper(),
-                            "route": route.value,
-                            "handler": node.name,
-                            "evidence_path": path.relative_to(root).as_posix(),
-                        }
-                    )
+            found.extend(_node_routes(root, path, node))
     return sorted(
         found,
         key=lambda item: (
@@ -127,6 +107,48 @@ def _routes(root: Path) -> list[dict[str, str]]:
             item["handler"],
         ),
     )
+
+
+def _parse_python_file(path: Path) -> ast.AST | None:
+    try:
+        return ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, SyntaxError):
+        return None
+
+
+def _node_routes(root: Path, path: Path, node: ast.AST) -> list[dict[str, str]]:
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return []
+    routes = []
+    for decorator in node.decorator_list:
+        route = _route_record(root, path, node, decorator)
+        if route is not None:
+            routes.append(route)
+    return routes
+
+
+def _route_record(
+    root: Path,
+    path: Path,
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    decorator: ast.expr,
+) -> dict[str, str] | None:
+    if not isinstance(decorator, ast.Call) or not isinstance(
+        decorator.func, ast.Attribute
+    ):
+        return None
+    method = decorator.func.attr.lower()
+    if method not in _ROUTE_METHODS or not decorator.args:
+        return None
+    route = decorator.args[0]
+    if not isinstance(route, ast.Constant) or not isinstance(route.value, str):
+        return None
+    return {
+        "method": method.upper(),
+        "route": route.value,
+        "handler": node.name,
+        "evidence_path": path.relative_to(root).as_posix(),
+    }
 
 
 def _tests(root: Path) -> list[str]:
@@ -146,6 +168,12 @@ def _tests(root: Path) -> list[str]:
 
 
 def _pack_templates(root: Path) -> list[dict[str, str]]:
+    templates = _registered_templates()
+    _apply_pack_entrypoints(root, templates)
+    return sorted(templates, key=lambda item: item["target_pack"])
+
+
+def _registered_templates() -> list[dict[str, str]]:
     templates: list[dict[str, str]] = []
     registry = (
         Path(__file__).resolve().parent / "data" / "gauntlet_target_promises.json"
@@ -162,20 +190,32 @@ def _pack_templates(root: Path) -> list[dict[str, str]]:
                     "evidence_path": "factoryline/data/gauntlet_target_promises.json",
                 }
             )
+    return templates
+
+
+def _apply_pack_entrypoints(root: Path, templates: list[dict[str, str]]) -> None:
     base = root / "factoryline" / "builtin_packs"
     for path in sorted(base.glob("target-*/pack.yaml")) if base.is_dir() else []:
-        try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        pack = _pack_identity(path)
+        if pack is None:
             continue
-        entrypoint = value.get("entrypoint")
-        if isinstance(entrypoint, str) and entrypoint.strip():
-            pack_id = str(value.get("id", path.parent.name))
-            for template in templates:
-                if template.get("target_pack") == pack_id:
-                    template["entrypoint"] = entrypoint.strip()
-                    template["pack_evidence_path"] = path.relative_to(root).as_posix()
-    return sorted(templates, key=lambda item: item["target_pack"])
+        entrypoint, pack_id = pack
+        for template in templates:
+            if template.get("target_pack") == pack_id:
+                template["entrypoint"] = entrypoint
+                template["pack_evidence_path"] = path.relative_to(root).as_posix()
+
+
+def _pack_identity(path: Path) -> tuple[str, str] | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    entrypoint = value.get("entrypoint")
+    if not isinstance(entrypoint, str) or not entrypoint.strip():
+        return None
+    pack_id = str(value.get("id", path.parent.name))
+    return entrypoint.strip(), pack_id
 
 
 def draft_gauntlet(root: Path, source_id: str) -> dict[str, Any]:
