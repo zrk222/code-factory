@@ -327,6 +327,8 @@ def release_candidate_preflight(
     """Evaluate contract/source/artifact identity without external authority."""
     workspace = Path(root).resolve()
     source = source_snapshot(workspace)
+    if candidate_tag is not None and candidate_tag != f"v{source.get('version')}":
+        raise ValueError("candidate tag must match the source package version")
     release_cadence = (
         release_cadence_status(workspace, candidate_tag=candidate_tag)
         if candidate_tag is not None

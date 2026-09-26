@@ -9,6 +9,16 @@ import factoryline.release_candidate as candidate
 from test_intake_admission import _intake
 
 
+def test_candidate_tag_must_match_package_version(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        candidate, "source_snapshot", lambda root: {"version": "0.46.9"}
+    )
+    with pytest.raises(ValueError, match="source package version"):
+        candidate.release_candidate_preflight(
+            tmp_path, Path("contract.json"), candidate_tag="v0.46.8"
+        )
+
+
 @pytest.fixture(autouse=True)
 def _eligible_release_cadence(monkeypatch) -> None:
     monkeypatch.setattr(
