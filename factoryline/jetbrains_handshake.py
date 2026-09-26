@@ -160,34 +160,37 @@ def _intent(workspace: Path, change_list: str, changed: list[str]) -> dict[str, 
         }
 
 
+def _latest_projection(projection: dict[str, Any]) -> dict[str, Any] | None:
+    latest = projection.get("latest")
+    return latest if isinstance(latest, dict) else None
+
+
+def _appforge_proof_context(projection: dict[str, Any]) -> dict[str, Any]:
+    latest = _latest_projection(projection)
+    return {
+        "state": "bound" if latest else "not_supplied",
+        "receipt_sha256": latest.get("receipt_sha256") if latest else None,
+        "contract_sha256": latest.get("contract_sha256") if latest else None,
+        "artifacts": latest.get("artifacts") if latest else None,
+        "gates": latest.get("gates") if latest else None,
+    }
+
+
+def _saas_proof_context(projection: dict[str, Any]) -> dict[str, Any]:
+    latest = _latest_projection(projection)
+    return {
+        "state": "bound" if latest else "not_supplied",
+        "receipt_sha256": latest.get("receipt_sha256") if latest else None,
+        "path": latest.get("path") if latest else None,
+        "verdict": latest.get("verdict") if latest else None,
+    }
+
+
 def _product_proof_context(workspace: Path) -> dict[str, Any]:
     """Bind only hash-valid local AppForge and SaaS proof facts into a mission."""
-    appforge = appforge_design_projection(workspace)
-    saas = saas_proof_projection(workspace)
-    appforge_latest = (
-        appforge.get("latest") if isinstance(appforge.get("latest"), dict) else None
-    )
-    saas_latest = saas.get("latest") if isinstance(saas.get("latest"), dict) else None
     return {
-        "appforge": {
-            "state": "bound" if appforge_latest else "not_supplied",
-            "receipt_sha256": appforge_latest.get("receipt_sha256")
-            if appforge_latest
-            else None,
-            "contract_sha256": appforge_latest.get("contract_sha256")
-            if appforge_latest
-            else None,
-            "artifacts": appforge_latest.get("artifacts") if appforge_latest else None,
-            "gates": appforge_latest.get("gates") if appforge_latest else None,
-        },
-        "saas": {
-            "state": "bound" if saas_latest else "not_supplied",
-            "receipt_sha256": saas_latest.get("receipt_sha256")
-            if saas_latest
-            else None,
-            "path": saas_latest.get("path") if saas_latest else None,
-            "verdict": saas_latest.get("verdict") if saas_latest else None,
-        },
+        "appforge": _appforge_proof_context(appforge_design_projection(workspace)),
+        "saas": _saas_proof_context(saas_proof_projection(workspace)),
         "claim_boundary": "Hash-valid local receipt facts guide the agent; they are not current UI, device, provider, payment, deployment, or App Store proof.",
     }
 
@@ -304,51 +307,43 @@ def _e2e(workspace: Path, receipt_path: Path | None) -> dict[str, Any]:
     }
 
 
-def evaluate_jetbrains_handshake(
-    root: Path,
-    scope_path: Path,
-    changed_paths: list[str],
-    analysis_sarif: Path,
-    e2e_receipt: Path | None = None,
-    *,
-    analysis_provider: str = "auto",
-    max_new_errors: int = 0,
-    max_new_warnings: int = 0,
-) -> dict[str, Any]:
-    """Evaluate agent changes and analyzer evidence without granting execution or approval."""
-    workspace = _workspace(root)
+def _validate_analysis_thresholds(errors: int, warnings: int) -> None:
     if any(
         isinstance(value, bool) or not isinstance(value, int) or value < 0
-        for value in (max_new_errors, max_new_warnings)
+        for value in (errors, warnings)
     ):
         raise JetBrainsHandshakeError(
             "ANALYSIS_THRESHOLD_INVALID",
             "analysis thresholds must be non-negative integers",
         )
-    scope, scope_file, scope_file_sha, sealed = _scope(workspace, scope_path)
-    changed = _changed_paths(changed_paths)
-    escaped = sorted(set(changed) - set(sealed))
-    intent = _intent(workspace, scope["change_list"], changed)
+
+
+def _parse_handshake_analysis(
+    workspace: Path, analysis_sarif: Path, provider: str
+) -> dict[str, Any]:
     try:
-        analysis = parse_analysis_sarif(
-            workspace, analysis_sarif, provider=analysis_provider
-        )
+        return parse_analysis_sarif(workspace, analysis_sarif, provider=provider)
     except AnalysisEvidenceError as exc:
         raise JetBrainsHandshakeError(exc.code, str(exc)) from exc
-    e2e = _e2e(workspace, e2e_receipt)
-    new_errors = sum(
+
+
+def _new_finding_count(analysis: dict[str, Any], level: str) -> int:
+    return sum(
         1
         for item in analysis["findings"]
-        if item["level"] == "error" and item["baseline_state"] in {"new", "unbaselined"}
+        if item["level"] == level and item["baseline_state"] in {"new", "unbaselined"}
     )
-    new_warnings = sum(
-        1
-        for item in analysis["findings"]
-        if item["level"] == "warning"
-        and item["baseline_state"] in {"new", "unbaselined"}
-    )
+
+
+def _handshake_blockers(
+    escaped: list[str],
+    new_errors: int,
+    new_warnings: int,
+    max_new_errors: int,
+    max_new_warnings: int,
+    e2e: dict[str, Any],
+) -> list[str]:
     blockers: list[str] = []
-    unknowns: list[str] = []
     if escaped:
         blockers.append("scope_escape")
     if new_errors > max_new_errors or new_warnings > max_new_warnings:
@@ -357,12 +352,23 @@ def evaluate_jetbrains_handshake(
         blockers.append(
             "hollow_e2e" if e2e["marker"] == "HOLLOW_E2E_TEST" else "e2e_failed"
         )
+    return blockers
+
+
+def _handshake_unknowns(
+    e2e: dict[str, Any], analysis: dict[str, Any], intent: dict[str, Any]
+) -> list[str]:
+    unknowns: list[str] = []
     if e2e["state"] == "missing":
         unknowns.append("e2e_receipt_missing")
     if analysis["execution_successful"] is not True:
         unknowns.append("analysis_execution_unverified")
     if intent["state"] != "ready_for_human_review":
         unknowns.append(f"intent_{intent['state']}")
+    return unknowns
+
+
+def _handshake_decision(blockers: list[str], unknowns: list[str]) -> tuple[str, str]:
     verdict = (
         "blocked"
         if blockers
@@ -377,6 +383,29 @@ def evaluate_jetbrains_handshake(
         if unknowns
         else "human_review"
     )
+    return verdict, next_action
+
+
+def _handshake_receipt(
+    workspace: Path,
+    scope: dict[str, Any],
+    scope_file: Path,
+    scope_file_sha: str,
+    sealed: list[str],
+    changed: list[str],
+    escaped: list[str],
+    intent: dict[str, Any],
+    analysis: dict[str, Any],
+    max_new_errors: int,
+    max_new_warnings: int,
+    new_errors: int,
+    new_warnings: int,
+    e2e: dict[str, Any],
+    blockers: list[str],
+    unknowns: list[str],
+    verdict: str,
+    next_action: str,
+) -> dict[str, Any]:
     core = {
         "schema": HANDSHAKE_SCHEMA,
         "marker": "JETBRAINS_PROOF_HANDSHAKE_EVALUATED",
@@ -413,6 +442,60 @@ def evaluate_jetbrains_handshake(
         ],
     }
     return {**core, "handshake_sha256": _sha(core)}
+
+
+def evaluate_jetbrains_handshake(
+    root: Path,
+    scope_path: Path,
+    changed_paths: list[str],
+    analysis_sarif: Path,
+    e2e_receipt: Path | None = None,
+    *,
+    analysis_provider: str = "auto",
+    max_new_errors: int = 0,
+    max_new_warnings: int = 0,
+) -> dict[str, Any]:
+    """Evaluate agent changes and analyzer evidence without granting execution or approval."""
+    workspace = _workspace(root)
+    _validate_analysis_thresholds(max_new_errors, max_new_warnings)
+    scope, scope_file, scope_file_sha, sealed = _scope(workspace, scope_path)
+    changed = _changed_paths(changed_paths)
+    escaped = sorted(set(changed) - set(sealed))
+    intent = _intent(workspace, scope["change_list"], changed)
+    analysis = _parse_handshake_analysis(workspace, analysis_sarif, analysis_provider)
+    e2e = _e2e(workspace, e2e_receipt)
+    new_errors = _new_finding_count(analysis, "error")
+    new_warnings = _new_finding_count(analysis, "warning")
+    blockers = _handshake_blockers(
+        escaped,
+        new_errors,
+        new_warnings,
+        max_new_errors,
+        max_new_warnings,
+        e2e,
+    )
+    unknowns = _handshake_unknowns(e2e, analysis, intent)
+    verdict, next_action = _handshake_decision(blockers, unknowns)
+    return _handshake_receipt(
+        workspace,
+        scope,
+        scope_file,
+        scope_file_sha,
+        sealed,
+        changed,
+        escaped,
+        intent,
+        analysis,
+        max_new_errors,
+        max_new_warnings,
+        new_errors,
+        new_warnings,
+        e2e,
+        blockers,
+        unknowns,
+        verdict,
+        next_action,
+    )
 
 
 def validate_jetbrains_handshake(value: object) -> dict[str, Any]:

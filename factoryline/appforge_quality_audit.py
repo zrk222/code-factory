@@ -198,20 +198,13 @@ def _requirements(
     return required, skipped
 
 
-def verify_quality_audit(
-    root: Path, contract_path: Path, evidence_path: Path, out_path: Path
-) -> dict[str, Any]:
-    """Verify strict candidate-bound design, accessibility, and full-stack evidence."""
-    workspace = Path(root).resolve()
-    contract, contract_source = _read_json(workspace, contract_path, CONTRACT_SCHEMA)
-    evidence, evidence_source = _read_json(workspace, evidence_path, EVIDENCE_SCHEMA)
-    expected = _candidate(contract.get("candidate"), "contract.candidate")
-    observed = _candidate(evidence.get("candidate"), "evidence.candidate")
-    intent = _digest(
-        contract.get("user_design_input_sha256"), "contract.user_design_input_sha256"
-    )
-    required, skipped = _requirements(contract)
-    findings: list[dict[str, str]] = []
+def _binding_findings(
+    expected: dict[str, str],
+    observed: dict[str, str],
+    intent: str,
+    evidence: dict[str, Any],
+    findings: list[dict[str, str]],
+) -> None:
     if observed != expected:
         findings.append(
             {
@@ -219,19 +212,22 @@ def verify_quality_audit(
                 "detail": "quality evidence is not bound to the reviewed candidate",
             }
         )
-    if (
-        _digest(
-            evidence.get("user_design_input_sha256"),
-            "evidence.user_design_input_sha256",
-        )
-        != intent
-    ):
+    evidence_intent = _digest(
+        evidence.get("user_design_input_sha256"),
+        "evidence.user_design_input_sha256",
+    )
+    if evidence_intent != intent:
         findings.append(
             {
                 "code": "APPFORGE_QUALITY_USER_INTENT_MISMATCH",
                 "detail": "quality evidence is not bound to the confirmed user design input",
             }
         )
+
+
+def _design_review_summary(
+    evidence: dict[str, Any], findings: list[dict[str, str]]
+) -> dict[str, Any] | None:
     review = evidence.get("design_review")
     if (
         not isinstance(review, dict)
@@ -243,21 +239,116 @@ def verify_quality_audit(
                 "detail": "a named reviewer must confirm that the supplied user design input was considered",
             }
         )
-        review_summary = None
-    else:
-        review_summary = {
-            "reviewed_by": _text(
-                review.get("reviewed_by"), "design_review.reviewed_by"
+        return None
+    return {
+        "reviewed_by": _text(review.get("reviewed_by"), "design_review.reviewed_by"),
+        "reviewed_at": _timestamp(
+            review.get("reviewed_at"), "design_review.reviewed_at"
+        ),
+        "user_design_input_considered": True,
+        "storyboard_sha256": _digest(
+            review.get("storyboard_sha256"), "design_review.storyboard_sha256"
+        ),
+    }
+
+
+def _check_identity(
+    item: object,
+    required: dict[str, dict[str, str]],
+    seen: set[str],
+    findings: list[dict[str, str]],
+) -> str | None:
+    if not isinstance(item, dict):
+        findings.append(
+            {
+                "code": "APPFORGE_QUALITY_CHECK_INVALID",
+                "detail": "every check must be an object",
+            }
+        )
+        return None
+    check_id = str(item.get("id") or "").strip()
+    if check_id not in required:
+        findings.append(
+            {
+                "code": "APPFORGE_QUALITY_CHECK_UNRECOGNIZED",
+                "detail": f"{check_id or 'unnamed'} is not required by this contract",
+            }
+        )
+        return None
+    if check_id in seen:
+        findings.append(
+            {
+                "code": "APPFORGE_QUALITY_CHECK_DUPLICATE",
+                "detail": f"{check_id} appears more than once",
+            }
+        )
+        return None
+    seen.add(check_id)
+    return check_id
+
+
+def _passed_check(
+    workspace: Path,
+    item: dict[str, Any],
+    check_id: str,
+    kind: str,
+    findings: list[dict[str, str]],
+) -> dict[str, str] | None:
+    if item.get("status") != "passed":
+        findings.append(
+            {
+                "code": "APPFORGE_QUALITY_CHECK_UNPROVEN",
+                "detail": f"{check_id} is not passed",
+            }
+        )
+        return None
+    try:
+        artifact = _local(
+            workspace,
+            Path(
+                _text(
+                    item.get("artifact_path"),
+                    f"checks.{check_id}.artifact_path",
+                    limit=700,
+                )
             ),
-            "reviewed_at": _timestamp(
-                review.get("reviewed_at"), "design_review.reviewed_at"
+        )
+        digest = _digest(
+            item.get("artifact_sha256"), f"checks.{check_id}.artifact_sha256"
+        )
+        if hashlib.sha256(artifact.read_bytes()).hexdigest() != digest:
+            raise RevenueForgeError(
+                "APPFORGE_QUALITY_ARTIFACT_HASH_MISMATCH",
+                f"{check_id} artifact does not match declared SHA-256",
+            )
+        return {
+            "id": check_id,
+            "kind": kind,
+            "artifact_path": artifact.relative_to(workspace).as_posix(),
+            "artifact_sha256": digest,
+            "performed_by": _text(
+                item.get("performed_by"), f"checks.{check_id}.performed_by"
             ),
-            "user_design_input_considered": True,
-            "storyboard_sha256": _digest(
-                review.get("storyboard_sha256"), "design_review.storyboard_sha256"
+            "performed_at": _timestamp(
+                item.get("performed_at"), f"checks.{check_id}.performed_at"
             ),
         }
-    supplied = evidence.get("checks")
+    except RevenueForgeError as error:
+        findings.append(
+            {
+                "code": getattr(error, "code", "APPFORGE_QUALITY_EVIDENCE_INVALID"),
+                "detail": str(error),
+            }
+        )
+        return None
+
+
+def _collect_check_evidence(
+    workspace: Path,
+    supplied: object,
+    required: dict[str, dict[str, str]],
+    findings: list[dict[str, str]],
+) -> tuple[list[dict[str, str]], set[str]]:
     if not isinstance(supplied, list) or len(supplied) > 100:
         raise RevenueForgeError(
             "APPFORGE_QUALITY_EVIDENCE_INVALID",
@@ -266,80 +357,22 @@ def verify_quality_audit(
     passed: list[dict[str, str]] = []
     seen: set[str] = set()
     for item in supplied:
-        if not isinstance(item, dict):
-            findings.append(
-                {
-                    "code": "APPFORGE_QUALITY_CHECK_INVALID",
-                    "detail": "every check must be an object",
-                }
-            )
+        check_id = _check_identity(item, required, seen, findings)
+        if check_id is None:
             continue
-        check_id = str(item.get("id") or "").strip()
-        if check_id not in required:
-            findings.append(
-                {
-                    "code": "APPFORGE_QUALITY_CHECK_UNRECOGNIZED",
-                    "detail": f"{check_id or 'unnamed'} is not required by this contract",
-                }
-            )
-            continue
-        if check_id in seen:
-            findings.append(
-                {
-                    "code": "APPFORGE_QUALITY_CHECK_DUPLICATE",
-                    "detail": f"{check_id} appears more than once",
-                }
-            )
-            continue
-        seen.add(check_id)
-        if item.get("status") != "passed":
-            findings.append(
-                {
-                    "code": "APPFORGE_QUALITY_CHECK_UNPROVEN",
-                    "detail": f"{check_id} is not passed",
-                }
-            )
-            continue
-        try:
-            artifact = _local(
-                workspace,
-                Path(
-                    _text(
-                        item.get("artifact_path"),
-                        f"checks.{check_id}.artifact_path",
-                        limit=700,
-                    )
-                ),
-            )
-            digest = _digest(
-                item.get("artifact_sha256"), f"checks.{check_id}.artifact_sha256"
-            )
-            if hashlib.sha256(artifact.read_bytes()).hexdigest() != digest:
-                raise RevenueForgeError(
-                    "APPFORGE_QUALITY_ARTIFACT_HASH_MISMATCH",
-                    f"{check_id} artifact does not match declared SHA-256",
-                )
-            passed.append(
-                {
-                    "id": check_id,
-                    "kind": required[check_id]["kind"],
-                    "artifact_path": artifact.relative_to(workspace).as_posix(),
-                    "artifact_sha256": digest,
-                    "performed_by": _text(
-                        item.get("performed_by"), f"checks.{check_id}.performed_by"
-                    ),
-                    "performed_at": _timestamp(
-                        item.get("performed_at"), f"checks.{check_id}.performed_at"
-                    ),
-                }
-            )
-        except RevenueForgeError as error:
-            findings.append(
-                {
-                    "code": getattr(error, "code", "APPFORGE_QUALITY_EVIDENCE_INVALID"),
-                    "detail": str(error),
-                }
-            )
+        check = _passed_check(
+            workspace, item, check_id, required[check_id]["kind"], findings
+        )
+        if check is not None:
+            passed.append(check)
+    return passed, seen
+
+
+def _missing_check_findings(
+    required: dict[str, dict[str, str]],
+    seen: set[str],
+    findings: list[dict[str, str]],
+) -> None:
     for check_id in required:
         if check_id not in seen:
             findings.append(
@@ -348,8 +381,19 @@ def verify_quality_audit(
                     "detail": f"{check_id} has no passed, hash-bound evidence",
                 }
             )
-    destination = _local(workspace, out_path, exists=False)
-    core: dict[str, Any] = {
+
+
+def _quality_receipt_core(
+    expected: dict[str, str],
+    intent: str,
+    contract_source: Path,
+    evidence_source: Path,
+    review_summary: dict[str, Any] | None,
+    passed: list[dict[str, str]],
+    skipped: list[dict[str, str]],
+    findings: list[dict[str, str]],
+) -> dict[str, Any]:
+    return {
         "schema": RECEIPT_SCHEMA,
         "marker": "APPFORGE_QUALITY_AUDIT_READY"
         if not findings
@@ -373,6 +417,39 @@ def verify_quality_audit(
         },
         "claim_boundary": "hash-bound supplied local artifacts only; not a substitute for physical-device assistive-technology testing, backend uptime verification, App Store Connect state, Apple policy certification, submission, or approval.",
     }
+
+
+def verify_quality_audit(
+    root: Path, contract_path: Path, evidence_path: Path, out_path: Path
+) -> dict[str, Any]:
+    """Verify strict candidate-bound design, accessibility, and full-stack evidence."""
+    workspace = Path(root).resolve()
+    contract, contract_source = _read_json(workspace, contract_path, CONTRACT_SCHEMA)
+    evidence, evidence_source = _read_json(workspace, evidence_path, EVIDENCE_SCHEMA)
+    expected = _candidate(contract.get("candidate"), "contract.candidate")
+    observed = _candidate(evidence.get("candidate"), "evidence.candidate")
+    intent = _digest(
+        contract.get("user_design_input_sha256"), "contract.user_design_input_sha256"
+    )
+    required, skipped = _requirements(contract)
+    findings: list[dict[str, str]] = []
+    _binding_findings(expected, observed, intent, evidence, findings)
+    review_summary = _design_review_summary(evidence, findings)
+    passed, seen = _collect_check_evidence(
+        workspace, evidence.get("checks"), required, findings
+    )
+    _missing_check_findings(required, seen, findings)
+    destination = _local(workspace, out_path, exists=False)
+    core = _quality_receipt_core(
+        expected,
+        intent,
+        contract_source,
+        evidence_source,
+        review_summary,
+        passed,
+        skipped,
+        findings,
+    )
     core["receipt_sha256"] = _sha(core)
     _atomic(destination, core)
     return {**core, "path": destination.relative_to(workspace).as_posix()}

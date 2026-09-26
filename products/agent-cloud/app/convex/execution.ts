@@ -49,11 +49,13 @@ type EnqueueResult = {
 async function activeBlueprintForEnqueue(ctx: MutationCtx, blueprintId: Id<"agentBlueprints">) {
   const blueprint = await ctx.db.get(blueprintId);
   if (!blueprint) throw new Error("E_BLUEPRINT_NOT_FOUND");
-  await requireWorkspaceRole(ctx, blueprint.workspaceId, "operator");
+  return blueprint;
+}
+
+async function assertEnqueueBlueprintReady(ctx: MutationCtx, blueprint: Doc<"agentBlueprints">) {
   if (blueprint.status !== "active") throw new Error("E_BLUEPRINT_NOT_ACTIVE");
   const binding = await ctx.db.query("inferenceBindings").withIndex("by_agent", (q) => q.eq("agentSpecId", blueprint.agentSpecId)).unique();
   if (!binding || binding.status !== "ready") throw new Error("E_INFERENCE_BINDING_NOT_READY");
-  return blueprint;
 }
 
 async function existingExecution(ctx: MutationCtx, workspaceId: Id<"workspaces">, idempotencyKey: string) {
@@ -112,6 +114,8 @@ export const enqueue = mutation({
   args: { blueprintId: v.id("agentBlueprints"), idempotencyKey: v.string(), inputRef: v.string(), inputDigest: v.string(), maxAttempts: v.number(), runtimeAdapterId: v.optional(v.id("runtimeAdapters")) },
   handler: async (ctx, args): Promise<EnqueueResult> => {
     const blueprint = await activeBlueprintForEnqueue(ctx, args.blueprintId);
+    await requireWorkspaceRole(ctx, blueprint.workspaceId, "operator");
+    await assertEnqueueBlueprintReady(ctx, blueprint);
     const idempotencyKey = assertText(args.idempotencyKey, "idempotency_key", 120);
     const existing = await existingExecution(ctx, blueprint.workspaceId, idempotencyKey);
     if (existing) return { marker: "EXECUTION_JOB_REPLAYED" as const, jobId: existing._id, status: existing.status };
