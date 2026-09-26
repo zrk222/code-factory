@@ -95,75 +95,99 @@ def _parse_timestamp(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc) if parsed.tzinfo else None
 
 
-def _module_classification(
-    root: Path, relative: list[str]
-) -> tuple[dict[str, int], dict[str, str]]:
-    """Classify implementation modules and retain each module's domain.
-
-    The manifest is intentionally authoritative for specialist boundaries.  A
-    missing or invalid manifest keeps every implementation module in ``core``
-    for measurement, while the returned domain counts still surface the
-    manifest problem as a blocking contract finding.
-    """
-    manifest_path = root / "architecture-boundaries.json"
-    implementation = [
+def _implementation_modules(relative: list[str]) -> list[str]:
+    return [
         path
         for path in relative
         if path.startswith("factoryline/")
         and path.endswith(".py")
         and not path.endswith("/__init__.py")
     ]
-    if not manifest_path.exists():
-        return {"manifest_missing": 1}, {path: "core" for path in implementation}
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {"manifest_invalid": 1}, {path: "core" for path in implementation}
-    if manifest.get("schema") != "factory.module-boundaries.v1":
-        return {"manifest_invalid": 1}, {path: "core" for path in implementation}
-    domains: dict[str, int] = {}
-    patterns = manifest.get("domains", {})
-    if not isinstance(patterns, dict) or any(
-        not isinstance(domain, str)
-        or not isinstance(globs, list)
-        or not globs
-        or not all(isinstance(pattern, str) and pattern for pattern in globs)
+
+
+def _core_module_assignments(
+    implementation: list[str], status: str
+) -> tuple[dict[str, int], dict[str, str]]:
+    return {status: 1}, {path: "core" for path in implementation}
+
+
+def _valid_boundary_patterns(patterns: Any) -> bool:
+    return isinstance(patterns, dict) and all(
+        isinstance(domain, str)
+        and isinstance(globs, list)
+        and bool(globs)
+        and all(isinstance(pattern, str) and pattern for pattern in globs)
         for domain, globs in patterns.items()
-    ):
-        return {"manifest_invalid": 1}, {path: "core" for path in implementation}
-    owners = manifest.get("owners")
-    if owners is not None and (
-        not isinstance(owners, dict)
-        or any(
-            not isinstance(owner, str) or not owner.strip()
+    )
+
+
+def _valid_boundary_owners(owners: Any, patterns: dict[str, Any]) -> bool:
+    if owners is None:
+        return True
+    return (
+        isinstance(owners, dict)
+        and all(
+            isinstance(owner, str) and owner.strip()
             for domain, owner in owners.items()
             if domain in patterns
         )
-        or any(domain not in owners for domain in patterns)
-    ):
-        return {"manifest_invalid": 1}, {path: "core" for path in implementation}
-    experimental = manifest.get("experimental", [])
-    if not isinstance(experimental, list) or not all(
+        and all(domain in owners for domain in patterns)
+    )
+
+
+def _valid_experimental_paths(experimental: Any) -> bool:
+    return isinstance(experimental, list) and all(
         isinstance(path, str)
         and path.startswith("factoryline/")
         and not Path(path).is_absolute()
         for path in experimental
-    ):
-        return {"manifest_invalid": 1}, {path: "core" for path in implementation}
-    for name in patterns:
-        domains[name] = 0
-    default = manifest.get("defaultDomain", "unclassified")
+    )
+
+
+def _assign_module_domains(
+    implementation: list[str], patterns: dict[str, list[str]], default: str
+) -> tuple[dict[str, int], dict[str, str]]:
+    domains = {name: 0 for name in patterns}
     domains.setdefault(default, 0)
-    assignments: dict[str, str] = {}
+    assignments = {}
     for path in implementation:
-        assigned = default
-        for domain, globs in patterns.items():
-            if any(fnmatch.fnmatch(path, pattern) for pattern in globs):
-                assigned = domain
-                break
+        assigned = next(
+            (
+                domain
+                for domain, globs in patterns.items()
+                if any(fnmatch.fnmatch(path, pattern) for pattern in globs)
+            ),
+            default,
+        )
         assignments[path] = assigned
         domains[assigned] = domains.get(assigned, 0) + 1
     return domains, assignments
+
+
+def _module_classification(
+    root: Path, relative: list[str]
+) -> tuple[dict[str, int], dict[str, str]]:
+    """Classify implementation modules using the authoritative boundary manifest."""
+    implementation = _implementation_modules(relative)
+    path = root / "architecture-boundaries.json"
+    if not path.exists():
+        return _core_module_assignments(implementation, "manifest_missing")
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _core_module_assignments(implementation, "manifest_invalid")
+    patterns = manifest.get("domains", {})
+    if manifest.get(
+        "schema"
+    ) != "factory.module-boundaries.v1" or not _valid_boundary_patterns(patterns):
+        return _core_module_assignments(implementation, "manifest_invalid")
+    if not _valid_boundary_owners(manifest.get("owners"), patterns):
+        return _core_module_assignments(implementation, "manifest_invalid")
+    if not _valid_experimental_paths(manifest.get("experimental", [])):
+        return _core_module_assignments(implementation, "manifest_invalid")
+    return _assign_module_domains(
+        implementation, patterns, manifest.get("defaultDomain", "unclassified")
+    )
 
 
 def _module_domains(root: Path, relative: list[str]) -> dict[str, int]:
@@ -171,71 +195,98 @@ def _module_domains(root: Path, relative: list[str]) -> dict[str, int]:
     return _module_classification(root, relative)[0]
 
 
-def _documentation_index(root: Path, relative: list[str]) -> dict[str, Any]:
-    """Validate the repository's canonical and historical Markdown index."""
-    markdown = [name for name in relative if name.lower().endswith(".md")]
-    index_path = root / DOCUMENTATION_INDEX_NAME
-    if not markdown and not index_path.exists():
-        return {"status": "not_applicable", "canonical_count": 0, "unmatched": []}
-    if not index_path.is_file():
-        return {
-            "status": "missing",
-            "canonical_count": 0,
-            "unmatched": markdown,
-        }
-    try:
-        index = json.loads(index_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return {"status": "invalid", "canonical_count": 0, "unmatched": markdown}
-    if index.get("schema") != "factory.documentation-index.v1":
-        return {"status": "invalid", "canonical_count": 0, "unmatched": markdown}
-    canonical = index.get("canonical")
-    coverage = index.get("coverage")
-    rules = index.get("rules")
-    if (
-        not isinstance(canonical, list)
-        or not isinstance(coverage, list)
-        or not isinstance(rules, dict)
-        or not rules.get("canonical_paths_must_exist")
-        or not rules.get("canonical_entries_require_executable_or_decision")
-        or not rules.get("evidence_refs_must_exist")
-    ):
-        return {"status": "invalid", "canonical_count": 0, "unmatched": markdown}
-    canonical_paths: set[str] = set()
+def _invalid_documentation_index(markdown: list[str]) -> dict[str, Any]:
+    return {"status": "invalid", "canonical_count": 0, "unmatched": markdown}
+
+
+def _valid_documentation_rules(rules: Any) -> bool:
+    required = (
+        "canonical_paths_must_exist",
+        "canonical_entries_require_executable_or_decision",
+        "evidence_refs_must_exist",
+    )
+    return isinstance(rules, dict) and all(rules.get(key) for key in required)
+
+
+def _canonical_documentation_paths(
+    canonical: list[Any], relative: list[str]
+) -> set[str] | None:
+    paths: set[str] = set()
     for entry in canonical:
         if not isinstance(entry, dict):
-            return {"status": "invalid", "canonical_count": 0, "unmatched": markdown}
+            return None
         path = entry.get("path")
-        if (
-            not isinstance(path, str)
-            or path in canonical_paths
-            or path not in relative
-            or not path.lower().endswith(".md")
-            or not any(
-                isinstance(entry.get(key), str) and entry[key].strip()
-                for key in ("executable", "decision")
-            )
-        ):
-            return {"status": "invalid", "canonical_count": 0, "unmatched": markdown}
-        evidence_refs = [
-            entry.get(key)
+        if not _valid_canonical_entry(entry, path, paths, relative):
+            return None
+        if not _has_existing_evidence(entry, relative):
+            return None
+        paths.add(path)
+    return paths
+
+
+def _valid_canonical_entry(
+    entry: dict[str, Any], path: Any, paths: set[str], relative: list[str]
+) -> bool:
+    return (
+        isinstance(path, str)
+        and path not in paths
+        and path in relative
+        and path.lower().endswith(".md")
+        and any(
+            isinstance(entry.get(key), str) and entry[key].strip()
             for key in ("executable", "decision")
-            if isinstance(entry.get(key), str) and entry[key].strip()
-        ]
-        if not any(ref in relative for ref in evidence_refs):
-            return {"status": "invalid", "canonical_count": 0, "unmatched": markdown}
-        canonical_paths.add(path)
-    patterns: list[str] = []
+        )
+    )
+
+
+def _has_existing_evidence(entry: dict[str, Any], relative: list[str]) -> bool:
+    references = [
+        entry.get(key)
+        for key in ("executable", "decision")
+        if isinstance(entry.get(key), str) and entry[key].strip()
+    ]
+    return any(reference in relative for reference in references)
+
+
+def _documentation_coverage_patterns(coverage: list[Any]) -> list[str] | None:
+    patterns = []
     for entry in coverage:
         if (
             not isinstance(entry, dict)
             or not isinstance(entry.get("glob"), str)
             or not entry["glob"]
-            or not isinstance(entry.get("status"), str)
-            or entry["status"] not in {"canonical", "historical", "indexed"}
         ):
-            return {"status": "invalid", "canonical_count": 0, "unmatched": markdown}
+            return None
+        if not isinstance(entry.get("status"), str) or entry["status"] not in {
+            "canonical",
+            "historical",
+            "indexed",
+        }:
+            return None
         patterns.append(entry["glob"])
+    return patterns
+
+
+def _read_documentation_index(
+    root: Path, markdown: list[str]
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    index_path = root / DOCUMENTATION_INDEX_NAME
+    if not markdown and not index_path.exists():
+        return None, {"status": "not_applicable", "canonical_count": 0, "unmatched": []}
+    if not index_path.is_file():
+        return None, {"status": "missing", "canonical_count": 0, "unmatched": markdown}
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None, _invalid_documentation_index(markdown)
+    if index.get("schema") != "factory.documentation-index.v1":
+        return None, _invalid_documentation_index(markdown)
+    return index, None
+
+
+def _document_index_coverage_result(
+    markdown: list[str], canonical_paths: set[str], patterns: list[str]
+) -> dict[str, Any]:
     unmatched = [
         name
         for name in markdown
@@ -249,19 +300,74 @@ def _documentation_index(root: Path, relative: list[str]) -> dict[str, Any]:
     }
 
 
-def _release_train(root: Path, relative: list[str]) -> dict[str, Any]:
-    """Validate the release-train contract without touching providers."""
-    path = root / RELEASE_TRAIN_NAME
-    if not path.is_file():
-        return {"status": "missing", "channels": 0}
-    try:
-        train = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return {"status": "invalid", "channels": 0}
-    cadence = train.get("cadence")
-    channels = train.get("channels")
-    states = train.get("publication_states")
-    required_states = {
+def _documentation_index(root: Path, relative: list[str]) -> dict[str, Any]:
+    """Validate the repository's canonical and historical Markdown index."""
+    markdown = [name for name in relative if name.lower().endswith(".md")]
+    index, early_result = _read_documentation_index(root, markdown)
+    if early_result is not None:
+        return early_result
+    canonical, coverage, rules = (
+        index.get("canonical"),
+        index.get("coverage"),
+        index.get("rules"),
+    )
+    if (
+        not isinstance(canonical, list)
+        or not isinstance(coverage, list)
+        or not _valid_documentation_rules(rules)
+    ):
+        return _invalid_documentation_index(markdown)
+    canonical_paths = _canonical_documentation_paths(canonical, relative)
+    patterns = _documentation_coverage_patterns(coverage)
+    if canonical_paths is None or patterns is None:
+        return _invalid_documentation_index(markdown)
+    return _document_index_coverage_result(markdown, canonical_paths, patterns)
+
+
+def _valid_release_channels(channels: Any, relative: list[str]) -> bool:
+    if not isinstance(channels, list) or not channels:
+        return False
+    required = ("id", "version_source", "changelog", "artifact")
+    if not all(
+        isinstance(channel, dict)
+        and all(isinstance(channel.get(key), str) for key in required)
+        for channel in channels
+    ):
+        return False
+    return all(
+        channel["version_source"] in relative and channel["changelog"] in relative
+        for channel in channels
+    )
+
+
+def _valid_release_train_identity(train: dict[str, Any]) -> bool:
+    return (
+        train.get("schema") == "factory.release-train.v1"
+        and isinstance(train.get("train_id"), str)
+        and isinstance(train.get("owner"), str)
+    )
+
+
+def _valid_release_cadence_contract(
+    cadence: Any,
+    max_releases: Any,
+    minimum_days: Any,
+    effective_time: datetime | None,
+) -> bool:
+    return (
+        isinstance(cadence, dict)
+        and type(max_releases) is int
+        and max_releases > 0
+        and type(minimum_days) is int
+        and minimum_days > 0
+        and effective_time is not None
+        and cadence.get("exception_requires") == "human-release-authority"
+        and cadence.get("requires_changelog_entry") is True
+    )
+
+
+def _valid_publication_states(train: dict[str, Any]) -> bool:
+    required = {
         "prepared",
         "verified",
         "uploaded",
@@ -271,22 +377,58 @@ def _release_train(root: Path, relative: list[str]) -> dict[str, Any]:
         "blocked",
         "not_configured",
     }
-    valid_channels = (
-        isinstance(channels, list)
-        and bool(channels)
-        and all(
-            isinstance(channel, dict)
-            and isinstance(channel.get("id"), str)
-            and isinstance(channel.get("version_source"), str)
-            and isinstance(channel.get("changelog"), str)
-            and isinstance(channel.get("artifact"), str)
-            for channel in channels
+    states = train.get("publication_states")
+    return isinstance(states, list) and required.issubset(states)
+
+
+def _release_train_is_valid(
+    train: dict[str, Any],
+    channels_valid: bool,
+    cadence: Any,
+    max_releases: Any,
+    minimum_days: Any,
+    effective_time: datetime | None,
+) -> bool:
+    return all(
+        (
+            _valid_release_train_identity(train),
+            channels_valid,
+            _valid_release_cadence_contract(
+                cadence, max_releases, minimum_days, effective_time
+            ),
+            _valid_publication_states(train),
         )
     )
-    valid_sources = valid_channels and all(
-        channel["version_source"] in relative and channel["changelog"] in relative
-        for channel in channels
-    )
+
+
+def _release_cadence_summary(
+    cadence: Any,
+    effective_time: datetime | None,
+) -> dict[str, Any]:
+    if not isinstance(cadence, dict):
+        cadence = {}
+    effective_at = cadence.get("effective_at")
+    return {
+        "max_releases_30d": cadence.get("max_releases_30d"),
+        "minimum_days_between_releases": cadence.get("minimum_days_between_releases"),
+        "effective_at": effective_time.isoformat().replace("+00:00", "Z")
+        if effective_time
+        else effective_at,
+        "exception_requires": cadence.get("exception_requires"),
+        "requires_changelog_entry": cadence.get("requires_changelog_entry"),
+    }
+
+
+def _release_train(root: Path, relative: list[str]) -> dict[str, Any]:
+    """Validate the release-train contract without touching providers."""
+    path = root / RELEASE_TRAIN_NAME
+    if not path.is_file():
+        return {"status": "missing", "channels": 0}
+    try:
+        train = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {"status": "invalid", "channels": 0}
+    cadence, channels = train.get("cadence"), train.get("channels")
     max_releases = (
         cadence.get("max_releases_30d") if isinstance(cadence, dict) else None
     )
@@ -297,34 +439,131 @@ def _release_train(root: Path, relative: list[str]) -> dict[str, Any]:
     )
     effective_at = cadence.get("effective_at") if isinstance(cadence, dict) else None
     effective_time = _parse_timestamp(effective_at)
-    valid = (
-        train.get("schema") == "factory.release-train.v1"
-        and isinstance(train.get("train_id"), str)
-        and isinstance(train.get("owner"), str)
-        and valid_sources
-        and isinstance(cadence, dict)
-        and type(max_releases) is int
-        and max_releases > 0
-        and type(minimum_days) is int
-        and minimum_days > 0
-        and effective_time is not None
-        and cadence.get("exception_requires") == "human-release-authority"
-        and cadence.get("requires_changelog_entry") is True
-        and isinstance(states, list)
-        and required_states.issubset(states)
+    valid = _release_train_is_valid(
+        train,
+        _valid_release_channels(channels, relative),
+        cadence,
+        max_releases,
+        minimum_days,
+        effective_time,
     )
     return {
         "status": "valid" if valid else "invalid",
         "channels": len(channels) if isinstance(channels, list) else 0,
-        "cadence": {
-            "max_releases_30d": max_releases,
-            "minimum_days_between_releases": minimum_days,
-            "effective_at": effective_time.isoformat().replace("+00:00", "Z")
-            if effective_time
-            else effective_at,
-            "exception_requires": cadence.get("exception_requires"),
-            "requires_changelog_entry": cadence.get("requires_changelog_entry"),
-        },
+        "cadence": _release_cadence_summary(cadence, effective_time),
+    }
+
+
+def _cadence_releases_after_effective_date(
+    releases: list[tuple[str, datetime]],
+    effective_at: datetime | None,
+) -> tuple[list[tuple[str, datetime]], int, datetime | None]:
+    if effective_at is None:
+        return releases, 0, None
+    effective_at = effective_at.astimezone(timezone.utc)
+    pre_policy_count = sum(1 for _, stamp in releases if stamp < effective_at)
+    return (
+        [item for item in releases if item[1] >= effective_at],
+        pre_policy_count,
+        effective_at,
+    )
+
+
+def _cadence_window_deadline(
+    recent: list[tuple[str, datetime]],
+    max_releases_30d: int,
+) -> datetime | None:
+    if len(recent) < max_releases_30d:
+        return None
+    # The budget boundary is inclusive; advance one tick before admitting.
+    return recent[max_releases_30d - 1][1] + timedelta(days=30, microseconds=1)
+
+
+def _cadence_next_eligible(
+    now: datetime,
+    effective_at: datetime | None,
+    cooldown_until: datetime | None,
+    window_until: datetime | None,
+) -> datetime:
+    candidates = [value for value in (cooldown_until, window_until) if value]
+    if effective_at is not None and now < effective_at:
+        candidates.append(effective_at)
+    return max(candidates) if candidates else now
+
+
+def _cadence_state_and_reason(
+    releases: list[tuple[str, datetime]],
+    recent: list[tuple[str, datetime]],
+    now: datetime,
+    effective_at: datetime | None,
+    pre_policy_count: int,
+    max_releases_30d: int,
+    minimum_days_between_releases: int,
+    cooldown_until: datetime | None,
+) -> tuple[str, str]:
+    if not releases and effective_at is not None and now < effective_at:
+        return (
+            "not_yet_effective",
+            f"Release cadence begins at {effective_at.isoformat()}.",
+        )
+    if not releases:
+        if effective_at and pre_policy_count:
+            return (
+                "no_tags",
+                f"No version tags have been created since {effective_at.isoformat()}; the release train is eligible.",
+            )
+        return (
+            "no_tags",
+            "No version tags were observed; the release train is eligible.",
+        )
+    if len(recent) >= max_releases_30d:
+        reason = f"{len(recent)} version tags are inside the rolling 30-day budget of {max_releases_30d}."
+        return "rate_limited", reason
+    if cooldown_until and now < cooldown_until:
+        reason = f"The minimum {minimum_days_between_releases}-day interval since {releases[0][0]} has not elapsed."
+        return "cooldown", reason
+    return "eligible", "The observed release history satisfies the configured cadence."
+
+
+def _iso_timestamp(value: datetime | None) -> str | None:
+    return value.isoformat().replace("+00:00", "Z") if value else None
+
+
+def _cadence_projection_result(
+    releases: list[tuple[str, datetime]],
+    recent: list[tuple[str, datetime]],
+    pre_policy_count: int,
+    effective_at: datetime | None,
+    max_releases_30d: int,
+    minimum_days_between_releases: int,
+    cooldown_until: datetime | None,
+    window_until: datetime | None,
+    next_eligible: datetime,
+    state: str,
+    reason: str,
+) -> dict[str, Any]:
+    latest = releases[0] if releases else None
+    interval = (
+        (releases[0][1] - releases[1][1]).total_seconds() / 86400
+        if len(releases) > 1
+        else None
+    )
+    return {
+        "available": True,
+        "recent_count": len(recent),
+        "pre_policy_release_count": pre_policy_count,
+        "effective_at": _iso_timestamp(effective_at),
+        "max_releases_30d": max_releases_30d,
+        "minimum_days_between_releases": minimum_days_between_releases,
+        "latest_tag": latest[0] if latest else None,
+        "latest_release_at": _iso_timestamp(latest[1]) if latest else None,
+        "latest_interval_days": round(interval, 2) if interval is not None else None,
+        "cooldown_until": _iso_timestamp(cooldown_until),
+        "window_budget_until": _iso_timestamp(window_until),
+        "next_eligible_at": _iso_timestamp(next_eligible),
+        "admission": state in {"eligible", "no_tags"},
+        "state": state,
+        "reason": reason,
     }
 
 
@@ -344,82 +583,41 @@ def _cadence_projection(
     It never deletes, rewrites, or reclassifies historical tags.
     """
     releases = sorted(releases, key=lambda item: item[1], reverse=True)
-    pre_policy_count = 0
-    if effective_at is not None:
-        effective_at = effective_at.astimezone(timezone.utc)
-        pre_policy_count = sum(1 for _, stamp in releases if stamp < effective_at)
-        releases = [item for item in releases if item[1] >= effective_at]
+    releases, pre_policy_count, effective_at = _cadence_releases_after_effective_date(
+        releases, effective_at
+    )
     recent = [item for item in releases if now - item[1] <= timedelta(days=30)]
     latest = releases[0] if releases else None
     cooldown_until = (
         latest[1] + timedelta(days=minimum_days_between_releases) if latest else None
     )
-    window_until = None
-    if len(recent) >= max_releases_30d:
-        # The fourth-newest tag must age out before a fifth release is allowed.
-        # `now - tag <= 30 days` includes the exact boundary, so move the
-        # admission time forward by one clock tick to avoid an off-by-one hold.
-        window_until = recent[max_releases_30d - 1][1] + timedelta(
-            days=30, microseconds=1
-        )
-    candidates = [value for value in (cooldown_until, window_until) if value]
-    if effective_at is not None and now < effective_at:
-        candidates.append(effective_at)
-    next_eligible = max(candidates) if candidates else now
-    if not releases and effective_at is not None and now < effective_at:
-        state = "not_yet_effective"
-        reason = f"Release cadence begins at {effective_at.isoformat()}."
-    elif not releases:
-        state = "no_tags"
-        reason = (
-            f"No version tags have been created since {effective_at.isoformat()}; "
-            "the release train is eligible."
-            if effective_at and pre_policy_count
-            else "No version tags were observed; the release train is eligible."
-        )
-    elif len(recent) >= max_releases_30d:
-        state = "rate_limited"
-        reason = (
-            f"{len(recent)} version tags are inside the rolling 30-day budget "
-            f"of {max_releases_30d}."
-        )
-    elif cooldown_until and now < cooldown_until:
-        state = "cooldown"
-        reason = (
-            f"The minimum {minimum_days_between_releases}-day interval since "
-            f"{latest[0]} has not elapsed."
-        )
-    else:
-        state = "eligible"
-        reason = "The observed release history satisfies the configured cadence."
-    interval = (
-        (releases[0][1] - releases[1][1]).total_seconds() / 86400
-        if len(releases) > 1
-        else None
+    window_until = _cadence_window_deadline(recent, max_releases_30d)
+    next_eligible = _cadence_next_eligible(
+        now, effective_at, cooldown_until, window_until
     )
-
-    def iso(value: datetime | None) -> str | None:
-        return value.isoformat().replace("+00:00", "Z") if value else None
-
-    return {
-        "available": True,
-        "recent_count": len(recent),
-        "pre_policy_release_count": pre_policy_count,
-        "effective_at": effective_at.isoformat().replace("+00:00", "Z")
-        if effective_at
-        else None,
-        "max_releases_30d": max_releases_30d,
-        "minimum_days_between_releases": minimum_days_between_releases,
-        "latest_tag": latest[0] if latest else None,
-        "latest_release_at": iso(latest[1]) if latest else None,
-        "latest_interval_days": round(interval, 2) if interval is not None else None,
-        "cooldown_until": iso(cooldown_until),
-        "window_budget_until": iso(window_until),
-        "next_eligible_at": iso(next_eligible),
-        "admission": state in {"eligible", "no_tags"},
-        "state": state,
-        "reason": reason,
-    }
+    state, reason = _cadence_state_and_reason(
+        releases,
+        recent,
+        now,
+        effective_at,
+        pre_policy_count,
+        max_releases_30d,
+        minimum_days_between_releases,
+        cooldown_until,
+    )
+    return _cadence_projection_result(
+        releases,
+        recent,
+        pre_policy_count,
+        effective_at,
+        max_releases_30d,
+        minimum_days_between_releases,
+        cooldown_until,
+        window_until,
+        next_eligible,
+        state,
+        reason,
+    )
 
 
 def _recent_release_tags(
@@ -646,22 +844,47 @@ def _accepted_debt(
     value = policy.get("accepted_debt")
     if value is None:
         return None, None
-    if not isinstance(value, dict):
-        return None, "accepted_debt must be an object"
-    required = {"decision_id", "owner", "expires_at", "reason", "codes", "metrics"}
-    if set(value) != required:
+    error = _accepted_debt_shape_error(value)
+    if error:
+        return None, error
+    _, error = _accepted_debt_expiry(value)
+    if error:
+        return None, error
+    codes = _accepted_debt_codes(value.get("codes"))
+    if codes is None:
         return (
             None,
-            "accepted_debt must contain decision_id, owner, expires_at, reason, codes, and metrics",
+            "accepted_debt codes must be a unique non-empty list of known debt codes",
         )
+    accepted_metrics = value.get("metrics")
+    if not isinstance(accepted_metrics, dict):
+        return None, "accepted_debt metrics must be an object"
+    active_codes = [code for code in codes if code in active_finding_codes]
+    error = _accepted_metric_error(active_codes, accepted_metrics, metrics, cadence)
+    if error:
+        return None, error
+    if not active_codes:
+        return None, None
+    return _accepted_debt_receipt(
+        value, codes, active_codes, active_finding_codes, accepted_metrics
+    ), None
+
+
+def _accepted_debt_shape_error(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return "accepted_debt must be an object"
+    required = {"decision_id", "owner", "expires_at", "reason", "codes", "metrics"}
+    if set(value) != required:
+        return "accepted_debt must contain decision_id, owner, expires_at, reason, codes, and metrics"
     if not all(
         isinstance(value.get(key), str) and value[key].strip()
         for key in ("decision_id", "owner", "reason")
     ):
-        return (
-            None,
-            "accepted_debt decision_id, owner, and reason must be non-empty strings",
-        )
+        return "accepted_debt decision_id, owner, and reason must be non-empty strings"
+    return None
+
+
+def _accepted_debt_expiry(value: dict[str, Any]) -> tuple[datetime | None, str | None]:
     try:
         expires = datetime.fromisoformat(
             str(value["expires_at"]).replace("Z", "+00:00")
@@ -673,39 +896,47 @@ def _accepted_debt(
             )
     except ValueError:
         return None, "accepted_debt expires_at must be an ISO-8601 timestamp"
-    codes = value.get("codes")
+    return expires, None
+
+
+def _accepted_debt_codes(value: Any) -> list[str] | None:
     if (
-        not isinstance(codes, list)
-        or not codes
-        or len(codes) != len(set(codes))
+        not isinstance(value, list)
+        or not value
         or not all(
             isinstance(code, str) and code in _ACCEPTED_METRIC_FOR_CODE
-            for code in codes
+            for code in value
         )
     ):
-        return (
-            None,
-            "accepted_debt codes must be a unique non-empty list of known debt codes",
-        )
-    accepted_metrics = value.get("metrics")
-    if not isinstance(accepted_metrics, dict):
-        return None, "accepted_debt metrics must be an object"
+        return None
+    return value if len(value) == len(set(value)) else None
+
+
+def _accepted_metric_error(
+    active_codes: list[str],
+    accepted_metrics: dict[str, Any],
+    metrics: dict[str, Any],
+    cadence: dict[str, Any],
+) -> str | None:
     observed = {**metrics, "release_recent_count": cadence.get("recent_count")}
-    active_codes = [code for code in codes if code in active_finding_codes]
     for code in active_codes:
         metric = _ACCEPTED_METRIC_FOR_CODE[code]
         if metric not in accepted_metrics or accepted_metrics[metric] != observed.get(
             metric
         ):
             return (
-                None,
-                f"accepted_debt metric {metric} must exactly match the measured value",
+                f"accepted_debt metric {metric} must exactly match the measured value"
             )
-    if not active_codes:
-        # Approval snapshots only apply to findings that still exist. A fixed
-        # metric must not keep the gate red because an obsolete waiver digest
-        # was not rewritten by the same code change that fixed the issue.
-        return None, None
+    return None
+
+
+def _accepted_debt_receipt(
+    value: dict[str, Any],
+    codes: list[str],
+    active_codes: list[str],
+    active_finding_codes: set[str],
+    accepted_metrics: dict[str, Any],
+) -> dict[str, Any]:
     return {
         "decision_id": value["decision_id"],
         "owner": value["owner"],
@@ -719,20 +950,12 @@ def _accepted_debt(
             ]
             for code in active_codes
         },
-    }, None
+    }
 
 
-def evaluate_architecture_health(
-    root: Path, policy_path: Path | None = None, *, strict: bool = False
-) -> dict[str, Any]:
-    """Evaluate metrics against a human-reviewed policy.
-
-    Existing debt is reported as ``REVIEW_REQUIRED``.  Only a metric exceeding
-    its explicit budget is ``BLOCKED``; this makes the check useful immediately
-    on the current repository and strict on every subsequent change.
-    """
-    root = root.resolve()
-    policy_path = (policy_path or (root / DEFAULT_POLICY_NAME)).resolve()
+def _load_architecture_policy(
+    policy_path: Path,
+) -> tuple[bytes, dict[str, Any]]:
     if not policy_path.exists():
         raise ArchitectureHealthError(f"architecture policy not found: {policy_path}")
     try:
@@ -742,11 +965,13 @@ def evaluate_architecture_health(
         raise ArchitectureHealthError(f"invalid architecture policy: {exc}") from exc
     if policy.get("schema") != "factory.architecture-policy.v1":
         raise ArchitectureHealthError("unsupported architecture policy schema")
-    snapshot = collect_architecture_health(root)
-    metrics = snapshot["metrics"]
-    baseline = policy.get("baseline", {})
-    budgets = policy.get("budgets", {})
-    regressions: list[dict[str, Any]] = []
+    return policy_bytes, policy
+
+
+def _budget_regressions(
+    metrics: dict[str, Any], budgets: dict[str, Any]
+) -> list[dict[str, Any]]:
+    findings = []
     for key, budget_key in (
         ("markdown_files", "max_markdown_files"),
         ("python_files", "max_python_files"),
@@ -754,10 +979,9 @@ def evaluate_architecture_health(
         ("cli_command_declarations", "max_cli_command_declarations"),
         ("core_modules", "max_core_modules"),
     ):
-        value = metrics[key]
-        limit = budgets.get(budget_key)
+        value, limit = metrics[key], budgets.get(budget_key)
         if isinstance(value, int) and isinstance(limit, int) and value > limit:
-            regressions.append(
+            findings.append(
                 _finding(
                     f"E_ARCH_{key.upper()}_GROWTH",
                     "BLOCKER",
@@ -766,27 +990,34 @@ def evaluate_architecture_health(
                     blocking=True,
                 )
             )
-    ratio = metrics["markdown_python_ratio"]
-    ratio_limit = budgets.get("max_markdown_python_ratio")
+    ratio, limit = (
+        metrics["markdown_python_ratio"],
+        budgets.get("max_markdown_python_ratio"),
+    )
     if (
         isinstance(ratio, (int, float))
-        and isinstance(ratio_limit, (int, float))
-        and ratio > ratio_limit
+        and isinstance(limit, (int, float))
+        and ratio > limit
     ):
-        regressions.append(
+        findings.append(
             _finding(
                 "E_ARCH_DOC_CODE_RATIO_GROWTH",
                 "BLOCKER",
-                f"Markdown/Python ratio is {ratio}; policy maximum is {ratio_limit}.",
+                f"Markdown/Python ratio is {ratio}; policy maximum is {limit}.",
                 "Add executable coverage or consolidate stale documentation before adding more narrative surface.",
                 blocking=True,
             )
         )
+    return findings
 
-    debt: list[dict[str, Any]] = []
+
+def _integrity_regressions(
+    metrics: dict[str, Any], policy: dict[str, Any]
+) -> list[dict[str, Any]]:
+    findings = []
     domains = metrics.get("module_domains", {})
     if domains.get("manifest_invalid"):
-        regressions.append(
+        findings.append(
             _finding(
                 "E_ARCH_BOUNDARY_MANIFEST_INVALID",
                 "BLOCKER",
@@ -795,20 +1026,13 @@ def evaluate_architecture_health(
                 blocking=True,
             )
         )
-    elif domains.get("manifest_missing"):
-        debt.append(
-            _finding(
-                "ARCH_BOUNDARY_MANIFEST_MISSING",
-                "MEDIUM",
-                "No architecture-boundaries.json manifest was found for the measured repository.",
-                "Add a reviewed core-versus-specialist boundary manifest before expanding the module surface.",
-            )
-        )
-    documentation_index = metrics.get("documentation_index", {})
-    if policy.get("documentation", {}).get("require_index") and documentation_index.get(
-        "status"
-    ) in {"missing", "invalid", "incomplete"}:
-        regressions.append(
+    docs = metrics.get("documentation_index", {})
+    if policy.get("documentation", {}).get("require_index") and docs.get("status") in {
+        "missing",
+        "invalid",
+        "incomplete",
+    }:
+        findings.append(
             _finding(
                 "E_ARCH_DOCUMENTATION_INDEX_INVALID",
                 "BLOCKER",
@@ -817,11 +1041,12 @@ def evaluate_architecture_health(
                 blocking=True,
             )
         )
-    release_train = metrics.get("release_train", {})
-    if policy.get("release", {}).get("require_train") and release_train.get(
-        "status"
-    ) in {"missing", "invalid"}:
-        regressions.append(
+    train = metrics.get("release_train", {})
+    if policy.get("release", {}).get("require_train") and train.get("status") in {
+        "missing",
+        "invalid",
+    }:
+        findings.append(
             _finding(
                 "E_ARCH_RELEASE_TRAIN_INVALID",
                 "BLOCKER",
@@ -830,10 +1055,26 @@ def evaluate_architecture_health(
                 blocking=True,
             )
         )
-    if metrics["cli_lines"] > policy.get("review_thresholds", {}).get(
-        "cli_lines", 5000
-    ):
-        debt.append(
+    return findings
+
+
+def _surface_baseline_debt(
+    metrics: dict[str, Any], policy: dict[str, Any]
+) -> list[dict[str, Any]]:
+    findings = []
+    domains = metrics.get("module_domains", {})
+    if domains.get("manifest_missing") and not domains.get("manifest_invalid"):
+        findings.append(
+            _finding(
+                "ARCH_BOUNDARY_MANIFEST_MISSING",
+                "MEDIUM",
+                "No architecture-boundaries.json manifest was found for the measured repository.",
+                "Add a reviewed core-versus-specialist boundary manifest before expanding the module surface.",
+            )
+        )
+    thresholds = policy.get("review_thresholds", {})
+    if metrics["cli_lines"] > thresholds.get("cli_lines", 5000):
+        findings.append(
             _finding(
                 "ARCH_CLI_MONOLITH",
                 "HIGH",
@@ -841,10 +1082,10 @@ def evaluate_architecture_health(
                 "Extract command registration and dispatch into bounded command modules; retain cli.py as a compatibility entry point.",
             )
         )
-    if metrics["cli_command_declarations"] > policy.get("review_thresholds", {}).get(
+    if metrics["cli_command_declarations"] > thresholds.get(
         "cli_command_declarations", 300
     ):
-        debt.append(
+        findings.append(
             _finding(
                 "ARCH_CLI_COMMAND_SURFACE",
                 "HIGH",
@@ -852,10 +1093,8 @@ def evaluate_architecture_health(
                 "Group commands by bounded domain and expose a stable compatibility index instead of adding more parser branches.",
             )
         )
-    if metrics["core_modules"] > policy.get("review_thresholds", {}).get(
-        "core_modules", 150
-    ):
-        debt.append(
+    if metrics["core_modules"] > thresholds.get("core_modules", 150):
+        findings.append(
             _finding(
                 "ARCH_CORE_SURFACE",
                 "HIGH",
@@ -863,10 +1102,9 @@ def evaluate_architecture_health(
                 "Publish a supported-module manifest and move experimental adapters behind explicit package boundaries.",
             )
         )
-    if ratio is not None and ratio > policy.get("review_thresholds", {}).get(
-        "markdown_python_ratio", 1.5
-    ):
-        debt.append(
+    ratio = metrics["markdown_python_ratio"]
+    if ratio is not None and ratio > thresholds.get("markdown_python_ratio", 1.5):
+        findings.append(
             _finding(
                 "ARCH_DOC_CODE_RATIO",
                 "MEDIUM",
@@ -874,78 +1112,131 @@ def evaluate_architecture_health(
                 "Index canonical docs, archive superseded narratives, and require each new document to link to executable behavior or a decision.",
             )
         )
-    cadence = snapshot["release_cadence"]
-    cadence_policy = policy.get("release", {})
-    if cadence_policy.get(
+    return findings
+
+
+def _changelog_regressions(
+    root: Path, metrics: dict[str, Any], policy: dict[str, Any]
+) -> list[dict[str, Any]]:
+    if not policy.get("release", {}).get(
         "requires_changelog_entry"
-    ) and not _changelog_contains_version(root, metrics.get("version")):
-        regressions.append(
-            _finding(
-                "E_ARCH_RELEASE_CHANGELOG_MISSING",
-                "BLOCKER",
-                f"Current version {metrics.get('version') or 'unknown'} has no CHANGELOG.md release entry.",
-                "Add a human-readable changelog heading for the exact current version before release.",
-                blocking=True,
-            )
+    ) or _changelog_contains_version(root, metrics.get("version")):
+        return []
+    return [
+        _finding(
+            "E_ARCH_RELEASE_CHANGELOG_MISSING",
+            "BLOCKER",
+            f"Current version {metrics.get('version') or 'unknown'} has no CHANGELOG.md release entry.",
+            "Add a human-readable changelog heading for the exact current version before release.",
+            blocking=True,
         )
-    active_finding_codes = {item["code"] for item in [*regressions, *debt]}
-    accepted, acceptance_error = _accepted_debt(
-        policy, metrics, cadence, active_finding_codes
-    )
-    if acceptance_error:
+    ]
+
+
+def _apply_accepted_debt(
+    policy: dict[str, Any],
+    metrics: dict[str, Any],
+    cadence: dict[str, Any],
+    regressions: list[dict[str, Any]],
+    debt: list[dict[str, Any]],
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    dict[str, Any] | None,
+]:
+    active_codes = {item["code"] for item in [*regressions, *debt]}
+    accepted, error = _accepted_debt(policy, metrics, cadence, active_codes)
+    if error:
         regressions.append(
             _finding(
                 "E_ARCH_ACCEPTANCE_INVALID",
                 "BLOCKER",
-                acceptance_error,
+                error,
                 "Remove the acceptance or renew it with a named owner, future expiry, and exact measured values.",
                 blocking=True,
             )
         )
     accepted_codes = set(accepted["codes"]) if accepted else set()
-    accepted_baseline_debt = [item for item in debt if item["code"] in accepted_codes]
-    debt = [item for item in debt if item["code"] not in accepted_codes]
+    accepted_debt = [item for item in debt if item["code"] in accepted_codes]
     accepted_regressions = [
         item for item in regressions if item["code"] in accepted_codes
     ]
-    regressions = [item for item in regressions if item["code"] not in accepted_codes]
-
-    decision = (
-        "BLOCKED"
-        if regressions or (strict and debt)
-        else ("REVIEW_REQUIRED" if debt else "HEALTHY")
+    return (
+        [item for item in debt if item["code"] not in accepted_codes],
+        [item for item in regressions if item["code"] not in accepted_codes],
+        accepted_debt,
+        accepted_regressions,
+        accepted,
     )
-    cadence_action = ""
-    if snapshot["release_cadence"].get("admission") is False:
-        cadence = snapshot["release_cadence"]
-        next_eligible = cadence.get("next_eligible_at")
-        cadence_action = (
-            " Release admission is blocked by the cadence guard: "
-            f"{cadence.get('reason', 'cadence evidence unavailable')}"
+
+
+def _architecture_decision(
+    regressions: list[dict[str, Any]], debt: list[dict[str, Any]], strict: bool
+) -> str:
+    if regressions or (strict and debt):
+        return "BLOCKED"
+    return "REVIEW_REQUIRED" if debt else "HEALTHY"
+
+
+def _architecture_next_action(
+    regressions: list[dict[str, Any]],
+    debt: list[dict[str, Any]],
+    strict: bool,
+    cadence: dict[str, Any],
+) -> str:
+    if regressions:
+        return "Stop and resolve architecture budget regressions before merge."
+    if strict and debt:
+        return (
+            "Strict mode requires an approved decomposition plan for all baseline debt."
         )
-        if next_eligible:
-            cadence_action += f" Next eligible at {next_eligible}."
+    if debt:
+        return (
+            "Keep the existing debt visible and execute the bounded decomposition plan."
+        )
+    action = "Architecture budgets are within policy."
+    if cadence.get("admission") is not False:
+        return action
+    action += " Release admission is blocked by the cadence guard: "
+    action += cadence.get("reason", "cadence evidence unavailable")
+    if cadence.get("next_eligible_at"):
+        action += f" Next eligible at {cadence['next_eligible_at']}."
+    return action
+
+
+def evaluate_architecture_health(
+    root: Path, policy_path: Path | None = None, *, strict: bool = False
+) -> dict[str, Any]:
+    """Evaluate metrics against a human-reviewed policy."""
+    root = root.resolve()
+    policy_path = (policy_path or (root / DEFAULT_POLICY_NAME)).resolve()
+    policy_bytes, policy = _load_architecture_policy(policy_path)
+    snapshot = collect_architecture_health(root)
+    metrics = snapshot["metrics"]
+    budgets = policy.get("budgets", {})
+    regressions = _budget_regressions(metrics, budgets)
+    regressions.extend(_integrity_regressions(metrics, policy))
+    regressions.extend(_changelog_regressions(root, metrics, policy))
+    debt = _surface_baseline_debt(metrics, policy)
+    cadence = snapshot["release_cadence"]
+    debt, regressions, accepted_debt, accepted_regressions, accepted = (
+        _apply_accepted_debt(policy, metrics, cadence, regressions, debt)
+    )
     return {
         **snapshot,
         "policy": {
             "path": str(policy_path),
-            "baseline": baseline,
+            "baseline": policy.get("baseline", {}),
             "budgets": budgets,
             "sha256": "sha256:" + hashlib.sha256(policy_bytes).hexdigest(),
         },
         "baseline_debt": debt,
-        "accepted_baseline_debt": accepted_baseline_debt,
+        "accepted_baseline_debt": accepted_debt,
         "accepted_regressions": accepted_regressions,
         "accepted_debt": accepted,
         "regressions": regressions,
-        "decision": decision,
-        "next_action": (
-            "Stop and resolve architecture budget regressions before merge."
-            if regressions
-            else "Strict mode requires an approved decomposition plan for all baseline debt."
-            if strict and debt
-            else "Keep the existing debt visible and execute the bounded decomposition plan."
-            if debt
-            else "Architecture budgets are within policy." + cadence_action
-        ),
+        "decision": _architecture_decision(regressions, debt, strict),
+        "next_action": _architecture_next_action(regressions, debt, strict, cadence),
     }

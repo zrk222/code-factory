@@ -193,190 +193,227 @@ def add_parser(sub: Any) -> None:
     semantic_status.add_argument("--json", action="store_true")
 
 
-def run(args: Any) -> int:
-    """Execute the selected authority command."""
-    if args.cmd == "proof-continuity":
-        from .oracle_firewall import OracleFirewallError
-        from .proof_continuity_ledger import (
-            ProofContinuityError,
-            proof_continuity_projection,
-            record_proof_continuity_observation,
-            seal_proof_continuity,
-        )
-
-        root = Path(args.root).resolve()
-        try:
-            if args.proof_continuity_cmd == "seal":
-                result = seal_proof_continuity(root, Path(args.input), Path(args.out))
-            elif args.proof_continuity_cmd == "observe":
-                result = record_proof_continuity_observation(
-                    root, Path(args.contract), Path(args.observation), Path(args.out)
-                )
-            else:
-                result = proof_continuity_projection(root)
-            code = 0 if result.get("verdict") != "BLOCKED" else 1
-        except (
-            ProofContinuityError,
-            OracleFirewallError,
-            OSError,
-            UnicodeDecodeError,
-            json.JSONDecodeError,
-            ValueError,
-        ) as exc:
-            result = {
-                "schema": "factory.proof-continuity.error.v1",
-                "marker": "PROOF_CONTINUITY_REFUSED",
-                "code": getattr(exc, "code", "PROOF_CONTINUITY_INPUT_INVALID"),
-                "message": str(exc),
-            }
-            code = 2
-        if args.json:
-            print(json.dumps(result, indent=2, sort_keys=True))
-        elif code == 0:
-            print(result.get("marker", "PROOF_CONTINUITY_OK"))
-            print(
-                "authority   : local hash-bound audit only; no test run, candidate mutation, provider action, release, or approval"
-            )
-        else:
-            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
-        return code
-
-    if args.cmd == "oracle":
-        from .oracle_firewall import (
-            OracleFirewallError,
-            capture_intent_handoff,
-            compare_oracle_contracts,
-            compile_oracle_challenge,
-            initialize_oracle_firewall,
-            oracle_firewall_projection,
-            record_oracle_incident,
-            seal_oracle_contract,
-            verify_oracle_challenge_result,
-            verify_oracle_contract,
-        )
-
-        root = Path(args.root).resolve()
-        try:
-            if args.oracle_cmd == "init":
-                agent = json.loads((root / args.agent).read_text(encoding="utf-8-sig"))
-                result = initialize_oracle_firewall(
-                    root,
-                    Path(args.out_dir),
-                    Path(args.source),
-                    agent,
-                    args.id,
-                    args.scope,
-                    appforge=args.appforge,
-                )
-            elif args.oracle_cmd == "handoff":
-                agent = json.loads((root / args.agent).read_text(encoding="utf-8-sig"))
-                result = capture_intent_handoff(
-                    root,
-                    Path(args.source),
-                    agent,
-                    args.id,
-                    Path(args.out) if args.out else None,
-                )
-            elif args.oracle_cmd == "seal":
-                result = seal_oracle_contract(root, Path(args.input), Path(args.out))
-            elif args.oracle_cmd == "verify":
-                result = verify_oracle_contract(root, Path(args.contract))
-            elif args.oracle_cmd == "diff":
-                result = compare_oracle_contracts(
-                    root,
-                    Path(args.prior),
-                    Path(args.candidate),
-                    Path(args.out) if args.out else None,
-                )
-            elif args.oracle_cmd == "challenge":
-                result = (
-                    compile_oracle_challenge(
-                        root, Path(args.contract), Path(args.out) if args.out else None
-                    )
-                    if args.oracle_challenge_cmd == "compile"
-                    else verify_oracle_challenge_result(
-                        root, Path(args.plan), Path(args.result)
-                    )
-                )
-            elif args.oracle_cmd == "incident":
-                agent = json.loads((root / args.agent).read_text(encoding="utf-8-sig"))
-                result = record_oracle_incident(
-                    root,
-                    agent,
-                    Path(args.contract),
-                    Path(args.drift),
-                    Path(args.out) if args.out else None,
-                )
-            else:
-                result = oracle_firewall_projection(root)
-            code = (
-                0
-                if result.get("ok", True) and result.get("verdict") != "BLOCKED"
-                else 1
-            )
-        except (
-            OracleFirewallError,
-            OSError,
-            UnicodeDecodeError,
-            json.JSONDecodeError,
-            ValueError,
-        ) as exc:
-            result = {
-                "schema": "factory.oracle-firewall.error.v1",
-                "marker": "ORACLE_FIREWALL_REFUSED",
-                "code": getattr(exc, "code", "ORACLE_INPUT_INVALID"),
-                "message": str(exc),
-            }
-            code = 2
-        if args.json:
-            print(json.dumps(result, indent=2, sort_keys=True))
-        elif code == 0:
-            print(result.get("marker", "ORACLE_FIREWALL_OK"))
-            print(
-                "authority   : local integrity and read-only supervision only; no candidate mutation, approval, release, credential, or network action"
-            )
-        else:
-            print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
-        return code
-
-    from .semantic_authority import (
-        SemanticAuthorityError,
-        authorize_semantic_action,
-        record_semantic_action_decision,
-        seal_authority_lease,
-        seal_semantic_handoff,
-        semantic_authority_projection,
-        verify_authority_lease,
-        verify_semantic_handoff,
+def _handle_proof_continuity(args):
+    from .oracle_firewall import OracleFirewallError
+    from .proof_continuity_ledger import (
+        ProofContinuityError,
+        proof_continuity_projection,
+        record_proof_continuity_observation,
+        seal_proof_continuity,
     )
 
     root = Path(args.root).resolve()
     try:
-        if args.semantic_cmd == "handoff":
-            result = seal_semantic_handoff(root, Path(args.input), Path(args.out))
-        elif args.semantic_cmd == "lease":
-            result = seal_authority_lease(root, Path(args.input), Path(args.out))
-        elif args.semantic_cmd == "verify":
-            result = (
-                verify_semantic_handoff(root, Path(args.path))
-                if args.kind == "handoff"
-                else verify_authority_lease(root, Path(args.path))
-            )
-        elif args.semantic_cmd == "check":
-            result = authorize_semantic_action(
-                root,
-                Path(args.lease),
-                json.loads((root / args.request).read_text(encoding="utf-8-sig")),
-            )
-        elif args.semantic_cmd == "record":
-            result = record_semantic_action_decision(
-                root,
-                Path(args.lease),
-                json.loads((root / args.request).read_text(encoding="utf-8-sig")),
-                Path(args.out),
+        if args.proof_continuity_cmd == "seal":
+            result = seal_proof_continuity(root, Path(args.input), Path(args.out))
+        elif args.proof_continuity_cmd == "observe":
+            result = record_proof_continuity_observation(
+                root, Path(args.contract), Path(args.observation), Path(args.out)
             )
         else:
-            result = semantic_authority_projection(root)
+            result = proof_continuity_projection(root)
+        code = 0 if result.get("verdict") != "BLOCKED" else 1
+    except (
+        ProofContinuityError,
+        OracleFirewallError,
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        ValueError,
+    ) as exc:
+        result = {
+            "schema": "factory.proof-continuity.error.v1",
+            "marker": "PROOF_CONTINUITY_REFUSED",
+            "code": getattr(exc, "code", "PROOF_CONTINUITY_INPUT_INVALID"),
+            "message": str(exc),
+        }
+        code = 2
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    elif code == 0:
+        print(result.get("marker", "PROOF_CONTINUITY_OK"))
+        print(
+            "authority   : local hash-bound audit only; no test run, candidate mutation, provider action, release, or approval"
+        )
+    else:
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+    return code
+
+
+def _oracle_setup(args, root):
+    from .oracle_firewall import capture_intent_handoff, initialize_oracle_firewall
+
+    agent = json.loads((root / args.agent).read_text(encoding="utf-8-sig"))
+    if args.oracle_cmd == "init":
+        return initialize_oracle_firewall(
+            root,
+            Path(args.out_dir),
+            Path(args.source),
+            agent,
+            args.id,
+            args.scope,
+            appforge=args.appforge,
+        )
+    return capture_intent_handoff(
+        root,
+        Path(args.source),
+        agent,
+        args.id,
+        Path(args.out) if args.out else None,
+    )
+
+
+def _oracle_contract_action(args, root):
+    from .oracle_firewall import (
+        compare_oracle_contracts,
+        seal_oracle_contract,
+        verify_oracle_contract,
+    )
+
+    if args.oracle_cmd == "seal":
+        return seal_oracle_contract(root, Path(args.input), Path(args.out))
+    if args.oracle_cmd == "verify":
+        return verify_oracle_contract(root, Path(args.contract))
+    return compare_oracle_contracts(
+        root,
+        Path(args.prior),
+        Path(args.candidate),
+        Path(args.out) if args.out else None,
+    )
+
+
+def _oracle_challenge_action(args, root):
+    from .oracle_firewall import (
+        compile_oracle_challenge,
+        verify_oracle_challenge_result,
+    )
+
+    if args.oracle_challenge_cmd == "compile":
+        return compile_oracle_challenge(
+            root, Path(args.contract), Path(args.out) if args.out else None
+        )
+    return verify_oracle_challenge_result(root, Path(args.plan), Path(args.result))
+
+
+def _oracle_incident(args, root):
+    from .oracle_firewall import record_oracle_incident
+
+    agent = json.loads((root / args.agent).read_text(encoding="utf-8-sig"))
+    return record_oracle_incident(
+        root,
+        agent,
+        Path(args.contract),
+        Path(args.drift),
+        Path(args.out) if args.out else None,
+    )
+
+
+def _oracle_dispatch(args, root):
+    from .oracle_firewall import oracle_firewall_projection
+
+    actions = {
+        "init": lambda: _oracle_setup(args, root),
+        "handoff": lambda: _oracle_setup(args, root),
+        "seal": lambda: _oracle_contract_action(args, root),
+        "verify": lambda: _oracle_contract_action(args, root),
+        "diff": lambda: _oracle_contract_action(args, root),
+        "challenge": lambda: _oracle_challenge_action(args, root),
+        "incident": lambda: _oracle_incident(args, root),
+    }
+    action = actions.get(args.oracle_cmd)
+    return action() if action else oracle_firewall_projection(root)
+
+
+def _handle_oracle(args):
+    from .oracle_firewall import OracleFirewallError
+
+    root = Path(args.root).resolve()
+    try:
+        result = _oracle_dispatch(args, root)
+        code = 0 if result.get("ok", True) and result.get("verdict") != "BLOCKED" else 1
+    except (
+        OracleFirewallError,
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        ValueError,
+    ) as exc:
+        result = {
+            "schema": "factory.oracle-firewall.error.v1",
+            "marker": "ORACLE_FIREWALL_REFUSED",
+            "code": getattr(exc, "code", "ORACLE_INPUT_INVALID"),
+            "message": str(exc),
+        }
+        code = 2
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    elif code == 0:
+        print(result.get("marker", "ORACLE_FIREWALL_OK"))
+        print(
+            "authority   : local integrity and read-only supervision only; no candidate mutation, approval, release, credential, or network action"
+        )
+    else:
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
+    return code
+
+
+def _semantic_handoff(args, root):
+    from .semantic_authority import seal_semantic_handoff
+
+    return seal_semantic_handoff(root, Path(args.input), Path(args.out))
+
+
+def _semantic_lease(args, root):
+    from .semantic_authority import seal_authority_lease
+
+    return seal_authority_lease(root, Path(args.input), Path(args.out))
+
+
+def _semantic_verify(args, root):
+    from .semantic_authority import verify_authority_lease, verify_semantic_handoff
+
+    verifier = (
+        verify_semantic_handoff if args.kind == "handoff" else verify_authority_lease
+    )
+    return verifier(root, Path(args.path))
+
+
+def _semantic_check(args, root):
+    from .semantic_authority import authorize_semantic_action
+
+    request = json.loads((root / args.request).read_text(encoding="utf-8-sig"))
+    return authorize_semantic_action(root, Path(args.lease), request)
+
+
+def _semantic_record(args, root):
+    from .semantic_authority import record_semantic_action_decision
+
+    request = json.loads((root / args.request).read_text(encoding="utf-8-sig"))
+    return record_semantic_action_decision(
+        root, Path(args.lease), request, Path(args.out)
+    )
+
+
+def _semantic_dispatch(args, root):
+    from .semantic_authority import semantic_authority_projection
+
+    actions = {
+        "handoff": lambda: _semantic_handoff(args, root),
+        "lease": lambda: _semantic_lease(args, root),
+        "verify": lambda: _semantic_verify(args, root),
+        "check": lambda: _semantic_check(args, root),
+        "record": lambda: _semantic_record(args, root),
+    }
+    action = actions.get(args.semantic_cmd)
+    return action() if action else semantic_authority_projection(root)
+
+
+def _handle_semantic_authority(args):
+    from .semantic_authority import SemanticAuthorityError
+
+    root = Path(args.root).resolve()
+    try:
+        result = _semantic_dispatch(args, root)
         code = 0 if result.get("ok", result.get("allowed", True)) else 1
     except (
         SemanticAuthorityError,
@@ -402,3 +439,9 @@ def run(args: Any) -> int:
     else:
         print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
     return code
+
+
+def run(args: Any) -> int:
+    """Dispatch one authority command."""
+    handlers = {"proof-continuity": _handle_proof_continuity, "oracle": _handle_oracle}
+    return handlers.get(args.cmd, _handle_semantic_authority)(args)
