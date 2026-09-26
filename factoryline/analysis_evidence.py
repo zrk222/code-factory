@@ -128,13 +128,7 @@ def _safe_uri(uri: object) -> str | None:
     return normalized
 
 
-def parse_analysis_sarif(
-    root: Path, sarif_path: Path, *, provider: str = "auto"
-) -> dict[str, Any]:
-    """Normalize bounded Qodana or SonarQube SARIF facts without executing it."""
-    workspace = _workspace(root)
-    path = _local_file(workspace, sarif_path)
-    raw = path.read_bytes()
+def _load_sarif_payload(raw: bytes) -> dict[str, Any]:
     try:
         payload = json.loads(raw.decode("utf-8-sig"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -151,69 +145,77 @@ def parse_analysis_sarif(
             "ANALYSIS_SARIF_INVALID",
             "analysis evidence must be a SARIF 2.1.0 object with at least one run",
         )
-    names = _driver_names(payload)
-    resolved_provider = _provider(provider, names)
-    findings: list[dict[str, Any]] = []
-    execution: list[bool] = []
-    for run in payload["runs"]:
-        if not isinstance(run, dict) or not isinstance(run.get("results", []), list):
-            raise AnalysisEvidenceError(
-                "ANALYSIS_SARIF_INVALID",
-                "every SARIF run must contain a results array when present",
-            )
-        invocations = run.get("invocations", [])
-        if not isinstance(invocations, list):
-            raise AnalysisEvidenceError(
-                "ANALYSIS_SARIF_INVALID", "SARIF invocations must be an array"
-            )
-        for invocation in invocations:
-            if isinstance(invocation, dict) and isinstance(
-                invocation.get("executionSuccessful"), bool
-            ):
-                execution.append(invocation["executionSuccessful"])
-        for result in run.get("results", []):
-            if not isinstance(result, dict):
-                raise AnalysisEvidenceError(
-                    "ANALYSIS_SARIF_INVALID", "SARIF results must be objects"
-                )
-            rule = result.get("ruleId")
-            if not isinstance(rule, str) or not rule.strip() or len(rule) > 200:
-                raise AnalysisEvidenceError(
-                    "ANALYSIS_SARIF_INVALID",
-                    "each SARIF result must contain a bounded ruleId",
-                )
-            level = result.get("level", "warning")
-            if level not in {"error", "warning", "note", "none"}:
-                raise AnalysisEvidenceError(
-                    "ANALYSIS_SARIF_INVALID", "SARIF result level is unsupported"
-                )
-            baseline = result.get("baselineState", "unbaselined")
-            if baseline not in {"new", "unchanged", "absent", "updated", "unbaselined"}:
-                raise AnalysisEvidenceError(
-                    "ANALYSIS_SARIF_INVALID", "SARIF baselineState is unsupported"
-                )
-            locations: list[str] = []
-            raw_locations = result.get("locations", [])
-            if not isinstance(raw_locations, list):
-                raise AnalysisEvidenceError(
-                    "ANALYSIS_SARIF_INVALID", "SARIF result locations must be an array"
-                )
-            for location in raw_locations:
-                try:
-                    uri = location["physicalLocation"]["artifactLocation"]["uri"]
-                except (KeyError, TypeError):
-                    continue
-                safe = _safe_uri(uri)
-                if safe is not None:
-                    locations.append(safe)
-            findings.append(
-                {
-                    "rule_id": rule.strip(),
-                    "level": level,
-                    "baseline_state": baseline,
-                    "paths": sorted(set(locations))[:20],
-                }
-            )
+    return payload
+
+
+def _normalized_result_locations(result: dict[str, Any]) -> list[str]:
+    raw_locations = result.get("locations", [])
+    if not isinstance(raw_locations, list):
+        raise AnalysisEvidenceError(
+            "ANALYSIS_SARIF_INVALID", "SARIF result locations must be an array"
+        )
+    paths = []
+    for location in raw_locations:
+        try:
+            uri = location["physicalLocation"]["artifactLocation"]["uri"]
+        except (KeyError, TypeError):
+            continue
+        safe = _safe_uri(uri)
+        if safe is not None:
+            paths.append(safe)
+    return sorted(set(paths))[:20]
+
+
+def _normalized_sarif_result(result: Any) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        raise AnalysisEvidenceError(
+            "ANALYSIS_SARIF_INVALID", "SARIF results must be objects"
+        )
+    rule = result.get("ruleId")
+    if not isinstance(rule, str) or not rule.strip() or len(rule) > 200:
+        raise AnalysisEvidenceError(
+            "ANALYSIS_SARIF_INVALID", "each SARIF result must contain a bounded ruleId"
+        )
+    level = result.get("level", "warning")
+    if level not in {"error", "warning", "note", "none"}:
+        raise AnalysisEvidenceError(
+            "ANALYSIS_SARIF_INVALID", "SARIF result level is unsupported"
+        )
+    baseline = result.get("baselineState", "unbaselined")
+    if baseline not in {"new", "unchanged", "absent", "updated", "unbaselined"}:
+        raise AnalysisEvidenceError(
+            "ANALYSIS_SARIF_INVALID", "SARIF baselineState is unsupported"
+        )
+    return {
+        "rule_id": rule.strip(),
+        "level": level,
+        "baseline_state": baseline,
+        "paths": _normalized_result_locations(result),
+    }
+
+
+def _normalized_sarif_run(run: Any) -> tuple[list[dict[str, Any]], list[bool]]:
+    if not isinstance(run, dict) or not isinstance(run.get("results", []), list):
+        raise AnalysisEvidenceError(
+            "ANALYSIS_SARIF_INVALID",
+            "every SARIF run must contain a results array when present",
+        )
+    invocations = run.get("invocations", [])
+    if not isinstance(invocations, list):
+        raise AnalysisEvidenceError(
+            "ANALYSIS_SARIF_INVALID", "SARIF invocations must be an array"
+        )
+    execution = [
+        item["executionSuccessful"]
+        for item in invocations
+        if isinstance(item, dict) and isinstance(item.get("executionSuccessful"), bool)
+    ]
+    return [
+        _normalized_sarif_result(item) for item in run.get("results", [])
+    ], execution
+
+
+def _sarif_counts(findings: list[dict[str, Any]]) -> dict[str, int]:
     counts = {
         key: 0
         for key in (
@@ -231,6 +233,40 @@ def parse_analysis_sarif(
     for finding in findings:
         counts[finding["level"]] += 1
         counts[finding["baseline_state"]] += 1
+    return counts
+
+
+def _execution_status(execution: list[bool]) -> bool | None:
+    if False in execution:
+        return False
+    return True if execution else None
+
+
+def _seal_evidence(core: dict[str, Any]) -> dict[str, Any]:
+    core["evidence_sha256"] = sha256(
+        json.dumps(
+            core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    return core
+
+
+def parse_analysis_sarif(
+    root: Path, sarif_path: Path, *, provider: str = "auto"
+) -> dict[str, Any]:
+    """Normalize bounded Qodana or SonarQube SARIF facts without executing it."""
+    workspace = _workspace(root)
+    path = _local_file(workspace, sarif_path)
+    raw = path.read_bytes()
+    payload = _load_sarif_payload(raw)
+    names = _driver_names(payload)
+    resolved_provider = _provider(provider, names)
+    findings: list[dict[str, Any]] = []
+    execution: list[bool] = []
+    for run in payload["runs"]:
+        run_findings, run_execution = _normalized_sarif_run(run)
+        findings.extend(run_findings)
+        execution.extend(run_execution)
     core = {
         "schema": SCHEMA,
         "marker": "ANALYSIS_EVIDENCE_NORMALIZED",
@@ -238,12 +274,8 @@ def parse_analysis_sarif(
         "tool_driver_names": names,
         "path": path.relative_to(workspace).as_posix(),
         "file_sha256": sha256(raw).hexdigest(),
-        "execution_successful": False
-        if False in execution
-        else True
-        if execution
-        else None,
-        "counts": counts,
+        "execution_successful": _execution_status(execution),
+        "counts": _sarif_counts(findings),
         "findings": sorted(
             findings,
             key=lambda item: (
@@ -261,9 +293,4 @@ def parse_analysis_sarif(
         },
         "claim_boundary": "supplied local SARIF facts only; not analyzer execution, vendor certification, absence of defects, or release approval",
     }
-    core["evidence_sha256"] = sha256(
-        json.dumps(
-            core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
-    ).hexdigest()
-    return core
+    return _seal_evidence(core)
