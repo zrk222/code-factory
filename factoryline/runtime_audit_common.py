@@ -136,29 +136,43 @@ def reject_secret_material(
     if depth > 32:
         raise RuntimeAuditError("E_ARTIFACT_DEPTH", "maximum nesting depth is 32")
     if isinstance(value, dict):
-        for key, child in value.items():
-            if str(key).lower() in FORBIDDEN_SECRET_FIELDS:
-                raise RuntimeAuditError(
-                    "E_SECRET_MATERIAL", f"forbidden field at {path}.{key}"
-                )
-            reject_secret_material(
-                child,
-                path=f"{path}.{key}",
-                depth=depth + 1,
-                max_string_length=max_string_length,
-            )
+        _reject_secret_fields(value, path, depth, max_string_length)
     elif isinstance(value, list):
-        for index, child in enumerate(value):
-            reject_secret_material(
-                child,
-                path=f"{path}[{index}]",
-                depth=depth + 1,
-                max_string_length=max_string_length,
-            )
+        _reject_secret_list(value, path, depth, max_string_length)
     elif isinstance(value, float) and not math.isfinite(value):
         raise RuntimeAuditError("E_NONFINITE", f"non-finite number at {path}")
     elif isinstance(value, str) and len(value) > max_string_length:
         raise RuntimeAuditError("E_FIELD_SIZE", f"string too long at {path}")
+
+
+def _reject_secret_fields(
+    value: dict, path: str, depth: int, max_string_length: int
+) -> None:
+    """Check object keys before descending into their values."""
+    for key, child in value.items():
+        if str(key).lower() in FORBIDDEN_SECRET_FIELDS:
+            raise RuntimeAuditError(
+                "E_SECRET_MATERIAL", f"forbidden field at {path}.{key}"
+            )
+        reject_secret_material(
+            child,
+            path=f"{path}.{key}",
+            depth=depth + 1,
+            max_string_length=max_string_length,
+        )
+
+
+def _reject_secret_list(
+    value: list, path: str, depth: int, max_string_length: int
+) -> None:
+    """Preserve index paths while checking nested evidence."""
+    for index, child in enumerate(value):
+        reject_secret_material(
+            child,
+            path=f"{path}[{index}]",
+            depth=depth + 1,
+            max_string_length=max_string_length,
+        )
 
 
 def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

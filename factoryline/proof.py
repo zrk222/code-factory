@@ -599,6 +599,32 @@ def public_evidence(
     }
 
 
+def _public_stage_lines(stages: list[dict]) -> list[str]:
+    """Render each recorded stage verdict without inferring missing results."""
+    lines = []
+    for stage in stages:
+        verdict = "ok" if stage["ok"] else "failed"
+        failure = stage.get("dominant_failure_class") or "-"
+        rate = "-" if stage.get("rate") is None else stage["rate"]
+        lines.append(f"{stage['stage']:<28} {verdict:<7} rate={rate} class={failure}")
+    return lines
+
+
+def _public_meter_lines(meter: dict) -> list[str]:
+    """Render measured cost values only when a meter was supplied."""
+    if not meter:
+        return []
+    return [
+        "",
+        "COST / TOKEN MODEL",
+        "-" * 52,
+        f"stages measured      : {meter.get('stages_measured')}",
+        f"build wall ms        : {meter.get('build_wall_ms')}",
+        f"tokens saved         : {meter.get('tokens_saved')}",
+        f"percent saved        : {meter.get('pct_tokens_saved')}%",
+    ]
+
+
 def public_evidence_text(evidence: dict) -> str:
     """Render public evidence as human-readable Markdown without inventing claims."""
     status = "verified" if evidence["verified"] else "not verified"
@@ -615,24 +641,8 @@ def public_evidence_text(evidence: dict) -> str:
         "STAGES",
         "-" * 52,
     ]
-    for stage in evidence["stages"]:
-        verdict = "ok" if stage["ok"] else "failed"
-        failure = stage.get("dominant_failure_class") or "-"
-        rate = "-" if stage.get("rate") is None else stage["rate"]
-        lines.append(f"{stage['stage']:<28} {verdict:<7} rate={rate} class={failure}")
-    meter = evidence.get("meter") or {}
-    if meter:
-        lines.extend(
-            [
-                "",
-                "COST / TOKEN MODEL",
-                "-" * 52,
-                f"stages measured      : {meter.get('stages_measured')}",
-                f"build wall ms        : {meter.get('build_wall_ms')}",
-                f"tokens saved         : {meter.get('tokens_saved')}",
-                f"percent saved        : {meter.get('pct_tokens_saved')}%",
-            ]
-        )
+    lines.extend(_public_stage_lines(evidence["stages"]))
+    lines.extend(_public_meter_lines(evidence.get("meter") or {}))
     if evidence["verification_errors"]:
         lines.extend(["", "VERIFICATION ERRORS", "-" * 52])
         lines.extend(f"- {error}" for error in evidence["verification_errors"])

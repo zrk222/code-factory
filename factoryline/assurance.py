@@ -210,20 +210,8 @@ class RiskDAG:
         }
 
 
-def run_constrained(
-    command: list[str],
-    *,
-    root: Path,
-    cwd: str = ".",
-    timeout: int = 60,
-    env_keys: Iterable[str] = (),
-) -> dict[str, Any]:
-    """Run a command with no shell, a contained cwd, and an allow-listed env.
-
-    This is a process boundary, not a kernel/container sandbox. The result
-    states that limitation so callers can require a stronger runner for
-    untrusted code.
-    """
+def _runner_work_path(command: list[str], root: Path, cwd: str) -> Path:
+    """Validate argv and resolve a working directory beneath the caller's root."""
     if not command or not all(isinstance(item, str) and item for item in command):
         raise AssuranceError(
             "E_RUNNER_COMMAND", "command must be a non-empty argv list"
@@ -238,6 +226,11 @@ def run_constrained(
         ) from exc
     if not work_path.is_dir():
         raise AssuranceError("E_RUNNER_CWD", "runner cwd does not exist")
+    return work_path
+
+
+def _runner_environment(env_keys: Iterable[str]) -> dict[str, str]:
+    """Keep only host process essentials and explicitly allowed variables."""
     # Keep only the runtime variables required to launch a process on the
     # host. Application secrets and user variables remain opt-in.
     runtime_keys = {"PATH", "PATHEXT", "SystemRoot", "WINDIR", "TEMP", "TMP"}
@@ -247,6 +240,25 @@ def run_constrained(
         if key in os.environ
     }
     env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
+def run_constrained(
+    command: list[str],
+    *,
+    root: Path,
+    cwd: str = ".",
+    timeout: int = 60,
+    env_keys: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Run argv with a contained cwd and an allow-listed environment.
+
+    This is a process boundary, not a kernel/container sandbox. The result
+    states that limitation so callers can require a stronger runner for
+    untrusted code.
+    """
+    work_path = _runner_work_path(command, root, cwd)
+    env = _runner_environment(env_keys)
     try:
         completed = subprocess.run(
             command,

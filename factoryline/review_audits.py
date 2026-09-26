@@ -547,6 +547,63 @@ def _write_fingerprint(root: Path, path: Path, value: dict) -> None:
     )
 
 
+def _fingerprint_baseline_file(workspace: Path, baseline_path: Path) -> Path:
+    """Resolve baseline evidence without allowing a path outside the workspace."""
+    baseline_file = (
+        (workspace / baseline_path).resolve()
+        if not baseline_path.is_absolute()
+        else baseline_path.resolve()
+    )
+    if not baseline_file.is_relative_to(workspace):
+        raise ReviewAuditError("Baseline fingerprint must remain inside the workspace.")
+    return baseline_file
+
+
+def _fingerprint_changes(before: dict, fingerprint: dict) -> dict:
+    """Compare policy, source, result, and finding identities independently."""
+    return {
+        "policy": before.get("policy_sha256") != fingerprint["policy_sha256"],
+        "sources": before.get("sources") != fingerprint["sources"],
+        "results": (
+            before.get("results") != fingerprint["results"]
+            or before.get("state") != fingerprint["state"]
+        ),
+        "finding_codes": {
+            "added": sorted(
+                set(fingerprint["finding_codes"]) - set(before.get("finding_codes", []))
+            ),
+            "removed": sorted(
+                set(before.get("finding_codes", [])) - set(fingerprint["finding_codes"])
+            ),
+        },
+    }
+
+
+def _classify_fingerprint_changes(result: dict) -> None:
+    """Fail closed when stable inputs yield contradictory results or drift."""
+    changes = result["changes"]
+    if not changes["policy"] and not changes["sources"] and changes["results"]:
+        result.update(
+            marker="AUDIT_FINGERPRINT_CONTRADICTORY",
+            state="CONTRADICTORY",
+            reusable=False,
+            code="E_AUDIT_RESULT_CONTRADICTION",
+            action_summary="Block reuse: identical policy and source bytes produced different audit results.",
+        )
+    elif changes["policy"] or changes["sources"]:
+        result.update(
+            marker="AUDIT_FINGERPRINT_DRIFT",
+            state="DRIFT_DETECTED",
+            reusable=False,
+            code="E_AUDIT_FINGERPRINT_STALE",
+            action_summary="Do not reuse the baseline: policy or audited source bytes changed; run a fresh review.",
+        )
+    else:
+        result["action_summary"] = (
+            "Baseline and current audit are byte-identical; reuse is content-addressed and still non-authorizing."
+        )
+
+
 def audit_fingerprint(
     root: Path,
     policy_path: str = ".factory/review-audits.json",
@@ -581,55 +638,13 @@ def audit_fingerprint(
             "claim_boundary": "Fresh local structural audit fingerprint only; no runtime correctness, security certification, or release authority.",
         }
         if baseline_path is not None:
-            baseline_file = (
-                (workspace / baseline_path).resolve()
-                if not baseline_path.is_absolute()
-                else baseline_path.resolve()
+            baseline = _read_fingerprint(
+                _fingerprint_baseline_file(workspace, baseline_path)
             )
-            if not baseline_file.is_relative_to(workspace):
-                raise ReviewAuditError(
-                    "Baseline fingerprint must remain inside the workspace."
-                )
-            baseline = _read_fingerprint(baseline_file)
-            before = baseline["fingerprint"]
-            policy_changed = before.get("policy_sha256") != fingerprint["policy_sha256"]
-            sources_changed = before.get("sources") != fingerprint["sources"]
-            results_changed = (
-                before.get("results") != fingerprint["results"]
-                or before.get("state") != fingerprint["state"]
+            result["changes"] = _fingerprint_changes(
+                baseline["fingerprint"], fingerprint
             )
-            added = sorted(
-                set(fingerprint["finding_codes"]) - set(before.get("finding_codes", []))
-            )
-            removed = sorted(
-                set(before.get("finding_codes", [])) - set(fingerprint["finding_codes"])
-            )
-            result["changes"] = {
-                "policy": policy_changed,
-                "sources": sources_changed,
-                "results": results_changed,
-                "finding_codes": {"added": added, "removed": removed},
-            }
-            if not policy_changed and not sources_changed and results_changed:
-                result.update(
-                    marker="AUDIT_FINGERPRINT_CONTRADICTORY",
-                    state="CONTRADICTORY",
-                    reusable=False,
-                    code="E_AUDIT_RESULT_CONTRADICTION",
-                    action_summary="Block reuse: identical policy and source bytes produced different audit results.",
-                )
-            elif policy_changed or sources_changed:
-                result.update(
-                    marker="AUDIT_FINGERPRINT_DRIFT",
-                    state="DRIFT_DETECTED",
-                    reusable=False,
-                    code="E_AUDIT_FINGERPRINT_STALE",
-                    action_summary="Do not reuse the baseline: policy or audited source bytes changed; run a fresh review.",
-                )
-            else:
-                result["action_summary"] = (
-                    "Baseline and current audit are byte-identical; reuse is content-addressed and still non-authorizing."
-                )
+            _classify_fingerprint_changes(result)
         else:
             result["action_summary"] = (
                 "Created a fresh content-addressed audit fingerprint; no baseline comparison was requested."
@@ -878,64 +893,70 @@ def _security_scan_tree(root: Path, path: Path, tree: ast.AST) -> list[dict[str,
     return findings
 
 
-def security_scan(root: Path) -> dict[str, Any]:
-    """Run a bounded AST security and code-quality scan without importing or executing source."""
-    workspace = Path(root).resolve()
-    files = _security_source_files(workspace)
-    findings: list[dict[str, Any]] = []
-    bindings: list[dict[str, Any]] = []
-    parse_errors = 0
-    for path in files:
-        try:
-            data = path.read_bytes()
-            if len(data) > MAX_BYTES:
-                findings.append(
+def _security_scan_file(
+    workspace: Path, path: Path
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]], bool]:
+    """Scan one bounded Python source and return its byte binding and findings."""
+    relative = path.relative_to(workspace).as_posix()
+    binding: dict[str, Any] | None = None
+    try:
+        data = path.read_bytes()
+        if len(data) > MAX_BYTES:
+            return (
+                None,
+                [
                     _security_finding(
                         "SECURITY_SOURCE_TOO_LARGE",
-                        path.relative_to(workspace).as_posix(),
+                        relative,
                         ast.Module(body=[], type_ignores=[]),
                         f"Source exceeds the {MAX_BYTES}-byte scan limit.",
                         "HIGH",
                         bytes=len(data),
                     )
-                )
-                continue
-            bindings.append(
-                {
-                    "path": path.relative_to(workspace).as_posix(),
-                    "sha256": sha256(data).hexdigest(),
-                    "bytes": len(data),
-                }
+                ],
+                False,
             )
-            tree = ast.parse(data, filename=str(path))
-        except SyntaxError as exc:
-            parse_errors += 1
-            findings.append(
+        binding = {
+            "path": relative,
+            "sha256": sha256(data).hexdigest(),
+            "bytes": len(data),
+        }
+        tree = ast.parse(data, filename=str(path))
+    except SyntaxError as exc:
+        return (
+            binding,
+            [
                 _security_finding(
                     "QUALITY_SYNTAX_ERROR",
-                    path.relative_to(workspace).as_posix(),
+                    relative,
                     exc,
                     "Python source cannot be parsed deterministically.",
                     "HIGH",
                     detail=str(exc),
                 )
-            )
-            continue
-        except (OSError, UnicodeError) as exc:
-            parse_errors += 1
-            findings.append(
+            ],
+            True,
+        )
+    except (OSError, UnicodeError) as exc:
+        return (
+            binding,
+            [
                 _security_finding(
                     "SECURITY_SOURCE_UNREADABLE",
-                    path.relative_to(workspace).as_posix(),
+                    relative,
                     ast.Module(body=[], type_ignores=[]),
                     "Source could not be read for security analysis.",
                     "HIGH",
                     detail=type(exc).__name__,
                 )
-            )
-            continue
-        findings.extend(_security_scan_tree(workspace, path, tree))
-    # A concurrent edit must never be mistaken for a clean, hash-bound scan.
+            ],
+            True,
+        )
+    return binding, _security_scan_tree(workspace, path, tree), False
+
+
+def _verify_security_bindings(workspace: Path, bindings: list[dict[str, Any]]) -> None:
+    """Reject a source that changes after its scan but before receipt creation."""
     for binding in bindings:
         current = workspace / binding["path"]
         try:
@@ -951,6 +972,22 @@ def security_scan(root: Path) -> dict[str, Any]:
             raise ReviewAuditError(
                 f"Evidence changed during security scan: {binding['path']}"
             )
+
+
+def security_scan(root: Path) -> dict[str, Any]:
+    """Run a bounded AST security and code-quality scan without importing or executing source."""
+    workspace = Path(root).resolve()
+    files = _security_source_files(workspace)
+    findings: list[dict[str, Any]] = []
+    bindings: list[dict[str, Any]] = []
+    parse_errors = 0
+    for path in files:
+        binding, file_findings, parse_error = _security_scan_file(workspace, path)
+        if binding is not None:
+            bindings.append(binding)
+        findings.extend(file_findings)
+        parse_errors += int(parse_error)
+    _verify_security_bindings(workspace, bindings)
     findings.sort(
         key=lambda item: (item["path"], item["line"], item["code"], item["column"])
     )
