@@ -96,6 +96,62 @@ def _git_head(root: Path) -> str | None:
     return value if result.returncode == 0 and COMMIT_RE.fullmatch(value) else None
 
 
+def _platform_source_versions(
+    workspace: Path, python_version: str
+) -> dict[str, str | None]:
+    """Read optional editor versions without promoting them to core source authority."""
+    versions: dict[str, str | None] = {
+        "python": python_version,
+        "vscode": None,
+        "intellij": None,
+    }
+    try:
+        vscode = json.loads(
+            (workspace / "editors" / "vscode" / "package.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        if isinstance(vscode, dict) and isinstance(vscode.get("version"), str):
+            versions["vscode"] = vscode["version"].strip()
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
+        pass
+    try:
+        gradle_text = (
+            workspace / "editors" / "intellij" / "build.gradle.kts"
+        ).read_text(encoding="utf-8")
+        match = re.search(r"(?m)^version\s*=\s*['\"]([^'\"]+)['\"]", gradle_text)
+        if match:
+            versions["intellij"] = match.group(1).strip()
+    except (OSError, UnicodeDecodeError):
+        pass
+    return versions
+
+
+def _core_source_files(
+    workspace: Path, versions: dict[str, str]
+) -> tuple[dict[str, dict[str, str]], str | None]:
+    """Bind each authoritative version declaration to its exact source bytes."""
+    entries = {}
+    for key, value in versions.items():
+        try:
+            entries[key] = {
+                "version": value,
+                "sha256": hashlib.sha256((workspace / key).read_bytes()).hexdigest(),
+            }
+        except OSError:
+            return {}, key
+    return entries, None
+
+
+def _source_versions_present(pyproject_version: Any, init_version: str | None) -> bool:
+    """Reject missing declarations before applying semantic-version checks."""
+    return (
+        isinstance(pyproject_version, str)
+        and bool(pyproject_version.strip())
+        and bool(init_version)
+    )
+
+
 def source_snapshot(root: Path) -> dict[str, Any]:
     """Read the core source version and immutable source commit."""
     workspace = Path(root).resolve()
@@ -109,11 +165,7 @@ def source_snapshot(root: Path) -> dict[str, Any]:
         return {"ok": False, "reason": "core source metadata is unavailable"}
     init_match = re.search(r"(?m)^__version__\s*=\s*['\"]([^'\"]+)['\"]", init_text)
     init_version = init_match.group(1).strip() if init_match else None
-    if (
-        not isinstance(pyproject_version, str)
-        or not pyproject_version.strip()
-        or not init_version
-    ):
+    if not _source_versions_present(pyproject_version, init_version):
         return {"ok": False, "reason": "core source version is missing"}
     if not SEMVER_RE.fullmatch(pyproject_version.strip()) or not SEMVER_RE.fullmatch(
         init_version
@@ -133,39 +185,10 @@ def source_snapshot(root: Path) -> dict[str, Any]:
             "versions": versions,
             "commit": commit,
         }
-    platform_versions: dict[str, str | None] = {
-        "python": pyproject_version.strip(),
-        "vscode": None,
-        "intellij": None,
-    }
-    try:
-        vscode = json.loads(
-            (workspace / "editors" / "vscode" / "package.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        if isinstance(vscode, dict) and isinstance(vscode.get("version"), str):
-            platform_versions["vscode"] = vscode["version"].strip()
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
-        pass
-    try:
-        gradle_text = (
-            workspace / "editors" / "intellij" / "build.gradle.kts"
-        ).read_text(encoding="utf-8")
-        gradle_match = re.search(r"(?m)^version\s*=\s*['\"]([^'\"]+)['\"]", gradle_text)
-        if gradle_match:
-            platform_versions["intellij"] = gradle_match.group(1).strip()
-    except (OSError, UnicodeDecodeError):
-        pass
-    file_entries: dict[str, dict[str, str]] = {}
-    for key, value in versions.items():
-        try:
-            file_entries[key] = {
-                "version": value,
-                "sha256": hashlib.sha256((workspace / key).read_bytes()).hexdigest(),
-            }
-        except OSError:
-            return {"ok": False, "reason": f"core source file is unreadable: {key}"}
+    platform_versions = _platform_source_versions(workspace, pyproject_version.strip())
+    file_entries, unreadable = _core_source_files(workspace, versions)
+    if unreadable is not None:
+        return {"ok": False, "reason": f"core source file is unreadable: {unreadable}"}
     return {
         "ok": True,
         "version": pyproject_version.strip(),
@@ -313,6 +336,525 @@ def _scan_artifacts(
     }
 
 
+def _architecture_preflight(
+    workspace: Path,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, str] | None]:
+    """Translate strict architecture policy into one release check and blocker."""
+    try:
+        health = evaluate_architecture_health(workspace, strict=True)
+    except (
+        ArchitectureHealthError,
+        OSError,
+        TypeError,
+        ValueError,
+        AttributeError,
+    ) as exc:
+        health = {
+            "decision": "BLOCKED",
+            "regressions": [
+                {"code": "E_ARCH_POLICY_UNAVAILABLE", "detail": str(exc)[:240]}
+            ],
+            "baseline_debt": [],
+        }
+    codes = [
+        str(item.get("code", "E_ARCH_UNKNOWN"))
+        for group in ("regressions", "baseline_debt")
+        for item in health.get(group, [])
+        if isinstance(item, dict)
+    ]
+    admitted = health.get("decision") == "HEALTHY"
+    check = {
+        "id": "STRICT_ARCHITECTURE_HEALTH",
+        "passed": admitted,
+        "evidence": health.get("decision", "BLOCKED")
+        + (f" ({', '.join(codes)})" if codes else ""),
+    }
+    blocker = (
+        None
+        if admitted
+        else {
+            "code": "E_RELEASE_ARCHITECTURE_HEALTH_BLOCKED",
+            "detail": "strict architecture health is "
+            f"{health.get('decision', 'BLOCKED')}; resolve: "
+            + (", ".join(codes) or "policy unavailable"),
+        }
+    )
+    return health, check, blocker
+
+
+def _cadence_preflight(
+    cadence: dict[str, Any],
+) -> tuple[bool, dict[str, Any], dict[str, str] | None]:
+    """Require the effective release train to admit this exact candidate."""
+    admitted = (
+        cadence.get("release_train_status") == "valid"
+        and cadence.get("available") is True
+        and cadence.get("admission") is True
+    )
+    check = {
+        "id": "RELEASE_CADENCE_ADMISSION",
+        "passed": admitted,
+        "evidence": cadence.get("reason", "release cadence unavailable"),
+    }
+    if admitted:
+        return True, check, None
+    detail = str(cadence.get("reason", "release cadence unavailable"))
+    if cadence.get("next_eligible_at"):
+        detail += f" Next eligible at {cadence['next_eligible_at']}."
+    return False, check, {"code": "E_RELEASE_CADENCE_BLOCKED", "detail": detail}
+
+
+def _contract_preflight(
+    workspace: Path, path: Path
+) -> tuple[
+    dict[str, Any] | None, dict[str, Any], dict[str, Any], dict[str, str] | None
+]:
+    """Parse the contract and verify its declared stages against local proof."""
+    value: dict[str, Any] | None = None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+        if not isinstance(value, dict):
+            raise ValueError("release contract must be an object")
+        required = (
+            set(value.get("required_stages", []))
+            if isinstance(value.get("required_stages"), list)
+            else set()
+        )
+        result = verify_release_contract(
+            workspace, str(value.get("feature")), path, required
+        )
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        result = {
+            "ok": False,
+            "marker": "RELEASE_CONTRACT_INVALID",
+            "reason": str(exc)[:240],
+        }
+    check = {
+        "id": "RELEASE_CONTRACT_VALID",
+        "passed": bool(result.get("ok")),
+        "evidence": result.get("marker", "RELEASE_CONTRACT_INVALID"),
+    }
+    blocker = (
+        None
+        if result.get("ok")
+        else {
+            "code": str(result.get("marker", "RELEASE_CONTRACT_INVALID")),
+            "detail": str(result.get("reason", "release contract is invalid")),
+        }
+    )
+    return value, result, check, blocker
+
+
+def _source_binding_errors(
+    source: dict[str, Any], binding: Any
+) -> list[dict[str, str]]:
+    """Describe each missing or stale candidate identity field."""
+    errors: list[dict[str, str]] = []
+    if not source.get("ok"):
+        errors.append(
+            {
+                "code": "RELEASE_CONTRACT_SOURCE_MISMATCH",
+                "detail": str(source.get("reason", "source metadata is invalid")),
+            }
+        )
+    elif not isinstance(binding, dict):
+        errors.append(
+            {
+                "code": "RELEASE_CONTRACT_SOURCE_BINDING_MISSING",
+                "detail": "contract candidate.source_version and candidate.source_commit are required",
+            }
+        )
+    else:
+        for field, detail in (
+            (
+                "source_version",
+                "contract candidate.source_version differs from source version",
+            ),
+            (
+                "source_commit",
+                "contract candidate.source_commit differs from current Git commit",
+            ),
+        ):
+            expected = (
+                source.get("version")
+                if field == "source_version"
+                else source.get("commit")
+            )
+            if binding.get(field) != expected:
+                errors.append(
+                    {"code": "RELEASE_CONTRACT_SOURCE_MISMATCH", "detail": detail}
+                )
+    return errors
+
+
+def _source_binding_preflight(
+    source: dict[str, Any], contract_value: dict[str, Any] | None
+) -> tuple[dict[str, Any] | None, bool, dict[str, Any], list[dict[str, str]]]:
+    """Match contract candidate identity to source version and Git commit."""
+    binding = (
+        contract_value.get("candidate") if isinstance(contract_value, dict) else None
+    )
+    errors = _source_binding_errors(source, binding)
+    binding_ok = not errors
+    check = {
+        "id": "RELEASE_CONTRACT_SOURCE_MATCH",
+        "passed": binding_ok,
+        "evidence": "candidate binding equals source version and commit"
+        if binding_ok
+        else "candidate binding is missing or stale",
+    }
+    return binding if isinstance(binding, dict) else None, binding_ok, check, errors
+
+
+def _expected_artifact_versions(
+    source: dict[str, Any], binding: dict[str, Any] | None
+) -> tuple[dict[str, str], list[dict[str, str]]]:
+    """Resolve declared platform versions and reject contract/source drift."""
+    source_version = str(source.get("version", ""))
+    source_versions = source.get("platform_versions", {"python": source_version})
+    declared = binding.get("artifact_versions") if isinstance(binding, dict) else None
+    errors: list[dict[str, str]] = []
+    if isinstance(declared, dict):
+        for platform, value in declared.items():
+            expected = source_versions.get(platform)
+            if isinstance(expected, str) and value != expected:
+                errors.append(
+                    {
+                        "code": "RELEASE_CONTRACT_ARTIFACT_BINDING_MISMATCH",
+                        "detail": f"contract candidate artifact_versions.{platform} differs from source metadata",
+                    }
+                )
+    else:
+        declared = source_versions
+    selected = {
+        key: value
+        for key, value in declared.items()
+        if key in {"python", "vscode", "intellij"} and isinstance(value, str)
+    }
+    return selected, errors
+
+
+def _artifact_preflight(
+    workspace: Path,
+    source: dict[str, Any],
+    binding: dict[str, Any] | None,
+    artifact_dirs: Iterable[Path] | None,
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, str]]]:
+    """Inventory candidate artifacts against source and declared versions."""
+    source_version = str(source.get("version", ""))
+    expected, errors = _expected_artifact_versions(source, binding)
+    if source_version:
+        directories = (
+            list(artifact_dirs)
+            if artifact_dirs is not None
+            else list(DEFAULT_ARTIFACT_DIRS)
+        )
+        artifacts = _scan_artifacts(workspace, expected, directories)
+    else:
+        artifacts = {
+            "directories": [],
+            "artifacts": [],
+            "blockers": [
+                {
+                    "code": "E_RELEASE_ARTIFACT_VERSION_MISMATCH",
+                    "detail": "source version unavailable",
+                }
+            ],
+            "versions_match": False,
+        }
+    check = {
+        "id": "RELEASE_ARTIFACT_VERSIONS_MATCH",
+        "passed": artifacts["versions_match"],
+        "evidence": f"{len(artifacts['artifacts'])} candidate artifact(s) match source {source_version}"
+        if artifacts["versions_match"]
+        else "candidate artifact inventory contains a stale or unreadable version",
+    }
+    return artifacts, check, errors + artifacts["blockers"]
+
+
+def _metadata_preflight(
+    workspace: Path, paths: Iterable[Path] | None
+) -> tuple[dict[str, Any], bool, bool, dict[str, Any], list[dict[str, str]]]:
+    """Keep active metadata integrity and lineage drift in one bounded lane."""
+    metadata: dict[str, Any] = {
+        "scope": "active",
+        "status": "NOT_REQUESTED",
+        "findings": [],
+        "files": [],
+    }
+    if paths is not None:
+        from .codex_metadata import audit_metadata
+
+        metadata = audit_metadata(
+            workspace, [Path(item) for item in paths], scope="active"
+        )
+    findings = metadata.get("findings", [])
+    blockers = (
+        [
+            {
+                "code": finding.get("code", "E_METADATA_INTEGRITY"),
+                "detail": f"{finding.get('path', '<metadata>')} {finding.get('location', '')}: {finding.get('detail', '')}".strip(),
+            }
+            for finding in findings
+        ]
+        if paths is not None
+        else []
+    )
+    lineage_valid = not any(
+        item.get("code") == "E_METADATA_STATE_RECEIPT_MISMATCH" for item in findings
+    )
+    ledger_drift = any(
+        item.get("code")
+        in {"E_METADATA_LEDGER_ORDER", "E_METADATA_LEDGER_HEAD_MISMATCH"}
+        for item in findings
+    )
+    metadata_ok = not findings
+    check = {
+        "id": "CODEX_METADATA_INTEGRITY_ACTIVE",
+        "passed": metadata_ok or paths is None,
+        "evidence": "active metadata audit passed"
+        if metadata_ok
+        else (
+            "active metadata audit not requested"
+            if paths is None
+            else "active metadata contains blocking findings"
+        ),
+    }
+    return metadata, lineage_valid, ledger_drift, check, blockers
+
+
+def _supply_chain_preflight(
+    workspace: Path, manifest: Path | None
+) -> tuple[dict[str, Any], dict[str, Any] | None, list[dict[str, str]]]:
+    """Verify optional supply-chain evidence without granting release authority."""
+    if manifest is None:
+        return {"status": "NOT_REQUESTED"}, None, []
+    from .supply_chain import evaluate_supply_chain
+
+    try:
+        path = _inside(workspace, Path(manifest), "supply-chain manifest")
+        value = json.loads(path.read_text(encoding="utf-8"))
+        result = evaluate_supply_chain(workspace, value)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        result = {
+            "schema": "factory.supply-chain-receipt.v1",
+            "decision": "BLOCKED",
+            "blockers": [{"code": "E_SUPPLY_CHAIN_INPUT", "detail": str(exc)[:240]}],
+            "authority": "none",
+            "release_approval": False,
+        }
+    passed = result.get("decision") == "PASS"
+    check = {
+        "id": "SUPPLY_CHAIN_INTEGRITY",
+        "passed": passed,
+        "evidence": "source, lockfiles, SBOM, VEX, licences, reproducible builds and artifact scan passed"
+        if passed
+        else "supply-chain evidence is blocked",
+    }
+    return result, check, result.get("blockers", [])
+
+
+def _intake_preflight(
+    workspace: Path, parameters: Path | None, required: bool
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, str]]]:
+    """Keep authoritative intake binding distinct from optional release inputs."""
+    result: dict[str, Any] = {"status": "NOT_REQUESTED"}
+    blockers: list[dict[str, str]] = []
+    if parameters is None:
+        if required:
+            result = {
+                "status": "BLOCKED",
+                "errors": [
+                    {
+                        "code": "E_INTAKE_BINDING_REQUIRED",
+                        "detail": "strict release preflight requires an authoritative intake-parameter envelope",
+                    }
+                ],
+            }
+            blockers.extend(result["errors"])
+    else:
+        try:
+            result = verify_intake_binding(workspace, Path(parameters))
+        except (OSError, TypeError, ValueError) as exc:
+            result = {
+                "status": "BLOCKED",
+                "ok": False,
+                "errors": [
+                    {"code": "E_INTAKE_BINDING_INVALID", "detail": str(exc)[:240]}
+                ],
+            }
+        if not result.get("ok"):
+            blockers.extend(
+                result.get(
+                    "errors",
+                    [
+                        {
+                            "code": "E_INTAKE_PARAMETER_DRIFT",
+                            "detail": "intake binding failed",
+                        }
+                    ],
+                )
+            )
+    check = {
+        "id": "INTAKE_PARAMETERS_AUTHORITATIVE",
+        "passed": (parameters is None and not required) or bool(result.get("ok")),
+        "evidence": "authoritative intake binding verified"
+        if result.get("ok")
+        else (
+            "not requested"
+            if parameters is None and not required
+            else "intake binding is blocked"
+        ),
+    }
+    return result, check, blockers
+
+
+def _invalid_contract_receipt(
+    contract: Path,
+    artifact_dirs: Iterable[Path] | None,
+    source: dict[str, Any],
+    cadence: dict[str, Any],
+    health: dict[str, Any],
+    architecture_blocker: dict[str, str] | None,
+    error: ValueError,
+) -> dict[str, Any]:
+    """Preserve the blocked receipt even when the contract path is unsafe."""
+    admitted = health.get("decision") == "HEALTHY"
+    body = {
+        "schema": SCHEMA,
+        "marker": "RELEASE_CANDIDATE_PREFLIGHT_BLOCKED",
+        "ok": False,
+        "source": source,
+        "contract": {
+            "path": str(contract),
+            "feature": None,
+            "marker": "RELEASE_CONTRACT_INVALID",
+        },
+        "artifacts": {
+            "directories": [
+                Path(item).as_posix()
+                for item in (artifact_dirs or DEFAULT_ARTIFACT_DIRS)
+            ],
+            "artifacts": [],
+            "blockers": [],
+        },
+        "metadata": {
+            "scope": "active",
+            "status": "NOT_REQUESTED",
+            "findings": [],
+            "files": [],
+        },
+        "supply_chain": {"status": "NOT_REQUESTED"},
+        "release_cadence": cadence,
+        "architecture_health": health,
+        "facts": {
+            "contract_valid": False,
+            "artifact_versions_match": False,
+            "metadata_lineage_valid": True,
+            "ledger_drift": False,
+            "windows_binding_proven": True,
+            "supply_chain_verified": None,
+            "intake_binding_verified": False,
+            "release_cadence_admissible": False,
+            "architecture_health_admissible": admitted,
+        },
+        "checks": [
+            {"id": "RELEASE_CONTRACT_VALID", "passed": False, "evidence": str(error)},
+            {
+                "id": "STRICT_ARCHITECTURE_HEALTH",
+                "passed": admitted,
+                "evidence": health.get("decision", "BLOCKED"),
+            },
+            {
+                "id": "RELEASE_CADENCE_ADMISSION",
+                "passed": False,
+                "evidence": cadence.get("reason", "cadence unavailable"),
+            },
+        ],
+        "blockers": [
+            {"code": "RELEASE_CONTRACT_INVALID", "detail": str(error)},
+            *([architecture_blocker] if architecture_blocker else []),
+            {
+                "code": "E_RELEASE_CADENCE_BLOCKED",
+                "detail": cadence.get("reason", "release cadence unavailable"),
+            },
+        ],
+        "next_action": "repair_release_candidate",
+        "authority": dict(AUTHORITY),
+        "claim_boundary": "Read-only local candidate identity and artifact-version proof; no execution, credentials, signing, provider call, publication, deployment, approval, or merge authority.",
+    }
+    body["receipt_sha256"] = _sha(body)
+    return body
+
+
+def _final_preflight_receipt(
+    workspace: Path,
+    evidence: dict[str, Any],
+    flags: dict[str, Any],
+    checks: list[dict[str, Any]],
+    blockers: list[dict[str, str]],
+) -> dict[str, Any]:
+    """Seal the evaluated lanes into one non-authorizing candidate receipt."""
+    source = evidence["source"]
+    contract_result = evidence["contract_result"]
+    artifacts = evidence["artifacts"]
+    supply_chain = evidence["supply_chain"]
+    intake_result = evidence["intake_result"]
+    facts = {
+        "contract_valid": bool(contract_result.get("ok")),
+        "artifact_versions_match": bool(artifacts["versions_match"]),
+        "metadata_lineage_valid": flags["metadata_lineage_valid"],
+        "ledger_drift": flags["ledger_drift"],
+        "windows_binding_proven": True,
+        "supply_chain_verified": None
+        if not flags["supply_chain_requested"]
+        else supply_chain.get("decision") == "PASS",
+        "intake_binding_verified": None
+        if not flags["intake_requested"]
+        else bool(intake_result.get("ok")),
+        "release_cadence_admissible": flags["cadence_admitted"],
+        "architecture_health_admissible": flags["architecture_admitted"],
+    }
+    ok = bool(source.get("ok")) and flags["binding_ok"] and not blockers
+    contract_value = evidence["contract_value"]
+    body: dict[str, Any] = {
+        "schema": SCHEMA,
+        "marker": "RELEASE_CANDIDATE_PREFLIGHT_PASS"
+        if ok
+        else "RELEASE_CANDIDATE_PREFLIGHT_BLOCKED",
+        "ok": ok,
+        "source": source,
+        "contract": {
+            "path": evidence["contract_path"].relative_to(workspace).as_posix(),
+            "feature": contract_value.get("feature") if contract_value else None,
+            "marker": contract_result.get("marker"),
+            "policy_digest": contract_result.get("policy_digest"),
+        },
+        "artifacts": artifacts,
+        "metadata": evidence["metadata"],
+        "supply_chain": supply_chain,
+        "release_cadence": evidence["release_cadence"],
+        "architecture_health": evidence["architecture_health"],
+        "intake_parameters": intake_result,
+        "facts": facts,
+        "checks": checks,
+        "blockers": blockers,
+        "next_action": "review_external_publish_gates"
+        if ok
+        else "repair_release_candidate",
+        "authority": dict(AUTHORITY),
+        "claim_boundary": "Read-only local candidate identity and artifact-version proof; no execution, credentials, signing, provider call, publication, deployment, approval, or merge authority.",
+    }
+    body["receipt_sha256"] = _sha(body)
+    return body
+
+
 def release_candidate_preflight(
     root: Path,
     contract: Path,
@@ -334,459 +876,93 @@ def release_candidate_preflight(
         if candidate_tag is not None
         else release_cadence_status(workspace)
     )
-    try:
-        architecture_health = evaluate_architecture_health(workspace, strict=True)
-    except (
-        ArchitectureHealthError,
-        OSError,
-        TypeError,
-        ValueError,
-        AttributeError,
-    ) as exc:
-        architecture_health = {
-            "decision": "BLOCKED",
-            "regressions": [
-                {"code": "E_ARCH_POLICY_UNAVAILABLE", "detail": str(exc)[:240]}
-            ],
-            "baseline_debt": [],
-        }
-    architecture_codes = [
-        str(item.get("code", "E_ARCH_UNKNOWN"))
-        for group in ("regressions", "baseline_debt")
-        for item in architecture_health.get(group, [])
-        if isinstance(item, dict)
-    ]
-    architecture_admitted = architecture_health.get("decision") == "HEALTHY"
-    architecture_blocker = {
-        "code": "E_RELEASE_ARCHITECTURE_HEALTH_BLOCKED",
-        "detail": "strict architecture health is "
-        f"{architecture_health.get('decision', 'BLOCKED')}; resolve: "
-        + (", ".join(architecture_codes) or "policy unavailable"),
-    }
-    checks: list[dict[str, Any]] = []
-    blockers: list[dict[str, str]] = []
-    checks.append(
-        {
-            "id": "STRICT_ARCHITECTURE_HEALTH",
-            "passed": architecture_admitted,
-            "evidence": architecture_health.get("decision", "BLOCKED")
-            + (f" ({', '.join(architecture_codes)})" if architecture_codes else ""),
-        }
+    architecture_health, architecture_check, architecture_blocker = (
+        _architecture_preflight(workspace)
     )
-    if not architecture_admitted:
-        blockers.append(architecture_blocker)
+    architecture_admitted = architecture_check["passed"]
+    checks: list[dict[str, Any]] = [architecture_check]
+    blockers: list[dict[str, str]] = (
+        [architecture_blocker] if architecture_blocker else []
+    )
     try:
         contract_path = _inside(workspace, Path(contract), "release contract")
     except ValueError as exc:
-        body = {
-            "schema": SCHEMA,
-            "marker": "RELEASE_CANDIDATE_PREFLIGHT_BLOCKED",
-            "ok": False,
-            "source": source,
-            "contract": {
-                "path": str(contract),
-                "feature": None,
-                "marker": "RELEASE_CONTRACT_INVALID",
-            },
-            "artifacts": {
-                "directories": [
-                    Path(item).as_posix()
-                    for item in (artifact_dirs or DEFAULT_ARTIFACT_DIRS)
-                ],
-                "artifacts": [],
-                "blockers": [],
-            },
-            "metadata": {
-                "scope": "active",
-                "status": "NOT_REQUESTED",
-                "findings": [],
-                "files": [],
-            },
-            "supply_chain": {"status": "NOT_REQUESTED"},
-            "release_cadence": release_cadence,
-            "architecture_health": architecture_health,
-            "facts": {
-                "contract_valid": False,
-                "artifact_versions_match": False,
-                "metadata_lineage_valid": True,
-                "ledger_drift": False,
-                "windows_binding_proven": True,
-                "supply_chain_verified": None,
-                "intake_binding_verified": False,
-                "release_cadence_admissible": False,
-                "architecture_health_admissible": architecture_admitted,
-            },
-            "checks": [
-                {"id": "RELEASE_CONTRACT_VALID", "passed": False, "evidence": str(exc)},
-                {
-                    "id": "STRICT_ARCHITECTURE_HEALTH",
-                    "passed": architecture_admitted,
-                    "evidence": architecture_health.get("decision", "BLOCKED"),
-                },
-                {
-                    "id": "RELEASE_CADENCE_ADMISSION",
-                    "passed": False,
-                    "evidence": release_cadence.get("reason", "cadence unavailable"),
-                },
-            ],
-            "blockers": [
-                {"code": "RELEASE_CONTRACT_INVALID", "detail": str(exc)},
-                *([] if architecture_admitted else [architecture_blocker]),
-                {
-                    "code": "E_RELEASE_CADENCE_BLOCKED",
-                    "detail": release_cadence.get(
-                        "reason", "release cadence unavailable"
-                    ),
-                },
-            ],
-            "next_action": "repair_release_candidate",
-            "authority": dict(AUTHORITY),
-            "claim_boundary": "Read-only local candidate identity and artifact-version proof; no execution, credentials, signing, provider call, publication, deployment, approval, or merge authority.",
-        }
-        body["receipt_sha256"] = _sha(body)
-        return body
-    cadence_admitted = (
-        release_cadence.get("release_train_status") == "valid"
-        and release_cadence.get("available") is True
-        and release_cadence.get("admission") is True
-    )
-    checks.append(
-        {
-            "id": "RELEASE_CADENCE_ADMISSION",
-            "passed": cadence_admitted,
-            "evidence": release_cadence.get("reason", "release cadence unavailable"),
-        }
-    )
-    if not cadence_admitted:
-        next_eligible = release_cadence.get("next_eligible_at")
-        detail = str(release_cadence.get("reason", "release cadence unavailable"))
-        if next_eligible:
-            detail += f" Next eligible at {next_eligible}."
-        blockers.append({"code": "E_RELEASE_CADENCE_BLOCKED", "detail": detail})
-    contract_value: dict[str, Any] | None = None
-    contract_result: dict[str, Any]
-    try:
-        contract_value = json.loads(contract_path.read_text(encoding="utf-8-sig"))
-        if not isinstance(contract_value, dict):
-            raise ValueError("release contract must be an object")
-        feature = contract_value.get("feature")
-        required = (
-            set(contract_value.get("required_stages", []))
-            if isinstance(contract_value.get("required_stages"), list)
-            else set()
+        return _invalid_contract_receipt(
+            Path(contract),
+            artifact_dirs,
+            source,
+            release_cadence,
+            architecture_health,
+            architecture_blocker,
+            exc,
         )
-        contract_result = verify_release_contract(
-            workspace, str(feature), contract_path, required
-        )
-    except (
-        OSError,
-        UnicodeDecodeError,
-        json.JSONDecodeError,
-        TypeError,
-        ValueError,
-    ) as exc:
-        contract_result = {
-            "ok": False,
-            "marker": "RELEASE_CONTRACT_INVALID",
-            "reason": str(exc)[:240],
-        }
-    checks.append(
-        {
-            "id": "RELEASE_CONTRACT_VALID",
-            "passed": bool(contract_result.get("ok")),
-            "evidence": contract_result.get("marker", "RELEASE_CONTRACT_INVALID"),
-        }
+    cadence_admitted, cadence_check, cadence_blocker = _cadence_preflight(
+        release_cadence
     )
-    if not contract_result.get("ok"):
-        blockers.append(
-            {
-                "code": str(contract_result.get("marker", "RELEASE_CONTRACT_INVALID")),
-                "detail": str(
-                    contract_result.get("reason", "release contract is invalid")
-                ),
-            }
-        )
+    checks.append(cadence_check)
+    if cadence_blocker:
+        blockers.append(cadence_blocker)
+    contract_value, contract_result, contract_check, contract_blocker = (
+        _contract_preflight(workspace, contract_path)
+    )
+    checks.append(contract_check)
+    if contract_blocker:
+        blockers.append(contract_blocker)
 
-    binding = (
-        contract_value.get("candidate") if isinstance(contract_value, dict) else None
+    binding, binding_ok, binding_check, binding_blockers = _source_binding_preflight(
+        source, contract_value
     )
-    binding_ok = (
-        bool(source.get("ok"))
-        and isinstance(binding, dict)
-        and binding.get("source_version") == source.get("version")
-        and binding.get("source_commit") == source.get("commit")
-    )
-    if not source.get("ok"):
-        blockers.append(
-            {
-                "code": "RELEASE_CONTRACT_SOURCE_MISMATCH",
-                "detail": str(source.get("reason", "source metadata is invalid")),
-            }
-        )
-    elif not isinstance(binding, dict):
-        blockers.append(
-            {
-                "code": "RELEASE_CONTRACT_SOURCE_BINDING_MISSING",
-                "detail": "contract candidate.source_version and candidate.source_commit are required",
-            }
-        )
-    else:
-        if binding.get("source_version") != source.get("version"):
-            blockers.append(
-                {
-                    "code": "RELEASE_CONTRACT_SOURCE_MISMATCH",
-                    "detail": "contract candidate.source_version differs from source version",
-                }
-            )
-        if binding.get("source_commit") != source.get("commit"):
-            blockers.append(
-                {
-                    "code": "RELEASE_CONTRACT_SOURCE_MISMATCH",
-                    "detail": "contract candidate.source_commit differs from current Git commit",
-                }
-            )
-    checks.append(
-        {
-            "id": "RELEASE_CONTRACT_SOURCE_MATCH",
-            "passed": binding_ok,
-            "evidence": "candidate binding equals source version and commit"
-            if binding_ok
-            else "candidate binding is missing or stale",
-        }
-    )
+    checks.append(binding_check)
+    blockers.extend(binding_blockers)
 
-    source_version = str(source.get("version", ""))
-    declared_versions = (
-        binding.get("artifact_versions") if isinstance(binding, dict) else None
+    artifacts, artifact_check, artifact_blockers = _artifact_preflight(
+        workspace, source, binding, artifact_dirs
     )
-    source_versions = (
-        source.get("platform_versions", {"python": source_version})
-        if isinstance(source, dict)
-        else {"python": source_version}
-    )
-    if isinstance(declared_versions, dict):
-        for platform, value in declared_versions.items():
-            expected_source = source_versions.get(platform)
-            if isinstance(expected_source, str) and value != expected_source:
-                blockers.append(
-                    {
-                        "code": "RELEASE_CONTRACT_ARTIFACT_BINDING_MISMATCH",
-                        "detail": f"contract candidate artifact_versions.{platform} differs from source metadata",
-                    }
-                )
-    else:
-        declared_versions = source_versions
-    expected_versions = {
-        key: value
-        for key, value in declared_versions.items()
-        if key in {"python", "vscode", "intellij"} and isinstance(value, str)
-    }
-    artifacts = (
-        _scan_artifacts(
-            workspace,
-            expected_versions,
-            list(artifact_dirs)
-            if artifact_dirs is not None
-            else list(DEFAULT_ARTIFACT_DIRS),
-        )
-        if source_version
-        else {
-            "directories": [],
-            "artifacts": [],
-            "blockers": [
-                {
-                    "code": "E_RELEASE_ARTIFACT_VERSION_MISMATCH",
-                    "detail": "source version unavailable",
-                }
-            ],
-            "versions_match": False,
-        }
-    )
-    checks.append(
-        {
-            "id": "RELEASE_ARTIFACT_VERSIONS_MATCH",
-            "passed": artifacts["versions_match"],
-            "evidence": f"{len(artifacts['artifacts'])} candidate artifact(s) match source {source_version}"
-            if artifacts["versions_match"]
-            else "candidate artifact inventory contains a stale or unreadable version",
-        }
-    )
-    blockers.extend(artifacts["blockers"])
+    checks.append(artifact_check)
+    blockers.extend(artifact_blockers)
 
-    metadata: dict[str, Any] = {
-        "scope": "active",
-        "status": "NOT_REQUESTED",
-        "findings": [],
-        "files": [],
-    }
-    if metadata_paths is not None:
-        from .codex_metadata import audit_metadata
-
-        metadata = audit_metadata(
-            workspace, [Path(item) for item in metadata_paths], scope="active"
-        )
-        for finding in metadata.get("findings", []):
-            blockers.append(
-                {
-                    "code": finding.get("code", "E_METADATA_INTEGRITY"),
-                    "detail": f"{finding.get('path', '<metadata>')} {finding.get('location', '')}: {finding.get('detail', '')}".strip(),
-                }
-            )
-    metadata_lineage_valid = not any(
-        item.get("code") == "E_METADATA_STATE_RECEIPT_MISMATCH"
-        for item in metadata.get("findings", [])
+    (
+        metadata,
+        metadata_lineage_valid,
+        ledger_drift,
+        metadata_check,
+        metadata_blockers,
+    ) = _metadata_preflight(workspace, metadata_paths)
+    checks.append(metadata_check)
+    blockers.extend(metadata_blockers)
+    supply_chain, supply_check, supply_blockers = _supply_chain_preflight(
+        workspace, supply_chain_manifest
     )
-    ledger_drift = any(
-        item.get("code")
-        in {"E_METADATA_LEDGER_ORDER", "E_METADATA_LEDGER_HEAD_MISMATCH"}
-        for item in metadata.get("findings", [])
+    if supply_check:
+        checks.append(supply_check)
+    blockers.extend(supply_blockers)
+    intake_result, intake_check, intake_blockers = _intake_preflight(
+        workspace, intake_parameters, require_intake
     )
-    metadata_ok = not metadata.get("findings")
-    checks.append(
-        {
-            "id": "CODEX_METADATA_INTEGRITY_ACTIVE",
-            "passed": metadata_ok or metadata_paths is None,
-            "evidence": "active metadata audit passed"
-            if metadata_ok
-            else (
-                "active metadata audit not requested"
-                if metadata_paths is None
-                else "active metadata contains blocking findings"
-            ),
-        }
-    )
-    supply_chain: dict[str, Any] = {"status": "NOT_REQUESTED"}
-    if supply_chain_manifest is not None:
-        from .supply_chain import evaluate_supply_chain
-
-        try:
-            supply_path = _inside(
-                workspace, Path(supply_chain_manifest), "supply-chain manifest"
-            )
-            manifest_value = json.loads(supply_path.read_text(encoding="utf-8"))
-            supply_chain = evaluate_supply_chain(workspace, manifest_value)
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            supply_chain = {
-                "schema": "factory.supply-chain-receipt.v1",
-                "decision": "BLOCKED",
-                "blockers": [
-                    {"code": "E_SUPPLY_CHAIN_INPUT", "detail": str(exc)[:240]}
-                ],
-                "authority": "none",
-                "release_approval": False,
-            }
-        supply_passed = supply_chain.get("decision") == "PASS"
-        checks.append(
-            {
-                "id": "SUPPLY_CHAIN_INTEGRITY",
-                "passed": supply_passed,
-                "evidence": "source, lockfiles, SBOM, VEX, licences, reproducible builds and artifact scan passed"
-                if supply_passed
-                else "supply-chain evidence is blocked",
-            }
-        )
-        blockers.extend(supply_chain.get("blockers", []))
-    intake_result: dict[str, Any] = {"status": "NOT_REQUESTED"}
-    if intake_parameters is None:
-        if require_intake:
-            intake_result = {
-                "status": "BLOCKED",
-                "errors": [
-                    {
-                        "code": "E_INTAKE_BINDING_REQUIRED",
-                        "detail": "strict release preflight requires an authoritative intake-parameter envelope",
-                    }
-                ],
-            }
-            blockers.extend(intake_result["errors"])
-    else:
-        try:
-            intake_result = verify_intake_binding(workspace, Path(intake_parameters))
-        except (OSError, TypeError, ValueError) as exc:
-            intake_result = {
-                "status": "BLOCKED",
-                "ok": False,
-                "errors": [
-                    {"code": "E_INTAKE_BINDING_INVALID", "detail": str(exc)[:240]}
-                ],
-            }
-        if not intake_result.get("ok"):
-            blockers.extend(
-                intake_result.get(
-                    "errors",
-                    [
-                        {
-                            "code": "E_INTAKE_PARAMETER_DRIFT",
-                            "detail": "intake binding failed",
-                        }
-                    ],
-                )
-            )
-    checks.append(
-        {
-            "id": "INTAKE_PARAMETERS_AUTHORITATIVE",
-            "passed": intake_parameters is None
-            and not require_intake
-            or bool(intake_result.get("ok")),
-            "evidence": "authoritative intake binding verified"
-            if intake_result.get("ok")
-            else (
-                "not requested"
-                if intake_parameters is None and not require_intake
-                else "intake binding is blocked"
-            ),
-        }
-    )
-    facts = {
-        "contract_valid": bool(contract_result.get("ok")),
-        "artifact_versions_match": bool(artifacts["versions_match"]),
-        "metadata_lineage_valid": metadata_lineage_valid,
-        "ledger_drift": ledger_drift,
-        "windows_binding_proven": True,
-        "supply_chain_verified": (
-            None
-            if supply_chain_manifest is None
-            else supply_chain.get("decision") == "PASS"
-        ),
-        "intake_binding_verified": (
-            None
-            if intake_parameters is None and not require_intake
-            else bool(intake_result.get("ok"))
-        ),
-        "release_cadence_admissible": cadence_admitted,
-        "architecture_health_admissible": architecture_admitted,
-    }
-    ok = bool(source.get("ok")) and binding_ok and not blockers
-    body: dict[str, Any] = {
-        "schema": SCHEMA,
-        "marker": "RELEASE_CANDIDATE_PREFLIGHT_PASS"
-        if ok
-        else "RELEASE_CANDIDATE_PREFLIGHT_BLOCKED",
-        "ok": ok,
+    checks.append(intake_check)
+    blockers.extend(intake_blockers)
+    evidence = {
         "source": source,
-        "contract": {
-            "path": contract_path.relative_to(workspace).as_posix(),
-            "feature": contract_value.get("feature") if contract_value else None,
-            "marker": contract_result.get("marker"),
-            "policy_digest": contract_result.get("policy_digest"),
-        },
+        "contract_path": contract_path,
+        "contract_value": contract_value,
+        "contract_result": contract_result,
         "artifacts": artifacts,
         "metadata": metadata,
         "supply_chain": supply_chain,
         "release_cadence": release_cadence,
         "architecture_health": architecture_health,
-        "intake_parameters": intake_result,
-        "facts": facts,
-        "checks": checks,
-        "blockers": blockers,
-        "next_action": "review_external_publish_gates"
-        if ok
-        else "repair_release_candidate",
-        "authority": dict(AUTHORITY),
-        "claim_boundary": "Read-only local candidate identity and artifact-version proof; no execution, credentials, signing, provider call, publication, deployment, approval, or merge authority.",
+        "intake_result": intake_result,
     }
-    body["receipt_sha256"] = _sha(body)
-    return body
+    flags = {
+        "metadata_lineage_valid": metadata_lineage_valid,
+        "ledger_drift": ledger_drift,
+        "supply_chain_requested": supply_chain_manifest is not None,
+        "intake_requested": intake_parameters is not None or require_intake,
+        "cadence_admitted": cadence_admitted,
+        "architecture_admitted": architecture_admitted,
+        "binding_ok": binding_ok,
+    }
+    return _final_preflight_receipt(workspace, evidence, flags, checks, blockers)
 
 
 def write_release_candidate_preflight(
