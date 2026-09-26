@@ -4703,6 +4703,7 @@ def main(argv=None) -> int:
             except Exception:
                 pass
         raise
+    _notify_interactive_update(values, code)
     if not read_only:
         try:
             record_lifecycle(
@@ -4716,6 +4717,70 @@ def main(argv=None) -> int:
             # Telemetry must never change the command's release semantics.
             pass
     return code
+
+
+def _notify_interactive_update(argv, exit_code: int) -> None:
+    """Show a once-daily update notice only in successful human CLI sessions."""
+    if exit_code != 0 or not _interactive_update_check_allowed(argv):
+        return
+    try:
+        from .update_check import check_for_update, render, user_cache_path
+
+        result = check_for_update(cache_path=user_cache_path())
+        if result["status"] == "update_available":
+            print(render(result), file=sys.stderr)
+    except Exception:
+        # Optional update discovery must never change a command's result.
+        return
+
+
+def _interactive_update_check_allowed(
+    argv, *, stdin=None, stderr=None, environ=None
+) -> bool:
+    """Keep network checks out of automation, machine output, and server modes."""
+    import os
+
+    values = list(argv)
+    environment = os.environ if environ is None else environ
+    input_stream = sys.stdin if stdin is None else stdin
+    error_stream = sys.stderr if stderr is None else stderr
+    truthy = {"1", "true", "yes", "on"}
+    if (
+        str(environment.get("FACTORY_DISABLE_UPDATE_CHECK", "")).strip().lower()
+        in truthy
+    ):
+        return False
+    if any(
+        str(environment.get(name, "")).strip().lower() in truthy
+        for name in (
+            "CI",
+            "GITHUB_ACTIONS",
+            "GITLAB_CI",
+            "JENKINS_URL",
+            "BUILDKITE",
+            "TEAMCITY_VERSION",
+            "TF_BUILD",
+        )
+    ):
+        return False
+    if not values or any(
+        value in {"--json", "--version", "-h", "--help"} for value in values
+    ):
+        return False
+    if values[0] in {
+        "update",
+        "update-check",
+        "version",
+        "mcp",
+        "hosted",
+        "serve",
+        "studio",
+    }:
+        return False
+    try:
+        return bool(input_stream.isatty() and error_stream.isatty())
+    except (AttributeError, OSError):
+        return False
 
 
 if __name__ == "__main__":
