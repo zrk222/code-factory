@@ -145,13 +145,9 @@ def _captures(media: dict[str, Any]) -> dict[tuple[str, str], str]:
     return found
 
 
-def _contract(
-    root: Path,
-    value: dict[str, Any],
-    candidate: dict[str, str],
-    media_sha: str,
-    captures: dict[tuple[str, str], str],
-) -> list[dict[str, Any]]:
+def _contract_scenes(
+    value: dict[str, Any], candidate: dict[str, str], media_sha: str
+) -> list[Any]:
     if (
         set(value) != {"schema", "candidate", "store_media_receipt_sha256", "scenes"}
         or value.get("candidate") != candidate
@@ -167,62 +163,98 @@ def _contract(
             "APPFORGE_STOREFRONT_STORY_CONTRACT_INVALID",
             "scenes must contain 1-20 entries",
         )
+    return scenes
+
+
+def _scene_evidence_refs(scene: dict[str, Any], kind: str) -> list[Any]:
+    refs = scene.get("evidence_refs")
+    if (
+        not isinstance(refs, list)
+        or len(refs) > 8
+        or (kind != "experience" and not refs)
+    ):
+        raise RevenueForgeError(
+            "APPFORGE_STOREFRONT_STORY_CONTRACT_INVALID",
+            "feature or measured claims require 1-8 evidence references",
+        )
+    return refs
+
+
+def _validate_story_scene(
+    scene: Any,
+    captures: dict[tuple[str, str], str],
+    seen: set[tuple[str, str]],
+) -> tuple[tuple[str, str], str, str, list[Any]]:
+    if not isinstance(scene, dict) or set(scene) != {
+        "set_id",
+        "capture_id",
+        "story_beat",
+        "headline",
+        "supporting_copy",
+        "claim_kind",
+        "evidence_refs",
+    }:
+        raise RevenueForgeError(
+            "APPFORGE_STOREFRONT_STORY_CONTRACT_INVALID",
+            "each scene must use the fixed storyboard fields",
+        )
+    key = (
+        _text(scene.get("set_id"), "scene.set_id", 80),
+        _text(scene.get("capture_id"), "scene.capture_id", 80),
+    )
+    if key not in captures or key in seen:
+        raise RevenueForgeError(
+            "APPFORGE_STOREFRONT_STORY_CONTRACT_INVALID",
+            "each scene must reference one unique known store-media capture",
+        )
+    seen.add(key)
+    beat = _text(scene.get("story_beat"), "scene.story_beat", 30)
+    kind = _text(scene.get("claim_kind"), "scene.claim_kind", 20)
+    if beat not in BEATS or kind not in CLAIM_KINDS:
+        raise RevenueForgeError(
+            "APPFORGE_STOREFRONT_STORY_CONTRACT_INVALID",
+            "scene story_beat or claim_kind is unsupported",
+        )
+    refs = _scene_evidence_refs(scene, kind)
+    return key, beat, kind, refs
+
+
+def _normalized_story_scene(
+    scene: dict[str, Any],
+    captures: dict[tuple[str, str], str],
+    key: tuple[str, str],
+    beat: str,
+    kind: str,
+    refs: list[Any],
+) -> dict[str, Any]:
+    return {
+        "set_id": key[0],
+        "capture_id": key[1],
+        "journey": captures[key],
+        "story_beat": beat,
+        "headline": _text(scene.get("headline"), "scene.headline", 80),
+        "supporting_copy": _text(
+            scene.get("supporting_copy"), "scene.supporting_copy", 180
+        ),
+        "claim_kind": kind,
+        "evidence_refs": refs,
+    }
+
+
+def _contract(
+    root: Path,
+    value: dict[str, Any],
+    candidate: dict[str, str],
+    media_sha: str,
+    captures: dict[tuple[str, str], str],
+) -> list[dict[str, Any]]:
+    scenes = _contract_scenes(value, candidate, media_sha)
     normalized: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for scene in scenes:
-        if not isinstance(scene, dict) or set(scene) != {
-            "set_id",
-            "capture_id",
-            "story_beat",
-            "headline",
-            "supporting_copy",
-            "claim_kind",
-            "evidence_refs",
-        }:
-            raise RevenueForgeError(
-                "APPFORGE_STOREFRONT_STORY_CONTRACT_INVALID",
-                "each scene must use the fixed storyboard fields",
-            )
-        key = (
-            _text(scene.get("set_id"), "scene.set_id", 80),
-            _text(scene.get("capture_id"), "scene.capture_id", 80),
-        )
-        if key not in captures or key in seen:
-            raise RevenueForgeError(
-                "APPFORGE_STOREFRONT_STORY_CONTRACT_INVALID",
-                "each scene must reference one unique known store-media capture",
-            )
-        seen.add(key)
-        beat = _text(scene.get("story_beat"), "scene.story_beat", 30)
-        kind = _text(scene.get("claim_kind"), "scene.claim_kind", 20)
-        if beat not in BEATS or kind not in CLAIM_KINDS:
-            raise RevenueForgeError(
-                "APPFORGE_STOREFRONT_STORY_CONTRACT_INVALID",
-                "scene story_beat or claim_kind is unsupported",
-            )
-        refs = scene.get("evidence_refs")
-        if (
-            not isinstance(refs, list)
-            or len(refs) > 8
-            or (kind != "experience" and not refs)
-        ):
-            raise RevenueForgeError(
-                "APPFORGE_STOREFRONT_STORY_CONTRACT_INVALID",
-                "feature or measured claims require 1-8 evidence references",
-            )
+        key, beat, kind, refs = _validate_story_scene(scene, captures, seen)
         normalized.append(
-            {
-                "set_id": key[0],
-                "capture_id": key[1],
-                "journey": captures[key],
-                "story_beat": beat,
-                "headline": _text(scene.get("headline"), "scene.headline", 80),
-                "supporting_copy": _text(
-                    scene.get("supporting_copy"), "scene.supporting_copy", 180
-                ),
-                "claim_kind": kind,
-                "evidence_refs": refs,
-            }
+            _normalized_story_scene(scene, captures, key, beat, kind, refs)
         )
     if seen != set(captures):
         raise RevenueForgeError(
@@ -232,13 +264,9 @@ def _contract(
     return normalized
 
 
-def _evidence(
-    root: Path,
-    value: dict[str, Any],
-    candidate: dict[str, str],
-    contract_sha: str,
-    scenes: list[dict[str, Any]],
-) -> dict[str, str]:
+def _evidence_review(
+    value: dict[str, Any], candidate: dict[str, str], contract_sha: str
+) -> dict[str, Any]:
     if (
         set(value) != {"schema", "candidate", "contract_sha256", "review"}
         or value.get("candidate") != candidate
@@ -260,6 +288,10 @@ def _evidence(
             "APPFORGE_STOREFRONT_STORY_REVIEW_REQUIRED",
             "named review must confirm storyboard truth and claims",
         )
+    return review
+
+
+def _validate_claim_evidence(root: Path, scenes: list[dict[str, Any]]) -> None:
     for scene in scenes:
         for reference in scene["evidence_refs"]:
             path = _local(root, Path(_text(reference, "scene.evidence_refs[]", 600)))
@@ -268,6 +300,17 @@ def _evidence(
                     "APPFORGE_STOREFRONT_STORY_INPUT_TOO_LARGE",
                     "claim evidence exceeds 1 MiB",
                 )
+
+
+def _evidence(
+    root: Path,
+    value: dict[str, Any],
+    candidate: dict[str, str],
+    contract_sha: str,
+    scenes: list[dict[str, Any]],
+) -> dict[str, str]:
+    review = _evidence_review(value, candidate, contract_sha)
+    _validate_claim_evidence(root, scenes)
     return {
         "reviewed_by": _text(review.get("reviewed_by"), "review.reviewed_by", 120),
         "confirmed_at": _timestamp(review.get("confirmed_at")),
