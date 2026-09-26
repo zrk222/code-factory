@@ -130,9 +130,11 @@ def test_release_integrity_rejects_missing_artifact_fan_in(tmp_path: Path) -> No
         ("--draft=false", "--draft=true"),
         ("workflow_dispatch:", "release:\n    types: [published]"),
         (
-            "ref: ${{ inputs.release_tag }}",
+            "ref: ${{ needs.guard.outputs.candidate_commit }}",
             "ref: ${{ github.event.release.tag_name }}",
         ),
+        ('git merge-base --is-ancestor "$candidate_commit" origin/main', "true"),
+        ('item["published_at"]', 'item["created_at"]'),
         (
             "needs: [guard, validate_python, validate_vscode, validate_intellij]",
             "needs: [validate_python, validate_vscode, validate_intellij]",
@@ -423,3 +425,58 @@ def test_release_integrity_text_render_keeps_authority_boundary() -> None:
         "authority: no execution, publication, credential, or approval authority"
         in text
     )
+
+
+@pytest.mark.parametrize(
+    "ages,draft,admitted",
+    [
+        ([9], False, True),
+        ([1], False, False),
+        ([9, 10, 11, 12], False, False),
+        ([0], True, True),
+    ],
+)
+def test_publication_guard_uses_published_timestamps(tmp_path, ages, draft, admitted):
+    import os
+    import subprocess
+    import sys
+    from datetime import datetime, timedelta, timezone
+    import yaml
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
+    step = next(
+        item
+        for item in workflow["jobs"]["guard"]["steps"]
+        if item.get("name")
+        == "Enforce cadence using actual GitHub publication timestamps"
+    )
+    script = step["run"].split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    now = datetime.now(timezone.utc)
+    (tmp_path / "release-train.json").write_text(
+        json.dumps(
+            {
+                "cadence": {
+                    "effective_at": (now - timedelta(days=60)).isoformat(),
+                    "max_releases_30d": 4,
+                    "minimum_days_between_releases": 7,
+                }
+            }
+        )
+    )
+    history = [
+        {
+            "draft": draft,
+            "created_at": "2000-01-01T00:00:00Z",
+            "published_at": None if draft else (now - timedelta(days=age)).isoformat(),
+        }
+        for age in ages
+    ]
+    (tmp_path / "release-history.json").write_text(json.dumps([history]))
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env={**os.environ, "RUNNER_TEMP": str(tmp_path)},
+        capture_output=True,
+        text=True,
+    )
+    assert (result.returncode == 0) is admitted, result.stderr

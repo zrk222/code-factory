@@ -19,8 +19,15 @@ jobs:
   guard:
     name: require a draft release tag
     runs-on: ubuntu-latest
+    outputs:
+      candidate_commit: ${{ steps.candidate.outputs.commit }}
     steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
       - name: Verify the requested release exists and remains a draft
+        id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -39,6 +46,39 @@ jobs:
             echo "The requested GitHub release must exist and remain a draft until protected publication." >&2
             exit 1
           }
+          candidate_commit="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+          git merge-base --is-ancestor "$candidate_commit" origin/main || {
+            echo "The candidate must already be merged into protected main." >&2
+            exit 1
+          }
+          echo "commit=$candidate_commit" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Enforce cadence using actual GitHub publication timestamps
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/release-history.json"
+          python - <<'PY'
+          import json, os
+          from datetime import datetime, timedelta, timezone
+          from pathlib import Path
+          policy = json.loads(Path("release-train.json").read_text())["cadence"]
+          parse = lambda value: datetime.fromisoformat(value.replace("Z", "+00:00"))
+          effective = parse(policy["effective_at"])
+          now = datetime.now(timezone.utc)
+          pages = json.loads((Path(os.environ["RUNNER_TEMP"]) / "release-history.json").read_text())
+          published = [parse(item["published_at"]) for page in pages for item in page if not item["draft"]]
+          active = sorted(stamp for stamp in published if stamp >= effective)
+          recent = [stamp for stamp in active if stamp > now - timedelta(days=30)]
+          if len(recent) >= policy["max_releases_30d"]:
+              raise SystemExit("Actual published release count exceeds admission policy")
+          if active and now < active[-1] + timedelta(days=policy["minimum_days_between_releases"]):
+              raise SystemExit("Actual published release is still within the cooldown")
+          print("Published-release cadence admitted; tag timestamps do not authorize publication")
+          PY
 
   validate_python:
     name: validate Python release artifacts
@@ -47,7 +87,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.release_tag }}
+          ref: ${{ needs.guard.outputs.candidate_commit }}
           fetch-depth: 0
 
       - uses: actions/setup-python@v6
@@ -96,7 +136,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.release_tag }}
+          ref: ${{ needs.guard.outputs.candidate_commit }}
           fetch-depth: 0
 
       - uses: actions/setup-node@v7.0.0
@@ -133,7 +173,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.release_tag }}
+          ref: ${{ needs.guard.outputs.candidate_commit }}
           fetch-depth: 0
 
       - uses: actions/setup-java@v5
@@ -166,7 +206,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.release_tag }}
+          ref: ${{ needs.guard.outputs.candidate_commit }}
           fetch-depth: 0
 
       - uses: actions/download-artifact@v8.0.1
@@ -263,7 +303,7 @@ jobs:
 
   publish_mcp_registry:
     name: publish Official MCP Registry metadata
-    needs: [publish]
+    needs: [guard, publish]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -271,7 +311,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.release_tag }}
+          ref: ${{ needs.guard.outputs.candidate_commit }}
           fetch-depth: 0
 
       - name: Validate release tag and MCP Registry metadata

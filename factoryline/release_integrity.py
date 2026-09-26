@@ -99,7 +99,7 @@ def _fan_in_check(workflow: str) -> dict[str, Any]:
             isinstance(step, dict)
             and step.get("uses") == "actions/checkout@v5"
             and isinstance(step.get("with"), dict)
-            and step["with"].get("ref") == "${{ inputs.release_tag }}"
+            and step["with"].get("ref") == "${{ needs.guard.outputs.candidate_commit }}"
             for step in steps
         )
 
@@ -165,6 +165,11 @@ def _fan_in_check(workflow: str) -> dict[str, Any]:
         and 'gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq \'.isDraft\''
         in guard_script
         and '[[ "$is_draft" == "true" ]]' in guard_script
+        and 'git merge-base --is-ancestor "$candidate_commit" origin/main'
+        in guard_script
+        and 'item["published_at"]' in guard_script
+        and guard.get("outputs", {}).get("candidate_commit")
+        == "${{ steps.candidate.outputs.commit }}"
         and all(
             isinstance(job, dict)
             and job.get("needs") == ["guard"]
