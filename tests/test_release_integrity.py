@@ -135,6 +135,8 @@ def test_release_integrity_rejects_missing_artifact_fan_in(tmp_path: Path) -> No
         ),
         ('git merge-base --is-ancestor "$candidate_commit" origin/main', "true"),
         ('item["published_at"]', 'item["created_at"]'),
+        ("group: publish-release-train", "group: publish-${{ inputs.release_tag }}"),
+        ('git fetch --no-tags origin "refs/tags/${RELEASE_TAG}"', "true"),
         (
             "needs: [guard, validate_python, validate_vscode, validate_intellij]",
             "needs: [validate_python, validate_vscode, validate_intellij]",

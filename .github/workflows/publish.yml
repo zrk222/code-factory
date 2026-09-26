@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: publish-${{ inputs.release_tag }}
+  group: publish-release-train
   cancel-in-progress: false
 
 jobs:
@@ -270,24 +270,16 @@ jobs:
       - name: Attach distributions to GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release upload "${{ inputs.release_tag }}"
-          release-bundle/python/*
-          release-bundle/editors/*
-          docs/assets/factoryline-logo-480.png
-          docs/assets/marketplace/factoryline-0.44-live-dashboard.png
-          docs/assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg
-          docs/assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg
-          docs/assets/marketplace/factoryline-60-day-personal-case-study.png
-          docs/assets/marketplace/code-factory-60-day-personal-case-study.png
-          docs/assets/marketplace/factory-studio-mvp-1280x800.png
-          docs/assets/marketplace/graph-ops-studio-1280x800.png
-          docs/assets/marketplace/graph-ops-proofsearch.png
-          docs/assets/marketplace/graph-ops-proofsearch-controls.png
-          docs/assets/marketplace/graph-ops-evidence-frontier.png
-          docs/assets/*.svg
-          docs/assets/verify-policy.gif
-          --clobber
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_COMMIT: ${{ needs.guard.outputs.candidate_commit }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "refs/tags/${RELEASE_TAG}"
+          [[ "$(git rev-parse 'FETCH_HEAD^{commit}')" == "$EXPECTED_COMMIT" ]] || {
+            echo "Release tag moved after candidate validation." >&2
+            exit 1
+          }
+          gh release upload "$RELEASE_TAG" release-bundle/python/* release-bundle/editors/* docs/assets/factoryline-logo-480.png docs/assets/marketplace/factoryline-0.44-live-dashboard.png docs/assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg docs/assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg docs/assets/marketplace/factoryline-60-day-personal-case-study.png docs/assets/marketplace/code-factory-60-day-personal-case-study.png docs/assets/marketplace/factory-studio-mvp-1280x800.png docs/assets/marketplace/graph-ops-studio-1280x800.png docs/assets/marketplace/graph-ops-proofsearch.png docs/assets/marketplace/graph-ops-proofsearch-controls.png docs/assets/marketplace/graph-ops-evidence-frontier.png docs/assets/*.svg docs/assets/verify-policy.gif --clobber
 
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -299,7 +291,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+          EXPECTED_COMMIT: ${{ needs.guard.outputs.candidate_commit }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "refs/tags/${RELEASE_TAG}"
+          [[ "$(git rev-parse 'FETCH_HEAD^{commit}')" == "$EXPECTED_COMMIT" ]] || {
+            echo "Release tag moved after candidate validation." >&2
+            exit 1
+          }
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
 
   publish_mcp_registry:
     name: publish Official MCP Registry metadata

@@ -156,6 +156,8 @@ def _fan_in_check(workflow: str) -> dict[str, Any]:
 
     passed = (
         set(triggers) == {"workflow_dispatch"}
+        and document.get("concurrency", {}).get("group") == "publish-release-train"
+        and document.get("concurrency", {}).get("cancel-in-progress") == "false"
         and release_tag_input.get("required") == "true"
         and release_tag_input.get("type") == "string"
         and set(jobs) >= {"guard", *validator_names, "publish"}
@@ -186,6 +188,15 @@ def _fan_in_check(workflow: str) -> dict[str, Any]:
         and downloaded_artifacts == list(artifact_names)
         and pypi_position >= 0
         and public_release_position > pypi_position
+        and sum(
+            'git fetch --no-tags origin "refs/tags/${RELEASE_TAG}"'
+            in str(step.get("run", ""))
+            and "git rev-parse" in str(step.get("run", ""))
+            and step.get("env", {}).get("EXPECTED_COMMIT")
+            == "${{ needs.guard.outputs.candidate_commit }}"
+            for step in publish_steps
+        )
+        == 2
     )
     return _check(
         "RELEASE_FAN_IN_EXACT",
