@@ -226,7 +226,13 @@ def _validate_contract(
             "APPFORGE_FASTLANE_CAPTURE_CONTRACT_INVALID",
             "contract must bind the exact candidate, surface matrix, and storefront story",
         )
-    fastlane = value.get("fastlane")
+    fastlane = _validated_fastlane(value.get("fastlane"))
+    normalized = _capture_contract_records(value.get("captures"), scene_keys)
+    return _normalize_fastlane_paths(fastlane), normalized
+
+
+def _validated_fastlane(value: object) -> dict[str, Any]:
+    fastlane = value
     if not isinstance(fastlane, dict) or set(fastlane) != {
         "snapfile_path",
         "fastfile_path",
@@ -250,7 +256,33 @@ def _validate_contract(
             "APPFORGE_FASTLANE_CAPTURE_CONTRACT_INVALID",
             "fastlane.framing must be raw_only or reviewed_framefile",
         )
-    captures = value.get("captures")
+    return {
+        "snapfile_path": fastlane.get("snapfile_path"),
+        "fastfile_path": fastlane.get("fastfile_path"),
+        "ui_test_path": fastlane.get("ui_test_path"),
+        "capture_lane": lane,
+        "framing": framing,
+    }
+
+
+def _normalize_fastlane_paths(value: dict[str, Any]) -> dict[str, str]:
+    return {
+        "snapfile_path": _text(
+            value.get("snapfile_path"), "fastlane.snapfile_path", 512
+        ),
+        "fastfile_path": _text(
+            value.get("fastfile_path"), "fastlane.fastfile_path", 512
+        ),
+        "ui_test_path": _text(value.get("ui_test_path"), "fastlane.ui_test_path", 512),
+        "capture_lane": value["capture_lane"],
+        "framing": value["framing"],
+    }
+
+
+def _capture_contract_records(
+    value: object, scene_keys: set[tuple[str, str]]
+) -> list[dict[str, str]]:
+    captures = value
     if not isinstance(captures, list) or not captures or len(captures) > 20:
         raise RevenueForgeError(
             "APPFORGE_FASTLANE_CAPTURE_CONTRACT_INVALID",
@@ -260,58 +292,77 @@ def _validate_contract(
     names: set[str] = set()
     normalized: list[dict[str, str]] = []
     for item in captures:
-        if not isinstance(item, dict) or set(item) != {
-            "set_id",
-            "capture_id",
-            "snapshot_name",
-        }:
-            raise RevenueForgeError(
-                "APPFORGE_FASTLANE_CAPTURE_CONTRACT_INVALID",
-                "each capture must have set_id, capture_id, and snapshot_name",
-            )
-        key = (
-            _text(item.get("set_id"), "captures[].set_id", 80),
-            _text(item.get("capture_id"), "captures[].capture_id", 80),
-        )
-        name = _text(item.get("snapshot_name"), "captures[].snapshot_name", 120)
-        if (
-            key not in scene_keys
-            or key in seen
-            or name in names
-            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _-]*", name)
-        ):
-            raise RevenueForgeError(
-                "APPFORGE_FASTLANE_CAPTURE_COVERAGE_INVALID",
-                "capture references must cover each known scene exactly once with unique safe snapshot names",
-            )
-        seen.add(key)
-        names.add(name)
-        normalized.append(
-            {"set_id": key[0], "capture_id": key[1], "snapshot_name": name}
-        )
+        normalized.append(_normalize_capture_record(item, scene_keys, seen, names))
     if seen != scene_keys:
         raise RevenueForgeError(
             "APPFORGE_FASTLANE_CAPTURE_COVERAGE_MISSING",
             "every reviewed storefront scene must map to exactly one Fastlane snapshot",
         )
-    return {
-        "snapfile_path": _text(
-            fastlane.get("snapfile_path"), "fastlane.snapfile_path", 512
-        ),
-        "fastfile_path": _text(
-            fastlane.get("fastfile_path"), "fastlane.fastfile_path", 512
-        ),
-        "ui_test_path": _text(
-            fastlane.get("ui_test_path"), "fastlane.ui_test_path", 512
-        ),
-        "capture_lane": lane,
-        "framing": framing,
-    }, normalized
+    return normalized
+
+
+def _normalize_capture_record(
+    value: object,
+    scene_keys: set[tuple[str, str]],
+    seen: set[tuple[str, str]],
+    names: set[str],
+) -> dict[str, str]:
+    if not isinstance(value, dict) or set(value) != {
+        "set_id",
+        "capture_id",
+        "snapshot_name",
+    }:
+        raise RevenueForgeError(
+            "APPFORGE_FASTLANE_CAPTURE_CONTRACT_INVALID",
+            "each capture must have set_id, capture_id, and snapshot_name",
+        )
+    key = (
+        _text(value.get("set_id"), "captures[].set_id", 80),
+        _text(value.get("capture_id"), "captures[].capture_id", 80),
+    )
+    name = _text(value.get("snapshot_name"), "captures[].snapshot_name", 120)
+    invalid = (
+        key not in scene_keys
+        or key in seen
+        or name in names
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _-]*", name)
+    )
+    if invalid:
+        raise RevenueForgeError(
+            "APPFORGE_FASTLANE_CAPTURE_COVERAGE_INVALID",
+            "capture references must cover each known scene exactly once with unique safe snapshot names",
+        )
+    seen.add(key)
+    names.add(name)
+    return {"set_id": key[0], "capture_id": key[1], "snapshot_name": name}
 
 
 def _validate_sources(
     root: Path, fastlane: dict[str, Any], captures: list[dict[str, str]]
 ) -> dict[str, Any]:
+    snapfile_path, snapfile, fastfile_path, fastfile, ui_test_path, ui_test = (
+        _capture_source_texts(root, fastlane)
+    )
+    settings = _validate_snapfile(snapfile)
+    body = _lane_body(fastfile, fastlane["capture_lane"])
+    _validate_capture_lane(body, fastlane["framing"])
+    _validate_ui_test(ui_test, captures)
+    return _capture_source_receipts(
+        root,
+        snapfile_path,
+        snapfile,
+        settings,
+        fastfile_path,
+        fastlane["capture_lane"],
+        body,
+        ui_test_path,
+        captures,
+    )
+
+
+def _capture_source_texts(
+    root: Path, fastlane: dict[str, Any]
+) -> tuple[Path, str, Path, str, Path, str]:
     snapfile_path, snapfile = _read_text(
         root, fastlane["snapfile_path"], "fastlane.snapfile_path"
     )
@@ -326,8 +377,10 @@ def _validate_sources(
             "APPFORGE_FASTLANE_CAPTURE_SECRET_IN_SOURCE",
             "declared capture sources must not contain credential-like values",
         )
-    settings = _validate_snapfile(snapfile)
-    body = _lane_body(fastfile, fastlane["capture_lane"])
+    return snapfile_path, snapfile, fastfile_path, fastfile, ui_test_path, ui_test
+
+
+def _validate_capture_lane(body: str, framing: str) -> None:
     if not re.search(r"\b(?:capture_screenshots|snapshot)\b", body) or any(
         re.search(rf"\b{action}\b", body) for action in _UNSAFE_LANE_ACTIONS
     ):
@@ -335,18 +388,21 @@ def _validate_sources(
             "APPFORGE_FASTLANE_CAPTURE_LANE_INVALID",
             "capture lane must invoke capture_screenshots or snapshot and cannot sign, upload, deliver, invite, or submit",
         )
-    if fastlane["framing"] == "reviewed_framefile" and not re.search(
+    if framing == "reviewed_framefile" and not re.search(
         r"\bframe_screenshots\b", body
     ):
         raise RevenueForgeError(
             "APPFORGE_FASTLANE_CAPTURE_LANE_INVALID",
             "reviewed_framefile requires frame_screenshots in the capture lane",
         )
-    if fastlane["framing"] == "raw_only" and re.search(r"\bframe_screenshots\b", body):
+    if framing == "raw_only" and re.search(r"\bframe_screenshots\b", body):
         raise RevenueForgeError(
             "APPFORGE_FASTLANE_CAPTURE_LANE_INVALID",
             "raw_only capture lane cannot frame media",
         )
+
+
+def _validate_ui_test(ui_test: str, captures: list[dict[str, str]]) -> None:
     if (
         not re.search(r"\bsetupSnapshot\s*\(", ui_test)
         or not re.search(r"\bapp\.launch\s*\(", ui_test)
@@ -369,6 +425,19 @@ def _validate_sources(
             "APPFORGE_FASTLANE_CAPTURE_UI_TEST_COVERAGE_MISSING",
             "UI test is missing sealed snapshot calls: " + ", ".join(missing),
         )
+
+
+def _capture_source_receipts(
+    root: Path,
+    snapfile_path: Path,
+    snapfile: str,
+    settings: dict[str, bool],
+    fastfile_path: Path,
+    capture_lane: str,
+    body: str,
+    ui_test_path: Path,
+    captures: list[dict[str, str]],
+) -> dict[str, Any]:
     return {
         "snapfile": {
             "path": snapfile_path.relative_to(root).as_posix(),
@@ -378,7 +447,7 @@ def _validate_sources(
         "fastfile": {
             "path": fastfile_path.relative_to(root).as_posix(),
             "sha256": _file_sha(fastfile_path),
-            "capture_lane": fastlane["capture_lane"],
+            "capture_lane": capture_lane,
             "capture_only": True,
         },
         "ui_test": {
