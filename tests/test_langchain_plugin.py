@@ -1062,6 +1062,34 @@ def test_muse_audit_mcp_reads_current_receipt_and_rejects_changed_workspace(
     ] == [7]
     assert call("cf_audit_coverage")["status"] == "current"
     assert call("cf_pr_review_brief")["status"] == "current"
+    assert call("cf_audit_status")["status"] == "current"
+    oversized_harness = tmp_path / "oversized-rerun.mjs"
+    oversized_harness.write_text(
+        "import {buildAudit} from '" + hook.resolve().as_uri() + "';\n"
+        "const findings=[{code:'SECURITY_OVERFLOW',severity:'HIGH',path:'app.py',message:'receipt boundary fixture'}];\n"
+        "const oversized={exitCode:0,stdout:JSON.stringify({state:'BLOCKED',findings}),stderr:''};\n"
+        "const clean={exitCode:0,stdout:JSON.stringify({state:'CLEAN'}),stderr:''};\n"
+        "const result=buildAudit({hook_event_name:'PostToolUse',session_id:'oversized',turn_id:'oversized',cwd:process.env.WORKSPACE,tool_input:{}},{trigger:'on_demand',testReceiptByteLimitBytes:128,runRtk:(args)=>args[2]==='security'?oversized:clean,runForge:()=>({exitCode:0,stdout:JSON.stringify({passed:true}),stderr:''}),runGit:()=>({items:[],ok:false}),emit:()=>{}});\n"
+        "process.stdout.write(JSON.stringify(result));\n",
+        encoding="utf-8",
+    )
+    oversized_run = subprocess.run(
+        ["node", str(oversized_harness)],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    oversized_result = json.loads(oversized_run.stdout)
+    assert oversized_result["receiptSaved"] is False
+    assert "exceeded the reviewed 128 bytes local storage limit" in oversized_result[
+        "summary"
+    ]
+    assert call("cf_audit_status")["status"] == "unavailable"
+    subprocess.run(
+        ["node", str(harness)], check=True, capture_output=True, text=True, env=env
+    )
+    assert call("cf_audit_status")["status"] == "current"
     receipt_path = (
         data_dir
         / "cf-build-audit"

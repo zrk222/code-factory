@@ -346,6 +346,14 @@ reaching a retry budget or finding a new regression leaves it open.
 
 ### CI execution profiles
 
+The profiles below describe the proposed deeper-audit target. In current
+release policy, protected-main source merges require the owner-selected
+specialty AI review status and CI; PyPI and Hugging Face publication do not
+require a second human. That current choice is not independent human approval:
+the AI reviews source, while publication remains a separate, manually
+dispatched workflow. The release-candidate row describes the stronger future
+profile and must not be reported as a gate that is already configured.
+
 | Lane | When | Work | Blocking behavior |
 | --- | --- | --- | --- |
 | Pull request | Every PR and candidate change | Changed-surface inventory; CodeQL and enabled Semgrep rules; secret diff scan; policy/guard checks; targeted unit, authorization, and challenge tests; PRD/spec routing to AppForge/SaaSForge | Block on critical/high findings, inventory uncertainty in changed security-sensitive paths, failed required challenge, stale policy, or missing reviewer handoff. Surface full-scan-only checks as pending, not passed. |

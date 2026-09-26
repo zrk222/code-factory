@@ -720,7 +720,7 @@ function boundHookOutput(output, fullSummary, outcomes) {
   return output;
 }
 
-function saveReviewReceipt(root, summary, outcomes, findings, auditId, expectedState) {
+function saveReviewReceipt(root, summary, outcomes, findings, auditId, expectedState, maxReceiptBytes) {
   const state = gitState(root);
   if (!state) return { status: 'unavailable' };
   if (!sameGitState(state, expectedState)) return { status: 'changed' };
@@ -733,7 +733,9 @@ function saveReviewReceipt(root, summary, outcomes, findings, auditId, expectedS
     outcomes, summary, findings,
   };
   const payload = JSON.stringify(receipt);
-  if (Buffer.byteLength(payload, 'utf8') > MAX_RECEIPT_BYTES - 128) return { status: 'oversized' };
+  if (Buffer.byteLength(payload, 'utf8') > maxReceiptBytes - 128) {
+    return { status: 'oversized', maxReceiptBytes };
+  }
   const sealed = {
     ...receipt,
     sha256: createHash('sha256').update(payload).digest('hex'),
@@ -941,19 +943,22 @@ function persistAuditCompletion(
   outcomes,
   makeSummary,
   initialSummary,
+  maxReceiptBytes,
 ) {
   let finalSummary = initialSummary;
   let stateSaved = false;
   let receiptTarget;
   try {
     if (!sourceStateIssue) {
-      const receiptResult = saveReviewReceipt(root, finalSummary, outcomes, findings, auditId, sourceStateBefore);
+      const receiptResult = saveReviewReceipt(
+        root, finalSummary, outcomes, findings, auditId, sourceStateBefore, maxReceiptBytes,
+      );
       if (receiptResult.status === 'saved') receiptTarget = receiptResult.target;
       else {
         sourceStateIssue = receiptResult.status === 'changed'
           ? 'the Git source snapshot changed after the scans and before receipt creation'
           : receiptResult.status === 'oversized'
-            ? 'the complete receipt exceeded the reviewed 8 MiB local storage limit'
+            ? `the complete receipt exceeded the reviewed ${receiptResult.maxReceiptBytes === MAX_RECEIPT_BYTES ? '8 MiB' : `${receiptResult.maxReceiptBytes} bytes`} local storage limit`
             : 'the Git source snapshot became unavailable before receipt creation';
         outcomes = incompleteOutcomes();
         reports.push(`Workspace source consistency: INCOMPLETE; ${sourceStateIssue}. Scanner details are diagnostic only; rerun all lanes on a stable workspace. No current receipt was issued.`);
@@ -1009,6 +1014,11 @@ function emitBuildAuditResult(emitOutput, event, completion, root, auditId) {
 
 function executeBuildAudit(event, dependencies) {
   const onDemand = dependencies.trigger === 'on_demand';
+  // Tests may lower this bound to exercise the oversized-receipt path without
+  // changing the fixed production limit or exposing it through the MCP API.
+  const maxReceiptBytes = Number.isSafeInteger(dependencies.testReceiptByteLimitBytes)
+    ? Math.min(MAX_RECEIPT_BYTES, Math.max(128, dependencies.testReceiptByteLimitBytes))
+    : MAX_RECEIPT_BYTES;
   const { runCli, runForgeCli, gitRunner, emitOutput } = auditRunners(dependencies);
   const root = projectRoot(event.cwd || process.cwd());
   const auditId = randomUUID();
@@ -1045,6 +1055,7 @@ function executeBuildAudit(event, dependencies) {
     outcomes,
     makeSummary,
     makeSummary(),
+    maxReceiptBytes,
   );
   return emitBuildAuditResult(emitOutput, event, completion, root, auditId);
 }
