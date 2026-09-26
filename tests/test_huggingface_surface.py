@@ -35,7 +35,9 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "Audit code.<br>Review evidence.<br>Resolve defects." in page
     assert "A code audit system for the entire development workflow." in page
     assert "Explore the audit workflow" in page
-    assert "First Proof is one starter example within the larger audit system." in readme
+    assert (
+        "First Proof is one starter example within the larger audit system." in readme
+    )
     assert "Run a safe negative-control demonstration, receive a local receipt" in page
     assert "Read or star on GitHub" in page
     assert (
