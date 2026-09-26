@@ -229,10 +229,7 @@ def _evidence_binding(root: Path, value: object, check_id: str) -> dict[str, Any
     return {"path": relative.as_posix(), "sha256": _sha(data), "bytes": len(data)}
 
 
-def _check_findings(
-    root: Path, manifest: dict[str, Any]
-) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
-    findings: list[dict[str, str]] = []
+def _check_set_expected(manifest: dict[str, Any]) -> tuple[set[str], list[Any]]:
     checks = manifest.get("checks")
     ui_in_scope = manifest.get("ui_in_scope")
     if not isinstance(ui_in_scope, bool) or not isinstance(checks, list):
@@ -241,71 +238,128 @@ def _check_findings(
             "ui_in_scope must be boolean and checks must be an array",
         )
     expected = set(CORE_CHECKS) | (set(UI_CHECKS) if ui_in_scope else set())
+    return expected, checks
+
+
+def _check_set_matches(checks: list[Any], expected: set[str]) -> bool:
     ids = [item.get("id") for item in checks if isinstance(item, dict)]
-    if (
-        len(checks) != len(expected)
-        or len(ids) != len(checks)
-        or set(ids) != expected
-        or len(set(ids)) != len(ids)
-    ):
-        findings.append(
-            {
-                "code": "E_UX_CHECK_SET_MISMATCH",
-                "detail": f"expected exactly {len(expected)} closed check identifiers",
-            }
-        )
-        return findings, []
+    return (
+        len(checks) == len(expected)
+        and len(ids) == len(checks)
+        and set(ids) == expected
+        and len(set(ids)) == len(ids)
+    )
+
+
+def _check_set_mismatch(expected: set[str]) -> dict[str, str]:
+    return {
+        "code": "E_UX_CHECK_SET_MISMATCH",
+        "detail": f"expected exactly {len(expected)} closed check identifiers",
+    }
+
+
+def _check_entry(
+    root: Path, item: dict[str, Any]
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    findings: list[dict[str, str]] = []
+    check_id = item["id"]
+    _require_exact_keys(
+        item, {"id", "state", "provenance", "evidence"}, f"check {check_id}"
+    )
+    state, provenance, evidence = (
+        item.get("state"),
+        item.get("provenance"),
+        item.get("evidence"),
+    )
+    if state != "passed":
+        findings.append({"code": "E_UX_CHECK_NOT_PASSED", "detail": check_id})
+    if provenance not in APPROVED_PROVENANCE:
+        findings.append({"code": "E_UX_CHECK_PROVENANCE", "detail": check_id})
+    bindings, evidence_findings = _check_evidence(root, evidence, check_id)
+    findings.extend(evidence_findings)
+    return findings, {
+        "id": check_id,
+        "state": state,
+        "provenance": provenance,
+        "evidence": bindings,
+    }
+
+
+def _check_evidence(
+    root: Path, evidence: object, check_id: str
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    if not isinstance(evidence, list) or not 1 <= len(evidence) <= 16:
+        return [], [{"code": "E_UX_CHECK_EVIDENCE_INCOMPLETE", "detail": check_id}]
+    findings: list[dict[str, str]] = []
+    string_evidence = [path for path in evidence if isinstance(path, str)]
+    if len(set(string_evidence)) != len(string_evidence):
+        findings.append({"code": "E_UX_CHECK_EVIDENCE_DUPLICATE", "detail": check_id})
+    return [_evidence_binding(root, path, check_id) for path in evidence], findings
+
+
+def _check_findings(
+    root: Path, manifest: dict[str, Any]
+) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+    expected, checks = _check_set_expected(manifest)
+    if not _check_set_matches(checks, expected):
+        return [_check_set_mismatch(expected)], []
     bound_checks: list[dict[str, Any]] = []
+    findings: list[dict[str, str]] = []
     for item in sorted(checks, key=lambda candidate: candidate["id"]):
-        _require_exact_keys(
-            item, {"id", "state", "provenance", "evidence"}, f"check {item['id']}"
-        )
-        check_id = item["id"]
-        state, provenance, evidence = (
-            item.get("state"),
-            item.get("provenance"),
-            item.get("evidence"),
-        )
-        if state != "passed":
-            findings.append({"code": "E_UX_CHECK_NOT_PASSED", "detail": check_id})
-        if provenance not in APPROVED_PROVENANCE:
-            findings.append({"code": "E_UX_CHECK_PROVENANCE", "detail": check_id})
-        if not isinstance(evidence, list) or not 1 <= len(evidence) <= 16:
-            findings.append(
-                {"code": "E_UX_CHECK_EVIDENCE_INCOMPLETE", "detail": check_id}
-            )
-            bindings = []
-        else:
-            string_evidence = [path for path in evidence if isinstance(path, str)]
-            if len(set(string_evidence)) != len(string_evidence):
-                findings.append(
-                    {"code": "E_UX_CHECK_EVIDENCE_DUPLICATE", "detail": check_id}
-                )
-            bindings = [_evidence_binding(root, path, check_id) for path in evidence]
-        bound_checks.append(
-            {
-                "id": check_id,
-                "state": state,
-                "provenance": provenance,
-                "evidence": bindings,
-            }
-        )
+        item_findings, bound_check = _check_entry(root, item)
+        findings.extend(item_findings)
+        bound_checks.append(bound_check)
     return findings, bound_checks
 
 
-def _judgment_findings(
-    manifest: dict[str, Any],
-) -> tuple[list[dict[str, str]], dict[str, Any]]:
-    findings: list[dict[str, str]] = []
+def _judgment_schema(manifest: dict[str, Any]) -> tuple[dict[str, Any], list[Any]]:
     reviewer, judgments = manifest.get("reviewer"), manifest.get("judgments")
     if not isinstance(reviewer, dict) or not isinstance(judgments, list):
         raise FullStackUXHarnessError(
             "E_UX_MANIFEST_SCHEMA", "reviewer and judgments are required"
         )
     _require_exact_keys(reviewer, {"name", "type"}, "reviewer")
+    return reviewer, judgments
+
+
+def _judgment_set_matches(judgments: list[Any]) -> bool:
+    ids = [item.get("id") for item in judgments if isinstance(item, dict)]
+    return (
+        len(judgments) == len(JUDGMENTS)
+        and len(ids) == len(judgments)
+        and set(ids) == set(JUDGMENTS)
+        and len(set(ids)) == len(ids)
+    )
+
+
+def _judgment_entry(
+    item: dict[str, Any],
+) -> tuple[dict[str, str] | None, dict[str, Any]]:
+    _require_exact_keys(item, {"id", "approved", "rationale"}, f"judgment {item['id']}")
+    rationale = item.get("rationale")
+    approved = item.get("approved") is True
+    if (
+        not approved
+        or not isinstance(rationale, str)
+        or not 12 <= len(rationale.strip()) <= 1000
+    ):
+        finding = {"code": "E_UX_HUMAN_REVIEW_REQUIRED", "detail": item["id"]}
+    else:
+        finding = None
+    return finding, {
+        "id": item["id"],
+        "approved": approved,
+        "rationale": rationale.strip() if isinstance(rationale, str) else "",
+    }
+
+
+def _judgment_findings(
+    manifest: dict[str, Any],
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    findings: list[dict[str, str]] = []
+    reviewer, judgments = _judgment_schema(manifest)
     name = reviewer.get("name")
     reviewer_type = reviewer.get("type")
-    ids = [item.get("id") for item in judgments if isinstance(item, dict)]
     if not isinstance(name, str) or not name.strip() or reviewer_type != "human":
         findings.append(
             {
@@ -313,12 +367,7 @@ def _judgment_findings(
                 "detail": "one named human reviewer is required",
             }
         )
-    if (
-        len(judgments) != len(JUDGMENTS)
-        or len(ids) != len(judgments)
-        or set(ids) != set(JUDGMENTS)
-        or len(set(ids)) != len(ids)
-    ):
+    if not _judgment_set_matches(judgments):
         findings.append(
             {
                 "code": "E_UX_JUDGMENT_SET_MISMATCH",
@@ -332,26 +381,10 @@ def _judgment_findings(
         }
     normalized = []
     for item in sorted(judgments, key=lambda candidate: candidate["id"]):
-        _require_exact_keys(
-            item, {"id", "approved", "rationale"}, f"judgment {item['id']}"
-        )
-        rationale = item.get("rationale")
-        approved = item.get("approved") is True
-        if (
-            not approved
-            or not isinstance(rationale, str)
-            or not 12 <= len(rationale.strip()) <= 1000
-        ):
-            findings.append(
-                {"code": "E_UX_HUMAN_REVIEW_REQUIRED", "detail": item["id"]}
-            )
-        normalized.append(
-            {
-                "id": item["id"],
-                "approved": approved,
-                "rationale": rationale.strip() if isinstance(rationale, str) else "",
-            }
-        )
+        finding, normalized_item = _judgment_entry(item)
+        if finding:
+            findings.append(finding)
+        normalized.append(normalized_item)
     return findings, {
         "name": name.strip() if isinstance(name, str) else "",
         "type": reviewer_type,
