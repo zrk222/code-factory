@@ -67,26 +67,32 @@ def _run_id(value: object) -> str:
     return value
 
 
+def _safe_object(value: dict[str, Any], depth: int) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or key.lower() in _FORBIDDEN_KEYS:
+            raise AguiError(
+                "E_AGUI_SENSITIVE",
+                "event payload contains a forbidden sensitive field",
+            )
+        result[key] = _safe_value(item, depth=depth + 1)
+    return result
+
+
+def _safe_array(value: list[Any], depth: int) -> list[Any]:
+    if len(value) > 64:
+        raise AguiError("E_AGUI_BOUNDS", "event arrays may contain at most 64 items")
+    return [_safe_value(item, depth=depth + 1) for item in value]
+
+
 def _safe_value(value: Any, *, depth: int = 0) -> Any:
     """Copy only bounded JSON values and reject sensitive field names."""
     if depth > 5:
         raise AguiError("E_AGUI_DEPTH", "event payload nesting is too deep")
     if isinstance(value, dict):
-        result: dict[str, Any] = {}
-        for key, item in value.items():
-            if not isinstance(key, str) or key.lower() in _FORBIDDEN_KEYS:
-                raise AguiError(
-                    "E_AGUI_SENSITIVE",
-                    "event payload contains a forbidden sensitive field",
-                )
-            result[key] = _safe_value(item, depth=depth + 1)
-        return result
+        return _safe_object(value, depth)
     if isinstance(value, list):
-        if len(value) > 64:
-            raise AguiError(
-                "E_AGUI_BOUNDS", "event arrays may contain at most 64 items"
-            )
-        return [_safe_value(item, depth=depth + 1) for item in value]
+        return _safe_array(value, depth)
     if isinstance(value, (str, int, float, bool)) or value is None:
         if isinstance(value, str) and len(value) > 4096:
             raise AguiError(
@@ -249,6 +255,34 @@ def build_release_completed_event(
     return _event(rid, 0, "RUN_FINISHED", payload)
 
 
+def _validate_event(index: int, row: dict[str, Any]) -> None:
+    """Check one event's schema, sequence, content binding, and size."""
+    if not isinstance(row, dict) or row.get("schema") != SCHEMA:
+        raise AguiError(
+            "E_AGUI_SCHEMA", "every event must use the Code Factory AGUI schema"
+        )
+    if row.get("sequence") != index or row.get("type") not in EVENT_TYPES:
+        raise AguiError(
+            "E_AGUI_SEQUENCE",
+            "event sequences must be contiguous and use known types",
+        )
+    rid = _run_id(row.get("runId"))
+    payload = row.get("payload")
+    if not isinstance(payload, dict) or row.get("payloadSha256") != _sha(payload):
+        raise AguiError("E_AGUI_HASH", "payload hash does not match the event payload")
+    core = {
+        "schema": SCHEMA,
+        "runId": rid,
+        "sequence": index,
+        "type": row["type"],
+        "payload": payload,
+    }
+    if row.get("eventId") != "agui:" + _sha(core)[:32]:
+        raise AguiError("E_AGUI_HASH", "event id does not match the event contents")
+    if len(_canonical(row)) > MAX_PAYLOAD_BYTES:
+        raise AguiError("E_AGUI_BOUNDS", "event exceeds the maximum encoded size")
+
+
 def validate_agui_events(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     """Validate ordering, hashes, bounds, and the no-authority boundary."""
     rows = list(events)
@@ -257,32 +291,7 @@ def validate_agui_events(events: Iterable[dict[str, Any]]) -> list[dict[str, Any
             "E_AGUI_BOUNDS", f"event stream must contain 1-{MAX_EVENTS} events"
         )
     for index, row in enumerate(rows):
-        if not isinstance(row, dict) or row.get("schema") != SCHEMA:
-            raise AguiError(
-                "E_AGUI_SCHEMA", "every event must use the Code Factory AGUI schema"
-            )
-        if row.get("sequence") != index or row.get("type") not in EVENT_TYPES:
-            raise AguiError(
-                "E_AGUI_SEQUENCE",
-                "event sequences must be contiguous and use known types",
-            )
-        rid = _run_id(row.get("runId"))
-        payload = row.get("payload")
-        if not isinstance(payload, dict) or row.get("payloadSha256") != _sha(payload):
-            raise AguiError(
-                "E_AGUI_HASH", "payload hash does not match the event payload"
-            )
-        core = {
-            "schema": SCHEMA,
-            "runId": rid,
-            "sequence": index,
-            "type": row["type"],
-            "payload": payload,
-        }
-        if row.get("eventId") != "agui:" + _sha(core)[:32]:
-            raise AguiError("E_AGUI_HASH", "event id does not match the event contents")
-        if len(_canonical(row)) > MAX_PAYLOAD_BYTES:
-            raise AguiError("E_AGUI_BOUNDS", "event exceeds the maximum encoded size")
+        _validate_event(index, row)
     if rows[0]["type"] != "RUN_STARTED" or rows[-1]["type"] != "RUN_FINISHED":
         raise AguiError(
             "E_AGUI_SEQUENCE",
