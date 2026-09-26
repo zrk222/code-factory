@@ -2889,13 +2889,9 @@ def _jetbrains_handshake_status(root: Path, arguments: object) -> dict[str, obje
     }
 
 
-def _tool_call(root: Path, params: object) -> dict[str, object]:
-    if not isinstance(params, dict) or set(params) - {"name", "arguments"}:
-        raise McpError("tools/call requires name and optional arguments")
-    name = params.get("name")
-    arguments = params.get("arguments", {})
-    if not isinstance(name, str):
-        raise McpError("tools/call name must be a string")
+def _tool_call_dispatch_1(
+    root: Path, name: str, arguments: object
+) -> dict[str, object] | None:
     if name == "factory.status":
         if arguments != {}:
             raise McpError("factory.status accepts no arguments")
@@ -2913,6 +2909,12 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
                 "impact": graph_ops_impact(root, _changed_paths(arguments)),
             }
         )
+    return None
+
+
+def _tool_call_dispatch_2(
+    root: Path, name: str, arguments: object
+) -> dict[str, object] | None:
     if name == "factory.model_route_audit":
         if not isinstance(arguments, dict) or set(arguments) != {"route"}:
             raise McpError("factory.model_route_audit requires one route object")
@@ -2931,6 +2933,12 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_judgment_status(root, arguments))
     if name == "factory.judgment_safety_case":
         return _content(_judgment_safety_case(root, arguments))
+    return None
+
+
+def _tool_call_dispatch_3(
+    root: Path, name: str, arguments: object
+) -> dict[str, object] | None:
     if name == "factory.langgraph_assurance":
         return _content(_langgraph_assurance(root, arguments))
     if name == "factory.next_action":
@@ -2957,6 +2965,12 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_proof_delta_status(root, arguments))
     if name == "factory.first_lap_status":
         return _content(_first_lap_status(root, arguments))
+    return None
+
+
+def _tool_call_dispatch_4(
+    root: Path, name: str, arguments: object
+) -> dict[str, object] | None:
     if name == "factory.agui_review_events":
         return _content(_agui_review_events(root, arguments))
     if name == "factory.cdte_status":
@@ -2975,6 +2989,12 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_workspace_advisor(root, arguments))
     if name == "factory.ide_playbook":
         return _content(_ide_playbook(root, arguments))
+    return None
+
+
+def _tool_call_dispatch_5(
+    root: Path, name: str, arguments: object
+) -> dict[str, object] | None:
     if name == "factory.revenue_status":
         return _content(_revenue_status(root, arguments))
     if name == "factory.revenue_memory":
@@ -2993,6 +3013,12 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_atomic_status(root, arguments))
     if name == "factory.operations_control_status":
         return _content(_operations_control_status(root, arguments))
+    return None
+
+
+def _tool_call_dispatch_6(
+    root: Path, name: str, arguments: object
+) -> dict[str, object] | None:
     if name == "factory.agentic_control_status":
         return _content(_agentic_control_status(root, arguments))
     if name == "factory.task_board_status":
@@ -3011,6 +3037,12 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_update_status(root, arguments))
     if name == "factory.lifecycle_status":
         return _content(_lifecycle_status(root, arguments))
+    return None
+
+
+def _tool_call_dispatch_7(
+    root: Path, name: str, arguments: object
+) -> dict[str, object] | None:
     if name == "factory.repair_loop_status":
         return _content(_repair_loop_status(root, arguments))
     if name == "factory.mission_control_status":
@@ -3030,6 +3062,12 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
             raise McpError(str(exc), exc.marker) from exc
     if name == "factory.agent_bridge_status":
         return _content(_agent_bridge_status(root, arguments))
+    return None
+
+
+def _tool_call_dispatch_8(
+    root: Path, name: str, arguments: object
+) -> dict[str, object] | None:
     if name == "factory.agent_handoff_brief":
         return _content(_agent_handoff_brief(root, arguments))
     if name == "factory.proof_worklog_status":
@@ -3048,6 +3086,12 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_appforge_surface_matrix_status(root, arguments))
     if name == "factory.appforge_mobile_evidence_status":
         return _content(_appforge_mobile_evidence_status(root, arguments))
+    return None
+
+
+def _tool_call_dispatch_9(
+    root: Path, name: str, arguments: object
+) -> dict[str, object] | None:
     if name == "factory.release_readiness":
         return _content(_release_readiness_status(root, arguments))
     if name == "factory.release_decision":
@@ -3066,12 +3110,43 @@ def _tool_call(root: Path, params: object) -> dict[str, object]:
         return _content(_junie_taxonomy(root, arguments))
     if name == "factory.junie_contribution":
         return _content(_junie_contribution(root, arguments))
+    return None
+
+
+def _tool_call_dispatch_10(
+    root: Path, name: str, arguments: object
+) -> dict[str, object] | None:
     if name == "factory.agent_proof_mission":
         return _content(_agent_proof_mission(root, arguments))
     if name == "factory.jetbrains_handshake":
         return _content(_jetbrains_handshake(root, arguments))
     if name == "factory.jetbrains_handshake_status":
         return _content(_jetbrains_handshake_status(root, arguments))
+    return None
+
+
+def _tool_call(root: Path, params: object) -> dict[str, object]:
+    if not isinstance(params, dict) or set(params) - {"name", "arguments"}:
+        raise McpError("tools/call requires name and optional arguments")
+    name = params.get("name")
+    arguments = params.get("arguments", {})
+    if not isinstance(name, str):
+        raise McpError("tools/call name must be a string")
+    for dispatch in (
+        _tool_call_dispatch_1,
+        _tool_call_dispatch_2,
+        _tool_call_dispatch_3,
+        _tool_call_dispatch_4,
+        _tool_call_dispatch_5,
+        _tool_call_dispatch_6,
+        _tool_call_dispatch_7,
+        _tool_call_dispatch_8,
+        _tool_call_dispatch_9,
+        _tool_call_dispatch_10,
+    ):
+        result = dispatch(root, name, arguments)
+        if result is not None:
+            return result
     raise McpError("unknown MCP tool")
 
 
