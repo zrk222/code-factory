@@ -232,6 +232,183 @@ def _product_refs(
     return references
 
 
+def _product_entry_id(
+    state: dict[str, Any],
+    source: str,
+    entry: object,
+    noun: str,
+    seen: set[str] | None = None,
+) -> str | None:
+    if not isinstance(entry, dict):
+        _record_error(state["errors"], source, f"{noun}_NOT_OBJECT")
+        state["slice_links_exact"] = False
+        return None
+    value = entry.get("id")
+    if not isinstance(value, str) or not value.strip() or len(value.strip()) > 240:
+        _record_error(state["errors"], source, f"{noun}_ID_INVALID")
+        state["slice_links_exact"] = False
+        return None
+    value = value.strip()
+    if seen is not None and value in seen:
+        _record_error(state["errors"], source, f"{noun}_ID_DUPLICATE")
+        state["slice_links_exact"] = False
+        return None
+    if seen is not None:
+        seen.add(value)
+    return value
+
+
+def _append_product_requirements(
+    state: dict[str, Any],
+    graph: dict[str, Any],
+    source: str,
+    project: str,
+    product_id: str,
+    requirements: dict[tuple[str, str], str],
+) -> list[str]:
+    requirement_ids: list[str] = []
+    seen: set[str] = set()
+    for entry in _product_list(state, graph, "requirements", source):
+        requirement_id = _product_entry_id(state, source, entry, "REQUIREMENT", seen)
+        if requirement_id is None:
+            continue
+        requirement_ids.append(requirement_id)
+        node_id = f"requirement:{project}:{requirement_id}"
+        _node(
+            state,
+            node_id=node_id,
+            kind="requirement",
+            label=requirement_id,
+            source=source,
+            status="unverified",
+            facts={"statement": _text(entry.get("statement"), requirement_id)},
+        )
+        _edge(state, product_id, node_id, "declares")
+        requirements[(project, requirement_id)] = node_id
+    return requirement_ids
+
+
+def _append_slice_entry(
+    state: dict[str, Any],
+    entry: object,
+    source: str,
+    project: str,
+    product_id: str,
+    requirements: dict[tuple[str, str], str],
+    slices: dict[str, list[str]],
+    planned_slices: list[tuple[str, list[str]]],
+) -> None:
+    slice_id = _product_entry_id(state, source, entry, "SLICE")
+    if slice_id is None:
+        return
+    node_id = f"slice:{project}:{slice_id}"
+    _node(
+        state,
+        node_id=node_id,
+        kind="slice",
+        label=slice_id,
+        source=source,
+        status=_text(entry.get("risk"), "unknown"),
+        facts={"theme": _text(entry.get("theme"), "unknown")},
+    )
+    _edge(state, product_id, node_id, "plans")
+    slices.setdefault(slice_id, []).append(node_id)
+    dependencies = _product_refs(state, entry, "depends_on", source)
+    planned_slices.append((node_id, dependencies))
+    for req_id in _product_refs(state, entry, "requirement_ids", source):
+        requirement = requirements.get((project, req_id))
+        if requirement:
+            _edge(state, requirement, node_id, "assigned_to")
+        else:
+            state["slice_links_exact"] = False
+            _record_error(state["errors"], source, "SLICE_REQUIREMENT_UNKNOWN")
+
+
+def _link_product_slice_dependencies(
+    state: dict[str, Any],
+    planned_slices: list[tuple[str, list[str]]],
+    slices: dict[str, list[str]],
+) -> None:
+    for node_id, dependencies in planned_slices:
+        for dependency in dependencies:
+            for dependency_id in slices.get(dependency, []):
+                _edge(state, dependency_id, node_id, "depends_on")
+
+
+def _validate_product_slice_assignments(
+    state: dict[str, Any],
+    requirement_ids: list[str],
+    project: str,
+    requirements: dict[tuple[str, str], str],
+    source: str,
+) -> None:
+    for requirement_id in requirement_ids:
+        requirement_node = requirements.get((project, requirement_id))
+        assigned = [
+            edge
+            for edge in state["edges"]
+            if edge["source"] == requirement_node and edge["relation"] == "assigned_to"
+        ]
+        if requirement_node is None or len(assigned) != 1:
+            state["slice_links_exact"] = False
+            _record_error(state["errors"], source, f"SLICE_ASSIGNMENT_{requirement_id}")
+
+
+def _validate_product_slice_dependencies(
+    state: dict[str, Any],
+    planned_slices: list[tuple[str, list[str]]],
+    slices: dict[str, list[str]],
+    source: str,
+) -> None:
+    for node_id, dependencies in planned_slices:
+        for dependency in dependencies:
+            expected = [
+                (dependency_id, node_id, "depends_on")
+                for dependency_id in slices.get(dependency, [])
+            ]
+            if len(expected) != 1 or expected[0] not in state["edge_keys"]:
+                state["slice_links_exact"] = False
+                _record_error(state["errors"], source, f"SLICE_DEPENDENCY_{dependency}")
+
+
+def _append_product_slices(
+    state: dict[str, Any],
+    root: Path,
+    graph_path: Path,
+    project: str,
+    product_id: str,
+    requirement_ids: list[str],
+    requirements: dict[tuple[str, str], str],
+    slices: dict[str, list[str]],
+) -> None:
+    slices_path = graph_path.parent / "value_slices.json"
+    plan, plan_source = (
+        _load_json(root, slices_path, state["errors"])
+        if slices_path.exists()
+        else (None, None)
+    )
+    if plan is None or plan_source is None:
+        return
+    state["slice_plan_seen"] = True
+    planned_slices: list[tuple[str, list[str]]] = []
+    for entry in _product_list(state, plan, "slices", plan_source):
+        _append_slice_entry(
+            state,
+            entry,
+            plan_source,
+            project,
+            product_id,
+            requirements,
+            slices,
+            planned_slices,
+        )
+    _link_product_slice_dependencies(state, planned_slices, slices)
+    _validate_product_slice_assignments(
+        state, requirement_ids, project, requirements, plan_source
+    )
+    _validate_product_slice_dependencies(state, planned_slices, slices, plan_source)
+
+
 def _append_product_graphs(
     state: dict[str, Any], root: Path
 ) -> tuple[dict[tuple[str, str], str], dict[str, list[str]]]:
@@ -254,117 +431,127 @@ def _append_product_graphs(
             source=source,
             status=_text(graph.get("status"), "unknown"),
         )
-        requirement_ids: list[str] = []
-        for entry in _product_list(state, graph, "requirements", source):
-            if not isinstance(entry, dict):
-                _record_error(state["errors"], source, "REQUIREMENT_NOT_OBJECT")
-                state["slice_links_exact"] = False
-                continue
-            requirement_id = entry.get("id")
-            if (
-                not isinstance(requirement_id, str)
-                or not requirement_id.strip()
-                or len(requirement_id.strip()) > 240
-            ):
-                _record_error(state["errors"], source, "REQUIREMENT_ID_INVALID")
-                state["slice_links_exact"] = False
-                continue
-            requirement_id = requirement_id.strip()
-            if requirement_id in requirement_ids:
-                _record_error(state["errors"], source, "REQUIREMENT_ID_DUPLICATE")
-                state["slice_links_exact"] = False
-                continue
-            requirement_ids.append(requirement_id)
-            node_id = f"requirement:{project}:{requirement_id}"
-            _node(
-                state,
-                node_id=node_id,
-                kind="requirement",
-                label=requirement_id,
-                source=source,
-                status="unverified",
-                facts={"statement": _text(entry.get("statement"), requirement_id)},
-            )
-            _edge(state, product_id, node_id, "declares")
-            requirements[(project, requirement_id)] = node_id
-
-        slices_path = graph_path.parent / "value_slices.json"
-        plan, plan_source = (
-            _load_json(root, slices_path, state["errors"])
-            if slices_path.exists()
-            else (None, None)
+        requirement_ids = _append_product_requirements(
+            state, graph, source, project, product_id, requirements
         )
-        if plan is None or plan_source is None:
-            continue
-        state["slice_plan_seen"] = True
-        planned_slices: list[tuple[str, list[str]]] = []
-        for entry in _product_list(state, plan, "slices", plan_source):
-            if not isinstance(entry, dict):
-                _record_error(state["errors"], plan_source, "SLICE_NOT_OBJECT")
-                state["slice_links_exact"] = False
-                continue
-            slice_id = entry.get("id")
-            if (
-                not isinstance(slice_id, str)
-                or not slice_id.strip()
-                or len(slice_id.strip()) > 240
-            ):
-                _record_error(state["errors"], plan_source, "SLICE_ID_INVALID")
-                state["slice_links_exact"] = False
-                continue
-            slice_id = slice_id.strip()
-            node_id = f"slice:{project}:{slice_id}"
-            _node(
-                state,
-                node_id=node_id,
-                kind="slice",
-                label=slice_id,
-                source=plan_source,
-                status=_text(entry.get("risk"), "unknown"),
-                facts={"theme": _text(entry.get("theme"), "unknown")},
-            )
-            _edge(state, product_id, node_id, "plans")
-            slices.setdefault(slice_id, []).append(node_id)
-            dependencies = _product_refs(state, entry, "depends_on", plan_source)
-            planned_slices.append((node_id, dependencies))
-            for req_id in _product_refs(state, entry, "requirement_ids", plan_source):
-                requirement = requirements.get((project, req_id))
-                if requirement:
-                    _edge(state, requirement, node_id, "assigned_to")
-                else:
-                    state["slice_links_exact"] = False
-                    _record_error(
-                        state["errors"], plan_source, "SLICE_REQUIREMENT_UNKNOWN"
-                    )
-        for node_id, dependencies in planned_slices:
-            for dependency in dependencies:
-                for dependency_id in slices.get(dependency, []):
-                    _edge(state, dependency_id, node_id, "depends_on")
-        for requirement_id in requirement_ids:
-            requirement_node = requirements.get((project, requirement_id))
-            assigned = [
-                edge
-                for edge in state["edges"]
-                if edge["source"] == requirement_node
-                and edge["relation"] == "assigned_to"
-            ]
-            if requirement_node is None or len(assigned) != 1:
-                state["slice_links_exact"] = False
-                _record_error(
-                    state["errors"], plan_source, f"SLICE_ASSIGNMENT_{requirement_id}"
-                )
-        for node_id, dependencies in planned_slices:
-            for dependency in dependencies:
-                expected = [
-                    (dependency_id, node_id, "depends_on")
-                    for dependency_id in slices.get(dependency, [])
-                ]
-                if len(expected) != 1 or expected[0] not in state["edge_keys"]:
-                    state["slice_links_exact"] = False
-                    _record_error(
-                        state["errors"], plan_source, f"SLICE_DEPENDENCY_{dependency}"
-                    )
+        _append_product_slices(
+            state,
+            root,
+            graph_path,
+            project,
+            product_id,
+            requirement_ids,
+            requirements,
+            slices,
+        )
     return requirements, slices
+
+
+def _append_mission_decision(
+    state: dict[str, Any],
+    root: Path,
+    mission_path: Path,
+    mission_id: str,
+    mission_node: str,
+) -> None:
+    decision_path = mission_path.parent / "execution_decision.json"
+    if not decision_path.exists():
+        return
+    decision, source = _load_json(root, decision_path, state["errors"])
+    if decision is None or source is None:
+        return
+    decision_id = f"approval:{mission_id}"
+    _node(
+        state,
+        node_id=decision_id,
+        kind="approval",
+        label=f"approval for {mission_id}",
+        source=source,
+        status=_text(decision.get("decision"), "unknown"),
+    )
+    _edge(state, decision_id, mission_node, "decides")
+
+
+def _verified_mission_completion(
+    root: Path, completion_path: Path, state: dict[str, Any]
+) -> tuple[dict[str, Any] | None, str | None, dict[str, Any] | None]:
+    completion, source = _load_json(root, completion_path, state["errors"])
+    if completion is None:
+        return None, source, None
+    try:
+        verification = verify_mission_completion(completion_path)
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        verification = {"valid": False, "errors": ["completion verification failed"]}
+    return completion, source, verification
+
+
+def _append_mission_completion(
+    state: dict[str, Any],
+    root: Path,
+    mission_path: Path,
+    mission: dict[str, Any],
+    mission_id: str,
+    mission_node: str,
+    requirements: dict[tuple[str, str], str],
+    evidenced: set[str],
+) -> None:
+    completion_path = mission_path.parent / "completion.json"
+    if not completion_path.exists():
+        return
+    completion, source, verification = _verified_mission_completion(
+        root, completion_path, state
+    )
+    if completion is None or source is None:
+        return
+    completion_id = f"completion:{mission_id}"
+    valid = verification is not None and verification.get("valid") is True
+    _node(
+        state,
+        node_id=completion_id,
+        kind="completion",
+        label=f"completion for {mission_id}",
+        source=source,
+        status="verified" if valid else "invalid",
+        facts={"errors": verification.get("errors", []) if verification else []},
+    )
+    _edge(state, mission_node, completion_id, "completed_by")
+    if valid:
+        project = _text(mission.get("project"), "")
+        for requirement_id in mission.get("slice", {}).get("requirement_ids", []):
+            req_node = requirements.get((project, str(requirement_id)))
+            if req_node:
+                _edge(state, completion_id, req_node, "verifies")
+                evidenced.add(req_node)
+
+
+def _append_one_mission(
+    state: dict[str, Any],
+    root: Path,
+    mission_path: Path,
+    mission: dict[str, Any],
+    source: str,
+    requirements: dict[tuple[str, str], str],
+    slices: dict[str, list[str]],
+    evidenced: set[str],
+) -> None:
+    mission_id = _text(mission.get("id"), mission_path.parent.name)
+    node_id = f"mission:{mission_id}"
+    _node(
+        state,
+        node_id=node_id,
+        kind="mission",
+        label=mission_id,
+        source=source,
+        status=_text(
+            mission.get("approval_state"), _text(mission.get("status"), "unknown")
+        ),
+    )
+    for slice_node in slices.get(_text(mission.get("slice_id"), ""), []):
+        _edge(state, slice_node, node_id, "governs")
+    _append_mission_decision(state, root, mission_path, mission_id, node_id)
+    _append_mission_completion(
+        state, root, mission_path, mission, mission_id, node_id, requirements, evidenced
+    )
 
 
 def _append_missions(
@@ -379,140 +566,143 @@ def _append_missions(
         mission, source = _load_json(root, mission_path, state["errors"])
         if mission is None or source is None:
             continue
-        mission_id = _text(mission.get("id"), mission_path.parent.name)
-        node_id = f"mission:{mission_id}"
-        _node(
-            state,
-            node_id=node_id,
-            kind="mission",
-            label=mission_id,
-            source=source,
-            status=_text(
-                mission.get("approval_state"), _text(mission.get("status"), "unknown")
-            ),
+        _append_one_mission(
+            state, root, mission_path, mission, source, requirements, slices, evidenced
         )
-        slice_id = _text(mission.get("slice_id"), "")
-        for slice_node in slices.get(slice_id, []):
-            _edge(state, slice_node, node_id, "governs")
-
-        decision_path = mission_path.parent / "execution_decision.json"
-        if decision_path.exists():
-            decision, decision_source = _load_json(root, decision_path, state["errors"])
-            if decision is not None and decision_source is not None:
-                decision_id = f"approval:{mission_id}"
-                _node(
-                    state,
-                    node_id=decision_id,
-                    kind="approval",
-                    label=f"approval for {mission_id}",
-                    source=decision_source,
-                    status=_text(decision.get("decision"), "unknown"),
-                )
-                _edge(state, decision_id, node_id, "decides")
-
-        completion_path = mission_path.parent / "completion.json"
-        if completion_path.exists():
-            completion, completion_source = _load_json(
-                root, completion_path, state["errors"]
-            )
-            verification: dict[str, Any] | None = None
-            if completion is not None:
-                try:
-                    verification = verify_mission_completion(completion_path)
-                except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
-                    verification = {
-                        "valid": False,
-                        "errors": ["completion verification failed"],
-                    }
-            if completion is not None and completion_source is not None:
-                completion_id = f"completion:{mission_id}"
-                status = (
-                    "verified"
-                    if verification and verification.get("valid") is True
-                    else "invalid"
-                )
-                _node(
-                    state,
-                    node_id=completion_id,
-                    kind="completion",
-                    label=f"completion for {mission_id}",
-                    source=completion_source,
-                    status=status,
-                    facts={
-                        "errors": verification.get("errors", []) if verification else []
-                    },
-                )
-                _edge(state, node_id, completion_id, "completed_by")
-                if verification and verification.get("valid") is True:
-                    project = _text(mission.get("project"), "")
-                    for requirement_id in mission.get("slice", {}).get(
-                        "requirement_ids", []
-                    ):
-                        req_node = requirements.get((project, str(requirement_id)))
-                        if req_node:
-                            _edge(state, completion_id, req_node, "verifies")
-                            evidenced.add(req_node)
     return evidenced
+
+
+def _load_intake_confirmation(root: Path, binding: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return verify_intake_confirmation(root, Path(binding["path"]))
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return {"valid": False, "errors": ["intake confirmation verification failed"]}
+
+
+def _append_intake_confirmation(
+    state: dict[str, Any],
+    root: Path,
+    graph_path: Path,
+    graph: dict[str, Any],
+    source: str,
+    facts: dict[str, int],
+) -> None:
+    binding = graph.get("intake")
+    if binding is None:
+        return
+    project = _text(graph.get("project"), graph_path.parent.name)
+    if not isinstance(binding, dict) or not isinstance(binding.get("path"), str):
+        _record_error(state["errors"], source, "INTAKE_CONFIRMATION_INVALID")
+        facts["invalid_count"] += 1
+        return
+    confirmation = _load_intake_confirmation(root, binding)
+    value = (
+        confirmation.get("confirmation")
+        if isinstance(confirmation.get("confirmation"), dict)
+        else None
+    )
+    valid = bool(confirmation.get("valid")) and value is not None
+    digest = _text(binding.get("confirmation_sha256"), _sha(binding)[:24])
+    node_id = f"intake:{digest[:24]}"
+    decision = value.get("decision", {}) if value else {}
+    _append_intake_node(state, binding, source, project, node_id, decision, valid)
+    facts["count"] += 1
+    facts["confirmed_count"] += int(valid)
+    facts["invalid_count"] += int(not valid)
+
+
+def _append_intake_node(
+    state: dict[str, Any],
+    binding: dict[str, Any],
+    source: str,
+    project: str,
+    node_id: str,
+    decision: dict[str, Any],
+    valid: bool,
+) -> None:
+    _node(
+        state,
+        node_id=node_id,
+        kind="intake",
+        label=f"intake · {_text(decision.get('framework'), 'unconfirmed')}",
+        source=source,
+        status="confirmed" if valid else "invalid",
+        facts={
+            "framework": _text(decision.get("framework"), "unconfirmed"),
+            "source_sha256": binding.get("source_sha256"),
+            "acceptance_evidence": "bound" if valid else "unverified",
+            "external_effects": _text(decision.get("external_effects"), "unknown"),
+            "re_evaluation_declared": bool(decision.get("re_evaluate_when"))
+            if isinstance(decision, dict)
+            else False,
+            "authority": _AUTHORITY,
+        },
+    )
+    product_id = f"product:{project}"
+    if product_id in state["nodes"]:
+        _edge(state, node_id, product_id, "sets_intent_for")
 
 
 def _append_intake_confirmations(state: dict[str, Any], root: Path) -> dict[str, int]:
     """Project only source-bound human intake decisions already present in graphs."""
     facts = {"count": 0, "confirmed_count": 0, "invalid_count": 0}
-    for graph_path in sorted(
-        (root / ".factory" / "products").glob("*/product_graph.json")
-    ):
+    product_root = root / ".factory" / "products"
+    for graph_path in sorted(product_root.glob("*/product_graph.json")):
         graph, source = _load_json(root, graph_path, state["errors"])
         if graph is None or source is None:
             continue
-        binding = graph.get("intake")
-        if binding is None:
-            continue
-        project = _text(graph.get("project"), graph_path.parent.name)
-        if not isinstance(binding, dict) or not isinstance(binding.get("path"), str):
-            _record_error(state["errors"], source, "INTAKE_CONFIRMATION_INVALID")
-            facts["invalid_count"] += 1
-            continue
-        try:
-            confirmation = verify_intake_confirmation(root, Path(binding["path"]))
-        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
-            confirmation = {
-                "valid": False,
-                "errors": ["intake confirmation verification failed"],
-            }
-        value = (
-            confirmation.get("confirmation")
-            if isinstance(confirmation.get("confirmation"), dict)
-            else None
-        )
-        valid = bool(confirmation.get("valid")) and value is not None
-        digest = _text(binding.get("confirmation_sha256"), _sha(binding)[:24])
-        node_id = f"intake:{digest[:24]}"
-        decision = value.get("decision", {}) if value else {}
-        _node(
-            state,
-            node_id=node_id,
-            kind="intake",
-            label=f"intake · {_text(decision.get('framework'), 'unconfirmed')}",
-            source=source,
-            status="confirmed" if valid else "invalid",
-            facts={
-                "framework": _text(decision.get("framework"), "unconfirmed"),
-                "source_sha256": binding.get("source_sha256"),
-                "acceptance_evidence": "bound" if valid else "unverified",
-                "external_effects": _text(decision.get("external_effects"), "unknown"),
-                "re_evaluation_declared": bool(decision.get("re_evaluate_when"))
-                if isinstance(decision, dict)
-                else False,
-                "authority": _AUTHORITY,
-            },
-        )
-        product_id = f"product:{project}"
-        if product_id in state["nodes"]:
-            _edge(state, node_id, product_id, "sets_intent_for")
-        facts["count"] += 1
-        facts["confirmed_count"] += int(valid)
-        facts["invalid_count"] += int(not valid)
+        _append_intake_confirmation(state, root, graph_path, graph, source, facts)
     return facts
+
+
+def _append_proof_receipt(
+    state: dict[str, Any],
+    root: Path,
+    receipt_path: Path,
+    receipt: dict[str, Any],
+    source: str,
+) -> int:
+    key = _text(receipt.get("proof_key"), receipt_path.stem)
+    try:
+        verification = verify_proof_receipt(root, receipt_path)
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        verification = {"valid": False, "errors": ["proof verification failed"]}
+    status = "verified" if verification.get("valid") is True else "stale"
+    proof_id = f"proof:{key}"
+    _node(
+        state,
+        node_id=proof_id,
+        kind="proof",
+        label=_text(receipt.get("gate"), key),
+        source=source,
+        status=status,
+        facts={"proof_key": key, "errors": verification.get("errors", [])},
+    )
+    _append_proof_artifacts(state, root, receipt, source, proof_id)
+    return int(status == "stale")
+
+
+def _append_proof_artifacts(
+    state: dict[str, Any],
+    root: Path,
+    receipt: dict[str, Any],
+    source: str,
+    proof_id: str,
+) -> None:
+    for role in ("inputs", "outputs"):
+        for item in receipt.get(role, []):
+            if not isinstance(item, dict):
+                continue
+            artifact_id = _artifact(
+                state, root, item.get("path"), source=source, role=role[:-1]
+            )
+            if artifact_id:
+                _edge(
+                    state,
+                    artifact_id,
+                    proof_id,
+                    "input_to" if role == "inputs" else "validated_by",
+                )
 
 
 def _append_proofs(state: dict[str, Any], root: Path) -> int:
@@ -522,37 +712,7 @@ def _append_proofs(state: dict[str, Any], root: Path) -> int:
         receipt, source = _load_json(root, receipt_path, state["errors"])
         if receipt is None or source is None:
             continue
-        key = _text(receipt.get("proof_key"), receipt_path.stem)
-        try:
-            verification = verify_proof_receipt(root, receipt_path)
-        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
-            verification = {"valid": False, "errors": ["proof verification failed"]}
-        status = "verified" if verification.get("valid") is True else "stale"
-        stale += status == "stale"
-        proof_id = f"proof:{key}"
-        _node(
-            state,
-            node_id=proof_id,
-            kind="proof",
-            label=_text(receipt.get("gate"), key),
-            source=source,
-            status=status,
-            facts={"proof_key": key, "errors": verification.get("errors", [])},
-        )
-        for role in ("inputs", "outputs"):
-            for item in receipt.get(role, []):
-                if not isinstance(item, dict):
-                    continue
-                artifact_id = _artifact(
-                    state, root, item.get("path"), source=source, role=role[:-1]
-                )
-                if artifact_id:
-                    _edge(
-                        state,
-                        artifact_id,
-                        proof_id,
-                        "input_to" if role == "inputs" else "validated_by",
-                    )
+        stale += _append_proof_receipt(state, root, receipt_path, receipt, source)
     return stale
 
 
@@ -587,53 +747,80 @@ def _append_plans(state: dict[str, Any], root: Path) -> Counter[str]:
     return dispositions
 
 
+def _append_trace_artifacts(
+    state: dict[str, Any], root: Path, source: str, receipt_id: str, artifacts: Any
+) -> None:
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            continue
+        artifact_id = _artifact(
+            state,
+            root,
+            artifact.get("path"),
+            source=source,
+            role=_text(artifact.get("kind"), "artifact"),
+        )
+        if artifact_id:
+            _edge(state, receipt_id, artifact_id, "observes")
+
+
+def _append_trace_receipt(
+    state: dict[str, Any],
+    root: Path,
+    source: str,
+    trace_id: str,
+    index: int,
+    item: object,
+    valid: bool,
+) -> None:
+    if not isinstance(item, dict):
+        return
+    receipt_hash = _text(item.get("receipt_sha256"), f"receipt-{index}")
+    receipt_id = f"receipt:{receipt_hash[:24]}"
+    _node(
+        state,
+        node_id=receipt_id,
+        kind="receipt",
+        label=_text(item.get("receipt_path"), receipt_hash[:12]),
+        source=source,
+        status="verified" if valid else "unverified",
+    )
+    _edge(state, trace_id, receipt_id, "contains")
+    _append_trace_artifacts(state, root, source, receipt_id, item.get("artifacts", []))
+
+
+def _append_one_trace(
+    state: dict[str, Any],
+    root: Path,
+    trace_path: Path,
+    trace: dict[str, Any],
+    source: str,
+) -> None:
+    try:
+        verification = verify_trace(trace_path, root=root)
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        verification = {"valid": False, "errors": ["trace verification failed"]}
+    valid = verification.get("valid") is True
+    trace_id = f"trace:{_text(trace.get('feature'), trace_path.stem)}"
+    _node(
+        state,
+        node_id=trace_id,
+        kind="trace",
+        label=_text(trace.get("feature"), trace_path.stem),
+        source=source,
+        status="verified" if valid else "invalid",
+        facts={"errors": verification.get("errors", [])},
+    )
+    for index, item in enumerate(trace.get("nodes", []), 1):
+        _append_trace_receipt(state, root, source, trace_id, index, item, valid)
+
+
 def _append_traces(state: dict[str, Any], root: Path) -> None:
     for trace_path in sorted((root / ".factory" / "traces").glob("*.trace.json")):
         trace, source = _load_json(root, trace_path, state["errors"])
         if trace is None or source is None:
             continue
-        try:
-            verification = verify_trace(trace_path, root=root)
-        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
-            verification = {"valid": False, "errors": ["trace verification failed"]}
-        trace_id = f"trace:{_text(trace.get('feature'), trace_path.stem)}"
-        _node(
-            state,
-            node_id=trace_id,
-            kind="trace",
-            label=_text(trace.get("feature"), trace_path.stem),
-            source=source,
-            status="verified" if verification.get("valid") is True else "invalid",
-            facts={"errors": verification.get("errors", [])},
-        )
-        for index, item in enumerate(trace.get("nodes", []), 1):
-            if not isinstance(item, dict):
-                continue
-            receipt_hash = _text(item.get("receipt_sha256"), f"receipt-{index}")
-            receipt_id = f"receipt:{receipt_hash[:24]}"
-            _node(
-                state,
-                node_id=receipt_id,
-                kind="receipt",
-                label=_text(item.get("receipt_path"), receipt_hash[:12]),
-                source=source,
-                status="verified"
-                if verification.get("valid") is True
-                else "unverified",
-            )
-            _edge(state, trace_id, receipt_id, "contains")
-            for artifact in item.get("artifacts", []):
-                if not isinstance(artifact, dict):
-                    continue
-                artifact_id = _artifact(
-                    state,
-                    root,
-                    artifact.get("path"),
-                    source=source,
-                    role=_text(artifact.get("kind"), "artifact"),
-                )
-                if artifact_id:
-                    _edge(state, receipt_id, artifact_id, "observes")
+        _append_one_trace(state, root, trace_path, trace, source)
 
 
 def _append_verifier_sessions(state: dict[str, Any], root: Path) -> dict[str, int]:
@@ -698,75 +885,182 @@ def _append_verifier_sessions(state: dict[str, Any], root: Path) -> dict[str, in
     return facts
 
 
+def _append_lineage_fact(
+    state: dict[str, Any], path: Path, root: Path
+) -> tuple[Path, dict[str, Any], str, str] | None:
+    lineage, source = _load_json(root, path, state["errors"])
+    if lineage is None or source is None:
+        return None
+    result = verify_graph_lineage(path)
+    run_id = _text(result.get("run_id"), path.stem)
+    node_id = f"lineage:{run_id}"
+    _node(
+        state,
+        node_id=node_id,
+        kind="lineage",
+        label=run_id,
+        source=source,
+        status="verified" if result["valid"] else "invalid",
+        facts={
+            "graph_id": _text(result.get("graph_id"), "unknown"),
+            "steps": len(result["steps"]),
+            "errors": result["errors"],
+        },
+    )
+    return path, result, node_id, source
+
+
+def _append_forensic_pair(
+    state: dict[str, Any],
+    graph_id: str,
+    items: list[tuple[Path, dict[str, Any], str, str]],
+) -> tuple[int, int]:
+    if len(items) < 2:
+        return 0, 0
+    baseline, candidate = items[-2], items[-1]
+    result = graph_forensics(baseline[0], candidate[0])
+    forensic_id = f"forensics:{_sha({'graph_id': graph_id, 'sha': result['forensics_sha256']})[:24]}"
+    status = (
+        "anomaly"
+        if result["anomalies"]
+        else "diverged"
+        if result["divergence"]
+        else "verified"
+    )
+    _node(
+        state,
+        node_id=forensic_id,
+        kind="forensics",
+        label=f"{baseline[1]['run_id']} vs {candidate[1]['run_id']}",
+        source=candidate[3],
+        status=status,
+        facts={
+            "graph_id": graph_id,
+            "baseline": result["baseline"],
+            "candidate": result["candidate"],
+            "baseline_path": baseline[3],
+            "candidate_path": candidate[3],
+            "first_divergence": result["divergence"],
+            "anomaly_count": len(result["anomalies"]),
+            "anomalies": result["anomalies"],
+            "recovery_plan": result["recovery_plan"],
+            "authority": result["authority"],
+            "forensics_sha256": result["forensics_sha256"],
+        },
+    )
+    _edge(state, baseline[2], forensic_id, "baseline_for")
+    _edge(state, candidate[2], forensic_id, "candidate_for")
+    return len(result["anomalies"]), int(result["divergence"] is not None)
+
+
 def _append_graph_forensics(state: dict[str, Any], root: Path) -> dict[str, int]:
     """Add verified lineage and latest-pair forensic facts to the read-only map."""
     facts = {"lineage_count": 0, "anomaly_count": 0, "divergence_count": 0}
     verified: list[tuple[Path, dict[str, Any], str, str]] = []
-    for path in sorted((root / ".factory" / "graph-runs").glob("*.lineage.json")):
-        lineage, source = _load_json(root, path, state["errors"])
-        if lineage is None or source is None:
+    lineage_root = root / ".factory" / "graph-runs"
+    for path in sorted(lineage_root.glob("*.lineage.json")):
+        item = _append_lineage_fact(state, path, root)
+        if item is None:
             continue
-        result = verify_graph_lineage(path)
-        run_id = _text(result.get("run_id"), path.stem)
-        node_id = f"lineage:{run_id}"
-        _node(
-            state,
-            node_id=node_id,
-            kind="lineage",
-            label=run_id,
-            source=source,
-            status="verified" if result["valid"] else "invalid",
-            facts={
-                "graph_id": _text(result.get("graph_id"), "unknown"),
-                "steps": len(result["steps"]),
-                "errors": result["errors"],
-            },
-        )
         facts["lineage_count"] += 1
-        if result["valid"]:
-            verified.append((path, result, node_id, source))
+        if item[1]["valid"]:
+            verified.append(item)
     by_graph: dict[str, list[tuple[Path, dict[str, Any], str, str]]] = {}
     for item in verified:
         by_graph.setdefault(str(item[1]["graph_id"]), []).append(item)
     for graph_id, items in sorted(by_graph.items()):
-        if len(items) < 2:
-            continue
-        baseline, candidate = items[-2], items[-1]
-        result = graph_forensics(baseline[0], candidate[0])
-        forensic_id = f"forensics:{_sha({'graph_id': graph_id, 'sha': result['forensics_sha256']})[:24]}"
-        status = (
-            "anomaly"
-            if result["anomalies"]
-            else "diverged"
-            if result["divergence"]
-            else "verified"
-        )
-        _node(
-            state,
-            node_id=forensic_id,
-            kind="forensics",
-            label=f"{baseline[1]['run_id']} vs {candidate[1]['run_id']}",
-            source=candidate[3],
-            status=status,
-            facts={
-                "graph_id": graph_id,
-                "baseline": result["baseline"],
-                "candidate": result["candidate"],
-                "baseline_path": baseline[3],
-                "candidate_path": candidate[3],
-                "first_divergence": result["divergence"],
-                "anomaly_count": len(result["anomalies"]),
-                "anomalies": result["anomalies"],
-                "recovery_plan": result["recovery_plan"],
-                "authority": result["authority"],
-                "forensics_sha256": result["forensics_sha256"],
-            },
-        )
-        _edge(state, baseline[2], forensic_id, "baseline_for")
-        _edge(state, candidate[2], forensic_id, "candidate_for")
-        facts["anomaly_count"] += len(result["anomalies"])
-        facts["divergence_count"] += int(result["divergence"] is not None)
+        anomalies, divergences = _append_forensic_pair(state, graph_id, items)
+        facts["anomaly_count"] += anomalies
+        facts["divergence_count"] += divergences
     return facts
+
+
+def _append_proofsearch_candidate(
+    state: dict[str, Any],
+    candidate: object,
+    source: str,
+    digest: str,
+    winner: object,
+    evaluation_id: str,
+    facts: dict[str, int],
+) -> None:
+    if not isinstance(candidate, dict):
+        return
+    candidate_id = _text(candidate.get("candidate_id"), "candidate")
+    node_id = f"repair-candidate:{_sha({'evaluation': digest, 'candidate': candidate_id})[:24]}"
+    is_winner = candidate_id == winner
+    eligible = candidate.get("eligible") is True
+    status = "winner" if is_winner else "eligible" if eligible else "rejected"
+    _node(
+        state,
+        node_id=node_id,
+        kind="repair_candidate",
+        label=candidate_id,
+        source=source,
+        status=status,
+        facts={
+            "winner": is_winner,
+            "eligible": eligible,
+            "reasons": candidate.get("reasons", []),
+            "risk_score": candidate.get("risk_score"),
+            "changed_lines": candidate.get("changed_lines"),
+            "changed_paths": candidate.get("changed_paths", []),
+            "mutation": candidate.get("mutation", {}),
+            "metrics": candidate.get("metrics", {}),
+            "proofs": candidate.get("proofs", []),
+            "patch": candidate.get("patch", {}),
+            "guardrails": candidate.get("guardrails", {}),
+        },
+    )
+    _edge(state, node_id, evaluation_id, "evaluated_by")
+    facts["candidate_count"] += 1
+    facts["eligible_count"] += int(eligible)
+    facts["winner_count"] += int(is_winner)
+
+
+def _append_proofsearch_evaluation(
+    state: dict[str, Any],
+    root: Path,
+    path: Path,
+    value: dict[str, Any],
+    source: str,
+    facts: dict[str, int],
+) -> None:
+    verification = verify_proofsearch_evaluation(root, path)
+    digest = _text(value.get("evaluation_sha256"), path.stem)
+    evaluation_id = f"proofsearch:{digest[:24]}"
+    winner = value.get("winner")
+    status = (
+        "verified"
+        if verification["valid"] and winner
+        else "blocked"
+        if verification["valid"]
+        else "invalid"
+    )
+    _node(
+        state,
+        node_id=evaluation_id,
+        kind="proofsearch",
+        label=f"ProofSearch · {winner or 'no winner'}",
+        source=source,
+        status=status,
+        facts={
+            "winner": winner,
+            "decision": value.get("decision"),
+            "apply": value.get("apply"),
+            "savings": value.get("savings", {}),
+            "authority": value.get("authority", {}),
+            "evaluation_sha256": digest,
+            "valid": verification["valid"],
+            "errors": verification["errors"],
+            "candidate_count": len(value.get("candidates", [])),
+        },
+    )
+    facts["evaluation_count"] += 1
+    for candidate in value.get("candidates", []):
+        _append_proofsearch_candidate(
+            state, candidate, source, digest, winner, evaluation_id, facts
+        )
 
 
 def _append_proofsearch(state: dict[str, Any], root: Path) -> dict[str, int]:
@@ -782,68 +1076,91 @@ def _append_proofsearch(state: dict[str, Any], root: Path) -> dict[str, int]:
         value, source = _load_json(root, path, state["errors"])
         if value is None or source is None:
             continue
-        verification = verify_proofsearch_evaluation(root, path)
-        digest = _text(value.get("evaluation_sha256"), path.stem)
-        evaluation_id = f"proofsearch:{digest[:24]}"
-        winner = value.get("winner")
-        _node(
-            state,
-            node_id=evaluation_id,
-            kind="proofsearch",
-            label=f"ProofSearch · {winner or 'no winner'}",
-            source=source,
-            status="verified"
-            if verification["valid"] and winner
-            else "blocked"
-            if verification["valid"]
-            else "invalid",
-            facts={
-                "winner": winner,
-                "decision": value.get("decision"),
-                "apply": value.get("apply"),
-                "savings": value.get("savings", {}),
-                "authority": value.get("authority", {}),
-                "evaluation_sha256": digest,
-                "valid": verification["valid"],
-                "errors": verification["errors"],
-                "candidate_count": len(value.get("candidates", [])),
-            },
-        )
-        facts["evaluation_count"] += 1
-        for candidate in value.get("candidates", []):
-            if not isinstance(candidate, dict):
-                continue
-            candidate_id = _text(candidate.get("candidate_id"), "candidate")
-            node_id = f"repair-candidate:{_sha({'evaluation': digest, 'candidate': candidate_id})[:24]}"
-            is_winner = candidate_id == winner
-            eligible = candidate.get("eligible") is True
-            status = "winner" if is_winner else "eligible" if eligible else "rejected"
-            _node(
-                state,
-                node_id=node_id,
-                kind="repair_candidate",
-                label=candidate_id,
-                source=source,
-                status=status,
-                facts={
-                    "winner": is_winner,
-                    "eligible": eligible,
-                    "reasons": candidate.get("reasons", []),
-                    "risk_score": candidate.get("risk_score"),
-                    "changed_lines": candidate.get("changed_lines"),
-                    "changed_paths": candidate.get("changed_paths", []),
-                    "mutation": candidate.get("mutation", {}),
-                    "metrics": candidate.get("metrics", {}),
-                    "proofs": candidate.get("proofs", []),
-                    "patch": candidate.get("patch", {}),
-                    "guardrails": candidate.get("guardrails", {}),
-                },
-            )
-            _edge(state, node_id, evaluation_id, "evaluated_by")
-            facts["candidate_count"] += 1
-            facts["eligible_count"] += int(eligible)
-            facts["winner_count"] += int(is_winner)
+        _append_proofsearch_evaluation(state, root, path, value, source, facts)
     return facts
+
+
+def _frontier_status(valid: bool, next_experiment: object) -> str:
+    return "ready" if valid and next_experiment else "halted" if valid else "invalid"
+
+
+def _append_evidence_experiment(
+    state: dict[str, Any],
+    source: str,
+    digest: str,
+    next_experiment: object,
+    frontier_id: str,
+    experiment: object,
+) -> None:
+    if not isinstance(experiment, dict):
+        return
+    experiment_id = _text(experiment.get("experiment_id"), "experiment")
+    node_id = f"evidence-experiment:{_sha({'frontier': digest, 'experiment': experiment_id})[:24]}"
+    _node(
+        state,
+        node_id=node_id,
+        kind="evidence_experiment",
+        label=experiment_id,
+        source=source,
+        status="next" if experiment_id == next_experiment else "ranked",
+        facts={
+            "rank": experiment.get("rank"),
+            "kind": experiment.get("kind"),
+            "description": experiment.get("description"),
+            "predictions": experiment.get("predictions", {}),
+            "separation_count": experiment.get("separation_count"),
+            "candidate_pair_count": experiment.get("candidate_pair_count"),
+            "measurement": experiment.get("measurement"),
+            "execution_allowed": False,
+        },
+    )
+    _edge(state, node_id, frontier_id, "ranked_by")
+
+
+def _append_one_evidence_frontier(
+    state: dict[str, Any],
+    root: Path,
+    path: Path,
+    value: dict[str, Any],
+    source: str,
+    facts: dict[str, int],
+) -> None:
+    verification = verify_evidence_frontier(root, path)
+    digest = _text(value.get("frontier_sha256"), path.stem)
+    next_experiment = value.get("next_experiment")
+    status = _frontier_status(verification["valid"], next_experiment)
+    frontier_id = f"evidence-frontier:{digest[:24]}"
+    _node(
+        state,
+        node_id=frontier_id,
+        kind="evidence_frontier",
+        label=f"Evidence Frontier · {next_experiment or 'no separating test'}",
+        source=source,
+        status=status,
+        facts={
+            "next_experiment": next_experiment,
+            "decision": value.get("decision"),
+            "eligible_candidate_ids": value.get("eligible_candidate_ids", []),
+            "max_experiments": value.get("max_experiments"),
+            "savings": value.get("savings", {}),
+            "authority": value.get("authority", {}),
+            "frontier_sha256": digest,
+            "valid": verification["valid"],
+            "errors": verification["errors"],
+        },
+    )
+    evaluation = value.get("evaluation")
+    evaluation_path = evaluation.get("path") if isinstance(evaluation, dict) else None
+    for node in state["nodes"].values():
+        if node.get("kind") == "proofsearch" and node.get("source") == evaluation_path:
+            _edge(state, frontier_id, node["id"], "selects_evidence_for")
+    for experiment in value.get("experiments", []):
+        _append_evidence_experiment(
+            state, source, digest, next_experiment, frontier_id, experiment
+        )
+    facts["frontier_count"] += 1
+    facts["ready_count"] += int(status == "ready")
+    facts["halted_count"] += int(status == "halted")
 
 
 def _append_evidence_frontiers(state: dict[str, Any], root: Path) -> dict[str, int]:
@@ -854,74 +1171,7 @@ def _append_evidence_frontiers(state: dict[str, Any], root: Path) -> dict[str, i
         value, source = _load_json(root, path, state["errors"])
         if value is None or source is None:
             continue
-        verification = verify_evidence_frontier(root, path)
-        digest = _text(value.get("frontier_sha256"), path.stem)
-        next_experiment = value.get("next_experiment")
-        status = (
-            "ready"
-            if verification["valid"] and next_experiment
-            else "halted"
-            if verification["valid"]
-            else "invalid"
-        )
-        frontier_id = f"evidence-frontier:{digest[:24]}"
-        _node(
-            state,
-            node_id=frontier_id,
-            kind="evidence_frontier",
-            label=f"Evidence Frontier · {next_experiment or 'no separating test'}",
-            source=source,
-            status=status,
-            facts={
-                "next_experiment": next_experiment,
-                "decision": value.get("decision"),
-                "eligible_candidate_ids": value.get("eligible_candidate_ids", []),
-                "max_experiments": value.get("max_experiments"),
-                "savings": value.get("savings", {}),
-                "authority": value.get("authority", {}),
-                "frontier_sha256": digest,
-                "valid": verification["valid"],
-                "errors": verification["errors"],
-            },
-        )
-        evaluation_path = (
-            value.get("evaluation", {}).get("path")
-            if isinstance(value.get("evaluation"), dict)
-            else None
-        )
-        for node in state["nodes"].values():
-            if (
-                node.get("kind") == "proofsearch"
-                and node.get("source") == evaluation_path
-            ):
-                _edge(state, frontier_id, node["id"], "selects_evidence_for")
-        for experiment in value.get("experiments", []):
-            if not isinstance(experiment, dict):
-                continue
-            experiment_id = _text(experiment.get("experiment_id"), "experiment")
-            node_id = f"evidence-experiment:{_sha({'frontier': digest, 'experiment': experiment_id})[:24]}"
-            _node(
-                state,
-                node_id=node_id,
-                kind="evidence_experiment",
-                label=experiment_id,
-                source=source,
-                status="next" if experiment_id == next_experiment else "ranked",
-                facts={
-                    "rank": experiment.get("rank"),
-                    "kind": experiment.get("kind"),
-                    "description": experiment.get("description"),
-                    "predictions": experiment.get("predictions", {}),
-                    "separation_count": experiment.get("separation_count"),
-                    "candidate_pair_count": experiment.get("candidate_pair_count"),
-                    "measurement": experiment.get("measurement"),
-                    "execution_allowed": False,
-                },
-            )
-            _edge(state, node_id, frontier_id, "ranked_by")
-        facts["frontier_count"] += 1
-        facts["ready_count"] += int(status == "ready")
-        facts["halted_count"] += int(status == "halted")
+        _append_one_evidence_frontier(state, root, path, value, source, facts)
     return facts
 
 
@@ -1163,6 +1413,193 @@ def _append_continuity(state: dict[str, Any], root: Path) -> dict[str, int]:
     return facts
 
 
+def _proof_delta_verification(
+    state: dict[str, Any], root: Path, path: Path, facts: dict[str, Any]
+) -> tuple[dict[str, Any], str] | None:
+    value, source = _load_json(root, path, state["errors"])
+    if value is None or source is None:
+        facts["invalid_count"] += 1
+        return None
+    try:
+        verification = verify_proof_delta(root, path)
+    except ProofDeltaError as exc:
+        _record_error(state["errors"], source, exc.code)
+        facts["invalid_count"] += 1
+        return None
+    return verification, source
+
+
+def _append_proof_delta_blocker(
+    state: dict[str, Any], source: str, telemetry: dict[str, Any], digest: str
+) -> None:
+    blocker_id = f"proof-delta-blocker:{telemetry['telemetrySha256'][:24]}"
+    _node(
+        state,
+        node_id=blocker_id,
+        kind="proof_delta_blocker",
+        label="NO_GAIN_HALT · unproductive retry",
+        source=source,
+        status="blocked",
+        facts={
+            **telemetry["blocker"],
+            "proofDeltaSha256": digest,
+            "authority": dict(_AUTHORITY),
+            "execution": False,
+        },
+    )
+    _edge(
+        state,
+        f"proof_delta_guard:{telemetry['telemetrySha256'][:24]}",
+        blocker_id,
+        "blocked_by",
+    )
+    for debt in telemetry["proofDebt"]:
+        debt_id = (
+            f"proof-delta-debt:{telemetry['telemetrySha256'][:16]}:{_sha(debt)[:8]}"
+        )
+        _node(
+            state,
+            node_id=debt_id,
+            kind="proof_delta_proof_debt",
+            label=debt[:240],
+            source=source,
+            status="unresolved",
+            facts={
+                "debt": debt,
+                "proofDeltaSha256": digest,
+                "authority": dict(_AUTHORITY),
+                "execution": False,
+            },
+        )
+        _edge(
+            state,
+            f"proof_delta_guard:{telemetry['telemetrySha256'][:24]}",
+            debt_id,
+            "owes_proof",
+        )
+
+
+def _append_proof_delta_nodes(
+    state: dict[str, Any], source: str, verification: dict[str, Any], path: Path
+) -> tuple[str, dict[str, Any], str]:
+    status = "admitted" if verification["eligible"] else "halted"
+    digest = _text(verification.get("proof_delta_sha256"), path.stem)
+    node_id = f"proof-delta:{digest[:24]}"
+    _node(
+        state,
+        node_id=node_id,
+        kind="proof_delta",
+        label=f"retry · {verification['criterion_id']}",
+        source=source,
+        status=status,
+        facts={
+            "marker": verification["marker"],
+            "mission_id": verification["mission_id"],
+            "criterion_id": verification["criterion_id"],
+            "new_evidence_count": len(verification["new_evidence"]),
+            "reason": verification["reason"],
+            "proof_delta_sha256": digest,
+            "authority": verification["authority"],
+            "execution": False,
+        },
+    )
+    telemetry = build_proof_delta_telemetry(verification, digest)
+    telemetry_id = f"proof_delta_guard:{telemetry['telemetrySha256'][:24]}"
+    _node(
+        state,
+        node_id=telemetry_id,
+        kind="proof_delta_guard",
+        label=f"{telemetry['status']} · proof-delta guard",
+        source=source,
+        status=telemetry["status"],
+        facts=telemetry,
+    )
+    _edge(state, node_id, telemetry_id, "projects_telemetry")
+    _append_proof_delta_artifacts(
+        state, source, verification, telemetry, digest, telemetry_id
+    )
+    if telemetry["status"] == "NO_GAIN_HALT":
+        _append_proof_delta_blocker(state, source, telemetry, digest)
+    _append_proof_delta_action(state, source, telemetry, digest, telemetry_id)
+    return node_id, telemetry, status
+
+
+def _append_proof_delta_artifacts(
+    state: dict[str, Any],
+    source: str,
+    verification: dict[str, Any],
+    telemetry: dict[str, Any],
+    digest: str,
+    telemetry_id: str,
+) -> None:
+    candidate = verification["repair_candidate"]["candidate"]
+    candidate_id = f"proof-delta-candidate:{candidate['diff_sha256'][:24]}"
+    _node(
+        state,
+        node_id=candidate_id,
+        kind="proof_delta_candidate",
+        label=f"candidate · {candidate['diff_sha256'][:12]}",
+        source=verification["repair_candidate"]["path"],
+        status="changed"
+        if not telemetry["blocker"]["candidateUnchanged"]
+        else "unchanged",
+        facts={
+            "candidateHash": candidate["diff_sha256"],
+            "changedPaths": candidate["changed_paths"],
+            "role": "repair",
+            "proofDeltaSha256": digest,
+            "authority": dict(_AUTHORITY),
+            "execution": False,
+        },
+    )
+    _edge(state, telemetry_id, candidate_id, "binds_candidate")
+    evidence_digest = telemetry["blocker"]["evidenceDigest"]
+    evidence_id = f"proof-delta-evidence:{evidence_digest[7:31]}"
+    _node(
+        state,
+        node_id=evidence_id,
+        kind="proof_delta_evidence",
+        label=f"evidence · {evidence_digest[7:19]}",
+        source=source,
+        status="fresh"
+        if telemetry["status"] == "REPAIR_ADMITTED"
+        else "stale_or_unchanged",
+        facts={
+            "evidenceDigest": evidence_digest,
+            "newEvidenceCount": len(verification.get("new_evidence", [])),
+            "proofDeltaSha256": digest,
+            "authority": dict(_AUTHORITY),
+            "execution": False,
+        },
+    )
+    _edge(state, telemetry_id, evidence_id, "binds_evidence")
+
+
+def _append_proof_delta_action(
+    state: dict[str, Any],
+    source: str,
+    telemetry: dict[str, Any],
+    digest: str,
+    telemetry_id: str,
+) -> None:
+    action_id = f"proof-delta-action:{telemetry['telemetrySha256'][:24]}"
+    _node(
+        state,
+        node_id=action_id,
+        kind="proof_delta_next_action",
+        label="Next fact-derived action",
+        source=source,
+        status="review",
+        facts={
+            "action": telemetry["nextFactDerivedAction"],
+            "proofDeltaSha256": digest,
+            "authority": dict(_AUTHORITY),
+            "execution": False,
+        },
+    )
+    _edge(state, telemetry_id, action_id, "next_fact_derived_action")
+
+
 def _append_proof_deltas(state: dict[str, Any], root: Path) -> dict[str, Any]:
     """Project retry-admission evidence without starting a retry or a worker."""
     facts: dict[str, Any] = {
@@ -1176,141 +1613,13 @@ def _append_proof_deltas(state: dict[str, Any], root: Path) -> dict[str, Any]:
     }
     directory = root / ".factory" / "proof-deltas"
     for path in sorted(directory.glob("*.json")):
-        value, source = _load_json(root, path, state["errors"])
-        if value is None or source is None:
-            facts["invalid_count"] += 1
+        verified = _proof_delta_verification(state, root, path, facts)
+        if verified is None:
             continue
-        try:
-            verification = verify_proof_delta(root, path)
-        except ProofDeltaError as exc:
-            _record_error(state["errors"], source, exc.code)
-            facts["invalid_count"] += 1
-            continue
-        status = "admitted" if verification["eligible"] else "halted"
-        digest = _text(verification.get("proof_delta_sha256"), path.stem)
-        node_id = f"proof-delta:{digest[:24]}"
-        _node(
-            state,
-            node_id=node_id,
-            kind="proof_delta",
-            label=f"retry · {verification['criterion_id']}",
-            source=source,
-            status=status,
-            facts={
-                "marker": verification["marker"],
-                "mission_id": verification["mission_id"],
-                "criterion_id": verification["criterion_id"],
-                "new_evidence_count": len(verification["new_evidence"]),
-                "reason": verification["reason"],
-                "proof_delta_sha256": digest,
-                "authority": verification["authority"],
-                "execution": False,
-            },
+        verification, source = verified
+        node_id, telemetry, status = _append_proof_delta_nodes(
+            state, source, verification, path
         )
-        telemetry = build_proof_delta_telemetry(verification, digest)
-        telemetry_id = f"proof_delta_guard:{telemetry['telemetrySha256'][:24]}"
-        _node(
-            state,
-            node_id=telemetry_id,
-            kind="proof_delta_guard",
-            label=f"{telemetry['status']} · proof-delta guard",
-            source=source,
-            status=telemetry["status"],
-            facts=telemetry,
-        )
-        _edge(state, node_id, telemetry_id, "projects_telemetry")
-        candidate = verification["repair_candidate"]["candidate"]
-        candidate_id = f"proof-delta-candidate:{candidate['diff_sha256'][:24]}"
-        _node(
-            state,
-            node_id=candidate_id,
-            kind="proof_delta_candidate",
-            label=f"candidate · {candidate['diff_sha256'][:12]}",
-            source=verification["repair_candidate"]["path"],
-            status="changed"
-            if not telemetry["blocker"]["candidateUnchanged"]
-            else "unchanged",
-            facts={
-                "candidateHash": candidate["diff_sha256"],
-                "changedPaths": candidate["changed_paths"],
-                "role": "repair",
-                "proofDeltaSha256": digest,
-                "authority": dict(_AUTHORITY),
-                "execution": False,
-            },
-        )
-        _edge(state, telemetry_id, candidate_id, "binds_candidate")
-        evidence_id = (
-            f"proof-delta-evidence:{telemetry['blocker']['evidenceDigest'][7:31]}"
-        )
-        _node(
-            state,
-            node_id=evidence_id,
-            kind="proof_delta_evidence",
-            label=f"evidence · {telemetry['blocker']['evidenceDigest'][7:19]}",
-            source=source,
-            status="fresh"
-            if telemetry["status"] == "REPAIR_ADMITTED"
-            else "stale_or_unchanged",
-            facts={
-                "evidenceDigest": telemetry["blocker"]["evidenceDigest"],
-                "newEvidenceCount": len(verification.get("new_evidence", [])),
-                "proofDeltaSha256": digest,
-                "authority": dict(_AUTHORITY),
-                "execution": False,
-            },
-        )
-        _edge(state, telemetry_id, evidence_id, "binds_evidence")
-        if telemetry["status"] == "NO_GAIN_HALT":
-            blocker_id = f"proof-delta-blocker:{telemetry['telemetrySha256'][:24]}"
-            _node(
-                state,
-                node_id=blocker_id,
-                kind="proof_delta_blocker",
-                label="NO_GAIN_HALT · unproductive retry",
-                source=source,
-                status="blocked",
-                facts={
-                    **telemetry["blocker"],
-                    "proofDeltaSha256": digest,
-                    "authority": dict(_AUTHORITY),
-                    "execution": False,
-                },
-            )
-            _edge(state, telemetry_id, blocker_id, "blocked_by")
-            for debt in telemetry["proofDebt"]:
-                debt_id = f"proof-delta-debt:{telemetry['telemetrySha256'][:16]}:{_sha(debt)[:8]}"
-                _node(
-                    state,
-                    node_id=debt_id,
-                    kind="proof_delta_proof_debt",
-                    label=debt[:240],
-                    source=source,
-                    status="unresolved",
-                    facts={
-                        "debt": debt,
-                        "proofDeltaSha256": digest,
-                        "authority": dict(_AUTHORITY),
-                        "execution": False,
-                    },
-                )
-                _edge(state, telemetry_id, debt_id, "owes_proof")
-        action_id = f"proof-delta-action:{telemetry['telemetrySha256'][:24]}"
-        _node(
-            state,
-            node_id=action_id,
-            kind="proof_delta_next_action",
-            label="Next fact-derived action",
-            source=source,
-            status="review",
-            facts={
-                "action": telemetry["nextFactDerivedAction"],
-                "proofDeltaSha256": digest,
-                "authority": dict(_AUTHORITY),
-                "execution": False,
-            },
-        )
-        _edge(state, telemetry_id, action_id, "next_fact_derived_action")
         facts["telemetry"].append(telemetry)
         facts["telemetry_count"] += 1
         facts["no_gain_halt_count"] += int(telemetry["status"] == "NO_GAIN_HALT")
@@ -1321,6 +1630,83 @@ def _append_proof_deltas(state: dict[str, Any], root: Path) -> dict[str, Any]:
         facts["advance_count"] += int(verification["eligible"])
         facts["halted_count"] += int(not verification["eligible"])
     return facts
+
+
+def _append_survival_outcome(
+    state: dict[str, Any],
+    card: dict[str, Any],
+    outcome: dict[str, Any],
+    source: str,
+    node_id: str,
+) -> None:
+    promise_id = outcome["promise"]["id"]
+    for reality_node in state["nodes"].values():
+        facts = reality_node.get("facts", {})
+        if (
+            reality_node.get("kind") == "reality_check"
+            and facts.get("promise") == outcome["reality"]["promise"]
+        ):
+            _edge(state, reality_node["id"], node_id, "sabotage_evidence_for")
+    case_id = (
+        f"gauntlet-case:{card['card_sha256'][:16]}:{_sha(outcome['proposal_id'])[:8]}"
+    )
+    _node(
+        state,
+        node_id=case_id,
+        kind="gauntlet_case",
+        label=f"{promise_id} · {outcome['sabotage']['risk_tag']}",
+        source=source,
+        status=outcome["status"],
+        facts={
+            "risk_tag": outcome["sabotage"]["risk_tag"],
+            "mutation": outcome["sabotage"]["mutation"],
+            "e2e_marker": outcome["e2e_receipt"]["marker"],
+        },
+    )
+    _edge(state, case_id, node_id, "reported_by")
+
+
+def _append_survival_card(
+    state: dict[str, Any], card: dict[str, Any], source: str
+) -> str:
+    status = (
+        "survived"
+        if card["ok"]
+        else "hollow"
+        if card["marker"] == "GAUNTLET_HOLLOW"
+        else "blocked"
+    )
+    node_id = f"gauntlet:{card['card_sha256'][:24]}"
+    _node(
+        state,
+        node_id=node_id,
+        kind="gauntlet",
+        label=f"Survival Card · {card['source']['id']}",
+        source=source,
+        status=status,
+        facts={
+            "marker": card["marker"],
+            "card_sha256": card["card_sha256"],
+            "source_id": card["source"]["id"],
+            "summary": card["summary"],
+            "unproven_promises": card["unproven_promises"],
+            "continuity": {
+                "bound": card["continuity"] is not None,
+                "record_count": len(card["continuity"]["records"])
+                if card["continuity"]
+                else 0,
+                "binding_sha256": card["continuity"]["binding_sha256"]
+                if card["continuity"]
+                else None,
+            },
+            "commit": card["commit"],
+            "authority": card["authority"],
+            "execution": False,
+        },
+    )
+    for outcome in card["outcomes"]:
+        _append_survival_outcome(state, card, outcome, source, node_id)
+    return status
 
 
 def _append_survival_cards(state: dict[str, Any], root: Path) -> dict[str, int]:
@@ -1344,80 +1730,139 @@ def _append_survival_cards(state: dict[str, Any], root: Path) -> dict[str, int]:
             _record_error(state["errors"], source, exc.code)
             facts["invalid_count"] += 1
             continue
-        status = (
-            "survived"
-            if card["ok"]
-            else "hollow"
-            if card["marker"] == "GAUNTLET_HOLLOW"
-            else "blocked"
-        )
-        node_id = f"gauntlet:{card['card_sha256'][:24]}"
+        status = _append_survival_card(state, card, source)
+        facts["count"] += 1
+        facts[f"{status}_count"] += 1
+    return facts
+
+
+def _append_agent_incidents(
+    state: dict[str, Any],
+    incidents: list[Any],
+    identity: str,
+    license_node: str,
+    facts: dict[str, int],
+) -> None:
+    for incident in incidents:
+        if not isinstance(incident, dict):
+            continue
+        event_id = _text(incident.get("event_id"), "incident")
+        incident_id = f"agent-incident:{identity[:12]}:{event_id}"
         _node(
             state,
-            node_id=node_id,
-            kind="gauntlet",
-            label=f"Survival Card · {card['source']['id']}",
-            source=source,
-            status=status,
+            node_id=incident_id,
+            kind="agent_incident",
+            label=f"automatic demotion · {event_id}",
+            source=".factory/agent-licenses/incidents",
+            status="demoted",
             facts={
-                "marker": card["marker"],
-                "card_sha256": card["card_sha256"],
-                "source_id": card["source"]["id"],
-                "summary": card["summary"],
-                "unproven_promises": card["unproven_promises"],
-                "continuity": {
-                    "bound": card["continuity"] is not None,
-                    "record_count": len(card["continuity"]["records"])
-                    if card["continuity"]
-                    else 0,
-                    "binding_sha256": card["continuity"]["binding_sha256"]
-                    if card["continuity"]
-                    else None,
-                },
-                "commit": card["commit"],
-                "authority": card["authority"],
-                "execution": False,
+                "recorded_at": incident.get("recorded_at"),
+                "failure_classes": incident.get("failure_classes", []),
+                "event_sha256": incident.get("event_sha256"),
+                "effect": "human_controlled_pending_requalification",
             },
         )
-        for outcome in card["outcomes"]:
-            promise_id = outcome["promise"]["id"]
-            for reality_node in state["nodes"].values():
-                if (
-                    reality_node.get("kind") == "reality_check"
-                    and reality_node.get("facts", {}).get("promise")
-                    == outcome["reality"]["promise"]
-                ):
-                    _edge(state, reality_node["id"], node_id, "sabotage_evidence_for")
-            _node(
-                state,
-                node_id=f"gauntlet-case:{card['card_sha256'][:16]}:{_sha(outcome['proposal_id'])[:8]}",
-                kind="gauntlet_case",
-                label=f"{promise_id} · {outcome['sabotage']['risk_tag']}",
-                source=source,
-                status=outcome["status"],
-                facts={
-                    "risk_tag": outcome["sabotage"]["risk_tag"],
-                    "mutation": outcome["sabotage"]["mutation"],
-                    "e2e_marker": outcome["e2e_receipt"]["marker"],
-                },
-            )
-            _edge(
-                state,
-                f"gauntlet-case:{card['card_sha256'][:16]}:{_sha(outcome['proposal_id'])[:8]}",
-                node_id,
-                "reported_by",
-            )
-        facts["count"] += 1
-        facts["survived_count"] += int(status == "survived")
-        facts["hollow_count"] += int(status == "hollow")
-        facts["blocked_count"] += int(status == "blocked")
-    return facts
+        _edge(state, incident_id, license_node, "demotes")
+        facts["incident_count"] += 1
+
+
+def _append_agent_license(
+    state: dict[str, Any], license_value: object, facts: dict[str, int]
+) -> None:
+    if not isinstance(license_value, dict):
+        return
+    agent, evidence, incidents = (
+        license_value.get("agent"),
+        license_value.get("evidence"),
+        license_value.get("incidents"),
+    )
+    if (
+        not isinstance(agent, dict)
+        or not isinstance(evidence, dict)
+        or not isinstance(incidents, list)
+    ):
+        return
+    identity = _text(agent.get("identity_sha256"), "unknown")
+    tier = _text(license_value.get("tier"), "human_controlled")
+    node_id = f"agent-license:{identity[:24]}"
+    _node(
+        state,
+        node_id=node_id,
+        kind="agent_license",
+        label=f"{_text(agent.get('subject'), 'declared agent')} · {tier.replace('_', ' ')}",
+        source=".factory/agent-licenses/events",
+        status=tier,
+        facts={
+            "identity_sha256": identity,
+            "identity_provenance": license_value.get("identity_provenance"),
+            "tier": tier,
+            "reason": license_value.get("reason"),
+            "expires_at": license_value.get("expires_at"),
+            "allowed_paths": license_value.get("allowed_paths", []),
+            "evidence": evidence,
+            "latest_event_sha256": evidence.get("latest_event_sha256"),
+            "derivation": "live_read_only_not_a_sealed_license_artifact",
+            "incident_count": len(incidents),
+            "authority": license_value.get("authority", _AUTHORITY),
+            "execution": False,
+        },
+    )
+    facts["license_count"] += 1
+    if tier in {"human_controlled", "supervised", "autonomous"}:
+        facts[f"{tier}_count"] += 1
+    _append_agent_incidents(state, incidents, identity, node_id, facts)
+
+
+def _append_combine_candidate(
+    state: dict[str, Any], candidate: object, scoreboard_id: str, facts: dict[str, int]
+) -> None:
+    if not isinstance(candidate, dict) or not isinstance(candidate.get("agent"), dict):
+        return
+    candidate_identity = candidate["agent"].get("identity_sha256")
+    if isinstance(candidate_identity, str):
+        license_node = f"agent-license:{candidate_identity[:24]}"
+        if license_node in state["nodes"]:
+            _edge(state, license_node, scoreboard_id, "compared_in")
+    facts["combine_passing_candidate_count"] += int(candidate.get("passed") is True)
+
+
+def _append_combine_scoreboard(
+    state: dict[str, Any], scoreboard: object, authority: object, facts: dict[str, int]
+) -> None:
+    if not isinstance(scoreboard, dict):
+        return
+    digest = _text(scoreboard.get("scoreboard_sha256"), "scoreboard")
+    task_id = _text(scoreboard.get("task_id"), "sealed task")
+    candidates = scoreboard.get("candidates")
+    if not isinstance(candidates, list):
+        return
+    node_id = f"combine-scoreboard:{digest[:24]}"
+    _node(
+        state,
+        node_id=node_id,
+        kind="combine_scoreboard",
+        label=f"Combine · {task_id}",
+        source=".factory/combines/scoreboards",
+        status="verified",
+        facts={
+            "scoreboard_sha256": digest,
+            "task_id": task_id,
+            "scored_at": scoreboard.get("scored_at"),
+            "summary": scoreboard.get("summary", {}),
+            "candidate_count": len(candidates),
+            "authority": authority,
+            "execution": False,
+        },
+    )
+    facts["combine_scoreboard_count"] += 1
+    for candidate in candidates:
+        _append_combine_candidate(state, candidate, node_id, facts)
 
 
 def _append_agent_supervision(state: dict[str, Any], root: Path) -> dict[str, int]:
     """Project license and Combine evidence without granting agent authority.
 
-    The view is deliberately derived from the immutable local ledgers.  It does
+    The view is deliberately derived from the immutable local ledgers. It does
     not issue a license, invoke a candidate, make an approval decision, or turn
     declared identity into an authenticated one.
     """
@@ -1432,109 +1877,12 @@ def _append_agent_supervision(state: dict[str, Any], root: Path) -> dict[str, in
     }
     licenses = license_projection(root)
     for license_value in licenses.get("licenses", []):
-        if not isinstance(license_value, dict):
-            continue
-        agent = license_value.get("agent")
-        evidence = license_value.get("evidence")
-        incidents = license_value.get("incidents")
-        if (
-            not isinstance(agent, dict)
-            or not isinstance(evidence, dict)
-            or not isinstance(incidents, list)
-        ):
-            continue
-        identity = _text(agent.get("identity_sha256"), "unknown")
-        tier = _text(license_value.get("tier"), "human_controlled")
-        node_id = f"agent-license:{identity[:24]}"
-        _node(
-            state,
-            node_id=node_id,
-            kind="agent_license",
-            label=f"{_text(agent.get('subject'), 'declared agent')} · {tier.replace('_', ' ')}",
-            source=".factory/agent-licenses/events",
-            status=tier,
-            facts={
-                "identity_sha256": identity,
-                "identity_provenance": license_value.get("identity_provenance"),
-                "tier": tier,
-                "reason": license_value.get("reason"),
-                "expires_at": license_value.get("expires_at"),
-                "allowed_paths": license_value.get("allowed_paths", []),
-                "evidence": evidence,
-                "latest_event_sha256": evidence.get("latest_event_sha256"),
-                "derivation": "live_read_only_not_a_sealed_license_artifact",
-                "incident_count": len(incidents),
-                "authority": license_value.get("authority", _AUTHORITY),
-                "execution": False,
-            },
-        )
-        facts["license_count"] += 1
-        if tier in {"human_controlled", "supervised", "autonomous"}:
-            facts[f"{tier}_count"] += 1
-        for incident in incidents:
-            if not isinstance(incident, dict):
-                continue
-            event_id = _text(incident.get("event_id"), "incident")
-            incident_id = f"agent-incident:{identity[:12]}:{event_id}"
-            _node(
-                state,
-                node_id=incident_id,
-                kind="agent_incident",
-                label=f"automatic demotion · {event_id}",
-                source=".factory/agent-licenses/incidents",
-                status="demoted",
-                facts={
-                    "recorded_at": incident.get("recorded_at"),
-                    "failure_classes": incident.get("failure_classes", []),
-                    "event_sha256": incident.get("event_sha256"),
-                    "effect": "human_controlled_pending_requalification",
-                },
-            )
-            _edge(state, incident_id, node_id, "demotes")
-            facts["incident_count"] += 1
-
+        _append_agent_license(state, license_value, facts)
     scoreboards = combine_projection(root)
     for scoreboard in scoreboards.get("scoreboards", []):
-        if not isinstance(scoreboard, dict):
-            continue
-        digest = _text(scoreboard.get("scoreboard_sha256"), "scoreboard")
-        task_id = _text(scoreboard.get("task_id"), "sealed task")
-        candidates = scoreboard.get("candidates")
-        if not isinstance(candidates, list):
-            continue
-        node_id = f"combine-scoreboard:{digest[:24]}"
-        _node(
-            state,
-            node_id=node_id,
-            kind="combine_scoreboard",
-            label=f"Combine · {task_id}",
-            source=".factory/combines/scoreboards",
-            status="verified",
-            facts={
-                "scoreboard_sha256": digest,
-                "task_id": task_id,
-                "scored_at": scoreboard.get("scored_at"),
-                "summary": scoreboard.get("summary", {}),
-                "candidate_count": len(candidates),
-                "authority": scoreboards.get("authority", _AUTHORITY),
-                "execution": False,
-            },
+        _append_combine_scoreboard(
+            state, scoreboard, scoreboards.get("authority", _AUTHORITY), facts
         )
-        facts["combine_scoreboard_count"] += 1
-        for candidate in candidates:
-            if not isinstance(candidate, dict) or not isinstance(
-                candidate.get("agent"), dict
-            ):
-                continue
-            candidate_agent = candidate["agent"]
-            candidate_identity = candidate_agent.get("identity_sha256")
-            if isinstance(candidate_identity, str):
-                license_node = f"agent-license:{candidate_identity[:24]}"
-                if license_node in state["nodes"]:
-                    _edge(state, license_node, node_id, "compared_in")
-            facts["combine_passing_candidate_count"] += int(
-                candidate.get("passed") is True
-            )
     return facts
 
 
@@ -1656,178 +2004,296 @@ def _append_counterexamples(state: dict[str, Any], root: Path) -> dict[str, int]
     return facts
 
 
+def _append_oracle_source(
+    state: dict[str, Any],
+    summary: dict[str, Any],
+    digest: str,
+    source_id: object,
+    source: object,
+) -> str:
+    source_node = f"oracle-source:{digest[:16]}:{source_id}"
+    if source_node not in state["nodes"]:
+        _node(
+            state,
+            node_id=source_node,
+            kind="oracle_source",
+            label=f"source · {source_id}",
+            source=source.get("path", summary["path"])
+            if isinstance(source, dict)
+            else summary["path"],
+            status="bound" if source else "missing",
+            facts={
+                "source_id": source_id,
+                "origin": source.get("origin") if isinstance(source, dict) else None,
+                "sha256": source.get("sha256") if isinstance(source, dict) else None,
+                "authority": _AUTHORITY,
+                "execution": False,
+            },
+        )
+    return source_node
+
+
+def _append_oracle_rule(
+    state: dict[str, Any],
+    summary: dict[str, Any],
+    digest: str,
+    sources: dict[Any, Any],
+    group: str,
+    kind: str,
+    label: str,
+    rule: object,
+) -> str | None:
+    if not isinstance(rule, dict):
+        return None
+    rule_id = str(rule.get("id") or "rule")
+    node_id = f"oracle-{label}:{digest[:16]}:{rule_id}"
+    source_id = rule.get("source_id")
+    source = sources.get(source_id) if isinstance(source_id, str) else None
+    _node(
+        state,
+        node_id=node_id,
+        kind=kind,
+        label=f"{label} · {rule_id}",
+        source=summary["path"],
+        status="advisory" if rule.get("effect") == "advisory" else "approved",
+        facts={
+            "statement": rule.get("statement"),
+            "origin": rule.get("origin"),
+            "effect": rule.get("effect"),
+            "source_id": source_id,
+            "source_sha256": source.get("sha256") if isinstance(source, dict) else None,
+            "critical": rule.get("critical"),
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+    source_node = _append_oracle_source(state, summary, digest, source_id, source)
+    _edge(state, source_node, node_id, "authorizes")
+    return node_id
+
+
+def _append_oracle_rules(
+    state: dict[str, Any],
+    summary: dict[str, Any],
+    contract: dict[str, Any],
+    digest: str,
+) -> dict[str, list[str]]:
+    sources = {
+        item.get("id"): item
+        for item in contract.get("sources", [])
+        if isinstance(item, dict)
+    }
+    rule_nodes: dict[str, list[str]] = {
+        "requirements": [],
+        "forbidden_behaviors": [],
+        "gates": [],
+        "tests": [],
+    }
+    groups = (
+        ("requirements", "oracle_obligation", "obligation"),
+        ("forbidden_behaviors", "oracle_forbidden", "forbidden"),
+        ("gates", "oracle_gate", "gate"),
+        ("tests", "oracle_test", "test"),
+    )
+    for group, kind, label in groups:
+        for rule in contract.get("rules", {}).get(group, []):
+            node_id = _append_oracle_rule(
+                state, summary, digest, sources, group, kind, label, rule
+            )
+            if node_id is not None:
+                rule_nodes[group].append(node_id)
+    return rule_nodes
+
+
+def _link_oracle_rules(state: dict[str, Any], rule_nodes: dict[str, list[str]]) -> None:
+    for requirement in rule_nodes["requirements"]:
+        for forbidden in rule_nodes["forbidden_behaviors"]:
+            _edge(state, requirement, forbidden, "forbids")
+    for forbidden in rule_nodes["forbidden_behaviors"]:
+        for gate in rule_nodes["gates"]:
+            _edge(state, forbidden, gate, "guards")
+    for gate in rule_nodes["gates"]:
+        for test in rule_nodes["tests"]:
+            _edge(state, gate, test, "is_checked_by")
+
+
+def _append_oracle_evidence(
+    state: dict[str, Any],
+    projection: dict[str, Any],
+    digest: str,
+    decision_id: str,
+    tests: list[str],
+) -> None:
+    evidence_id = f"oracle-evidence:{digest[:24]}"
+    _node(
+        state,
+        node_id=evidence_id,
+        kind="oracle_evidence",
+        label="independent challenge evidence",
+        source=".factory/oracles/challenges",
+        status="pending" if not projection.get("challenge_count") else "planned",
+        facts={
+            "contract_sha256": digest,
+            "challenge_count": projection.get("challenge_count", 0),
+            "target": "implementation",
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+    for test in tests:
+        _edge(state, test, evidence_id, "requires_evidence")
+    _edge(state, evidence_id, decision_id, "informs")
+
+
+def _append_oracle_contract(
+    state: dict[str, Any],
+    root: Path,
+    summary: dict[str, Any],
+    projection: dict[str, Any],
+    facts: dict[str, int],
+) -> None:
+    if not isinstance(summary, dict) or not isinstance(summary.get("path"), str):
+        return
+    checked = verify_oracle_contract(root, Path(summary["path"]))
+    contract = (
+        checked.get("contract") if isinstance(checked.get("contract"), dict) else None
+    )
+    if contract is None:
+        facts["invalid_count"] += 1
+        return
+    digest = str(contract.get("contract_sha256") or summary.get("sha256") or "contract")
+    status = "current" if checked.get("ok") else "stale"
+    decision_id = f"oracle-decision:{digest[:24]}"
+    _node(
+        state,
+        node_id=decision_id,
+        kind="oracle_decision",
+        label=f"Oracle contract {contract.get('id', digest[:12])}",
+        source=summary["path"],
+        status=status,
+        facts={
+            "contract_sha256": digest,
+            "approved_by": contract.get("approved_by"),
+            "approval_rationale": contract.get("approval_rationale"),
+            "marker": contract.get("marker"),
+            "authority": contract.get("authority", _AUTHORITY),
+            "execution": False,
+        },
+    )
+    facts["contract_count"] += 1
+    facts["current_count"] += int(status == "current")
+    rule_nodes = _append_oracle_rules(state, summary, contract, digest)
+    _link_oracle_rules(state, rule_nodes)
+    _append_oracle_evidence(state, projection, digest, decision_id, rule_nodes["tests"])
+
+
+def _append_blocked_oracle_drift(state: dict[str, Any], blocked: object) -> None:
+    if not isinstance(blocked, dict):
+        return
+    drift_id = f"oracle-drift:{str(blocked.get('sha256') or 'blocked')[:24]}"
+    _node(
+        state,
+        node_id=drift_id,
+        kind="oracle_drift",
+        label="Oracle weakening blocked",
+        source=str(blocked.get("path") or ".factory/oracles/drifts"),
+        status="blocked",
+        facts={
+            "marker": blocked.get("marker"),
+            "verdict": blocked.get("verdict"),
+            "drift_sha256": blocked.get("sha256"),
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+
+
 def _append_oracle_firewall(
     state: dict[str, Any], root: Path, projection: dict | None = None
 ) -> dict[str, int]:
     """Project the source-to-decision oracle chain without changing any input."""
+    if projection is None:
+        projection = oracle_firewall_projection(root)
     facts = {
         "contract_count": 0,
         "current_count": 0,
-        "blocked_drift_count": 0,
-        "challenge_count": 0,
-        "incident_count": 0,
-        "invalid_count": 0,
+        "blocked_drift_count": int(projection.get("blocked_drift_count", 0)),
+        "challenge_count": int(projection.get("challenge_count", 0)),
+        "incident_count": int(projection.get("incident_count", 0)),
+        "invalid_count": int(projection.get("invalid_count", 0)),
     }
-    if projection is None:
-        projection = oracle_firewall_projection(root)
-    facts["blocked_drift_count"] = int(projection.get("blocked_drift_count", 0))
-    facts["challenge_count"] = int(projection.get("challenge_count", 0))
-    facts["incident_count"] = int(projection.get("incident_count", 0))
-    facts["invalid_count"] = int(projection.get("invalid_count", 0))
     for summary in projection.get("contracts", []):
-        if not isinstance(summary, dict) or not isinstance(summary.get("path"), str):
-            continue
-        checked = verify_oracle_contract(root, Path(summary["path"]))
-        contract = (
-            checked.get("contract")
-            if isinstance(checked.get("contract"), dict)
-            else None
-        )
-        if contract is None:
-            facts["invalid_count"] += 1
-            continue
-        digest = str(
-            contract.get("contract_sha256") or summary.get("sha256") or "contract"
-        )
-        status = "current" if checked.get("ok") else "stale"
-        decision_id = f"oracle-decision:{digest[:24]}"
-        _node(
-            state,
-            node_id=decision_id,
-            kind="oracle_decision",
-            label=f"Oracle contract {contract.get('id', digest[:12])}",
-            source=summary["path"],
-            status=status,
-            facts={
-                "contract_sha256": digest,
-                "approved_by": contract.get("approved_by"),
-                "approval_rationale": contract.get("approval_rationale"),
-                "marker": contract.get("marker"),
-                "authority": contract.get("authority", _AUTHORITY),
-                "execution": False,
-            },
-        )
-        facts["contract_count"] += 1
-        facts["current_count"] += int(status == "current")
-        sources = {
-            item.get("id"): item
-            for item in contract.get("sources", [])
-            if isinstance(item, dict)
-        }
-        rule_nodes: dict[str, list[str]] = {
-            "requirements": [],
-            "forbidden_behaviors": [],
-            "gates": [],
-            "tests": [],
-        }
-        for group, kind, label in (
-            ("requirements", "oracle_obligation", "obligation"),
-            ("forbidden_behaviors", "oracle_forbidden", "forbidden"),
-            ("gates", "oracle_gate", "gate"),
-            ("tests", "oracle_test", "test"),
-        ):
-            for rule in contract.get("rules", {}).get(group, []):
-                if not isinstance(rule, dict):
-                    continue
-                rule_id = str(rule.get("id") or "rule")
-                node_id = f"oracle-{label}:{digest[:16]}:{rule_id}"
-                source_id = rule.get("source_id")
-                source = sources.get(source_id) if isinstance(source_id, str) else None
-                _node(
-                    state,
-                    node_id=node_id,
-                    kind=kind,
-                    label=f"{label} · {rule_id}",
-                    source=summary["path"],
-                    status="advisory"
-                    if rule.get("effect") == "advisory"
-                    else "approved",
-                    facts={
-                        "statement": rule.get("statement"),
-                        "origin": rule.get("origin"),
-                        "effect": rule.get("effect"),
-                        "source_id": source_id,
-                        "source_sha256": source.get("sha256")
-                        if isinstance(source, dict)
-                        else None,
-                        "critical": rule.get("critical"),
-                        "authority": _AUTHORITY,
-                        "execution": False,
-                    },
-                )
-                source_node = f"oracle-source:{digest[:16]}:{source_id}"
-                if source_node not in state["nodes"]:
-                    _node(
-                        state,
-                        node_id=source_node,
-                        kind="oracle_source",
-                        label=f"source · {source_id}",
-                        source=source.get("path", summary["path"])
-                        if isinstance(source, dict)
-                        else summary["path"],
-                        status="bound" if source else "missing",
-                        facts={
-                            "source_id": source_id,
-                            "origin": source.get("origin")
-                            if isinstance(source, dict)
-                            else None,
-                            "sha256": source.get("sha256")
-                            if isinstance(source, dict)
-                            else None,
-                            "authority": _AUTHORITY,
-                            "execution": False,
-                        },
-                    )
-                _edge(state, source_node, node_id, "authorizes")
-                rule_nodes[group].append(node_id)
-        for requirement in rule_nodes["requirements"]:
-            for forbidden in rule_nodes["forbidden_behaviors"]:
-                _edge(state, requirement, forbidden, "forbids")
-        for forbidden in rule_nodes["forbidden_behaviors"]:
-            for gate in rule_nodes["gates"]:
-                _edge(state, forbidden, gate, "guards")
-        for gate in rule_nodes["gates"]:
-            for test in rule_nodes["tests"]:
-                _edge(state, gate, test, "is_checked_by")
-        evidence_id = f"oracle-evidence:{digest[:24]}"
-        _node(
-            state,
-            node_id=evidence_id,
-            kind="oracle_evidence",
-            label="independent challenge evidence",
-            source=".factory/oracles/challenges",
-            status="pending" if not projection.get("challenge_count") else "planned",
-            facts={
-                "contract_sha256": digest,
-                "challenge_count": projection.get("challenge_count", 0),
-                "target": "implementation",
-                "authority": _AUTHORITY,
-                "execution": False,
-            },
-        )
-        for test in rule_nodes["tests"]:
-            _edge(state, test, evidence_id, "requires_evidence")
-        _edge(state, evidence_id, decision_id, "informs")
+        _append_oracle_contract(state, root, summary, projection, facts)
     for blocked in projection.get("blocked_drifts", []):
-        if not isinstance(blocked, dict):
-            continue
-        drift_id = f"oracle-drift:{str(blocked.get('sha256') or 'blocked')[:24]}"
-        _node(
-            state,
-            node_id=drift_id,
-            kind="oracle_drift",
-            label="Oracle weakening blocked",
-            source=str(blocked.get("path") or ".factory/oracles/drifts"),
-            status="blocked",
-            facts={
-                "marker": blocked.get("marker"),
-                "verdict": blocked.get("verdict"),
-                "drift_sha256": blocked.get("sha256"),
-                "authority": _AUTHORITY,
-                "execution": False,
-            },
-        )
+        _append_blocked_oracle_drift(state, blocked)
     return facts
+
+
+def _append_proof_continuity_contract(
+    state: dict[str, Any], item: object, reopened: list[Any]
+) -> tuple[str, str] | None:
+    if not isinstance(item, dict):
+        return None
+    digest = str(item.get("receipt_sha256") or "continuity")
+    node_id = f"proof-continuity:{digest[:24]}"
+    is_reopened = any(
+        obs.get("contract_receipt_sha256") == digest
+        for obs in reopened
+        if isinstance(obs, dict)
+    )
+    _node(
+        state,
+        node_id=node_id,
+        kind="proof_continuity_audit",
+        label=f"Proof continuity · {item.get('id', digest[:12])}",
+        source=str(item.get("path") or ".factory/proof-continuity/contracts"),
+        status="reopened" if is_reopened else "current",
+        facts={
+            "receipt_sha256": digest,
+            "subject": item.get("subject"),
+            "oracle_contract_sha256": item.get("oracle_contract_sha256"),
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+    oracle_digest = str(item.get("oracle_contract_sha256") or "")
+    if oracle_digest:
+        _edge(state, f"oracle-decision:{oracle_digest[:24]}", node_id, "continues")
+    return digest, node_id
+
+
+def _append_proof_continuity_observation(
+    state: dict[str, Any], item: object, contract_nodes: dict[str, str]
+) -> None:
+    if not isinstance(item, dict):
+        return
+    digest = str(item.get("receipt_sha256") or "observation")
+    node_id = f"proof-continuity-observation:{digest[:24]}"
+    status = (
+        "blocked"
+        if item.get("incident_open")
+        else "current"
+        if item.get("verdict") == "CURRENT"
+        else "review_required"
+    )
+    _node(
+        state,
+        node_id=node_id,
+        kind="proof_continuity_observation",
+        label="Proof continuity observation",
+        source=str(item.get("path") or ".factory/proof-continuity/observations"),
+        status=status,
+        facts={
+            "receipt_sha256": digest,
+            "verdict": item.get("verdict"),
+            "incident_open": item.get("incident_open"),
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+    contract_node = contract_nodes.get(str(item.get("contract_receipt_sha256") or ""))
+    if contract_node:
+        _edge(state, contract_node, node_id, "rechecked_by")
 
 
 def _append_proof_continuity(state: dict[str, Any], root: Path) -> dict[str, int]:
@@ -1841,179 +2307,212 @@ def _append_proof_continuity(state: dict[str, Any], root: Path) -> dict[str, int
         "invalid_count": int(projection.get("invalid_count", 0)),
     }
     contract_nodes: dict[str, str] = {}
+    reopened = projection.get("reopened", [])
     for item in projection.get("contracts", []):
-        if not isinstance(item, dict):
-            continue
-        digest = str(item.get("receipt_sha256") or "continuity")
-        node_id = f"proof-continuity:{digest[:24]}"
-        contract_nodes[digest] = node_id
-        status = (
-            "reopened"
-            if any(
-                obs.get("contract_receipt_sha256") == digest
-                for obs in projection.get("reopened", [])
-                if isinstance(obs, dict)
-            )
-            else "current"
-        )
-        _node(
-            state,
-            node_id=node_id,
-            kind="proof_continuity_audit",
-            label=f"Proof continuity · {item.get('id', digest[:12])}",
-            source=str(item.get("path") or ".factory/proof-continuity/contracts"),
-            status=status,
-            facts={
-                "receipt_sha256": digest,
-                "subject": item.get("subject"),
-                "oracle_contract_sha256": item.get("oracle_contract_sha256"),
-                "authority": _AUTHORITY,
-                "execution": False,
-            },
-        )
-        oracle_digest = str(item.get("oracle_contract_sha256") or "")
-        if oracle_digest:
-            _edge(state, f"oracle-decision:{oracle_digest[:24]}", node_id, "continues")
+        result = _append_proof_continuity_contract(state, item, reopened)
+        if result is not None:
+            contract_nodes[result[0]] = result[1]
     for item in projection.get("observations", []):
-        if not isinstance(item, dict):
-            continue
-        digest = str(item.get("receipt_sha256") or "observation")
-        node_id = f"proof-continuity-observation:{digest[:24]}"
-        status = (
-            "blocked"
-            if item.get("incident_open")
-            else "current"
-            if item.get("verdict") == "CURRENT"
-            else "review_required"
-        )
-        _node(
-            state,
-            node_id=node_id,
-            kind="proof_continuity_observation",
-            label="Proof continuity observation",
-            source=str(item.get("path") or ".factory/proof-continuity/observations"),
-            status=status,
-            facts={
-                "receipt_sha256": digest,
-                "verdict": item.get("verdict"),
-                "incident_open": item.get("incident_open"),
-                "authority": _AUTHORITY,
-                "execution": False,
-            },
-        )
-        contract_node = contract_nodes.get(
-            str(item.get("contract_receipt_sha256") or "")
-        )
-        if contract_node:
-            _edge(state, contract_node, node_id, "rechecked_by")
+        _append_proof_continuity_observation(state, item, contract_nodes)
+    return facts
+
+
+def _append_semantic_handoff(
+    state: dict[str, Any], item: object, facts: dict[str, Any], handoffs: dict[str, str]
+) -> None:
+    if not isinstance(item, dict) or not item.get("ok"):
+        return
+    digest = str(item.get("sha256") or "handoff")
+    for key in (
+        "known_count",
+        "unknown_count",
+        "uncertain_count",
+        "blocking_unknown_count",
+        "capability_limit_count",
+    ):
+        facts[key] += int(item.get(key, 0))
+    node_id = f"semantic-handoff:{digest[:24]}"
+    handoffs[digest] = node_id
+    contract_digest = str(item.get("contract_sha256") or "")
+    _node(
+        state,
+        node_id=node_id,
+        kind="semantic_handoff",
+        label=f"Semantic handoff {item.get('id', digest[:12])}",
+        source=str(item.get("path") or ".factory/semantic-authority/handoffs"),
+        status="current",
+        facts={
+            "handoff_sha256": digest,
+            "context_urn": item.get("context_urn"),
+            "contract_sha256": contract_digest,
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+    if contract_digest:
+        _edge(state, f"oracle-decision:{contract_digest[:24]}", node_id, "constrains")
+
+
+def _append_semantic_lease(
+    state: dict[str, Any], item: object, leases: dict[str, str]
+) -> None:
+    if not isinstance(item, dict):
+        return
+    digest = str(item.get("sha256") or "lease")
+    node_id = f"semantic-lease:{digest[:24]}"
+    leases[digest] = node_id
+    status = (
+        "active"
+        if item.get("ok")
+        else "expired"
+        if item.get("code") == "SEMANTIC_LEASE_EXPIRED"
+        else "invalid"
+    )
+    _node(
+        state,
+        node_id=node_id,
+        kind="authority_lease",
+        label=f"Authority lease {item.get('id', digest[:12])}",
+        source=str(item.get("path") or ".factory/semantic-authority/leases"),
+        status=status,
+        facts={
+            "lease_sha256": digest,
+            "context_urn": item.get("context_urn"),
+            "contract_sha256": item.get("contract_sha256"),
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+    contract_digest = str(item.get("contract_sha256") or "")
+    if contract_digest:
+        _edge(state, f"oracle-decision:{contract_digest[:24]}", node_id, "bounds")
+
+
+def _append_semantic_decision(
+    state: dict[str, Any], item: object, leases: dict[str, str]
+) -> None:
+    if not isinstance(item, dict):
+        return
+    digest = str(item.get("sha256") or "decision")
+    node_id = f"semantic-decision:{digest[:24]}"
+    _node(
+        state,
+        node_id=node_id,
+        kind="semantic_decision",
+        label=f"Constrained action {item.get('action_id', digest[:12])}",
+        source=str(item.get("path") or ".factory/semantic-authority/decisions"),
+        status="recorded",
+        facts={
+            "decision_sha256": digest,
+            "action": item.get("action"),
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+    lease_node = leases.get(str(item.get("lease_sha256") or ""))
+    if lease_node:
+        _edge(state, lease_node, node_id, "admits")
+
+
+def _semantic_authority_facts(projection: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "handoff_count",
+        "current_handoff_count",
+        "lease_count",
+        "active_lease_count",
+        "expired_lease_count",
+        "decision_count",
+        "invalid_count",
+    )
+    facts = {key: int(projection.get(key, 0)) for key in keys}
+    facts.update(
+        {
+            key: 0
+            for key in (
+                "known_count",
+                "unknown_count",
+                "uncertain_count",
+                "blocking_unknown_count",
+                "capability_limit_count",
+            )
+        }
+    )
+    facts["authority"] = projection.get("authority", _AUTHORITY)
     return facts
 
 
 def _append_semantic_authority(state: dict[str, Any], root: Path) -> dict[str, Any]:
     """Project typed handoffs and expiring leases; never treat them as execution."""
     projection = semantic_authority_projection(root)
-    facts = {
-        "handoff_count": int(projection.get("handoff_count", 0)),
-        "current_handoff_count": int(projection.get("current_handoff_count", 0)),
-        "lease_count": int(projection.get("lease_count", 0)),
-        "active_lease_count": int(projection.get("active_lease_count", 0)),
-        "expired_lease_count": int(projection.get("expired_lease_count", 0)),
-        "decision_count": int(projection.get("decision_count", 0)),
-        "invalid_count": int(projection.get("invalid_count", 0)),
-        "known_count": 0,
-        "unknown_count": 0,
-        "uncertain_count": 0,
-        "blocking_unknown_count": 0,
-        "capability_limit_count": 0,
-        "authority": projection.get("authority", _AUTHORITY),
-    }
+    facts = _semantic_authority_facts(projection)
     handoffs: dict[str, str] = {}
     leases: dict[str, str] = {}
     for item in projection.get("handoffs", []):
-        if not isinstance(item, dict) or not item.get("ok"):
-            continue
-        digest = str(item.get("sha256") or "handoff")
-        facts["known_count"] += int(item.get("known_count", 0))
-        facts["unknown_count"] += int(item.get("unknown_count", 0))
-        facts["uncertain_count"] += int(item.get("uncertain_count", 0))
-        facts["blocking_unknown_count"] += int(item.get("blocking_unknown_count", 0))
-        facts["capability_limit_count"] += int(item.get("capability_limit_count", 0))
-        node_id = f"semantic-handoff:{digest[:24]}"
-        handoffs[digest] = node_id
-        contract_digest = str(item.get("contract_sha256") or "")
-        _node(
-            state,
-            node_id=node_id,
-            kind="semantic_handoff",
-            label=f"Semantic handoff {item.get('id', digest[:12])}",
-            source=str(item.get("path") or ".factory/semantic-authority/handoffs"),
-            status="current",
-            facts={
-                "handoff_sha256": digest,
-                "context_urn": item.get("context_urn"),
-                "contract_sha256": contract_digest,
-                "authority": _AUTHORITY,
-                "execution": False,
-            },
-        )
-        if contract_digest:
-            _edge(
-                state, f"oracle-decision:{contract_digest[:24]}", node_id, "constrains"
-            )
+        _append_semantic_handoff(state, item, facts, handoffs)
     for item in projection.get("leases", []):
-        if not isinstance(item, dict):
-            continue
-        digest = str(item.get("sha256") or "lease")
-        node_id = f"semantic-lease:{digest[:24]}"
-        leases[digest] = node_id
-        status = (
-            "active"
-            if item.get("ok")
-            else "expired"
-            if item.get("code") == "SEMANTIC_LEASE_EXPIRED"
-            else "invalid"
-        )
-        _node(
-            state,
-            node_id=node_id,
-            kind="authority_lease",
-            label=f"Authority lease {item.get('id', digest[:12])}",
-            source=str(item.get("path") or ".factory/semantic-authority/leases"),
-            status=status,
-            facts={
-                "lease_sha256": digest,
-                "context_urn": item.get("context_urn"),
-                "contract_sha256": item.get("contract_sha256"),
-                "authority": _AUTHORITY,
-                "execution": False,
-            },
-        )
-        contract_digest = str(item.get("contract_sha256") or "")
-        if contract_digest:
-            _edge(state, f"oracle-decision:{contract_digest[:24]}", node_id, "bounds")
+        _append_semantic_lease(state, item, leases)
     for item in projection.get("decisions", []):
-        if not isinstance(item, dict):
-            continue
-        digest = str(item.get("sha256") or "decision")
-        node_id = f"semantic-decision:{digest[:24]}"
-        _node(
-            state,
-            node_id=node_id,
-            kind="semantic_decision",
-            label=f"Constrained action {item.get('action_id', digest[:12])}",
-            source=str(item.get("path") or ".factory/semantic-authority/decisions"),
-            status="recorded",
-            facts={
-                "decision_sha256": digest,
-                "action": item.get("action"),
-                "authority": _AUTHORITY,
-                "execution": False,
-            },
-        )
-        lease_node = leases.get(str(item.get("lease_sha256") or ""))
-        if lease_node:
-            _edge(state, lease_node, node_id, "admits")
+        _append_semantic_decision(state, item, leases)
     return facts
+
+
+def _append_enterprise_decision(state: dict[str, Any], item: object) -> None:
+    if not isinstance(item, dict):
+        return
+    digest = str(item.get("decision_sha256") or "enterprise-decision")
+    admitted = item.get("admitted") is True
+    _node(
+        state,
+        node_id=f"enterprise-pep:{digest[:24]}",
+        kind="enterprise_pep_reference",
+        label=f"Enterprise PEP reference {item.get('action_id', digest[:12])}",
+        source=str(item.get("path") or ".factory/enterprise-enforcement/decisions"),
+        status="admitted" if admitted else "denied",
+        facts={
+            "decision_sha256": digest,
+            "admitted": admitted,
+            "action_class": item.get("action_class"),
+            "semantic_authority_status": item.get("semantic_authority_status"),
+            "revocation_status": item.get("revocation_status"),
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+
+
+def _append_enterprise_runner_packet(state: dict[str, Any], item: object) -> None:
+    if not isinstance(item, dict):
+        return
+    digest = str(item.get("packet_sha256") or "runner-packet")
+    decision_digest = str(item.get("decision_sha256") or "")
+    node_id = f"enterprise-runner-admission:{digest[:24]}"
+    _node(
+        state,
+        node_id=node_id,
+        kind="enterprise_runner_admission",
+        label=f"Runner packet {item.get('run_id', digest[:12])}",
+        source=str(
+            item.get("path") or ".factory/enterprise-enforcement/runner-admissions"
+        ),
+        status="verified",
+        facts={
+            "packet_sha256": digest,
+            "decision_sha256": decision_digest,
+            "action_class": item.get("action_class"),
+            "scope_count": item.get("scope_count"),
+            "argv_sha256": item.get("argv_sha256"),
+            "admission_expires_at": item.get("admission_expires_at"),
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+    if decision_digest:
+        _edge(
+            state,
+            f"enterprise-pep:{decision_digest[:24]}",
+            node_id,
+            "binds_runner_input",
+        )
 
 
 def _append_enterprise_enforcement(state: dict[str, Any], root: Path) -> dict[str, Any]:
@@ -2030,69 +2529,224 @@ def _append_enterprise_enforcement(state: dict[str, Any], root: Path) -> dict[st
         if isinstance(projection.get("runner_admission"), dict)
         else {}
     )
-    facts["runner_admission"] = runner
-    facts["runner_packet_count"] = int(runner.get("packet_count", 0))
-    facts["runner_verified_count"] = int(runner.get("verified_count", 0))
-    facts["runner_fresh_count"] = int(runner.get("fresh_count", 0))
-    facts["runner_expired_count"] = int(runner.get("expired_count", 0))
-    facts["runner_invalid_count"] = int(runner.get("invalid_count", 0))
+    facts.update(
+        {
+            "runner_admission": runner,
+            "runner_packet_count": int(runner.get("packet_count", 0)),
+            "runner_verified_count": int(runner.get("verified_count", 0)),
+            "runner_fresh_count": int(runner.get("fresh_count", 0)),
+            "runner_expired_count": int(runner.get("expired_count", 0)),
+            "runner_invalid_count": int(runner.get("invalid_count", 0)),
+        }
+    )
     for item in projection.get("decisions", []):
-        if not isinstance(item, dict):
-            continue
-        digest = str(item.get("decision_sha256") or "enterprise-decision")
-        node_id = f"enterprise-pep:{digest[:24]}"
-        admitted = item.get("admitted") is True
-        _node(
-            state,
-            node_id=node_id,
-            kind="enterprise_pep_reference",
-            label=f"Enterprise PEP reference {item.get('action_id', digest[:12])}",
-            source=str(item.get("path") or ".factory/enterprise-enforcement/decisions"),
-            status="admitted" if admitted else "denied",
-            facts={
-                "decision_sha256": digest,
-                "admitted": admitted,
-                "action_class": item.get("action_class"),
-                "semantic_authority_status": item.get("semantic_authority_status"),
-                "revocation_status": item.get("revocation_status"),
-                "authority": _AUTHORITY,
-                "execution": False,
-            },
-        )
+        _append_enterprise_decision(state, item)
     for item in runner.get("packets", []):
-        if not isinstance(item, dict):
-            continue
-        digest = str(item.get("packet_sha256") or "runner-packet")
-        decision_digest = str(item.get("decision_sha256") or "")
-        node_id = f"enterprise-runner-admission:{digest[:24]}"
-        _node(
-            state,
-            node_id=node_id,
-            kind="enterprise_runner_admission",
-            label=f"Runner packet {item.get('run_id', digest[:12])}",
-            source=str(
-                item.get("path") or ".factory/enterprise-enforcement/runner-admissions"
-            ),
-            status="verified",
-            facts={
-                "packet_sha256": digest,
-                "decision_sha256": decision_digest,
-                "action_class": item.get("action_class"),
-                "scope_count": item.get("scope_count"),
-                "argv_sha256": item.get("argv_sha256"),
-                "admission_expires_at": item.get("admission_expires_at"),
-                "authority": _AUTHORITY,
-                "execution": False,
-            },
-        )
-        if decision_digest:
-            _edge(
-                state,
-                f"enterprise-pep:{decision_digest[:24]}",
-                node_id,
-                "binds_runner_input",
-            )
+        _append_enterprise_runner_packet(state, item)
     return facts
+
+
+def _append_atomic_stage(
+    state: dict[str, Any],
+    stage: object,
+    summary_path: str,
+    digest: str,
+    run_id: str,
+    stage_nodes: dict[str, str],
+) -> None:
+    if not isinstance(stage, dict) or not isinstance(stage.get("id"), str):
+        return
+    stage_id = f"atomic-stage:{digest[:16]}:{stage['id']}"
+    stage_nodes[stage["id"]] = stage_id
+    checkpoint = (
+        stage.get("checkpoint", {}) if isinstance(stage.get("checkpoint"), dict) else {}
+    )
+    _node(
+        state,
+        node_id=stage_id,
+        kind="atomic_stage",
+        label=f"Atomic {stage.get('kind', 'stage')} · {stage['id']}",
+        source=summary_path,
+        status=str(stage.get("status") or "unknown"),
+        facts={
+            "scope_paths": stage.get("scope_paths", []),
+            "capabilities": stage.get("capabilities", []),
+            "checkpoint_id": checkpoint.get("id"),
+            "checkpoint_sha256": checkpoint.get("sha256"),
+            "artifact_sha256": stage.get("artifact_sha256"),
+            "tool_manifest_sha256": stage.get("tool_manifest_sha256"),
+            "source_preconditions": stage.get("source_preconditions", []),
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+    _edge(state, run_id, stage_id, "contains")
+
+
+def _append_atomic_handoff(
+    state: dict[str, Any],
+    handoff: object,
+    summary_path: str,
+    digest: str,
+    stage_nodes: dict[str, str],
+) -> None:
+    if not isinstance(handoff, dict) or not isinstance(handoff.get("id"), str):
+        return
+    handoff_id = f"atomic-handoff:{digest[:16]}:{handoff['id']}"
+    _node(
+        state,
+        node_id=handoff_id,
+        kind="atomic_handoff",
+        label=f"Atomic handoff {handoff['id']}",
+        source=summary_path,
+        status="bound",
+        facts={
+            "capability": handoff.get("capability"),
+            "scope_paths": handoff.get("scope_paths", []),
+            "artifact_sha256": handoff.get("artifact_sha256"),
+            "tool_manifest_sha256": handoff.get("tool_manifest_sha256"),
+            "source_preconditions_sha256": handoff.get("source_preconditions_sha256"),
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+    source = stage_nodes.get(handoff.get("from_stage"))
+    target = stage_nodes.get(handoff.get("to_stage"))
+    if source:
+        _edge(state, source, handoff_id, "hands_off")
+    if target:
+        _edge(state, handoff_id, target, "scoped_to")
+
+
+def _receipt_mapping(receipt: dict[str, Any], key: str) -> dict[str, Any]:
+    value = receipt.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def _receipt_digest(
+    receipt: dict[str, Any], summary: dict[str, Any], fallback: str
+) -> str:
+    return str(
+        receipt.get("receipt_sha256") or summary.get("receipt_sha256") or fallback
+    )
+
+
+def _append_atomic_stages(
+    state: dict[str, Any],
+    stages: object,
+    summary_path: str,
+    digest: str,
+    run_id: str,
+    stage_nodes: dict[str, str],
+) -> None:
+    for stage in stages:
+        _append_atomic_stage(state, stage, summary_path, digest, run_id, stage_nodes)
+
+
+def _append_atomic_handoffs(
+    state: dict[str, Any],
+    handoffs: object,
+    summary_path: str,
+    digest: str,
+    stage_nodes: dict[str, str],
+) -> None:
+    for handoff in handoffs:
+        _append_atomic_handoff(state, handoff, summary_path, digest, stage_nodes)
+
+
+def _append_atomic_receipt(
+    state: dict[str, Any], summary: dict[str, Any], receipt: dict[str, Any]
+) -> None:
+    digest = _receipt_digest(receipt, summary, "atomic")
+    oracle = _receipt_mapping(receipt, "oracle")
+    workflow = _receipt_mapping(receipt, "workflow")
+    run = _receipt_mapping(receipt, "run")
+    contract_digest = str(oracle.get("contract_sha256") or "unbound")
+    contract_id, workflow_id, run_id = (
+        f"atomic-contract:{contract_digest[:24]}",
+        f"atomic-workflow:{digest[:24]}",
+        f"atomic-run:{digest[:24]}",
+    )
+    summary_path = summary["path"]
+    isolation = _receipt_mapping(receipt, "isolation")
+    _node(
+        state,
+        node_id=contract_id,
+        kind="atomic_contract",
+        label=f"Atomic contract {contract_digest[:12]}",
+        source=str(oracle.get("path") or summary_path),
+        status="bound",
+        facts={
+            "contract_sha256": contract_digest,
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+    _node(
+        state,
+        node_id=workflow_id,
+        kind="atomic_workflow",
+        label=f"Atomic DAG {workflow.get('id', digest[:12])}",
+        source=summary_path,
+        status="declared",
+        facts={
+            "definition_sha256": workflow.get("definition_sha256"),
+            "topology_sha256": workflow.get("topology_sha256"),
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+    _node(
+        state,
+        node_id=run_id,
+        kind="atomic_run",
+        label=f"Atomic run {run.get('id', digest[:12])}",
+        source=summary_path,
+        status=str(run.get("status") or "unknown"),
+        facts={
+            "receipt_sha256": digest,
+            "declared_isolation": isolation.get("declared_mode"),
+            "resumed": receipt.get("resume") is not None,
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+    _edge(state, contract_id, workflow_id, "authorizes")
+    _edge(state, workflow_id, run_id, "declares")
+    stage_nodes: dict[str, str] = {}
+    _append_atomic_stages(
+        state, receipt.get("stages", []), summary_path, digest, run_id, stage_nodes
+    )
+    _append_atomic_handoffs(
+        state, receipt.get("handoffs", []), summary_path, digest, stage_nodes
+    )
+
+
+def _append_atomic_summary(
+    state: dict[str, Any], root: Path, summary: object, facts: dict[str, Any]
+) -> None:
+    if not isinstance(summary, dict) or not isinstance(summary.get("path"), str):
+        return
+    checked = verify_atomic_receipt(root, Path(summary["path"]))
+    if not checked.get("ok"):
+        facts["invalid_count"] += 1
+        return
+    _append_atomic_receipt(state, summary, checked["receipt"])
+
+
+def _append_atomic_invalid(state: dict[str, Any], path: object) -> None:
+    if not isinstance(path, str):
+        return
+    invalid_id = hashlib.sha256(path.encode("utf-8")).hexdigest()[:24]
+    _node(
+        state,
+        node_id=f"atomic-invalid:{invalid_id}",
+        kind="atomic_receipt",
+        label="Atomic receipt invalid",
+        source=path,
+        status="invalid",
+        facts={"authority": _AUTHORITY, "execution": False},
+    )
 
 
 def _append_atomic_proof_adapter(state: dict[str, Any], root: Path) -> dict[str, Any]:
@@ -2107,148 +2761,181 @@ def _append_atomic_proof_adapter(state: dict[str, Any], root: Path) -> dict[str,
         "authority": projection.get("authority", _AUTHORITY),
     }
     for summary in projection.get("receipts", []):
-        if not isinstance(summary, dict) or not isinstance(summary.get("path"), str):
-            continue
-        checked = verify_atomic_receipt(root, Path(summary["path"]))
-        if not checked.get("ok"):
-            facts["invalid_count"] += 1
-            continue
-        receipt = checked["receipt"]
-        digest = str(
-            receipt.get("receipt_sha256") or summary.get("receipt_sha256") or "atomic"
-        )
-        oracle = (
-            receipt.get("oracle", {}) if isinstance(receipt.get("oracle"), dict) else {}
-        )
-        workflow = (
-            receipt.get("workflow", {})
-            if isinstance(receipt.get("workflow"), dict)
-            else {}
-        )
-        run = receipt.get("run", {}) if isinstance(receipt.get("run"), dict) else {}
-        contract_digest = str(oracle.get("contract_sha256") or "unbound")
-        contract_id = f"atomic-contract:{contract_digest[:24]}"
-        workflow_id = f"atomic-workflow:{digest[:24]}"
-        run_id = f"atomic-run:{digest[:24]}"
+        _append_atomic_summary(state, root, summary, facts)
+    for invalid in projection.get("invalid", []):
+        _append_atomic_invalid(state, invalid)
+    return facts
+
+
+def _append_agent_stage(
+    state: dict[str, Any],
+    workflow_node: object,
+    summary_path: str,
+    digest: str,
+    run_id: str,
+) -> None:
+    if not isinstance(workflow_node, dict) or not isinstance(
+        workflow_node.get("id"), str
+    ):
+        return
+    stage_id = f"agent-stage:{digest[:16]}:{workflow_node['id']}"
+    _node(
+        state,
+        node_id=stage_id,
+        kind="agent_stage",
+        label=f"Agent {workflow_node.get('kind', 'stage')} · {workflow_node['id']}",
+        source=summary_path,
+        status="declared",
+        facts={"authority": _AUTHORITY, "execution": False},
+    )
+    _edge(state, run_id, stage_id, "contains")
+
+
+def _append_agent_evidence_pair(
+    state: dict[str, Any], pair: object, summary_path: str, digest: str, run_id: str
+) -> None:
+    if not isinstance(pair, dict) or not isinstance(pair.get("id"), str):
+        return
+    evidence_id = f"agent-evidence:{digest[:16]}:{pair['id']}"
+    _node(
+        state,
+        node_id=evidence_id,
+        kind="agent_evidence",
+        label=f"Before/after {pair.get('kind', 'evidence')} · {pair['id']}",
+        source=summary_path,
+        status="bound",
+        facts={
+            "before_sha256": pair.get("before_sha256"),
+            "after_sha256": pair.get("after_sha256"),
+            "claim_sha256": pair.get("claim_sha256"),
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+    _edge(state, evidence_id, run_id, "informs")
+
+
+def _append_agent_stages(
+    state: dict[str, Any], nodes: object, summary_path: str, digest: str, run_id: str
+) -> None:
+    for workflow_node in nodes:
+        _append_agent_stage(state, workflow_node, summary_path, digest, run_id)
+
+
+def _append_agent_evidence_pairs(
+    state: dict[str, Any], pairs: object, summary_path: str, digest: str, run_id: str
+) -> None:
+    for pair in pairs:
+        _append_agent_evidence_pair(state, pair, summary_path, digest, run_id)
+
+
+def _append_agent_receipt(
+    state: dict[str, Any], summary: dict[str, Any], receipt: dict[str, Any]
+) -> None:
+    digest = _receipt_digest(receipt, summary, "agent")
+    oracle = _receipt_mapping(receipt, "oracle")
+    workflow = _receipt_mapping(receipt, "workflow")
+    run = _receipt_mapping(receipt, "run")
+    profile = _receipt_mapping(receipt, "provider_receipt")
+    contract_digest = str(oracle.get("contract_sha256") or "unbound")
+    contract_id, provider_id = (
+        f"agent-contract:{contract_digest[:24]}",
+        f"agent-provider:{digest[:24]}",
+    )
+    workflow_id, run_id = f"agent-workflow:{digest[:24]}", f"agent-run:{digest[:24]}"
+    summary_path = summary["path"]
+    _node(
+        state,
+        node_id=contract_id,
+        kind="agent_contract",
+        label=f"Agent contract {contract_digest[:12]}",
+        source=str(oracle.get("path") or summary_path),
+        status="bound",
+        facts={
+            "contract_sha256": contract_digest,
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+    _node(
+        state,
+        node_id=provider_id,
+        kind="agent_provider",
+        label=f"{receipt.get('provider', 'agent')} export",
+        source=summary_path,
+        status="declared",
+        facts={
+            "runtime_sha256": profile.get("runtime_sha256"),
+            "tool_manifest_sha256": profile.get("tool_manifest_sha256"),
+            "session_id": profile.get("session_id"),
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+    _node(
+        state,
+        node_id=workflow_id,
+        kind="agent_workflow",
+        label=f"Agent DAG {workflow.get('id', digest[:12])}",
+        source=summary_path,
+        status="declared",
+        facts={
+            "definition_sha256": workflow.get("definition_sha256"),
+            "topology_sha256": workflow.get("topology_sha256"),
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+    run_isolation = _receipt_mapping(receipt, "isolation")
+    _node(
+        state,
+        node_id=run_id,
+        kind="agent_run",
+        label=f"Agent run {run.get('id', digest[:12])}",
+        source=summary_path,
+        status=str(run.get("status") or "unknown"),
+        facts={
+            "receipt_sha256": digest,
+            "surface": receipt.get("surface"),
+            "resumed": receipt.get("resume") is not None,
+            "declared_isolation": run_isolation.get("declared_mode"),
+            "authority": _AUTHORITY,
+            "execution": False,
+        },
+    )
+    _edge(state, contract_id, workflow_id, "authorizes")
+    _edge(state, provider_id, run_id, "declares")
+    _edge(state, workflow_id, run_id, "governs")
+    _append_agent_stages(state, workflow.get("nodes", []), summary_path, digest, run_id)
+    _append_agent_evidence_pairs(
+        state, receipt.get("evidence_pairs", []), summary_path, digest, run_id
+    )
+
+
+def _append_agent_summary(
+    state: dict[str, Any], root: Path, summary: object, facts: dict[str, Any]
+) -> None:
+    if not isinstance(summary, dict) or not isinstance(summary.get("path"), str):
+        return
+    checked = verify_agent_proof(root, Path(summary["path"]))
+    if not checked.get("ok"):
+        facts["invalid_count"] += 1
+        return
+    _append_agent_receipt(state, summary, checked["receipt"])
+
+
+def _append_agent_invalid(state: dict[str, Any], path: object) -> None:
+    if isinstance(path, str):
+        invalid_id = hashlib.sha256(path.encode("utf-8")).hexdigest()[:24]
         _node(
             state,
-            node_id=contract_id,
-            kind="atomic_contract",
-            label=f"Atomic contract {contract_digest[:12]}",
-            source=str(oracle.get("path") or summary["path"]),
-            status="bound",
-            facts={
-                "contract_sha256": contract_digest,
-                "authority": _AUTHORITY,
-                "execution": False,
-            },
-        )
-        _node(
-            state,
-            node_id=workflow_id,
-            kind="atomic_workflow",
-            label=f"Atomic DAG {workflow.get('id', digest[:12])}",
-            source=summary["path"],
-            status="declared",
-            facts={
-                "definition_sha256": workflow.get("definition_sha256"),
-                "topology_sha256": workflow.get("topology_sha256"),
-                "authority": _AUTHORITY,
-                "execution": False,
-            },
-        )
-        _node(
-            state,
-            node_id=run_id,
-            kind="atomic_run",
-            label=f"Atomic run {run.get('id', digest[:12])}",
-            source=summary["path"],
-            status=str(run.get("status") or "unknown"),
-            facts={
-                "receipt_sha256": digest,
-                "declared_isolation": receipt.get("isolation", {}).get("declared_mode")
-                if isinstance(receipt.get("isolation"), dict)
-                else None,
-                "resumed": receipt.get("resume") is not None,
-                "authority": _AUTHORITY,
-                "execution": False,
-            },
-        )
-        _edge(state, contract_id, workflow_id, "authorizes")
-        _edge(state, workflow_id, run_id, "declares")
-        stage_nodes: dict[str, str] = {}
-        for stage in receipt.get("stages", []):
-            if not isinstance(stage, dict) or not isinstance(stage.get("id"), str):
-                continue
-            stage_id = f"atomic-stage:{digest[:16]}:{stage['id']}"
-            stage_nodes[stage["id"]] = stage_id
-            checkpoint = (
-                stage.get("checkpoint", {})
-                if isinstance(stage.get("checkpoint"), dict)
-                else {}
-            )
-            _node(
-                state,
-                node_id=stage_id,
-                kind="atomic_stage",
-                label=f"Atomic {stage.get('kind', 'stage')} · {stage['id']}",
-                source=summary["path"],
-                status=str(stage.get("status") or "unknown"),
-                facts={
-                    "scope_paths": stage.get("scope_paths", []),
-                    "capabilities": stage.get("capabilities", []),
-                    "checkpoint_id": checkpoint.get("id"),
-                    "checkpoint_sha256": checkpoint.get("sha256"),
-                    "artifact_sha256": stage.get("artifact_sha256"),
-                    "tool_manifest_sha256": stage.get("tool_manifest_sha256"),
-                    "source_preconditions": stage.get("source_preconditions", []),
-                    "authority": _AUTHORITY,
-                    "execution": False,
-                },
-            )
-            _edge(state, run_id, stage_id, "contains")
-        for handoff in receipt.get("handoffs", []):
-            if not isinstance(handoff, dict) or not isinstance(handoff.get("id"), str):
-                continue
-            handoff_id = f"atomic-handoff:{digest[:16]}:{handoff['id']}"
-            _node(
-                state,
-                node_id=handoff_id,
-                kind="atomic_handoff",
-                label=f"Atomic handoff {handoff['id']}",
-                source=summary["path"],
-                status="bound",
-                facts={
-                    "capability": handoff.get("capability"),
-                    "scope_paths": handoff.get("scope_paths", []),
-                    "artifact_sha256": handoff.get("artifact_sha256"),
-                    "tool_manifest_sha256": handoff.get("tool_manifest_sha256"),
-                    "source_preconditions_sha256": handoff.get(
-                        "source_preconditions_sha256"
-                    ),
-                    "authority": _AUTHORITY,
-                    "execution": False,
-                },
-            )
-            source = stage_nodes.get(handoff.get("from_stage"))
-            target = stage_nodes.get(handoff.get("to_stage"))
-            if source:
-                _edge(state, source, handoff_id, "hands_off")
-            if target:
-                _edge(state, handoff_id, target, "scoped_to")
-    for path in projection.get("invalid", []):
-        if not isinstance(path, str):
-            continue
-        _node(
-            state,
-            node_id=f"atomic-invalid:{hashlib.sha256(path.encode('utf-8')).hexdigest()[:24]}",
-            kind="atomic_receipt",
-            label="Atomic receipt invalid",
+            node_id=f"agent-invalid:{invalid_id}",
+            kind="agent_receipt",
+            label="Agent proof receipt invalid",
             source=path,
             status="invalid",
             facts={"authority": _AUTHORITY, "execution": False},
         )
-    return facts
 
 
 def _append_agent_proof_bridge(state: dict[str, Any], root: Path) -> dict[str, Any]:
@@ -2268,147 +2955,9 @@ def _append_agent_proof_bridge(state: dict[str, Any], root: Path) -> dict[str, A
         "authority": projection.get("authority", _AUTHORITY),
     }
     for summary in projection.get("receipts", []):
-        if not isinstance(summary, dict) or not isinstance(summary.get("path"), str):
-            continue
-        checked = verify_agent_proof(root, Path(summary["path"]))
-        if not checked.get("ok"):
-            facts["invalid_count"] += 1
-            continue
-        receipt = checked["receipt"]
-        digest = str(
-            receipt.get("receipt_sha256") or summary.get("receipt_sha256") or "agent"
-        )
-        oracle = (
-            receipt.get("oracle", {}) if isinstance(receipt.get("oracle"), dict) else {}
-        )
-        workflow = (
-            receipt.get("workflow", {})
-            if isinstance(receipt.get("workflow"), dict)
-            else {}
-        )
-        run = receipt.get("run", {}) if isinstance(receipt.get("run"), dict) else {}
-        profile = (
-            receipt.get("provider_receipt", {})
-            if isinstance(receipt.get("provider_receipt"), dict)
-            else {}
-        )
-        contract_digest = str(oracle.get("contract_sha256") or "unbound")
-        contract_id, provider_id = (
-            f"agent-contract:{contract_digest[:24]}",
-            f"agent-provider:{digest[:24]}",
-        )
-        workflow_id, run_id = (
-            f"agent-workflow:{digest[:24]}",
-            f"agent-run:{digest[:24]}",
-        )
-        _node(
-            state,
-            node_id=contract_id,
-            kind="agent_contract",
-            label=f"Agent contract {contract_digest[:12]}",
-            source=str(oracle.get("path") or summary["path"]),
-            status="bound",
-            facts={
-                "contract_sha256": contract_digest,
-                "authority": _AUTHORITY,
-                "execution": False,
-            },
-        )
-        _node(
-            state,
-            node_id=provider_id,
-            kind="agent_provider",
-            label=f"{receipt.get('provider', 'agent')} export",
-            source=summary["path"],
-            status="declared",
-            facts={
-                "runtime_sha256": profile.get("runtime_sha256"),
-                "tool_manifest_sha256": profile.get("tool_manifest_sha256"),
-                "session_id": profile.get("session_id"),
-                "authority": _AUTHORITY,
-                "execution": False,
-            },
-        )
-        _node(
-            state,
-            node_id=workflow_id,
-            kind="agent_workflow",
-            label=f"Agent DAG {workflow.get('id', digest[:12])}",
-            source=summary["path"],
-            status="declared",
-            facts={
-                "definition_sha256": workflow.get("definition_sha256"),
-                "topology_sha256": workflow.get("topology_sha256"),
-                "authority": _AUTHORITY,
-                "execution": False,
-            },
-        )
-        _node(
-            state,
-            node_id=run_id,
-            kind="agent_run",
-            label=f"Agent run {run.get('id', digest[:12])}",
-            source=summary["path"],
-            status=str(run.get("status") or "unknown"),
-            facts={
-                "receipt_sha256": digest,
-                "surface": receipt.get("surface"),
-                "resumed": receipt.get("resume") is not None,
-                "declared_isolation": receipt.get("isolation", {}).get("declared_mode")
-                if isinstance(receipt.get("isolation"), dict)
-                else None,
-                "authority": _AUTHORITY,
-                "execution": False,
-            },
-        )
-        _edge(state, contract_id, workflow_id, "authorizes")
-        _edge(state, provider_id, run_id, "declares")
-        _edge(state, workflow_id, run_id, "governs")
-        for node in workflow.get("nodes", []):
-            if not isinstance(node, dict) or not isinstance(node.get("id"), str):
-                continue
-            stage_id = f"agent-stage:{digest[:16]}:{node['id']}"
-            _node(
-                state,
-                node_id=stage_id,
-                kind="agent_stage",
-                label=f"Agent {node.get('kind', 'stage')} · {node['id']}",
-                source=summary["path"],
-                status="declared",
-                facts={"authority": _AUTHORITY, "execution": False},
-            )
-            _edge(state, run_id, stage_id, "contains")
-        for pair in receipt.get("evidence_pairs", []):
-            if not isinstance(pair, dict) or not isinstance(pair.get("id"), str):
-                continue
-            evidence_id = f"agent-evidence:{digest[:16]}:{pair['id']}"
-            _node(
-                state,
-                node_id=evidence_id,
-                kind="agent_evidence",
-                label=f"Before/after {pair.get('kind', 'evidence')} · {pair['id']}",
-                source=summary["path"],
-                status="bound",
-                facts={
-                    "before_sha256": pair.get("before_sha256"),
-                    "after_sha256": pair.get("after_sha256"),
-                    "claim_sha256": pair.get("claim_sha256"),
-                    "authority": _AUTHORITY,
-                    "execution": False,
-                },
-            )
-            _edge(state, evidence_id, run_id, "informs")
-    for path in projection.get("invalid", []):
-        if isinstance(path, str):
-            _node(
-                state,
-                node_id=f"agent-invalid:{hashlib.sha256(path.encode('utf-8')).hexdigest()[:24]}",
-                kind="agent_receipt",
-                label="Agent proof receipt invalid",
-                source=path,
-                status="invalid",
-                facts={"authority": _AUTHORITY, "execution": False},
-            )
+        _append_agent_summary(state, root, summary, facts)
+    for invalid in projection.get("invalid", []):
+        _append_agent_invalid(state, invalid)
     return facts
 
 
@@ -2475,12 +3024,75 @@ def _append_proof_worklogs(state: dict[str, Any], root: Path) -> dict[str, Any]:
     return facts
 
 
+def _append_operations_receipt(
+    state: dict[str, Any], summary: object, authority: object
+) -> None:
+    if not isinstance(summary, dict):
+        return
+    digest = str(summary.get("receipt_sha256") or "operations")
+    status = "ready" if summary.get("marker") == "OPS_CONTROL_READY" else "blocked"
+    control_id = f"operations-control:{digest[:24]}"
+    source = str(summary.get("path") or ".factory/operations-control")
+    _node(
+        state,
+        node_id=control_id,
+        kind="operations_control",
+        label=f"Operations envelope {str(summary.get('id') or digest[:12])}",
+        source=source,
+        status=status,
+        facts={
+            "receipt_sha256": digest,
+            "marker": summary.get("marker"),
+            "work_kind": summary.get("work_kind"),
+            "authority": authority,
+            "execution": False,
+        },
+    )
+    _node(
+        state,
+        node_id=f"operations-isolation:{digest[:24]}",
+        kind="operations_isolation",
+        label="Verified isolation",
+        source=source,
+        status=status,
+        facts={"receipt_sha256": digest, "authority": authority, "execution": False},
+    )
+    _node(
+        state,
+        node_id=f"operations-envelope:{digest[:24]}",
+        kind="change_envelope",
+        label="Reviewable change envelope",
+        source=source,
+        status=status,
+        facts={"receipt_sha256": digest, "authority": authority, "execution": False},
+    )
+    _edge(state, f"operations-isolation:{digest[:24]}", control_id, "preconditions_for")
+    _edge(state, f"operations-envelope:{digest[:24]}", control_id, "bounds")
+
+
+def _append_invalid_operations_receipt(
+    state: dict[str, Any], path: object, authority: object
+) -> None:
+    if isinstance(path, str):
+        digest = hashlib.sha256(path.encode("utf-8")).hexdigest()[:24]
+        _node(
+            state,
+            node_id=f"operations-invalid:{digest}",
+            kind="operations_control",
+            label="Operations control receipt invalid",
+            source=path,
+            status="invalid",
+            facts={"authority": authority, "execution": False},
+        )
+
+
 def _append_operations_controls(
     state: dict[str, Any], root: Path, projection: dict | None = None
 ) -> dict[str, Any]:
     """Project fail-closed operating envelopes without starting any work."""
-    if projection is None:
-        projection = operations_control_projection(root)
+    projection = (
+        operations_control_projection(root) if projection is None else projection
+    )
     facts = {
         "receipt_count": int(projection.get("receipt_count", 0)),
         "ready_count": int(projection.get("ready_count", 0)),
@@ -2490,70 +3102,9 @@ def _append_operations_controls(
         "authority": projection.get("authority", _AUTHORITY),
     }
     for summary in projection.get("receipts", []):
-        if not isinstance(summary, dict):
-            continue
-        digest = str(summary.get("receipt_sha256") or "operations")
-        status = "ready" if summary.get("marker") == "OPS_CONTROL_READY" else "blocked"
-        control_id = f"operations-control:{digest[:24]}"
-        _node(
-            state,
-            node_id=control_id,
-            kind="operations_control",
-            label=f"Operations envelope {str(summary.get('id') or digest[:12])}",
-            source=str(summary.get("path") or ".factory/operations-control"),
-            status=status,
-            facts={
-                "receipt_sha256": digest,
-                "marker": summary.get("marker"),
-                "work_kind": summary.get("work_kind"),
-                "authority": facts["authority"],
-                "execution": False,
-            },
-        )
-        _node(
-            state,
-            node_id=f"operations-isolation:{digest[:24]}",
-            kind="operations_isolation",
-            label="Verified isolation",
-            source=str(summary.get("path") or ".factory/operations-control"),
-            status=status,
-            facts={
-                "receipt_sha256": digest,
-                "authority": facts["authority"],
-                "execution": False,
-            },
-        )
-        _node(
-            state,
-            node_id=f"operations-envelope:{digest[:24]}",
-            kind="change_envelope",
-            label="Reviewable change envelope",
-            source=str(summary.get("path") or ".factory/operations-control"),
-            status=status,
-            facts={
-                "receipt_sha256": digest,
-                "authority": facts["authority"],
-                "execution": False,
-            },
-        )
-        _edge(
-            state,
-            f"operations-isolation:{digest[:24]}",
-            control_id,
-            "preconditions_for",
-        )
-        _edge(state, f"operations-envelope:{digest[:24]}", control_id, "bounds")
+        _append_operations_receipt(state, summary, facts["authority"])
     for path in projection.get("invalid", []):
-        if isinstance(path, str):
-            _node(
-                state,
-                node_id=f"operations-invalid:{hashlib.sha256(path.encode('utf-8')).hexdigest()[:24]}",
-                kind="operations_control",
-                label="Operations control receipt invalid",
-                source=path,
-                status="invalid",
-                facts={"authority": facts["authority"], "execution": False},
-            )
+        _append_invalid_operations_receipt(state, path, facts["authority"])
     return facts
 
 
@@ -2587,12 +3138,78 @@ def _append_agentic_control(state: dict[str, Any], root: Path) -> dict[str, Any]
     }
 
 
+def _append_lifecycle_run(
+    state: dict[str, Any], summary: object, authority: object
+) -> None:
+    if not isinstance(summary, dict) or not isinstance(summary.get("run_id"), str):
+        return
+    digest = str(summary.get("latest_receipt_sha256") or summary["run_id"])
+    status = (
+        "review_required"
+        if summary.get("requires_human")
+        else str(summary.get("latest_event") or "unknown")
+    )
+    trace = (
+        summary.get("latest_session_trace")
+        if isinstance(summary.get("latest_session_trace"), dict)
+        else {}
+    )
+    run_id, trace_id = f"lifecycle-run:{digest[:24]}", f"session-trace:{digest[:24]}"
+    _node(
+        state,
+        node_id=run_id,
+        kind="lifecycle_run",
+        label=f"Harness lifecycle {summary['run_id']}",
+        source=".factory/lifecycle",
+        status=status,
+        facts={
+            "event_count": summary.get("event_count"),
+            "latest_event": summary.get("latest_event"),
+            "latest_receipt_sha256": digest,
+            "requires_human": bool(summary.get("requires_human")),
+            "authority": authority,
+            "execution": False,
+        },
+    )
+    _node(
+        state,
+        node_id=trace_id,
+        kind="session_trace",
+        label=f"Session trace {str(trace.get('session_id') or 'unknown')}",
+        source=".factory/lifecycle",
+        status=status,
+        facts={
+            "harness": trace.get("harness"),
+            "stage": trace.get("stage"),
+            "trace_sha256": trace.get("trace_sha256"),
+            "authority": authority,
+            "execution": False,
+        },
+    )
+    _edge(state, trace_id, run_id, "traces")
+
+
+def _append_invalid_lifecycle_receipt(
+    state: dict[str, Any], path: object, authority: object
+) -> None:
+    if isinstance(path, str):
+        digest = hashlib.sha256(path.encode("utf-8")).hexdigest()[:24]
+        _node(
+            state,
+            node_id=f"lifecycle-invalid:{digest}",
+            kind="lifecycle_run",
+            label="Lifecycle receipt invalid",
+            source=path,
+            status="invalid",
+            facts={"authority": authority, "execution": False},
+        )
+
+
 def _append_lifecycle_events(
     state: dict[str, Any], root: Path, projection: dict | None = None
 ) -> dict[str, Any]:
     """Project hash-linked agent/session events; they remain declared local facts."""
-    if projection is None:
-        projection = lifecycle_projection(root)
+    projection = lifecycle_projection(root) if projection is None else projection
     facts = {
         "run_count": int(projection.get("run_count", 0)),
         "review_required_count": int(projection.get("review_required_count", 0)),
@@ -2601,64 +3218,9 @@ def _append_lifecycle_events(
         "authority": projection.get("authority", _AUTHORITY),
     }
     for summary in projection.get("runs", []):
-        if not isinstance(summary, dict) or not isinstance(summary.get("run_id"), str):
-            continue
-        digest = str(summary.get("latest_receipt_sha256") or summary["run_id"])
-        status = (
-            "review_required"
-            if summary.get("requires_human")
-            else str(summary.get("latest_event") or "unknown")
-        )
-        trace = (
-            summary.get("latest_session_trace")
-            if isinstance(summary.get("latest_session_trace"), dict)
-            else {}
-        )
-        run_id = f"lifecycle-run:{digest[:24]}"
-        trace_id = f"session-trace:{digest[:24]}"
-        _node(
-            state,
-            node_id=run_id,
-            kind="lifecycle_run",
-            label=f"Harness lifecycle {summary['run_id']}",
-            source=".factory/lifecycle",
-            status=status,
-            facts={
-                "event_count": summary.get("event_count"),
-                "latest_event": summary.get("latest_event"),
-                "latest_receipt_sha256": digest,
-                "requires_human": bool(summary.get("requires_human")),
-                "authority": facts["authority"],
-                "execution": False,
-            },
-        )
-        _node(
-            state,
-            node_id=trace_id,
-            kind="session_trace",
-            label=f"Session trace {str(trace.get('session_id') or 'unknown')}",
-            source=".factory/lifecycle",
-            status=status,
-            facts={
-                "harness": trace.get("harness"),
-                "stage": trace.get("stage"),
-                "trace_sha256": trace.get("trace_sha256"),
-                "authority": facts["authority"],
-                "execution": False,
-            },
-        )
-        _edge(state, trace_id, run_id, "traces")
+        _append_lifecycle_run(state, summary, facts["authority"])
     for path in projection.get("invalid", []):
-        if isinstance(path, str):
-            _node(
-                state,
-                node_id=f"lifecycle-invalid:{hashlib.sha256(path.encode('utf-8')).hexdigest()[:24]}",
-                kind="lifecycle_run",
-                label="Lifecycle receipt invalid",
-                source=path,
-                status="invalid",
-                facts={"authority": facts["authority"], "execution": False},
-            )
+        _append_invalid_lifecycle_receipt(state, path, facts["authority"])
     return facts
 
 
@@ -2729,12 +3291,81 @@ def _append_deep_scan(state: dict[str, Any], root: Path) -> dict[str, Any]:
     return projection
 
 
+def _append_repair_loop_receipt(
+    state: dict[str, Any], summary: object, authority: object
+) -> None:
+    if not isinstance(summary, dict):
+        return
+    digest = str(summary.get("receipt_sha256") or "repair-loop")
+    loop_id, issue_id, consequence_id = (
+        f"repair-loop:{digest[:24]}",
+        f"repair-issue:{digest[:24]}",
+        f"repair-consequence:{digest[:24]}",
+    )
+    source = str(summary.get("path") or ".factory/repair-loops")
+    _node(
+        state,
+        node_id=loop_id,
+        kind="repair_loop",
+        label=f"Repair loop {str(summary.get('id') or digest[:12])}",
+        source=source,
+        status="review_required",
+        facts={
+            "receipt_sha256": digest,
+            "reviewer": summary.get("reviewer"),
+            "oracle_contract_sha256": summary.get("oracle_contract_sha256"),
+            "authority": authority,
+            "execution": False,
+        },
+    )
+    _node(
+        state,
+        node_id=issue_id,
+        kind="repair_issue",
+        label=str(summary.get("failure_code") or "Exact failure"),
+        source=source,
+        status="observed",
+        facts={"authority": authority, "execution": False},
+    )
+    severity = str(summary.get("highest_severity") or "unknown")
+    _node(
+        state,
+        node_id=consequence_id,
+        kind="repair_consequence",
+        label=f"Potential consequence · {severity}",
+        source=source,
+        status="review_required",
+        facts={
+            "consequence_count": summary.get("consequence_count"),
+            "authority": authority,
+            "execution": False,
+        },
+    )
+    _edge(state, issue_id, loop_id, "requires_repair_review")
+    _edge(state, consequence_id, loop_id, "raises_risk")
+
+
+def _append_invalid_repair_loop(
+    state: dict[str, Any], path: object, authority: object
+) -> None:
+    if isinstance(path, str):
+        digest = hashlib.sha256(path.encode("utf-8")).hexdigest()[:24]
+        _node(
+            state,
+            node_id=f"repair-loop-invalid:{digest}",
+            kind="repair_loop",
+            label="Repair loop receipt invalid",
+            source=path,
+            status="invalid",
+            facts={"authority": authority, "execution": False},
+        )
+
+
 def _append_repair_loops(
     state: dict[str, Any], root: Path, projection: dict | None = None
 ) -> dict[str, Any]:
     """Project repair packets as review evidence, never a self-healing engine."""
-    if projection is None:
-        projection = repair_loop_projection(root)
+    projection = repair_loop_projection(root) if projection is None else projection
     facts = {
         "receipt_count": int(projection.get("receipt_count", 0)),
         "invalid_count": int(projection.get("invalid_count", 0)),
@@ -2742,65 +3373,9 @@ def _append_repair_loops(
         "authority": projection.get("authority", _AUTHORITY),
     }
     for summary in projection.get("receipts", []):
-        if not isinstance(summary, dict):
-            continue
-        digest = str(summary.get("receipt_sha256") or "repair-loop")
-        loop_id, issue_id, consequence_id = (
-            f"repair-loop:{digest[:24]}",
-            f"repair-issue:{digest[:24]}",
-            f"repair-consequence:{digest[:24]}",
-        )
-        source = str(summary.get("path") or ".factory/repair-loops")
-        _node(
-            state,
-            node_id=loop_id,
-            kind="repair_loop",
-            label=f"Repair loop {str(summary.get('id') or digest[:12])}",
-            source=source,
-            status="review_required",
-            facts={
-                "receipt_sha256": digest,
-                "reviewer": summary.get("reviewer"),
-                "oracle_contract_sha256": summary.get("oracle_contract_sha256"),
-                "authority": facts["authority"],
-                "execution": False,
-            },
-        )
-        _node(
-            state,
-            node_id=issue_id,
-            kind="repair_issue",
-            label=str(summary.get("failure_code") or "Exact failure"),
-            source=source,
-            status="observed",
-            facts={"authority": facts["authority"], "execution": False},
-        )
-        _node(
-            state,
-            node_id=consequence_id,
-            kind="repair_consequence",
-            label=f"Potential consequence · {str(summary.get('highest_severity') or 'unknown')}",
-            source=source,
-            status="review_required",
-            facts={
-                "consequence_count": summary.get("consequence_count"),
-                "authority": facts["authority"],
-                "execution": False,
-            },
-        )
-        _edge(state, issue_id, loop_id, "requires_repair_review")
-        _edge(state, consequence_id, loop_id, "raises_risk")
+        _append_repair_loop_receipt(state, summary, facts["authority"])
     for path in projection.get("invalid", []):
-        if isinstance(path, str):
-            _node(
-                state,
-                node_id=f"repair-loop-invalid:{hashlib.sha256(path.encode('utf-8')).hexdigest()[:24]}",
-                kind="repair_loop",
-                label="Repair loop receipt invalid",
-                source=path,
-                status="invalid",
-                facts={"authority": facts["authority"], "execution": False},
-            )
+        _append_invalid_repair_loop(state, path, facts["authority"])
     return facts
 
 
@@ -2983,6 +3558,66 @@ def _append_external_evidence(state: dict[str, Any], root: Path) -> dict[str, in
     return facts
 
 
+def _journey_receipt_kind(schema: str) -> str:
+    kinds = {
+        "factory.journey-reality-receipt.v1": "journey_reality",
+        "factory.failure-capsule.v1": "failure_capsule",
+        "factory.stateful-workflow-receipt.v1": "stateful_workflow_proof",
+        "factory.proof-gated-healing-receipt.v1": "proof_gated_healing",
+        "factory.agent-work-audit.v1": "agent_work_audit",
+    }
+    return kinds.get(schema, "journey_proof")
+
+
+def _append_journey_receipt(
+    state: dict[str, Any],
+    receipt: dict[str, Any],
+    facts: dict[str, int],
+    healing_nodes: dict[str, str],
+    pending_audits: list[tuple[str, str]],
+) -> None:
+    digest = str(receipt["receipt_sha256"])
+    kind = _journey_receipt_kind(str(receipt.get("schema") or "unknown"))
+    label_id = (
+        receipt.get("journey_id")
+        or receipt.get("workflow_id")
+        or receipt.get("healing_id")
+        or digest[:12]
+    )
+    node_id = f"journey-proof:{digest[:24]}"
+    decision = receipt.get("decision")
+    _node(
+        state,
+        node_id=node_id,
+        kind=kind,
+        label=f"{kind.replace('_', ' ')} · {label_id}",
+        source=receipt["path"],
+        status=str(decision or receipt.get("marker") or "verified"),
+        facts={**receipt, "execution": False, "authority": dict(_AUTHORITY)},
+    )
+    facts["count"] += 1
+    facts["admissible_count"] += int(
+        decision in {"matched", "passed", "admissible_for_human_review"}
+    )
+    healing_id = receipt.get("healing_id")
+    if isinstance(healing_id, str):
+        if kind == "proof_gated_healing":
+            healing_nodes[healing_id] = node_id
+        elif kind == "agent_work_audit":
+            pending_audits.append((healing_id, node_id))
+
+
+def _link_journey_audits(
+    state: dict[str, Any],
+    pending_audits: list[tuple[str, str]],
+    healing_nodes: dict[str, str],
+) -> None:
+    for healing_id, audit_node in pending_audits:
+        healing_node = healing_nodes.get(healing_id)
+        if healing_node:
+            _edge(state, audit_node, healing_node, "audits_agent_work_for")
+
+
 def _append_journey_proofs(state: dict[str, Any], root: Path) -> dict[str, int]:
     """Project hash-verified Journey Proof receipts without executing work."""
     status = journey_proof_status(root)
@@ -2994,46 +3629,8 @@ def _append_journey_proofs(state: dict[str, Any], root: Path) -> dict[str, int]:
     healing_nodes: dict[str, str] = {}
     pending_audits: list[tuple[str, str]] = []
     for receipt in status["receipts"]:
-        digest = str(receipt["receipt_sha256"])
-        schema = str(receipt.get("schema") or "unknown")
-        kind = {
-            "factory.journey-reality-receipt.v1": "journey_reality",
-            "factory.failure-capsule.v1": "failure_capsule",
-            "factory.stateful-workflow-receipt.v1": "stateful_workflow_proof",
-            "factory.proof-gated-healing-receipt.v1": "proof_gated_healing",
-            "factory.agent-work-audit.v1": "agent_work_audit",
-        }.get(schema, "journey_proof")
-        label_id = (
-            receipt.get("journey_id")
-            or receipt.get("workflow_id")
-            or receipt.get("healing_id")
-            or digest[:12]
-        )
-        node_id = f"journey-proof:{digest[:24]}"
-        decision = receipt.get("decision")
-        _node(
-            state,
-            node_id=node_id,
-            kind=kind,
-            label=f"{kind.replace('_', ' ')} · {label_id}",
-            source=receipt["path"],
-            status=str(decision or receipt.get("marker") or "verified"),
-            facts={**receipt, "execution": False, "authority": dict(_AUTHORITY)},
-        )
-        facts["count"] += 1
-        facts["admissible_count"] += int(
-            decision in {"matched", "passed", "admissible_for_human_review"}
-        )
-        healing_id = receipt.get("healing_id")
-        if isinstance(healing_id, str):
-            if kind == "proof_gated_healing":
-                healing_nodes[healing_id] = node_id
-            elif kind == "agent_work_audit":
-                pending_audits.append((healing_id, node_id))
-    for healing_id, audit_node in pending_audits:
-        healing_node = healing_nodes.get(healing_id)
-        if healing_node:
-            _edge(state, audit_node, healing_node, "audits_agent_work_for")
+        _append_journey_receipt(state, receipt, facts, healing_nodes, pending_audits)
+    _link_journey_audits(state, pending_audits, healing_nodes)
     for invalid in status["invalid_receipts"]:
         _record_error(state["errors"], root / invalid, "JOURNEY_RECEIPT_INVALID")
     return facts
@@ -3107,6 +3704,495 @@ def _forge_ship_binding(root: Path, feature: str) -> dict[str, Any]:
     }
 
 
+def _intent_trace_facts() -> dict[str, int]:
+    return {
+        "count": 0,
+        "traceable_count": 0,
+        "untraceable_count": 0,
+        "blocked_count": 0,
+        "invalid_count": 0,
+        "bound_count": 0,
+        "mismatch_count": 0,
+        "unbound_count": 0,
+        "lineage_edge_count": 0,
+        "lineage_node_count": 0,
+    }
+
+
+def _new_adapter_candidate(path: Path) -> dict[str, Any]:
+    derived_feature = path.name[len("forgeline-") : -len(".json")].rsplit("-ship-", 1)[
+        0
+    ]
+    return {
+        "path": path,
+        "payload": None,
+        "source": str(path).replace("\\", "/"),
+        "feature": derived_feature or "unknown-feature",
+        "mtime_ns": 0,
+        "timestamp": "",
+    }
+
+
+def _ensure_adapter_error(state: dict[str, Any], candidate: dict[str, Any]) -> None:
+    source = candidate["source"]
+    if candidate["payload"] is not None or any(
+        item["source"] == source for item in state["errors"]
+    ):
+        return
+    # A matching ship receipt that cannot be read is still an adapter
+    # candidate; suppress legacy fallback and surface the gap.
+    _record_error(state["errors"], source, "INTENT_TRACE_ADAPTER_INVALID")
+
+
+def _read_adapter_candidate(
+    root: Path, state: dict[str, Any], candidate: dict[str, Any]
+) -> bool:
+    try:
+        receipt_path, source = _source(root, candidate["path"])
+        candidate["path"] = receipt_path
+        candidate["source"] = source
+        candidate["mtime_ns"] = receipt_path.stat().st_mtime_ns
+        if receipt_path.stat().st_size > MAX_SOURCE_BYTES:
+            _record_error(state["errors"], source, "INTENT_TRACE_ADAPTER_TOO_LARGE")
+        else:
+            payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                outputs = payload.get("outputs")
+                # Older Factoryline receipts are not adapter records and
+                # must not hide a readable legacy Forge source.
+                if not isinstance(outputs, dict) or "intent_trace" not in outputs:
+                    return False
+                candidate["payload"] = payload
+                if (
+                    isinstance(payload.get("feature"), str)
+                    and payload["feature"].strip()
+                ):
+                    candidate["feature"] = payload["feature"].strip()[:240]
+                candidate["timestamp"] = (
+                    payload.get("ts") if isinstance(payload.get("ts"), str) else ""
+                )
+            else:
+                _record_error(state["errors"], source, "INTENT_TRACE_ADAPTER_INVALID")
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        _record_error(
+            state["errors"], candidate["source"], "INTENT_TRACE_ADAPTER_INVALID"
+        )
+    _ensure_adapter_error(state, candidate)
+    return True
+
+
+def _collect_adapter_candidates(
+    state: dict[str, Any], root: Path
+) -> tuple[dict[str, list[dict[str, Any]]], set[str]]:
+    candidates: dict[str, list[dict[str, Any]]] = {}
+    features: set[str] = set()
+    for path in sorted((root / "receipts").glob("forgeline-*-ship-*.json")):
+        candidate = _new_adapter_candidate(path)
+        if not _read_adapter_candidate(root, state, candidate):
+            continue
+        feature = candidate["feature"]
+        features.add(feature)
+        candidates.setdefault(feature, []).append(candidate)
+    return candidates, features
+
+
+def _adapter_trace(payload: object) -> Any:
+    return (
+        payload.get("outputs", {}).get("intent_trace")
+        if isinstance(payload, dict)
+        else None
+    )
+
+
+def _adapter_payload_valid(payload: object, feature: str) -> bool:
+    return (
+        isinstance(payload, dict)
+        and payload.get("module") == "forgeline"
+        and payload.get("stage") == "ship"
+        and payload.get("feature") == feature
+        and payload.get("ok") is True
+    )
+
+
+def _adapter_digest_valid(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _adapter_authority_valid(trace: dict[str, Any]) -> bool:
+    authority = trace.get("authority")
+    return isinstance(authority, dict) and all(
+        authority.get(key) is False for key in _AUTHORITY
+    )
+
+
+def _adapter_trace_valid(trace: object) -> bool:
+    if not isinstance(trace, dict):
+        return False
+    return (
+        trace.get("schema") == "factoryline.intent-trace.v1"
+        and isinstance(trace.get("shipped"), bool)
+        and isinstance(trace.get("intent_traceable"), bool)
+        and _adapter_digest_valid(trace.get("forge_receipt_sha256"))
+        and _adapter_authority_valid(trace)
+        and trace.get("execution") is False
+    )
+
+
+def _adapter_shape_valid(payload: object, feature: str, trace: object) -> bool:
+    return _adapter_payload_valid(payload, feature) and _adapter_trace_valid(trace)
+
+
+def _adapter_binding(root: Path, feature: str, shape_valid: bool) -> dict[str, Any]:
+    if shape_valid:
+        return _forge_ship_binding(root, feature)
+    return {"status": "invalid", "sha256": None, "value": None}
+
+
+def _adapter_binding_value(binding: dict[str, Any]) -> dict[str, Any] | None:
+    value = binding.get("value")
+    return value if isinstance(value, dict) else None
+
+
+def _optional_adapter_field_matches(
+    trace: dict[str, Any], binding_value: dict[str, Any], field: str
+) -> bool:
+    trace_value = trace.get(field)
+    source_value = binding_value.get(field)
+    return (
+        not isinstance(trace_value, str)
+        or not isinstance(source_value, str)
+        or trace_value == source_value
+    )
+
+
+def _adapter_provenance_matches(
+    shape_valid: bool,
+    trace: object,
+    binding: dict[str, Any],
+    binding_value: dict[str, Any] | None,
+) -> bool:
+    if (
+        not shape_valid
+        or not isinstance(trace, dict)
+        or binding.get("status") != "bound"
+        or trace.get("forge_receipt_sha256") != binding.get("sha256")
+        or not isinstance(binding_value, dict)
+        or binding_value.get("shipped") is not trace.get("shipped")
+    ):
+        return False
+    return _optional_adapter_field_matches(
+        trace, binding_value, "intent_hash"
+    ) and _optional_adapter_field_matches(trace, binding_value, "obligations")
+
+
+def _adapter_provenance_status(
+    valid: bool, shape_valid: bool, binding: dict[str, Any]
+) -> str:
+    if valid:
+        return "bound"
+    if shape_valid and binding.get("status") == "bound":
+        return "mismatch"
+    return str(binding.get("status") or "invalid")
+
+
+def _adapter_trace_status(valid: bool, shipped: bool, traceable: bool) -> str:
+    if traceable:
+        return "traceable"
+    if not shipped and valid:
+        return "blocked"
+    return "untraceable"
+
+
+def _adapter_receipt_sha(candidate: dict[str, Any], source: str) -> str:
+    try:
+        return hashlib.sha256(candidate["path"].read_bytes()).hexdigest()
+    except OSError:
+        return hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
+def _adapter_node_facts(
+    feature: str,
+    trace: object,
+    shipped: bool,
+    traceable: bool,
+    receipt_sha: str,
+    binding: dict[str, Any],
+    provenance_status: str,
+    provenance_match: bool,
+) -> dict[str, Any]:
+    trace_value = trace if isinstance(trace, dict) else {}
+    intent_hash = trace_value.get("intent_hash")
+    obligations = trace_value.get("obligations")
+    timestamp = trace_value.get("ts")
+    return {
+        "feature": feature,
+        "shipped": shipped,
+        "intent_traceable": traceable,
+        "intent_hash": intent_hash if isinstance(intent_hash, str) else None,
+        "obligations": obligations if isinstance(obligations, str) else None,
+        "receipt_sha256": receipt_sha,
+        "forge_receipt_sha256": trace_value.get("forge_receipt_sha256"),
+        "observed_forge_receipt_sha256": binding.get("sha256"),
+        "forge_receipt_source": binding.get("source"),
+        "forge_receipt_line": binding.get("line"),
+        "provenance_status": provenance_status,
+        "provenance_match": provenance_match,
+        "timestamp": timestamp if isinstance(timestamp, str) else None,
+        "source_type": "factoryline_adapter",
+        "preferred": True,
+        "authority": dict(_AUTHORITY),
+        "execution": False,
+    }
+
+
+def _add_adapter_lineage(
+    state: dict[str, Any],
+    facts: dict[str, int],
+    feature: str,
+    node_id: str,
+    binding: dict[str, Any],
+    valid: bool,
+) -> None:
+    if not (
+        valid
+        and isinstance(binding.get("source"), str)
+        and isinstance(binding.get("line"), int)
+        and isinstance(binding.get("sha256"), str)
+    ):
+        return
+    source_id = f"intent-source:{feature}:{binding['sha256'][:24]}"
+    source_created = source_id not in state["nodes"]
+    source_added = _node(
+        state,
+        node_id=source_id,
+        kind="intent_source",
+        label=f"{feature} · Forge ship line",
+        source=binding["source"],
+        status="bound",
+        facts={
+            "feature": feature,
+            "source_path": binding["source"],
+            "line": binding["line"],
+            "sha256": binding["sha256"],
+            "source_type": "forge_ship_line",
+            "authority": dict(_AUTHORITY),
+            "execution": False,
+        },
+    )
+    if source_added:
+        facts["lineage_node_count"] += int(source_created)
+    if source_added and _edge(state, node_id, source_id, "bound_to_forge_line"):
+        facts["lineage_edge_count"] += 1
+
+
+def _update_adapter_provenance_count(
+    facts: dict[str, int], provenance_status: str
+) -> None:
+    if provenance_status == "bound":
+        facts["bound_count"] += 1
+    elif provenance_status == "mismatch":
+        facts["mismatch_count"] += 1
+    else:
+        facts["unbound_count"] += 1
+
+
+def _update_adapter_counts(
+    facts: dict[str, int], valid: bool, shipped: bool, traceable: bool
+) -> None:
+    facts["count"] += 1
+    facts["traceable_count"] += int(traceable)
+    facts["untraceable_count"] += int(shipped and not traceable)
+    facts["blocked_count"] += int(not shipped and valid)
+
+
+def _project_adapter(
+    state: dict[str, Any],
+    root: Path,
+    facts: dict[str, int],
+    feature: str,
+    candidate: dict[str, Any],
+) -> None:
+    source = candidate["source"]
+    payload = candidate.get("payload")
+    trace = _adapter_trace(payload)
+    shape_valid = _adapter_shape_valid(payload, feature, trace)
+    binding = _adapter_binding(root, feature, shape_valid)
+    binding_value = _adapter_binding_value(binding)
+    provenance_match = _adapter_provenance_matches(
+        shape_valid, trace, binding, binding_value
+    )
+    valid = bool(shape_valid and provenance_match)
+    if not valid:
+        _record_error(state["errors"], source, "INTENT_TRACE_ADAPTER_INVALID")
+        facts["invalid_count"] += 1
+    trace_value = trace if isinstance(trace, dict) else {}
+    shipped = trace_value.get("shipped") is True
+    traceable = valid and shipped and trace_value.get("intent_traceable") is True
+    status = _adapter_trace_status(valid, shipped, traceable)
+    provenance_status = _adapter_provenance_status(valid, shape_valid, binding)
+    _update_adapter_provenance_count(facts, provenance_status)
+    receipt_sha = _adapter_receipt_sha(candidate, source)
+    node_id = f"intent-trace:{feature}:{receipt_sha[:24]}"
+    _node(
+        state,
+        node_id=node_id,
+        kind="intent_trace",
+        label=f"{feature} · intent trace",
+        source=source,
+        status=status,
+        facts=_adapter_node_facts(
+            feature,
+            trace,
+            shipped,
+            traceable,
+            receipt_sha,
+            binding,
+            provenance_status,
+            provenance_match,
+        ),
+    )
+    # Only a fully hash-bound adapter may create a traversable provenance
+    # relationship. Mismatch, missing, and invalid states remain closed.
+    _add_adapter_lineage(state, facts, feature, node_id, binding, valid)
+    _update_adapter_counts(facts, valid, shipped, traceable)
+
+
+def _project_adapter_candidates(
+    state: dict[str, Any],
+    root: Path,
+    facts: dict[str, int],
+    candidates: dict[str, list[dict[str, Any]]],
+) -> None:
+    for feature, feature_candidates in sorted(candidates.items()):
+        feature_candidates.sort(
+            key=lambda item: (
+                item.get("timestamp", ""),
+                item.get("mtime_ns", 0),
+                item.get("source", ""),
+            )
+        )
+        _project_adapter(state, root, facts, feature, feature_candidates[-1])
+
+
+def _read_legacy_receipt(
+    state: dict[str, Any], root: Path, path: Path, facts: dict[str, int]
+) -> tuple[str, list[str]] | None:
+    try:
+        receipt_path, source = _source(root, path)
+        if receipt_path.stat().st_size > MAX_SOURCE_BYTES:
+            _record_error(state["errors"], source, "SOURCE_TOO_LARGE")
+            facts["invalid_count"] += 1
+            return None
+        lines = receipt_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError, ValueError):
+        _record_error(state["errors"], path, "INTENT_TRACE_RECEIPT_UNREADABLE")
+        facts["invalid_count"] += 1
+        return None
+    return source, lines
+
+
+def _latest_legacy_ship(
+    lines: list[str],
+) -> tuple[tuple[dict[str, Any], str] | None, bool]:
+    latest: tuple[dict[str, Any], str] | None = None
+    invalid = False
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            invalid = True
+            continue
+        if isinstance(value, dict) and value.get("phase") == "ship":
+            latest = (value, line)
+    return latest, invalid
+
+
+def _legacy_node_facts(
+    feature: str,
+    value: dict[str, Any],
+    shipped: bool,
+    traceable: bool,
+    receipt_sha: str,
+) -> dict[str, Any]:
+    intent_hash = value.get("intent_hash")
+    obligations = value.get("obligations")
+    timestamp = value.get("ts")
+    return {
+        "feature": feature,
+        "shipped": shipped,
+        "intent_traceable": traceable,
+        "intent_hash": intent_hash if isinstance(intent_hash, str) else None,
+        "obligations": obligations if isinstance(obligations, str) else None,
+        "receipt_sha256": receipt_sha,
+        "timestamp": timestamp if isinstance(timestamp, str) else None,
+        "authority": dict(_AUTHORITY),
+        "execution": False,
+    }
+
+
+def _project_legacy_ship(
+    state: dict[str, Any],
+    path: Path,
+    source: str,
+    latest: tuple[dict[str, Any], str] | None,
+    invalid: bool,
+    adapter_features: set[str],
+    facts: dict[str, int],
+) -> None:
+    if invalid:
+        _record_error(state["errors"], source, "INTENT_TRACE_RECEIPT_INVALID")
+        facts["invalid_count"] += 1
+    if latest is None:
+        return
+    value, raw_line = latest
+    feature = _text(path.parent.name, "unknown-feature")
+    if feature in adapter_features:
+        # An explicit adapter, including an invalid one, is the preferred
+        # record for this feature. Do not silently fall back to older
+        # upstream evidence and mask the adapter failure.
+        return
+    shipped = value.get("shipped") is True
+    # A malformed source invalidates the whole projection. Do not surface a
+    # traceable card beside a rejected line and accidentally invite reliance.
+    traceable = not invalid and shipped and value.get("intent_traceable") is True
+    status = "traceable" if traceable else "blocked" if not shipped else "untraceable"
+    receipt_sha = hashlib.sha256(raw_line.encode("utf-8")).hexdigest()
+    node_id = f"intent-trace:{feature}:{receipt_sha[:24]}"
+    _node(
+        state,
+        node_id=node_id,
+        kind="intent_trace",
+        label=f"{feature} · intent trace",
+        source=source,
+        status=status,
+        facts=_legacy_node_facts(feature, value, shipped, traceable, receipt_sha),
+    )
+    facts["count"] += 1
+    facts["traceable_count"] += int(traceable)
+    facts["untraceable_count"] += int(shipped and not traceable)
+    facts["blocked_count"] += int(not shipped)
+
+
+def _append_legacy_intent_traces(
+    state: dict[str, Any], root: Path, facts: dict[str, int], adapter_features: set[str]
+) -> None:
+    for path in sorted((root / ".forge").glob("*/receipts.jsonl")):
+        source_lines = _read_legacy_receipt(state, root, path, facts)
+        if source_lines is None:
+            continue
+        source, lines = source_lines
+        latest, invalid = _latest_legacy_ship(lines)
+        _project_legacy_ship(
+            state, path, source, latest, invalid, adapter_features, facts
+        )
+
+
 def _append_intent_traces(state: dict[str, Any], root: Path) -> dict[str, int]:
     """Project local Forge intent evidence without inferring traceability.
 
@@ -3124,322 +4210,10 @@ def _append_intent_traces(state: dict[str, Any], root: Path) -> dict[str, int]:
     # REQ_INTENT_LINEAGE_FACTS · GRAPH_OPS_INTENT_ADAPTER_LINEAGE ·
     # REQ_INTENT_LINEAGE_EDGE · REQ_INTENT_LINEAGE_EDGE_FAIL_CLOSED ·
     # REQ_INTENT_LINEAGE_EDGE_FACTS · GRAPH_OPS_INTENT_LINEAGE_EDGE
-    facts = {
-        "count": 0,
-        "traceable_count": 0,
-        "untraceable_count": 0,
-        "blocked_count": 0,
-        "invalid_count": 0,
-        "bound_count": 0,
-        "mismatch_count": 0,
-        "unbound_count": 0,
-        "lineage_edge_count": 0,
-        "lineage_node_count": 0,
-    }
-    adapter_candidates: dict[str, list[dict[str, Any]]] = {}
-    adapter_features: set[str] = set()
-    adapter_dir = root / "receipts"
-    for path in sorted(adapter_dir.glob("forgeline-*-ship-*.json")):
-        derived_feature = path.name[len("forgeline-") : -len(".json")].rsplit(
-            "-ship-", 1
-        )[0]
-        feature = derived_feature or "unknown-feature"
-        candidate: dict[str, Any] = {
-            "path": path,
-            "payload": None,
-            "source": str(path).replace("\\", "/"),
-            "feature": feature,
-            "mtime_ns": 0,
-            "timestamp": "",
-        }
-        try:
-            receipt_path, source = _source(root, path)
-            candidate["path"] = receipt_path
-            candidate["source"] = source
-            candidate["mtime_ns"] = receipt_path.stat().st_mtime_ns
-            if receipt_path.stat().st_size > MAX_SOURCE_BYTES:
-                _record_error(state["errors"], source, "INTENT_TRACE_ADAPTER_TOO_LARGE")
-            else:
-                payload = json.loads(receipt_path.read_text(encoding="utf-8"))
-                if isinstance(payload, dict):
-                    outputs = payload.get("outputs")
-                    # Older Factoryline receipts are not adapter records and
-                    # must not hide a readable legacy Forge source.
-                    if not isinstance(outputs, dict) or "intent_trace" not in outputs:
-                        continue
-                    candidate["payload"] = payload
-                    if (
-                        isinstance(payload.get("feature"), str)
-                        and payload["feature"].strip()
-                    ):
-                        candidate["feature"] = payload["feature"].strip()[:240]
-                    candidate["timestamp"] = (
-                        payload.get("ts") if isinstance(payload.get("ts"), str) else ""
-                    )
-                else:
-                    _record_error(
-                        state["errors"], source, "INTENT_TRACE_ADAPTER_INVALID"
-                    )
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
-            _record_error(
-                state["errors"], candidate["source"], "INTENT_TRACE_ADAPTER_INVALID"
-            )
-        if candidate["payload"] is None and not any(
-            item["source"] == candidate["source"] for item in state["errors"]
-        ):
-            # A matching ship receipt that cannot be read is still an adapter
-            # candidate; suppress legacy fallback and surface the gap.
-            _record_error(
-                state["errors"], candidate["source"], "INTENT_TRACE_ADAPTER_INVALID"
-            )
-        adapter_features.add(candidate["feature"])
-        adapter_candidates.setdefault(candidate["feature"], []).append(candidate)
-
-    def _project_adapter(feature: str, candidate: dict[str, Any]) -> None:
-        source = candidate["source"]
-        payload = candidate.get("payload")
-        trace = (
-            payload.get("outputs", {}).get("intent_trace")
-            if isinstance(payload, dict)
-            else None
-        )
-        authority = trace.get("authority") if isinstance(trace, dict) else None
-        shape_valid = (
-            isinstance(payload, dict)
-            and payload.get("module") == "forgeline"
-            and payload.get("stage") == "ship"
-            and payload.get("feature") == feature
-            and payload.get("ok") is True
-            and isinstance(trace, dict)
-            and trace.get("schema") == "factoryline.intent-trace.v1"
-            and isinstance(trace.get("shipped"), bool)
-            and isinstance(trace.get("intent_traceable"), bool)
-            and isinstance(trace.get("forge_receipt_sha256"), str)
-            and len(trace["forge_receipt_sha256"]) == 64
-            and all(
-                character in "0123456789abcdef"
-                for character in trace["forge_receipt_sha256"]
-            )
-            and isinstance(authority, dict)
-            and all(authority.get(key) is False for key in _AUTHORITY)
-            and trace.get("execution") is False
-        )
-        binding = (
-            _forge_ship_binding(root, feature)
-            if shape_valid
-            else {"status": "invalid", "sha256": None, "value": None}
-        )
-        binding_value = (
-            binding.get("value") if isinstance(binding.get("value"), dict) else None
-        )
-        provenance_match = (
-            shape_valid
-            and binding.get("status") == "bound"
-            and trace.get("forge_receipt_sha256") == binding.get("sha256")
-            and isinstance(binding_value, dict)
-            and binding_value.get("shipped") is trace.get("shipped")
-            and (
-                not isinstance(trace.get("intent_hash"), str)
-                or not isinstance(binding_value.get("intent_hash"), str)
-                or trace.get("intent_hash") == binding_value.get("intent_hash")
-            )
-            and (
-                not isinstance(trace.get("obligations"), str)
-                or not isinstance(binding_value.get("obligations"), str)
-                or trace.get("obligations") == binding_value.get("obligations")
-            )
-        )
-        valid = bool(shape_valid and provenance_match)
-        if not valid:
-            _record_error(state["errors"], source, "INTENT_TRACE_ADAPTER_INVALID")
-            facts["invalid_count"] += 1
-        shipped = trace.get("shipped") is True if isinstance(trace, dict) else False
-        traceable = (
-            valid and shipped and trace.get("intent_traceable") is True
-            if isinstance(trace, dict)
-            else False
-        )
-        status = (
-            "traceable"
-            if traceable
-            else "blocked"
-            if not shipped and valid
-            else "untraceable"
-        )
-        provenance_status = (
-            "bound"
-            if valid
-            else "mismatch"
-            if shape_valid and binding.get("status") == "bound"
-            else str(binding.get("status") or "invalid")
-        )
-        if provenance_status == "bound":
-            facts["bound_count"] += 1
-        elif provenance_status == "mismatch":
-            facts["mismatch_count"] += 1
-        else:
-            facts["unbound_count"] += 1
-        try:
-            receipt_sha = hashlib.sha256(candidate["path"].read_bytes()).hexdigest()
-        except OSError:
-            receipt_sha = hashlib.sha256(source.encode("utf-8")).hexdigest()
-        node_id = f"intent-trace:{feature}:{receipt_sha[:24]}"
-        _node(
-            state,
-            node_id=node_id,
-            kind="intent_trace",
-            label=f"{feature} · intent trace",
-            source=source,
-            status=status,
-            facts={
-                "feature": feature,
-                "shipped": shipped,
-                "intent_traceable": traceable,
-                "intent_hash": trace.get("intent_hash")
-                if isinstance(trace, dict) and isinstance(trace.get("intent_hash"), str)
-                else None,
-                "obligations": trace.get("obligations")
-                if isinstance(trace, dict) and isinstance(trace.get("obligations"), str)
-                else None,
-                "receipt_sha256": receipt_sha,
-                "forge_receipt_sha256": trace.get("forge_receipt_sha256")
-                if isinstance(trace, dict)
-                else None,
-                "observed_forge_receipt_sha256": binding.get("sha256"),
-                "forge_receipt_source": binding.get("source"),
-                "forge_receipt_line": binding.get("line"),
-                "provenance_status": provenance_status,
-                "provenance_match": provenance_match,
-                "timestamp": trace.get("ts")
-                if isinstance(trace, dict) and isinstance(trace.get("ts"), str)
-                else None,
-                "source_type": "factoryline_adapter",
-                "preferred": True,
-                "authority": dict(_AUTHORITY),
-                "execution": False,
-            },
-        )
-        # Only a fully hash-bound adapter may create a traversable provenance
-        # relationship. Mismatch, missing, and invalid states remain closed.
-        if (
-            valid
-            and isinstance(binding.get("source"), str)
-            and isinstance(binding.get("line"), int)
-            and isinstance(binding.get("sha256"), str)
-        ):
-            source_id = f"intent-source:{feature}:{binding['sha256'][:24]}"
-            source_created = source_id not in state["nodes"]
-            source_added = _node(
-                state,
-                node_id=source_id,
-                kind="intent_source",
-                label=f"{feature} · Forge ship line",
-                source=binding["source"],
-                status="bound",
-                facts={
-                    "feature": feature,
-                    "source_path": binding["source"],
-                    "line": binding["line"],
-                    "sha256": binding["sha256"],
-                    "source_type": "forge_ship_line",
-                    "authority": dict(_AUTHORITY),
-                    "execution": False,
-                },
-            )
-            if source_added:
-                facts["lineage_node_count"] += int(source_created)
-            if source_added and _edge(state, node_id, source_id, "bound_to_forge_line"):
-                facts["lineage_edge_count"] += 1
-        facts["count"] += 1
-        facts["traceable_count"] += int(traceable)
-        facts["untraceable_count"] += int(shipped and not traceable)
-        facts["blocked_count"] += int(not shipped and valid)
-
-    for feature, candidates in sorted(adapter_candidates.items()):
-        candidates.sort(
-            key=lambda item: (
-                item.get("timestamp", ""),
-                item.get("mtime_ns", 0),
-                item.get("source", ""),
-            )
-        )
-        _project_adapter(feature, candidates[-1])
-
-    directory = root / ".forge"
-    for path in sorted(directory.glob("*/receipts.jsonl")):
-        try:
-            receipt_path, source = _source(root, path)
-            if receipt_path.stat().st_size > MAX_SOURCE_BYTES:
-                _record_error(state["errors"], source, "SOURCE_TOO_LARGE")
-                facts["invalid_count"] += 1
-                continue
-            lines = receipt_path.read_text(encoding="utf-8").splitlines()
-        except (OSError, UnicodeDecodeError, ValueError):
-            _record_error(state["errors"], path, "INTENT_TRACE_RECEIPT_UNREADABLE")
-            facts["invalid_count"] += 1
-            continue
-        latest: tuple[dict[str, Any], str] | None = None
-        invalid = False
-        for line in lines:
-            if not line.strip():
-                continue
-            try:
-                value = json.loads(line)
-            except json.JSONDecodeError:
-                invalid = True
-                continue
-            if isinstance(value, dict) and value.get("phase") == "ship":
-                latest = (value, line)
-        if invalid:
-            _record_error(state["errors"], source, "INTENT_TRACE_RECEIPT_INVALID")
-            facts["invalid_count"] += 1
-        if latest is None:
-            continue
-        value, raw_line = latest
-        feature = _text(path.parent.name, "unknown-feature")
-        if feature in adapter_features:
-            # An explicit adapter, including an invalid one, is the preferred
-            # record for this feature.  Do not silently fall back to older
-            # upstream evidence and mask the adapter failure.
-            continue
-        shipped = value.get("shipped") is True
-        # A malformed source invalidates the whole projection. Do not surface a
-        # traceable card beside a rejected line and accidentally invite reliance.
-        traceable = not invalid and shipped and value.get("intent_traceable") is True
-        status = (
-            "traceable" if traceable else "blocked" if not shipped else "untraceable"
-        )
-        receipt_sha = hashlib.sha256(raw_line.encode("utf-8")).hexdigest()
-        node_id = f"intent-trace:{feature}:{receipt_sha[:24]}"
-        _node(
-            state,
-            node_id=node_id,
-            kind="intent_trace",
-            label=f"{feature} · intent trace",
-            source=source,
-            status=status,
-            facts={
-                "feature": feature,
-                "shipped": shipped,
-                "intent_traceable": traceable,
-                "intent_hash": value.get("intent_hash")
-                if isinstance(value.get("intent_hash"), str)
-                else None,
-                "obligations": value.get("obligations")
-                if isinstance(value.get("obligations"), str)
-                else None,
-                "receipt_sha256": receipt_sha,
-                "timestamp": value.get("ts")
-                if isinstance(value.get("ts"), str)
-                else None,
-                "authority": dict(_AUTHORITY),
-                "execution": False,
-            },
-        )
-        facts["count"] += 1
-        facts["traceable_count"] += int(traceable)
-        facts["untraceable_count"] += int(shipped and not traceable)
-        facts["blocked_count"] += int(not shipped)
+    facts = _intent_trace_facts()
+    candidates, adapter_features = _collect_adapter_candidates(state, root)
+    _project_adapter_candidates(state, root, facts, candidates)
+    _append_legacy_intent_traces(state, root, facts, adapter_features)
     return facts
 
 
@@ -3475,7 +4249,7 @@ def _external_runtime_triage(facts: dict[str, int]) -> tuple[str, str] | None:
     return None
 
 
-def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
+def _recommendation_priority_1(facts: dict) -> tuple[str, str] | None:
     if facts.get("oracle_blocked_drift_count", 0) > 0:
         return (
             "review_oracle_weakening",
@@ -3509,6 +4283,10 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
             "repair_supply_chain_attestation",
             "The local supply-chain receipt is blocked or integrity-invalid. Reconcile source, dependency, vulnerability, licence, reproducible-build, and artifact evidence before release review.",
         )
+    return None
+
+
+def _recommendation_priority_2(facts: dict) -> tuple[str, str] | None:
     if facts.get("context_efficiency_blocked", 0) > 0:
         return (
             "repair_context_efficiency_packet",
@@ -3549,6 +4327,10 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
             "refresh_intent_trace_adapter",
             "A Factoryline intent adapter cannot be bound to a readable Forge ship line; rerun the supervised assembly or repair the local evidence source.",
         )
+    return None
+
+
+def _recommendation_priority_3(facts: dict) -> tuple[str, str] | None:
     if facts["operational_node_count"] == 0:
         return (
             "initialize_graph",
@@ -3594,6 +4376,10 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
             "refresh_expired_continuity",
             "At least one local continuity record is expired and is withheld from future recall.",
         )
+    return None
+
+
+def _recommendation_priority_4(facts: dict) -> tuple[str, str] | None:
     if facts["continuity_draft_count"] > 0:
         return (
             "review_continuity_promotion",
@@ -3637,6 +4423,10 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
             "collect_independent_verifier_evidence",
             "A verifier session is bound, but no Code Factory runtime isolation has been proven.",
         )
+    return None
+
+
+def _recommendation_priority_5(facts: dict) -> tuple[str, str] | None:
     if facts["forensic_anomaly_count"] > 0:
         return (
             "review_graph_anomaly",
@@ -3680,15 +4470,19 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
             "review_verified_repair",
             "ProofSearch selected one hash-bound candidate; human approval is still required before apply.",
         )
+    return None
+
+
+def _recommendation_priority_6(facts: dict) -> tuple[str, str] | None:
     if facts["forensic_divergence_count"] > 0:
         return (
             "review_counterfactual_fork",
             "Two verified graph runs diverge; review the bounded recovery preview.",
         )
     if facts["stale_proof_count"] > 0:
-        return "rerun_invalid_proof", "At least one recorded proof is stale."
+        return ("rerun_invalid_proof", "At least one recorded proof is stale.")
     if facts["blocked_gate_count"] > 0:
-        return "resolve_blocked_gate", "At least one declared proof gate is blocked."
+        return ("resolve_blocked_gate", "At least one declared proof gate is blocked.")
     if facts["run_gate_count"] > 0:
         return (
             "run_required_validation",
@@ -3699,6 +4493,21 @@ def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
             "collect_completion_evidence",
             "At least one declared requirement lacks a valid completion receipt.",
         )
+    return None
+
+
+def _recommendation(facts: dict[str, int]) -> tuple[str, str]:
+    for resolver in (
+        _recommendation_priority_1,
+        _recommendation_priority_2,
+        _recommendation_priority_3,
+        _recommendation_priority_4,
+        _recommendation_priority_5,
+        _recommendation_priority_6,
+    ):
+        result = resolver(facts)
+        if result is not None:
+            return result
     return (
         "review_verified_graph",
         "All currently represented requirements have valid completion evidence.",
@@ -4885,40 +5694,40 @@ def _changed_path(value: str) -> str:
     return path
 
 
-def graph_ops_impact(root: Path, changed_paths: list[str]) -> dict[str, Any]:
-    """Return exact input-edge impact facts without running or skipping validation."""
-    changed = sorted({_changed_path(value) for value in changed_paths})
-    if not changed:
-        raise ValueError("at least one changed path is required")
-    snapshot = graph_ops_snapshot(root)
-    nodes = {node["id"]: node for node in snapshot["nodes"]}
-    # One artifact can legitimately have several proof receipts over time.
-    # Keep every input edge instead of letting a dict comprehension hide the
-    # current receipt behind whichever proof happened to be iterated last.
+def _impact_edge_indexes(
+    snapshot: dict[str, Any], nodes: dict[str, dict[str, Any]]
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     inputs: dict[str, list[str]] = {}
-    for edge in snapshot["edges"]:
-        if (
-            edge["relation"] != "input_to"
-            or nodes.get(edge["source"], {}).get("kind") != "artifact"
-        ):
-            continue
-        inputs.setdefault(edge["source"], []).append(edge["target"])
     gate_for_proof: dict[str, list[str]] = {}
     for edge in snapshot["edges"]:
+        if (
+            edge["relation"] == "input_to"
+            and nodes.get(edge["source"], {}).get("kind") == "artifact"
+        ):
+            inputs.setdefault(edge["source"], []).append(edge["target"])
         if edge["relation"] == "uses_proof":
             gate_for_proof.setdefault(edge["target"], []).append(edge["source"])
+    return inputs, gate_for_proof
 
+
+def _changed_artifact_paths(artifact_path: str, changed: list[str]) -> list[str]:
+    return [
+        path
+        for path in changed
+        if artifact_path == path or artifact_path.startswith(path + "/")
+    ]
+
+
+def _match_changed_proofs(
+    nodes: dict[str, dict[str, Any]], inputs: dict[str, list[str]], changed: list[str]
+) -> dict[str, dict[str, Any]]:
     matched: dict[str, dict[str, Any]] = {}
     for artifact_id, proof_ids in inputs.items():
         artifact = nodes[artifact_id]
         artifact_path = str(
             artifact.get("facts", {}).get("path", artifact.get("label", ""))
         )
-        path_matches = [
-            path
-            for path in changed
-            if artifact_path == path or artifact_path.startswith(path + "/")
-        ]
+        path_matches = _changed_artifact_paths(artifact_path, changed)
         if not path_matches:
             continue
         for proof_id in sorted(set(proof_ids)):
@@ -4938,6 +5747,14 @@ def graph_ops_impact(root: Path, changed_paths: list[str]) -> dict[str, Any]:
             entry["input_artifacts"].append(
                 {"path": artifact_path, "changed_paths": path_matches}
             )
+    return matched
+
+
+def _finalize_impact_proofs(
+    matched: dict[str, dict[str, Any]],
+    gate_for_proof: dict[str, list[str]],
+    nodes: dict[str, dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     for proof_id, entry in matched.items():
         entry["input_artifacts"].sort(key=lambda item: item["path"])
         entry["gates"] = sorted(
@@ -4947,18 +5764,43 @@ def graph_ops_impact(root: Path, changed_paths: list[str]) -> dict[str, Any]:
                 if gate_id in nodes
             }
         )
-    matched_rows = [matched[key] for key in sorted(matched)]
-    verified_current = [item for item in matched_rows if item["status"] == "verified"]
-    # A rerun creates a new content-addressed receipt while the historical
-    # receipt remains useful lineage.  Once a current receipt exists for the
-    # same gate label, the older stale receipt is superseded for this impact
-    # decision; otherwise every changed input would stay blocked forever.
-    current_labels = {item["label"] for item in verified_current}
+    rows = [matched[key] for key in sorted(matched)]
+    current = [item for item in rows if item["status"] == "verified"]
+    current_labels = {item["label"] for item in current}
     stale = [
         item
-        for item in matched_rows
+        for item in rows
         if item["status"] == "stale" and item["label"] not in current_labels
     ]
+    return rows, current, stale
+
+
+def _unmatched_impact_paths(
+    changed: list[str], matched_rows: list[dict[str, Any]]
+) -> list[str]:
+    return [
+        path
+        for path in changed
+        if not any(
+            path in artifact["changed_paths"]
+            for item in matched_rows
+            for artifact in item["input_artifacts"]
+        )
+    ]
+
+
+def graph_ops_impact(root: Path, changed_paths: list[str]) -> dict[str, Any]:
+    """Return exact input-edge impact facts without running or skipping validation."""
+    changed = sorted({_changed_path(value) for value in changed_paths})
+    if not changed:
+        raise ValueError("at least one changed path is required")
+    snapshot = graph_ops_snapshot(root)
+    nodes = {node["id"]: node for node in snapshot["nodes"]}
+    inputs, gate_for_proof = _impact_edge_indexes(snapshot, nodes)
+    matched = _match_changed_proofs(nodes, inputs, changed)
+    matched_rows, verified_current, stale = _finalize_impact_proofs(
+        matched, gate_for_proof, nodes
+    )
     core = {
         "schema": "factory.graph-impact.v1",
         "marker": "GRAPH_OPS_IMPACT_EXACT",
@@ -4971,15 +5813,7 @@ def graph_ops_impact(root: Path, changed_paths: list[str]) -> dict[str, Any]:
         "matched_proofs": matched_rows,
         "verified_current_proofs": verified_current,
         "rerun_proofs": stale,
-        "unmatched_changed_paths": [
-            path
-            for path in changed
-            if not any(
-                path in artifact["changed_paths"]
-                for item in matched_rows
-                for artifact in item["input_artifacts"]
-            )
-        ],
+        "unmatched_changed_paths": _unmatched_impact_paths(changed, matched_rows),
         "authority": _AUTHORITY,
         "graph_sha256": snapshot["graph_sha256"],
         "complete": snapshot["complete"],
