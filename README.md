@@ -52,12 +52,13 @@ factory --help
 factory guide
 ```
 
-In an interactive terminal, `factory` checks PyPI at most once per day and
-prints a notice when a newer version is available. It never downloads or
-installs the update. The check is quiet in CI, JSON output, server/MCP, help,
-version, and non-interactive runs; set `FACTORY_DISABLE_UPDATE_CHECK=1` to turn
-it off. The plain PyPI request does not include a project path, account
-identifier, or usage data.
+In an interactive terminal, `factory` checks PyPI and caches the result for up
+to 24 hours, then prints a notice when a newer version is available. Two
+simultaneous first runs can both check. It never downloads or installs the
+update. The check is quiet in CI, JSON output, server/MCP, help, version, and
+non-interactive runs; set `FACTORY_DISABLE_UPDATE_CHECK=1` to turn it off. The
+plain PyPI request does not include a project path, account identifier, or
+usage data.
 
 Run repository commands from the project being reviewed. `factory guide` is a
 read-only orientation; it does not run tests or agents.
