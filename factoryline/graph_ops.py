@@ -3896,6 +3896,41 @@ def _snapshot_markers(
         "GRAPH_OPS_RECOMMENDATION_EXACT",
         "GRAPH_OPS_AUTHORITY_RETAINED",
     ]
+    markers.extend(_base_snapshot_markers(state, nodes))
+    markers.extend(
+        _audit_snapshot_markers(
+            verifier_sessions,
+            forensics,
+            proofsearch,
+            frontier,
+            reality,
+            authorizations,
+            assurance,
+        )
+    )
+    markers.extend(
+        _governance_snapshot_markers(continuity, counterexamples, oracle_firewall)
+    )
+    markers.extend(
+        _adapter_snapshot_markers(
+            atomic_proof_adapter, agent_proof_bridge, proof_worklogs
+        )
+    )
+    markers.extend(
+        _resilience_snapshot_markers(
+            guardrails, resilience, proof_deltas, survival_cards, agent_supervision
+        )
+    )
+    markers.extend(
+        _runtime_snapshot_markers(judgment, external_evidence, intent_traces)
+    )
+    return sorted(markers)
+
+
+def _base_snapshot_markers(
+    state: dict[str, Any], nodes: list[dict[str, Any]]
+) -> list[str]:
+    markers = []
     if state["slice_plan_seen"] and state["slice_links_exact"]:
         markers.append("GRAPH_OPS_SLICE_LINKS_EXACT")
     if any(node["kind"] == "mission" for node in nodes):
@@ -3904,6 +3939,23 @@ def _snapshot_markers(
         markers.append("GRAPH_OPS_PROOF_HASH_STATUS")
     if any(node["kind"] in {"gate", "trace", "receipt"} for node in nodes):
         markers.append("GRAPH_OPS_DECLARED_GATE_STATE")
+    if any(node["kind"] == "intake" for node in nodes):
+        markers.append("GRAPH_OPS_INTAKE_DECISIONS_READ_ONLY")
+    if state["errors"] or state["truncated"]:
+        markers.append("GRAPH_OPS_PARTIAL_RESULT")
+    return markers
+
+
+def _audit_snapshot_markers(
+    verifier_sessions: dict[str, int],
+    forensics: dict[str, int],
+    proofsearch: dict[str, int],
+    frontier: dict[str, int],
+    reality: dict[str, int],
+    authorizations: dict[str, int],
+    assurance: dict[str, int],
+) -> list[str]:
+    markers = []
     if verifier_sessions["session_count"]:
         markers.append("GRAPH_OPS_VERIFIER_SESSIONS_READ_ONLY")
     if forensics["lineage_count"]:
@@ -3922,6 +3974,15 @@ def _snapshot_markers(
         markers.append("GRAPH_OPS_HUMAN_AUTHORIZATIONS_PROJECTED")
     if assurance["count"]:
         markers.append("GRAPH_OPS_GITHUB_ASSURANCE_PROJECTED")
+    return markers
+
+
+def _governance_snapshot_markers(
+    continuity: dict[str, int],
+    counterexamples: dict[str, int],
+    oracle_firewall: dict[str, int],
+) -> list[str]:
+    markers = []
     if continuity["record_count"]:
         markers.append("GRAPH_OPS_CONTINUITY_METADATA_READ_ONLY")
     if counterexamples["count"]:
@@ -3930,6 +3991,15 @@ def _snapshot_markers(
         markers.append("GRAPH_OPS_ORACLE_FIREWALL_READ_ONLY")
     if oracle_firewall["blocked_drift_count"]:
         markers.append("GRAPH_OPS_ORACLE_WEAKENING_BLOCKED")
+    return markers
+
+
+def _adapter_snapshot_markers(
+    atomic_proof_adapter: dict[str, Any],
+    agent_proof_bridge: dict[str, Any],
+    proof_worklogs: dict[str, Any],
+) -> list[str]:
+    markers = []
     if atomic_proof_adapter["receipt_count"] or atomic_proof_adapter["invalid_count"]:
         markers.append("GRAPH_OPS_ATOMIC_PROOF_ADAPTER_READ_ONLY")
     if atomic_proof_adapter["invalid_count"]:
@@ -3942,6 +4012,17 @@ def _snapshot_markers(
         markers.append("GRAPH_OPS_PROOF_WORKLOG_REVIEW_REQUIRED")
     if proof_worklogs["invalid_count"]:
         markers.append("GRAPH_OPS_PROOF_WORKLOG_INVALID")
+    return markers
+
+
+def _resilience_snapshot_markers(
+    guardrails: dict[str, int],
+    resilience: dict[str, int],
+    proof_deltas: dict[str, Any],
+    survival_cards: dict[str, int],
+    agent_supervision: dict[str, int],
+) -> list[str]:
+    markers = []
     if guardrails["count"]:
         markers.append("GRAPH_OPS_GUARDRAIL_EVALUATIONS_REDACTED")
     if resilience["count"]:
@@ -3958,6 +4039,24 @@ def _snapshot_markers(
         markers.append("GRAPH_OPS_AGENT_LICENSES_READ_ONLY")
     if agent_supervision["combine_scoreboard_count"]:
         markers.append("GRAPH_OPS_COMBINE_SCOREBOARDS_READ_ONLY")
+    return markers
+
+
+def _runtime_snapshot_markers(
+    judgment: dict[str, int],
+    external_evidence: dict[str, int],
+    intent_traces: dict[str, int],
+) -> list[str]:
+    markers = _runtime_evidence_markers(judgment, external_evidence)
+    markers.extend(_intent_state_markers(intent_traces))
+    markers.extend(_intent_binding_markers(intent_traces))
+    return markers
+
+
+def _runtime_evidence_markers(
+    judgment: dict[str, int], external_evidence: dict[str, int]
+) -> list[str]:
+    markers = []
     if judgment["count"]:
         markers.append("GRAPH_OPS_JUDGMENT_CAPSULES_READ_ONLY")
     if external_evidence["count"]:
@@ -3968,6 +4067,11 @@ def _snapshot_markers(
         or external_evidence["unknown_count"]
     ):
         markers.append("GRAPH_OPS_EXTERNAL_RUNTIME_TRIAGE_READ_ONLY")
+    return markers
+
+
+def _intent_state_markers(intent_traces: dict[str, int]) -> list[str]:
+    markers = []
     if intent_traces["count"]:
         markers.append("GRAPH_OPS_INTENT_TRACE_READ_ONLY")
     if (
@@ -3976,6 +4080,11 @@ def _snapshot_markers(
         or intent_traces["invalid_count"]
     ):
         markers.append("GRAPH_OPS_INTENT_TRACE_FAIL_CLOSED")
+    return markers
+
+
+def _intent_binding_markers(intent_traces: dict[str, int]) -> list[str]:
+    markers = []
     if intent_traces["bound_count"]:
         markers.append("GRAPH_OPS_INTENT_ADAPTER_BOUND")
         markers.append("GRAPH_OPS_INTENT_ADAPTER_LINEAGE")
@@ -3985,11 +4094,7 @@ def _snapshot_markers(
         markers.append("GRAPH_OPS_INTENT_ADAPTER_MISMATCH")
     if intent_traces["unbound_count"]:
         markers.append("GRAPH_OPS_INTENT_ADAPTER_UNBOUND")
-    if any(node["kind"] == "intake" for node in nodes):
-        markers.append("GRAPH_OPS_INTAKE_DECISIONS_READ_ONLY")
-    if state["errors"] or state["truncated"]:
-        markers.append("GRAPH_OPS_PARTIAL_RESULT")
-    return sorted(markers)
+    return markers
 
 
 def _append_admission_packets(state: dict[str, Any], root: Path) -> dict[str, int]:
