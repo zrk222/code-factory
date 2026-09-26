@@ -133,114 +133,154 @@ def add_parser(sub: Any) -> None:
 
 def run(args: Any) -> int:
     """Execute a First Lap command after parser selection."""
-    from .first_lap import (
-        FirstLapError,
-        classify_failure,
-        first_lap_status,
-        initialize_first_lap,
-        promote_incident,
-        record_incident,
-        verify_activation,
-        verify_holdout_boundary,
-        verify_observed_first_lap,
-        verify_verifier_calibration,
-    )
+    from . import first_lap
 
     workspace = (
         Path(args.root).resolve() if hasattr(args, "root") else Path(".").resolve()
     )
     try:
-        if args.first_lap_cmd == "init":
-            result = initialize_first_lap(
-                workspace,
-                mission=args.mission,
-                journeys=args.journeys,
-                holdouts=args.holdouts,
-                overwrite=args.force,
-            )
-            code = 0
-        elif args.first_lap_cmd == "status":
-            result = first_lap_status(workspace)
-            code = 0 if result.get("state") in {"INITIALIZED", "NOT_INITIALIZED"} else 1
-        elif args.first_lap_cmd == "calibrate":
-            result = verify_verifier_calibration(
-                workspace,
-                json.loads(Path(args.input).read_text(encoding="utf-8")),
-                strict=args.strict,
-            )
-            code = 0 if result.get("state") == "CALIBRATED" else 1
-        elif args.first_lap_cmd == "incident":
-            payload = json.loads(Path(args.input).read_text(encoding="utf-8"))
-            result = record_incident(workspace, payload)
-            if args.promote:
-                result = {
-                    "recorded": result,
-                    "promoted": promote_incident(workspace, payload),
-                }
-            code = 0
-        elif args.first_lap_cmd == "promote":
-            result = promote_incident(
-                workspace, json.loads(Path(args.input).read_text(encoding="utf-8"))
-            )
-            code = 0
-        elif args.first_lap_cmd == "holdout":
-            result = verify_holdout_boundary(
-                workspace,
-                json.loads(Path(args.input).read_text(encoding="utf-8")),
-                strict=args.strict,
-            )
-            code = 0 if result.get("state") == "VERIFIED" else 1
-        elif args.first_lap_cmd == "observe":
-            result = verify_observed_first_lap(
-                json.loads(Path(args.input).read_text(encoding="utf-8")),
-                strict=args.strict,
-            )
-            code = 0 if result.get("state") == "OBSERVED" else 1
-        elif args.first_lap_cmd == "failure":
-            result = classify_failure(
-                args.kind,
-                provider=args.provider,
-                retry_after_seconds=args.retry_after,
-                strict=args.strict,
-            )
-            code = 0
-        else:
-            result = verify_activation(
-                workspace,
-                calibration=json.loads(
-                    Path(args.calibration).read_text(encoding="utf-8")
-                ),
-                holdout=json.loads(Path(args.holdout).read_text(encoding="utf-8")),
-                observed=json.loads(Path(args.observed).read_text(encoding="utf-8")),
-                strict=args.strict,
-                persist=args.persist,
-            )
-            code = 0 if result.get("state") == "READY" else 1
+        result, code = _execute_first_lap_command(args, workspace, first_lap)
     except (
-        FirstLapError,
+        first_lap.FirstLapError,
         OSError,
         UnicodeError,
         json.JSONDecodeError,
         TypeError,
         ValueError,
     ) as exc:
-        result = {
-            "schema": "factory.first-lap.error.v1",
-            "marker": "FIRST_LAP_BLOCKED",
-            "code": getattr(exc, "code", "E_FIRST_LAP_INPUT"),
-            "message": str(exc),
-            "authority": "none",
-        }
+        result = _first_lap_error(exc)
         code = 2
+    _render_first_lap_result(args, result, code)
+    return code
+
+
+def _read_input(path: str | Path) -> Any:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _first_lap_init(args: Any, workspace: Path, first_lap: Any) -> tuple[dict, int]:
+    result = first_lap.initialize_first_lap(
+        workspace,
+        mission=args.mission,
+        journeys=args.journeys,
+        holdouts=args.holdouts,
+        overwrite=args.force,
+    )
+    return result, 0
+
+
+def _first_lap_status(args: Any, workspace: Path, first_lap: Any) -> tuple[dict, int]:
+    result = first_lap.first_lap_status(workspace)
+    code = 0 if result.get("state") in {"INITIALIZED", "NOT_INITIALIZED"} else 1
+    return result, code
+
+
+def _first_lap_calibrate(
+    args: Any, workspace: Path, first_lap: Any
+) -> tuple[dict, int]:
+    result = first_lap.verify_verifier_calibration(
+        workspace, _read_input(args.input), strict=args.strict
+    )
+    code = 0 if result.get("state") == "CALIBRATED" else 1
+    return result, code
+
+
+def _first_lap_incident(args: Any, workspace: Path, first_lap: Any) -> tuple[dict, int]:
+    payload = _read_input(args.input)
+    result = first_lap.record_incident(workspace, payload)
+    if args.promote:
+        result = {
+            "recorded": result,
+            "promoted": first_lap.promote_incident(workspace, payload),
+        }
+    return result, 0
+
+
+def _first_lap_promote(args: Any, workspace: Path, first_lap: Any) -> tuple[dict, int]:
+    return first_lap.promote_incident(workspace, _read_input(args.input)), 0
+
+
+def _first_lap_holdout(args: Any, workspace: Path, first_lap: Any) -> tuple[dict, int]:
+    result = first_lap.verify_holdout_boundary(
+        workspace, _read_input(args.input), strict=args.strict
+    )
+    code = 0 if result.get("state") == "VERIFIED" else 1
+    return result, code
+
+
+def _first_lap_observe(args: Any, workspace: Path, first_lap: Any) -> tuple[dict, int]:
+    result = first_lap.verify_observed_first_lap(
+        _read_input(args.input), strict=args.strict
+    )
+    code = 0 if result.get("state") == "OBSERVED" else 1
+    return result, code
+
+
+def _first_lap_failure(args: Any, workspace: Path, first_lap: Any) -> tuple[dict, int]:
+    return (
+        first_lap.classify_failure(
+            args.kind,
+            provider=args.provider,
+            retry_after_seconds=args.retry_after,
+            strict=args.strict,
+        ),
+        0,
+    )
+
+
+def _first_lap_verify(args: Any, workspace: Path, first_lap: Any) -> tuple[dict, int]:
+    result = first_lap.verify_activation(
+        workspace,
+        calibration=_read_input(args.calibration),
+        holdout=_read_input(args.holdout),
+        observed=_read_input(args.observed),
+        strict=args.strict,
+        persist=args.persist,
+    )
+    code = 0 if result.get("state") == "READY" else 1
+    return result, code
+
+
+def _execute_first_lap_command(
+    args: Any, workspace: Path, first_lap: Any
+) -> tuple[dict, int]:
+    handlers = {
+        "init": _first_lap_init,
+        "status": _first_lap_status,
+        "calibrate": _first_lap_calibrate,
+        "incident": _first_lap_incident,
+        "promote": _first_lap_promote,
+        "holdout": _first_lap_holdout,
+        "observe": _first_lap_observe,
+        "failure": _first_lap_failure,
+    }
+    handler = handlers.get(args.first_lap_cmd, _first_lap_verify)
+    return handler(args, workspace, first_lap)
+
+
+def _first_lap_error(exc: Exception) -> dict[str, Any]:
+    return {
+        "schema": "factory.first-lap.error.v1",
+        "marker": "FIRST_LAP_BLOCKED",
+        "code": getattr(exc, "code", "E_FIRST_LAP_INPUT"),
+        "message": str(exc),
+        "authority": "none",
+    }
+
+
+def _render_first_lap_success(result: dict[str, Any]) -> None:
+    print(f"first lap: {result.get('marker', result.get('state', 'READY'))}")
+    if result.get("paths"):
+        for name, path in result["paths"].items():
+            print(f"  {name}: {path}")
+    if result.get("retry_allowed") is not None:
+        print(f"retry allowed: {result['retry_allowed']}")
+
+
+def _render_first_lap_result(args: Any, result: dict[str, Any], code: int) -> None:
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     elif code == 0:
-        print(f"first lap: {result.get('marker', result.get('state', 'READY'))}")
-        if result.get("paths"):
-            for name, path in result["paths"].items():
-                print(f"  {name}: {path}")
-        if result.get("retry_allowed") is not None:
-            print(f"retry allowed: {result['retry_allowed']}")
+        _render_first_lap_success(result)
     else:
         print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
-    return code

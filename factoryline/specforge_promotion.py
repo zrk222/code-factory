@@ -43,40 +43,46 @@ def _output(root: Path, path: Path) -> Path:
     return target
 
 
-def verify_specforge_promotion(
-    root: Path, spec_path: Path, forge_path: Path, out_path: Path
-) -> dict[str, Any]:
-    """Fail closed if ForgeLine tries to promote work outside an approved SpecLine packet."""
-    root = Path(root).resolve()
-    spec, spec_source = _read(root, spec_path)
-    forge, forge_source = _read(root, forge_path)
-    if (
-        set(spec) != {"schema", "intent", "approval", "obligations", "required_gates"}
-        or spec.get("schema") != "factory.specline.delivery-packet.v1"
-        or not isinstance(spec.get("intent"), dict)
-        or not isinstance(spec.get("obligations"), list)
-        or not isinstance(spec.get("required_gates"), list)
-        or not all(isinstance(item, str) and item for item in spec["required_gates"])
-    ):
+def _validate_spec(spec: dict[str, Any]) -> None:
+    valid = (
+        set(spec) == {"schema", "intent", "approval", "obligations", "required_gates"}
+        and spec.get("schema") == "factory.specline.delivery-packet.v1"
+        and isinstance(spec.get("intent"), dict)
+        and isinstance(spec.get("obligations"), list)
+        and isinstance(spec.get("required_gates"), list)
+        and all(isinstance(item, str) and item for item in spec["required_gates"])
+    )
+    if not valid:
         raise RevenueForgeError(
             "SPECFORGE_SPEC_INVALID",
             "SpecLine packet must contain intent, approval, obligations, and explicit required_gates",
         )
-    digest = _sha(spec["intent"])
+
+
+def _spec_findings(spec: dict[str, Any]) -> list[str]:
     findings: list[str] = []
-    if not isinstance(spec["approval"], dict) or spec["approval"].get("origin") not in {
+    approval = spec["approval"]
+    if not isinstance(approval, dict) or approval.get("origin") not in {
         "human_confirmed",
         "trusted_source",
     }:
         findings.append("E_SPECLINE_AUTHORITY_MISSING")
-    if not spec["obligations"] or not all(
+    obligations = spec["obligations"]
+    if not obligations or not all(
         isinstance(item, dict)
         and item.get("id")
         and item.get("forbidden_behavior")
         and item.get("gate")
-        for item in spec["obligations"]
+        for item in obligations
     ):
         findings.append("E_SPECLINE_OBLIGATION_LOOSE")
+    return findings
+
+
+def _forge_findings(
+    spec: dict[str, Any], forge: dict[str, Any], digest: str
+) -> list[str]:
+    findings: list[str] = []
     if (
         set(forge) != {"schema", "intent_sha256", "state", "gates"}
         or forge.get("schema") != "factory.forgeline.delivery-state.v1"
@@ -89,25 +95,48 @@ def verify_specforge_promotion(
             findings.append("E_FORGELINE_REQUIRED_GATE_MISSING:" + gate)
     if forge.get("state") != "verified":
         findings.append("E_FORGELINE_STATE_NOT_VERIFIED")
-    core = {
+    return findings
+
+
+def _repair_plan(findings: list[str]) -> list[str]:
+    plan: list[str] = []
+    for finding in findings:
+        if finding == "E_FORGELINE_INTENT_DRIFT":
+            plan.append(
+                "Re-issue ForgeLine state from the exact approved SpecLine intent."
+            )
+        elif finding.startswith("E_FORGELINE_REQUIRED"):
+            plan.append(
+                "Restore the missing selected capability gate with its candidate-bound receipt."
+            )
+        else:
+            plan.append(
+                "Obtain human-confirmed intent approval and complete explicit forbidden behavior and gate fields."
+            )
+    return plan
+
+
+def _promotion_core(
+    spec: dict[str, Any],
+    spec_source: Path,
+    forge_source: Path,
+    root: Path,
+    digest: str,
+    findings: list[str],
+) -> dict[str, Any]:
+    ready = not findings
+    return {
         "schema": "factory.specforge.promotion-receipt.v1",
         "marker": "SPECFORGE_PROMOTION_READY"
-        if not findings
+        if ready
         else "SPECFORGE_PROMOTION_BLOCKED",
-        "ok": not findings,
+        "ok": ready,
         "action_summary": "Bind ForgeLine promotion to one approved SpecLine intent digest and only the explicitly selected capability gates; do not execute, release, or override a human.",
         "intent_sha256": digest,
         "obligation_count": len(spec["obligations"]),
         "required_gates": spec["required_gates"],
         "findings": findings,
-        "repair_plan": [
-            "Re-issue ForgeLine state from the exact approved SpecLine intent."
-            if item == "E_FORGELINE_INTENT_DRIFT"
-            else "Restore the missing selected capability gate with its candidate-bound receipt."
-            if item.startswith("E_FORGELINE_REQUIRED")
-            else "Obtain human-confirmed intent approval and complete explicit forbidden behavior and gate fields."
-            for item in findings
-        ],
+        "repair_plan": _repair_plan(findings),
         "sources": {
             "specline": spec_source.relative_to(root).as_posix(),
             "forgeline": forge_source.relative_to(root).as_posix(),
@@ -115,6 +144,19 @@ def verify_specforge_promotion(
         "authority": {**AUTHORITY, "execution": False, "release": False},
         "claim_boundary": "Local topology and digest validation only; not proof that external SpecLine or ForgeLine ran, nor a release approval.",
     }
+
+
+def verify_specforge_promotion(
+    root: Path, spec_path: Path, forge_path: Path, out_path: Path
+) -> dict[str, Any]:
+    """Fail closed if ForgeLine tries to promote work outside an approved SpecLine packet."""
+    root = Path(root).resolve()
+    spec, spec_source = _read(root, spec_path)
+    forge, forge_source = _read(root, forge_path)
+    _validate_spec(spec)
+    digest = _sha(spec["intent"])
+    findings = _spec_findings(spec) + _forge_findings(spec, forge, digest)
+    core = _promotion_core(spec, spec_source, forge_source, root, digest, findings)
     receipt = {**core, "receipt_sha256": _sha(core)}
     target = _output(root, out_path)
     target.parent.mkdir(parents=True, exist_ok=True)
