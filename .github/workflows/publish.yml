@@ -48,6 +48,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
 
       - uses: actions/setup-python@v6
         with:
@@ -96,6 +97,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
 
       - uses: actions/setup-node@v7.0.0
         with:
@@ -132,6 +134,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
 
       - uses: actions/setup-java@v5
         with:
@@ -164,6 +167,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
 
       - uses: actions/download-artifact@v8.0.1
         with:
@@ -202,6 +206,7 @@ jobs:
       - name: Require sealed release candidate preflight before external publication
         env:
           RELEASE_CONTRACT_PATH: .factory/release-contracts/release.json
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           test -n "$RELEASE_CONTRACT_PATH" || {
@@ -214,6 +219,7 @@ jobs:
           }
           python -m factoryline.cli release preflight \
             --root . \
+            --candidate-tag "$RELEASE_TAG" \
             --contract "$RELEASE_CONTRACT_PATH" \
             --artifact-dir release-bundle/python \
             --artifact-dir release-bundle/editors \
@@ -266,6 +272,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
 
       - name: Validate release tag and MCP Registry metadata
         env:

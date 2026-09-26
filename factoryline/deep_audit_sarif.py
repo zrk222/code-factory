@@ -7,6 +7,7 @@ Unrecognized SARIF indirection is rejected rather than silently dropping evidenc
 from __future__ import annotations
 
 from pathlib import Path
+from copy import deepcopy
 import re
 
 from .deep_audit_io import bound_bytes, digest, relative_path, strict_json
@@ -117,6 +118,8 @@ def _resolution(rule: str) -> str:
 
 
 def _execution_sarif(report: dict, lane: dict, sources: dict) -> list:
+    # Rule defaults are normalized on a copy; native hashes bind original bytes.
+    report = deepcopy(report)
     if report.get("version") != "2.1.0":
         raise RuntimeAuditError("E_SARIF_VERSION", "SARIF 2.1.0 required")
     findings = []
@@ -403,6 +406,10 @@ def normalize_execution_bundle(
     sources = {item["path"]: item["sha256"] for item in inventory["files"]}
     findings = _native_execution_report(report, lane, sources)
     gaps = []
+    if lane["engine"] == "gitleaks":
+        # Gitleaks SARIF lists findings, not every file actually scanned. Adapter
+        # coverage.sources cannot establish native input accounting on its own.
+        gaps.append("SECRETS_NATIVE_ACCOUNTING_UNAVAILABLE")
     required = {
         item["path"]: item["sha256"]
         for item in inventory["files"]

@@ -429,6 +429,7 @@ def _recent_release_tags(
     max_releases_30d: int = 4,
     minimum_days_between_releases: int = 7,
     effective_at: datetime | None = None,
+    candidate_tag: str | None = None,
 ) -> dict[str, Any]:
     """Measure release-tag cadence and expose a forward release guard."""
     now = now or datetime.now(timezone.utc)
@@ -453,6 +454,8 @@ def _recent_release_tags(
     for line in completed.stdout.splitlines():
         try:
             name, stamp = line.split("\t", 1)
+            if name == candidate_tag:
+                continue
             releases.append(
                 (
                     name,
@@ -472,9 +475,26 @@ def _recent_release_tags(
     )
 
 
-def release_cadence_status(root: Path, now: datetime | None = None) -> dict[str, Any]:
+def release_cadence_status(
+    root: Path, now: datetime | None = None, *, candidate_tag: str | None = None
+) -> dict[str, Any]:
     """Return release-train validity and its tag-derived admission projection."""
     root = Path(root).resolve()
+    if candidate_tag is not None:
+        if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", candidate_tag):
+            raise ValueError("candidate tag must use vMAJOR.MINOR.PATCH")
+
+        def commit(ref: str) -> str:
+            return subprocess.run(
+                ["git", "-C", str(root), "rev-parse", "--verify", ref],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            ).stdout.strip()
+
+        if commit(f"refs/tags/{candidate_tag}^{{commit}}") != commit("HEAD"):
+            raise ValueError("candidate tag must identify the checked-out commit")
     relative = [
         path.relative_to(root).as_posix()
         for path in _tracked_files(root)
@@ -523,7 +543,9 @@ def release_cadence_status(root: Path, now: datetime | None = None) -> dict[str,
         max_releases_30d=cadence["max_releases_30d"],
         minimum_days_between_releases=cadence["minimum_days_between_releases"],
         effective_at=_parse_timestamp(cadence["effective_at"]),
+        candidate_tag=candidate_tag,
     )
+    projection["excluded_candidate_tag"] = candidate_tag
     projection["release_train_status"] = train["status"]
     if not projection.get("available"):
         projection.update(

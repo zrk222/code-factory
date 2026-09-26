@@ -202,6 +202,15 @@ def verify_deep_audit_plan(
         schema=PLAN_SCHEMA,
         trust_root_path=trust_root_path,
     )
+    keys = [
+        key
+        for key in strict_json(trust).get("keys", [])
+        if key.get("keyid") == verified["signature"]["keyid"]
+    ]
+    if len(keys) != 1 or keys[0].get("revoked") or keys[0].get("revoked_at"):
+        raise RuntimeAuditError(
+            "E_PLAN_SIGNER_REVOKED", "plan signer is ambiguous or revoked"
+        )
     plan = verified["payload"]
     if plan != parsed:
         raise RuntimeAuditError("E_INPUT_CHANGED", "signed payload changed")

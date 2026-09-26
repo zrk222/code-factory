@@ -104,6 +104,18 @@ def test_signature_sources_and_policy_are_bound(tmp_path):
 
 
 @pytest.mark.parametrize(
+    "revocation", [{"revoked": True}, {"revoked_at": "2026-01-01T00:00:00Z"}]
+)
+def test_plan_rejects_revoked_signer(tmp_path, revocation):
+    path, trust, _, root = fixture(tmp_path)
+    value = json.loads(trust.read_text())
+    value["keys"][0].update(revocation)
+    trust.write_text(json.dumps(value))
+    with pytest.raises(RuntimeAuditError, match="E_PLAN_SIGNER_REVOKED"):
+        verify_deep_audit_plan(path, trust, sha256_bytes(trust.read_bytes()), root)
+
+
+@pytest.mark.parametrize(
     "mutate,code",
     [
         (lambda p: p["rules"][0].update(origin="agent_proposed"), "E_RULE_AUTHORITY"),
@@ -742,7 +754,11 @@ def synthetic_execution(tmp_path, monkeypatch):
         trust_root=trust,
         trust_root_sha256=plan["trust_root_sha256"],
     )
-    assert result["analysis_complete"], result["gaps"]
+    assert not result["analysis_complete"]
+    assert any(
+        "SECRETS_NATIVE_ACCOUNTING_UNAVAILABLE" in lane["gaps"]
+        for lane in result["lanes"]
+    )
     assert (
         result["state"] == "INCOMPLETE"
     )  # Synthetic observations alone never approve.
@@ -811,6 +827,20 @@ def test_specialty_review_reconciles_its_own_findings(
     )
     gaps = ["missing runtime observation"] if disposition == "gap" else []
     attestation, invocation = review_documents(tmp_path, args, result, findings, gaps)
+    with pytest.raises(RuntimeAuditError, match="E_REVIEW_NORMALIZATION"):
+        verify_execution_review(
+            args[0],
+            result["run_id"],
+            attestation,
+            invocation,
+            args[4],
+            args[5]["trust_root_sha256"],
+        )
+    # Isolate disposition/signature reconciliation after proving the real native
+    # gate rejects incomplete secrets coverage. This is not an integration pass.
+    monkeypatch.setattr(
+        "factoryline.deep_audit_attestation._review_native_lanes", lambda *args: None
+    )
     reviewed = verify_execution_review(
         args[0],
         result["run_id"],
@@ -821,9 +851,7 @@ def test_specialty_review_reconciles_its_own_findings(
     )
     assert (
         reviewed["state"]
-        == {"accept": "READY_FOR_HUMAN_REVIEW", "high": "BLOCKED", "gap": "INCOMPLETE"}[
-            disposition
-        ]
+        == {"accept": "INCOMPLETE", "high": "BLOCKED", "gap": "INCOMPLETE"}[disposition]
     )
     assert reviewed["specialty_ai_review"] == "COORDINATOR_ATTESTED"
     assert reviewed["authority"] == "none" and not reviewed["release_approval"]
@@ -951,3 +979,53 @@ def test_specialty_review_stages_do_not_hide_complexity():
             elif isinstance(node, ast.BoolOp):
                 complexity += len(node.values) - 1
         assert complexity <= 10, (name, complexity)
+
+
+@pytest.mark.parametrize("surface", ["primary", "challenge"])
+def test_execution_sarif_defaults_preserve_original_hashes(tmp_path, surface):
+    from copy import deepcopy
+    from factoryline.deep_audit_sarif import normalize_execution_bundle
+
+    _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    lane = next(item for item in plan["lanes"] if item["engine"] == "codeql")
+    bundle = execution_bundle(lane, inventory, "0" * 32)
+    if surface == "primary":
+        report = execution_native(lane, inventory, detected=True)
+        bundle["artifacts"]["report.json"] = report
+    else:
+        observation = bundle["artifacts"]["challenges.json"]["observations"][0]
+        report = observation["report"]["native_report"]
+    run = report["runs"][0]
+    run["results"][0].pop("level")
+    run["tool"]["driver"]["rules"] = [
+        {"id": "fixture-detection", "defaultConfiguration": {"level": "error"}}
+    ]
+    if surface == "primary":
+        bundle["artifacts"]["coverage.json"]["report_sha256"] = digest(report)
+    else:
+        observation["observation_sha256"] = digest(observation["report"])
+        obligation = next(
+            item for item in plan["obligations"] if item["engine"] == "codeql"
+        )
+        obligation["challenges"][0]["expected_report_sha256"] = digest(
+            observation["report"]
+        )
+    original = deepcopy(bundle)
+    result = normalize_execution_bundle(
+        bundle, lane, inventory, "0" * 32, plan["obligations"]
+    )
+    assert not result["gaps"], result["gaps"]
+    assert bundle == original
+
+
+def test_secrets_sidecar_cannot_claim_native_scan_coverage(tmp_path):
+    from factoryline.deep_audit_sarif import normalize_execution_bundle
+
+    _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    lane = next(item for item in plan["lanes"] if item["engine"] == "gitleaks")
+    bundle = execution_bundle(lane, inventory, "0" * 32)
+    result = normalize_execution_bundle(
+        bundle, lane, inventory, "0" * 32, plan["obligations"]
+    )
+    assert result["state"] == "INCOMPLETE"
+    assert "SECRETS_NATIVE_ACCOUNTING_UNAVAILABLE" in result["gaps"]

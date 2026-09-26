@@ -26,6 +26,10 @@ def add_parser(sub: Any) -> None:
     )
     preflight.add_argument("--root", default=".")
     preflight.add_argument(
+        "--candidate-tag",
+        help="draft release tag at HEAD to exclude from prior-release cadence",
+    )
+    preflight.add_argument(
         "--contract",
         required=True,
         help="workspace-contained release contract with candidate source binding",
@@ -112,6 +116,7 @@ def run(args: Any) -> int:
                     supply_chain_manifest=supply_chain_manifest,
                     intake_parameters=intake_parameters,
                     require_intake=args.require_intake,
+                    candidate_tag=args.candidate_tag,
                 )
                 if args.out
                 else release_candidate_preflight(
@@ -122,6 +127,7 @@ def run(args: Any) -> int:
                     supply_chain_manifest=supply_chain_manifest,
                     intake_parameters=intake_parameters,
                     require_intake=args.require_intake,
+                    candidate_tag=args.candidate_tag,
                 )
             )
         except (OSError, UnicodeDecodeError, ValueError, TypeError) as exc:

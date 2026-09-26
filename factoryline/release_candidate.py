@@ -322,11 +322,16 @@ def release_candidate_preflight(
     supply_chain_manifest: Path | None = None,
     intake_parameters: Path | None = None,
     require_intake: bool = False,
+    candidate_tag: str | None = None,
 ) -> dict[str, Any]:
     """Evaluate contract/source/artifact identity without external authority."""
     workspace = Path(root).resolve()
     source = source_snapshot(workspace)
-    release_cadence = release_cadence_status(workspace)
+    release_cadence = (
+        release_cadence_status(workspace, candidate_tag=candidate_tag)
+        if candidate_tag is not None
+        else release_cadence_status(workspace)
+    )
     try:
         architecture_health = evaluate_architecture_health(workspace, strict=True)
     except (
@@ -792,6 +797,7 @@ def write_release_candidate_preflight(
     supply_chain_manifest: Path | None = None,
     intake_parameters: Path | None = None,
     require_intake: bool = False,
+    candidate_tag: str | None = None,
 ) -> dict[str, Any]:
     """Write a candidate receipt atomically after running the pure preflight."""
     workspace = Path(root).resolve()
@@ -803,6 +809,7 @@ def write_release_candidate_preflight(
         supply_chain_manifest=supply_chain_manifest,
         intake_parameters=intake_parameters,
         require_intake=require_intake,
+        candidate_tag=candidate_tag,
     )
     destination = _inside(workspace, Path(out), "release preflight output")
     destination.parent.mkdir(parents=True, exist_ok=True)

@@ -637,3 +637,48 @@ def test_release_cadence_fails_closed_when_policy_and_train_diverge(
     assert result["available"] is False
     assert result["admission"] is False
     assert result["state"] == "release_policy_mismatch"
+
+
+def test_release_cadence_excludes_only_bound_candidate(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    cadence = {
+        "max_releases_30d": 4,
+        "minimum_days_between_releases": 7,
+        "effective_at": "2026-09-01T00:00:00Z",
+        "exception_requires": "human-release-authority",
+        "requires_changelog_entry": True,
+    }
+    (tmp_path / "architecture-policy.json").write_text(json.dumps({"release": cadence}))
+    monkeypatch.setattr(architecture_health, "_tracked_files", lambda root: [])
+    monkeypatch.setattr(
+        architecture_health,
+        "_release_train",
+        lambda *args: {"status": "valid", "cadence": cadence},
+    )
+
+    def git(argv, **kwargs):
+        if "rev-parse" in argv:
+            return SimpleNamespace(
+                stdout="a" * 40
+                if argv[-1] in {"HEAD", "refs/tags/v0.46.9^{commit}"}
+                else "b" * 40
+            )
+        return SimpleNamespace(
+            stdout="v0.46.8\t2026-09-10T00:00:00+00:00\nv0.46.9\t2026-09-25T00:00:00+00:00\n"
+        )
+
+    monkeypatch.setattr(architecture_health.subprocess, "run", git)
+    now = datetime(2026, 9, 25, 12, tzinfo=timezone.utc)
+    assert not release_cadence_status(tmp_path, now)["admission"]
+    result = release_cadence_status(tmp_path, now, candidate_tag="v0.46.9")
+    assert result["admission"]
+    assert result["recent_count"] == 1
+    assert result["excluded_candidate_tag"] == "v0.46.9"
+    import pytest
+
+    with pytest.raises(ValueError, match="checked-out commit"):
+        release_cadence_status(tmp_path, now, candidate_tag="v0.46.8")
+    with pytest.raises(ValueError, match="vMAJOR"):
+        release_cadence_status(tmp_path, now, candidate_tag="--all")

@@ -43,8 +43,8 @@
   ],
   "invariants": [
     "A tag and artifact must bind to one commit before publication.",
-    "Every public release requires approval from a human who did not initiate it, enforced by protected GitHub environments.",
-    "The workflow initiator is not evidence of independent human approval.",
+    "Every release candidate requires specialty AI review, passing required checks and resolved review findings before merge.",
+    "Specialty AI review is not human approval or security certification; protected publication environments remain separate controls.",
     "Uploaded, processing, and pending_review are not published.",
     "Provider credentials remain outside repository state.",
     "A release exception is never inferred from a green build."
