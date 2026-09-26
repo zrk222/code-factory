@@ -377,11 +377,7 @@ def _validate_continuity_binding(value: object, label: str) -> None:
             "GAUNTLET_PROPOSAL_INVALID", f"{label} continuity binding is invalid"
         )
     core = {key: value[key] for key in fields - {"binding_sha256"}}
-    for field in ("tenant_id_sha256", "scope_ref_sha256", "binding_sha256"):
-        if not isinstance(value.get(field), str) or not _SHA.fullmatch(value[field]):
-            raise GauntletError(
-                "GAUNTLET_PROPOSAL_INVALID", f"{label} continuity binding is invalid"
-            )
+    _validate_continuity_binding_hashes(value, label)
     if value["binding_sha256"] != _sha(core):
         raise GauntletError(
             "GAUNTLET_PROPOSAL_TAMPERED",
@@ -399,43 +395,81 @@ def _validate_continuity_binding(value: object, label: str) -> None:
         "record_sha256",
         "expires_at",
     }
+    _validate_continuity_records(records, record_fields, label)
+
+
+def _validate_continuity_binding_hashes(value: dict[str, Any], label: str) -> None:
+    for field in ("tenant_id_sha256", "scope_ref_sha256", "binding_sha256"):
+        if not isinstance(value.get(field), str) or not _SHA.fullmatch(value[field]):
+            raise GauntletError(
+                "GAUNTLET_PROPOSAL_INVALID", f"{label} continuity binding is invalid"
+            )
+
+
+def _validate_continuity_records(
+    records: object, record_fields: set[str], label: str
+) -> None:
     if not isinstance(records, list) or not 1 <= len(records) <= MAX_CONTINUITY_RECORDS:
         raise GauntletError(
             "GAUNTLET_PROPOSAL_INVALID", f"{label} continuity records are invalid"
         )
     record_hashes: set[str] = set()
     for record in records:
-        if not isinstance(record, dict) or set(record) != record_fields:
-            raise GauntletError(
-                "GAUNTLET_PROPOSAL_INVALID", f"{label} continuity record is invalid"
-            )
-        for field in (
-            "record_id_sha256",
-            "memory_ref_sha256",
-            "scope_ref_sha256",
-            "evidence_sha256",
-            "record_sha256",
-        ):
-            if not isinstance(record.get(field), str) or not _SHA.fullmatch(
-                record[field]
-            ):
-                raise GauntletError(
-                    "GAUNTLET_PROPOSAL_INVALID", f"{label} continuity record is invalid"
-                )
-        _text(record.get("record_type"), f"{label} continuity record type", limit=40)
-        _text(
-            record.get("purpose_ref"), f"{label} continuity record purpose", limit=200
-        )
-        _timestamp(record.get("expires_at"), f"{label} continuity record expiry")
-        record_hashes.add(record["record_id_sha256"])
+        record_hashes.add(_validate_continuity_record(record, record_fields, label))
     if len(record_hashes) != len(records):
         raise GauntletError(
             "GAUNTLET_PROPOSAL_INVALID", f"{label} continuity record ids must be unique"
         )
 
 
+def _validate_continuity_record(
+    record: object, record_fields: set[str], label: str
+) -> str:
+    if not isinstance(record, dict) or set(record) != record_fields:
+        raise GauntletError(
+            "GAUNTLET_PROPOSAL_INVALID", f"{label} continuity record is invalid"
+        )
+    for field in (
+        "record_id_sha256",
+        "memory_ref_sha256",
+        "scope_ref_sha256",
+        "evidence_sha256",
+        "record_sha256",
+    ):
+        if not isinstance(record.get(field), str) or not _SHA.fullmatch(record[field]):
+            raise GauntletError(
+                "GAUNTLET_PROPOSAL_INVALID", f"{label} continuity record is invalid"
+            )
+    _text(record.get("record_type"), f"{label} continuity record type", limit=40)
+    _text(record.get("purpose_ref"), f"{label} continuity record purpose", limit=200)
+    _timestamp(record.get("expires_at"), f"{label} continuity record expiry")
+    return record["record_id_sha256"]
+
+
 def _source(root: Path, source_path: Path) -> tuple[dict[str, Any], Path, str, str]:
     source, path, relative, digest = _load_json(root, source_path, "source")
+    _validate_source_envelope(source)
+    promises = source.get("promises")
+    if not isinstance(promises, list) or not 1 <= len(promises) <= MAX_PROMISES:
+        raise GauntletError(
+            "GAUNTLET_SOURCE_INVALID",
+            f"promises must contain 1 through {MAX_PROMISES} entries",
+        )
+    normalized = _normalized_promises(root, promises)
+    return (
+        {
+            "schema": GAUNTLET_SOURCE_SCHEMA,
+            "id": _text(source.get("id"), "id", identifier=True),
+            "promises": normalized,
+            "continuity": _continuity_binding(root, source.get("continuity")),
+        },
+        path,
+        relative,
+        digest,
+    )
+
+
+def _validate_source_envelope(source: dict[str, Any]) -> None:
     required = {"schema", "id", "promises"}
     if (
         not required.issubset(source)
@@ -446,115 +480,123 @@ def _source(root: Path, source_path: Path) -> tuple[dict[str, Any], Path, str, s
             "GAUNTLET_SOURCE_INVALID",
             f"source must contain schema, id, promises, and optional continuity for {GAUNTLET_SOURCE_SCHEMA}",
         )
-    promises = source.get("promises")
-    if not isinstance(promises, list) or not 1 <= len(promises) <= MAX_PROMISES:
-        raise GauntletError(
-            "GAUNTLET_SOURCE_INVALID",
-            f"promises must contain 1 through {MAX_PROMISES} entries",
-        )
+
+
+def _normalized_promises(root: Path, promises: list[Any]) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     promise_ids: set[str] = set()
     case_ids: set[str] = set()
     for index, item in enumerate(promises):
-        if not isinstance(item, dict) or set(item) != {
-            "id",
-            "statement",
-            "reality_manifest",
-            "sabotage_cases",
-        }:
-            raise GauntletError(
-                "GAUNTLET_SOURCE_INVALID",
-                f"promises[{index}] must contain exactly id, statement, reality_manifest, and sabotage_cases",
-            )
-        promise_id = _text(item.get("id"), f"promises[{index}].id", identifier=True)
-        if promise_id in promise_ids:
-            raise GauntletError("GAUNTLET_SOURCE_INVALID", "promise ids must be unique")
-        promise_ids.add(promise_id)
-        cases = item.get("sabotage_cases")
-        if not isinstance(cases, list) or not 1 <= len(cases) <= len(_RISK_TAGS):
-            raise GauntletError(
-                "GAUNTLET_SOURCE_INVALID",
-                f"promises[{index}].sabotage_cases must contain 1 through {len(_RISK_TAGS)} entries",
-            )
-        normalized_cases: list[dict[str, Any]] = []
-        for case_index, case in enumerate(cases):
-            if not isinstance(case, dict) or set(case) != {
-                "id",
-                "risk_tag",
-                "summary",
-                "e2e_manifest",
-            }:
-                raise GauntletError(
-                    "GAUNTLET_SOURCE_INVALID",
-                    f"promises[{index}].sabotage_cases[{case_index}] must contain exactly id, risk_tag, summary, and e2e_manifest",
-                )
-            case_id = _text(
-                case.get("id"),
-                f"promises[{index}].sabotage_cases[{case_index}].id",
-                identifier=True,
-            )
-            compound_case_id = f"{promise_id}--{case_id}"
-            _compound_identifier(
-                compound_case_id,
-                f"promises[{index}].sabotage_cases[{case_index}].compound_id",
-            )
-            if compound_case_id in case_ids:
-                raise GauntletError(
-                    "GAUNTLET_SOURCE_INVALID", "promise/case ids must be unique"
-                )
-            case_ids.add(compound_case_id)
-            risk_tag = case.get("risk_tag")
-            if risk_tag not in _RISK_TAGS:
-                raise GauntletError(
-                    "GAUNTLET_SOURCE_INVALID",
-                    f"promises[{index}].sabotage_cases[{case_index}].risk_tag is unsupported",
-                )
-            normalized_cases.append(
-                {
-                    "id": case_id,
-                    "risk_tag": risk_tag,
-                    "summary": _text(
-                        case.get("summary"),
-                        f"promises[{index}].sabotage_cases[{case_index}].summary",
-                    ),
-                    "e2e_manifest": _relative_text(
-                        root,
-                        case.get("e2e_manifest"),
-                        f"promises[{index}].sabotage_cases[{case_index}].e2e_manifest",
-                    ).as_posix(),
-                }
-            )
-        statement = _text(item.get("statement"), f"promises[{index}].statement")
-        normalized.append(
-            {
-                "id": promise_id,
-                "statement": _clear_intent(statement, f"promises[{index}].statement"),
-                "reality_manifest": _relative_text(
-                    root,
-                    item.get("reality_manifest"),
-                    f"promises[{index}].reality_manifest",
-                ).as_posix(),
-                "sabotage_cases": sorted(
-                    normalized_cases, key=lambda entry: entry["id"]
-                ),
-            }
-        )
+        normalized.append(_normalized_promise(root, item, index, promise_ids, case_ids))
     if len(case_ids) > MAX_CASES:
         raise GauntletError(
             "GAUNTLET_SOURCE_INVALID",
             f"the source may contain at most {MAX_CASES} sabotage cases",
         )
-    return (
-        {
-            "schema": GAUNTLET_SOURCE_SCHEMA,
-            "id": _text(source.get("id"), "id", identifier=True),
-            "promises": sorted(normalized, key=lambda entry: entry["id"]),
-            "continuity": _continuity_binding(root, source.get("continuity")),
-        },
-        path,
-        relative,
-        digest,
+    return sorted(normalized, key=lambda entry: entry["id"])
+
+
+def _normalized_promise(
+    root: Path,
+    item: object,
+    index: int,
+    promise_ids: set[str],
+    case_ids: set[str],
+) -> dict[str, Any]:
+    if not isinstance(item, dict) or set(item) != {
+        "id",
+        "statement",
+        "reality_manifest",
+        "sabotage_cases",
+    }:
+        raise GauntletError(
+            "GAUNTLET_SOURCE_INVALID",
+            f"promises[{index}] must contain exactly id, statement, reality_manifest, and sabotage_cases",
+        )
+    promise_id = _text(item.get("id"), f"promises[{index}].id", identifier=True)
+    if promise_id in promise_ids:
+        raise GauntletError("GAUNTLET_SOURCE_INVALID", "promise ids must be unique")
+    promise_ids.add(promise_id)
+    cases = item.get("sabotage_cases")
+    if not isinstance(cases, list) or not 1 <= len(cases) <= len(_RISK_TAGS):
+        raise GauntletError(
+            "GAUNTLET_SOURCE_INVALID",
+            f"promises[{index}].sabotage_cases must contain 1 through {len(_RISK_TAGS)} entries",
+        )
+    normalized_cases = _normalized_sabotage_cases(
+        root, promise_id, cases, index, case_ids
     )
+    statement = _text(item.get("statement"), f"promises[{index}].statement")
+    return {
+        "id": promise_id,
+        "statement": _clear_intent(statement, f"promises[{index}].statement"),
+        "reality_manifest": _relative_text(
+            root,
+            item.get("reality_manifest"),
+            f"promises[{index}].reality_manifest",
+        ).as_posix(),
+        "sabotage_cases": normalized_cases,
+    }
+
+
+def _normalized_sabotage_cases(
+    root: Path,
+    promise_id: str,
+    cases: list[Any],
+    promise_index: int,
+    case_ids: set[str],
+) -> list[dict[str, Any]]:
+    normalized_cases = []
+    for case_index, case in enumerate(cases):
+        normalized_cases.append(
+            _normalized_sabotage_case(
+                root, promise_id, case, promise_index, case_index, case_ids
+            )
+        )
+    return sorted(normalized_cases, key=lambda entry: entry["id"])
+
+
+def _normalized_sabotage_case(
+    root: Path,
+    promise_id: str,
+    case: object,
+    promise_index: int,
+    case_index: int,
+    case_ids: set[str],
+) -> dict[str, Any]:
+    case_prefix = f"promises[{promise_index}].sabotage_cases[{case_index}]"
+    if not isinstance(case, dict) or set(case) != {
+        "id",
+        "risk_tag",
+        "summary",
+        "e2e_manifest",
+    }:
+        raise GauntletError(
+            "GAUNTLET_SOURCE_INVALID",
+            f"{case_prefix} must contain exactly id, risk_tag, summary, and e2e_manifest",
+        )
+    case_id = _text(case.get("id"), f"{case_prefix}.id", identifier=True)
+    compound_case_id = f"{promise_id}--{case_id}"
+    _compound_identifier(compound_case_id, f"{case_prefix}.compound_id")
+    if compound_case_id in case_ids:
+        raise GauntletError(
+            "GAUNTLET_SOURCE_INVALID", "promise/case ids must be unique"
+        )
+    case_ids.add(compound_case_id)
+    risk_tag = case.get("risk_tag")
+    if risk_tag not in _RISK_TAGS:
+        raise GauntletError(
+            "GAUNTLET_SOURCE_INVALID",
+            f"{case_prefix}.risk_tag is unsupported",
+        )
+    return {
+        "id": case_id,
+        "risk_tag": risk_tag,
+        "summary": _text(case.get("summary"), f"{case_prefix}.summary"),
+        "e2e_manifest": _relative_text(
+            root, case.get("e2e_manifest"), f"{case_prefix}.e2e_manifest"
+        ).as_posix(),
+    }
 
 
 def _proposal_core(root: Path, source_path: Path) -> dict[str, Any]:
@@ -639,6 +681,11 @@ def compile_gauntlet_proposal(root: Path, source_path: Path) -> dict[str, Any]:
 
 def _proposal(root: Path, proposal_path: Path) -> tuple[dict[str, Any], Path, str]:
     value, resolved, relative, _digest = _load_json(root, proposal_path, "proposal")
+    _validate_proposal(value)
+    return value, resolved, relative
+
+
+def _validate_proposal(value: dict[str, Any]) -> None:
     required = {
         "schema",
         "marker",
@@ -659,6 +706,12 @@ def _proposal(root: Path, proposal_path: Path) -> tuple[dict[str, Any], Path, st
             "GAUNTLET_PROPOSAL_INVALID", "proposal has an unsupported schema or fields"
         )
     core = {key: value[key] for key in required - {"proposal_sha256"}}
+    _validate_proposal_hash(value, core)
+    _validate_proposal_source(value.get("source"))
+    _validate_continuity_binding(value.get("continuity"), "proposal")
+
+
+def _validate_proposal_hash(value: dict[str, Any], core: dict[str, Any]) -> None:
     if (
         not isinstance(value.get("proposal_sha256"), str)
         or not _SHA.fullmatch(value["proposal_sha256"])
@@ -667,7 +720,9 @@ def _proposal(root: Path, proposal_path: Path) -> tuple[dict[str, Any], Path, st
         raise GauntletError(
             "GAUNTLET_PROPOSAL_TAMPERED", "proposal SHA-256 does not match"
         )
-    source = value.get("source")
+
+
+def _validate_proposal_source(source: object) -> None:
     if (
         not isinstance(source, dict)
         or set(source) != {"path", "sha256", "id"}
@@ -677,8 +732,6 @@ def _proposal(root: Path, proposal_path: Path) -> tuple[dict[str, Any], Path, st
         raise GauntletError(
             "GAUNTLET_PROPOSAL_INVALID", "proposal source binding is invalid"
         )
-    _validate_continuity_binding(value.get("continuity"), "proposal")
-    return value, resolved, relative
 
 
 def verify_gauntlet_proposal(root: Path, proposal_path: Path) -> dict[str, Any]:
@@ -851,6 +904,11 @@ def admit_gauntlet(
 
 def _admission(root: Path, admission_path: Path) -> tuple[dict[str, Any], Path, str]:
     value, resolved, relative, _digest = _load_json(root, admission_path, "admission")
+    _validate_admission(value)
+    return value, resolved, relative
+
+
+def _validate_admission(value: dict[str, Any]) -> None:
     required = {
         "schema",
         "marker",
@@ -873,6 +931,16 @@ def _admission(root: Path, admission_path: Path) -> tuple[dict[str, Any], Path, 
             "admission has an unsupported schema or fields",
         )
     core = {key: value[key] for key in required - {"admission_sha256"}}
+    _validate_admission_hash(value, core)
+    if value.get("authority") != _PLANNING_AUTHORITY:
+        raise GauntletError(
+            "GAUNTLET_ADMISSION_INVALID", "admission authority boundary changed"
+        )
+    _validate_admission_proposal(value.get("proposal"))
+    _validate_admission_identity_and_expiry(value)
+
+
+def _validate_admission_hash(value: dict[str, Any], core: dict[str, Any]) -> None:
     if (
         not isinstance(value.get("admission_sha256"), str)
         or not _SHA.fullmatch(value["admission_sha256"])
@@ -881,11 +949,9 @@ def _admission(root: Path, admission_path: Path) -> tuple[dict[str, Any], Path, 
         raise GauntletError(
             "GAUNTLET_ADMISSION_TAMPERED", "admission SHA-256 does not match"
         )
-    if value.get("authority") != _PLANNING_AUTHORITY:
-        raise GauntletError(
-            "GAUNTLET_ADMISSION_INVALID", "admission authority boundary changed"
-        )
-    proposal = value.get("proposal")
+
+
+def _validate_admission_proposal(proposal: object) -> None:
     if (
         not isinstance(proposal, dict)
         or set(proposal) != {"path", "sha256", "source_id"}
@@ -895,6 +961,9 @@ def _admission(root: Path, admission_path: Path) -> tuple[dict[str, Any], Path, 
         raise GauntletError(
             "GAUNTLET_ADMISSION_INVALID", "admission proposal binding is invalid"
         )
+
+
+def _validate_admission_identity_and_expiry(value: dict[str, Any]) -> None:
     _text(value.get("approved_by"), "approved_by")
     _text(value.get("rationale"), "rationale")
     issued_at, expires_at = (
@@ -906,7 +975,6 @@ def _admission(root: Path, admission_path: Path) -> tuple[dict[str, Any], Path, 
             "GAUNTLET_ADMISSION_INVALID",
             "admission expiry must be after issue and at most sixty minutes later",
         )
-    return value, resolved, relative
 
 
 def verify_gauntlet_admission(
@@ -1371,6 +1439,13 @@ def _validate_outcome(outcome: object) -> tuple[str, str]:
     proposal_id = _compound_identifier(
         outcome.get("proposal_id"), "outcome proposal_id"
     )
+    _validate_outcome_promise(outcome, proposal_id)
+    _validate_outcome_sabotage(outcome)
+    status = _validate_outcome_e2e(outcome)
+    return proposal_id, status
+
+
+def _validate_outcome_promise(outcome: dict[str, Any], proposal_id: str) -> None:
     promise = outcome.get("promise")
     if not isinstance(promise, dict) or set(promise) != {"id", "statement"}:
         raise GauntletError("SURVIVAL_CARD_INVALID", "card outcome promise is invalid")
@@ -1396,6 +1471,9 @@ def _validate_outcome(outcome: object) -> tuple[str, str]:
         )
     _clear_intent(reality["promise"], "outcome Reality Check promise")
     _clear_intent(reality["failure_case"], "outcome Reality Check failure_case")
+
+
+def _validate_outcome_sabotage(outcome: dict[str, Any]) -> None:
     sabotage = outcome.get("sabotage")
     if (
         not isinstance(sabotage, dict)
@@ -1406,6 +1484,9 @@ def _validate_outcome(outcome: object) -> tuple[str, str]:
         raise GauntletError("SURVIVAL_CARD_INVALID", "card outcome sabotage is invalid")
     _text(sabotage.get("id"), "outcome sabotage id", identifier=True)
     _text(sabotage.get("summary"), "outcome sabotage summary")
+
+
+def _validate_outcome_e2e(outcome: dict[str, Any]) -> str:
     e2e = _hash_binding(outcome.get("e2e"), {"path", "sha256", "id"}, "outcome E2E")
     _text(e2e.get("id"), "outcome E2E id", identifier=True)
     try:
@@ -1427,7 +1508,7 @@ def _validate_outcome(outcome: object) -> tuple[str, str]:
         raise GauntletError(
             "SURVIVAL_CARD_INVALID", "card outcome does not match its E2E receipt"
         )
-    return proposal_id, status
+    return status
 
 
 def _validated_outcomes(card: dict[str, Any]) -> list[str]:
