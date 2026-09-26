@@ -14,6 +14,8 @@
   bounded AppForge and provider-neutral SaaS proof status projections.
 - Fix nested pytest-asyncio plugin registration and retry transient Windows
   staging-directory access denials during target promotion.
+- Notify interactive CLI users about newer PyPI releases at most once per day;
+  CI, JSON, server, and non-interactive runs stay quiet, with an opt-out.
 - Keep the package and MCP descriptor at 0.46.9 for candidate validation; no
   package, Marketplace listing, or external service is published by this entry.
 
