@@ -255,6 +255,44 @@ def _categories(*, source: str) -> list[dict[str, Any]]:
 def _direct_normalize(
     root: Path, value: dict[str, Any], spec_name: str
 ) -> dict[str, Any]:
+    metadata = _direct_metadata(value, spec_name)
+    config = _mapping(
+        value["harnessConfig"],
+        "harnessConfig",
+        {
+            "visualMedia",
+            "privacyToListing",
+            "releaseChain",
+            "designSystem",
+            "productionSignal",
+            "androidParity",
+        },
+    )
+    visual_norm = _normalize_direct_visual(root, config)
+    privacy_norm = _normalize_direct_privacy(config)
+    release_norm = _normalize_direct_release(root, config)
+    design_norm = _normalize_direct_design(config)
+    signal_norm = _normalize_direct_signal(config)
+    android_norm = _normalize_direct_android(config)
+    triage = _normalize_direct_triage(value["triageRules"])
+    return {
+        "apiVersion": DIRECT_API_VERSION,
+        "kind": DIRECT_KIND,
+        "metadata": metadata,
+        "harnessConfig": {
+            "visualMedia": visual_norm,
+            "privacyToListing": privacy_norm,
+            "releaseChain": release_norm,
+            "designSystem": design_norm,
+            "productionSignal": signal_norm,
+            "androidParity": android_norm,
+        },
+        "triageRules": triage,
+        "mobileCategories": _categories(source="explicit_harness_config"),
+    }
+
+
+def _direct_metadata(value: dict[str, Any], spec_name: str) -> dict[str, str]:
     _mapping(
         value,
         "specification",
@@ -280,19 +318,15 @@ def _direct_normalize(
     spec_file = _text(
         metadata.get("specFile", spec_name), "metadata.specFile", limit=256
     )
+    return {
+        "name": name,
+        "specFile": spec_file,
+        "targetAppId": target,
+        "version": version,
+    }
 
-    config = _mapping(
-        value["harnessConfig"],
-        "harnessConfig",
-        {
-            "visualMedia",
-            "privacyToListing",
-            "releaseChain",
-            "designSystem",
-            "productionSignal",
-            "androidParity",
-        },
-    )
+
+def _normalize_direct_visual(root: Path, config: dict[str, Any]) -> dict[str, Any]:
     visual = _mapping(
         config["visualMedia"],
         "harnessConfig.visualMedia",
@@ -324,7 +358,10 @@ def _direct_normalize(
             for path in screenshot_paths
         ],
     }
+    return visual_norm
 
+
+def _normalize_direct_privacy(config: dict[str, Any]) -> dict[str, Any]:
     privacy = _mapping(
         config["privacyToListing"],
         "harnessConfig.privacyToListing",
@@ -346,7 +383,10 @@ def _direct_normalize(
             "harnessConfig.privacyToListing.appStorePrivacyLabelHash",
         ),
     }
+    return privacy_norm
 
+
+def _normalize_direct_release(root: Path, config: dict[str, Any]) -> dict[str, Any]:
     release = _mapping(
         config["releaseChain"],
         "harnessConfig.releaseChain",
@@ -370,7 +410,10 @@ def _direct_normalize(
             release["fastlaneReceiptPath"],
             "harnessConfig.releaseChain.fastlaneReceiptPath",
         )
+    return release_norm
 
+
+def _normalize_direct_design(config: dict[str, Any]) -> dict[str, Any]:
     design = _mapping(
         config["designSystem"],
         "harnessConfig.designSystem",
@@ -386,6 +429,10 @@ def _direct_normalize(
             "harnessConfig.designSystem.hierarchyRulesVerified",
         ),
     }
+    return design_norm
+
+
+def _normalize_direct_signal(config: dict[str, Any]) -> dict[str, Any]:
     signal = _mapping(
         config["productionSignal"],
         "harnessConfig.productionSignal",
@@ -402,6 +449,10 @@ def _direct_normalize(
             "harnessConfig.productionSignal.crashReportingVerified",
         ),
     }
+    return signal_norm
+
+
+def _normalize_direct_android(config: dict[str, Any]) -> dict[str, Any]:
     android = _mapping(
         config["androidParity"],
         "harnessConfig.androidParity",
@@ -418,8 +469,10 @@ def _direct_normalize(
             "harnessConfig.androidParity.adbDeviceLogsHash",
         ),
     }
+    return android_norm
 
-    raw_triage = value["triageRules"]
+
+def _normalize_direct_triage(raw_triage: Any) -> list[dict[str, str]]:
     if not isinstance(raw_triage, list) or not 1 <= len(raw_triage) <= MAX_ITEMS:
         raise FullStackUXSpecError(
             "E_UX_SPEC_SCHEMA", "triageRules must contain 1-64 rules"
@@ -464,27 +517,7 @@ def _direct_normalize(
                 ),
             }
         )
-
-    return {
-        "apiVersion": DIRECT_API_VERSION,
-        "kind": DIRECT_KIND,
-        "metadata": {
-            "name": name,
-            "specFile": spec_file,
-            "targetAppId": target,
-            "version": version,
-        },
-        "harnessConfig": {
-            "visualMedia": visual_norm,
-            "privacyToListing": privacy_norm,
-            "releaseChain": release_norm,
-            "designSystem": design_norm,
-            "productionSignal": signal_norm,
-            "androidParity": android_norm,
-        },
-        "triageRules": sorted(triage, key=lambda item: item["ruleId"]),
-        "mobileCategories": _categories(source="explicit_harness_config"),
-    }
+    return sorted(triage, key=lambda item: item["ruleId"])
 
 
 def _legacy_normalize(value: dict[str, Any], spec_name: str) -> dict[str, Any]:
@@ -497,79 +530,8 @@ def _legacy_normalize(value: dict[str, Any], spec_name: str) -> dict[str, Any]:
         )
     version = _text(value.get("version"), "version", limit=32)
     _text(value.get("intent"), "intent", limit=2048)
-    requirements = value.get("requirements")
-    if not isinstance(requirements, list) or len(requirements) != len(
-        LEGACY_REQUIREMENTS
-    ):
-        raise FullStackUXSpecError(
-            "E_UX_SPEC_SCHEMA", "legacy SSAT must contain exactly four requirements"
-        )
-    normalized_requirements: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for index, item in enumerate(requirements):
-        row = _mapping(
-            item, f"requirements[{index}]", {"id", "description", "invariant", "checks"}
-        )
-        identifier = _text(row.get("id"), f"requirements[{index}].id", limit=128)
-        if identifier in seen or identifier not in LEGACY_REQUIREMENTS:
-            raise FullStackUXSpecError(
-                "E_UX_SPEC_SCHEMA",
-                "legacy SSAT requirement identifiers must be unique and closed",
-            )
-        seen.add(identifier)
-        checks = row.get("checks")
-        if (
-            not isinstance(checks, list)
-            or not 1 <= len(checks) <= MAX_ITEMS
-            or not all(isinstance(check, str) and check.strip() for check in checks)
-        ):
-            raise FullStackUXSpecError(
-                "E_UX_SPEC_SCHEMA",
-                f"requirements[{index}].checks must be a string list",
-            )
-        normalized_requirements.append(
-            {
-                "id": identifier,
-                "description": _text(
-                    row.get("description"),
-                    f"requirements[{index}].description",
-                    limit=2048,
-                ),
-                "invariant": _text(
-                    row.get("invariant"), f"requirements[{index}].invariant", limit=128
-                ),
-                "checks": sorted(set(check.strip() for check in checks)),
-            }
-        )
-    if seen != LEGACY_REQUIREMENTS:
-        raise FullStackUXSpecError(
-            "E_UX_SPEC_SCHEMA", "legacy SSAT is missing a closed requirement"
-        )
-    gates = value.get("gates")
-    if not isinstance(gates, list) or not 1 <= len(gates) <= MAX_ITEMS:
-        raise FullStackUXSpecError(
-            "E_UX_SPEC_SCHEMA", "gates must contain 1-64 entries"
-        )
-    normalized_gates: list[dict[str, str]] = []
-    for index, item in enumerate(gates):
-        row = _mapping(item, f"gates[{index}]", {"type", "command"})
-        gate_type = _text(row.get("type"), f"gates[{index}].type", limit=32)
-        if gate_type not in {"test", "smoke"}:
-            raise FullStackUXSpecError(
-                "E_UX_SPEC_SCHEMA", f"gates[{index}].type must be test or smoke"
-            )
-        normalized_gates.append(
-            {
-                "type": gate_type,
-                "command": _text(
-                    row.get("command"), f"gates[{index}].command", limit=512
-                ),
-            }
-        )
-    if {gate["type"] for gate in normalized_gates} != {"test", "smoke"}:
-        raise FullStackUXSpecError(
-            "E_UX_SPEC_SCHEMA", "legacy SSAT needs both test and smoke gates"
-        )
+    normalized_requirements = _normalized_legacy_requirements(value.get("requirements"))
+    normalized_gates = _normalized_legacy_gates(value.get("gates"))
     return {
         "apiVersion": DIRECT_API_VERSION,
         "kind": DIRECT_KIND,
@@ -582,12 +544,91 @@ def _legacy_normalize(value: dict[str, Any], spec_name: str) -> dict[str, Any]:
         "legacy": {
             "feature": LEGACY_FEATURE,
             "intent": value["intent"].strip(),
-            "requirements": sorted(
-                normalized_requirements, key=lambda item: item["id"]
-            ),
-            "gates": sorted(normalized_gates, key=lambda item: item["type"]),
+            "requirements": normalized_requirements,
+            "gates": normalized_gates,
         },
         "mobileCategories": _categories(source="derived_from_legacy_harness"),
+    }
+
+
+def _normalized_legacy_requirements(raw_requirements: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_requirements, list) or len(raw_requirements) != len(
+        LEGACY_REQUIREMENTS
+    ):
+        raise FullStackUXSpecError(
+            "E_UX_SPEC_SCHEMA", "legacy SSAT must contain exactly four requirements"
+        )
+    normalized = []
+    seen: set[str] = set()
+    for index, item in enumerate(raw_requirements):
+        normalized.append(_normalized_legacy_requirement(item, index, seen))
+    if seen != LEGACY_REQUIREMENTS:
+        raise FullStackUXSpecError(
+            "E_UX_SPEC_SCHEMA", "legacy SSAT is missing a closed requirement"
+        )
+    return sorted(normalized, key=lambda item: item["id"])
+
+
+def _normalized_legacy_requirement(
+    item: Any, index: int, seen: set[str]
+) -> dict[str, Any]:
+    row = _mapping(
+        item, f"requirements[{index}]", {"id", "description", "invariant", "checks"}
+    )
+    identifier = _text(row.get("id"), f"requirements[{index}].id", limit=128)
+    if identifier in seen or identifier not in LEGACY_REQUIREMENTS:
+        raise FullStackUXSpecError(
+            "E_UX_SPEC_SCHEMA",
+            "legacy SSAT requirement identifiers must be unique and closed",
+        )
+    seen.add(identifier)
+    checks = row.get("checks")
+    if (
+        not isinstance(checks, list)
+        or not 1 <= len(checks) <= MAX_ITEMS
+        or not all(isinstance(check, str) and check.strip() for check in checks)
+    ):
+        raise FullStackUXSpecError(
+            "E_UX_SPEC_SCHEMA",
+            f"requirements[{index}].checks must be a string list",
+        )
+    return {
+        "id": identifier,
+        "description": _text(
+            row.get("description"), f"requirements[{index}].description", limit=2048
+        ),
+        "invariant": _text(
+            row.get("invariant"), f"requirements[{index}].invariant", limit=128
+        ),
+        "checks": sorted(set(check.strip() for check in checks)),
+    }
+
+
+def _normalized_legacy_gates(raw_gates: Any) -> list[dict[str, str]]:
+    if not isinstance(raw_gates, list) or not 1 <= len(raw_gates) <= MAX_ITEMS:
+        raise FullStackUXSpecError(
+            "E_UX_SPEC_SCHEMA", "gates must contain 1-64 entries"
+        )
+    normalized = [
+        _normalized_legacy_gate(item, index) for index, item in enumerate(raw_gates)
+    ]
+    if {gate["type"] for gate in normalized} != {"test", "smoke"}:
+        raise FullStackUXSpecError(
+            "E_UX_SPEC_SCHEMA", "legacy SSAT needs both test and smoke gates"
+        )
+    return sorted(normalized, key=lambda item: item["type"])
+
+
+def _normalized_legacy_gate(item: Any, index: int) -> dict[str, str]:
+    row = _mapping(item, f"gates[{index}]", {"type", "command"})
+    gate_type = _text(row.get("type"), f"gates[{index}].type", limit=32)
+    if gate_type not in {"test", "smoke"}:
+        raise FullStackUXSpecError(
+            "E_UX_SPEC_SCHEMA", f"gates[{index}].type must be test or smoke"
+        )
+    return {
+        "type": gate_type,
+        "command": _text(row.get("command"), f"gates[{index}].command", limit=512),
     }
 
 
@@ -700,57 +741,10 @@ def verify_ux_harness_spec_receipt(root: Path, receipt_path: Path) -> dict[str, 
     """Replay a spec receipt against its current source and self-digest."""
     workspace = Path(root).resolve()
     try:
-        receipt_source = Path(receipt_path)
-        receipt_source = (
-            receipt_source
-            if receipt_source.is_absolute()
-            else workspace / receipt_source
-        )
-        receipt_source = receipt_source.resolve()
-        receipt_source.relative_to(workspace)
-        if receipt_source.stat().st_size > MAX_BYTES:
-            raise FullStackUXSpecError(
-                "E_UX_SPEC_RECEIPT_INVALID", "receipt exceeds 1 MiB"
-            )
+        receipt_source = _receipt_source_path(workspace, receipt_path)
         value = json.loads(receipt_source.read_text(encoding="utf-8-sig"))
-        if not isinstance(value, dict) or value.get("schema") != RECEIPT_SCHEMA:
-            raise FullStackUXSpecError(
-                "E_UX_SPEC_RECEIPT_INVALID", "receipt schema is invalid"
-            )
-        supplied = value.get("receipt_sha256")
-        if not isinstance(supplied, str) or supplied != _sha(_core_from_receipt(value)):
-            raise FullStackUXSpecError(
-                "E_UX_SPEC_RECEIPT_INVALID", "receipt digest is invalid"
-            )
-        if (
-            value.get("ok") is not True
-            or value.get("marker") != "FULL_STACK_UX_HARNESS_SPEC_VALIDATED"
-        ):
-            raise FullStackUXSpecError(
-                "E_UX_SPEC_NOT_VALIDATED", "receipt is not a validated contract"
-            )
-        source_info = value.get("source")
-        if (
-            not isinstance(source_info, dict)
-            or not isinstance(source_info.get("path"), str)
-            or not isinstance(source_info.get("sha256"), str)
-        ):
-            raise FullStackUXSpecError(
-                "E_UX_SPEC_RECEIPT_INVALID", "source binding is missing"
-            )
-        raw, source, data = _safe_source(workspace, Path(source_info["path"]))
-        if _sha(data) != source_info["sha256"]:
-            raise FullStackUXSpecError(
-                "E_UX_SPEC_STALE", "specification source changed"
-            )
-        normalized = _normalize(workspace, raw, source.name)
-        if (
-            normalized != value.get("normalized_spec")
-            or source.relative_to(workspace).as_posix() != source_info["path"]
-        ):
-            raise FullStackUXSpecError(
-                "E_UX_SPEC_STALE", "replayed specification differs from receipt"
-            )
+        supplied, source_info = _validated_receipt(value)
+        _replay_receipt_source(workspace, source_info, value.get("normalized_spec"))
         return {
             "ok": True,
             "marker": value["marker"],
@@ -770,3 +764,58 @@ def verify_ux_harness_spec_receipt(root: Path, receipt_path: Path) -> dict[str, 
             "marker": "FULL_STACK_UX_HARNESS_SPEC_REVIEW_REQUIRED",
             "reason": str(exc)[:240],
         }
+
+
+def _receipt_source_path(workspace: Path, receipt_path: Path) -> Path:
+    source = Path(receipt_path)
+    source = source if source.is_absolute() else workspace / source
+    source = source.resolve()
+    source.relative_to(workspace)
+    if source.stat().st_size > MAX_BYTES:
+        raise FullStackUXSpecError("E_UX_SPEC_RECEIPT_INVALID", "receipt exceeds 1 MiB")
+    return source
+
+
+def _validated_receipt(value: Any) -> tuple[str, dict[str, Any]]:
+    if not isinstance(value, dict) or value.get("schema") != RECEIPT_SCHEMA:
+        raise FullStackUXSpecError(
+            "E_UX_SPEC_RECEIPT_INVALID", "receipt schema is invalid"
+        )
+    supplied = value.get("receipt_sha256")
+    if not isinstance(supplied, str) or supplied != _sha(_core_from_receipt(value)):
+        raise FullStackUXSpecError(
+            "E_UX_SPEC_RECEIPT_INVALID", "receipt digest is invalid"
+        )
+    if (
+        value.get("ok") is not True
+        or value.get("marker") != "FULL_STACK_UX_HARNESS_SPEC_VALIDATED"
+    ):
+        raise FullStackUXSpecError(
+            "E_UX_SPEC_NOT_VALIDATED", "receipt is not a validated contract"
+        )
+    source_info = value.get("source")
+    if (
+        not isinstance(source_info, dict)
+        or not isinstance(source_info.get("path"), str)
+        or not isinstance(source_info.get("sha256"), str)
+    ):
+        raise FullStackUXSpecError(
+            "E_UX_SPEC_RECEIPT_INVALID", "source binding is missing"
+        )
+    return supplied, source_info
+
+
+def _replay_receipt_source(
+    workspace: Path, source_info: dict[str, Any], expected_normalized: Any
+) -> None:
+    raw, source, data = _safe_source(workspace, Path(source_info["path"]))
+    if _sha(data) != source_info["sha256"]:
+        raise FullStackUXSpecError("E_UX_SPEC_STALE", "specification source changed")
+    normalized = _normalize(workspace, raw, source.name)
+    if (
+        normalized != expected_normalized
+        or source.relative_to(workspace).as_posix() != source_info["path"]
+    ):
+        raise FullStackUXSpecError(
+            "E_UX_SPEC_STALE", "replayed specification differs from receipt"
+        )
