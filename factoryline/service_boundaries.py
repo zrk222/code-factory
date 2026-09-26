@@ -95,9 +95,9 @@ def _inside(root: Path, relative: str) -> Path:
     return target
 
 
-def _manifest(root: Path, source: Path) -> tuple[dict[str, Any], str]:
+def _manifest_relative_path(root: Path, source: Path) -> str:
     try:
-        relative = (
+        return (
             source.resolve().relative_to(root).as_posix()
             if source.is_absolute()
             else _path(str(source), "manifest")
@@ -106,13 +106,18 @@ def _manifest(root: Path, source: Path) -> tuple[dict[str, Any], str]:
         raise ServiceBoundaryError(
             "E_SERVICE_BOUNDARY_PATH", "manifest escapes the workspace"
         ) from exc
-    path = _inside(root, relative)
+
+
+def _load_manifest_json(path: Path) -> object:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ServiceBoundaryError(
             "E_SERVICE_BOUNDARY_SCHEMA", "manifest must be UTF-8 JSON"
         ) from exc
+
+
+def _manifest_object(value: object) -> dict[str, Any]:
     fields = {
         "schema",
         "id",
@@ -131,26 +136,56 @@ def _manifest(root: Path, source: Path) -> tuple[dict[str, Any], str]:
             "E_SERVICE_BOUNDARY_SCHEMA",
             f"manifest must use exact {MANIFEST_SCHEMA} fields",
         )
-    if not isinstance(value["id"], str) or not _ID.fullmatch(value["id"]):
+    return value
+
+
+def _manifest_id(value: dict[str, Any]) -> str:
+    identifier = value["id"]
+    if not isinstance(identifier, str) or not _ID.fullmatch(identifier):
         raise ServiceBoundaryError(
             "E_SERVICE_BOUNDARY_SCHEMA", "id must be a safe identifier"
         )
-    zones = {
+    return identifier
+
+
+def _manifest_zones(value: dict[str, Any]) -> dict[str, list[str]]:
+    return {
         "actions": _paths(value["actions_paths"], "actions_paths"),
         "services": _paths(value["services_paths"], "services_paths"),
         "adapters": _paths(value["adapters_paths"], "adapters_paths"),
         "core": _paths(value["core_paths"], "core_paths"),
     }
+
+
+def _zone_pair_overlaps(first: list[str], second: list[str]) -> bool:
+    return any(_under(second, path) for path in first) or any(
+        _under(first, path) for path in second
+    )
+
+
+def _validate_zone_overlaps(zones: dict[str, list[str]]) -> None:
     names = list(zones)
     for index, name in enumerate(names):
         for other in names[index + 1 :]:
-            if any(_under(zones[other], path) for path in zones[name]) or any(
-                _under(zones[name], path) for path in zones[other]
-            ):
+            if _zone_pair_overlaps(zones[name], zones[other]):
                 raise ServiceBoundaryError(
                     "E_SERVICE_BOUNDARY_SCHEMA",
                     f"{name} and {other} path zones must not overlap",
                 )
+
+
+def _manifest_literal_valid(item: object) -> bool:
+    return (
+        isinstance(item, dict)
+        and set(item) == {"zone", "literal"}
+        and item["zone"] in {"actions", "services", "adapters", "core"}
+        and isinstance(item["literal"], str)
+        and bool(item["literal"].strip())
+        and len(item["literal"]) <= 128
+    )
+
+
+def _manifest_forbidden_literals(value: dict[str, Any]) -> list[dict[str, str]]:
     literals = value["forbidden_literals"]
     if not isinstance(literals, list) or len(literals) > 64:
         raise ServiceBoundaryError(
@@ -159,86 +194,114 @@ def _manifest(root: Path, source: Path) -> tuple[dict[str, Any], str]:
         )
     normalized = []
     for index, item in enumerate(literals):
-        if (
-            not isinstance(item, dict)
-            or set(item) != {"zone", "literal"}
-            or item["zone"] not in {"actions", "services", "adapters", "core"}
-            or not isinstance(item["literal"], str)
-            or not item["literal"].strip()
-            or len(item["literal"]) > 128
-        ):
+        if not _manifest_literal_valid(item):
             raise ServiceBoundaryError(
                 "E_SERVICE_BOUNDARY_SCHEMA", f"forbidden_literals[{index}] is invalid"
             )
         normalized.append({"zone": item["zone"], "literal": item["literal"]})
+    return sorted(normalized, key=lambda item: (item["zone"], item["literal"]))
+
+
+def _manifest(root: Path, source: Path) -> tuple[dict[str, Any], str]:
+    relative = _manifest_relative_path(root, source)
+    path = _inside(root, relative)
+    value = _manifest_object(_load_manifest_json(path))
+    identifier = _manifest_id(value)
+    zones = _manifest_zones(value)
+    _validate_zone_overlaps(zones)
+    literals = _manifest_forbidden_literals(value)
     return {
-        "id": value["id"],
+        "id": identifier,
         "zones": zones,
-        "forbidden_literals": sorted(
-            normalized, key=lambda item: (item["zone"], item["literal"])
-        ),
+        "forbidden_literals": literals,
         "path": relative,
     }, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def check_service_boundaries(
-    root: Path, manifest_path: Path, changed: list[str]
-) -> dict[str, Any]:
-    """Classify changed files and report declared architecture boundary violations."""
-    workspace = Path(root).resolve()
-    manifest, manifest_sha = _manifest(workspace, manifest_path)
+def _changed_paths(changed: list[str]) -> list[str]:
     normalized = sorted({_path(item, "changed path") for item in changed})
     if not normalized or len(normalized) > 256:
         raise ServiceBoundaryError(
             "E_SERVICE_BOUNDARY_SCHEMA", "changed must contain 1-256 unique paths"
         )
+    return normalized
+
+
+def _classify_zone(manifest: dict[str, Any], relative: str) -> str | None:
+    matches = [
+        name
+        for name, prefixes in manifest["zones"].items()
+        if _under(prefixes, relative)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _unclassified_finding(relative: str) -> dict[str, str]:
+    return {
+        "code": "SERVICE_BOUNDARY_UNCLASSIFIED",
+        "path": relative,
+        "severity": "blocking",
+        "message": "Changed source is not assigned to actions, services, adapters, or core.",
+    }
+
+
+def _source_text(path: Path) -> tuple[str, bool]:
+    text = (
+        path.read_text(encoding="utf-8", errors="replace")
+        if path.stat().st_size <= MAX_BYTES
+        else ""
+    )
+    return text, not text and path.stat().st_size > MAX_BYTES
+
+
+def _oversized_finding(relative: str) -> dict[str, str]:
+    return {
+        "code": "SERVICE_BOUNDARY_SOURCE_TOO_LARGE",
+        "path": relative,
+        "severity": "blocking",
+        "message": "Changed source exceeds the scan limit.",
+    }
+
+
+def _literal_findings(
+    rules: list[dict[str, str]], zone: str, text: str, relative: str
+) -> list[dict[str, str]]:
     findings = []
-    classifications = []
-    for relative in normalized:
-        path = _inside(workspace, relative)
-        matches = [
-            name
-            for name, prefixes in manifest["zones"].items()
-            if _under(prefixes, relative)
-        ]
-        zone = matches[0] if len(matches) == 1 else None
-        if zone is None:
+    for rule in rules:
+        if rule["zone"] == zone and rule["literal"] in text:
             findings.append(
                 {
-                    "code": "SERVICE_BOUNDARY_UNCLASSIFIED",
+                    "code": "SERVICE_BOUNDARY_LITERAL",
                     "path": relative,
                     "severity": "blocking",
-                    "message": "Changed source is not assigned to actions, services, adapters, or core.",
+                    "literal": rule["literal"],
+                    "message": "A declared prohibited direct dependency is present in this architecture zone.",
                 }
             )
-            classifications.append({"path": relative, "zone": None})
-            continue
-        text = (
-            path.read_text(encoding="utf-8", errors="replace")
-            if path.stat().st_size <= MAX_BYTES
-            else ""
-        )
-        if not text and path.stat().st_size > MAX_BYTES:
-            findings.append(
-                {
-                    "code": "SERVICE_BOUNDARY_SOURCE_TOO_LARGE",
-                    "path": relative,
-                    "severity": "blocking",
-                    "message": "Changed source exceeds the scan limit.",
-                }
-            )
-        for rule in manifest["forbidden_literals"]:
-            if rule["zone"] == zone and rule["literal"] in text:
-                findings.append(
-                    {
-                        "code": "SERVICE_BOUNDARY_LITERAL",
-                        "path": relative,
-                        "severity": "blocking",
-                        "literal": rule["literal"],
-                        "message": "A declared prohibited direct dependency is present in this architecture zone.",
-                    }
-                )
-        classifications.append({"path": relative, "zone": zone})
+    return findings
+
+
+def _inspect_changed_path(
+    workspace: Path, manifest: dict[str, Any], relative: str
+) -> tuple[dict[str, str | None], list[dict[str, str]]]:
+    path = _inside(workspace, relative)
+    zone = _classify_zone(manifest, relative)
+    if zone is None:
+        return {"path": relative, "zone": None}, [_unclassified_finding(relative)]
+    text, oversized = _source_text(path)
+    findings = [_oversized_finding(relative)] if oversized else []
+    findings.extend(
+        _literal_findings(manifest["forbidden_literals"], zone, text, relative)
+    )
+    return {"path": relative, "zone": zone}, findings
+
+
+def _service_boundary_report(
+    manifest: dict[str, Any],
+    manifest_sha: str,
+    classifications: list[dict[str, str | None]],
+    findings: list[dict[str, str]],
+) -> dict[str, Any]:
     blockers = [item for item in findings if item["severity"] == "blocking"]
     core_changed = [item["path"] for item in classifications if item["zone"] == "core"]
     core = {
@@ -269,6 +332,24 @@ def check_service_boundaries(
         ],
     }
     return {**core, "report_sha256": _sha(core)}
+
+
+def check_service_boundaries(
+    root: Path, manifest_path: Path, changed: list[str]
+) -> dict[str, Any]:
+    """Classify changed files and report declared architecture boundary violations."""
+    workspace = Path(root).resolve()
+    manifest, manifest_sha = _manifest(workspace, manifest_path)
+    normalized = _changed_paths(changed)
+    findings = []
+    classifications = []
+    for relative in normalized:
+        classification, path_findings = _inspect_changed_path(
+            workspace, manifest, relative
+        )
+        findings.extend(path_findings)
+        classifications.append(classification)
+    return _service_boundary_report(manifest, manifest_sha, classifications, findings)
 
 
 def service_boundary_template() -> dict[str, Any]:
