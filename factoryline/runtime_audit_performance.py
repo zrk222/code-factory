@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from statistics import median
 from typing import Any
 
@@ -41,14 +42,23 @@ def _series(value: object, field: str, minimum: int) -> list[float]:
     return [require_number(item, f"{field}[]") for item in value]
 
 
-def evaluate_performance(
+@dataclass(frozen=True)
+class _PerformanceRuns:
+    """Validated equivalent runs and approved threshold declarations."""
+
+    baseline: dict[str, Any]
+    candidate: dict[str, Any]
+    observations: int
+    thresholds: list[dict[str, Any]]
+
+
+def _performance_identity(
     artifact: dict[str, Any],
     config: dict[str, Any],
-    *,
     engine: str,
     engine_version: str,
-) -> dict[str, Any]:
-    """Evaluate equivalent-load thresholds, generator capacity, cooldown retention, and profiler-scoped memory findings."""
+) -> dict[str, Any] | tuple[str, str]:
+    """Bind the evidence to the signed engine, workload, and environment."""
     validate_lane_policy("performance_regression", config)
     exact_keys(
         artifact,
@@ -96,8 +106,67 @@ def evaluate_performance(
             "PERFORMANCE_COMPARISON_NOT_EQUIVALENT",
             "Baseline and candidate are not bound to the approved workload and environment.",
         )
-    baseline = artifact["baseline"]
-    candidate = artifact["candidate"]
+    return workload, environment
+
+
+def _performance_run_preflight(
+    label: str,
+    run: dict[str, Any],
+    workload: str,
+    environment: str,
+    config: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Reject a mismatched, short, or incorrect baseline/candidate run."""
+    exact_keys(
+        run,
+        {
+            "observations",
+            "metrics",
+            "workload_sha256",
+            "environment_sha256",
+            "soak_seconds",
+            "cooldown_seconds",
+            "correctness_failures",
+        },
+    )
+    if run["workload_sha256"] != workload or run["environment_sha256"] != environment:
+        return lane_result(
+            "performance_regression",
+            "INCOMPLETE",
+            "PERFORMANCE_COMPARISON_NOT_EQUIVALENT",
+            f"{label} fingerprint differs from the signed comparison.",
+        )
+    if (
+        require_number(run["soak_seconds"], "soak_seconds") < config["min_soak_seconds"]
+        or require_number(run["cooldown_seconds"], "cooldown_seconds")
+        < config["min_cooldown_seconds"]
+    ):
+        return lane_result(
+            "performance_regression",
+            "INCOMPLETE",
+            "PERFORMANCE_WINDOW_SHORT",
+            f"{label} did not meet the signed soak and cleanup windows.",
+        )
+    if require_int(
+        run["correctness_failures"], "correctness_failures", minimum=0, maximum=1000000
+    ):
+        return lane_result(
+            "performance_regression",
+            "FAIL",
+            "PERFORMANCE_CORRECTNESS_FAILURE",
+            f"{label} returned incorrect results under load.",
+        )
+    return None
+
+
+def _performance_runs(
+    artifact: dict[str, Any],
+    config: dict[str, Any],
+    workload: str,
+    environment: str,
+) -> dict[str, Any] | _PerformanceRuns:
+    """Validate equivalent run windows, observation counts, and threshold scope."""
+    baseline, candidate = artifact["baseline"], artifact["candidate"]
     if not isinstance(baseline, dict) or not isinstance(candidate, dict):
         return lane_result(
             "performance_regression",
@@ -106,52 +175,9 @@ def evaluate_performance(
             "Baseline or candidate metrics are missing.",
         )
     for label, run in (("baseline", baseline), ("candidate", candidate)):
-        exact_keys(
-            run,
-            {
-                "observations",
-                "metrics",
-                "workload_sha256",
-                "environment_sha256",
-                "soak_seconds",
-                "cooldown_seconds",
-                "correctness_failures",
-            },
-        )
-        if (
-            run["workload_sha256"] != workload
-            or run["environment_sha256"] != environment
-        ):
-            return lane_result(
-                "performance_regression",
-                "INCOMPLETE",
-                "PERFORMANCE_COMPARISON_NOT_EQUIVALENT",
-                f"{label} fingerprint differs from the signed comparison.",
-            )
-        if (
-            require_number(run["soak_seconds"], "soak_seconds")
-            < config["min_soak_seconds"]
-            or require_number(run["cooldown_seconds"], "cooldown_seconds")
-            < config["min_cooldown_seconds"]
-        ):
-            return lane_result(
-                "performance_regression",
-                "INCOMPLETE",
-                "PERFORMANCE_WINDOW_SHORT",
-                f"{label} did not meet the signed soak and cleanup windows.",
-            )
-        if require_int(
-            run["correctness_failures"],
-            "correctness_failures",
-            minimum=0,
-            maximum=1000000,
-        ):
-            return lane_result(
-                "performance_regression",
-                "FAIL",
-                "PERFORMANCE_CORRECTNESS_FAILURE",
-                f"{label} returned incorrect results under load.",
-            )
+        failure = _performance_run_preflight(label, run, workload, environment, config)
+        if failure is not None:
+            return failure
     observations = require_int(
         candidate.get("observations"),
         "candidate.observations",
@@ -181,78 +207,128 @@ def evaluate_performance(
             "PERFORMANCE_THRESHOLDS_MISSING",
             "No approved threshold was supplied.",
         )
+    return _PerformanceRuns(baseline, candidate, observations, thresholds)
+
+
+@dataclass(frozen=True)
+class _ThresholdObservation:
+    finding: dict[str, Any]
+    passed: bool
+    authoritative: bool
+
+
+@dataclass(frozen=True)
+class _ThresholdSummary:
+    failures: list[dict[str, Any]]
+    advisory: list[dict[str, Any]]
+    authoritative_count: int
+
+
+def _threshold_identity(
+    threshold: Any,
+    ids: set[str],
+    baseline: dict,
+    candidate: dict,
+) -> dict[str, Any] | tuple[str, str, str]:
+    """Validate one approved threshold's id, provenance, and observed metric."""
+    if not isinstance(threshold, dict):
+        return lane_result(
+            "performance_regression",
+            "INCOMPLETE",
+            "PERFORMANCE_THRESHOLD_INVALID",
+            "A threshold is malformed.",
+        )
+    exact_keys(threshold, {"id", "metric", "mode", "operator", "value", "origin"})
+    threshold_id = require_str(threshold["id"], "threshold.id")
+    if threshold_id in ids:
+        return lane_result(
+            "performance_regression",
+            "INCOMPLETE",
+            "PERFORMANCE_DUPLICATE_THRESHOLD",
+            "Threshold IDs must be unique.",
+        )
+    ids.add(threshold_id)
+    metric = require_str(threshold["metric"], "threshold.metric")
+    origin = threshold["origin"]
+    if origin not in ORIGINS:
+        return lane_result(
+            "performance_regression",
+            "INCOMPLETE",
+            "PERFORMANCE_PROVENANCE_UNKNOWN",
+            "Threshold provenance is not recognized.",
+        )
+    if metric not in candidate["metrics"] or metric not in baseline["metrics"]:
+        return lane_result(
+            "performance_regression",
+            "INCOMPLETE",
+            "PERFORMANCE_METRIC_MISSING",
+            "An approved metric was not observed.",
+            details={"metric": metric},
+        )
+    return threshold_id, metric, origin
+
+
+def _threshold_observation(
+    threshold: dict,
+    identity: tuple[str, str, str],
+    baseline: dict,
+    candidate: dict,
+) -> dict[str, Any] | _ThresholdObservation:
+    """Compare one candidate metric to its approved absolute or ratio budget."""
+    threshold_id, metric, origin = identity
+    base_value = require_number(
+        baseline["metrics"][metric], f"baseline.metrics.{metric}"
+    )
+    candidate_value = require_number(
+        candidate["metrics"][metric], f"candidate.metrics.{metric}"
+    )
+    mode = threshold["mode"]
+    if mode == "ratio" and base_value == 0:
+        return lane_result(
+            "performance_regression",
+            "INCOMPLETE",
+            "PERFORMANCE_ZERO_BASELINE",
+            "A relative comparison cannot use a zero baseline; approve an absolute budget.",
+        )
+    actual = candidate_value if mode == "absolute" else candidate_value / base_value
+    expected = require_number(threshold["value"], "threshold.value")
+    passed = _comparison(actual, threshold["operator"], expected)
+    finding = {
+        "id": threshold_id,
+        "metric": metric,
+        "actual": actual,
+        "operator": threshold["operator"],
+        "expected": expected,
+        "origin": origin,
+        "baseline": base_value,
+        "candidate": candidate_value,
+    }
+    return _ThresholdObservation(finding, passed, origin in AUTHORITATIVE)
+
+
+def _performance_thresholds(
+    runs: _PerformanceRuns,
+) -> dict[str, Any] | _ThresholdSummary:
+    """Keep agent-proposed budgets advisory and report approved violations."""
     failures: list[dict[str, Any]] = []
     advisory: list[dict[str, Any]] = []
     authoritative_count = 0
     ids: set[str] = set()
-    for threshold in thresholds:
-        if not isinstance(threshold, dict):
-            return lane_result(
-                "performance_regression",
-                "INCOMPLETE",
-                "PERFORMANCE_THRESHOLD_INVALID",
-                "A threshold is malformed.",
-            )
-        exact_keys(threshold, {"id", "metric", "mode", "operator", "value", "origin"})
-        threshold_id = require_str(threshold["id"], "threshold.id")
-        if threshold_id in ids:
-            return lane_result(
-                "performance_regression",
-                "INCOMPLETE",
-                "PERFORMANCE_DUPLICATE_THRESHOLD",
-                "Threshold IDs must be unique.",
-            )
-        ids.add(threshold_id)
-        metric = require_str(threshold["metric"], "threshold.metric")
-        origin = threshold["origin"]
-        if origin not in ORIGINS:
-            return lane_result(
-                "performance_regression",
-                "INCOMPLETE",
-                "PERFORMANCE_PROVENANCE_UNKNOWN",
-                "Threshold provenance is not recognized.",
-            )
-        if metric not in candidate["metrics"] or metric not in baseline["metrics"]:
-            return lane_result(
-                "performance_regression",
-                "INCOMPLETE",
-                "PERFORMANCE_METRIC_MISSING",
-                "An approved metric was not observed.",
-                details={"metric": metric},
-            )
-        base_value = require_number(
-            baseline["metrics"][metric], f"baseline.metrics.{metric}"
+    for threshold in runs.thresholds:
+        identity = _threshold_identity(threshold, ids, runs.baseline, runs.candidate)
+        if isinstance(identity, dict):
+            return identity
+        observation = _threshold_observation(
+            threshold, identity, runs.baseline, runs.candidate
         )
-        candidate_value = require_number(
-            candidate["metrics"][metric], f"candidate.metrics.{metric}"
-        )
-        mode = threshold["mode"]
-        if mode == "ratio" and base_value == 0:
-            return lane_result(
-                "performance_regression",
-                "INCOMPLETE",
-                "PERFORMANCE_ZERO_BASELINE",
-                "A relative comparison cannot use a zero baseline; approve an absolute budget.",
-            )
-        actual = candidate_value if mode == "absolute" else candidate_value / base_value
-        expected = require_number(threshold["value"], "threshold.value")
-        passed = _comparison(actual, threshold["operator"], expected)
-        finding = {
-            "id": threshold_id,
-            "metric": metric,
-            "actual": actual,
-            "operator": threshold["operator"],
-            "expected": expected,
-            "origin": origin,
-            "baseline": base_value,
-            "candidate": candidate_value,
-        }
-        if origin in AUTHORITATIVE:
+        if isinstance(observation, dict):
+            return observation
+        if observation.authoritative:
             authoritative_count += 1
-            if not passed:
-                failures.append(finding)
+            if not observation.passed:
+                failures.append(observation.finding)
         else:
-            advisory.append({**finding, "would_pass": passed})
+            advisory.append({**observation.finding, "would_pass": observation.passed})
     if authoritative_count == 0:
         return lane_result(
             "performance_regression",
@@ -261,7 +337,88 @@ def evaluate_performance(
             "Agent-proposed thresholds are advisory and cannot release a candidate.",
             details={"advisory": advisory},
         )
+    return _ThresholdSummary(failures, advisory, authoritative_count)
 
+
+@dataclass(frozen=True)
+class _ResourceObservation:
+    finding: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class _ResourceSummary:
+    failures: list[dict[str, Any]]
+    required_metrics: list[str]
+
+
+def _resource_series_result(
+    metric: str,
+    series: Any,
+    minimum_samples: int,
+    max_growth: float,
+) -> dict[str, Any] | _ResourceObservation:
+    """Compare retained post-cooldown resources for one required metric."""
+    if not isinstance(series, dict) or set(series) != {
+        "baseline",
+        "candidate",
+        "baseline_cooldown",
+        "candidate_cooldown",
+    }:
+        return lane_result(
+            "performance_regression",
+            "INCOMPLETE",
+            "RESOURCE_METRIC_MISSING",
+            "A required resource series is absent.",
+            details={"metric": metric},
+        )
+    try:
+        base_series = _series(
+            series["baseline"], f"resource_series.{metric}.baseline", minimum_samples
+        )
+        candidate_series = _series(
+            series["candidate"], f"resource_series.{metric}.candidate", minimum_samples
+        )
+        base_cooldown = _series(
+            series["baseline_cooldown"],
+            f"resource_series.{metric}.baseline_cooldown",
+            minimum_samples,
+        )
+        candidate_cooldown = _series(
+            series["candidate_cooldown"],
+            f"resource_series.{metric}.candidate_cooldown",
+            minimum_samples,
+        )
+    except ValueError as exc:
+        return lane_result(
+            "performance_regression",
+            "INCOMPLETE",
+            "RESOURCE_SERIES_SHORT",
+            str(exc),
+        )
+    base_start = median(base_series[: max(1, len(base_series) // 3)])
+    candidate_start = median(candidate_series[: max(1, len(candidate_series) // 3)])
+    base_retained = median(base_cooldown) - base_start
+    candidate_retained = median(candidate_cooldown) - candidate_start
+    denominator = max(abs(base_start), 1.0)
+    retained_ratio = (
+        max(0.0, candidate_retained - max(0.0, base_retained)) / denominator
+    )
+    if retained_ratio > max_growth:
+        return _ResourceObservation(
+            {
+                "metric": metric,
+                "retained_growth_ratio": retained_ratio,
+                "maximum": max_growth,
+            }
+        )
+    return _ResourceObservation(None)
+
+
+def _performance_resources(
+    artifact: dict[str, Any],
+    config: dict[str, Any],
+) -> dict[str, Any] | _ResourceSummary:
+    """Require bounded resource series and summarize retention regressions."""
     minimum_samples = require_int(
         config.get("minimum_resource_samples"),
         "config.minimum_resource_samples",
@@ -284,68 +441,23 @@ def evaluate_performance(
             "RESOURCE_EVIDENCE_MISSING",
             "Resource and memory evidence is required.",
         )
-    resource_failures: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
     for metric in required_resources:
         metric = require_str(metric, "config.resource_metrics[]")
-        series = resources.get(metric)
-        if not isinstance(series, dict) or set(series) != {
-            "baseline",
-            "candidate",
-            "baseline_cooldown",
-            "candidate_cooldown",
-        }:
-            return lane_result(
-                "performance_regression",
-                "INCOMPLETE",
-                "RESOURCE_METRIC_MISSING",
-                "A required resource series is absent.",
-                details={"metric": metric},
-            )
-        try:
-            base_series = _series(
-                series["baseline"],
-                f"resource_series.{metric}.baseline",
-                minimum_samples,
-            )
-            candidate_series = _series(
-                series["candidate"],
-                f"resource_series.{metric}.candidate",
-                minimum_samples,
-            )
-            base_cooldown = _series(
-                series["baseline_cooldown"],
-                f"resource_series.{metric}.baseline_cooldown",
-                minimum_samples,
-            )
-            candidate_cooldown = _series(
-                series["candidate_cooldown"],
-                f"resource_series.{metric}.candidate_cooldown",
-                minimum_samples,
-            )
-        except ValueError as exc:
-            return lane_result(
-                "performance_regression",
-                "INCOMPLETE",
-                "RESOURCE_SERIES_SHORT",
-                str(exc),
-            )
-        base_start = median(base_series[: max(1, len(base_series) // 3)])
-        candidate_start = median(candidate_series[: max(1, len(candidate_series) // 3)])
-        base_retained = median(base_cooldown) - base_start
-        candidate_retained = median(candidate_cooldown) - candidate_start
-        denominator = max(abs(base_start), 1.0)
-        retained_ratio = (
-            max(0.0, candidate_retained - max(0.0, base_retained)) / denominator
+        observation = _resource_series_result(
+            metric, resources.get(metric), minimum_samples, max_growth
         )
-        if retained_ratio > max_growth:
-            resource_failures.append(
-                {
-                    "metric": metric,
-                    "retained_growth_ratio": retained_ratio,
-                    "maximum": max_growth,
-                }
-            )
+        if isinstance(observation, dict):
+            return observation
+        if observation.finding is not None:
+            failures.append(observation.finding)
+    return _ResourceSummary(failures, required_resources)
 
+
+def _performance_loadgen(
+    artifact: dict[str, Any], config: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Reject a saturated load generator before interpreting candidate metrics."""
     loadgen = artifact["load_generator"]
     if not isinstance(loadgen, dict):
         return lane_result(
@@ -393,7 +505,21 @@ def evaluate_performance(
                 "dropped_iterations": dropped,
             },
         )
+    return None
 
+
+@dataclass(frozen=True)
+class _LeakObservation:
+    evidence: dict[str, Any]
+    findings: int
+    lost_bytes: int
+    exit_code: int
+
+
+def _performance_leak(
+    artifact: dict[str, Any], config: dict[str, Any]
+) -> dict[str, Any] | _LeakObservation:
+    """Bind memory-leak findings to the declared profiling engine."""
     leak = artifact["leak_check"]
     if not isinstance(leak, dict):
         return lane_result(
@@ -425,17 +551,33 @@ def evaluate_performance(
     leak_exit = require_int(
         leak["exit_code"], "leak_check.exit_code", minimum=0, maximum=255
     )
-    if failures or resource_failures or leak_findings or lost_bytes or leak_exit:
+    return _LeakObservation(leak, leak_findings, lost_bytes, leak_exit)
+
+
+def _performance_outcome(
+    runs: _PerformanceRuns,
+    thresholds: _ThresholdSummary,
+    resources: _ResourceSummary,
+    leak: _LeakObservation,
+) -> dict[str, Any]:
+    """Render a bounded pass or actionable regression with observed evidence."""
+    if (
+        thresholds.failures
+        or resources.failures
+        or leak.findings
+        or leak.lost_bytes
+        or leak.exit_code
+    ):
         return lane_result(
             "performance_regression",
             "FAIL",
             "PERFORMANCE_OR_RESOURCE_REGRESSION",
             "The candidate exceeded an approved performance limit or retained resources after load.",
             details={
-                "threshold_failures": failures,
-                "resource_failures": resource_failures,
-                "leak_check": leak,
-                "advisory": advisory,
+                "threshold_failures": thresholds.failures,
+                "resource_failures": resources.failures,
+                "leak_check": leak.evidence,
+                "advisory": thresholds.advisory,
             },
         )
     return lane_result(
@@ -444,11 +586,43 @@ def evaluate_performance(
         "PERFORMANCE_AND_RESOURCES_HELD",
         "Equivalent-workload and post-cleanup resource checks held within signed limits; this does not prove absence of leaks.",
         details={
-            "observations": observations,
-            "authoritative_thresholds": authoritative_count,
-            "resource_metrics": required_resources,
-            "leak_engine": leak["engine"],
-            "advisory": advisory,
+            "observations": runs.observations,
+            "authoritative_thresholds": thresholds.authoritative_count,
+            "resource_metrics": resources.required_metrics,
+            "leak_engine": leak.evidence["engine"],
+            "advisory": thresholds.advisory,
             "leak_claim": "no finding within declared profiler coverage",
         },
+    )
+
+
+def evaluate_performance(
+    artifact: dict[str, Any],
+    config: dict[str, Any],
+    *,
+    engine: str,
+    engine_version: str,
+) -> dict[str, Any]:
+    """Evaluate equivalent-load thresholds, generator capacity, cooldown retention, and profiler-scoped memory findings."""
+    identity = _performance_identity(artifact, config, engine, engine_version)
+    if isinstance(identity, dict):
+        return identity
+    workload, environment = identity
+    runs = _performance_runs(artifact, config, workload, environment)
+    if isinstance(runs, dict):
+        return runs
+    threshold_summary = _performance_thresholds(runs)
+    if isinstance(threshold_summary, dict):
+        return threshold_summary
+    resource_summary = _performance_resources(artifact, config)
+    if isinstance(resource_summary, dict):
+        return resource_summary
+    loadgen_failure = _performance_loadgen(artifact, config)
+    if loadgen_failure is not None:
+        return loadgen_failure
+    leak_observation = _performance_leak(artifact, config)
+    if isinstance(leak_observation, dict):
+        return leak_observation
+    return _performance_outcome(
+        runs, threshold_summary, resource_summary, leak_observation
     )
