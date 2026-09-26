@@ -256,39 +256,31 @@ def _guarded_ratio(
     return round(numerator["value"] / denominator["value"] * scale, 4)
 
 
-def _flow_metrics(stages: list[StageTiming]) -> dict:
-    """Expose flow observations without silently treating missing telemetry as zero."""
-    queue = _known_sum(stages, "queue_ms")
-    review = _known_sum(stages, "human_review_ms")
-    rework = _known_sum(stages, "rework_lines")
-    cache = _known_sum(stages, "cache_hits")
-    invalidated = _known_sum(stages, "invalidated_stages")
-    agent = _known_sum(stages, "agent_ms")
-    tools = _known_sum(stages, "deterministic_tool_ms")
-    changed = _known_sum(stages, "changed_lines")
-    replay = _known_sum(stages, "replay_hits")
-    avoided = _known_sum(stages, "model_calls_avoided")
-    retries = _known_sum(stages, "retry_count")
-    requirements = _known_sum(stages, "requirements_accepted")
-    costs = _known_sum(stages, "cost_usd")
-    escaped = _known_sum(stages, "escaped_defects")
-    releases = _known_sum(stages, "releases")
-    rollbacks = _known_sum(stages, "rollbacks")
-    first_pass = _known_rate(stages, "first_pass")
-    classified_execution = agent["unknown"] == 0 and tools["unknown"] == 0
-    legacy_execution = agent["known"] == 0 and tools["known"] == 0
-    complete_flow = (
-        bool(stages)
-        and queue["unknown"] == 0
-        and review["unknown"] == 0
-        and (classified_execution or legacy_execution)
-    )
-    execution = (
-        (agent["value"] or 0) + (tools["value"] or 0)
-        if classified_execution
-        else sum(stage.wall_ms for stage in stages)
-    )
-    total = execution + (queue["value"] or 0) + (review["value"] or 0)
+_FLOW_SUM_FIELDS = {
+    "queue": "queue_ms",
+    "review": "human_review_ms",
+    "rework": "rework_lines",
+    "cache": "cache_hits",
+    "invalidated": "invalidated_stages",
+    "agent": "agent_ms",
+    "tools": "deterministic_tool_ms",
+    "changed": "changed_lines",
+    "replay": "replay_hits",
+    "avoided": "model_calls_avoided",
+    "retries": "retry_count",
+    "requirements": "requirements_accepted",
+    "costs": "cost_usd",
+    "escaped": "escaped_defects",
+    "releases": "releases",
+    "rollbacks": "rollbacks",
+}
+
+
+def _flow_summaries(stages: list[StageTiming]) -> dict[str, dict]:
+    return {name: _known_sum(stages, field) for name, field in _FLOW_SUM_FIELDS.items()}
+
+
+def _flow_quality(stages: list[StageTiming]) -> tuple[dict[str, int], dict[str, int]]:
     token_quality = {
         quality: sum(
             (stage.token_quality or stage.usage_quality) == quality for stage in stages
@@ -299,6 +291,71 @@ def _flow_metrics(stages: list[StageTiming]) -> dict:
         quality: sum(stage.cost_quality == quality for stage in stages)
         for quality in ("exact", "estimated", "unknown")
     }
+    return token_quality, cost_quality
+
+
+def _execution_classification(summaries: dict[str, dict]) -> tuple[bool, bool]:
+    agent = summaries["agent"]
+    tools = summaries["tools"]
+    classified_execution = agent["unknown"] == 0 and tools["unknown"] == 0
+    legacy_execution = agent["known"] == 0 and tools["known"] == 0
+    return classified_execution, legacy_execution
+
+
+def _complete_flow(
+    stages: list[StageTiming],
+    summaries: dict[str, dict],
+    classified_execution: bool,
+    legacy_execution: bool,
+) -> bool:
+    complete_flow = (
+        bool(stages)
+        and summaries["queue"]["unknown"] == 0
+        and summaries["review"]["unknown"] == 0
+        and (classified_execution or legacy_execution)
+    )
+    return complete_flow
+
+
+def _execution_total(
+    stages: list[StageTiming], summaries: dict[str, dict], classified: bool
+) -> tuple[int, int]:
+    agent = summaries["agent"]
+    tools = summaries["tools"]
+    queue = summaries["queue"]
+    review = summaries["review"]
+    execution = (
+        (agent["value"] or 0) + (tools["value"] or 0)
+        if classified
+        else sum(stage.wall_ms for stage in stages)
+    )
+    total = execution + (queue["value"] or 0) + (review["value"] or 0)
+    return execution, total
+
+
+def _flow_execution_metrics(
+    stages: list[StageTiming], summaries: dict[str, dict]
+) -> dict[str, int | bool]:
+    classified_execution, legacy_execution = _execution_classification(summaries)
+    complete_flow = _complete_flow(
+        stages, summaries, classified_execution, legacy_execution
+    )
+    execution, total = _execution_total(stages, summaries, classified_execution)
+    return {
+        "classified_execution": classified_execution,
+        "legacy_execution": legacy_execution,
+        "complete_flow": complete_flow,
+        "execution": execution,
+        "total": total,
+    }
+
+
+def _flow_productivity(
+    stages: list[StageTiming],
+    summaries: dict[str, dict],
+    token_quality: dict[str, int],
+) -> dict[str, float | None]:
+    requirements = summaries["requirements"]
     token_total = sum(stage.tokens_in + stage.tokens_out for stage in stages)
     requirements_per_token = None
     if (
@@ -309,43 +366,76 @@ def _flow_metrics(stages: list[StageTiming]) -> dict:
     ):
         requirements_per_token = round(requirements["value"] / token_total, 8)
     requirements_per_engineering_hour = None
+    engineering_summaries = [summaries[name] for name in ("agent", "tools", "review")]
     if (
         requirements["unknown"] == 0
         and requirements["value"] is not None
-        and all(item["unknown"] == 0 for item in (agent, tools, review))
+        and all(item["unknown"] == 0 for item in engineering_summaries)
     ):
-        engineering_ms = (
-            (agent["value"] or 0) + (tools["value"] or 0) + (review["value"] or 0)
-        )
+        engineering_ms = sum(item["value"] or 0 for item in engineering_summaries)
         if engineering_ms:
             requirements_per_engineering_hour = round(
                 requirements["value"] / (engineering_ms / 3_600_000), 4
             )
     return {
+        "requirements_per_token": requirements_per_token,
+        "requirements_per_engineering_hour": requirements_per_engineering_hour,
+    }
+
+
+def _flow_review_minutes(review: dict) -> float | None:
+    if review["unknown"] == 0 and review["value"] is not None:
+        return round(review["value"] / 60000, 4)
+    return None
+
+
+def _flow_outcomes(stages: list[StageTiming]) -> dict[str, int]:
+    return {
+        name: sum(stage.outcome_status == name for stage in stages)
+        for name in ("achieved", "not_achieved", "inconclusive")
+    }
+
+
+def _flow_metrics(stages: list[StageTiming]) -> dict:
+    """Expose flow observations without silently treating missing telemetry as zero."""
+    summaries = _flow_summaries(stages)
+    first_pass = _known_rate(stages, "first_pass")
+    token_quality, cost_quality = _flow_quality(stages)
+    execution = _flow_execution_metrics(stages, summaries)
+    productivity = _flow_productivity(stages, summaries, token_quality)
+    queue = summaries["queue"]
+    review = summaries["review"]
+    rework = summaries["rework"]
+    changed = summaries["changed"]
+    requirements = summaries["requirements"]
+    escaped = summaries["escaped"]
+    releases = summaries["releases"]
+    rollbacks = summaries["rollbacks"]
+    return {
         "execution_ms": sum(stage.wall_ms for stage in stages),
         "queue_ms": queue,
-        "agent_ms": agent,
-        "deterministic_tool_ms": tools,
+        "agent_ms": summaries["agent"],
+        "deterministic_tool_ms": summaries["tools"],
         "human_review_ms": review,
-        "review_minutes": round(review["value"] / 60000, 4)
-        if review["unknown"] == 0 and review["value"] is not None
-        else None,
+        "review_minutes": _flow_review_minutes(review),
         "rework_lines": rework,
         "changed_lines": changed,
         "rework_ratio": _guarded_ratio(rework, changed),
-        "cache_hits": cache,
-        "replay_hits": replay,
-        "model_calls_avoided": avoided,
+        "cache_hits": summaries["cache"],
+        "replay_hits": summaries["replay"],
+        "model_calls_avoided": summaries["avoided"],
         "first_pass_gate_rate": first_pass,
-        "retry_count": retries,
-        "invalidated_stages": invalidated,
-        "flow_efficiency": round(execution / total, 4)
-        if complete_flow and total
+        "retry_count": summaries["retries"],
+        "invalidated_stages": summaries["invalidated"],
+        "flow_efficiency": round(execution["execution"] / execution["total"], 4)
+        if execution["complete_flow"] and execution["total"]
         else None,
         "requirements_accepted": requirements,
-        "requirements_per_token": requirements_per_token,
-        "requirements_per_engineering_hour": requirements_per_engineering_hour,
-        "cost_usd": costs,
+        "requirements_per_token": productivity["requirements_per_token"],
+        "requirements_per_engineering_hour": productivity[
+            "requirements_per_engineering_hour"
+        ],
+        "cost_usd": summaries["costs"],
         "token_quality": token_quality,
         "cost_quality": cost_quality,
         "escaped_defects": escaped,
@@ -353,10 +443,7 @@ def _flow_metrics(stages: list[StageTiming]) -> dict:
         "rollbacks": rollbacks,
         "escaped_defects_per_release": _guarded_ratio(escaped, releases),
         "rollback_rate": _guarded_ratio(rollbacks, releases),
-        "outcomes": {
-            name: sum(stage.outcome_status == name for stage in stages)
-            for name in ("achieved", "not_achieved", "inconclusive")
-        },
+        "outcomes": _flow_outcomes(stages),
         "usage_quality": token_quality,
         "scope": "local observed workflow telemetry; unknown fields remain null",
     }
