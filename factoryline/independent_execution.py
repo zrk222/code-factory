@@ -163,19 +163,11 @@ def _validate_observations(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _validate_header(
+def _validate_binding(
     value: dict[str, Any],
-    *,
     candidate_sha256: str | None,
     plan_sha256: str | None,
-    now: datetime | None,
-    seen_nonces: Iterable[str],
-    require_independent: bool,
-) -> tuple[str, str, str, str, datetime, datetime, str]:
-    if value.get("schema") != SCHEMA:
-        raise ExecutionAttestationError(
-            "E_ATTESTATION_SCHEMA", f"schema must be {SCHEMA}"
-        )
+) -> tuple[str, str, str]:
     attestation_id = require_str(
         value.get("attestation_id"), "attestation_id", maximum=160
     )
@@ -201,11 +193,21 @@ def _validate_header(
             "E_ATTESTATION_BINDING",
             "candidate or plan digest differs from the expected contract",
         )
+    return attestation_id, candidate, plan
+
+
+def _validate_nonce(value: dict[str, Any], seen_nonces: Iterable[str]) -> str:
     nonce = require_str(value.get("run_nonce"), "run_nonce", maximum=160)
     if nonce in set(seen_nonces):
         raise ExecutionAttestationError(
             "E_ATTESTATION_REPLAY", "run nonce has already been observed"
         )
+    return nonce
+
+
+def _validate_window(
+    value: dict[str, Any], now: datetime | None
+) -> tuple[datetime, datetime]:
     issued = _timestamp(value.get("issued_at"), "issued_at")
     expires = _timestamp(value.get("expires_at"), "expires_at")
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -217,6 +219,10 @@ def _validate_header(
         raise ExecutionAttestationError(
             "E_ATTESTATION_FRESHNESS", "attestation is expired"
         )
+    return issued, expires
+
+
+def _validate_assurance(value: dict[str, Any], require_independent: bool) -> str:
     assurance = value.get("assurance_level")
     if (
         assurance not in ASSURANCE_LEVELS
@@ -226,6 +232,28 @@ def _validate_header(
         raise ExecutionAttestationError(
             "E_ATTESTATION_ASSURANCE", "independent assurance is required"
         )
+    return assurance
+
+
+def _validate_header(
+    value: dict[str, Any],
+    *,
+    candidate_sha256: str | None,
+    plan_sha256: str | None,
+    now: datetime | None,
+    seen_nonces: Iterable[str],
+    require_independent: bool,
+) -> tuple[str, str, str, str, datetime, datetime, str]:
+    if value.get("schema") != SCHEMA:
+        raise ExecutionAttestationError(
+            "E_ATTESTATION_SCHEMA", f"schema must be {SCHEMA}"
+        )
+    attestation_id, candidate, plan = _validate_binding(
+        value, candidate_sha256, plan_sha256
+    )
+    nonce = _validate_nonce(value, seen_nonces)
+    issued, expires = _validate_window(value, now)
+    assurance = _validate_assurance(value, require_independent)
     if value.get("authority") != "none":
         raise ExecutionAttestationError(
             "E_ATTESTATION_AUTHORITY", "execution attestations cannot carry authority"
