@@ -200,7 +200,7 @@ def _stable_file(path: Path) -> tuple[bytes, str, dict[str, int]]:
     return raw, digest.hexdigest(), identity_before
 
 
-def _validate_request(root: Path, request: Any) -> dict[str, Any]:
+def _validate_request_fields(request: Any) -> None:
     if not isinstance(request, dict):
         raise ContextEfficiencyError(
             "E_REQUEST_FIELDS", "request has missing or unknown fields"
@@ -220,33 +220,32 @@ def _validate_request(root: Path, request: Any) -> dict[str, Any]:
         )
     if request["schema"] != REQUEST_SCHEMA:
         raise ContextEfficiencyError("E_SCHEMA", "unsupported request schema")
-    mission_id = _safe_text(request["mission_id"], "mission_id", 120)
-    contract_digest = _digest(request["contract_digest"], "contract_digest")
+
+
+def _normalize_changed_paths(root: Path, raw_paths: Any) -> list[str]:
     changed: list[str] = []
-    if (
-        not isinstance(request["changed_paths"], list)
-        or not 1 <= len(request["changed_paths"]) <= MAX_CHANGED_PATHS
-    ):
+    if not isinstance(raw_paths, list) or not 1 <= len(raw_paths) <= MAX_CHANGED_PATHS:
         raise ContextEfficiencyError(
             "E_FIELD", f"changed_paths must contain 1..{MAX_CHANGED_PATHS} paths"
         )
-    for index, item in enumerate(request["changed_paths"]):
+    for index, item in enumerate(raw_paths):
         _, relative = _relative_path(root, item, f"changed_paths[{index}]")
         if relative in changed:
             raise ContextEfficiencyError(
                 "E_DUPLICATE_PATH", f"duplicate changed path: {relative}"
             )
         changed.append(relative)
-    if (
-        not isinstance(request["sources"], list)
-        or not 1 <= len(request["sources"]) <= MAX_SOURCES
-    ):
+    return changed
+
+
+def _normalize_request_sources(root: Path, raw_sources: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_sources, list) or not 1 <= len(raw_sources) <= MAX_SOURCES:
         raise ContextEfficiencyError(
             "E_FIELD", f"sources must contain 1..{MAX_SOURCES} entries"
         )
     sources: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for index, entry in enumerate(request["sources"]):
+    for index, entry in enumerate(raw_sources):
         if not isinstance(entry, dict) or set(entry) != {"path", "role", "priority"}:
             raise ContextEfficiencyError(
                 "E_SOURCE_FIELDS", f"sources[{index}] has missing or unknown fields"
@@ -267,6 +266,15 @@ def _validate_request(root: Path, request: Any) -> dict[str, Any]:
             }
         )
     sources.sort(key=lambda item: (-item["priority"], item["role"], item["path"]))
+    return sources
+
+
+def _validate_request(root: Path, request: Any) -> dict[str, Any]:
+    _validate_request_fields(request)
+    mission_id = _safe_text(request["mission_id"], "mission_id", 120)
+    contract_digest = _digest(request["contract_digest"], "contract_digest")
+    changed = _normalize_changed_paths(root, request["changed_paths"])
+    sources = _normalize_request_sources(root, request["sources"])
     return {
         "schema": REQUEST_SCHEMA,
         "mission_id": mission_id,
@@ -504,18 +512,44 @@ def build_context_packet(
     return packet
 
 
-def _verify_packet_header(
-    workspace: Path, packet: dict[str, Any]
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    if packet.get("schema") != PACKET_SCHEMA or packet.get(
-        "packet_sha256"
-    ) != _packet_digest(packet):
+def _validate_source_row_binding(
+    row: Any, expected: dict[str, Any], allowed: set[str]
+) -> None:
+    if (
+        not isinstance(row, dict)
+        or set(row) - allowed
+        or row.get("path") != expected["path"]
+        or row.get("role") != expected["role"]
+        or row.get("priority") != expected["priority"]
+    ):
         raise ContextEfficiencyError(
-            "E_PACKET_DIGEST", "packet schema or digest is invalid"
+            "E_SOURCE_ROWS", "packet source row is not bound to the request"
         )
-    request = _validate_request(workspace, packet.get("request"))
-    packet_sources = packet.get("sources")
-    expected_sources = request["sources"]
+
+
+def _validate_source_row_accounting(row: dict[str, Any]) -> None:
+    if row.get("inclusion") not in {"full", "head_tail", "digest_only"}:
+        raise ContextEfficiencyError(
+            "E_SOURCE_ROWS", "packet source inclusion is invalid"
+        )
+    sizes = ("source_bytes", "selected_bytes", "omitted_bytes")
+    if any(not isinstance(row.get(field), int) for field in sizes):
+        raise ContextEfficiencyError(
+            "E_SOURCE_ROWS", "packet source byte accounting is invalid"
+        )
+    if (
+        row["selected_bytes"] < 0
+        or row["selected_bytes"] > row["source_bytes"]
+        or row["omitted_bytes"] != row["source_bytes"] - row["selected_bytes"]
+    ):
+        raise ContextEfficiencyError(
+            "E_SOURCE_ROWS", "packet source byte accounting is invalid"
+        )
+
+
+def _validate_source_rows(
+    packet_sources: Any, expected_sources: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     if not isinstance(packet_sources, list) or len(packet_sources) != len(
         expected_sources
     ):
@@ -535,33 +569,15 @@ def _verify_packet_header(
         "excerpt",
     }
     for row, expected in zip(packet_sources, expected_sources):
-        if (
-            not isinstance(row, dict)
-            or set(row) - allowed
-            or row.get("path") != expected["path"]
-            or row.get("role") != expected["role"]
-            or row.get("priority") != expected["priority"]
-        ):
-            raise ContextEfficiencyError(
-                "E_SOURCE_ROWS", "packet source row is not bound to the request"
-            )
-        if row.get("inclusion") not in {"full", "head_tail", "digest_only"}:
-            raise ContextEfficiencyError(
-                "E_SOURCE_ROWS", "packet source inclusion is invalid"
-            )
-        if (
-            any(
-                not isinstance(row.get(field), int)
-                for field in ("source_bytes", "selected_bytes", "omitted_bytes")
-            )
-            or row["selected_bytes"] < 0
-            or row["selected_bytes"] > row["source_bytes"]
-            or row["omitted_bytes"] != row["source_bytes"] - row["selected_bytes"]
-        ):
-            raise ContextEfficiencyError(
-                "E_SOURCE_ROWS", "packet source byte accounting is invalid"
-            )
-    source_identities = [
+        _validate_source_row_binding(row, expected, allowed)
+        _validate_source_row_accounting(row)
+    return packet_sources
+
+
+def _source_identity_rows(
+    packet_sources: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
         {
             "path": item["path"],
             "sha256": item["source_sha256"],
@@ -569,17 +585,40 @@ def _verify_packet_header(
         }
         for item in packet_sources
     ]
+
+
+def _validate_packet_cache(
+    packet: dict[str, Any],
+    request: dict[str, Any],
+    source_identities: list[dict[str, Any]],
+) -> None:
     cache = packet.get("cache")
-    if not isinstance(cache, dict) or cache.get("key") != _sha(
+    expected_key = _sha(
         {
             "module_version": MODULE_VERSION,
             "request": request,
             "sources": source_identities,
         }
-    ):
+    )
+    if not isinstance(cache, dict) or cache.get("key") != expected_key:
         raise ContextEfficiencyError(
             "E_CACHE_KEY", "cache key does not match request and source identities"
         )
+
+
+def _verify_packet_header(
+    workspace: Path, packet: dict[str, Any]
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if packet.get("schema") != PACKET_SCHEMA or packet.get(
+        "packet_sha256"
+    ) != _packet_digest(packet):
+        raise ContextEfficiencyError(
+            "E_PACKET_DIGEST", "packet schema or digest is invalid"
+        )
+    request = _validate_request(workspace, packet.get("request"))
+    packet_sources = _validate_source_rows(packet.get("sources"), request["sources"])
+    source_identities = _source_identity_rows(packet_sources)
+    _validate_packet_cache(packet, request, source_identities)
     return request, packet_sources
 
 
