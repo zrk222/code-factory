@@ -95,10 +95,37 @@ def normalize_scm_event(
 ) -> tuple[SCMEvent, Principal]:
     """Normalize a supported SCM webhook and its actor or reject unsafe claims."""
     provider = provider.strip().lower()
+    _validate_scm_provider(provider)
+    payload = _verified_scm_payload(claims)
+    delivery_id, event_type = _event_header(claims)
+    repository, actor, change = _provider_identity(provider, payload)
+    change_id = _required(str(change) if change is not None else "", "change_id")
+    tenant_id = _required(tenant_id, "tenant_id")
+    roles = _mapped_roles(actor_roles)
+    event = _scm_event(
+        provider,
+        tenant_id,
+        delivery_id,
+        event_type,
+        repository,
+        change_id,
+        actor,
+        payload,
+    )
+    principal = Principal(
+        subject=f"scm:{provider}:{actor}", tenant_id=tenant_id, roles=roles
+    )
+    return event, principal
+
+
+def _validate_scm_provider(provider: str) -> None:
     if provider not in SUPPORTED_SCM_PROVIDERS:
         raise ControlPlaneError(
             "E_SCM_PROVIDER", f"unsupported SCM provider: {provider}"
         )
+
+
+def _verified_scm_payload(claims: dict[str, Any]) -> dict[str, Any]:
     if claims.get("signature_verified") is not True:
         raise ControlPlaneError(
             "E_UNVERIFIED_WEBHOOK",
@@ -109,46 +136,82 @@ def normalize_scm_event(
         raise ControlPlaneError(
             "E_SCM_PAYLOAD", "verified SCM payload must be an object"
         )
+    return payload
+
+
+def _event_header(claims: dict[str, Any]) -> tuple[str, str]:
     delivery_id = _required(claims.get("delivery_id"), "delivery_id")
     event_type = _required(claims.get("event_type"), "event_type")
+    return delivery_id, event_type
+
+
+def _github_identity(payload: dict[str, Any]) -> tuple[str, str, Any]:
+    repository = _required(
+        (payload.get("repository") or {}).get("full_name"), "repository.full_name"
+    )
+    actor = _required((payload.get("sender") or {}).get("login"), "sender.login")
+    change = (
+        (payload.get("pull_request") or {}).get("number")
+        or payload.get("after")
+        or payload.get("ref")
+    )
+    return repository, actor, change
+
+
+def _gitlab_identity(payload: dict[str, Any]) -> tuple[str, str, Any]:
+    repository = _required(
+        (payload.get("project") or {}).get("path_with_namespace"),
+        "project.path_with_namespace",
+    )
+    actor = _required(payload.get("user_username"), "user_username")
+    change = (payload.get("object_attributes") or {}).get("iid") or payload.get(
+        "checkout_sha"
+    )
+    return repository, actor, change
+
+
+def _azure_identity(payload: dict[str, Any]) -> tuple[str, str, Any]:
+    resource = payload.get("resource") or {}
+    repository = _required(
+        (resource.get("repository") or {}).get("name"), "resource.repository.name"
+    )
+    actor = _required(
+        (resource.get("createdBy") or {}).get("id"), "resource.createdBy.id"
+    )
+    change = (
+        resource.get("pullRequestId")
+        or resource.get("sourceRefName")
+        or payload.get("id")
+    )
+    return repository, actor, change
+
+
+def _provider_identity(provider: str, payload: dict[str, Any]) -> tuple[str, str, Any]:
     if provider == "github":
-        repository = _required(
-            (payload.get("repository") or {}).get("full_name"), "repository.full_name"
-        )
-        actor = _required((payload.get("sender") or {}).get("login"), "sender.login")
-        change = (
-            (payload.get("pull_request") or {}).get("number")
-            or payload.get("after")
-            or payload.get("ref")
-        )
-    elif provider == "gitlab":
-        repository = _required(
-            (payload.get("project") or {}).get("path_with_namespace"),
-            "project.path_with_namespace",
-        )
-        actor = _required(payload.get("user_username"), "user_username")
-        change = (payload.get("object_attributes") or {}).get("iid") or payload.get(
-            "checkout_sha"
-        )
-    else:
-        resource = payload.get("resource") or {}
-        repository = _required(
-            (resource.get("repository") or {}).get("name"), "resource.repository.name"
-        )
-        actor = _required(
-            (resource.get("createdBy") or {}).get("id"), "resource.createdBy.id"
-        )
-        change = (
-            resource.get("pullRequestId")
-            or resource.get("sourceRefName")
-            or payload.get("id")
-        )
-    change_id = _required(str(change) if change is not None else "", "change_id")
-    tenant_id = _required(tenant_id, "tenant_id")
+        return _github_identity(payload)
+    if provider == "gitlab":
+        return _gitlab_identity(payload)
+    return _azure_identity(payload)
+
+
+def _mapped_roles(actor_roles: Iterable[str]) -> tuple[str, ...]:
     roles = tuple(sorted({role.strip() for role in actor_roles if role.strip()}))
     if not roles:
         raise ControlPlaneError("E_NO_ROLE", "SCM actor has no mapped factory role")
-    event = SCMEvent(
+    return roles
+
+
+def _scm_event(
+    provider: str,
+    tenant_id: str,
+    delivery_id: str,
+    event_type: str,
+    repository: str,
+    change_id: str,
+    actor: str,
+    payload: dict[str, Any],
+) -> SCMEvent:
+    return SCMEvent(
         schema="factory.scm.event.v1",
         provider=provider,
         tenant_id=tenant_id,
@@ -158,9 +221,6 @@ def normalize_scm_event(
         change_id=change_id,
         actor=actor,
         payload_sha256=hashlib.sha256(canonical_json(payload)).hexdigest(),
-    )
-    return event, Principal(
-        subject=f"scm:{provider}:{actor}", tenant_id=tenant_id, roles=roles
     )
 
 
