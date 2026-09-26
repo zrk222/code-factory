@@ -1251,6 +1251,27 @@ def _receipt_files(root: Path) -> list[Path]:
     ]
 
 
+def _cached_small_json(raw: bytes, digest: str) -> dict[str, Any] | None:
+    if len(raw) > _RECEIPT_JSON_CACHE_MAX_BYTES:
+        return None
+    with _RECEIPT_JSON_CACHE_LOCK:
+        cached = _RECEIPT_JSON_CACHE.get(digest)
+        if cached is None:
+            return None
+        _RECEIPT_JSON_CACHE.move_to_end(digest)
+        return deepcopy(cached)
+
+
+def _remember_small_json(raw: bytes, digest: str, value: dict[str, Any]) -> None:
+    if len(raw) > _RECEIPT_JSON_CACHE_MAX_BYTES:
+        return
+    with _RECEIPT_JSON_CACHE_LOCK:
+        _RECEIPT_JSON_CACHE[digest] = value
+        _RECEIPT_JSON_CACHE.move_to_end(digest)
+        while len(_RECEIPT_JSON_CACHE) > _RECEIPT_JSON_CACHE_LIMIT:
+            _RECEIPT_JSON_CACHE.popitem(last=False)
+
+
 def _load_small_json(path: Path) -> dict[str, Any] | None:
     try:
         if path.stat().st_size > _MAX_RECEIPT_BYTES:
@@ -1259,24 +1280,16 @@ def _load_small_json(path: Path) -> dict[str, Any] | None:
         digest = sha256(raw).hexdigest()
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
-    if len(raw) <= _RECEIPT_JSON_CACHE_MAX_BYTES:
-        with _RECEIPT_JSON_CACHE_LOCK:
-            cached = _RECEIPT_JSON_CACHE.get(digest)
-            if cached is not None:
-                _RECEIPT_JSON_CACHE.move_to_end(digest)
-                return deepcopy(cached)
+    cached = _cached_small_json(raw, digest)
+    if cached is not None:
+        return cached
     try:
         value = json.loads(raw.decode("utf-8-sig"))
     except (UnicodeDecodeError, json.JSONDecodeError):
         return None
     if not isinstance(value, dict):
         return None
-    if len(raw) <= _RECEIPT_JSON_CACHE_MAX_BYTES:
-        with _RECEIPT_JSON_CACHE_LOCK:
-            _RECEIPT_JSON_CACHE[digest] = value
-            _RECEIPT_JSON_CACHE.move_to_end(digest)
-            while len(_RECEIPT_JSON_CACHE) > _RECEIPT_JSON_CACHE_LIMIT:
-                _RECEIPT_JSON_CACHE.popitem(last=False)
+    _remember_small_json(raw, digest, value)
     return value
 
 
@@ -1337,13 +1350,19 @@ def _find_feature_receipt(
     return None
 
 
-def _receipt_listing(root: Path, arguments: object) -> dict[str, object]:
+def _receipt_listing_options(arguments: object) -> tuple[int, str | None]:
     if not isinstance(arguments, dict) or set(arguments) - {"limit", "feature"}:
         raise McpError("factory.list_receipts accepts only limit and optional feature")
     limit = arguments.get("limit", 10)
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 50:
         raise McpError("limit must be an integer from 1 to 50")
     feature = _feature(arguments["feature"]) if "feature" in arguments else None
+    return limit, feature
+
+
+def _listed_receipts(
+    root: Path, limit: int, feature: str | None
+) -> list[dict[str, object]]:
     entries = []
     for path in _receipt_files(root):
         payload = _load_small_json(path)
@@ -1354,6 +1373,12 @@ def _receipt_listing(root: Path, arguments: object) -> dict[str, object]:
         entries.append(_receipt_metadata(root, path))
         if len(entries) == limit:
             break
+    return entries
+
+
+def _receipt_listing(root: Path, arguments: object) -> dict[str, object]:
+    limit, feature = _receipt_listing_options(arguments)
+    entries = _listed_receipts(root, limit, feature)
     return {
         "marker": "MCP_RECEIPTS_UNASSESSED",
         "feature": feature,
@@ -1407,23 +1432,24 @@ def _content(payload: object) -> dict[str, object]:
     return {"content": [{"type": "text", "text": _canonical(payload)}]}
 
 
+def _normalize_changed_path(entry: object) -> str:
+    if not isinstance(entry, str) or not 1 <= len(entry) <= 512:
+        raise McpError("each changed path must contain 1 to 512 characters")
+    candidate = Path(entry)
+    if candidate.is_absolute() or ".." in candidate.parts or entry.strip() != entry:
+        raise McpError(
+            "each changed path must be root-relative without parent traversal"
+        )
+    return candidate.as_posix()
+
+
 def _changed_paths(arguments: object) -> list[str]:
     if not isinstance(arguments, dict) or set(arguments) != {"changed_paths"}:
         raise McpError("factory.graph_impact requires only changed_paths")
     value = arguments["changed_paths"]
     if not isinstance(value, list) or not 1 <= len(value) <= 50:
         raise McpError("changed_paths must contain 1 to 50 paths")
-    paths: list[str] = []
-    for entry in value:
-        if not isinstance(entry, str) or not 1 <= len(entry) <= 512:
-            raise McpError("each changed path must contain 1 to 512 characters")
-        candidate = Path(entry)
-        if candidate.is_absolute() or ".." in candidate.parts or entry.strip() != entry:
-            raise McpError(
-                "each changed path must be root-relative without parent traversal"
-            )
-        paths.append(candidate.as_posix())
-    return paths
+    return [_normalize_changed_path(entry) for entry in value]
 
 
 def _graph_summary(graph: dict[str, Any]) -> dict[str, object]:
@@ -1474,7 +1500,7 @@ def _developer_memory(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
-def _intent_ledger(root: Path, arguments: object) -> dict[str, object]:
+def _intent_ledger_input(arguments: object) -> dict[str, object]:
     if (
         not isinstance(arguments, dict)
         or set(arguments) - {"change_list", "changed_paths", "base"}
@@ -1483,6 +1509,10 @@ def _intent_ledger(root: Path, arguments: object) -> dict[str, object]:
         raise McpError(
             "factory.intent_ledger requires change_list and accepts only optional changed_paths and base"
         )
+    return arguments
+
+
+def _intent_change_list(arguments: dict[str, object]) -> str:
     change_list = arguments["change_list"]
     if (
         not isinstance(change_list, str)
@@ -1492,14 +1522,35 @@ def _intent_ledger(root: Path, arguments: object) -> dict[str, object]:
         raise McpError(
             "change_list must be a non-empty string of at most 160 characters"
         )
-    changed = (
-        _changed_paths({"changed_paths": arguments["changed_paths"]})
-        if "changed_paths" in arguments
-        else None
-    )
+    return change_list
+
+
+def _intent_changed_paths(arguments: dict[str, object]) -> list[str] | None:
+    if "changed_paths" not in arguments:
+        return None
+    return _changed_paths({"changed_paths": arguments["changed_paths"]})
+
+
+def _intent_base(arguments: dict[str, object]) -> str:
     base = arguments.get("base", "main")
     if not isinstance(base, str) or not base.strip() or len(base) > 120:
         raise McpError("base must be a non-empty string of at most 120 characters")
+    return base
+
+
+def _intent_ledger_arguments(
+    arguments: object,
+) -> tuple[str, list[str] | None, str]:
+    values = _intent_ledger_input(arguments)
+    return (
+        _intent_change_list(values),
+        _intent_changed_paths(values),
+        _intent_base(values),
+    )
+
+
+def _intent_ledger(root: Path, arguments: object) -> dict[str, object]:
+    change_list, changed, base = _intent_ledger_arguments(arguments)
     try:
         ledger = inspect_intent_ledger(
             root, change_list=change_list, changed=changed, base=base
@@ -1725,11 +1776,13 @@ def _agui_review_events(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
-def _cdte_status(root: Path, arguments: object) -> dict[str, object]:
+def _cdte_feature(arguments: object) -> str | None:
     if not isinstance(arguments, dict) or set(arguments) - {"feature"}:
         raise McpError("factory.cdte_status accepts only optional feature")
-    feature = _feature(arguments["feature"]) if "feature" in arguments else None
-    records = []
+    return _feature(arguments["feature"]) if "feature" in arguments else None
+
+
+def _find_cdte_scan(root: Path, feature: str | None) -> dict[str, object] | None:
     directory = root / ".factory" / "cdte"
     for item in _receipt_files(root):
         if not item.is_relative_to(directory):
@@ -1740,22 +1793,25 @@ def _cdte_status(root: Path, arguments: object) -> dict[str, object]:
             and payload.get("schema") == "factory.cdte-scan.v1"
             and (feature is None or payload.get("run_id") == feature)
         ):
-            records.append(
-                {
-                    "metadata": _receipt_metadata(root, item),
-                    "fail_closed": payload.get("fail_closed"),
-                    "requires_hitl_escalation": payload.get("requires_hitl_escalation"),
-                    "conflicts": len(payload.get("conflicts", []))
-                    if isinstance(payload.get("conflicts"), list)
-                    else None,
-                }
-            )
-            break
-    if records:
+            return {
+                "metadata": _receipt_metadata(root, item),
+                "fail_closed": payload.get("fail_closed"),
+                "requires_hitl_escalation": payload.get("requires_hitl_escalation"),
+                "conflicts": len(payload.get("conflicts", []))
+                if isinstance(payload.get("conflicts"), list)
+                else None,
+            }
+    return None
+
+
+def _cdte_status(root: Path, arguments: object) -> dict[str, object]:
+    feature = _cdte_feature(arguments)
+    scan = _find_cdte_scan(root, feature)
+    if scan is not None:
         return {
             "marker": "MCP_CDTE_SCAN_OBSERVED",
             "feature": feature,
-            "scan": records[0],
+            "scan": scan,
             "assessment": "unassessed",
         }
     return {
@@ -1766,7 +1822,7 @@ def _cdte_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
-def _prd_grill_status(root: Path, arguments: object) -> dict[str, object]:
+def _prd_source(root: Path, arguments: object) -> tuple[str, str]:
     if not isinstance(arguments, dict) or set(arguments) != {"prd_path"}:
         raise McpError("factory.prd_grill_status requires only prd_path")
     relative, source = _relative_path(
@@ -1774,30 +1830,38 @@ def _prd_grill_status(root: Path, arguments: object) -> dict[str, object]:
     )
     if source.stat().st_size > _MAX_RECEIPT_BYTES:
         raise McpError("prd_path must be at most 262144 bytes")
-    source_sha = sha256(source.read_bytes()).hexdigest()
-    matches = []
+    return relative, sha256(source.read_bytes()).hexdigest()
+
+
+def _matching_prd_grill(root: Path, source_sha: str) -> Path | None:
     directory = root / ".factory" / "prd-grills"
-    if directory.is_dir():
-        for path in _receipt_files(root):
-            if not path.is_relative_to(directory):
-                continue
-            payload = _load_small_json(path)
-            source_record = payload.get("source") if isinstance(payload, dict) else None
-            if (
-                payload is not None
-                and payload.get("schema") == "factory.prd_grill.v1"
-                and isinstance(source_record, dict)
-                and source_record.get("sha256") == source_sha
-            ):
-                matches.append(path)
-    if not matches:
+    if not directory.is_dir():
+        return None
+    for path in _receipt_files(root):
+        if not path.is_relative_to(directory):
+            continue
+        payload = _load_small_json(path)
+        source_record = payload.get("source") if isinstance(payload, dict) else None
+        if (
+            payload is not None
+            and payload.get("schema") == "factory.prd_grill.v1"
+            and isinstance(source_record, dict)
+            and source_record.get("sha256") == source_sha
+        ):
+            return path
+    return None
+
+
+def _prd_grill_status(root: Path, arguments: object) -> dict[str, object]:
+    relative, source_sha = _prd_source(root, arguments)
+    path = _matching_prd_grill(root, source_sha)
+    if path is None:
         return {
             "marker": "MCP_PRD_GRILL_REQUIRED",
             "prd_path": relative,
             "assessment": "unassessed",
             "next_action": "Run factory prd grill explicitly to create a source-bound clarification receipt.",
         }
-    path = matches[0]
     verification = verify_prd_grill(path)
     return {
         "marker": "MCP_PRD_GRILL_STATUS",
@@ -1897,7 +1961,7 @@ def _revenue_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
-def _revenue_memory(root: Path, arguments: object) -> dict[str, object]:
+def _revenue_memory_shape(arguments: object) -> dict[str, object]:
     if (
         not isinstance(arguments, dict)
         or set(arguments) - {"app_id", "journey", "at"}
@@ -1906,15 +1970,37 @@ def _revenue_memory(root: Path, arguments: object) -> dict[str, object]:
         raise McpError(
             "factory.revenue_memory requires app_id and journey and accepts optional at"
         )
-    app_id = arguments["app_id"]
-    journey = arguments["journey"]
-    at = arguments.get("at")
-    if not isinstance(app_id, str) or not app_id.strip() or len(app_id) > 160:
-        raise McpError("app_id must be a non-empty string of at most 160 characters")
-    if not isinstance(journey, str) or not journey.strip() or len(journey) > 80:
-        raise McpError("journey must be a non-empty string of at most 80 characters")
-    if at is not None and (not isinstance(at, str) or not at.strip() or len(at) > 40):
-        raise McpError("at must be an ISO-8601 string of at most 40 characters")
+    return arguments
+
+
+def _revenue_memory_text(value: object, limit: int, message: str) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > limit:
+        raise McpError(message)
+    return value
+
+
+def _revenue_memory_arguments(arguments: object) -> tuple[str, str, str | None]:
+    values = _revenue_memory_shape(arguments)
+    app_id = _revenue_memory_text(
+        values["app_id"],
+        160,
+        "app_id must be a non-empty string of at most 160 characters",
+    )
+    journey = _revenue_memory_text(
+        values["journey"],
+        80,
+        "journey must be a non-empty string of at most 80 characters",
+    )
+    at = values.get("at")
+    if at is not None:
+        at = _revenue_memory_text(
+            at, 40, "at must be an ISO-8601 string of at most 40 characters"
+        )
+    return app_id, journey, at
+
+
+def _revenue_memory(root: Path, arguments: object) -> dict[str, object]:
+    app_id, journey, at = _revenue_memory_arguments(arguments)
     try:
         status = query_evidence_memory(root, app_id, journey, at)
     except RevenueForgeError as exc:
@@ -2004,7 +2090,20 @@ def _agentic_control_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
-def _task_board_status(root: Path, arguments: object) -> dict[str, object]:
+def _task_board_candidate(base: Path, raw_path: str) -> Path:
+    candidate = Path(raw_path)
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    candidate = candidate.resolve()
+    if candidate != base and base not in candidate.parents:
+        raise McpError(
+            "task card paths must remain inside the workspace",
+            "TASK_BOARD_PATH_REFUSED",
+        )
+    return candidate
+
+
+def _task_board_candidates(root: Path, arguments: object) -> list[Path]:
     if not isinstance(arguments, dict) or set(arguments) - {"paths"}:
         raise McpError("factory.task_board_status accepts only paths")
     raw_paths = arguments.get("paths")
@@ -2013,24 +2112,17 @@ def _task_board_status(root: Path, arguments: object) -> dict[str, object]:
     elif isinstance(raw_paths, list) and all(
         isinstance(value, str) and value.strip() for value in raw_paths
     ):
-        candidates = []
         base = root.resolve()
-        for raw_path in raw_paths:
-            candidate = Path(raw_path)
-            if not candidate.is_absolute():
-                candidate = base / candidate
-            candidate = candidate.resolve()
-            if candidate != base and base not in candidate.parents:
-                raise McpError(
-                    "task card paths must remain inside the workspace",
-                    "TASK_BOARD_PATH_REFUSED",
-                )
-            candidates.append(candidate)
+        candidates = [_task_board_candidate(base, path) for path in raw_paths]
     else:
         raise McpError(
             "paths must be an array of workspace-relative strings",
             "TASK_BOARD_INPUT_REFUSED",
         )
+    return candidates
+
+
+def _read_task_cards(candidates: list[Path]) -> list[dict[str, object]]:
     cards: list[dict[str, object]] = []
     for path in candidates[:500]:
         try:
@@ -2044,12 +2136,21 @@ def _task_board_status(root: Path, arguments: object) -> dict[str, object]:
                 f"task card {path.name} must be an object", "TASK_BOARD_INPUT_REFUSED"
             )
         cards.append(value)
+    return cards
+
+
+def _project_task_cards(cards: list[dict[str, object]]) -> dict[str, object]:
     try:
-        board = project_task_board(cards)
+        return project_task_board(cards)
     except Exception as exc:
         if hasattr(exc, "code"):
             raise McpError(str(exc), getattr(exc, "code")) from exc
         raise McpError(str(exc), "TASK_BOARD_PROJECTION_REFUSED") from exc
+
+
+def _task_board_status(root: Path, arguments: object) -> dict[str, object]:
+    candidates = _task_board_candidates(root, arguments)
+    board = _project_task_cards(_read_task_cards(candidates))
     return {
         "marker": "TASK_BOARD_MCP_READ_ONLY",
         "action_summary": "Projected verified local task cards into deterministic Kanban lanes and dependency actions; no dispatcher ran.",
@@ -2058,57 +2159,7 @@ def _task_board_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
-def _task_handoff_status(root: Path, arguments: object) -> dict[str, object]:
-    if (
-        not isinstance(arguments, dict)
-        or set(arguments) != {"task_card_path", "handoff_path"}
-        or not all(
-            isinstance(arguments[key], str) and arguments[key].strip()
-            for key in arguments
-        )
-    ):
-        raise McpError(
-            "factory.task_handoff_status requires task_card_path and handoff_path",
-            "TASK_HANDOFF_INPUT_REFUSED",
-        )
-    base = root.resolve()
-    values: list[dict[str, object]] = []
-    for key in ("task_card_path", "handoff_path"):
-        path = Path(str(arguments[key]))
-        if not path.is_absolute():
-            path = base / path
-        path = path.resolve()
-        if path != base and base not in path.parents:
-            raise McpError(
-                "receipt paths must remain inside the workspace",
-                "TASK_HANDOFF_PATH_REFUSED",
-            )
-        try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise McpError(
-                f"cannot read {key}: {exc}", "TASK_HANDOFF_READ_REFUSED"
-            ) from exc
-        if not isinstance(value, dict):
-            raise McpError(
-                f"{key} must contain an object", "TASK_HANDOFF_INPUT_REFUSED"
-            )
-        values.append(value)
-    try:
-        binding = bind_task_card_handoff(values[0], values[1])
-    except Exception as exc:
-        if hasattr(exc, "code"):
-            raise McpError(str(exc), getattr(exc, "code")) from exc
-        raise McpError(str(exc), "TASK_HANDOFF_BINDING_REFUSED") from exc
-    return {
-        "marker": "TASK_HANDOFF_MCP_READ_ONLY",
-        "action_summary": "Compared the task card and typed handoff intent and path scope; no code or workflow action ran.",
-        "status": binding,
-        "scope": "Read-only local lineage proof. No model, execution, repair, approval, branch, merge, publication, deployment, credential, or connector action ran.",
-    }
-
-
-def _candidate_alignment_status(root: Path, arguments: object) -> dict[str, object]:
+def _candidate_receipt_arguments(arguments: object) -> dict[str, object]:
     required = {"task_card_path", "handoff_path", "candidate_hash", "changed_paths"}
     if not isinstance(arguments, dict) or set(arguments) != required:
         raise McpError(
@@ -2123,12 +2174,46 @@ def _candidate_alignment_status(root: Path, arguments: object) -> dict[str, obje
             "candidate paths and hash must be non-empty strings",
             "CANDIDATE_INPUT_REFUSED",
         )
-    if not isinstance(arguments["changed_paths"], list) or not all(
-        isinstance(path, str) and path.strip() for path in arguments["changed_paths"]
+    paths = arguments["changed_paths"]
+    if not isinstance(paths, list) or not all(
+        isinstance(path, str) and path.strip() for path in paths
     ):
         raise McpError(
             "changed_paths must be a non-empty string array", "CANDIDATE_INPUT_REFUSED"
         )
+    return arguments
+
+
+def _handoff_receipt_arguments(arguments: object) -> dict[str, object]:
+    if (
+        not isinstance(arguments, dict)
+        or set(arguments) != {"task_card_path", "handoff_path"}
+        or not all(
+            isinstance(arguments[key], str) and arguments[key].strip()
+            for key in arguments
+        )
+    ):
+        raise McpError(
+            "factory.task_handoff_status requires task_card_path and handoff_path",
+            "TASK_HANDOFF_INPUT_REFUSED",
+        )
+    return arguments
+
+
+def _task_receipt_arguments(arguments: object, *, candidate: bool) -> dict[str, object]:
+    if candidate:
+        return _candidate_receipt_arguments(arguments)
+    return _handoff_receipt_arguments(arguments)
+
+
+def _read_task_receipts(
+    root: Path,
+    arguments: dict[str, object],
+    *,
+    path_code: str,
+    read_code: str,
+    input_code: str,
+) -> list[dict[str, object]]:
     base = root.resolve()
     values: list[dict[str, object]] = []
     for key in ("task_card_path", "handoff_path"):
@@ -2139,23 +2224,61 @@ def _candidate_alignment_status(root: Path, arguments: object) -> dict[str, obje
         if path != base and base not in path.parents:
             raise McpError(
                 "receipt paths must remain inside the workspace",
-                "CANDIDATE_PATH_REFUSED",
+                path_code,
             )
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise McpError(
-                f"cannot read {key}: {exc}", "CANDIDATE_READ_REFUSED"
-            ) from exc
+            raise McpError(f"cannot read {key}: {exc}", read_code) from exc
         if not isinstance(value, dict):
-            raise McpError(f"{key} must contain an object", "CANDIDATE_INPUT_REFUSED")
+            raise McpError(f"{key} must contain an object", input_code)
         values.append(value)
+    return values
+
+
+def _bind_task_handoff(values: list[dict[str, object]]) -> dict[str, object]:
+    try:
+        return bind_task_card_handoff(values[0], values[1])
+    except Exception as exc:
+        if hasattr(exc, "code"):
+            raise McpError(str(exc), getattr(exc, "code")) from exc
+        raise McpError(str(exc), "TASK_HANDOFF_BINDING_REFUSED") from exc
+
+
+def _task_handoff_status(root: Path, arguments: object) -> dict[str, object]:
+    values = _task_receipt_arguments(arguments, candidate=False)
+    receipts = _read_task_receipts(
+        root,
+        values,
+        path_code="TASK_HANDOFF_PATH_REFUSED",
+        read_code="TASK_HANDOFF_READ_REFUSED",
+        input_code="TASK_HANDOFF_INPUT_REFUSED",
+    )
+    binding = _bind_task_handoff(receipts)
+    return {
+        "marker": "TASK_HANDOFF_MCP_READ_ONLY",
+        "action_summary": "Compared the task card and typed handoff intent and path scope; no code or workflow action ran.",
+        "status": binding,
+        "scope": "Read-only local lineage proof. No model, execution, repair, approval, branch, merge, publication, deployment, credential, or connector action ran.",
+    }
+
+
+def _candidate_alignment_status(root: Path, arguments: object) -> dict[str, object]:
+    values = _task_receipt_arguments(arguments, candidate=True)
+    base = root.resolve()
+    receipts = _read_task_receipts(
+        root,
+        values,
+        path_code="CANDIDATE_PATH_REFUSED",
+        read_code="CANDIDATE_READ_REFUSED",
+        input_code="CANDIDATE_INPUT_REFUSED",
+    )
     try:
         receipt = align_candidate_to_task(
-            values[0],
-            values[1],
-            str(arguments["candidate_hash"]),
-            arguments["changed_paths"],
+            receipts[0],
+            receipts[1],
+            str(values["candidate_hash"]),
+            values["changed_paths"],
             candidate_root=base,
         )
     except Exception as exc:
@@ -2486,7 +2609,7 @@ def _proof_worklog_status(root: Path, arguments: object) -> dict[str, object]:
     }
 
 
-def _codex_metadata_audit(root: Path, arguments: object) -> dict[str, object]:
+def _codex_metadata_paths(arguments: object) -> list[Path] | None:
     if not isinstance(arguments, dict) or set(arguments) - {"paths"}:
         raise McpError("factory.codex_metadata_audit accepts optional paths only")
     supplied = arguments.get("paths")
@@ -2499,10 +2622,13 @@ def _codex_metadata_audit(root: Path, arguments: object) -> dict[str, object]:
         )
     ):
         raise McpError("paths must contain 1-8 non-empty workspace-relative paths")
+    return [Path(item) for item in supplied] if supplied is not None else None
+
+
+def _codex_metadata_audit(root: Path, arguments: object) -> dict[str, object]:
+    paths = _codex_metadata_paths(arguments)
     try:
-        audit = audit_metadata(
-            root, [Path(item) for item in supplied] if supplied is not None else None
-        )
+        audit = audit_metadata(root, paths)
     except MetadataAuditError as exc:
         raise McpError(exc.message, exc.code) from exc
     return {
@@ -2692,9 +2818,7 @@ def _proof_continuity_status(root: Path, arguments: object) -> dict[str, object]
     }
 
 
-def _read_scope_sources(
-    root: Path, arguments: object
-) -> tuple[list[tuple[str, str]], int]:
+def _scope_source_paths(arguments: object) -> list[str]:
     if not isinstance(arguments, dict) or set(arguments) != {"source_paths"}:
         raise McpError("factory.project_scope_review requires source_paths")
     paths = arguments["source_paths"]
@@ -2711,35 +2835,51 @@ def _read_scope_sources(
         )
     if len(set(paths)) != len(paths):
         raise McpError("source_paths must not contain duplicates")
+    return paths
+
+
+def _scope_source_bytes(root: Path, raw_path: str) -> tuple[str, bytes]:
+    relative = Path(raw_path)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise McpError("source paths must stay inside the workspace")
+    if relative.suffix.lower() not in {".md", ".markdown"}:
+        raise McpError("project scope sources must be Markdown PRD or spec files")
+    try:
+        source_path = (root / relative).resolve(strict=True)
+        source_path.relative_to(root)
+        if not source_path.is_file():
+            raise McpError("each project scope source must be a regular file")
+        content = source_path.read_bytes()
+    except ValueError as exc:
+        raise McpError("source paths must stay inside the workspace") from exc
+    except (OSError, RuntimeError) as exc:
+        raise McpError("project scope source could not be read") from exc
+    return source_path.relative_to(root).as_posix(), content
+
+
+def _decode_scope_source(relative: str, content: bytes) -> tuple[str, str]:
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise McpError("project scope sources must be UTF-8 Markdown") from exc
+    return relative, text
+
+
+def _read_scope_sources(
+    root: Path, arguments: object
+) -> tuple[list[tuple[str, str]], int]:
+    paths = _scope_source_paths(arguments)
 
     sources: list[tuple[str, str]] = []
     total_bytes = 0
     for raw_path in paths:
-        relative = Path(raw_path)
-        if relative.is_absolute() or ".." in relative.parts:
-            raise McpError("source paths must stay inside the workspace")
-        if relative.suffix.lower() not in {".md", ".markdown"}:
-            raise McpError("project scope sources must be Markdown PRD or spec files")
-        try:
-            source_path = (root / relative).resolve(strict=True)
-            source_path.relative_to(root)
-            if not source_path.is_file():
-                raise McpError("each project scope source must be a regular file")
-            content = source_path.read_bytes()
-        except ValueError as exc:
-            raise McpError("source paths must stay inside the workspace") from exc
-        except (OSError, RuntimeError) as exc:
-            raise McpError("project scope source could not be read") from exc
+        relative, content = _scope_source_bytes(root, raw_path)
         if len(content) > _MAX_SCOPE_SOURCE_BYTES:
             raise McpError("each project scope source is limited to 131072 bytes")
         total_bytes += len(content)
         if total_bytes > _MAX_SCOPE_TOTAL_BYTES:
             raise McpError("combined project scope sources are limited to 524288 bytes")
-        try:
-            text = content.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise McpError("project scope sources must be UTF-8 Markdown") from exc
-        sources.append((source_path.relative_to(root).as_posix(), text))
+        sources.append(_decode_scope_source(relative, content))
     return sources, total_bytes
 
 
