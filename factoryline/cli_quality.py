@@ -94,6 +94,67 @@ def run_evidence(args: Any) -> int:
     return 0 if result["ok"] else 1
 
 
+def _execute_quality_command(
+    args: Any,
+    write_quality_harness_template: Any,
+    validate_ux_harness_spec: Any,
+    verify_ux_harness_spec_receipt: Any,
+    verify_quality_harness: Any,
+) -> tuple[dict[str, Any], int]:
+    if args.quality_cmd == "template":
+        result = write_quality_harness_template(
+            Path(args.root), Path(args.out), ui_in_scope=args.ui
+        )
+        return result, 0
+    if args.quality_cmd == "spec-validate":
+        result = validate_ux_harness_spec(
+            Path(args.root),
+            Path(args.spec),
+            out=Path(args.out) if args.out else None,
+        )
+        return result, 0 if result["ok"] else 1
+    if args.quality_cmd == "spec-verify":
+        result = verify_ux_harness_spec_receipt(Path(args.root), Path(args.receipt))
+        return result, 0 if result["ok"] else 1
+    result = verify_quality_harness(
+        Path(args.root),
+        Path(args.manifest),
+        out=Path(args.out) if args.out else None,
+    )
+    code = 0 if result["decision"] == "READY_FOR_HUMAN_RELEASE_REVIEW" else 1
+    return result, code
+
+
+def _quality_error(exc: Exception) -> dict[str, Any]:
+    return {
+        "schema": "factory.full-stack-ux-harness.error.v1",
+        "decision": "REJECTED",
+        "code": getattr(exc, "code", "E_UX_INPUT"),
+        "message": getattr(exc, "message", str(exc)),
+        "authority": "none",
+    }
+
+
+def _print_quality_json(result: dict[str, Any], code: int) -> None:
+    print(
+        json.dumps(result, indent=2, sort_keys=True),
+        file=sys.stderr if code == 2 else sys.stdout,
+    )
+
+
+def _print_quality_result(args: Any, result: dict[str, Any], code: int) -> None:
+    if args.json:
+        _print_quality_json(result, code)
+    elif code == 0:
+        print(f"Quality harness: {result.get('decision', 'TEMPLATE_WRITTEN')}")
+        if result.get("path"):
+            print(f"Receipt: {result['path']}")
+        elif result.get("source"):
+            print(f"Source: {result['source']}")
+    else:
+        _print_quality_json(result, code)
+
+
 def run_quality(args: Any) -> int:
     """Run full-stack quality assurance after the command is selected."""
     from .full_stack_ux_harness import (
@@ -108,28 +169,13 @@ def run_quality(args: Any) -> int:
     )
 
     try:
-        if args.quality_cmd == "template":
-            result = write_quality_harness_template(
-                Path(args.root), Path(args.out), ui_in_scope=args.ui
-            )
-            code = 0
-        elif args.quality_cmd == "spec-validate":
-            result = validate_ux_harness_spec(
-                Path(args.root),
-                Path(args.spec),
-                out=Path(args.out) if args.out else None,
-            )
-            code = 0 if result["ok"] else 1
-        elif args.quality_cmd == "spec-verify":
-            result = verify_ux_harness_spec_receipt(Path(args.root), Path(args.receipt))
-            code = 0 if result["ok"] else 1
-        else:
-            result = verify_quality_harness(
-                Path(args.root),
-                Path(args.manifest),
-                out=Path(args.out) if args.out else None,
-            )
-            code = 0 if result["decision"] == "READY_FOR_HUMAN_RELEASE_REVIEW" else 1
+        result, code = _execute_quality_command(
+            args,
+            write_quality_harness_template,
+            validate_ux_harness_spec,
+            verify_ux_harness_spec_receipt,
+            verify_quality_harness,
+        )
     except (
         FullStackUXHarnessError,
         FullStackUXSpecError,
@@ -137,28 +183,7 @@ def run_quality(args: Any) -> int:
         json.JSONDecodeError,
         ValueError,
     ) as exc:
-        result = {
-            "schema": "factory.full-stack-ux-harness.error.v1",
-            "decision": "REJECTED",
-            "code": getattr(exc, "code", "E_UX_INPUT"),
-            "message": getattr(exc, "message", str(exc)),
-            "authority": "none",
-        }
+        result = _quality_error(exc)
         code = 2
-    if args.json:
-        print(
-            json.dumps(result, indent=2, sort_keys=True),
-            file=sys.stderr if code == 2 else sys.stdout,
-        )
-    elif code == 0:
-        print(f"Quality harness: {result.get('decision', 'TEMPLATE_WRITTEN')}")
-        if result.get("path"):
-            print(f"Receipt: {result['path']}")
-        elif result.get("source"):
-            print(f"Source: {result['source']}")
-    else:
-        print(
-            json.dumps(result, indent=2, sort_keys=True),
-            file=sys.stderr if code == 2 else sys.stdout,
-        )
+    _print_quality_result(args, result, code)
     return code
