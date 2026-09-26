@@ -468,6 +468,75 @@ def _relative_paths(values: Iterable[str], label: str = "allowed_paths") -> list
     return sorted(set(normalized))
 
 
+def _capability_tool_lists(raw: dict[str, Any]) -> dict[str, list[str]]:
+    """Normalize permitted, forbidden, and required evidence names."""
+    tools: dict[str, list[str]] = {}
+    for key in ("allowed_tools", "forbidden_tools", "required_evidence"):
+        value = raw[key]
+        if not isinstance(value, list) or any(
+            not isinstance(item, str) or not item.strip() for item in value
+        ):
+            raise AgenticControlError(
+                "E_CAPABILITY_SCHEMA", f"{key} must be a list of strings"
+            )
+        tools[key] = sorted(set(item.strip() for item in value))
+    if set(tools["allowed_tools"]) & set(tools["forbidden_tools"]):
+        raise AgenticControlError(
+            "E_CAPABILITY_SCHEMA", "allowed and forbidden tools overlap"
+        )
+    return tools
+
+
+def _normalize_capability(raw: Any, seen: set[str]) -> dict[str, Any]:
+    """Validate one registry capability before inserting it into the ledger."""
+    if not isinstance(raw, dict):
+        raise AgenticControlError("E_CAPABILITY_SCHEMA", "capability must be an object")
+    required = {
+        "id",
+        "role",
+        "risk_class",
+        "allowed_tools",
+        "forbidden_tools",
+        "allowed_paths",
+        "model_tier",
+        "stop_condition",
+        "approval_required",
+        "required_evidence",
+    }
+    if set(raw) != required:
+        raise AgenticControlError(
+            "E_CAPABILITY_SCHEMA", "capability fields are not exact"
+        )
+    capability_id = _id(raw["id"], "capability.id")
+    if capability_id in seen:
+        raise AgenticControlError(
+            "E_CAPABILITY_SCHEMA", "capability ids must be unique"
+        )
+    seen.add(capability_id)
+    role = _id(raw["role"], "capability.role")
+    if raw["risk_class"] not in {"low", "medium", "high", "critical"}:
+        raise AgenticControlError("E_CAPABILITY_SCHEMA", "risk_class is invalid")
+    if raw["model_tier"] not in {"lightweight", "workhorse", "frontier"}:
+        raise AgenticControlError("E_CAPABILITY_SCHEMA", "model_tier is invalid")
+    if not isinstance(raw["approval_required"], bool):
+        raise AgenticControlError(
+            "E_CAPABILITY_SCHEMA", "approval_required must be boolean"
+        )
+    tools = _capability_tool_lists(raw)
+    return {
+        "id": capability_id,
+        "role": role,
+        "risk_class": raw["risk_class"],
+        "allowed_tools": tools["allowed_tools"],
+        "forbidden_tools": tools["forbidden_tools"],
+        "allowed_paths": _relative_paths(raw["allowed_paths"]),
+        "model_tier": raw["model_tier"],
+        "stop_condition": _bounded_text(raw["stop_condition"], "stop_condition"),
+        "approval_required": raw["approval_required"],
+        "required_evidence": tools["required_evidence"],
+    }
+
+
 def create_capability_registry(
     registry_id: str,
     version: str,
@@ -482,72 +551,7 @@ def create_capability_registry(
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
     for raw in capabilities:
-        if not isinstance(raw, dict):
-            raise AgenticControlError(
-                "E_CAPABILITY_SCHEMA", "capability must be an object"
-            )
-        required = {
-            "id",
-            "role",
-            "risk_class",
-            "allowed_tools",
-            "forbidden_tools",
-            "allowed_paths",
-            "model_tier",
-            "stop_condition",
-            "approval_required",
-            "required_evidence",
-        }
-        if set(raw) != required:
-            raise AgenticControlError(
-                "E_CAPABILITY_SCHEMA", "capability fields are not exact"
-            )
-        capability_id = _id(raw["id"], "capability.id")
-        if capability_id in seen:
-            raise AgenticControlError(
-                "E_CAPABILITY_SCHEMA", "capability ids must be unique"
-            )
-        seen.add(capability_id)
-        role = _id(raw["role"], "capability.role")
-        if raw["risk_class"] not in {"low", "medium", "high", "critical"}:
-            raise AgenticControlError("E_CAPABILITY_SCHEMA", "risk_class is invalid")
-        if raw["model_tier"] not in {"lightweight", "workhorse", "frontier"}:
-            raise AgenticControlError("E_CAPABILITY_SCHEMA", "model_tier is invalid")
-        if not isinstance(raw["approval_required"], bool):
-            raise AgenticControlError(
-                "E_CAPABILITY_SCHEMA", "approval_required must be boolean"
-            )
-        tools = {}
-        for key in ("allowed_tools", "forbidden_tools", "required_evidence"):
-            value = raw[key]
-            if not isinstance(value, list) or any(
-                not isinstance(item, str) or not item.strip() for item in value
-            ):
-                raise AgenticControlError(
-                    "E_CAPABILITY_SCHEMA", f"{key} must be a list of strings"
-                )
-            tools[key] = sorted(set(item.strip() for item in value))
-        overlap = set(tools["allowed_tools"]) & set(tools["forbidden_tools"])
-        if overlap:
-            raise AgenticControlError(
-                "E_CAPABILITY_SCHEMA", "allowed and forbidden tools overlap"
-            )
-        rows.append(
-            {
-                "id": capability_id,
-                "role": role,
-                "risk_class": raw["risk_class"],
-                "allowed_tools": tools["allowed_tools"],
-                "forbidden_tools": tools["forbidden_tools"],
-                "allowed_paths": _relative_paths(raw["allowed_paths"]),
-                "model_tier": raw["model_tier"],
-                "stop_condition": _bounded_text(
-                    raw["stop_condition"], "stop_condition"
-                ),
-                "approval_required": raw["approval_required"],
-                "required_evidence": tools["required_evidence"],
-            }
-        )
+        rows.append(_normalize_capability(raw, seen))
     if not rows:
         raise AgenticControlError(
             "E_CAPABILITY_SCHEMA", "at least one capability is required"
@@ -656,21 +660,16 @@ def create_task_card(
     return {**core, "task_sha256": digest, "marker": "TASK_CARD_HASH_BOUND"}
 
 
-def transition_task_card(
+def _validate_task_transition(
     card: dict[str, Any],
     state: str,
-    *,
-    lease_id: str | None = None,
-    lease_expires_at: str | None = None,
-    checkpoint_digest: str | None = None,
-    evidence_digest: str | None = None,
-    _verified_alignment: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Apply one deterministic task transition and return a new hash-bound card."""
-    verify_task_card(card)
+    evidence_digest: str | None,
+    verified_alignment: dict[str, Any] | None,
+) -> None:
+    """Reject unsupported state edges and completion without bound evidence."""
     if state not in _TASK_STATES:
         raise AgenticControlError("E_TASK_STATE", "unsupported task state")
-    if state == "completed" and _verified_alignment is None:
+    if state == "completed" and verified_alignment is None:
         raise AgenticControlError(
             "E_TASK_EVIDENCE",
             "completed state requires candidate alignment and evidence verification",
@@ -700,8 +699,16 @@ def transition_task_card(
         raise AgenticControlError(
             "E_TASK_EVIDENCE", "completion requires a hash-bound evidence digest"
         )
-    updated = dict(card)
-    updated["state"] = state
+
+
+def _apply_task_lease(
+    updated: dict[str, Any],
+    card: dict[str, Any],
+    state: str,
+    lease_id: str | None,
+    lease_expires_at: str | None,
+) -> None:
+    """Set or clear the lease for a validated task transition."""
     if state == "leased":
         if not lease_id or not lease_expires_at:
             raise AgenticControlError(
@@ -714,6 +721,24 @@ def transition_task_card(
         updated["attempt"] = int(card["attempt"]) + 1
     elif state in {"expired", "cancelled", "completed"}:
         updated["lease"] = None
+
+
+def transition_task_card(
+    card: dict[str, Any],
+    state: str,
+    *,
+    lease_id: str | None = None,
+    lease_expires_at: str | None = None,
+    checkpoint_digest: str | None = None,
+    evidence_digest: str | None = None,
+    _verified_alignment: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Apply one deterministic task transition and return a new hash-bound card."""
+    verify_task_card(card)
+    _validate_task_transition(card, state, evidence_digest, _verified_alignment)
+    updated = dict(card)
+    updated["state"] = state
+    _apply_task_lease(updated, card, state, lease_id, lease_expires_at)
     if checkpoint_digest is not None:
         _digest(checkpoint_digest, "checkpoint_digest")
         updated["checkpoint"] = checkpoint_digest
@@ -729,6 +754,50 @@ def transition_task_card(
         core["evidence_digest"] = updated["evidence_digest"]
     digest = _sha(core)
     return {**core, "task_sha256": digest, "marker": "TASK_CARD_HASH_BOUND"}
+
+
+def _validate_task_card_lifecycle(card: dict[str, Any]) -> None:
+    """Check the state, attempt, and exact lease shape of a task card."""
+    if card.get("state") not in _TASK_STATES or not isinstance(
+        card.get("authority"), dict
+    ):
+        raise AgenticControlError(
+            "E_TASK_SCHEMA", "task card state or authority is invalid"
+        )
+    if (
+        not isinstance(card.get("attempt"), int)
+        or isinstance(card.get("attempt"), bool)
+        or card["attempt"] < 0
+    ):
+        raise AgenticControlError("E_TASK_SCHEMA", "task card attempt is invalid")
+    if not isinstance(card.get("lease"), (dict, type(None))):
+        raise AgenticControlError("E_TASK_SCHEMA", "task card lease is invalid")
+    if isinstance(card.get("lease"), dict):
+        if set(card["lease"]) != {"lease_id", "expires_at"}:
+            raise AgenticControlError(
+                "E_TASK_SCHEMA", "task card lease fields are not exact"
+            )
+        _id(card["lease"]["lease_id"], "lease_id")
+        _bounded_text(card["lease"]["expires_at"], "lease_expires_at", 80)
+
+
+def _validate_task_card_proof(card: dict[str, Any]) -> None:
+    """Check optional evidence digests and the zero-authority boundary."""
+    if card.get("checkpoint") is not None:
+        _digest(card["checkpoint"], "checkpoint_digest")
+    if card.get("evidence_digest") is not None:
+        _digest(card["evidence_digest"], "evidence_digest")
+    if card.get("state") == "completed" and card.get("evidence_digest") is None:
+        raise AgenticControlError(
+            "E_TASK_EVIDENCE",
+            "completed task cards require a hash-bound evidence digest",
+        )
+    _digest(card["registry_sha256"], "registry_sha256")
+    _digest(card["intent_digest"], "intent_digest")
+    if any(value is not False for value in card["authority"].values()):
+        raise AgenticControlError(
+            "E_TASK_AUTHORITY", "task card cannot grant authority"
+        )
 
 
 def verify_task_card(card: dict[str, Any]) -> dict[str, Any]:
@@ -775,54 +844,13 @@ def verify_task_card(card: dict[str, Any]) -> dict[str, Any]:
         raise AgenticControlError(
             "E_TASK_TAMPERED", "task card digest does not match contents"
         )
-    if card.get("state") not in _TASK_STATES or not isinstance(
-        card.get("authority"), dict
-    ):
-        raise AgenticControlError(
-            "E_TASK_SCHEMA", "task card state or authority is invalid"
-        )
-    if (
-        not isinstance(card.get("attempt"), int)
-        or isinstance(card.get("attempt"), bool)
-        or card["attempt"] < 0
-    ):
-        raise AgenticControlError("E_TASK_SCHEMA", "task card attempt is invalid")
-    if not isinstance(card.get("lease"), (dict, type(None))):
-        raise AgenticControlError("E_TASK_SCHEMA", "task card lease is invalid")
-    if isinstance(card.get("lease"), dict):
-        if set(card["lease"]) != {"lease_id", "expires_at"}:
-            raise AgenticControlError(
-                "E_TASK_SCHEMA", "task card lease fields are not exact"
-            )
-        _id(card["lease"]["lease_id"], "lease_id")
-        _bounded_text(card["lease"]["expires_at"], "lease_expires_at", 80)
-    if card.get("checkpoint") is not None:
-        _digest(card["checkpoint"], "checkpoint_digest")
-    if card.get("evidence_digest") is not None:
-        _digest(card["evidence_digest"], "evidence_digest")
-    if card.get("state") == "completed" and card.get("evidence_digest") is None:
-        raise AgenticControlError(
-            "E_TASK_EVIDENCE",
-            "completed task cards require a hash-bound evidence digest",
-        )
-    _digest(card["registry_sha256"], "registry_sha256")
-    _digest(card["intent_digest"], "intent_digest")
-    if any(value is not False for value in card["authority"].values()):
-        raise AgenticControlError(
-            "E_TASK_AUTHORITY", "task card cannot grant authority"
-        )
+    _validate_task_card_lifecycle(card)
+    _validate_task_card_proof(card)
     return dict(card)
 
 
-def project_task_board(cards: Iterable[dict[str, Any]]) -> dict[str, Any]:
-    """Project verified task cards into deterministic Kanban swim lanes.
-
-    This is intentionally a projection, not a dispatcher.  It validates the
-    dependency graph, rejects missing edges and cycles, then reports what is
-    ready, waiting, running, in review, or blocked.  No lease, model, branch,
-    merge, or release action is performed.
-    """
-    verified = [verify_task_card(card) for card in cards]
+def _task_board_index(verified: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Index verified task cards after rejecting duplicate ids and bad edges."""
     by_id: dict[str, dict[str, Any]] = {}
     for card in verified:
         task_id = _id(card["task_id"], "task_id")
@@ -837,15 +865,18 @@ def project_task_board(cards: Iterable[dict[str, Any]]) -> dict[str, Any]:
         for dependency in card["dependencies"]:
             _id(dependency, "dependency")
         by_id[task_id] = card
+    return by_id
 
-    for card in verified:
+
+def _validate_task_board_graph(by_id: dict[str, dict[str, Any]]) -> None:
+    """Reject missing dependency cards and cycles before projecting lanes."""
+    for card in by_id.values():
         missing = sorted(set(card["dependencies"]) - set(by_id))
         if missing:
             raise AgenticControlError(
                 "E_TASK_BOARD_DEPENDENCY",
                 f"unknown dependencies for {card['task_id']}: {', '.join(missing)}",
             )
-
     visiting: set[str] = set()
     visited: set[str] = set()
 
@@ -865,6 +896,32 @@ def project_task_board(cards: Iterable[dict[str, Any]]) -> dict[str, Any]:
     for task_id in sorted(by_id):
         visit(task_id)
 
+
+def _task_board_lane(state: str, unmet: list[str]) -> str:
+    """Map a task state and unmet dependencies to its display lane."""
+    if state == "completed":
+        return "done"
+    if state in {"leased", "running", "checkpointed"}:
+        return "running"
+    if state in {"verifying", "review_required"}:
+        return "review"
+    if state in {"blocked", "expired", "cancelled"}:
+        return "blocked"
+    return "triage" if unmet else "ready"
+
+
+def project_task_board(cards: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Project verified task cards into deterministic Kanban swim lanes.
+
+    This is intentionally a projection, not a dispatcher.  It validates the
+    dependency graph, rejects missing edges and cycles, then reports what is
+    ready, waiting, running, in review, or blocked.  No lease, model, branch,
+    merge, or release action is performed.
+    """
+    verified = [verify_task_card(card) for card in cards]
+    by_id = _task_board_index(verified)
+    _validate_task_board_graph(by_id)
+
     completed = {
         task_id for task_id, card in by_id.items() if card["state"] == "completed"
     }
@@ -881,18 +938,7 @@ def project_task_board(cards: Iterable[dict[str, Any]]) -> dict[str, Any]:
         card = by_id[task_id]
         unmet = sorted(set(card["dependencies"]) - completed)
         state = card["state"]
-        if state == "completed":
-            lane = "done"
-        elif state in {"leased", "running", "checkpointed"}:
-            lane = "running"
-        elif state in {"verifying", "review_required"}:
-            lane = "review"
-        elif state in {"blocked", "expired", "cancelled"}:
-            lane = "blocked"
-        elif unmet:
-            lane = "triage"
-        else:
-            lane = "ready"
+        lane = _task_board_lane(state, unmet)
         lane_ids[lane].append(task_id)
         rows.append(
             {
@@ -1178,6 +1224,25 @@ def candidate_digest_for_paths(root: Path, changed_paths: Iterable[str]) -> str:
     return digest.hexdigest()
 
 
+def _validate_candidate_alignment_fields(receipt: dict[str, Any]) -> None:
+    """Validate aligned identity, source paths, and zero authority."""
+    _id(receipt["task_id"], "task_id")
+    _id(receipt["workflow_id"], "workflow_id")
+    for key in ("task_sha256", "handoff_sha256", "intent_digest", "candidate_hash"):
+        _digest(receipt[key], key)
+    if not isinstance(receipt["changed_paths"], list) or not receipt["changed_paths"]:
+        raise AgenticControlError(
+            "E_CANDIDATE_SCHEMA", "changed_paths must be non-empty"
+        )
+    _relative_paths(receipt["changed_paths"], "changed_paths")
+    if not isinstance(receipt["authority"], dict) or any(
+        value is not False for value in receipt["authority"].values()
+    ):
+        raise AgenticControlError(
+            "E_CANDIDATE_AUTHORITY", "receipt cannot grant authority"
+        )
+
+
 def verify_candidate_alignment(receipt: dict[str, Any]) -> dict[str, Any]:
     """Verify candidate alignment receipt integrity and authority."""
     if (
@@ -1214,21 +1279,7 @@ def verify_candidate_alignment(receipt: dict[str, Any]) -> dict[str, Any]:
         raise AgenticControlError(
             "E_CANDIDATE_SCHEMA", "receipt marker or scope verdict is invalid"
         )
-    _id(receipt["task_id"], "task_id")
-    _id(receipt["workflow_id"], "workflow_id")
-    for key in ("task_sha256", "handoff_sha256", "intent_digest", "candidate_hash"):
-        _digest(receipt[key], key)
-    if not isinstance(receipt["changed_paths"], list) or not receipt["changed_paths"]:
-        raise AgenticControlError(
-            "E_CANDIDATE_SCHEMA", "changed_paths must be non-empty"
-        )
-    _relative_paths(receipt["changed_paths"], "changed_paths")
-    if not isinstance(receipt["authority"], dict) or any(
-        value is not False for value in receipt["authority"].values()
-    ):
-        raise AgenticControlError(
-            "E_CANDIDATE_AUTHORITY", "receipt cannot grant authority"
-        )
+    _validate_candidate_alignment_fields(receipt)
     return dict(receipt)
 
 
@@ -1287,6 +1338,31 @@ def create_task_evidence(
     }
 
 
+def _validate_task_evidence_fields(receipt: dict[str, Any]) -> None:
+    """Validate evidence identity, outcome, source scope, and zero authority."""
+    _id(receipt["task_id"], "task_id")
+    _id(receipt["workflow_id"], "workflow_id")
+    _id(receipt["verifier_id"], "verifier_id")
+    for key in ("task_sha256", "intent_digest", "candidate_hash", "evidence_digest"):
+        _digest(receipt[key], key)
+    if receipt["alignment_sha256"] is not None:
+        _digest(receipt["alignment_sha256"], "alignment_sha256")
+    _bounded_text(receipt["evidence_kind"], "evidence_kind", 96)
+    if receipt["outcome"] not in {"passed", "failed"}:
+        raise AgenticControlError("E_TASK_EVIDENCE", "outcome must be passed or failed")
+    if not isinstance(receipt["source_paths"], list):
+        raise AgenticControlError(
+            "E_TASK_EVIDENCE_SCHEMA", "source_paths must be a list"
+        )
+    _relative_paths(receipt["source_paths"], "source_paths")
+    if not isinstance(receipt["authority"], dict) or any(
+        value is not False for value in receipt["authority"].values()
+    ):
+        raise AgenticControlError(
+            "E_TASK_EVIDENCE_AUTHORITY", "evidence receipt cannot grant authority"
+        )
+
+
 def verify_task_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
     """Verify task evidence receipt integrity and its zero-authority boundary."""
     if not isinstance(receipt, dict) or receipt.get("schema") != TASK_EVIDENCE_SCHEMA:
@@ -1326,28 +1402,26 @@ def verify_task_evidence(receipt: dict[str, Any]) -> dict[str, Any]:
         raise AgenticControlError(
             "E_TASK_EVIDENCE_SCHEMA", "evidence receipt marker is invalid"
         )
-    _id(receipt["task_id"], "task_id")
-    _id(receipt["workflow_id"], "workflow_id")
-    _id(receipt["verifier_id"], "verifier_id")
-    for key in ("task_sha256", "intent_digest", "candidate_hash", "evidence_digest"):
-        _digest(receipt[key], key)
-    if receipt["alignment_sha256"] is not None:
-        _digest(receipt["alignment_sha256"], "alignment_sha256")
-    _bounded_text(receipt["evidence_kind"], "evidence_kind", 96)
-    if receipt["outcome"] not in {"passed", "failed"}:
-        raise AgenticControlError("E_TASK_EVIDENCE", "outcome must be passed or failed")
-    if not isinstance(receipt["source_paths"], list):
-        raise AgenticControlError(
-            "E_TASK_EVIDENCE_SCHEMA", "source_paths must be a list"
-        )
-    _relative_paths(receipt["source_paths"], "source_paths")
-    if not isinstance(receipt["authority"], dict) or any(
-        value is not False for value in receipt["authority"].values()
+    _validate_task_evidence_fields(receipt)
+    return dict(receipt)
+
+
+def _match_evidence_to_task(card: dict[str, Any], evidence: dict[str, Any]) -> None:
+    """Require the evidence to name this task and its workflow lineage."""
+    if (
+        evidence["task_id"] != card["task_id"]
+        or evidence["task_sha256"] != card["task_sha256"]
     ):
         raise AgenticControlError(
-            "E_TASK_EVIDENCE_AUTHORITY", "evidence receipt cannot grant authority"
+            "E_TASK_EVIDENCE", "evidence does not belong to the task card"
         )
-    return dict(receipt)
+    if (
+        evidence["workflow_id"] != card["workflow_id"]
+        or evidence["intent_digest"] != card["intent_digest"]
+    ):
+        raise AgenticControlError(
+            "E_TASK_EVIDENCE", "evidence lineage does not match the task"
+        )
 
 
 def complete_task_with_evidence(
@@ -1357,20 +1431,7 @@ def complete_task_with_evidence(
     verified_card = verify_task_card(card)
     verified_evidence = verify_task_evidence(evidence)
     verified_alignment = verify_candidate_alignment(alignment)
-    if (
-        verified_evidence["task_id"] != verified_card["task_id"]
-        or verified_evidence["task_sha256"] != verified_card["task_sha256"]
-    ):
-        raise AgenticControlError(
-            "E_TASK_EVIDENCE", "evidence does not belong to the task card"
-        )
-    if (
-        verified_evidence["workflow_id"] != verified_card["workflow_id"]
-        or verified_evidence["intent_digest"] != verified_card["intent_digest"]
-    ):
-        raise AgenticControlError(
-            "E_TASK_EVIDENCE", "evidence lineage does not match the task"
-        )
+    _match_evidence_to_task(verified_card, verified_evidence)
     if verified_evidence["outcome"] != "passed":
         raise AgenticControlError(
             "E_TASK_EVIDENCE", "failed evidence cannot complete a task"
@@ -1398,6 +1459,61 @@ def complete_task_with_evidence(
     )
 
 
+def _senior_receipt_fields(
+    name: str, status: str, receipt_path: Any, receipt_sha256: Any
+) -> None:
+    """Require a bound receipt for passed controls and validate optional evidence."""
+    if status == "PASSED":
+        if not isinstance(receipt_path, str) or not receipt_path.strip():
+            raise AgenticControlError(
+                "E_SENIOR_CONTROL_RECEIPT", f"slice {name} requires receipt_path"
+            )
+        _digest(receipt_sha256, f"{name}.receipt_sha256")
+    elif receipt_path is not None or receipt_sha256 is not None:
+        if receipt_path is not None and (
+            not isinstance(receipt_path, str) or not receipt_path.strip()
+        ):
+            raise AgenticControlError(
+                "E_SENIOR_CONTROL_RECEIPT", f"slice {name}.receipt_path is invalid"
+            )
+        if receipt_sha256 is not None:
+            _digest(receipt_sha256, f"{name}.receipt_sha256")
+
+
+def _normalize_senior_slice(name: str, value: Any) -> dict[str, Any]:
+    """Validate one named senior control and preserve its evidence binding."""
+    if not isinstance(value, dict) or set(value) != {
+        "status",
+        "evidence_digest",
+        "source",
+        "receipt_path",
+        "receipt_sha256",
+    }:
+        raise AgenticControlError(
+            "E_SENIOR_CONTROL_SCHEMA", f"slice {name} fields are not exact"
+        )
+    status = value["status"]
+    if status not in {"PASSED", "BLOCKED", "NOT_AVAILABLE"}:
+        raise AgenticControlError(
+            "E_SENIOR_CONTROL_SCHEMA", f"slice {name} status is invalid"
+        )
+    evidence_digest = value["evidence_digest"]
+    if status == "PASSED":
+        _digest(evidence_digest, f"{name}.evidence_digest")
+    elif evidence_digest is not None:
+        _digest(evidence_digest, f"{name}.evidence_digest")
+    receipt_path = value["receipt_path"]
+    receipt_sha256 = value["receipt_sha256"]
+    _senior_receipt_fields(name, status, receipt_path, receipt_sha256)
+    return {
+        "status": status,
+        "evidence_digest": evidence_digest,
+        "source": _bounded_text(value["source"], f"{name}.source", 160),
+        "receipt_path": receipt_path,
+        "receipt_sha256": receipt_sha256,
+    }
+
+
 def build_senior_control_bundle(
     candidate_hash: str,
     slices: dict[str, dict[str, Any]],
@@ -1411,51 +1527,7 @@ def build_senior_control_bundle(
         )
     normalized: dict[str, dict[str, Any]] = {}
     for name in SENIOR_CONTROL_SLICES:
-        value = slices[name]
-        if not isinstance(value, dict) or set(value) != {
-            "status",
-            "evidence_digest",
-            "source",
-            "receipt_path",
-            "receipt_sha256",
-        }:
-            raise AgenticControlError(
-                "E_SENIOR_CONTROL_SCHEMA", f"slice {name} fields are not exact"
-            )
-        status = value["status"]
-        if status not in {"PASSED", "BLOCKED", "NOT_AVAILABLE"}:
-            raise AgenticControlError(
-                "E_SENIOR_CONTROL_SCHEMA", f"slice {name} status is invalid"
-            )
-        evidence_digest = value["evidence_digest"]
-        if status == "PASSED":
-            _digest(evidence_digest, f"{name}.evidence_digest")
-        elif evidence_digest is not None:
-            _digest(evidence_digest, f"{name}.evidence_digest")
-        receipt_path = value["receipt_path"]
-        receipt_sha256 = value["receipt_sha256"]
-        if status == "PASSED":
-            if not isinstance(receipt_path, str) or not receipt_path.strip():
-                raise AgenticControlError(
-                    "E_SENIOR_CONTROL_RECEIPT", f"slice {name} requires receipt_path"
-                )
-            _digest(receipt_sha256, f"{name}.receipt_sha256")
-        elif receipt_path is not None or receipt_sha256 is not None:
-            if receipt_path is not None and (
-                not isinstance(receipt_path, str) or not receipt_path.strip()
-            ):
-                raise AgenticControlError(
-                    "E_SENIOR_CONTROL_RECEIPT", f"slice {name}.receipt_path is invalid"
-                )
-            if receipt_sha256 is not None:
-                _digest(receipt_sha256, f"{name}.receipt_sha256")
-        normalized[name] = {
-            "status": status,
-            "evidence_digest": evidence_digest,
-            "source": _bounded_text(value["source"], f"{name}.source", 160),
-            "receipt_path": receipt_path,
-            "receipt_sha256": receipt_sha256,
-        }
+        normalized[name] = _normalize_senior_slice(name, slices[name])
     blocking = [
         name for name in SENIOR_CONTROL_SLICES if normalized[name]["status"] != "PASSED"
     ]
@@ -1479,14 +1551,8 @@ def build_senior_control_bundle(
     }
 
 
-def verify_senior_control_bundle(
-    bundle: dict[str, Any], root: Path | None = None
-) -> dict[str, Any]:
-    """Verify six controls and their receipt bytes before accepting readiness."""
-    if not isinstance(bundle, dict) or bundle.get("schema") != SENIOR_CONTROL_SCHEMA:
-        raise AgenticControlError(
-            "E_SENIOR_CONTROL_SCHEMA", f"bundle must use {SENIOR_CONTROL_SCHEMA}"
-        )
+def _verify_senior_bundle_fields(bundle: dict[str, Any]) -> None:
+    """Validate the bundle digest, readiness projection, and authority."""
     required = {
         "schema",
         "candidate_hash",
@@ -1520,6 +1586,71 @@ def verify_senior_control_bundle(
         raise AgenticControlError(
             "E_SENIOR_CONTROL_AUTHORITY", "bundle cannot grant authority"
         )
+
+
+def _read_senior_receipt(
+    workspace: Path, name: str, slice_value: dict[str, Any]
+) -> dict:
+    """Read a workspace-local receipt after verifying its exact bytes."""
+    receipt_path = Path(slice_value["receipt_path"])
+    if receipt_path.is_absolute() or ".." in receipt_path.parts:
+        raise AgenticControlError(
+            "E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt escapes workspace"
+        )
+    resolved = (workspace / receipt_path).resolve()
+    if workspace not in resolved.parents or not resolved.is_file():
+        raise AgenticControlError(
+            "E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt is missing"
+        )
+    raw = resolved.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != slice_value["receipt_sha256"]:
+        raise AgenticControlError(
+            "E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt bytes changed"
+        )
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AgenticControlError(
+            "E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt is not JSON"
+        ) from exc
+
+
+def _verify_senior_receipt_payload(
+    name: str, payload: Any, candidate_hash: str, slice_value: dict[str, Any]
+) -> None:
+    """Bind a passed receipt to the candidate and reject claimed authority."""
+    if (
+        not isinstance(payload, dict)
+        or payload.get("candidate_hash") != candidate_hash
+        or payload.get("evidence_digest") != slice_value["evidence_digest"]
+    ):
+        raise AgenticControlError(
+            "E_SENIOR_CONTROL_RECEIPT",
+            f"slice {name} receipt is not bound to candidate/evidence",
+        )
+    if payload.get("outcome", "passed") != "passed":
+        raise AgenticControlError(
+            "E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt did not pass"
+        )
+    authority = payload.get("authority")
+    if authority is not None and (
+        not isinstance(authority, dict)
+        or any(value is not False for value in authority.values())
+    ):
+        raise AgenticControlError(
+            "E_SENIOR_CONTROL_AUTHORITY", f"slice {name} receipt grants authority"
+        )
+
+
+def verify_senior_control_bundle(
+    bundle: dict[str, Any], root: Path | None = None
+) -> dict[str, Any]:
+    """Verify six controls and their receipt bytes before accepting readiness."""
+    if not isinstance(bundle, dict) or bundle.get("schema") != SENIOR_CONTROL_SCHEMA:
+        raise AgenticControlError(
+            "E_SENIOR_CONTROL_SCHEMA", f"bundle must use {SENIOR_CONTROL_SCHEMA}"
+        )
+    _verify_senior_bundle_fields(bundle)
     if root is None:
         raise AgenticControlError(
             "E_SENIOR_CONTROL_RECEIPT",
@@ -1530,48 +1661,10 @@ def verify_senior_control_bundle(
         slice_value = bundle["slices"][name]
         if slice_value["status"] != "PASSED":
             continue
-        receipt_path = Path(slice_value["receipt_path"])
-        if receipt_path.is_absolute() or ".." in receipt_path.parts:
-            raise AgenticControlError(
-                "E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt escapes workspace"
-            )
-        resolved = (workspace / receipt_path).resolve()
-        if workspace not in resolved.parents or not resolved.is_file():
-            raise AgenticControlError(
-                "E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt is missing"
-            )
-        raw = resolved.read_bytes()
-        if hashlib.sha256(raw).hexdigest() != slice_value["receipt_sha256"]:
-            raise AgenticControlError(
-                "E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt bytes changed"
-            )
-        try:
-            payload = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise AgenticControlError(
-                "E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt is not JSON"
-            ) from exc
-        if (
-            not isinstance(payload, dict)
-            or payload.get("candidate_hash") != bundle["candidate_hash"]
-            or payload.get("evidence_digest") != slice_value["evidence_digest"]
-        ):
-            raise AgenticControlError(
-                "E_SENIOR_CONTROL_RECEIPT",
-                f"slice {name} receipt is not bound to candidate/evidence",
-            )
-        if payload.get("outcome", "passed") != "passed":
-            raise AgenticControlError(
-                "E_SENIOR_CONTROL_RECEIPT", f"slice {name} receipt did not pass"
-            )
-        authority = payload.get("authority")
-        if authority is not None and (
-            not isinstance(authority, dict)
-            or any(value is not False for value in authority.values())
-        ):
-            raise AgenticControlError(
-                "E_SENIOR_CONTROL_AUTHORITY", f"slice {name} receipt grants authority"
-            )
+        payload = _read_senior_receipt(workspace, name, slice_value)
+        _verify_senior_receipt_payload(
+            name, payload, bundle["candidate_hash"], slice_value
+        )
     return dict(bundle)
 
 
@@ -1723,14 +1816,10 @@ def _route_fields(
     }
 
 
-def route_model(
-    task_class: str,
-    *,
-    risk: str = "medium",
-    latency_budget_ms: int | None = None,
-    token_budget: int | None = None,
-) -> dict[str, Any]:
-    """Choose a model tier using explicit inputs only; no model is contacted."""
+def _validate_model_route_inputs(
+    task_class: str, risk: str, latency_budget_ms: int | None, token_budget: int | None
+) -> None:
+    """Validate the explicit risk and budget inputs for a deterministic route."""
     if task_class not in {"routine", "standard", "critical"}:
         raise AgenticControlError(
             "E_MODEL_ROUTE", "task_class must be routine, standard, or critical"
@@ -1749,22 +1838,36 @@ def route_model(
             raise AgenticControlError(
                 "E_MODEL_ROUTE", f"{label} must be a non-negative integer or null"
             )
+
+
+def _select_model_tier(
+    task_class: str, risk: str, latency_budget_ms: int | None, token_budget: int | None
+) -> tuple[str, str]:
+    """Choose a tier from risk, task class, and the stated resource budgets."""
     if risk in {"high", "critical"} or task_class == "critical":
-        tier, reason = (
+        return (
             "frontier",
             "high-risk or critical work requires the deepest review capacity",
         )
-    elif task_class == "routine" and (
+    if task_class == "routine" and (
         latency_budget_ms is not None and latency_budget_ms <= 1500
     ):
-        tier, reason = (
-            "lightweight",
-            "bounded routine work prioritizes latency and cost",
-        )
-    elif token_budget is not None and token_budget < 4000 and task_class == "routine":
-        tier, reason = "lightweight", "bounded token budget fits a lightweight route"
-    else:
-        tier, reason = "workhorse", "standard work uses the balanced default tier"
+        return "lightweight", "bounded routine work prioritizes latency and cost"
+    if token_budget is not None and token_budget < 4000 and task_class == "routine":
+        return "lightweight", "bounded token budget fits a lightweight route"
+    return "workhorse", "standard work uses the balanced default tier"
+
+
+def route_model(
+    task_class: str,
+    *,
+    risk: str = "medium",
+    latency_budget_ms: int | None = None,
+    token_budget: int | None = None,
+) -> dict[str, Any]:
+    """Choose a model tier using explicit inputs only; no model is contacted."""
+    _validate_model_route_inputs(task_class, risk, latency_budget_ms, token_budget)
+    tier, reason = _select_model_tier(task_class, risk, latency_budget_ms, token_budget)
     core = {
         "schema": MODEL_ROUTE_SCHEMA,
         "tier": tier,
@@ -1779,6 +1882,27 @@ def route_model(
         "marker": "MODEL_ROUTE_DETERMINISTIC",
     }
     return {**core, "route_sha256": _sha(core)}
+
+
+def _validate_receipt_route_budgets(budgets: Any) -> None:
+    """Reject malformed or negative budget values in a sealed route receipt."""
+    if not isinstance(budgets, dict) or set(budgets) != {
+        "latency_budget_ms",
+        "token_budget",
+    }:
+        raise AgenticControlError(
+            "E_MODEL_ROUTE_TRACE", "model route budgets are invalid"
+        )
+    for value, label in (
+        (budgets["latency_budget_ms"], "latency_budget_ms"),
+        (budgets["token_budget"], "token_budget"),
+    ):
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+        ):
+            raise AgenticControlError(
+                "E_MODEL_ROUTE_TRACE", f"{label} must be a non-negative integer or null"
+            )
 
 
 def verify_model_route(route: dict[str, Any]) -> dict[str, Any]:
@@ -1805,24 +1929,7 @@ def verify_model_route(route: dict[str, Any]) -> dict[str, Any]:
         )
     core = {key: route[key] for key in required}
     _route_fields(core)
-    budgets = core["budgets"]
-    if not isinstance(budgets, dict) or set(budgets) != {
-        "latency_budget_ms",
-        "token_budget",
-    }:
-        raise AgenticControlError(
-            "E_MODEL_ROUTE_TRACE", "model route budgets are invalid"
-        )
-    for value, label in (
-        (budgets["latency_budget_ms"], "latency_budget_ms"),
-        (budgets["token_budget"], "token_budget"),
-    ):
-        if value is not None and (
-            isinstance(value, bool) or not isinstance(value, int) or value < 0
-        ):
-            raise AgenticControlError(
-                "E_MODEL_ROUTE_TRACE", f"{label} must be a non-negative integer or null"
-            )
+    _validate_receipt_route_budgets(core["budgets"])
     if core["marker"] != "MODEL_ROUTE_DETERMINISTIC":
         raise AgenticControlError(
             "E_MODEL_ROUTE_TRACE", "model route marker is invalid"
@@ -1887,6 +1994,40 @@ def audit_model_route_policy(route: dict[str, Any]) -> dict[str, Any]:
     return verify_model_route_policy_audit(result)
 
 
+def _validate_route_audit_differences(differences: Any) -> None:
+    """Accept only sorted, unique route-policy field names as drift evidence."""
+    allowed = {
+        "tier",
+        "task_class",
+        "risk",
+        "budgets",
+        "rationale",
+        "authority",
+        "marker",
+    }
+    if (
+        not isinstance(differences, list)
+        or any(not isinstance(item, str) for item in differences)
+        or differences != sorted(set(differences))
+        or any(item not in allowed for item in differences)
+    ):
+        raise AgenticControlError(
+            "E_ROUTE_AUDIT_SCHEMA", "route audit differences are invalid"
+        )
+
+
+def _verify_route_audit_authority(authority: Any) -> None:
+    """Require the exact zero-authority route audit declaration."""
+    if authority != {
+        "provider_selection": False,
+        "model_call": False,
+        "execution": False,
+    }:
+        raise AgenticControlError(
+            "E_ROUTE_AUDIT_AUTHORITY", "route audit cannot grant authority"
+        )
+
+
 def verify_model_route_policy_audit(audit: dict[str, Any]) -> dict[str, Any]:
     """Verify the exact field set, authority boundary, and digest of a route audit."""
     if not isinstance(audit, dict) or audit.get("schema") != MODEL_ROUTE_AUDIT_SCHEMA:
@@ -1910,25 +2051,8 @@ def verify_model_route_policy_audit(audit: dict[str, Any]) -> dict[str, Any]:
     core = {key: audit[key] for key in core_keys}
     _digest(core["observed_route_sha256"], "observed_route_sha256")
     _digest(core["expected_route_sha256"], "expected_route_sha256")
-    allowed_differences = {
-        "tier",
-        "task_class",
-        "risk",
-        "budgets",
-        "rationale",
-        "authority",
-        "marker",
-    }
     differences = core["differences"]
-    if (
-        not isinstance(differences, list)
-        or any(not isinstance(item, str) for item in differences)
-        or differences != sorted(set(differences))
-        or any(item not in allowed_differences for item in differences)
-    ):
-        raise AgenticControlError(
-            "E_ROUTE_AUDIT_SCHEMA", "route audit differences are invalid"
-        )
+    _validate_route_audit_differences(differences)
     valid = not differences
     if core["valid"] is not valid or core["status"] != (
         "MATCH" if valid else "POLICY_DRIFT"
@@ -1936,14 +2060,7 @@ def verify_model_route_policy_audit(audit: dict[str, Any]) -> dict[str, Any]:
         raise AgenticControlError(
             "E_ROUTE_AUDIT_SCHEMA", "route audit result does not match its differences"
         )
-    if core["authority"] != {
-        "provider_selection": False,
-        "model_call": False,
-        "execution": False,
-    }:
-        raise AgenticControlError(
-            "E_ROUTE_AUDIT_AUTHORITY", "route audit cannot grant authority"
-        )
+    _verify_route_audit_authority(core["authority"])
     if audit["marker"] != "MODEL_ROUTE_POLICY_RECOMPUTED" or audit[
         "claim_boundary"
     ] != (
@@ -1957,6 +2074,23 @@ def verify_model_route_policy_audit(audit: dict[str, Any]) -> dict[str, Any]:
             "E_ROUTE_AUDIT_TAMPERED", "route audit digest does not match contents"
         )
     return dict(audit)
+
+
+def _handoff_allowed_paths(allowed_paths: Iterable[str]) -> list[str]:
+    """Normalize bounded workspace-relative paths for a handoff envelope."""
+    paths = []
+    for path in allowed_paths:
+        if (
+            not isinstance(path, str)
+            or not path.strip()
+            or Path(path).is_absolute()
+            or ".." in Path(path).parts
+        ):
+            raise AgenticControlError(
+                "E_HANDOFF_PATH", "allowed_paths must be workspace-relative"
+            )
+        paths.append(Path(path.replace("\\", "/")).as_posix())
+    return sorted(set(paths))
 
 
 def create_typed_handoff(
@@ -1991,18 +2125,7 @@ def create_typed_handoff(
         raise AgenticControlError(
             "E_HANDOFF_ACTION", "next_action must be a bounded non-empty string"
         )
-    paths = []
-    for path in allowed_paths:
-        if (
-            not isinstance(path, str)
-            or not path.strip()
-            or Path(path).is_absolute()
-            or ".." in Path(path).parts
-        ):
-            raise AgenticControlError(
-                "E_HANDOFF_PATH", "allowed_paths must be workspace-relative"
-            )
-        paths.append(Path(path.replace("\\", "/")).as_posix())
+    paths = _handoff_allowed_paths(allowed_paths)
     timestamp = created_at or datetime.now(timezone.utc).isoformat()
     if not isinstance(timestamp, str) or not timestamp.strip():
         raise AgenticControlError(
@@ -2016,7 +2139,7 @@ def create_typed_handoff(
         "target_agent": target_agent,
         "intent_digest": intent_digest,
         "payload_digest": payload_digest,
-        "allowed_paths": sorted(set(paths)),
+        "allowed_paths": paths,
         "next_action": next_action.strip(),
         "created_at": timestamp,
         "authority": dict(_AUTHORITY),
@@ -2111,6 +2234,14 @@ def create_route_trace(
     }
 
 
+def _validate_route_event_count(value: Any) -> None:
+    """Require a positive integer count without accepting JSON booleans."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise AgenticControlError(
+            "E_ROUTE_TRACE", "event_count must be a positive integer"
+        )
+
+
 def verify_route_trace(trace: dict[str, Any]) -> dict[str, Any]:
     """Verify route-trace hashes and ensure every linked authority is false."""
     if not isinstance(trace, dict) or trace.get("schema") != ROUTE_TRACE_SCHEMA:
@@ -2133,14 +2264,7 @@ def verify_route_trace(trace: dict[str, Any]) -> dict[str, Any]:
     )
     for key in ("workflow_sha256", "handoff_sha256", "swimlane_head_digest"):
         _digest(core[key], key)
-    if (
-        isinstance(core["event_count"], bool)
-        or not isinstance(core["event_count"], int)
-        or core["event_count"] < 1
-    ):
-        raise AgenticControlError(
-            "E_ROUTE_TRACE", "event_count must be a positive integer"
-        )
+    _validate_route_event_count(core["event_count"])
     if not isinstance(core["authority"], dict):
         raise AgenticControlError(
             "E_ROUTE_TRACE_AUTHORITY", "route authority must be an object"
@@ -2160,18 +2284,10 @@ def verify_route_trace(trace: dict[str, Any]) -> dict[str, Any]:
     return dict(trace)
 
 
-def new_swimlane_event(
-    workflow_id: str,
-    lane: str,
-    stage: str,
-    status: str,
-    *,
-    sequence: int,
-    artifact_digest: str | None = None,
-    previous_event_digest: str | None = None,
-    elapsed_ms: int | None = None,
-) -> dict[str, Any]:
-    """Create one append-only, observable swim-lane event."""
+def _validate_swimlane_identity(
+    workflow_id: str, lane: str, stage: str, status: str, sequence: int
+) -> None:
+    """Validate the lane identity, phase, outcome, and event sequence."""
     _id(workflow_id, "workflow_id")
     if not isinstance(lane, str) or not lane.strip() or len(lane) > 96:
         raise AgenticControlError(
@@ -2183,6 +2299,14 @@ def new_swimlane_event(
         raise AgenticControlError(
             "E_SWIMLANE_SEQUENCE", "sequence must be a non-negative integer"
         )
+
+
+def _validate_swimlane_metrics(
+    artifact_digest: str | None,
+    previous_event_digest: str | None,
+    elapsed_ms: int | None,
+) -> None:
+    """Validate optional hash links and non-negative elapsed time."""
     if artifact_digest is not None:
         _digest(artifact_digest, "artifact_digest")
     if previous_event_digest is not None:
@@ -2195,6 +2319,22 @@ def new_swimlane_event(
         raise AgenticControlError(
             "E_SWIMLANE_SCHEMA", "elapsed_ms must be non-negative"
         )
+
+
+def new_swimlane_event(
+    workflow_id: str,
+    lane: str,
+    stage: str,
+    status: str,
+    *,
+    sequence: int,
+    artifact_digest: str | None = None,
+    previous_event_digest: str | None = None,
+    elapsed_ms: int | None = None,
+) -> dict[str, Any]:
+    """Create one append-only, observable swim-lane event."""
+    _validate_swimlane_identity(workflow_id, lane, stage, status, sequence)
+    _validate_swimlane_metrics(artifact_digest, previous_event_digest, elapsed_ms)
     core = {
         "schema": SWIMLANE_SCHEMA,
         "workflow_id": workflow_id,
@@ -2384,14 +2524,8 @@ def verify_reusable_workflow(manifest: dict[str, Any]) -> dict[str, Any]:
     return dict(manifest)
 
 
-def create_sandbox_boundary(
-    root: Path,
-    *,
-    repo_path: str = ".",
-    expected_branch: str | None = None,
-    expected_head_sha: str | None = None,
-) -> dict[str, Any]:
-    """Inspect a checkout and issue a non-mutating branch/merge boundary."""
+def _sandbox_checkout(root: Path, repo_path: str) -> tuple[Path, Path]:
+    """Resolve a requested Git checkout strictly beneath the workspace."""
     workspace = Path(root).resolve()
     relative = Path(repo_path.replace("\\", "/"))
     if relative.is_absolute() or ".." in relative.parts:
@@ -2405,6 +2539,18 @@ def create_sandbox_boundary(
         ) from exc
     if not checkout.is_dir():
         raise AgenticControlError("E_SANDBOX_REPO", "repo_path is not a directory")
+    return relative, checkout
+
+
+def create_sandbox_boundary(
+    root: Path,
+    *,
+    repo_path: str = ".",
+    expected_branch: str | None = None,
+    expected_head_sha: str | None = None,
+) -> dict[str, Any]:
+    """Inspect a checkout and issue a non-mutating branch/merge boundary."""
+    relative, checkout = _sandbox_checkout(root, repo_path)
 
     def git(*args: str) -> str:
         run = subprocess.run(
@@ -2639,33 +2785,46 @@ def _deep_diffs(before: object, after: object, path: str = "") -> list[dict[str,
     return []
 
 
-def _drift_finding(diff: dict[str, Any]) -> dict[str, Any]:
-    """Classify one projection diff using release-sensitive control-plane rules."""
-    path = str(diff["path"])
-    kind = str(diff["kind"])
-    code = "AGENTIC_CONTROL_DRIFT"
-    severity = "REVIEW_REQUIRED"
-    if path.startswith("authority."):
-        code, severity = "AGENTIC_AUTHORITY_ESCALATION", "BLOCKED"
-    elif path == "schema" or path.endswith(".schema"):
-        code, severity = "AGENTIC_SCHEMA_CHANGED", "BLOCKED"
-    elif path.startswith("features.") and kind == "removed":
-        code, severity = "AGENTIC_FEATURE_REMOVED", "BLOCKED"
-    elif path == "extended_assurance.blocking_policy" and diff["after"] != (
+def _assurance_lane_drift(diff: dict[str, Any]) -> tuple[str, str]:
+    """Classify added or removed extended assurance lanes."""
+    before = set(diff["before"] or []) if isinstance(diff["before"], list) else set()
+    after = set(diff["after"] or []) if isinstance(diff["after"], list) else set()
+    if before - after:
+        return "AGENTIC_ASSURANCE_LANE_REMOVED", "BLOCKED"
+    return "AGENTIC_ASSURANCE_LANES_CHANGED", "REVIEW_REQUIRED"
+
+
+def _extended_assurance_drift(
+    path: str, kind: str, diff: dict[str, Any]
+) -> tuple[str, str]:
+    """Classify drift in optional assurance policy and lane coverage."""
+    if path == "extended_assurance.blocking_policy" and diff["after"] != (
         "only explicitly required lanes can block release"
     ):
-        code, severity = "AGENTIC_BLOCKING_POLICY_WEAKENED", "BLOCKED"
-    elif path == "extended_assurance.status" and diff["after"] == "disabled":
-        code, severity = "AGENTIC_ASSURANCE_DISABLED", "BLOCKED"
-    elif path == "extended_assurance.lanes" and kind == "changed":
-        before = (
-            set(diff["before"] or []) if isinstance(diff["before"], list) else set()
-        )
-        after = set(diff["after"] or []) if isinstance(diff["after"], list) else set()
-        if before - after:
-            code, severity = "AGENTIC_ASSURANCE_LANE_REMOVED", "BLOCKED"
-        else:
-            code, severity = "AGENTIC_ASSURANCE_LANES_CHANGED", "REVIEW_REQUIRED"
+        return "AGENTIC_BLOCKING_POLICY_WEAKENED", "BLOCKED"
+    if path == "extended_assurance.status" and diff["after"] == "disabled":
+        return "AGENTIC_ASSURANCE_DISABLED", "BLOCKED"
+    if path == "extended_assurance.lanes" and kind == "changed":
+        return _assurance_lane_drift(diff)
+    return "AGENTIC_CONTROL_DRIFT", "REVIEW_REQUIRED"
+
+
+def _drift_classification(diff: dict[str, Any]) -> tuple[str, str]:
+    """Apply release-sensitive rules to one changed control-plane path."""
+    path = str(diff["path"])
+    kind = str(diff["kind"])
+    if path.startswith("authority."):
+        return "AGENTIC_AUTHORITY_ESCALATION", "BLOCKED"
+    if path == "schema" or path.endswith(".schema"):
+        return "AGENTIC_SCHEMA_CHANGED", "BLOCKED"
+    if path.startswith("features.") and kind == "removed":
+        return "AGENTIC_FEATURE_REMOVED", "BLOCKED"
+    return _extended_assurance_drift(path, kind, diff)
+
+
+def _drift_finding(diff: dict[str, Any]) -> dict[str, Any]:
+    """Classify one projection diff using release-sensitive control-plane rules."""
+    code, severity = _drift_classification(diff)
     return {**diff, "code": code, "severity": severity}
 
 
@@ -2704,6 +2863,23 @@ def compare_agentic_control_drift(
     }
 
 
+def _expected_drift_verdict(findings: list[dict[str, Any]]) -> str:
+    """Derive the strongest reported drift verdict from finding severities."""
+    if any(item.get("severity") == "BLOCKED" for item in findings):
+        return "BLOCKED"
+    return "REVIEW_REQUIRED" if findings else "CLEAR"
+
+
+def _verify_drift_authority(authority: Any) -> None:
+    """Reject a drift receipt that grants any downstream authority."""
+    if not isinstance(authority, dict) or any(
+        value is not False for value in authority.values()
+    ):
+        raise AgenticControlError(
+            "E_AGENTIC_DRIFT_AUTHORITY", "drift receipt cannot grant authority"
+        )
+
+
 def verify_agentic_control_drift(receipt: dict[str, Any]) -> dict[str, Any]:
     """Verify a control-plane drift receipt hash, verdict, and authority boundary."""
     if not isinstance(receipt, dict) or receipt.get("schema") != DRIFT_SCHEMA:
@@ -2729,21 +2905,12 @@ def verify_agentic_control_drift(receipt: dict[str, Any]) -> dict[str, Any]:
         raise AgenticControlError(
             "E_AGENTIC_DRIFT_SCHEMA", "receipt findings or verdict are invalid"
         )
-    if not isinstance(core["authority"], dict) or any(
-        value is not False for value in core["authority"].values()
-    ):
-        raise AgenticControlError(
-            "E_AGENTIC_DRIFT_AUTHORITY", "drift receipt cannot grant authority"
-        )
+    _verify_drift_authority(core["authority"])
     if receipt.get("drift_sha256") != _sha(core):
         raise AgenticControlError(
             "E_AGENTIC_DRIFT_TAMPERED", "drift receipt digest does not match contents"
         )
-    expected = (
-        "BLOCKED"
-        if any(item.get("severity") == "BLOCKED" for item in core["findings"])
-        else ("REVIEW_REQUIRED" if core["findings"] else "CLEAR")
-    )
+    expected = _expected_drift_verdict(core["findings"])
     if (
         core["verdict"] != expected
         or receipt.get("marker") != f"AGENTIC_CONTROL_DRIFT_{expected}"
@@ -2811,6 +2978,51 @@ def _supply_chain_lane(evidence: object) -> dict[str, Any]:
     }
 
 
+def _semantic_case(case: Any, index: int) -> tuple[dict[str, Any] | None, str | None]:
+    """Normalize one differential case or return its specific refusal reason."""
+    if not isinstance(case, dict) or set(case) != {
+        "case_id",
+        "expected",
+        "observed",
+        "matched",
+    }:
+        return (
+            None,
+            f"case {index} must contain case_id, expected, observed, and matched",
+        )
+    if (
+        not isinstance(case["case_id"], str)
+        or not case["case_id"].strip()
+        or not isinstance(case["matched"], bool)
+    ):
+        return None, f"case {index} has invalid identity or match flag"
+    return {
+        "case_id": case["case_id"].strip(),
+        "expected": str(case["expected"]),
+        "observed": str(case["observed"]),
+        "matched": case["matched"],
+    }, None
+
+
+def _semantic_challenge(challenge: Any) -> tuple[tuple[int, int] | None, str | None]:
+    """Require an equal number of attempted and caught semantic mutations."""
+    if not isinstance(challenge, dict):
+        return None, "semantic mutation challenge is required"
+    attempted, caught = (
+        challenge.get("mutations_attempted"),
+        challenge.get("mutations_caught"),
+    )
+    if (
+        any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 1
+            for value in (attempted, caught)
+        )
+        or caught != attempted
+    ):
+        return None, "every semantic mutation must be caught"
+    return (attempted, caught), None
+
+
 def _semantic_lane(evidence: object) -> dict[str, Any]:
     if not isinstance(evidence, dict):
         return {
@@ -2825,51 +3037,14 @@ def _semantic_lane(evidence: object) -> dict[str, Any]:
         }
     normalized = []
     for index, case in enumerate(cases):
-        if not isinstance(case, dict) or set(case) != {
-            "case_id",
-            "expected",
-            "observed",
-            "matched",
-        }:
-            return {
-                "status": "BLOCKED",
-                "reason": f"case {index} must contain case_id, expected, observed, and matched",
-            }
-        if (
-            not isinstance(case["case_id"], str)
-            or not case["case_id"].strip()
-            or not isinstance(case["matched"], bool)
-        ):
-            return {
-                "status": "BLOCKED",
-                "reason": f"case {index} has invalid identity or match flag",
-            }
-        normalized.append(
-            {
-                "case_id": case["case_id"].strip(),
-                "expected": str(case["expected"]),
-                "observed": str(case["observed"]),
-                "matched": case["matched"],
-            }
-        )
-    challenge = evidence.get("challenge")
-    if not isinstance(challenge, dict):
-        return {
-            "status": "BLOCKED",
-            "reason": "semantic mutation challenge is required",
-        }
-    attempted, caught = (
-        challenge.get("mutations_attempted"),
-        challenge.get("mutations_caught"),
-    )
-    if (
-        any(
-            isinstance(value, bool) or not isinstance(value, int) or value < 1
-            for value in (attempted, caught)
-        )
-        or caught != attempted
-    ):
-        return {"status": "BLOCKED", "reason": "every semantic mutation must be caught"}
+        normalized_case, reason = _semantic_case(case, index)
+        if reason is not None:
+            return {"status": "BLOCKED", "reason": reason}
+        normalized.append(normalized_case)
+    counts, reason = _semantic_challenge(evidence.get("challenge"))
+    if reason is not None:
+        return {"status": "BLOCKED", "reason": reason}
+    attempted, caught = counts
     if not all(case["matched"] for case in normalized):
         return {
             "status": "BLOCKED",
@@ -2882,25 +3057,12 @@ def _semantic_lane(evidence: object) -> dict[str, Any]:
     }
 
 
-def build_extended_assurance_receipt(
-    feature: str,
-    *,
+def _extended_lane_results(
     extended_assurance: bool,
-    evidence: dict[str, Any] | None = None,
-    required_lanes: Iterable[str] = (),
-    tenant_id: str = "local",
-    run_id: str = "extended-assurance",
-    timestamp: str | None = None,
-) -> dict[str, Any]:
-    """Run optional lanes 7–8 from supplied evidence and emit Receipt v2 payload.
-
-    The function never invokes fuzzers, scanners, builders, or providers. It
-    validates externally produced evidence and creates a payload ready for the
-    existing enterprise Receipt v2 signing path.
-    """
-    feature = _id(feature, "feature")
-    tenant_id = _id(tenant_id, "tenant_id")
-    run_id = _id(run_id, "run_id")
+    evidence: dict[str, Any] | None,
+    required_lanes: Iterable[str],
+) -> dict[str, dict[str, Any]]:
+    """Classify both optional lanes from supplied evidence and declared scope."""
     selected = list(required_lanes)
     if set(selected) - set(EXTENDED_LANES) or len(selected) != len(set(selected)):
         raise AgenticControlError(
@@ -2925,17 +3087,11 @@ def build_extended_assurance_receipt(
             **_semantic_lane(evidence.get("semantic_robustness")),
             "required": "semantic_robustness" in selected,
         }
-    blocking = [
-        lane
-        for lane, result in lane_results.items()
-        if result.get("required") and result.get("status") != "PASSED"
-    ]
-    ok = not blocking
-    now = timestamp or datetime.now(timezone.utc).isoformat()
-    if not isinstance(now, str) or not now.strip():
-        raise AgenticControlError(
-            "E_EXTENDED_TIME", "timestamp must be a non-empty timestamp"
-        )
+    return lane_results
+
+
+def _extended_swimlane_events(feature: str, lane_results: dict) -> list[dict]:
+    """Link each lane observation to the previous event digest."""
     events = []
     previous = None
     for sequence, lane in enumerate(EXTENDED_LANES):
@@ -2949,6 +3105,53 @@ def build_extended_assurance_receipt(
         )
         events.append(event)
         previous = event["event_digest"]
+    return events
+
+
+def _validate_extended_receipt(payload: dict[str, Any]) -> None:
+    """Apply the shared Receipt v2 structural validator when available."""
+    try:
+        from .enterprise_receipts import validate_receipt_v2
+
+        validate_receipt_v2(payload)
+    except ImportError:
+        pass
+    except Exception as exc:
+        raise AgenticControlError("E_EXTENDED_RECEIPT", str(exc)) from exc
+
+
+def build_extended_assurance_receipt(
+    feature: str,
+    *,
+    extended_assurance: bool,
+    evidence: dict[str, Any] | None = None,
+    required_lanes: Iterable[str] = (),
+    tenant_id: str = "local",
+    run_id: str = "extended-assurance",
+    timestamp: str | None = None,
+) -> dict[str, Any]:
+    """Run optional lanes 7–8 from supplied evidence and emit Receipt v2 payload.
+
+    The function never invokes fuzzers, scanners, builders, or providers. It
+    validates externally produced evidence and creates a payload ready for the
+    existing enterprise Receipt v2 signing path.
+    """
+    feature = _id(feature, "feature")
+    tenant_id = _id(tenant_id, "tenant_id")
+    run_id = _id(run_id, "run_id")
+    lane_results = _extended_lane_results(extended_assurance, evidence, required_lanes)
+    blocking = [
+        lane
+        for lane, result in lane_results.items()
+        if result.get("required") and result.get("status") != "PASSED"
+    ]
+    ok = not blocking
+    now = timestamp or datetime.now(timezone.utc).isoformat()
+    if not isinstance(now, str) or not now.strip():
+        raise AgenticControlError(
+            "E_EXTENDED_TIME", "timestamp must be a non-empty timestamp"
+        )
+    events = _extended_swimlane_events(feature, lane_results)
     payload = {
         "schema": EXTENDED_RECEIPT_SCHEMA,
         "module": "agentic-control",
@@ -2971,14 +3174,7 @@ def build_extended_assurance_receipt(
         {"feature": feature, "extended_lanes": lane_results, "swimlane_events": events}
     )
     # Validate the common Receipt v2 shape without requiring cryptographic keys.
-    try:
-        from .enterprise_receipts import validate_receipt_v2
-
-        validate_receipt_v2(payload)
-    except ImportError:
-        pass
-    except Exception as exc:
-        raise AgenticControlError("E_EXTENDED_RECEIPT", str(exc)) from exc
+    _validate_extended_receipt(payload)
     return payload
 
 
