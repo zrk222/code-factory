@@ -153,43 +153,55 @@ def _normalize_events(raw_events: object) -> list[dict[str, Any]]:
     seen_ids: set[str] = set()
     last_sequence = -1
     for raw in raw_events:
-        if (
-            not isinstance(raw, dict)
-            or isinstance(raw.get("sequence"), bool)
-            or not isinstance(raw.get("sequence"), int)
-        ):
-            raise RevenueForgeError(
-                "REVENUEFORGE_EVIDENCE_INVALID", "each event needs an integer sequence"
-            )
-        event_id, event_type = (
-            str(raw.get("id") or "").strip(),
-            str(raw.get("type") or "").strip(),
+        event_id, event_type, sequence = _validated_event_identity(
+            raw, seen_ids, last_sequence
         )
-        if (
-            not event_id
-            or event_id in seen_ids
-            or raw["sequence"] <= last_sequence
-            or not event_type
-        ):
-            raise RevenueForgeError(
-                "REVENUEFORGE_EVENT_ORDER_INVALID",
-                "event ids must be unique and sequence must strictly increase",
-            )
         seen_ids.add(event_id)
-        last_sequence = raw["sequence"]
-        events.append(
-            {
-                "id": event_id,
-                "sequence": raw["sequence"],
-                "type": event_type,
-                "product_id": str(raw.get("product_id") or "") or None,
-                "verified": raw.get("verified")
-                if isinstance(raw.get("verified"), bool)
-                else None,
-                "entitlement": str(raw.get("entitlement") or "") or None,
-            }
-        )
+        last_sequence = sequence
+        events.append(_normalized_event(raw, event_id, event_type, sequence))
     return events
+
+
+def _validated_event_identity(
+    raw: object, seen_ids: set[str], last_sequence: int
+) -> tuple[str, str, int]:
+    if (
+        not isinstance(raw, dict)
+        or isinstance(raw.get("sequence"), bool)
+        or not isinstance(raw.get("sequence"), int)
+    ):
+        raise RevenueForgeError(
+            "REVENUEFORGE_EVIDENCE_INVALID", "each event needs an integer sequence"
+        )
+    event_id = str(raw.get("id") or "").strip()
+    event_type = str(raw.get("type") or "").strip()
+    sequence = raw["sequence"]
+    if (
+        not event_id
+        or event_id in seen_ids
+        or sequence <= last_sequence
+        or not event_type
+    ):
+        raise RevenueForgeError(
+            "REVENUEFORGE_EVENT_ORDER_INVALID",
+            "event ids must be unique and sequence must strictly increase",
+        )
+    return event_id, event_type, sequence
+
+
+def _normalized_event(
+    raw: dict[str, Any], event_id: str, event_type: str, sequence: int
+) -> dict[str, Any]:
+    return {
+        "id": event_id,
+        "sequence": sequence,
+        "type": event_type,
+        "product_id": str(raw.get("product_id") or "") or None,
+        "verified": raw.get("verified")
+        if isinstance(raw.get("verified"), bool)
+        else None,
+        "entitlement": str(raw.get("entitlement") or "") or None,
+    }
 
 
 def _replay_step(
@@ -333,6 +345,21 @@ def _feedback_item(raw: object) -> dict[str, Any]:
             "REVENUEFORGE_TESTFLIGHT_SECRET_REJECTED",
             "signed payloads and JWS values are not accepted in the feedback inbox",
         )
+    external_id, build_id, kind, summary = _feedback_fields(raw)
+    return {
+        "id": hashlib.sha256(f"{external_id}\0{build_id}".encode()).hexdigest()[:24],
+        "build_id": build_id,
+        "kind": kind,
+        "journey": _journey_for(summary),
+        "summary": summary,
+        "device_family": str(raw.get("device_family") or "unknown")[:80],
+        "os_version": str(raw.get("os_version") or "unknown")[:40],
+        "app_version": str(raw.get("app_version") or "unknown")[:40],
+        "screenshot_ref": str(raw.get("screenshot_ref") or "")[:300] or None,
+    }
+
+
+def _feedback_fields(raw: dict[str, Any]) -> tuple[str, str, str, str]:
     external_id, build_id = (
         str(raw.get("id") or "").strip(),
         str(raw.get("build_id") or "").strip(),
@@ -350,17 +377,7 @@ def _feedback_item(raw: object) -> dict[str, Any]:
             "REVENUEFORGE_TESTFLIGHT_INVALID",
             "id, build_id, and a supported kind are required",
         )
-    return {
-        "id": hashlib.sha256(f"{external_id}\0{build_id}".encode()).hexdigest()[:24],
-        "build_id": build_id,
-        "kind": kind,
-        "journey": _journey_for(summary),
-        "summary": summary,
-        "device_family": str(raw.get("device_family") or "unknown")[:80],
-        "os_version": str(raw.get("os_version") or "unknown")[:40],
-        "app_version": str(raw.get("app_version") or "unknown")[:40],
-        "screenshot_ref": str(raw.get("screenshot_ref") or "")[:300] or None,
-    }
+    return external_id, build_id, kind, summary
 
 
 def sync_testflight_evidence(
@@ -467,55 +484,92 @@ def _policy_sources(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
         )
     result: dict[str, dict[str, Any]] = {}
     for raw in sources:
-        if not isinstance(raw, dict):
-            raise RevenueForgeError(
-                "REVENUEFORGE_POLICY_INVALID", "each policy source must be an object"
-            )
-        source_id = str(raw.get("id") or "").strip()
-        url = str(raw.get("url") or "").strip()
-        digest = str(raw.get("sha256") or "").strip().lower()
-        retrieved_at = str(raw.get("retrieved_at") or "").strip()
-        impacts = raw.get("impacts", [])
-        if (
-            not source_id
-            or source_id in result
-            or not url.startswith("https://developer.apple.com/")
-            or not re.fullmatch(r"[0-9a-f]{64}", digest)
-            or not retrieved_at
-            or not isinstance(impacts, list)
-        ):
-            raise RevenueForgeError(
-                "REVENUEFORGE_POLICY_INVALID",
-                "policy source needs unique id, official Apple URL, retrieval date, sha256, and impacts",
-            )
-        clean_impacts = []
-        for impact in impacts:
-            if (
-                not isinstance(impact, dict)
-                or not str(impact.get("rule_id") or "").strip()
-            ):
-                raise RevenueForgeError(
-                    "REVENUEFORGE_POLICY_INVALID", "each impact needs a rule_id"
-                )
-            clean_impacts.append(
-                {
-                    "rule_id": str(impact["rule_id"]),
-                    "apps": sorted(
-                        {str(v) for v in impact.get("apps", []) if str(v).strip()}
-                    ),
-                    "artifacts": sorted(
-                        {str(v) for v in impact.get("artifacts", []) if str(v).strip()}
-                    ),
-                }
-            )
-        result[source_id] = {
-            "id": source_id,
-            "url": url,
-            "retrieved_at": retrieved_at,
-            "sha256": digest,
-            "impacts": clean_impacts,
-        }
+        source_id, normalized = _normalized_policy_source(raw, result)
+        result[source_id] = normalized
     return result
+
+
+def _normalized_policy_source(
+    raw: object, existing: dict[str, dict[str, Any]]
+) -> tuple[str, dict[str, Any]]:
+    if not isinstance(raw, dict):
+        raise RevenueForgeError(
+            "REVENUEFORGE_POLICY_INVALID", "each policy source must be an object"
+        )
+    source_id, url, retrieved_at, digest, impacts = _validated_policy_source_fields(
+        raw, existing
+    )
+    return source_id, {
+        "id": source_id,
+        "url": url,
+        "retrieved_at": retrieved_at,
+        "sha256": digest,
+        "impacts": _normalized_policy_impacts(impacts),
+    }
+
+
+def _validated_policy_source_fields(
+    raw: dict[str, Any], existing: dict[str, dict[str, Any]]
+) -> tuple[str, str, str, str, list[Any]]:
+    source_id = str(raw.get("id") or "").strip()
+    url = str(raw.get("url") or "").strip()
+    digest = str(raw.get("sha256") or "").strip().lower()
+    retrieved_at = str(raw.get("retrieved_at") or "").strip()
+    impacts = raw.get("impacts", [])
+    _validate_policy_source_id(source_id, existing)
+    if not url.startswith("https://developer.apple.com/"):
+        raise RevenueForgeError(
+            "REVENUEFORGE_POLICY_INVALID",
+            "policy source needs unique id, official Apple URL, retrieval date, sha256, and impacts",
+        )
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise RevenueForgeError(
+            "REVENUEFORGE_POLICY_INVALID",
+            "policy source needs unique id, official Apple URL, retrieval date, sha256, and impacts",
+        )
+    if not retrieved_at:
+        raise RevenueForgeError(
+            "REVENUEFORGE_POLICY_INVALID",
+            "policy source needs unique id, official Apple URL, retrieval date, sha256, and impacts",
+        )
+    if not isinstance(impacts, list):
+        raise RevenueForgeError(
+            "REVENUEFORGE_POLICY_INVALID",
+            "policy source needs unique id, official Apple URL, retrieval date, sha256, and impacts",
+        )
+
+    return source_id, url, retrieved_at, digest, impacts
+
+
+def _validate_policy_source_id(
+    source_id: str, existing: dict[str, dict[str, Any]]
+) -> None:
+    if not source_id or source_id in existing:
+        raise RevenueForgeError(
+            "REVENUEFORGE_POLICY_INVALID",
+            "policy source needs unique id, official Apple URL, retrieval date, sha256, and impacts",
+        )
+
+
+def _normalized_policy_impacts(impacts: list[Any]) -> list[dict[str, Any]]:
+    clean_impacts = []
+    for impact in impacts:
+        if not isinstance(impact, dict) or not str(impact.get("rule_id") or "").strip():
+            raise RevenueForgeError(
+                "REVENUEFORGE_POLICY_INVALID", "each impact needs a rule_id"
+            )
+        clean_impacts.append(
+            {
+                "rule_id": str(impact["rule_id"]),
+                "apps": sorted(
+                    {str(v) for v in impact.get("apps", []) if str(v).strip()}
+                ),
+                "artifacts": sorted(
+                    {str(v) for v in impact.get("artifacts", []) if str(v).strip()}
+                ),
+            }
+        )
+    return clean_impacts
 
 
 def watch_policy_drift(
@@ -557,26 +611,39 @@ def _policy_drift_rows(
     rows: list[dict[str, Any]] = []
     affected: dict[str, set[str]] = {"rules": set(), "apps": set(), "artifacts": set()}
     for source_id in sorted(set(baseline) | set(current)):
-        before = baseline.get(source_id)
-        after = current.get(source_id)
-        status = (
-            "unchanged"
-            if before and after and before["sha256"] == after["sha256"]
-            else "changed"
-        )
-        impacts = (before or after or {}).get("impacts", [])
-        if status == "changed":
-            _accumulate_impacts(affected, impacts)
-        rows.append(
-            {
-                "source_id": source_id,
-                "status": status,
-                "before_sha256": before and before["sha256"],
-                "after_sha256": after and after["sha256"],
-                "impacts": impacts if status == "changed" else [],
-            }
-        )
+        rows.append(_policy_drift_row(source_id, baseline, current, affected))
     return rows, affected
+
+
+def _policy_drift_row(
+    source_id: str,
+    baseline: dict[str, dict[str, Any]],
+    current: dict[str, dict[str, Any]],
+    affected: dict[str, set[str]],
+) -> dict[str, Any]:
+    before = baseline.get(source_id)
+    after = current.get(source_id)
+    status = _policy_source_status(before, after)
+    impacts = (before or after or {}).get("impacts", [])
+    if status == "changed":
+        _accumulate_impacts(affected, impacts)
+    return {
+        "source_id": source_id,
+        "status": status,
+        "before_sha256": before and before["sha256"],
+        "after_sha256": after and after["sha256"],
+        "impacts": impacts if status == "changed" else [],
+    }
+
+
+def _policy_source_status(
+    before: dict[str, Any] | None, after: dict[str, Any] | None
+) -> str:
+    return (
+        "unchanged"
+        if before and after and before["sha256"] == after["sha256"]
+        else "changed"
+    )
 
 
 def _parse_time(value: object, field: str) -> datetime:
