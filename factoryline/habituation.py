@@ -183,7 +183,7 @@ def _review_ratios(
 
 
 def normalize_review(event: dict[str, Any]) -> dict[str, Any]:
-    """Validate a review event and normalize its measurable evidence."""
+    """Validate and normalize review evidence, raising HabituationError on invalid input."""
     if not isinstance(event, dict):
         raise HabituationError("REVIEW_INVALID", "review event must be an object")
     review_id, reviewer, author_kind = _review_identity(event)

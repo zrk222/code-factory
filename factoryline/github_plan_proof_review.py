@@ -146,17 +146,29 @@ def _walkthrough(core: dict[str, Any]) -> str:
 
 
 def _review_fields(review: object) -> dict[str, Any]:
-    try:
-        review = validate_plan_proof_review(review)
-    except PlanProofReviewError as exc:
-        raise GitHubPlanProofReviewError(
-            "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID", str(exc)
-        ) from exc
+    review = _validated_plan_review(review)
     if not isinstance(review, dict) or review.get("schema") != PLAN_PROOF_REVIEW_SCHEMA:
         raise GitHubPlanProofReviewError(
             "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID",
             "a factory.plan_proof_review.v1 payload is required",
         )
+    _validate_review_shape(review)
+    _validate_changed_paths(review)
+    _validate_findings(review)
+    _validate_proof_debt(review)
+    return review
+
+
+def _validated_plan_review(review: object) -> object:
+    try:
+        return validate_plan_proof_review(review)
+    except PlanProofReviewError as exc:
+        raise GitHubPlanProofReviewError(
+            "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID", str(exc)
+        ) from exc
+
+
+def _validate_review_shape(review: dict[str, Any]) -> None:
     required = {
         "plan",
         "plan_sha256",
@@ -176,25 +188,33 @@ def _review_fields(review: object) -> dict[str, Any]:
             "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID",
             "the Plan-to-Proof payload shape or authority boundary is invalid",
         )
+
+
+def _validate_changed_paths(review: dict[str, Any]) -> None:
     if not isinstance(review["changed_paths"], list) or not all(
         isinstance(path, str) and path for path in review["changed_paths"]
     ):
         raise GitHubPlanProofReviewError(
             "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID", "changed paths are invalid"
         )
+
+
+def _validate_findings(review: dict[str, Any]) -> None:
     if not isinstance(review["findings"], list) or not all(
         isinstance(item, dict) for item in review["findings"]
     ):
         raise GitHubPlanProofReviewError(
             "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID", "findings are invalid"
         )
+
+
+def _validate_proof_debt(review: dict[str, Any]) -> None:
     if not isinstance(review["proof_debt"], dict) or not isinstance(
         review["proof_debt"].get("items"), list
     ):
         raise GitHubPlanProofReviewError(
             "GITHUB_PLAN_PROOF_REVIEW_INPUT_INVALID", "proof debt is invalid"
         )
-    return review
 
 
 def render_github_plan_proof_review(review: object, head_sha: str) -> dict[str, Any]:

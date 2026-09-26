@@ -24,6 +24,19 @@ function ageLabel(seconds: number | null) {
   return `${Math.floor(seconds / 86_400)}d ago`;
 }
 
+function sourceConfigurationIsValid(values: {
+  busy: boolean;
+  label: string;
+  publisher: string;
+  jurisdiction: string;
+  sourceGroup: string;
+  locator: string;
+  maximumAgeHours: number;
+  freshnessHours: number;
+}) {
+  return !values.busy && [values.label, values.publisher, values.jurisdiction, values.sourceGroup, values.locator].every((value) => Boolean(value.trim())) && values.maximumAgeHours >= values.freshnessHours;
+}
+
 export function SourceAssurancePanel({ agentSpec }: Props) {
   const readiness = useQuery(api.authoritativeSources.listReadiness, { agentSpecId: agentSpec._id });
   const configure = useMutation(api.authoritativeSources.configure);
@@ -44,6 +57,7 @@ export function SourceAssurancePanel({ agentSpec }: Props) {
   const [notice, setNotice] = useState<string | null>(null);
   const sources = readiness?.sources ?? [];
   const groups = readiness?.groups ?? [];
+  const canSave = sourceConfigurationIsValid({ busy, label, publisher, jurisdiction, sourceGroup, locator, maximumAgeHours, freshnessHours });
 
   async function save() {
     setBusy(true); setNotice(null);
@@ -82,7 +96,7 @@ export function SourceAssurancePanel({ agentSpec }: Props) {
         <label>Maximum age (hours)<input type="number" min={freshnessHours} max="2160" value={maximumAgeHours} onChange={(event) => setMaximumAgeHours(Number(event.target.value))} /></label>
         <label>Minimum authoritative sources<input type="number" min="1" max="5" value={minimumSources} onChange={(event) => setMinimumSources(Number(event.target.value))} /></label>
         <label className="source-required"><input type="checkbox" checked={required} onChange={(event) => setRequired(event.target.checked)} /> Block runs when this group is not ready</label>
-        <button className="button secondary" disabled={busy || !label.trim() || !publisher.trim() || !jurisdiction.trim() || !sourceGroup.trim() || !locator.trim() || maximumAgeHours < freshnessHours} onClick={() => void save()}><RadioTower size={15} /> Save authority source</button>
+        <button className="button secondary" disabled={!canSave} onClick={() => void save()}><RadioTower size={15} /> Save authority source</button>
       </div>
       {notice && <p className="knowledge-notice" role="status">{notice}</p>}
 

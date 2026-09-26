@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { principal, requireWorkspaceRole } from "./access";
@@ -21,6 +21,42 @@ export async function requireOrganizationRole(ctx: MutationCtx | QueryCtx, organ
 
 async function audit(ctx: MutationCtx, workspaceId: Id<"workspaces">, actor: string, event: string, targetId: string, detail: string) {
   await ctx.db.insert("auditEvents", { workspaceId, actor, event, targetType: "enterprise-identity", targetId, detail, createdAt: Date.now() });
+}
+
+type ProvisionWorkspaceMemberArgs = {
+  organizationId: Id<"organizations">;
+  directoryConnectionId: Id<"directoryConnections">;
+  workspaceId: Id<"workspaces">;
+  externalId: string;
+  tokenIdentifier: string;
+  memberLabel: string;
+};
+
+function validateProvisioningBoundary(organizationId: Id<"organizations">, workspace: Doc<"workspaces"> | null, directory: Doc<"directoryConnections"> | null) {
+  if (!workspace || workspace.organizationId !== organizationId || !directory || directory.organizationId !== organizationId) throw new Error("E_CROSS_ORGANIZATION_DIRECTORY");
+  if (directory.status === "disabled") throw new Error("E_DIRECTORY_DISABLED");
+  return { workspace, directory };
+}
+
+async function writeProvisionedMember(ctx: MutationCtx, args: ProvisionWorkspaceMemberArgs, workspace: Doc<"workspaces">, directory: Doc<"directoryConnections">, externalId: string, actor: string) {
+  const tokenIdentifier = assertText(args.tokenIdentifier, "token_identifier", 240);
+  const existing = await ctx.db.query("workspaceMemberships").withIndex("by_workspace_subject", (q) => q.eq("workspaceId", workspace._id).eq("tokenIdentifier", tokenIdentifier)).unique();
+  if (existing && existing.directoryExternalId !== externalId) throw new Error("E_IDENTITY_COLLISION");
+  const now = Date.now();
+  const memberLabel = assertText(args.memberLabel, "member_label", 160);
+  const membershipId = existing ? (await ctx.db.patch(existing._id, { memberLabel, role: directory.defaultWorkspaceRole, status: "active", directoryExternalId: externalId }), existing._id) : await ctx.db.insert("workspaceMemberships", { workspaceId: workspace._id, tokenIdentifier, memberLabel, role: directory.defaultWorkspaceRole, status: "active", createdBy: "enterprise-directory", directoryExternalId: externalId, createdAt: now });
+  await ctx.db.insert("directoryProvisioningEvents", { organizationId: args.organizationId, directoryConnectionId: directory._id, workspaceId: workspace._id, externalId, operation: existing ? "update" : "provision", membershipId, actor, createdAt: now });
+  await audit(ctx, workspace._id, actor, "enterprise.member-provisioned", String(membershipId), `Directory role mapping applied as ${directory.defaultWorkspaceRole}.`);
+  return { marker: "ENTERPRISE_MEMBER_PROVISIONED" as const, membershipId, idempotent: false };
+}
+
+async function provisionDirectoryMember(ctx: MutationCtx, args: ProvisionWorkspaceMemberArgs, actor: string) {
+  const [workspaceCandidate, directoryCandidate] = await Promise.all([ctx.db.get(args.workspaceId), ctx.db.get(args.directoryConnectionId)]);
+  const { workspace, directory } = validateProvisioningBoundary(args.organizationId, workspaceCandidate, directoryCandidate);
+  const externalId = assertText(args.externalId, "external_id", 240);
+  const priorEvent = await ctx.db.query("directoryProvisioningEvents").withIndex("by_connection_external", (q) => q.eq("directoryConnectionId", directory._id).eq("externalId", externalId)).order("desc").first();
+  if (priorEvent) return { marker: "ENTERPRISE_MEMBER_PROVISIONED" as const, membershipId: priorEvent.membershipId, idempotent: true };
+  return writeProvisionedMember(ctx, args, workspace, directory, externalId, actor);
 }
 
 /** Creates an organization around a workspace whose caller is already an owner. */
@@ -78,20 +114,7 @@ export const provisionWorkspaceMember = mutation({
   args: { organizationId: v.id("organizations"), directoryConnectionId: v.id("directoryConnections"), workspaceId: v.id("workspaces"), externalId: v.string(), tokenIdentifier: v.string(), memberLabel: v.string() },
   handler: async (ctx, args) => {
     const authorized = await requireOrganizationRole(ctx, args.organizationId, "admin");
-    const [workspace, directory] = await Promise.all([ctx.db.get(args.workspaceId), ctx.db.get(args.directoryConnectionId)]);
-    if (!workspace || workspace.organizationId !== args.organizationId || !directory || directory.organizationId !== args.organizationId) throw new Error("E_CROSS_ORGANIZATION_DIRECTORY");
-    if (directory.status === "disabled") throw new Error("E_DIRECTORY_DISABLED");
-    const externalId = assertText(args.externalId, "external_id", 240);
-    const priorEvent = await ctx.db.query("directoryProvisioningEvents").withIndex("by_connection_external", (q) => q.eq("directoryConnectionId", directory._id).eq("externalId", externalId)).order("desc").first();
-    if (priorEvent) return { marker: "ENTERPRISE_MEMBER_PROVISIONED" as const, membershipId: priorEvent.membershipId, idempotent: true };
-    const tokenIdentifier = assertText(args.tokenIdentifier, "token_identifier", 240);
-    const existing = await ctx.db.query("workspaceMemberships").withIndex("by_workspace_subject", (q) => q.eq("workspaceId", workspace._id).eq("tokenIdentifier", tokenIdentifier)).unique();
-    if (existing && existing.directoryExternalId !== externalId) throw new Error("E_IDENTITY_COLLISION");
-    const now = Date.now();
-    const membershipId = existing ? (await ctx.db.patch(existing._id, { memberLabel: assertText(args.memberLabel, "member_label", 160), role: directory.defaultWorkspaceRole, status: "active", directoryExternalId: externalId }), existing._id) : await ctx.db.insert("workspaceMemberships", { workspaceId: workspace._id, tokenIdentifier, memberLabel: assertText(args.memberLabel, "member_label", 160), role: directory.defaultWorkspaceRole, status: "active", createdBy: "enterprise-directory", directoryExternalId: externalId, createdAt: now });
-    await ctx.db.insert("directoryProvisioningEvents", { organizationId: args.organizationId, directoryConnectionId: directory._id, workspaceId: workspace._id, externalId, operation: existing ? "update" : "provision", membershipId, actor: authorized.tokenIdentifier, createdAt: now });
-    await audit(ctx, workspace._id, authorized.tokenIdentifier, "enterprise.member-provisioned", String(membershipId), `Directory role mapping applied as ${directory.defaultWorkspaceRole}.`);
-    return { marker: "ENTERPRISE_MEMBER_PROVISIONED" as const, membershipId, idempotent: false };
+    return provisionDirectoryMember(ctx, args, authorized.tokenIdentifier);
   },
 });
 

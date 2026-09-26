@@ -52,22 +52,32 @@ function requiredPolicyText(value: string | undefined) {
   return normalized;
 }
 
+function parseActivationReferences(serializedReferences: string | undefined): string[] {
+  if (serializedReferences === undefined || serializedReferences.trim() === "") throw new Error("E_SOURCE_WORKER_ACTIVATION_CONFIG_MISSING");
+  let parsed: unknown;
+  try { parsed = JSON.parse(serializedReferences); }
+  catch { throw new Error("E_SOURCE_WORKER_ACTIVATION_CONFIG_INVALID"); }
+  if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 32 || parsed.some((value) => typeof value !== "string")) throw new Error("E_SOURCE_WORKER_ACTIVATION_CONFIG_INVALID");
+  const sourceReferences = parsed as string[];
+  try { sourceReferences.forEach((value) => parseWorkerSourceReference(value)); }
+  catch { throw new Error("E_SOURCE_WORKER_ACTIVATION_CONFIG_INVALID"); }
+  return sourceReferences;
+}
+
+function parseRotationDrillSeconds(value: string | undefined): number | undefined {
+  const drillValue = value?.trim();
+  const rotationDrillSeconds = drillValue === undefined || drillValue === "" ? undefined : Number(drillValue);
+  if (rotationDrillSeconds !== undefined && (!Number.isInteger(rotationDrillSeconds) || rotationDrillSeconds < 5 || rotationDrillSeconds > 300)) throw new Error("E_SOURCE_WORKER_ACTIVATION_CONFIG_INVALID");
+  return rotationDrillSeconds;
+}
+
 /** Parses a secret-free activation policy and validates every closed source reference. */
 export function parseSourceWorkerActivationPolicy(environment: Record<string, string | undefined>): SourceWorkerActivationPolicy {
   const expectedIssuer = requiredPolicyText(environment.SOURCE_WORKER_EXPECTED_ISSUER);
   const expectedAudience = requiredPolicyText(environment.SOURCE_WORKER_EXPECTED_AUDIENCE);
   const expectedSubject = requiredPolicyText(environment.SOURCE_WORKER_EXPECTED_SUBJECT);
-  const serializedReferences = environment.SOURCE_WORKER_ACTIVATION_REFERENCES;
-  if (serializedReferences === undefined || serializedReferences.trim() === "") throw new Error("E_SOURCE_WORKER_ACTIVATION_CONFIG_MISSING");
-  let sourceReferences: unknown;
-  try { sourceReferences = JSON.parse(serializedReferences); }
-  catch { throw new Error("E_SOURCE_WORKER_ACTIVATION_CONFIG_INVALID"); }
-  if (!Array.isArray(sourceReferences) || sourceReferences.length < 1 || sourceReferences.length > 32 || sourceReferences.some((value) => typeof value !== "string")) throw new Error("E_SOURCE_WORKER_ACTIVATION_CONFIG_INVALID");
-  try { sourceReferences.forEach((value) => parseWorkerSourceReference(value)); }
-  catch { throw new Error("E_SOURCE_WORKER_ACTIVATION_CONFIG_INVALID"); }
-  const drillValue = environment.SOURCE_WORKER_ROTATION_DRILL_SECONDS?.trim();
-  const rotationDrillSeconds = drillValue === undefined || drillValue === "" ? undefined : Number(drillValue);
-  if (rotationDrillSeconds !== undefined && (!Number.isInteger(rotationDrillSeconds) || rotationDrillSeconds < 5 || rotationDrillSeconds > 300)) throw new Error("E_SOURCE_WORKER_ACTIVATION_CONFIG_INVALID");
+  const sourceReferences = parseActivationReferences(environment.SOURCE_WORKER_ACTIVATION_REFERENCES);
+  const rotationDrillSeconds = parseRotationDrillSeconds(environment.SOURCE_WORKER_ROTATION_DRILL_SECONDS);
   return { expectedIssuer, expectedAudience, expectedSubject, sourceReferences, rotationDrillSeconds };
 }
 
@@ -76,22 +86,34 @@ function claimsObject(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function validateIdentityClaims(tokenValue: string, policy: SourceWorkerActivationPolicy, dependencies: SourceWorkerActivationDependencies, now: number) {
+function decodeIdentityClaims(tokenValue: string, dependencies: SourceWorkerActivationDependencies) {
   const segments = tokenValue.split(".");
   if (segments.length !== 3 || segments.some((segment) => !COMPACT_JWT_SEGMENT.test(segment))) throw new Error("E_SOURCE_WORKER_IDENTITY_CLAIMS_INVALID");
   let decoded: unknown;
   try { decoded = dependencies.decodeJwtPayload(tokenValue); }
   catch { throw new Error("E_SOURCE_WORKER_IDENTITY_CLAIMS_INVALID"); }
-  const claims = claimsObject(decoded);
+  return claimsObject(decoded);
+}
+
+function validateIdentityBindingClaims(claims: Record<string, unknown>, policy: SourceWorkerActivationPolicy) {
   if (claims.iss !== policy.expectedIssuer) throw new Error("E_SOURCE_WORKER_IDENTITY_ISSUER_MISMATCH");
   const audiences = typeof claims.aud === "string" ? [claims.aud] : Array.isArray(claims.aud) && claims.aud.every((value) => typeof value === "string") ? claims.aud : [];
   if (!audiences.includes(policy.expectedAudience)) throw new Error("E_SOURCE_WORKER_IDENTITY_AUDIENCE_MISMATCH");
   if (claims.sub !== policy.expectedSubject) throw new Error("E_SOURCE_WORKER_IDENTITY_SUBJECT_MISMATCH");
+}
+
+function validateIdentityTimeClaims(claims: Record<string, unknown>, now: number) {
   if (!Number.isInteger(claims.exp) || (claims.exp as number) < now + 120) throw new Error("E_SOURCE_WORKER_IDENTITY_TIME_INVALID");
   for (const name of ["nbf", "iat"] as const) {
     const value = claims[name];
     if (value !== undefined && (!Number.isInteger(value) || (value as number) > now + 30)) throw new Error("E_SOURCE_WORKER_IDENTITY_TIME_INVALID");
   }
+}
+
+function validateIdentityClaims(tokenValue: string, policy: SourceWorkerActivationPolicy, dependencies: SourceWorkerActivationDependencies, now: number) {
+  const claims = decodeIdentityClaims(tokenValue, dependencies);
+  validateIdentityBindingClaims(claims, policy);
+  validateIdentityTimeClaims(claims, now);
 }
 
 async function collectActivationSnapshot(policy: SourceWorkerActivationPolicy, identity: WorkerIdentityConfig, dependencies: SourceWorkerActivationDependencies): Promise<ActivationSnapshot> {

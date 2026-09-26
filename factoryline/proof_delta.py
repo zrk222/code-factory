@@ -438,8 +438,7 @@ def create_proof_delta(
     return _write_delta(workspace, out, result, disposition)
 
 
-def _load_delta(path: Path) -> dict[str, Any]:
-    value = _load_json(path, "proof_delta")
+def _validate_delta_shape(value: dict[str, Any]) -> None:
     required = {
         "schema",
         "mission_id",
@@ -465,6 +464,9 @@ def _load_delta(path: Path) -> dict[str, Any]:
         raise ProofDeltaError("PROOF_DELTA_INVALID", "mission_id is required")
     if not isinstance(value.get("criterion_id"), str) or not value["criterion_id"]:
         raise ProofDeltaError("PROOF_DELTA_INVALID", "criterion_id is required")
+
+
+def _validate_delta_authority(value: dict[str, Any]) -> None:
     if (
         value.get("fresh_context_required") is not True
         or value.get("authority") != _AUTHORITY
@@ -480,11 +482,21 @@ def _load_delta(path: Path) -> dict[str, Any]:
         raise ProofDeltaError(
             "PROOF_DELTA_INVALID", "markers do not match the fixed Proof-Delta boundary"
         )
+
+
+def _validate_delta_integrity(value: dict[str, Any]) -> None:
     if value.get("proof_delta_sha256") != _sha(_core(value)):
         raise ProofDeltaError(
             "PROOF_DELTA_INTEGRITY_INVALID",
             "proof_delta_sha256 does not match receipt bytes",
         )
+
+
+def _load_delta(path: Path) -> dict[str, Any]:
+    value = _load_json(path, "proof_delta")
+    _validate_delta_shape(value)
+    _validate_delta_authority(value)
+    _validate_delta_integrity(value)
     return value
 
 

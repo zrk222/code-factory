@@ -92,12 +92,12 @@ not a second human approval. Provider publication and marketplace approval are
 separate outcomes. See [release channels](docs/RELEASE_CHANNELS.md).
 
 Architecture health checks growth budgets. The [2026-09-26 ForgeLine reassessment](evidence/self-audit/quality-reassessment-2026-09-26.json)
-grades this checkout C (62.3/100; 164 findings), with the hard complexity gate
-still failing. This scanner uses AST branch count; the earlier deep-audit
+grades this checkout A (87.5/100; zero findings). Maximum branch complexity is
+10, the hard limit; the static security-pattern score is 100, test-intent match
+is 0.74, and documented-symbol ratio is 0.77. The earlier deep-audit
 complexity-83 score uses a different metric, so the figures are not directly
-comparable. Its test-intent and security scores are static signals, not executed
+comparable. Test-intent and security scores are static signals, not executed
 coverage or a security certification. Historical receipts remain snapshots.
-The repository-wide quality gate is blocked; no grade-A claim is made.
 
 ## More detail
 

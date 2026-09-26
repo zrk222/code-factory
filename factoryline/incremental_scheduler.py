@@ -90,15 +90,38 @@ def paths_intersect(left: str, right: str) -> bool:
 
 
 def _validate_gate(gate: object, index: int, ids: set[str]) -> dict[str, Any]:
+    value = _gate_object(gate, index)
+    gate_id = _unique_gate_id(value, index, ids)
+    dependencies = _gate_dependencies(value, gate_id)
+    side_effects = _gate_side_effects(value, gate_id)
+    proof = _gate_proof(value, gate_id)
+    ids.add(gate_id)
+    return {
+        "id": gate_id,
+        "depends_on": dependencies,
+        "side_effects": side_effects,
+        "proof": proof,
+    }
+
+
+def _gate_object(gate: object, index: int) -> dict[str, Any]:
     if not isinstance(gate, dict):
         raise SchedulerError("E_SCHEDULE_CONTRACT", f"gate {index} must be an object")
     try:
         exact_keys(gate, {"id", "depends_on", "side_effects", "proof"})
     except Exception as exc:
         raise SchedulerError("E_SCHEDULE_CONTRACT", f"gate {index}: {exc}") from exc
+    return gate
+
+
+def _unique_gate_id(gate: dict[str, Any], index: int, ids: set[str]) -> str:
     gate_id = require_str(gate.get("id"), f"gates[{index}].id", maximum=160)
     if gate_id in ids:
         raise SchedulerError("E_SCHEDULE_CONTRACT", f"duplicate gate id: {gate_id}")
+    return gate_id
+
+
+def _gate_dependencies(gate: dict[str, Any], gate_id: str) -> list[str]:
     deps = gate.get("depends_on")
     if (
         not isinstance(deps, list)
@@ -111,23 +134,25 @@ def _validate_gate(gate: object, index: int, ids: set[str]) -> dict[str, Any]:
         )
     if gate_id in deps:
         raise SchedulerError("E_SCHEDULE_CYCLE", f"gate {gate_id} depends on itself")
+    return sorted(deps)
+
+
+def _gate_side_effects(gate: dict[str, Any], gate_id: str) -> bool:
     side_effects = gate.get("side_effects")
     if type(side_effects) is not bool:
         raise SchedulerError(
             "E_SCHEDULE_SIDE_EFFECTS", f"{gate_id}.side_effects must be boolean"
         )
+    return side_effects
+
+
+def _gate_proof(gate: dict[str, Any], gate_id: str) -> dict[str, Any] | None:
     proof = gate.get("proof")
     if proof is not None and not isinstance(proof, dict):
         raise SchedulerError(
             "E_SCHEDULE_PROOF", f"{gate_id}.proof must be an object or null"
         )
-    ids.add(gate_id)
-    return {
-        "id": gate_id,
-        "depends_on": sorted(deps),
-        "side_effects": side_effects,
-        "proof": proof,
-    }
+    return proof
 
 
 def _validate_closure(value: object) -> dict[str, list[str]]:
