@@ -430,20 +430,32 @@ def _add_state_claim(
         problem.add(location)
 
 
-def _has_independent_verifier(
-    record: dict[str, Any], pairs: list[tuple[str, str, Any]] | None = None
-) -> bool:
+def _add_record_identity(
+    key: str, value: Any, authors: set[str], verifiers: set[str]
+) -> None:
+    if key in IDENTITY_KEYS and isinstance(value, str) and value.strip():
+        authors.add(value.strip().lower())
+    if key in VERIFIER_KEYS and _nonempty(value):
+        verifiers.add(
+            value.strip().lower() if isinstance(value, str) else "structured-verifier"
+        )
+
+
+def _record_identities(
+    record: dict[str, Any], pairs: list[tuple[str, str, Any]] | None
+) -> tuple[set[str], set[str]]:
     authors: set[str] = set()
     verifiers: set[str] = set()
     walk = _walk_pairs(record) if pairs is None else pairs
     for key, _location, value in walk:
-        if key in IDENTITY_KEYS and isinstance(value, str) and value.strip():
-            authors.add(value.strip().lower())
-        if key in VERIFIER_KEYS and _nonempty(value):
-            if isinstance(value, str):
-                verifiers.add(value.strip().lower())
-            else:
-                verifiers.add("structured-verifier")
+        _add_record_identity(key, value, authors, verifiers)
+    return authors, verifiers
+
+
+def _has_independent_verifier(
+    record: dict[str, Any], pairs: list[tuple[str, str, Any]] | None = None
+) -> bool:
+    authors, verifiers = _record_identities(record, pairs)
     return bool(verifiers) and not (authors and verifiers.intersection(authors))
 
 
@@ -788,6 +800,75 @@ def _state_receipt_findings(
     return []
 
 
+def _terminal_anchor_findings(
+    path: str,
+    location: str,
+    terminal: bool,
+    anchors: set[str],
+    strong_anchors: set[str],
+) -> list[dict[str, str]]:
+    if not terminal:
+        return []
+    if not anchors:
+        return [
+            _finding(
+                "E_METADATA_UNBOUND_TERMINAL",
+                path,
+                location,
+                "terminal claim has no command, artifact, receipt, read-back, or hash anchor",
+            )
+        ]
+    if not strong_anchors:
+        return [
+            _finding(
+                "E_METADATA_WEAK_EVIDENCE",
+                path,
+                location,
+                "terminal claim has only a command or path and no receipt, digest, timestamp, or read-back anchor",
+            )
+        ]
+    return []
+
+
+def _terminal_status_findings(
+    path: str, location: str, terminal: bool, problem: bool
+) -> list[dict[str, str]]:
+    if terminal and problem:
+        return [
+            _finding(
+                "E_METADATA_CONTRADICTORY_STATUS",
+                path,
+                location,
+                "terminal claim is combined with pending, blocked, partial, failed, or unknown state",
+            )
+        ]
+    return []
+
+
+def _terminal_provider_findings(
+    path: str,
+    location: str,
+    record: dict[str, Any],
+    terminal: bool,
+    provider_anchors: set[str],
+    provider_identity: bool | None,
+) -> list[dict[str, str]]:
+    if not terminal:
+        return []
+    if provider_identity is None:
+        provider_identity = _has_provider_identity(record)
+    if provider_identity and not provider_anchors:
+        return [
+            _finding(
+                "E_METADATA_PROVIDER_UNBOUND",
+                path,
+                location,
+                "provider completion claim lacks a provider receipt, URL, or read-back anchor",
+            )
+        ]
+    return []
+
+
 def _record_terminal_findings(
     path: str,
     location: str,
@@ -799,45 +880,15 @@ def _record_terminal_findings(
     provider_anchors: set[str],
     provider_identity: bool | None = None,
 ) -> list[dict[str, str]]:
-    findings: list[dict[str, str]] = []
-    if terminal and not anchors:
-        findings.append(
-            _finding(
-                "E_METADATA_UNBOUND_TERMINAL",
-                path,
-                location,
-                "terminal claim has no command, artifact, receipt, read-back, or hash anchor",
-            )
+    findings = _terminal_anchor_findings(
+        path, location, terminal, anchors, strong_anchors
+    )
+    findings.extend(_terminal_status_findings(path, location, terminal, problem))
+    findings.extend(
+        _terminal_provider_findings(
+            path, location, record, terminal, provider_anchors, provider_identity
         )
-    elif terminal and not strong_anchors:
-        findings.append(
-            _finding(
-                "E_METADATA_WEAK_EVIDENCE",
-                path,
-                location,
-                "terminal claim has only a command or path and no receipt, digest, timestamp, or read-back anchor",
-            )
-        )
-    if terminal and problem:
-        findings.append(
-            _finding(
-                "E_METADATA_CONTRADICTORY_STATUS",
-                path,
-                location,
-                "terminal claim is combined with pending, blocked, partial, failed, or unknown state",
-            )
-        )
-    if terminal and provider_identity is None:
-        provider_identity = _has_provider_identity(record)
-    if terminal and provider_identity and not provider_anchors:
-        findings.append(
-            _finding(
-                "E_METADATA_PROVIDER_UNBOUND",
-                path,
-                location,
-                "provider completion claim lacks a provider receipt, URL, or read-back anchor",
-            )
-        )
+    )
     return findings
 
 
