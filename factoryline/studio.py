@@ -28,6 +28,7 @@ from .continuation import ContinuationError, continue_assembly, discover_feature
 from .run_metrics import public_metrics
 from .savings import SavingsError, public_savings_report, record_savings_pair
 from .graph_ops import graph_ops_html, graph_ops_snapshot
+from .deep_audit_loop import read_junit_report
 from .graph_authorization import (
     GraphAuthorizationError,
     create_graph_authorization,
@@ -958,6 +959,7 @@ class _StudioHandler(BaseHTTPRequestHandler):
                 developer_memory_snapshot
             ),
             "/api/graph-ops": lambda: self._serve_token_json(self._graph_ops_payload),
+            "/api/test-report": lambda: self._serve_token_json(read_junit_report),
         }
         return api_routes.get(self.path)
 

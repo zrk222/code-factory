@@ -5,8 +5,16 @@ Public product surfaces use only the assets listed in
 asset and current exact product captures. They are product evidence, not
 performance, savings, or readiness evidence.
 
-`marketplace/factoryline-0.44-live-dashboard.png` shows the current Graph Ops
+`marketplace/graph-ops-forensics.png` is the full-page Graph Ops dashboard
+capture used as the GitHub README lead visual; it shows lineage, a forensic
+finding, first divergence, recovery preview, guarded actions, and the next
+action. `marketplace/graph-ops-proofsearch.png` follows it to show candidate
+comparison. `marketplace/factoryline-0.44-live-dashboard.png` shows Graph Ops
 telemetry and evidence-backed next actions for a real local Assembly.
+`marketplace/graph-ops-audit-results-0.46.9.png` shows the updated audit
+results panel with labeled evidence states and individual JUnit test cases.
+`marketplace/graph-ops-live-annotated.png` adds explanatory callouts to that
+capture as a supplement; the original remains available for exact UI review.
 `marketplace/factoryline-jetbrains-0.44-all-controls.jpg` shows the current
 JetBrains control surface for proof, assemblies, receipts, Change Lists,
 workspace analysis, and the local meter.

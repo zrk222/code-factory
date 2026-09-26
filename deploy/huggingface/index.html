@@ -71,6 +71,10 @@
     pre { width: 100%; min-width: 0; max-width: 100%; overflow-x: auto; margin: 0; padding: 24px; border: 1px solid rgba(255,255,255,.14); border-radius: 18px; background: #0d0d0b; color: #ffd47c; font: 600 .95rem/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; }
     .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
     .gallery img { display: block; width: 100%; border-radius: 18px; border: 1px solid var(--line); background: var(--cream); }
+    .dashboard-feature { margin: 26px 0 0; overflow: hidden; border: 1px solid var(--line); border-radius: 22px; background: #0b1423; box-shadow: var(--shadow); }
+    .dashboard-feature img { display: block; width: 100%; height: auto; }
+    .dashboard-feature figcaption { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 18px; background: white; color: var(--muted); font-size: .9rem; }
+    .dashboard-feature figcaption strong { display: block; color: var(--ink); }
     .boundary { margin-top: 18px; color: var(--muted); font-size: .95rem; text-align: center; }
     .final { text-align: center; padding-bottom: 120px; }
     .final h2 { max-width: 16ch; margin: 0 auto 28px; }
@@ -79,7 +83,7 @@
       nav a:not(.button) { display: none; }
       .hero, .section-head, .proof { grid-template-columns: 1fr; }
       .hero { padding-top: 48px; }
-      .grid, .gallery { grid-template-columns: 1fr; }
+      .grid, .gallery, .dashboard-feature figcaption { grid-template-columns: 1fr; }
       h1 { font-size: clamp(3.2rem, 17vw, 5.4rem); }
       section { padding: 68px 0; }
       footer { flex-direction: column; }
@@ -125,8 +129,8 @@
         </div>
       </div>
       <figure class="visual">
-        <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/first-proof-card.svg" alt="Actual privacy-safe Code Factory Proof Card showing that a hollow test was detected.">
-        <figcaption>One starter example: First Proof · healthy control passed · hollow test caught · no source uploaded</figcaption>
+        <img src="assets/graph-ops-audit-results.png" alt="Updated local Graph Ops UI with separately labeled deep-scan, deep-evaluation, runtime-lane, and individual-test results.">
+        <figcaption>Updated Graph Ops: audit states, source-bound findings, and searchable individual test reports. The pictured local result is a capture, not a live hosted scan.</figcaption>
       </figure>
     </div>
 
@@ -143,6 +147,11 @@
         </div>
         <p class="boundary"><strong>Current limits:</strong> CF pattern and guard-path audits require a project policy; its security scan inspects Python ASTs. ForgeLine repo-wide QA is a static inventory. Native Gitleaks input accounting and full-depth certification remain incomplete. Muse catalogues and workflows do not establish Meta marketplace approval.</p>
         <p class="boundary"><a href="https://github.com/zrk222/code-factory/blob/main/docs/DEEP_DEFECT_COMPLETION.md" target="_blank" rel="noopener noreferrer">Read the audit implementation and limits →</a></p>
+        <figure class="dashboard-feature">
+          <img src="assets/graph-ops-audit-results.png" alt="Updated actual Graph Ops audit results panel: native deep scan, evaluated deep audit, runtime assurance lanes, and individually searchable JUnit test cases.">
+          <figcaption><span><strong>1. Native deep scan</strong> Run state, recorded candidate hash, findings, and coverage gaps.</span><span><strong>2. Deep evaluation</strong> Receipt state and bounded finding chains.</span><span><strong>3. Runtime lanes</strong> Separate signed lane outcomes and next repairs.</span><span><strong>4. Every reported test</strong> Searchable JUnit cases with counts and an explicit unbound-candidate label.</span></figcaption>
+        </figure>
+        <p class="boundary">The image is a local Code Factory capture. This static HF Space does not run code or ingest a visitor's repository. JUnit cases appear only after a local test runner writes <code>.factory/test-reports/pytest.xml</code>; reports over 10,000 cases or malformed inputs are marked incomplete.</p>
       </div>
     </section>
     <section id="proof">
@@ -254,7 +263,7 @@ factory proofsearch frontier plan frontier.request.json \
           <p>These are current local product captures: the live Graph Ops dashboard, the complete JetBrains controls, and a successful IDE First Proof.</p>
         </div>
         <div class="gallery">
-          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factoryline-0.44-live-dashboard.png" alt="FactoryLine 0.44 Graph Ops dashboard showing a waiting-for-human assembly and evidence-backed next actions.">
+          <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/graph-ops-forensics.png" alt="Full-page Graph Ops dashboard showing sealed lineage, first divergence, recovery preview, and locked execution controls.">
           <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg" alt="FactoryLine AI Proof controls in IntelliJ IDEA for proofs, assemblies, receipts, Change Lists, workspace analysis, and the local meter.">
           <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg" alt="FactoryLine AI Proof completing a successful local First Proof in IntelliJ IDEA.">
           <article class="card"><span>First local run</span><h3>Run First Proof</h3><p>Run one local command in a disposable sandbox. The healthy control passes; the hollow negative control is caught and bound to a privacy-safe Proof Card.</p><p><a href="#first-run">Run the demo →</a> · <a href="https://github.com/zrk222/code-factory/blob/main/docs/JETBRAINS_MARKETPLACE_ACQUISITION_KIT.md" target="_blank" rel="noopener noreferrer">Marketplace kit</a></p></article>

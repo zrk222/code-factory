@@ -72,7 +72,7 @@ def test_marketplace_entry_and_docs_expose_all_supported_coding_agent_installs()
     assert plugins[2] == {
         "name": "code-factory-build-audit",
         "source": "./plugins/muse-code-factory-audit",
-        "description": "Native Muse Code build audits with PRD/spec-driven AppForge and SaaS proof routing.",
+        "description": "Muse Code audit hooks and on-demand MCP tools for Code Factory, ForgeLine, PRD/spec-driven AppForge and SaaS proof routing.",
         "author": {"name": "Richard Katz", "email": "rkatz22@gmail.com"},
     }
 

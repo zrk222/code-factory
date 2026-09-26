@@ -31,6 +31,15 @@ Specialty AI audit evidence is available in [the reviewed change and findings](h
 
 The preview highlights audit progress, actionable repair tasks, source-bound evidence and specialty AI review. It is a static walkthrough, not a hosted repository scanner. CF pattern/guard-path audits need project policy; its security scan covers Python ASTs. ForgeLine repo-wide QA is static inventory. Agent review does not establish exhaustive native scanner coverage: Gitleaks per-file accounting remains incomplete.
 
+The updated Graph Ops capture in this Space shows the new **Audit and test
+results** panel. It labels native deep-scan state, evaluated deep-audit
+receipts, six runtime lanes, and individual JUnit test cases separately. Run
+`python -m pytest --junitxml=.factory/test-reports/pytest.xml` in a local
+workspace to populate its test list. The report remains explicitly unbound to
+the current candidate; missing, invalid, or over-limit reports do not become a
+passing run. The panel can search every recorded case in a bounded report of
+up to 10,000 tests, starting with eight cases and loading 20 more per action.
+
 
 Code Factory is a local-first code audit system spanning requirements, architecture, security checks, behavioral evidence, workflow integrity, specialty AI review, and actionable repairs.
 

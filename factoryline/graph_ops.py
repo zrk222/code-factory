@@ -53,6 +53,7 @@ from .operations_control import operations_control_projection
 from .lifecycle_ledger import lifecycle_projection
 from .repair_loop import repair_loop_projection
 from .deep_audit_loop import deep_audit_lineage
+from .deep_audit_loop import deep_scan_projection, read_junit_report
 from .mission_control_status import mission_control_status
 from .senior_engineering import senior_engineering_projection
 from .continuous_controls import continuous_controls_projection, build_control_graph
@@ -206,6 +207,31 @@ def _artifact(
     return node_id
 
 
+def _product_list(
+    state: dict[str, Any], document: dict[str, Any], key: str, source: str
+) -> list[Any]:
+    """Keep malformed product inputs visible without dropping the graph snapshot."""
+    value = document.get(key, [])
+    if isinstance(value, list):
+        return value
+    _record_error(state["errors"], source, f"{key.upper()}_NOT_LIST")
+    state["slice_links_exact"] = False
+    return []
+
+
+def _product_refs(
+    state: dict[str, Any], entry: dict[str, Any], key: str, source: str
+) -> list[str]:
+    references: list[str] = []
+    for value in _product_list(state, entry, key, source):
+        if not isinstance(value, str) or not value.strip() or len(value.strip()) > 240:
+            _record_error(state["errors"], source, f"{key.upper()}_INVALID")
+            state["slice_links_exact"] = False
+            continue
+        references.append(value.strip())
+    return references
+
+
 def _append_product_graphs(
     state: dict[str, Any], root: Path
 ) -> tuple[dict[tuple[str, str], str], dict[str, list[str]]]:
@@ -228,10 +254,27 @@ def _append_product_graphs(
             source=source,
             status=_text(graph.get("status"), "unknown"),
         )
-        for entry in graph.get("requirements", []):
+        requirement_ids: list[str] = []
+        for entry in _product_list(state, graph, "requirements", source):
             if not isinstance(entry, dict):
+                _record_error(state["errors"], source, "REQUIREMENT_NOT_OBJECT")
+                state["slice_links_exact"] = False
                 continue
-            requirement_id = _text(entry.get("id"), "requirement")
+            requirement_id = entry.get("id")
+            if (
+                not isinstance(requirement_id, str)
+                or not requirement_id.strip()
+                or len(requirement_id.strip()) > 240
+            ):
+                _record_error(state["errors"], source, "REQUIREMENT_ID_INVALID")
+                state["slice_links_exact"] = False
+                continue
+            requirement_id = requirement_id.strip()
+            if requirement_id in requirement_ids:
+                _record_error(state["errors"], source, "REQUIREMENT_ID_DUPLICATE")
+                state["slice_links_exact"] = False
+                continue
+            requirement_ids.append(requirement_id)
             node_id = f"requirement:{project}:{requirement_id}"
             _node(
                 state,
@@ -254,11 +297,22 @@ def _append_product_graphs(
         if plan is None or plan_source is None:
             continue
         state["slice_plan_seen"] = True
-        planned_slices: list[tuple[dict[str, Any], str]] = []
-        for entry in plan.get("slices", []):
+        planned_slices: list[tuple[str, list[str]]] = []
+        for entry in _product_list(state, plan, "slices", plan_source):
             if not isinstance(entry, dict):
+                _record_error(state["errors"], plan_source, "SLICE_NOT_OBJECT")
+                state["slice_links_exact"] = False
                 continue
-            slice_id = _text(entry.get("id"), "slice")
+            slice_id = entry.get("id")
+            if (
+                not isinstance(slice_id, str)
+                or not slice_id.strip()
+                or len(slice_id.strip()) > 240
+            ):
+                _record_error(state["errors"], plan_source, "SLICE_ID_INVALID")
+                state["slice_links_exact"] = False
+                continue
+            slice_id = slice_id.strip()
             node_id = f"slice:{project}:{slice_id}"
             _node(
                 state,
@@ -271,20 +325,21 @@ def _append_product_graphs(
             )
             _edge(state, product_id, node_id, "plans")
             slices.setdefault(slice_id, []).append(node_id)
-            planned_slices.append((entry, node_id))
-            for req_id in entry.get("requirement_ids", []):
-                requirement = requirements.get((project, str(req_id)))
+            dependencies = _product_refs(state, entry, "depends_on", plan_source)
+            planned_slices.append((node_id, dependencies))
+            for req_id in _product_refs(state, entry, "requirement_ids", plan_source):
+                requirement = requirements.get((project, req_id))
                 if requirement:
                     _edge(state, requirement, node_id, "assigned_to")
-        for entry, node_id in planned_slices:
-            for dependency in entry.get("depends_on", []):
-                for dependency_id in slices.get(str(dependency), []):
+                else:
+                    state["slice_links_exact"] = False
+                    _record_error(state["errors"], plan_source, "SLICE_REQUIREMENT_UNKNOWN")
+        for node_id, dependencies in planned_slices:
+            for dependency in dependencies:
+                for dependency_id in slices.get(dependency, []):
                     _edge(state, dependency_id, node_id, "depends_on")
-        for requirement_id, requirement_node in (
-            (item["id"], requirements.get((project, item["id"])))
-            for item in graph.get("requirements", [])
-            if isinstance(item, dict) and isinstance(item.get("id"), str)
-        ):
+        for requirement_id in requirement_ids:
+            requirement_node = requirements.get((project, requirement_id))
             assigned = [
                 edge
                 for edge in state["edges"]
@@ -296,11 +351,11 @@ def _append_product_graphs(
                 _record_error(
                     state["errors"], plan_source, f"SLICE_ASSIGNMENT_{requirement_id}"
                 )
-        for entry, node_id in planned_slices:
-            for dependency in entry.get("depends_on", []):
+        for node_id, dependencies in planned_slices:
+            for dependency in dependencies:
                 expected = [
                     (dependency_id, node_id, "depends_on")
-                    for dependency_id in slices.get(str(dependency), [])
+                    for dependency_id in slices.get(dependency, [])
                 ]
                 if len(expected) != 1 or expected[0] not in state["edge_keys"]:
                     state["slice_links_exact"] = False
@@ -2648,6 +2703,29 @@ def _append_deep_audit(state: dict[str, Any], root: Path, status: dict) -> dict:
     return projection
 
 
+def _append_deep_scan(state: dict[str, Any], root: Path) -> dict[str, Any]:
+    projection, source_error = deep_scan_projection(root)
+    if source_error:
+        _record_error(state["errors"], ".factory/deep-runs", source_error)
+    if projection["run_id"]:
+        _node(
+            state,
+            node_id=f"deep-scan:{projection['run_id']}",
+            kind="deep_scan",
+            label="Full-depth audit execution",
+            source=projection["source"],
+            status="incomplete",
+            facts={
+                "candidate_sha256": projection["candidate_sha256"],
+                "state_content_sha256": projection["state_content_sha256"],
+                "lane_count": len(projection["lanes"]),
+                "finding_count": projection["finding_count"],
+                "coverage_gap_count": projection["coverage_gap_count"],
+                "authority": "none",
+            },
+        )
+    return projection
+
 def _append_repair_loops(
     state: dict[str, Any], root: Path, projection: dict | None = None
 ) -> dict[str, Any]:
@@ -4137,6 +4215,7 @@ def _collect_snapshot_sources(state: dict[str, Any], workspace: Path) -> dict[st
                 state, workspace, shared["repair_loops"]
             ),
             "deep_audit": _append_deep_audit(state, workspace, shared["deep_audit"]),
+            "deep_scan": _append_deep_scan(state, workspace),
             "guardrails": _append_guardrail_evaluations(state, workspace),
             "resilience": _append_resilience_plans(state, workspace),
             "proof_deltas": _append_proof_deltas(state, workspace),
@@ -4621,6 +4700,14 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
 
     portfolio = graph_portfolio_plan({**base_core, "graph_sha256": base_graph_sha256})
     admissions = _append_admission_packets(state, workspace)
+    test_report = read_junit_report(workspace)
+    if test_report["state"] == "INCOMPLETE":
+        _record_error(
+            state["errors"], test_report["source"], "TEST_REPORT_INCOMPLETE"
+        )
+    test_report_summary = {
+        key: value for key, value in test_report.items() if key != "cases"
+    }
     projected_nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     projected_edges = sorted(
         state["edges"],
@@ -4633,14 +4720,22 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "admission_packet_count": admissions["count"],
         "admission_packet_sealed_count": admissions["sealed_count"],
     }
+    final_markers = {*markers, "GRAPH_OPS_PORTFOLIO_ADMISSION_READ_ONLY"}
+    if state["errors"] or state["truncated"]:
+        final_markers.add("GRAPH_OPS_PARTIAL_RESULT")
     core = {
         **base_core,
-        "markers": sorted([*markers, "GRAPH_OPS_PORTFOLIO_ADMISSION_READ_ONLY"]),
+        "markers": sorted(final_markers),
+        "complete": not state["errors"] and not state["truncated"],
         "nodes": projected_nodes,
         "edges": projected_edges,
         "facts": projected_facts,
+        "source_errors": sorted(
+            state["errors"], key=lambda item: (item["source"], item["code"])
+        ),
         "portfolio": portfolio,
         "admissions": admissions,
+        "test_report": test_report_summary,
         "agent_supervision": p["agent_supervision"],
         "judgment": p["judgment"],
         "continuous_proof": p["continuous_proof"],
@@ -4658,6 +4753,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "lifecycle": p["lifecycle"],
         "repair_loops": p["repair_loops"],
         "deep_audit": p["deep_audit"],
+        "deep_scan": p["deep_scan"],
         "mission_control": p["mission_control"],
         "release_decision": p["release_decision"],
         "saas_proof": p["saas_proof"],

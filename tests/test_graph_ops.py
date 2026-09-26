@@ -5,6 +5,7 @@ import hashlib
 from pathlib import Path
 
 from factoryline.cli import main
+from factoryline.deep_audit_loop import read_junit_report
 from factoryline.graph_ops import (
     GRAPH_OPS_SCHEMA,
     graph_ops_html,
@@ -890,7 +891,8 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
     assert '"X-Factory-Studio-Token":sessionToken' in page
     assert 'id="graph-refresh"' in page
     assert 'id="graph-stop"' in page
-    assert "setInterval(()=>{if(graphAutoRefresh)load();},1000)" in page
+    assert "GRAPH_REFRESH_MS=5000" in page
+    assert "if(graphAutoRefresh&&!document.hidden)load();" in page
     assert "Memory Spine · proof-aware briefing" in page
     assert "Turn the diff into the next safe proof." in page
     assert 'id="memory-refresh"' in page
@@ -1302,3 +1304,33 @@ def test_graph_ops_starts_with_plain_language_progressive_disclosure():
     assert "Can we govern agent work without trusting its story?" in html
     assert "This guide runs nothing." in html
     assert "AppForge applies only when mobile delivery is explicitly in scope." in html
+
+
+def test_graph_ops_junit_reader_reports_every_case_and_rejects_missing_cases(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / ".factory" / "test-reports" / "pytest.xml"
+    report.parent.mkdir(parents=True)
+    report.write_text(
+        '<testsuites><testsuite name="suite" tests="4" failures="1" errors="1" skipped="1">'
+        '<testcase classname="suite" name="pass"/>'
+        '<testcase classname="suite" name="fail"><failure message="bad assertion"/></testcase>'
+        '<testcase classname="suite" name="error"><error message="setup broke"/></testcase>'
+        '<testcase classname="suite" name="skip"><skipped message="unsupported"/></testcase>'
+        '</testsuite></testsuites>',
+        encoding="utf-8",
+    )
+    observed = read_junit_report(tmp_path)
+    assert observed["state"] == "OBSERVED"
+    assert observed["total_count"] == len(observed["cases"]) == 4
+    assert observed["counts"] == {"passed": 1, "failed": 1, "error": 1, "skipped": 1}
+    assert [case["status"] for case in observed["cases"]] == [
+        "passed", "failed", "error", "skipped"
+    ]
+    assert observed["candidate_binding"] == "UNBOUND"
+
+    report.write_text(report.read_text(encoding="utf-8").replace('tests="4"', 'tests="5"'), encoding="utf-8")
+    incomplete = read_junit_report(tmp_path)
+    assert incomplete["state"] == "INCOMPLETE"
+    assert incomplete["cases"] == []
+    assert "Declared JUnit counts" in incomplete["reason"]
