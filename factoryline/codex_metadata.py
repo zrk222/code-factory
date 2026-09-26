@@ -178,6 +178,31 @@ _PATH_KEYS = frozenset({"root", "workspace", "cwd", "checkout", "repository"})
 _NON_EXECUTION_STATE_SEGMENTS = frozenset(
     {"active_policy", "constraints", "policy", "policies"}
 )
+_NON_EXECUTION_STATE_LOCATIONS = _NON_EXECUTION_STATE_SEGMENTS | {"history"}
+_CONTAINER_EVIDENCE_KEYS = frozenset(
+    {"evidence", "verification", "receipt", "receipts", "provider_receipt"}
+)
+_CONCRETE_PROVIDER_KEYS = frozenset(
+    {"provider_receipt", "provider_url", "published_url", "readback", "read_back"}
+)
+_PROVIDER_IDENTITY_NAMES = frozenset(
+    {
+        "pypi",
+        "github",
+        "openvsx",
+        "jetbrains",
+        "huggingface",
+        "visualstudio",
+        "marketplace",
+    }
+)
+_INTENT_HASH_FIELDS = frozenset(
+    {"intent_hash", "ssat", "ssat_hash", "spec_hash", "contract_hash"}
+)
+_INTENT_BINDING_FIELDS = frozenset(
+    {"intent_id", "intent", "requirements", "acceptance_criteria", "spec"}
+)
+_INTENT_STATUS_FIELDS = frozenset({"intent_status", "intent_state"})
 _PROVIDER_RE = re.compile(
     r"\b(?:pypi|github|open\s*vsx|jetbrains|hugging\s*face|visual\s*studio|provider|marketplace)\b",
     re.I,
@@ -250,6 +275,17 @@ def _walk_pairs(value: Any, prefix: str = "record") -> Iterable[tuple[str, str, 
             yield from _walk_pairs(child, f"{prefix}[{index}]")
 
 
+def _pairs_for_prefix(
+    pairs: list[tuple[str, str, Any]], prefix: str
+) -> list[tuple[str, str, Any]]:
+    if prefix == "record":
+        return pairs
+    return [
+        (key, f"{prefix}{location[len('record') :]}", child)
+        for key, location, child in pairs
+    ]
+
+
 def _records(
     value: Any, prefix: str = "record"
 ) -> Iterable[tuple[str, dict[str, Any]]]:
@@ -290,12 +326,15 @@ def _is_execution_state_location(location: str) -> bool:
     contradictory-status findings.
     """
     segments = {part.split("[", 1)[0].lower() for part in location.split(".")}
-    return not bool(segments.intersection(_NON_EXECUTION_STATE_SEGMENTS | {"history"}))
+    return not bool(segments.intersection(_NON_EXECUTION_STATE_LOCATIONS))
 
 
-def _anchors(record: dict[str, Any]) -> set[str]:
+def _anchors(
+    record: dict[str, Any], pairs: list[tuple[str, str, Any]] | None = None
+) -> set[str]:
     anchors: set[str] = set()
-    for key, _location, value in _walk_pairs(record):
+    walk = _walk_pairs(record) if pairs is None else pairs
+    for key, _location, value in walk:
         if (
             key in EVIDENCE_KEYS
             and key not in {"evidence", "verification"}
@@ -304,77 +343,66 @@ def _anchors(record: dict[str, Any]) -> set[str]:
             anchors.add(key)
         if key == "h" and _is_receipt_hash(value):
             anchors.add(key)
-        if key in {
-            "evidence",
-            "verification",
-            "receipt",
-            "receipts",
-            "provider_receipt",
-        } and isinstance(value, (dict, list)):
+        if key in _CONTAINER_EVIDENCE_KEYS and isinstance(value, (dict, list)):
             # A container is useful only when it contains a concrete anchor.
             continue
     return anchors
 
 
-def _strong_anchors(record: dict[str, Any]) -> set[str]:
-    anchors = {
-        key
-        for key, _location, value in _walk_pairs(record)
-        if key in STRONG_EVIDENCE_KEYS and _nonempty(value)
-    }
-    if any(
-        key == "h" and _is_receipt_hash(value)
-        for key, _location, value in _walk_pairs(record)
-    ):
-        anchors.add("h")
+def _strong_anchors(
+    record: dict[str, Any], pairs: list[tuple[str, str, Any]] | None = None
+) -> set[str]:
+    anchors: set[str] = set()
+    walk = _walk_pairs(record) if pairs is None else pairs
+    for key, _location, value in walk:
+        if key in STRONG_EVIDENCE_KEYS and _nonempty(value):
+            anchors.add(key)
+        if key == "h" and _is_receipt_hash(value):
+            anchors.add("h")
     return anchors
 
 
-def _provider_anchors(record: dict[str, Any]) -> set[str]:
+def _provider_anchors(
+    record: dict[str, Any], pairs: list[tuple[str, str, Any]] | None = None
+) -> set[str]:
     anchors: set[str] = set()
-    for key, _location, value in _walk_pairs(record):
+    walk = _walk_pairs(record) if pairs is None else pairs
+    for key, _location, value in walk:
         # Merely naming a provider is not provider evidence.  A receipt, URL,
         # or explicit read-back is the load-bearing anchor.
-        concrete = key in {
-            "provider_receipt",
-            "provider_url",
-            "published_url",
-            "readback",
-            "read_back",
-        } or ("provider" in key and key != "provider")
+        concrete = key in _CONCRETE_PROVIDER_KEYS or (
+            "provider" in key and key != "provider"
+        )
         if concrete and _nonempty(value):
             anchors.add(key)
     return anchors
 
 
-def _has_provider_identity(record: dict[str, Any]) -> bool:
+def _has_provider_identity(
+    record: dict[str, Any], pairs: list[tuple[str, str, Any]] | None = None
+) -> bool:
     """Detect a provider named as structured data, not merely in prose."""
-    provider_names = {
-        "pypi",
-        "github",
-        "openvsx",
-        "jetbrains",
-        "huggingface",
-        "visualstudio",
-        "marketplace",
-    }
-    for key, _location, value in _walk_pairs(record):
-        if key == "provider" or key in provider_names:
+    walk = _walk_pairs(record) if pairs is None else pairs
+    for key, _location, value in walk:
+        if key == "provider" or key in _PROVIDER_IDENTITY_NAMES:
             return True
         if isinstance(value, str):
             normalized = re.sub(r"[^a-z]", "", value.lower())
-            if normalized in provider_names:
+            if normalized in _PROVIDER_IDENTITY_NAMES:
                 return True
     return False
 
 
 def _claim_values(
-    record: dict[str, Any], prefix: str = "record"
+    record: dict[str, Any],
+    prefix: str = "record",
+    pairs: list[tuple[str, str, Any]] | None = None,
 ) -> tuple[set[str], set[str], list[tuple[str, Any]]]:
     terminal: set[str] = set()
     problem: set[str] = set()
     gate_claims: list[tuple[str, Any]] = []
-    for key, location, value in _walk_pairs(record, prefix):
+    values = pairs if pairs is not None else _walk_pairs(record, prefix)
+    for key, location, value in values:
         _add_state_claim(key, location, value, terminal, problem)
         if key == "verified" and value is True:
             terminal.add(location)
@@ -402,10 +430,13 @@ def _add_state_claim(
         problem.add(location)
 
 
-def _has_independent_verifier(record: dict[str, Any]) -> bool:
+def _has_independent_verifier(
+    record: dict[str, Any], pairs: list[tuple[str, str, Any]] | None = None
+) -> bool:
     authors: set[str] = set()
     verifiers: set[str] = set()
-    for key, _location, value in _walk_pairs(record):
+    walk = _walk_pairs(record) if pairs is None else pairs
+    for key, _location, value in walk:
         if key in IDENTITY_KEYS and isinstance(value, str) and value.strip():
             authors.add(value.strip().lower())
         if key in VERIFIER_KEYS and _nonempty(value):
@@ -417,21 +448,13 @@ def _has_independent_verifier(record: dict[str, Any]) -> bool:
 
 
 def _intent_binding_value(key: str, value: Any) -> bool:
-    hash_fields = {"intent_hash", "ssat", "ssat_hash", "spec_hash", "contract_hash"}
-    if key in hash_fields and isinstance(value, str):
+    if key in _INTENT_HASH_FIELDS and isinstance(value, str):
         return re.fullmatch(r"[0-9a-fA-F]{64}", value.strip()) is not None
-    intent_fields = {
-        "intent_id",
-        "intent",
-        "requirements",
-        "acceptance_criteria",
-        "spec",
-    }
-    return key in intent_fields and _nonempty(value)
+    return key in _INTENT_BINDING_FIELDS and _nonempty(value)
 
 
 def _intent_status_flags(key: str, value: Any) -> tuple[bool, bool]:
-    if key not in {"intent_status", "intent_state"} or not isinstance(value, str):
+    if key not in _INTENT_STATUS_FIELDS or not isinstance(value, str):
         return False, False
     normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
     return (
@@ -440,11 +463,14 @@ def _intent_status_flags(key: str, value: Any) -> tuple[bool, bool]:
     )
 
 
-def _intent_state(record: dict[str, Any]) -> tuple[bool, bool]:
+def _intent_state(
+    record: dict[str, Any], pairs: list[tuple[str, str, Any]] | None = None
+) -> tuple[bool, bool]:
     """Return (bound, explicitly_unclear) for a terminal record's user intent."""
     bound = False
     unclear = False
-    for key, _location, value in _walk_pairs(record):
+    walk = _walk_pairs(record) if pairs is None else pairs
+    for key, _location, value in walk:
         bound = bound or _intent_binding_value(key, value)
         status_bound, status_unclear = _intent_status_flags(key, value)
         bound = bound or status_bound
@@ -452,16 +478,24 @@ def _intent_state(record: dict[str, Any]) -> tuple[bool, bool]:
     return bound, unclear
 
 
-def _path_mismatch(workspace: Path, record: dict[str, Any]) -> list[tuple[str, str]]:
+def _path_mismatch(
+    workspace: Path,
+    record: dict[str, Any],
+    pairs: list[tuple[str, str, Any]] | None = None,
+) -> list[tuple[str, str]]:
     findings: list[tuple[str, str]] = []
-    for key, location, value in _walk_pairs(record):
+    base: Path | None = None
+    walk = _walk_pairs(record) if pairs is None else pairs
+    for key, location, value in walk:
         if key not in _PATH_KEYS or not isinstance(value, str) or not value.strip():
             continue
         candidate = Path(value.strip())
         if not candidate.is_absolute():
             continue
+        if base is None:
+            base = workspace.resolve()
         try:
-            candidate.resolve().relative_to(workspace.resolve())
+            candidate.resolve().relative_to(base)
         except ValueError:
             findings.append((location, value.strip()))
     return findings
@@ -507,7 +541,10 @@ def _is_forge_receipt(relative: str) -> bool:
 
 
 def _scope_for_record(
-    relative: str, record: dict[str, Any], workspace: Path | None = None
+    relative: str,
+    record: dict[str, Any],
+    workspace: Path | None = None,
+    terminal_state: bool | None = None,
 ) -> str:
     """Classify a record without treating historical terminal state as active."""
     explicit = record.get("scope")
@@ -515,12 +552,14 @@ def _scope_for_record(
         return explicit.strip().lower()
     if _is_forge_state(relative) and _terminal_state_record(record):
         return "archive"
-    if (
-        workspace is not None
-        and _is_forge_receipt(relative)
-        and _terminal_state_file(workspace, relative)
-    ):
-        return "archive"
+    if workspace is not None and _is_forge_receipt(relative):
+        receipt_has_terminal_state = (
+            _terminal_state_file(workspace, relative)
+            if terminal_state is None
+            else terminal_state
+        )
+        if receipt_has_terminal_state:
+            return "archive"
     if _archived_relative(relative):
         return "archive"
     return "active"
@@ -758,6 +797,7 @@ def _record_terminal_findings(
     anchors: set[str],
     strong_anchors: set[str],
     provider_anchors: set[str],
+    provider_identity: bool | None = None,
 ) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
     if terminal and not anchors:
@@ -787,7 +827,9 @@ def _record_terminal_findings(
                 "terminal claim is combined with pending, blocked, partial, failed, or unknown state",
             )
         )
-    if terminal and _has_provider_identity(record) and not provider_anchors:
+    if terminal and provider_identity is None:
+        provider_identity = _has_provider_identity(record)
+    if terminal and provider_identity and not provider_anchors:
         findings.append(
             _finding(
                 "E_METADATA_PROVIDER_UNBOUND",
@@ -800,10 +842,14 @@ def _record_terminal_findings(
 
 
 def _record_gate_findings(
-    path: str, location: str, record: dict[str, Any], gate_claims: bool
+    path: str,
+    location: str,
+    record: dict[str, Any],
+    gate_claims: bool,
+    pairs: list[tuple[str, str, Any]] | None = None,
 ) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
-    if gate_claims and not _has_independent_verifier(record):
+    if gate_claims and not _has_independent_verifier(record, pairs):
         findings.append(
             _finding(
                 "E_METADATA_SELF_ATTESTED_GATE",
@@ -815,7 +861,9 @@ def _record_gate_findings(
     if gate_claims:
         negative = {
             key
-            for key, _location, value in _walk_pairs(record)
+            for key, _location, value in (
+                pairs if pairs is not None else _walk_pairs(record)
+            )
             if key in NEGATIVE_PROOF_KEYS and _nonempty(value)
         }
         if not negative:
@@ -860,10 +908,13 @@ def _record_intent_findings(
 
 
 def _record_workspace_findings(
-    workspace: Path, path: str, record: dict[str, Any]
+    workspace: Path,
+    path: str,
+    record: dict[str, Any],
+    pairs: list[tuple[str, str, Any]] | None = None,
 ) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
-    for mismatch_location, supplied in _path_mismatch(workspace, record):
+    for mismatch_location, supplied in _path_mismatch(workspace, record, pairs):
         findings.append(
             _finding(
                 "E_METADATA_WORKSPACE_MISMATCH",
@@ -880,11 +931,13 @@ def _record_active_findings(
     location: str,
     record: dict[str, Any],
     anchors: set[str],
+    pairs: list[tuple[str, str, Any]] | None = None,
 ) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
+    walk = _walk_pairs(record, location) if pairs is None else pairs
     states = [
         value
-        for key, state_location, value in _walk_pairs(record, location)
+        for key, state_location, value in walk
         if key in {"status", "state"}
         and isinstance(value, str)
         and _is_execution_state_location(state_location)
@@ -892,7 +945,7 @@ def _record_active_findings(
     if any(value.strip().lower() == "active" for value in states):
         execution_keys = {
             key
-            for key, _location, value in _walk_pairs(record)
+            for key, _location, value in walk
             if key
             in {"run_id", "execution_id", "started_at", "last_event", "execution"}
             and _nonempty(value)
@@ -912,10 +965,17 @@ def _record_active_findings(
 def _audit_record(
     workspace: Path, path: str, location: str, record: dict[str, Any]
 ) -> list[dict[str, str]]:
-    terminal, problem, gate_claims = _claim_values(record, location)
-    anchors = _anchors(record)
+    pairs = list(_walk_pairs(record))
+    located_pairs = _pairs_for_prefix(pairs, location)
+    terminal, problem, gate_claims = _claim_values(record, location, located_pairs)
+    anchors = _anchors(record, pairs)
     terminal_or_gate = terminal or gate_claims
-    intent_bound, intent_unclear = _intent_state(record)
+    intent_bound, intent_unclear = (
+        _intent_state(record, pairs) if terminal_or_gate else (False, False)
+    )
+    strong_anchors = _strong_anchors(record, pairs) if terminal else set()
+    provider_anchors = _provider_anchors(record, pairs) if terminal else set()
+    provider_identity = _has_provider_identity(record, pairs) if terminal else False
     findings: list[dict[str, str]] = []
     findings.extend(
         _record_terminal_findings(
@@ -925,18 +985,21 @@ def _audit_record(
             terminal,
             problem,
             anchors,
-            _strong_anchors(record),
-            _provider_anchors(record),
+            strong_anchors,
+            provider_anchors,
+            provider_identity,
         )
     )
-    findings.extend(_record_gate_findings(path, location, record, gate_claims))
+    findings.extend(_record_gate_findings(path, location, record, gate_claims, pairs))
     findings.extend(
         _record_intent_findings(
             path, location, terminal_or_gate, intent_bound, intent_unclear
         )
     )
-    findings.extend(_record_workspace_findings(workspace, path, record))
-    findings.extend(_record_active_findings(path, location, record, anchors))
+    findings.extend(_record_workspace_findings(workspace, path, record, pairs))
+    findings.extend(
+        _record_active_findings(path, location, record, anchors, located_pairs)
+    )
     return findings
 
 
@@ -1289,10 +1352,10 @@ def _audit_json(
                 f"invalid JSON: {exc.msg}",
             )
         ]
-    records = list(_records(value))
-    entry["records"] = len(records)
     findings: list[dict[str, str]] = []
-    for location, record in records:
+    record_count = 0
+    for location, record in _records(value):
+        record_count += 1
         record_scope = _scope_for_record(relative, record, workspace)
         if scope in {"all", record_scope}:
             findings.extend(
@@ -1300,6 +1363,7 @@ def _audit_json(
                     _audit_record(workspace, relative, location, record), record_scope
                 )
             )
+    entry["records"] = record_count
     if relative.lower().endswith("state.json") and isinstance(value, dict):
         root_scope = _scope_for_record(relative, value)
         if scope in {"all", root_scope}:
@@ -1314,6 +1378,7 @@ def _audit_jsonl(
 ) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
     record_count = 0
+    terminal_state: bool | None = None
     for number, line in enumerate(text.splitlines(), start=1):
         if not line.strip():
             continue
@@ -1331,7 +1396,19 @@ def _audit_jsonl(
             continue
         for location, record in _records(value, f"line:{number}"):
             record_count += 1
-            record_scope = _scope_for_record(relative, record, workspace)
+            explicit_scope = record.get("scope")
+            has_explicit_scope = isinstance(
+                explicit_scope, str
+            ) and explicit_scope.strip().lower() in {"active", "archive"}
+            if (
+                not has_explicit_scope
+                and _is_forge_receipt(relative)
+                and terminal_state is None
+            ):
+                terminal_state = _terminal_state_file(workspace, relative)
+            record_scope = _scope_for_record(
+                relative, record, workspace, terminal_state=terminal_state
+            )
             if scope in {"all", record_scope}:
                 findings.extend(
                     _scope_findings(
