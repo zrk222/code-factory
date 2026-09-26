@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Trace AI code from approved intent through six audits and current evidence to a human-owned review decision.">
-  <title>Code Factory — Catch the test that could never fail.</title>
+  <meta name="description" content="A local-first code audit system connecting requirements, architecture, security checks, behavioral evidence, specialty AI review, and actionable repairs.">
+  <title>Code Factory — Audit code. Review evidence. Resolve defects.</title>
   <style>
     :root {
       --ink: #171610;
@@ -92,7 +92,7 @@
   </style>
 </head>
 <body>
-  <p class="sr-only">Trace AI code from approved intent through six audits and current evidence to a human-owned review decision.</p>
+  <p class="sr-only">A local-first code audit system connecting requirements, architecture, security checks, behavioral evidence, specialty AI review, and actionable repairs.</p>
   <a class="skip-link" href="#main">Skip to product proof</a>
   <div class="shell">
     <header>
@@ -100,7 +100,7 @@
       <nav aria-label="Primary navigation">
         <a href="#tour">Product tour</a>
         <a href="https://github.com/zrk222/code-factory" target="_blank" rel="noopener noreferrer">GitHub source</a>
-        <a class="button" href="#first-run">Run first proof</a>
+        <a class="button" href="#audit-update">Explore audits</a>
       </nav>
     </header>
   </div>
@@ -109,11 +109,11 @@
     <div class="shell hero">
       <div>
         <div class="eyebrow">Open source · Local first · Evidence backed</div>
-        <h1>Catch the test that could never fail.</h1>
-        <p class="lede"><strong>One command answers one question: can this test actually fail?</strong> Run a safe negative-control demonstration, receive a local receipt, and see what trustworthy evidence looks like before relying on AI-generated tests. Your project is not uploaded or changed.</p>
+        <h1>Audit code.<br>Review evidence.<br>Resolve defects.</h1>
+        <p class="lede"><strong>A code audit system for the entire development workflow.</strong> Connect requirements and architecture checks, security analysis, behavioral tests, workflow integrity, and specialty AI review. Follow source-bound findings through actionable repairs and fresh verification, with coverage gaps visible at every step.</p>
         <p class="boundary"><strong>Current source preview:</strong> connect approved intent, agent handoffs, verification routes, and current evidence in one review path. <a href="https://github.com/zrk222/code-factory/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">See what changed in 0.46.9</a>. Publication remains a separate, gated step.</p>
         <div class="actions">
-          <a class="button primary" href="#first-run">Run your first local proof</a>
+          <a class="button primary" href="#audit-update">Explore the audit workflow</a>
           <a class="button" href="https://github.com/zrk222/code-factory/blob/main/docs/PRODUCT_VISUALS.md" target="_blank" rel="noopener noreferrer">See actual Factory Studio</a>
         </div>
         <div class="trust" id="release-proof" aria-label="Local proof boundaries">
@@ -126,7 +126,7 @@
       </div>
       <figure class="visual">
         <img src="https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/first-proof-card.svg" alt="Actual privacy-safe Code Factory Proof Card showing that a hollow test was detected.">
-        <figcaption>Actual First Proof Card · healthy control passed · hollow test caught · no source uploaded</figcaption>
+        <figcaption>One starter example: First Proof · healthy control passed · hollow test caught · no source uploaded</figcaption>
       </figure>
     </div>
 
@@ -279,9 +279,9 @@ factory proofsearch frontier plan frontier.request.json \
     <section id="first-run">
       <div class="shell proof">
         <div>
-          <div class="eyebrow">Your first proof</div>
+          <div class="eyebrow">Starter example · one check in the audit system</div>
           <h2>See Code Factory catch a hollow test in under two minutes.</h2>
-          <p>The demo runs only in a generated local sandbox. It proves the positive control can pass, catches the hollow negative control as <code>HOLLOW_E2E_TEST</code>, and writes a privacy-safe Proof Card. No account, model key, or source upload is required.</p>
+          <p>Run a safe negative-control demonstration, receive a local receipt, and explore one small part of the audit system. The demo runs only in a generated local sandbox. It proves the positive control can pass, catches the hollow negative control as <code>HOLLOW_E2E_TEST</code>, and writes a privacy-safe Proof Card. No account, model key, or source upload is required.</p>
         </div>
         <pre><code>pip install factoryline-code-factory
 factory first-proof --root .
