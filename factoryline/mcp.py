@@ -2170,7 +2170,7 @@ def _candidate_alignment_status(root: Path, arguments: object) -> dict[str, obje
     }
 
 
-def _task_evidence_status(root: Path, arguments: object) -> dict[str, object]:
+def _validate_task_evidence_arguments(arguments: object) -> dict[str, str]:
     required = {"task_card_path", "evidence_path"}
     allowed = required | {"alignment_path"}
     if (
@@ -2186,53 +2186,70 @@ def _task_evidence_status(root: Path, arguments: object) -> dict[str, object]:
             "factory.task_evidence_status requires task_card_path and evidence_path",
             "TASK_EVIDENCE_INPUT_REFUSED",
         )
-    base = root.resolve()
-    values: list[dict[str, object]] = []
-    for key in ("task_card_path", "evidence_path"):
-        path = Path(str(arguments[key]))
-        if not path.is_absolute():
-            path = base / path
-        path = path.resolve()
-        if path != base and base not in path.parents:
-            raise McpError(
-                "receipt paths must remain inside the workspace",
-                "TASK_EVIDENCE_PATH_REFUSED",
-            )
-        try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise McpError(
-                f"cannot read {key}: {exc}", "TASK_EVIDENCE_READ_REFUSED"
-            ) from exc
-        if not isinstance(value, dict):
-            raise McpError(
-                f"{key} must contain an object", "TASK_EVIDENCE_INPUT_REFUSED"
-            )
-        values.append(value)
+    return arguments
+
+
+def _task_evidence_path(root: Path, raw_path: str) -> Path:
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = root / path
+    path = path.resolve()
+    if path != root and root not in path.parents:
+        raise McpError(
+            "receipt paths must remain inside the workspace",
+            "TASK_EVIDENCE_PATH_REFUSED",
+        )
+    return path
+
+
+def _read_task_evidence_object(
+    root: Path, key: str, raw_path: str
+) -> dict[str, object]:
+    path = _task_evidence_path(root, raw_path)
     try:
-        receipt = verify_task_evidence(values[1])
-        card = values[0]
-        alignment = None
-        if (
-            isinstance(arguments.get("alignment_path"), str)
-            and arguments["alignment_path"].strip()
-        ):
-            alignment_path = Path(arguments["alignment_path"])
-            if not alignment_path.is_absolute():
-                alignment_path = base / alignment_path
-            alignment_path = alignment_path.resolve()
-            if alignment_path != base and base not in alignment_path.parents:
-                raise McpError(
-                    "receipt paths must remain inside the workspace",
-                    "TASK_EVIDENCE_PATH_REFUSED",
-                )
-            alignment = json.loads(alignment_path.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise McpError(
+            f"cannot read {key}: {exc}", "TASK_EVIDENCE_READ_REFUSED"
+        ) from exc
+    if not isinstance(value, dict):
+        raise McpError(f"{key} must contain an object", "TASK_EVIDENCE_INPUT_REFUSED")
+    return value
+
+
+def _task_completion_eligible(
+    card: dict[str, object], receipt: dict[str, object], alignment: object
+) -> bool:
+    from .agentic_control import complete_task_with_evidence
+
+    complete_task_with_evidence(card, receipt, alignment)
+    return True
+
+
+def _read_task_alignment(root: Path, raw_path: str) -> object:
+    path = _task_evidence_path(root, raw_path)
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _task_evidence_status(root: Path, arguments: object) -> dict[str, object]:
+    values = _validate_task_evidence_arguments(arguments)
+    base = root.resolve()
+    try:
+        card = _read_task_evidence_object(
+            base, "task_card_path", values["task_card_path"]
+        )
+        evidence = _read_task_evidence_object(
+            base, "evidence_path", values["evidence_path"]
+        )
+        receipt = verify_task_evidence(evidence)
+        alignment = (
+            _read_task_alignment(base, values["alignment_path"])
+            if "alignment_path" in values
+            else None
+        )
         eligible = False
         if alignment is not None:
-            from .agentic_control import complete_task_with_evidence
-
-            complete_task_with_evidence(card, receipt, alignment)
-            eligible = True
+            eligible = _task_completion_eligible(card, receipt, alignment)
     except Exception as exc:
         if hasattr(exc, "code"):
             raise McpError(str(exc), getattr(exc, "code")) from exc
