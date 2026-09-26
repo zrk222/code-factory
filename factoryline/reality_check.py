@@ -389,7 +389,7 @@ def _receipt_shape(value: object) -> tuple[dict[str, Any], set[str]]:
     return value, required
 
 
-def _receipt_manifest(value: object) -> dict[str, Any]:
+def _validate_receipt_manifest_header(value: object) -> None:
     if not isinstance(value, dict):
         _reject("REALITY_CHECK_RECEIPT_INVALID", "receipt manifest must be an object")
     required = {
@@ -406,32 +406,25 @@ def _receipt_manifest(value: object) -> dict[str, Any]:
         _reject(
             "REALITY_CHECK_RECEIPT_INVALID", "receipt manifest has unsupported fields"
         )
-    approval = value.get("approval")
-    behavior = value.get("behavior")
-    e2e_manifest = value.get("e2e_manifest")
+
+
+def _validate_manifest_approval(approval: object) -> None:
     if (
         not isinstance(approval, dict)
         or approval.get("state") != "approved"
         or set(approval) != {"state", "approved_by"}
     ):
         _reject("REALITY_CHECK_RECEIPT_INVALID", "receipt manifest approval is invalid")
+    _text(approval.get("approved_by"), "receipt manifest approved_by")
+
+
+def _validate_manifest_behavior(behavior: object) -> None:
     if not isinstance(behavior, dict) or set(behavior) != {
         "promise",
         "happy_path",
         "failure_case",
     }:
         _reject("REALITY_CHECK_RECEIPT_INVALID", "receipt manifest behavior is invalid")
-    if (
-        not isinstance(e2e_manifest, dict)
-        or set(e2e_manifest) != {"path", "sha256"}
-        or not isinstance(e2e_manifest.get("sha256"), str)
-        or not _SHA.fullmatch(e2e_manifest["sha256"])
-    ):
-        _reject(
-            "REALITY_CHECK_RECEIPT_INVALID", "receipt manifest E2E binding is invalid"
-        )
-    _text(value.get("id"), "receipt manifest id", identifier=True)
-    _text(approval.get("approved_by"), "receipt manifest approved_by")
     for field in ("promise", "happy_path", "failure_case"):
         _text(behavior.get(field), f"receipt manifest behavior.{field}")
     _clear_intent(behavior["promise"], "receipt manifest behavior.promise")
@@ -443,19 +436,46 @@ def _receipt_manifest(value: object) -> dict[str, Any]:
         "receipt manifest behavior.failure_case",
         observable=True,
     )
-    _text(e2e_manifest.get("path"), "receipt manifest E2E path")
-    _text(value.get("manifest_path"), "receipt manifest path")
-    if not isinstance(value.get("manifest_sha256"), str) or not _SHA.fullmatch(
-        value["manifest_sha256"]
+
+
+def _validate_manifest_e2e_binding(e2e_manifest: object) -> None:
+    if (
+        not isinstance(e2e_manifest, dict)
+        or set(e2e_manifest) != {"path", "sha256"}
+        or not isinstance(e2e_manifest.get("sha256"), str)
+        or not _SHA.fullmatch(e2e_manifest["sha256"])
     ):
-        _reject("REALITY_CHECK_RECEIPT_INVALID", "receipt manifest SHA-256 is invalid")
-    assertions = _intent_assertions(value.get("intent_assertions"))
+        _reject(
+            "REALITY_CHECK_RECEIPT_INVALID", "receipt manifest E2E binding is invalid"
+        )
+    _text(e2e_manifest.get("path"), "receipt manifest E2E path")
+
+
+def _validate_manifest_intent_assertions(raw_assertions: object) -> None:
+    assertions = _intent_assertions(raw_assertions)
     for assertion in assertions:
         _clear_intent(
             assertion["statement"],
             f"receipt intent_assertions[{assertion['id']}].statement",
             observable=True,
         )
+
+
+def _receipt_manifest(value: object) -> dict[str, Any]:
+    _validate_receipt_manifest_header(value)
+    approval = value.get("approval")
+    behavior = value.get("behavior")
+    e2e_manifest = value.get("e2e_manifest")
+    _validate_manifest_approval(approval)
+    _validate_manifest_behavior(behavior)
+    _validate_manifest_e2e_binding(e2e_manifest)
+    _text(value.get("id"), "receipt manifest id", identifier=True)
+    _text(value.get("manifest_path"), "receipt manifest path")
+    if not isinstance(value.get("manifest_sha256"), str) or not _SHA.fullmatch(
+        value["manifest_sha256"]
+    ):
+        _reject("REALITY_CHECK_RECEIPT_INVALID", "receipt manifest SHA-256 is invalid")
+    _validate_manifest_intent_assertions(value.get("intent_assertions"))
     return value
 
 
