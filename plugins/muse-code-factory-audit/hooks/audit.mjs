@@ -9,8 +9,10 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,6 +26,7 @@ const CLI_TIMEOUT_MS = 20_000;
 const FORGELINE_TIMEOUT_MS = 95_000;
 const GIT_TIMEOUT_MS = 2_000;
 const STATE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
+const RECEIPT_TTL_MS = 24 * 60 * 60 * 1_000;
 const STATE_DIR = path.join(
   process.env.MUSE_PLUGIN_DATA_DIR || os.tmpdir(),
   'cf-build-audit',
@@ -38,6 +41,11 @@ const BUILD_PATTERNS = [
   /\b(?:gradle|gradlew)\b[^\r\n]*\b(?:assemble|build|compile\w*)\b/i,
   /\b(?:make|nmake)\b[^\r\n]*\b(?:all|build|compile|package)\b/i,
   /\bpython(?:3(?:\.\d+)?)?\s+-m\s+build\b/i,
+];
+const WORK_PATTERNS = [
+  /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|check|typecheck)\b/i,
+  /\b(?:pytest|ruff|eslint|vitest|jest|tsc|cargo\s+test|go\s+test|dotnet\s+test)\b/i,
+  /\b(?:git\s+apply|apply_patch|sed\s+-i|python\s+[^\r\n]*\bwrite_text\b)\b/i,
 ];
 const APPFORGE_TERMS =
   /\b(?:ios|ipados|android|swiftui|uikit|app store|play store|storekit|testflight|react native|flutter|native mobile app|mobile app)\b/gi;
@@ -82,6 +90,11 @@ function collectText(value, depth = 0) {
 
 function isBuildCommand(command) {
   return BUILD_PATTERNS.some((pattern) => pattern.test(command));
+}
+
+function isRelevantWork(command, toolName = '') {
+  return isBuildCommand(command) || WORK_PATTERNS.some((pattern) => pattern.test(command)) ||
+    /^(?:Edit|Write|MultiEdit|NotebookEdit|ApplyPatch)$/i.test(toolName);
 }
 
 function runRtk(args, cwd, input, timeoutMs = CLI_TIMEOUT_MS) {
@@ -540,6 +553,72 @@ function stateFile(event, root) {
   return path.join(STATE_DIR, `${createHash('sha256').update(key).digest('hex')}.jsonl`);
 }
 
+function gitState(root) {
+  const invoke = (args) => spawnSync('git', args, {
+    cwd: root, encoding: 'utf8', windowsHide: true, timeout: GIT_TIMEOUT_MS,
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  const head = invoke(['rev-parse', '--verify', 'HEAD']);
+  const diff = invoke(['diff', '--binary', 'HEAD', '--']);
+  const untracked = invoke(['ls-files', '--others', '--exclude-standard', '-z']);
+  if (head.status !== 0 || diff.status !== 0 || untracked.status !== 0 || head.error || diff.error || untracked.error ||
+      !/^[a-f0-9]{40,64}$/i.test(head.stdout.trim())) return null;
+  const hash = createHash('sha256').update(diff.stdout);
+  let bytes = 0;
+  for (const relative of untracked.stdout.split('\0').filter(Boolean)) {
+    if (path.isAbsolute(relative) || relative.split(/[\\/]/).includes('..')) return null;
+    const target = path.join(root, relative);
+    try {
+      const actual = realpathSync(target);
+      const inside = path.relative(realpathSync(root), actual);
+      if (!inside || inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) return null;
+      const info = statSync(target);
+      bytes += info.size;
+      if (!info.isFile() || bytes > 8 * 1024 * 1024) return null;
+      hash.update(relative).update(readFileSync(target));
+    } catch { return null; }
+  }
+  return {
+    head: head.stdout.trim().toLowerCase(),
+    worktreeSha256: hash.digest('hex'),
+  };
+}
+
+function saveReviewReceipt(root, summary, outcomes, auditId) {
+  const state = gitState(root);
+  if (!state) return false;
+  const directory = path.join(STATE_DIR, 'receipts');
+  mkdirSync(directory, { recursive: true });
+  const workspace = realpathSync(root);
+  const receipt = {
+    schemaVersion: 'muse.cf-build-review.v1', workspace, ...state, auditId,
+    createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + RECEIPT_TTL_MS).toISOString(),
+    outcomes, summary: summary.slice(0, 24_000),
+  };
+  const payload = JSON.stringify(receipt);
+  const sealed = { ...receipt, sha256: createHash('sha256').update(payload).digest('hex') };
+  const target = path.join(directory, `${createHash('sha256').update(workspace).digest('hex')}.json`);
+  const temporary = `${target}.${randomUUID()}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(sealed)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+  renameSync(temporary, target);
+  return true;
+}
+
+function recentlyAudited(root) {
+  const state = gitState(root);
+  if (!state) return false;
+  try {
+    const workspace = realpathSync(root);
+    const target = path.join(STATE_DIR, 'receipts', `${createHash('sha256').update(workspace).digest('hex')}.json`);
+    const receipt = JSON.parse(readFileSync(target, 'utf8'));
+    const { sha256, ...body } = receipt;
+    return sha256 === createHash('sha256').update(JSON.stringify(body)).digest('hex') &&
+      receipt.workspace === workspace && receipt.head === state.head &&
+      receipt.worktreeSha256 === state.worktreeSha256 &&
+      Date.now() - Date.parse(receipt.createdAt) < 60_000;
+  } catch { return false; }
+}
+
 function removeStaleState() {
   try {
     const cutoff = Date.now() - STATE_TTL_MS;
@@ -558,13 +637,15 @@ function removeStaleState() {
 
 export function buildAudit(event, dependencies = {}) {
   const input = event.tool_input ?? {};
-  if (!isBuildCommand(collectText(input))) return;
+  const onDemand = dependencies.trigger === 'on_demand';
+  if (!onDemand && !isRelevantWork(collectText(input), event.tool_name || event.tool?.name || '')) return;
 
   const runCli = dependencies.runRtk || runRtk;
   const runForgeCli = dependencies.runForge || runForge;
   const gitRunner = dependencies.runGit || runGit;
   const emitOutput = dependencies.emit || emit;
   const root = projectRoot(event.cwd || process.cwd());
+  if (!onDemand && recentlyAudited(root)) return { root, summary: 'Current workspace state was audited within the last minute; see cf_audit_status for its receipt.' };
   const auditId = randomUUID();
   let auditStatePath;
   try {
@@ -667,7 +748,7 @@ export function buildAudit(event, dependencies = {}) {
   };
 
   const summary = [
-    'Automatic Muse Code post-build review (read-only):',
+    onDemand ? 'On-demand Muse Code workspace audit (read-only):' : 'Automatic Muse Code post-tool review (read-only):',
     `Workspace: ${safeField(root, 500)}`,
     event.hook_event_name === 'PostToolUseFailure'
       ? 'The build tool reported failure; audits describe the current workspace and do not imply that build succeeded.'
@@ -686,6 +767,9 @@ export function buildAudit(event, dependencies = {}) {
     appendFileSync(auditStatePath, `${JSON.stringify({
       phase: 'completed', audit_id: auditId, summary, outcomes, at: new Date().toISOString(),
     })}\n`, 'utf8');
+    if (!saveReviewReceipt(root, summary, outcomes, auditId)) {
+      finalSummary += '\nMuse review tools: unavailable; the workspace Git state could not be bound to a durable receipt.';
+    }
     removeStaleState();
     stateSaved = true;
   } catch (error) {

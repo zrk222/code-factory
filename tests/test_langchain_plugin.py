@@ -717,13 +717,18 @@ def test_standalone_muse_installer_preserves_settings_and_is_idempotent(
     assert set(settings["mcpServers"]) == {
         "existing-server",
         "expertise-agent-workflows",
+        "muse-code-factory-audit",
     }
     assert {"UserPromptSubmit", "PostToolUse", "PostToolUseFailure", "Stop"}.issubset(
         settings["hooks"]
     )
-    audit_group = settings["hooks"]["PostToolUse"][0]
+    audit_group = next(group for group in settings["hooks"]["PostToolUse"]
+                       if group.get("matcher") == "Bash|shell|Edit|Write|MultiEdit|NotebookEdit|ApplyPatch")
     installed_commands = [handler["command"] for handler in audit_group["hooks"]]
-    assert "existing-build-hook" in installed_commands
+    assert any(
+        handler["command"] == "existing-build-hook"
+        for group in settings["hooks"]["PostToolUse"] for handler in group["hooks"]
+    )
     assert not any("build-audit.mjs" in command for command in installed_commands)
     assert sum("standalone.mjs" in command for command in installed_commands) == 1
     assert (
@@ -767,6 +772,9 @@ def test_standalone_muse_installer_preserves_settings_and_is_idempotent(
     ).endswith(str(hook_path).replace('"', '\\"') + '"')
     assert (
         muse_home / "extensions" / "code-factory" / "expertise" / "server.mjs"
+    ).is_file()
+    assert (
+        muse_home / "extensions" / "code-factory" / "audit" / "server.mjs"
     ).is_file()
     for skill_id in ("cf-fl-build-audit", "expertise-agent-workflows"):
         assert (muse_home / "skills" / skill_id / "SKILL.md").is_file()
@@ -960,3 +968,45 @@ def test_standalone_muse_installer_preserves_settings_and_is_idempotent(
     corrupt_result = json.loads(corrupt_state.stdout)
     assert corrupt_result["decision"] == "block"
     assert "empty or corrupt" in corrupt_result["reason"]
+
+
+def test_muse_audit_mcp_reads_current_receipt_and_rejects_changed_workspace(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "app.py").write_text("print('one')\n", encoding="utf-8")
+    for args in (["init", "-q"], ["config", "user.name", "Audit Test"],
+                 ["config", "user.email", "audit@example.invalid"],
+                 ["add", "app.py"], ["commit", "-qm", "initial"]):
+        subprocess.run(["git", *args], cwd=workspace, check=True, capture_output=True)
+    data_dir = tmp_path / "plugin-data"
+    hook = ROOT / "plugins" / "muse-code-factory-audit" / "hooks" / "audit.mjs"
+    server = ROOT / "plugins" / "muse-code-factory-audit" / "mcp" / "server.mjs"
+    harness = tmp_path / "make-receipt.mjs"
+    harness.write_text(
+        "import {buildAudit} from '" + hook.resolve().as_uri() + "';\n"
+        "const answer={exitCode:0,stdout:JSON.stringify({state:'CLEAN',files_scanned:1}),stderr:''};\n"
+        "buildAudit({hook_event_name:'PostToolUse',session_id:'s',turn_id:'t',cwd:process.env.WORKSPACE,tool_input:{}},"
+        "{trigger:'on_demand',runRtk:()=>answer,runForge:()=>({exitCode:0,stdout:JSON.stringify({passed:true}),stderr:''}),"
+        "runGit:()=>({items:[],ok:false}),emit:()=>{}});\n",
+        encoding="utf-8",
+    )
+    env = {**os.environ, "MUSE_PLUGIN_DATA_DIR": str(data_dir), "WORKSPACE": str(workspace)}
+    subprocess.run(["node", str(harness)], check=True, capture_output=True, text=True, env=env)
+
+    def call(name: str) -> dict[str, object]:
+        request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+            "name": name, "arguments": {"workspace": str(workspace)}}}
+        process = subprocess.run(["node", str(server)], input=json.dumps(request) + "\n",
+                                 capture_output=True, text=True, check=True, timeout=10, env=env)
+        return json.loads(process.stdout)["result"]["structuredContent"]
+
+    status = call("cf_audit_status")
+    assert status["status"] == "current"
+    assert status["outcomes"]["deepPenetration"] == "incomplete"
+    assert call("cf_audit_findings")["status"] == "current"
+    assert call("cf_audit_coverage")["status"] == "current"
+    assert call("cf_pr_review_brief")["status"] == "current"
+    (workspace / "app.py").write_text("print('two')\n", encoding="utf-8")
+    assert call("cf_audit_status")["status"] == "stale_or_invalid"
