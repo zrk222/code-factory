@@ -28,32 +28,46 @@ class SavingsError(ValueError):
         self.code = code
 
 
-def _observation(value: dict[str, Any], label: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise SavingsError("OBSERVATION_INVALID", f"{label} must be an object")
+def _positive_elapsed(value: dict[str, Any], label: str) -> int:
     elapsed = value.get("elapsed_ms")
     if not isinstance(elapsed, int) or isinstance(elapsed, bool) or elapsed <= 0:
         raise SavingsError(
             "ELAPSED_INVALID", f"{label}.elapsed_ms must be a positive integer"
         )
-    result: dict[str, Any] = {"elapsed_ms": elapsed}
-    tokens = value.get("tokens")
-    if tokens is not None and (
-        not isinstance(tokens, int) or isinstance(tokens, bool) or tokens < 0
+
+    return elapsed
+
+
+def _optional_tokens(value: Any, label: str) -> int | None:
+    if value is not None and (
+        not isinstance(value, int) or isinstance(value, bool) or value < 0
     ):
         raise SavingsError(
             "TOKENS_INVALID", f"{label}.tokens must be a non-negative integer or null"
         )
-    result["tokens"] = tokens
-    cost = value.get("cost_usd")
-    if cost is not None and (
-        not isinstance(cost, (int, float)) or isinstance(cost, bool) or cost < 0
+    return value
+
+
+def _optional_cost(value: Any, label: str) -> float | None:
+    if value is not None and (
+        not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0
     ):
         raise SavingsError(
             "COST_INVALID", f"{label}.cost_usd must be non-negative or null"
         )
-    result["cost_usd"] = float(cost) if cost is not None else None
-    return result
+    return float(value) if value is not None else None
+
+
+def _observation(value: dict[str, Any], label: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise SavingsError("OBSERVATION_INVALID", f"{label} must be an object")
+    tokens = value.get("tokens")
+    cost = value.get("cost_usd")
+    return {
+        "elapsed_ms": _positive_elapsed(value, label),
+        "tokens": _optional_tokens(tokens, label),
+        "cost_usd": _optional_cost(cost, label),
+    }
 
 
 def _exact(value: Any) -> Any:
