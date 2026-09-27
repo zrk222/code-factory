@@ -119,12 +119,22 @@ function handle(message) {
   return result(message.id, toolResult({ ...packet(selected, loaded.receipt, args), trigger: params.name === 'cf_audit_run' ? 'on_demand' : 'stored_receipt' }));
 }
 
+function handleMessage(message) {
+  if (!Array.isArray(message)) {
+    try { return handle(message); } catch { return error(message?.id, -32603, 'Audit tool failed closed.'); }
+  }
+  if (message.length === 0) return error(null, -32600, 'Invalid Request');
+  const responses = message.map((item) => {
+    try { return handle(item); } catch { return error(item?.id, -32603, 'Audit tool failed closed.'); }
+  }).filter((reply) => reply !== null);
+  return responses.length ? responses : null;
+}
+
 function dispatchLine(line) {
   let message;
   try { message = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(line)); }
   catch { process.stdout.write(`${JSON.stringify(error(null, -32700, 'Parse error'))}\n`); return; }
-  let reply;
-  try { reply = handle(message); } catch { reply = error(message?.id, -32603, 'Audit tool failed closed.'); }
+  const reply = handleMessage(message);
   if (reply) process.stdout.write(`${JSON.stringify(reply)}\n`);
 }
 

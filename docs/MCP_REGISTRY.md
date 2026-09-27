@@ -104,11 +104,12 @@ parses Python ASTs, pattern/guard-path checks require `.factory/review-audits.js
 and `forge qa --repo-wide` is inventory-only. Full-depth penetration remains
 `incomplete`; these local checks do not certify code or approve a release.
 
-MCP stdio requests are limited to 32 KiB. Invalid JSON receives a JSON-RPC
-parse error, oversized requests receive an invalid-request error, and Muse
-notifications receive no response as required by the protocol. The installed
-Muse Code 1.3.0 build does not expose `muse plugins`; the current local
-installation therefore uses supported user hooks, skills, and MCP settings.
+MCP stdio accepts single messages and JSON-RPC batches. Each newline-delimited
+message is limited to 32 KiB before it is buffered; invalid JSON receives a
+JSON-RPC parse error, oversized messages receive an invalid-request error, and
+notification-only messages receive no response. The installed Muse Code 1.3.0
+build does not expose `muse plugins`; the current local installation therefore
+uses supported user hooks, skills, and MCP settings.
 Its installed MCP server has been smoke-tested directly, but an interactive
 Muse session and native plugin validator have not been exercised here.
 

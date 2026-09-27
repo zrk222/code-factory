@@ -983,6 +983,52 @@ def test_standalone_muse_installer_preserves_settings_and_is_idempotent(
     assert "empty or corrupt" in corrupt_result["reason"]
 
 
+def test_muse_audit_mcp_supports_json_rpc_batches() -> None:
+    server = ROOT / "plugins" / "muse-code-factory-audit" / "mcp" / "server.mjs"
+    batch = [
+        {"jsonrpc": "2.0", "id": 1, "method": "ping"},
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+    ]
+    notification_batch = [
+        {"jsonrpc": "2.0", "method": "notifications/initialized"}
+    ]
+    request_stream = "\n".join(
+        [
+            json.dumps(batch),
+            json.dumps(notification_batch),
+            json.dumps([]),
+            json.dumps({"jsonrpc": "2.0", "id": 3, "method": "ping"}),
+        ]
+    )
+    process = subprocess.run(
+        ["node", str(server)],
+        input=request_stream + "\n",
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
+    )
+    replies = [json.loads(line) for line in process.stdout.splitlines()]
+
+    assert len(replies) == 3
+    assert [item["id"] for item in replies[0]] == [1, 2]
+    assert replies[0][0] == {"jsonrpc": "2.0", "id": 1, "result": {}}
+    assert [item["name"] for item in replies[0][1]["result"]["tools"]] == [
+        "cf_audit_run",
+        "cf_audit_status",
+        "cf_audit_findings",
+        "cf_audit_coverage",
+        "cf_pr_review_brief",
+    ]
+    assert replies[1] == {
+        "jsonrpc": "2.0",
+        "id": None,
+        "error": {"code": -32600, "message": "Invalid Request"},
+    }
+    assert replies[2] == {"jsonrpc": "2.0", "id": 3, "result": {}}
+
+
 def test_muse_audit_mcp_handles_protocol_errors_without_hanging() -> None:
     server = ROOT / "plugins" / "muse-code-factory-audit" / "mcp" / "server.mjs"
     initialize = {
