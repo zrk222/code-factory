@@ -134,10 +134,12 @@ cross-account isolation still need an end-to-end live exercise. Clerk does
 not support self-service relink because introspection lacks `auth_time`; the
 generic OIDC profile supports fresh relink. Public
 connector-specific privacy and terms pages now return 200 under
-`cf.wizeme.app/meta-connector/`. The Muse Overview and Technical specs forms
-are prepared, but final terms acceptance and directory submission remain
-pending. Meta's early-access application is separate from a
-directory listing or approval.
+`cf.wizeme.app/meta-connector/`. On 2026-09-27, the signed-in Muse Platform
+accepted the Code Factory Audit Evidence connector submission and displayed
+"Thank you for your submission! We'll review Code Factory Audit Evidence and
+get in touch." No submission ID was shown. This is a review submission,
+not a directory listing or approval. Meta's separate early-access application
+was also submitted; neither receipt proves live OAuth account linking.
 
 Candidate requests for user research—not evidence of market demand—include:
 

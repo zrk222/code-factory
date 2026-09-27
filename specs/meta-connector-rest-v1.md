@@ -186,11 +186,11 @@ must be established by live checks before production use.
 
 Local tests and OpenAPI generation demonstrate an API implementation, not a
 live HTTPS service, accepted OAuth link, Meta approval, or public listing.
-Before submitting as a functioning connector, provision HTTPS hosting and a
-real OAuth provider, verify account link/unlink and cross-account isolation in
-Meta's guided test, publish service privacy/terms, and capture a live endpoint
-read-back. Do not claim independent evidence verification or full-depth audit
-from a submitted summary alone.
+The Muse review submission was made after provisioning HTTPS hosting, a real
+OAuth provider, public service privacy/terms, and live endpoint read-backs.
+Meta has not provided its callback URI or guided account-link test, so live
+account link/unlink and cross-account isolation remain unproven. Do not claim
+independent evidence verification or full-depth audit from a submitted summary.
 
 Meta's public early-access application accepts a REST API in active
 development; that application was submitted on 2026-09-27 and is distinct from
@@ -199,12 +199,13 @@ form exposes Overview, Technical specs, and Review steps. The isolated Vercel
 deployment, dedicated Neon database, verified production Clerk domain, and
 read-only OAuth client are provisioned. Hosted health/readiness, OpenAPI, and
 unauthenticated rejection have live read-backs. No Meta redirect URI has been
-assigned, and live scoped read, upload, unlink/relink, and cross-account tests
-remain. Public connector privacy/terms pages now return 200. The Muse Overview
-and Technical specs forms are prepared; final terms acceptance, submission,
-and the directory's own security/legal review remain outstanding. Do not call
-an early-access application a live
-directory submission or an approved connector.
+assigned, and live scoped read, upload, unlink, and cross-account tests remain.
+Clerk self-service relink is intentionally unsupported. Public connector
+privacy/terms pages return 200. On 2026-09-27, the signed-in Muse Platform
+accepted the Code Factory Audit Evidence directory review submission and
+displayed a thank-you receipt, without an ID. Meta's functional, security,
+and legal review and any listing or approval remain pending. The earlier
+early-access application is a separate submission.
 
 
 # Isolated Vercel deployment for the Meta connector
