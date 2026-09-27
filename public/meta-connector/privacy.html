@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Code Factory Audit Evidence — Privacy</title>
+<style>body{max-width:46rem;margin:3rem auto;padding:0 1.25rem;font:1rem/1.6 system-ui,sans-serif;color:#172033}h1,h2{line-height:1.2}a{color:#1759ba}</style>
+<main>
+<h1>Code Factory Audit Evidence — Privacy</h1>
+<p>Updated September 27, 2026. This notice covers the Code Factory audit connector at <a href="https://cf.wizeme.app/api">cf.wizeme.app</a>. It does not cover WizeMe.</p>
+<h2>Information used</h2>
+<p>When you link an account, Clerk handles sign-in and Code Factory verifies the access token. The connector stores a Clerk account identifier and, if you choose to upload them, bounded audit summaries: repository name, commit identifier, audit outcomes, finding labels, coverage limits, and repair steps. It does not request repository source code. Do not put secrets or personal data in finding text.</p>
+<h2>Purpose and sharing</h2>
+<p>The service uses these records to return your account's audit summaries to you through Muse. Vercel hosts the API, Neon stores audit records, and Clerk provides authentication. These providers process service data for those functions. The connector does not sell audit records or use them for advertising. Once you link Muse, the audit details you request are returned to Muse; Meta's own policies govern its handling of that response.</p>
+<h2>Retention and deletion</h2>
+<p>Audit summaries stop appearing in API results after seven days. Expired database rows are removed on subsequent uploads; they may remain in storage until then. You can request deletion of your account records at any time using the support contact below. A linked write-scoped account can also delete its records through the API. Operational logs and provider backups follow the relevant provider retention rules.</p>
+<h2>Security and contact</h2>
+<p>Account data requires a scoped bearer token and is partitioned by authenticated account. No Internet service is risk-free. For access, correction, deletion, or privacy questions, contact <a href="mailto:rkatz22@gmail.com">rkatz22@gmail.com</a> or <a href="https://github.com/zrk222/code-factory/issues">open a Code Factory issue</a> without including secrets.</p>
+</main></html>
