@@ -67,7 +67,7 @@ After the catalog change is available from the selected Git ref, the local
 installation flow is:
 
 ```text
-muse plugins marketplace add code-factory https://github.com/zrk222/code-factory#codex/release-governance-self-audit
+muse plugins marketplace add code-factory https://github.com/zrk222/code-factory
 muse plugins list --available
 muse plugins install expertise-agent-workflows@code-factory
 muse plugins inspect expertise-agent-workflows
@@ -90,6 +90,28 @@ tools are available to Muse sessions that load the user's MCP settings. Each
 MCP tool call still follows Muse's ordinary approval flow. Use the standalone
 path while the installed build lacks the plugin command; a plugin-capable build
 can install and review the native packages from the catalog above.
+
+The `code-factory-build-audit` package defines automatic bounded checks for
+relevant build, test, lint, edit, and patch events. Its local stdio server
+provides `cf_audit_run`, `cf_audit_status`, `cf_audit_findings`,
+`cf_audit_coverage`, and `cf_pr_review_brief`. The tools do not modify project
+source; receipts bind to the Git head, worktree digest, and audit-policy digest.
+Receipts expire after 24 hours and old state is eligible for cleanup after
+seven days. State is kept under `MUSE_PLUGIN_DATA_DIR` when set, or the OS temp
+directory otherwise. The hook invokes the installed `rtk` and `forge` CLIs;
+their own network behavior is outside this package. The Python security lane
+parses Python ASTs, pattern/guard-path checks require `.factory/review-audits.json`,
+and `forge qa --repo-wide` is inventory-only. Full-depth penetration remains
+`incomplete`; these local checks do not certify code or approve a release.
+
+MCP stdio accepts single messages and JSON-RPC batches. Each newline-delimited
+message is limited to 32 KiB before it is buffered; invalid JSON receives a
+JSON-RPC parse error, oversized messages receive an invalid-request error, and
+notification-only messages receive no response. The installed Muse Code 1.3.0
+build does not expose `muse plugins`; the current local installation therefore
+uses supported user hooks, skills, and MCP settings.
+Its installed MCP server has been smoke-tested directly, but an interactive
+Muse session and native plugin validator have not been exercised here.
 
 This is a team-hosted Muse Code plugin catalog, not an entry in the Official
 MCP Registry and not Meta approval or a listing in the consumer Muse connector
