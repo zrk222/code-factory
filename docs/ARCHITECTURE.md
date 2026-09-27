@@ -326,3 +326,28 @@ timestamp. The guard never deletes, rewrites, or hides historical tags. No
 automatic exception bypass exists: a release exception requires a separately
 reviewed human-authority decision and must not be inferred from a healthy
 architecture report.
+
+## Architecture decision: Meta connector API (2026-09-27)
+
+The user requested a remote Code Factory API for Meta AI Connectors. Its
+OAuth-protected, read-only audit resource is isolated in
+`factoryline/meta_connector_api.py`, with a dedicated security regression suite
+in `tests/test_meta_connector_api.py` and one canonical API contract in
+`specs/meta-connector-rest-v1.md`. The local Muse plugin exports only a bounded,
+current HMAC-checked receipt summary. The server cannot clone a repository or
+execute its code. Submitted summaries remain attributed observations, not
+independent audit attestations or release authority.
+
+This explicit capability adds two Python files and one Markdown contract.
+The file-count budgets therefore increase from 452 to 454 Python files and
+658 to 659 Markdown files. No baseline or severity is changed and no waiver
+is added. `core_modules` remains capped at 129; all other budgets remain
+unchanged. The additional files avoid inserting roughly 600 lines of hosted
+API and tests into unrelated modules solely to satisfy a count metric.
+
+Acceptance evidence: `tests/test_meta_connector_api.py`, the existing hosted
+adapter suite, the Muse receipt-export tests, Ruff including C901, and strict
+`factory architecture health`. A green architecture result describes only
+the documented file-count policy; it does not make the connector live or
+approved by Meta. The release train continues to enforce its seven-day
+minimum between package releases.

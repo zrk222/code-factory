@@ -12,8 +12,8 @@
     "captured_at": "2026-09-15"
   },
   "budgets": {
-    "max_markdown_files": 658,
-    "max_python_files": 452,
+    "max_markdown_files": 659,
+    "max_python_files": 454,
     "max_markdown_python_ratio": 1.7,
     "max_cli_lines": 4977,
     "max_cli_command_declarations": 184,
