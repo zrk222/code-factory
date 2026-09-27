@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Code Factory audit evidence</title>
+  <rect width="512" height="512" fill="#0f172a"/>
+  <circle cx="256" cy="256" r="215" fill="#172e56"/>
+  <circle cx="256" cy="256" r="183" fill="#2563eb"/>
+  <rect x="143" y="166" width="226" height="180" fill="#dbeafe"/>
+  <path d="m186 260 54 54 87-101" fill="none" stroke="#166534" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

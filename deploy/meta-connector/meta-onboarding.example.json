@@ -1,6 +1,7 @@
 {
   "note": "Operator mapping for Meta's guided onboarding; this is not an official Meta manifest schema.",
   "name": "Code Factory Audit Evidence",
+  "icon_path": "deploy/meta-connector/icon-512.svg",
   "description": "Read the latest account-linked audit summary, coverage gaps, findings, and repair steps for a named repository. Results are advisory and may include uploader assertions.",
   "api_base_url": "https://connector.example.com",
   "openapi_url": "https://connector.example.com/openapi.json",

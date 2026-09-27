@@ -162,7 +162,7 @@ cannot report Code Factory as `PASS`.
 ### Isolated Vercel route
 
 Deploy the Code Factory repository as its own Vercel project. Use the Python
-WSGI function at `api/index.py`, `requirements.txt` with the `[hosted]` extra,
+WSGI function at `api/index.py`, root `requirements.txt`,
 and the root `vercel.json` exclusion list. Do not build Code Factory into the
 WizeMe frontend or API bundle, reuse WizeMe's database, or share WizeMe's
 OAuth secrets. Prefer a dedicated `cf.wizeme.app` subdomain assigned directly
@@ -190,11 +190,14 @@ from a submitted summary alone.
 Meta's public early-access application accepts a REST API in active
 development; that application was submitted on 2026-09-27 and is distinct from
 a Muse Connector Platform directory submission. The signed-in Muse directory
-form now exposes Overview, Technical specs, and Review steps. Only Overview has
-been inspected. Do not call an early-access application a live directory
-submission or an approved connector. Meta's authenticated callback, tool
-registration schema, and production requirements remain to be verified in its
-onboarding UI.
+form exposes Overview, Technical specs, and Review steps. The isolated Vercel
+deployment, dedicated Neon database, verified production Clerk domain, and
+read-only OAuth client are provisioned. Hosted health/readiness, OpenAPI, and
+unauthenticated rejection have live read-backs. No Meta redirect URI has been
+assigned, and live scoped read, upload, unlink/relink, and cross-account tests
+remain. Public connector privacy/terms and the directory's own security/legal
+review remain outstanding. Do not call an early-access application a live
+directory submission or an approved connector.
 
 
 # Isolated Vercel deployment for the Meta connector
