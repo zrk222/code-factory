@@ -47,7 +47,8 @@ def test_ai_client_doc_keeps_connection_boundary_explicit() -> None:
         "read-only",
         "do not start",
         "provider keys",
-        "hosted MCP endpoint with OIDC",
+        "hosted, OAuth-protected MCP",
+        "does not run the local audit tools",
         "Cursor-specific extension smoke test",
     ):
         assert required in text

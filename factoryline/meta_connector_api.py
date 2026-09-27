@@ -1526,13 +1526,19 @@ def create_meta_connector_app_from_env(
     public_base_url = _validated_public_base(env)
     verify, fixed_tenant = _connector_verifier(env, provider)
     mcp_verify = None
-    if provider == "clerk" and public_base_url:
-        issuer = env["FACTORY_META_OIDC_ISSUER"].rstrip("/")
-        jwks = JwksCache(f"{issuer}/.well-known/jwks.json", HttpxTransport())
-        resource = public_base_url + "/mcp"
+    if provider == "clerk":
+        if not public_base_url:
 
-        def mcp_verify(token: str) -> dict[str, Any]:
-            return verify_clerk_mcp_token(token, get_jwks(jwks), issuer, resource)
+            def mcp_verify(_token: str) -> dict[str, Any]:
+                raise ClerkTokenError("MCP resource URL is not configured")
+
+        else:
+            issuer = env["FACTORY_META_OIDC_ISSUER"].rstrip("/")
+            jwks = JwksCache(f"{issuer}/.well-known/jwks.json", HttpxTransport())
+            resource = public_base_url + "/mcp"
+
+            def mcp_verify(token: str) -> dict[str, Any]:
+                return verify_clerk_mcp_token(token, get_jwks(jwks), issuer, resource)
 
     return MetaConnectorAPI(
         env["FACTORY_META_DATABASE"],

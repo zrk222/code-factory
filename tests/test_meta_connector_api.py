@@ -750,6 +750,8 @@ def test_clerk_profile_requires_dedicated_tenant_and_valid_public_url(tmp_path):
     else:
         raise AssertionError("Clerk must be bound to a dedicated tenant")
     config["FACTORY_META_TENANT_ID"] = "code-factory"
+    unbound = create_meta_connector_app_from_env(config)
+    assert _mcp_call(unbound, "initialize")[0] == "401 Unauthorized"
     config["FACTORY_META_PUBLIC_BASE_URL"] = "https://user:pass@cf.wizeme.app/api"
     try:
         create_meta_connector_app_from_env(config)
@@ -804,8 +806,10 @@ def test_clerk_mcp_jwt_requires_valid_resource_signature_and_read_scope():
         verify_clerk_mcp_token(valid, jwks, claims["iss"], claims["aud"])["sub"]
         == "user_123"
     )
+    prefix, signature = valid.rsplit(".", 1)
+    bad_signature = prefix + "." + ("A" if signature[0] != "A" else "B") + signature[1:]
     for invalid in (
-        valid.rsplit(".", 1)[0] + ".A" + valid.rsplit(".", 1)[1][1:],
+        bad_signature,
         token({**claims, "aud": "https://other.example/mcp"}),
         token({**claims, "scope": "cf.audit.write"}),
         token({**claims, "exp": now - 10_000}),
