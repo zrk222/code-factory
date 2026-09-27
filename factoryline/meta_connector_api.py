@@ -416,6 +416,12 @@ class MetaConnectorAPI:
     def _db(self):
         return connect(self.database)
 
+    def purge_expired(self) -> int:
+        """Delete expired summaries without requiring another user upload."""
+        cutoff = int(datetime.now(timezone.utc).timestamp()) - RETENTION_SECONDS
+        with self._db() as db:
+            return db.execute("DELETE FROM meta_audits WHERE created<?", (cutoff,)).rowcount
+
     def _account_row(self, db: Any, tenant: str, subject: str) -> Any:
         statement = "SELECT revoked_at FROM meta_accounts WHERE tenant=? AND subject=?"
         if self._postgres:

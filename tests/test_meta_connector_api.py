@@ -359,6 +359,55 @@ def test_vercel_mount_strips_only_api_prefix(monkeypatch):
         assert seen[-1] == (expected, "limit=1")
 
 
+def test_retention_purges_expired_rows_without_new_upload(tmp_path):
+    database = str(tmp_path / "retention.sqlite")
+    api = MetaConnectorAPI(
+        database,
+        lambda _: {},
+        authorization_url="https://id.example/authorize",
+        token_url="https://id.example/token",
+    )
+    now = int(time.time())
+    with sqlite3.connect(database) as db:
+        db.executemany(
+            "INSERT INTO meta_audits(id,tenant,subject,created,payload) VALUES(?,?,?,?,?)",
+            [("old", "t", "s", now - 8 * 86400, "{}"), ("new", "t", "s", now, "{}")],
+        )
+    assert api.purge_expired() == 1
+    with sqlite3.connect(database) as db:
+        assert db.execute("SELECT id FROM meta_audits").fetchall() == [("new",)]
+
+
+def test_vercel_retention_requires_configured_cron_secret(monkeypatch):
+    class Stub:
+        def purge_expired(self):
+            return 3
+
+    monkeypatch.setattr(vercel_entrypoint, "create_meta_connector_app_from_env", Stub)
+    secret = "s" * 40
+    monkeypatch.setenv("CRON_SECRET", secret)
+
+    def request(token):
+        status = {}
+        body = vercel_entrypoint.app(
+            {
+                "PATH_INFO": "/api/internal/retention",
+                "REQUEST_METHOD": "GET",
+                "HTTP_AUTHORIZATION": token,
+            },
+            lambda code, _headers: status.setdefault("code", code),
+        )
+        return status["code"], json.loads(body[0])
+
+    assert request("Bearer wrong")[0] == "401 Unauthorized"
+    assert request(f"Bearer {secret}") == (
+        "200 OK",
+        {"schema": "factory.meta.retention.v1", "deleted": 3},
+    )
+    monkeypatch.delenv("CRON_SECRET")
+    assert request(f"Bearer {secret}")[0] == "401 Unauthorized"
+
+
 def test_openapi_uses_configured_public_base_url(tmp_path):
     app = MetaConnectorAPI(
         str(tmp_path / "audit.sqlite"),
