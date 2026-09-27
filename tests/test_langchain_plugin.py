@@ -993,13 +993,15 @@ def test_muse_audit_mcp_handles_protocol_errors_without_hanging() -> None:
     }
     notification = {"jsonrpc": "2.0", "method": "notifications/initialized"}
     list_tools = {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}
+    ping = {"jsonrpc": "2.0", "id": 3, "method": "ping"}
     request_stream = "\n".join(
         [
             json.dumps(initialize),
             json.dumps(notification),
             json.dumps(list_tools),
             "{invalid",
-            "x" * 32_769,
+            "x" * 1_048_577,
+            json.dumps(ping),
         ]
     )
     process = subprocess.run(
@@ -1012,7 +1014,7 @@ def test_muse_audit_mcp_handles_protocol_errors_without_hanging() -> None:
     )
     replies = [json.loads(line) for line in process.stdout.splitlines()]
 
-    assert len(replies) == 4
+    assert len(replies) == 5
     assert replies[0]["result"]["protocolVersion"] == "2025-03-26"
     assert replies[0]["result"]["serverInfo"]["version"] == "0.2.0"
     assert [item["name"] for item in replies[1]["result"]["tools"]] == [
@@ -1032,6 +1034,7 @@ def test_muse_audit_mcp_handles_protocol_errors_without_hanging() -> None:
         "id": None,
         "error": {"code": -32600, "message": "Message too large"},
     }
+    assert replies[4] == {"jsonrpc": "2.0", "id": 3, "result": {}}
 
 
 def test_muse_audit_mcp_reads_current_receipt_and_rejects_changed_workspace(

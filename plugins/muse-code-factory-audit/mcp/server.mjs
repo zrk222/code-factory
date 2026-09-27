@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 // Read-only access to bounded Muse audit receipts. Scanner text is data only.
-import readline from 'node:readline';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import os from 'node:os';
@@ -120,18 +119,46 @@ function handle(message) {
   return result(message.id, toolResult({ ...packet(selected, loaded.receipt, args), trigger: params.name === 'cf_audit_run' ? 'on_demand' : 'stored_receipt' }));
 }
 
-const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity, terminal: false });
-input.on('line', (line) => {
-  if (Buffer.byteLength(line, 'utf8') > MAX_MESSAGE_BYTES) {
-    process.stdout.write(`${JSON.stringify(error(null, -32600, 'Message too large'))}\n`);
-    return;
-  }
+function dispatchLine(line) {
   let message;
-  try { message = JSON.parse(line); } catch {
-    process.stdout.write(`${JSON.stringify(error(null, -32700, 'Parse error'))}\n`);
-    return;
-  }
+  try { message = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(line)); }
+  catch { process.stdout.write(`${JSON.stringify(error(null, -32700, 'Parse error'))}\n`); return; }
   let reply;
   try { reply = handle(message); } catch { reply = error(message?.id, -32603, 'Audit tool failed closed.'); }
   if (reply) process.stdout.write(`${JSON.stringify(reply)}\n`);
+}
+
+let pending = Buffer.alloc(0);
+let discardingOversizedLine = false;
+function dispatchOversizedLine() {
+  process.stdout.write(`${JSON.stringify(error(null, -32600, 'Message too large'))}\n`);
+}
+
+process.stdin.on('data', (chunk) => {
+  let offset = 0;
+  while (offset < chunk.length) {
+    const newline = chunk.indexOf(0x0a, offset);
+    const end = newline < 0 ? chunk.length : newline;
+    const segment = chunk.subarray(offset, end);
+    if (!discardingOversizedLine) {
+      const pendingBytes = pending.length + segment.length;
+      if (pendingBytes > MAX_MESSAGE_BYTES) {
+        pending = Buffer.alloc(0);
+        discardingOversizedLine = true;
+      } else if (segment.length) {
+        pending = pending.length ? Buffer.concat([pending, segment], pendingBytes) : Buffer.from(segment);
+      }
+    }
+    if (newline < 0) break;
+    if (discardingOversizedLine) dispatchOversizedLine();
+    else dispatchLine(pending);
+    pending = Buffer.alloc(0);
+    discardingOversizedLine = false;
+    offset = newline + 1;
+  }
+});
+
+process.stdin.on('end', () => {
+  if (discardingOversizedLine) dispatchOversizedLine();
+  else if (pending.length) dispatchLine(pending);
 });
