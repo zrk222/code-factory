@@ -130,9 +130,11 @@ OpenAPI advertised the production Clerk URLs, and an unauthenticated audit
 request returned `AUTH_REQUIRED`. These checks do not establish a completed
 OAuth link or a populated account. The production read-only client has no
 Meta-assigned redirect URI yet; scoped account access, upload, unlink/relink,
-and cross-account isolation still need an end-to-end live exercise. The
-connector-specific public privacy/terms package and Muse directory submission
-also remain incomplete. Meta's early-access application is separate from a
+and cross-account isolation still need an end-to-end live exercise. Public
+connector-specific privacy and terms pages now return 200 under
+`cf.wizeme.app/meta-connector/`. The Muse Overview and Technical specs forms
+are prepared, but final terms acceptance and directory submission remain
+pending. Meta's early-access application is separate from a
 directory listing or approval.
 
 Candidate requests for user research—not evidence of market demand—include:

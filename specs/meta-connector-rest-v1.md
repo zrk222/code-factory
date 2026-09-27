@@ -195,8 +195,10 @@ deployment, dedicated Neon database, verified production Clerk domain, and
 read-only OAuth client are provisioned. Hosted health/readiness, OpenAPI, and
 unauthenticated rejection have live read-backs. No Meta redirect URI has been
 assigned, and live scoped read, upload, unlink/relink, and cross-account tests
-remain. Public connector privacy/terms and the directory's own security/legal
-review remain outstanding. Do not call an early-access application a live
+remain. Public connector privacy/terms pages now return 200. The Muse Overview
+and Technical specs forms are prepared; final terms acceptance, submission,
+and the directory's own security/legal review remain outstanding. Do not call
+an early-access application a live
 directory submission or an approved connector.
 
 
