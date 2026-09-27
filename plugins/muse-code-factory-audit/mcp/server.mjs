@@ -124,6 +124,9 @@ function handleMessage(message) {
     try { return handle(message); } catch { return error(message?.id, -32603, 'Audit tool failed closed.'); }
   }
   if (message.length === 0) return error(null, -32600, 'Invalid Request');
+  if (message.some((item) => item?.method === 'initialize')) {
+    return error(null, -32600, 'initialize must not be sent in a batch');
+  }
   const responses = message.map((item) => {
     try { return handle(item); } catch { return error(item?.id, -32603, 'Audit tool failed closed.'); }
   }).filter((reply) => reply !== null);

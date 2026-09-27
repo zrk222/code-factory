@@ -1027,6 +1027,36 @@ def test_muse_audit_mcp_supports_json_rpc_batches() -> None:
     assert replies[2] == {"jsonrpc": "2.0", "id": 3, "result": {}}
 
 
+def test_muse_audit_mcp_rejects_initialize_inside_batch() -> None:
+    server = ROOT / "plugins" / "muse-code-factory-audit" / "mcp" / "server.mjs"
+    initialize_batch = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+    ]
+    ping = {"jsonrpc": "2.0", "id": 3, "method": "ping"}
+    process = subprocess.run(
+        ["node", str(server)],
+        input=f"{json.dumps(initialize_batch)}\n{json.dumps(ping)}\n",
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
+    )
+    replies = [json.loads(line) for line in process.stdout.splitlines()]
+
+    assert replies == [
+        {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {
+                "code": -32600,
+                "message": "initialize must not be sent in a batch",
+            },
+        },
+        {"jsonrpc": "2.0", "id": 3, "result": {}},
+    ]
+
+
 def test_muse_audit_mcp_handles_protocol_errors_without_hanging() -> None:
     server = ROOT / "plugins" / "muse-code-factory-audit" / "mcp" / "server.mjs"
     initialize = {
