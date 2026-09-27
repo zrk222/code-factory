@@ -122,11 +122,22 @@ access path for a live REST API (or one in active development), a clear use
 case, and account linking. Meta says developer access is selected in waves and
 public publishing/discovery comes later.
 
-The current packages use local stdio and do not provide a hosted HTTPS API,
-OAuth account linking, public support route, or connector-specific terms and
-privacy package. The appropriate next step is not a claim of approval: build and
-operate that hosted service, verify its end-to-end flows, then submit the real
-endpoint and legal/contact details through Meta's connector process.
+The Muse Code packages still use local stdio. A separate Code Factory REST
+resource now runs in its own Vercel project at `https://cf.wizeme.app/api`,
+backed by a dedicated Neon database and production Clerk instance. On
+2026-09-27, the deployed `/api/health` and `/api/ready` routes returned 200,
+OpenAPI advertised the production Clerk URLs, and an unauthenticated audit
+request returned `AUTH_REQUIRED`. These checks do not establish a completed
+OAuth link or a populated account. The production read-only client has no
+Meta-assigned redirect URI yet; scoped account access, upload, unlink, and
+cross-account isolation still need an end-to-end live exercise. Clerk does
+not support self-service relink because introspection lacks `auth_time`; the
+generic OIDC profile supports fresh relink. Public
+connector-specific privacy and terms pages now return 200 under
+`cf.wizeme.app/meta-connector/`. The Muse Overview and Technical specs forms
+are prepared, but final terms acceptance and directory submission remain
+pending. Meta's early-access application is separate from a
+directory listing or approval.
 
 Candidate requests for user research—not evidence of market demand—include:
 

@@ -7,13 +7,16 @@ independent attestation. OAuth authorization is delegated to a configured IdP.
 
 from __future__ import annotations
 
+from base64 import b64encode
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import os
 import re
 import sqlite3
+import time
 from typing import Any, Callable, Mapping
+from urllib.parse import urlsplit
 from urllib.parse import parse_qs
 from uuid import uuid4
 
@@ -31,6 +34,101 @@ HEX64 = re.compile(r"[a-f0-9]{64}\Z")
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}\Z")
 LABELS = frozenset({"PASS", "FAIL", "NOT_RUN", "INCOMPLETE", "BLOCKED"})
 LANES = ("code_factory", "forgeline", "appforge", "saasforge", "full_depth")
+
+
+class StorageUnavailable(Exception):
+    """A database operation failed without exposing provider details."""
+
+
+class PostgresConnection:
+    """Expose the subset of sqlite3.Connection used by the connector."""
+
+    def __init__(self, dsn: str):
+        try:
+            import psycopg
+
+            self._driver = psycopg
+            self._connection = psycopg.connect(dsn, connect_timeout=5)
+        except Exception:
+            raise StorageUnavailable("audit storage is unavailable") from None
+
+    def __enter__(self) -> PostgresConnection:
+        return self
+
+    def __exit__(self, kind: Any, value: Any, traceback: Any) -> None:
+        try:
+            if kind is None:
+                self._connection.commit()
+            else:
+                self._connection.rollback()
+        except self._driver.Error:
+            raise StorageUnavailable("audit storage is unavailable") from None
+        finally:
+            self._connection.close()
+
+    def execute(self, statement: str, parameters: tuple[Any, ...] = ()) -> Any:
+        """Execute the connector's limited SQL dialect using PostgreSQL parameters."""
+        if statement == "BEGIN IMMEDIATE":
+            return None
+        try:
+            return self._connection.execute(statement.replace("?", "%s"), parameters)
+        except self._driver.Error:
+            raise StorageUnavailable("audit storage is unavailable") from None
+
+
+def connect(database: str) -> sqlite3.Connection | PostgresConnection:
+    """Select durable PostgreSQL by DSN; retain SQLite for local workflows."""
+    if is_postgres(database):
+        return PostgresConnection(database)
+    return sqlite3.connect(database, timeout=5)
+
+
+def is_postgres(database: str) -> bool:
+    """Identify PostgreSQL connection strings without opening a database connection."""
+    return database.startswith(("postgresql://", "postgres://"))
+
+
+class ClerkTokenError(Exception):
+    """The access token could not be verified or is not authorized."""
+
+
+def verify_clerk_oauth_token(
+    token: str, endpoint: str, client_id: str, client_secret: str
+) -> dict[str, Any]:
+    """Require an active token from the one configured OAuth client."""
+    import httpx
+
+    if not token or len(token) > 8192 or not client_id or not client_secret:
+        raise ClerkTokenError("access token could not be verified")
+    credentials = b64encode(f"{client_id}:{client_secret}".encode()).decode()
+    try:
+        response = httpx.post(
+            endpoint,
+            data={"token": token},
+            headers={"Authorization": f"Basic {credentials}"},
+            timeout=5,
+            follow_redirects=False,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError):
+        raise ClerkTokenError("access token could not be verified") from None
+    if not isinstance(payload, dict) or payload.get("active") is not True:
+        raise ClerkTokenError("access token is inactive")
+    if payload.get("client_id") != client_id:
+        raise ClerkTokenError("access token client does not match")
+    if not isinstance(payload.get("sub"), str) or not payload["sub"]:
+        raise ClerkTokenError("access token subject is invalid")
+    if not isinstance(payload.get("scope"), str):
+        raise ClerkTokenError("access token scopes are invalid")
+    now = int(time.time())
+    return {
+        "signature_verified": True,
+        "sub": payload["sub"],
+        "scope": payload["scope"],
+        "iat": now,
+        "exp": now + 1,
+    }
 
 
 class ConnectorError(Exception):
@@ -294,9 +392,18 @@ class MetaConnectorAPI:
         *,
         authorization_url: str,
         token_url: str,
+        public_base_url: str | None = None,
+        fixed_tenant: str | None = None,
+        supports_relink: bool = True,
+        max_token_seconds: int = MAX_TOKEN_SECONDS,
     ):
         self.database, self.verifier = database, verifier
+        self._postgres = is_postgres(database)
         self.authorization_url, self.token_url = authorization_url, token_url
+        self.public_base_url = public_base_url
+        self.fixed_tenant = fixed_tenant
+        self.supports_relink = supports_relink
+        self.max_token_seconds = max_token_seconds
         with self._db() as db:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS meta_accounts (tenant TEXT NOT NULL, subject TEXT NOT NULL, revoked_at INTEGER, PRIMARY KEY (tenant, subject))"
@@ -308,8 +415,22 @@ class MetaConnectorAPI:
                 "CREATE INDEX IF NOT EXISTS meta_audits_owner ON meta_audits(tenant, subject, created)"
             )
 
-    def _db(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.database, timeout=5)
+    def _db(self):
+        return connect(self.database)
+
+    def purge_expired(self) -> int:
+        """Delete expired summaries without requiring another user upload."""
+        cutoff = int(datetime.now(timezone.utc).timestamp()) - RETENTION_SECONDS
+        with self._db() as db:
+            return db.execute(
+                "DELETE FROM meta_audits WHERE created<?", (cutoff,)
+            ).rowcount
+
+    def _account_row(self, db: Any, tenant: str, subject: str) -> Any:
+        statement = "SELECT revoked_at FROM meta_accounts WHERE tenant=? AND subject=?"
+        if self._postgres:
+            statement += " FOR UPDATE"
+        return db.execute(statement, (tenant, subject)).fetchone()
 
     def _verified_identity(
         self, environ: Mapping[str, Any], scope: str
@@ -325,7 +446,7 @@ class MetaConnectorAPI:
             )
         try:
             claims = self.verifier(header[7:])
-        except (PRAssuranceError, ValueError, TypeError) as exc:
+        except (PRAssuranceError, ClerkTokenError, ValueError, TypeError) as exc:
             raise ConnectorError(
                 "401 Unauthorized",
                 "TOKEN_INVALID",
@@ -336,9 +457,18 @@ class MetaConnectorAPI:
                 "401 Unauthorized", "TOKEN_INVALID", "verified access token required"
             )
         try:
-            tenant = _text(claims.get("tenant_id"), "tenant_id", 100)
+            tenant_claim = claims.get("tenant_id")
+            if self.fixed_tenant is not None:
+                if tenant_claim is not None and tenant_claim != self.fixed_tenant:
+                    raise ConnectorError(
+                        "401 Unauthorized",
+                        "TOKEN_INVALID",
+                        "identity claims are invalid",
+                    )
+                tenant_claim = self.fixed_tenant
+            tenant = _text(tenant_claim, "tenant_id", 100)
             subject = _text(claims.get("sub"), "sub", 200)
-            if tenant != claims["tenant_id"] or subject != claims["sub"]:
+            if tenant != tenant_claim or subject != claims["sub"]:
                 raise ConnectorError(
                     "401 Unauthorized", "TOKEN_INVALID", "identity claims are invalid"
                 )
@@ -352,12 +482,12 @@ class MetaConnectorAPI:
             or isinstance(issued, bool)
             or not isinstance(expires, int)
             or isinstance(expires, bool)
-            or not 0 < expires - issued <= MAX_TOKEN_SECONDS
+            or not 0 < expires - issued <= self.max_token_seconds
         ):
             raise ConnectorError(
                 "401 Unauthorized",
                 "TOKEN_LIFETIME",
-                "access token must live at most 15 minutes",
+                "access token lifetime exceeds the configured issuer limit",
             )
         scopes = claims.get("scope", "")
         if not isinstance(scopes, str) or scope not in scopes.split():
@@ -378,7 +508,8 @@ class MetaConnectorAPI:
                     "401 Unauthorized", "ACCOUNT_REVOKED", "linked account is revoked"
                 )
             db.execute(
-                "INSERT OR IGNORE INTO meta_accounts(tenant, subject) VALUES (?,?)",
+                "INSERT INTO meta_accounts(tenant, subject) VALUES (?,?) "
+                "ON CONFLICT(tenant,subject) DO NOTHING",
                 (tenant, subject),
             )
         return tenant, subject
@@ -460,6 +591,16 @@ class MetaConnectorAPI:
         if method == "GET" and path == "/openapi.json":
             return "200 OK", self.openapi()
         if method == "GET" and path == "/v1/capabilities":
+            limits = [
+                "submitted summaries are not independent attestations",
+                "no repository execution",
+                "no release approval or certification",
+                "full-depth state follows supplied receipt",
+            ]
+            if not self.supports_relink:
+                limits.append(
+                    "self-service relink is unavailable for this OAuth provider"
+                )
             return "200 OK", {
                 "schema": "factory.meta.capabilities.v1",
                 "mode": "receipt-backed",
@@ -471,12 +612,7 @@ class MetaConnectorAPI:
                     "repair plan",
                     "delete account",
                 ],
-                "limits": [
-                    "submitted summaries are not independent attestations",
-                    "no repository execution",
-                    "no release approval or certification",
-                    "full-depth state follows supplied receipt",
-                ],
+                "limits": limits,
             }
         if path == "/v1/account":
             return self._account_route(method, environ)
@@ -504,6 +640,8 @@ class MetaConnectorAPI:
                 "subject": subject,
             }
         with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._account_row(db, tenant, subject)
             db.execute(
                 "DELETE FROM meta_audits WHERE tenant=? AND subject=?",
                 (tenant, subject),
@@ -520,6 +658,12 @@ class MetaConnectorAPI:
     def _relink_route(self, method: str, environ: Mapping[str, Any]) -> tuple[str, Any]:
         if method != "POST":
             raise ConnectorError("404 Not Found", "NOT_FOUND", "route not found")
+        if not self.supports_relink:
+            raise ConnectorError(
+                "501 Not Implemented",
+                "RELINK_UNSUPPORTED",
+                "this OAuth provider does not prove fresh authorization; contact support",
+            )
         tenant, subject, claims = self._verified_identity(environ, "cf.audit.link")
         auth_time = claims.get("auth_time")
         if (
@@ -534,10 +678,7 @@ class MetaConnectorAPI:
             )
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute(
-                "SELECT revoked_at FROM meta_accounts WHERE tenant=? AND subject=?",
-                (tenant, subject),
-            ).fetchone()
+            row = self._account_row(db, tenant, subject)
             if row and row[0] is not None and auth_time <= row[0]:
                 raise ConnectorError(
                     "401 Unauthorized",
@@ -574,10 +715,7 @@ class MetaConnectorAPI:
         audit_id = str(uuid4())
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
-            account = db.execute(
-                "SELECT revoked_at FROM meta_accounts WHERE tenant=? AND subject=?",
-                (tenant, subject),
-            ).fetchone()
+            account = self._account_row(db, tenant, subject)
             if account is None or account[0] is not None:
                 raise ConnectorError(
                     "401 Unauthorized", "ACCOUNT_REVOKED", "linked account is revoked"
@@ -707,14 +845,15 @@ class MetaConnectorAPI:
             "/openapi.json": ["get"],
             "/v1/capabilities": ["get"],
             "/v1/account": ["get", "delete"],
-            "/v1/account/relink": ["post"],
             "/v1/audits": ["get", "post"],
             "/v1/audits/{id}": ["get", "delete"],
             "/v1/audits/{id}/findings": ["get"],
             "/v1/audits/{id}/coverage": ["get"],
             "/v1/audits/{id}/repair-plan": ["get"],
         }
-        return {
+        if self.supports_relink:
+            paths["/v1/account/relink"] = ["post"]
+        specification = {
             "openapi": "3.1.0",
             "info": {
                 "title": "Code Factory Meta Connector",
@@ -808,7 +947,6 @@ class MetaConnectorAPI:
                                 "scopes": {
                                     "cf.audit.read": "Read own audit summaries",
                                     "cf.audit.write": "Upload and delete own audit summaries",
-                                    "cf.audit.link": "Relink after a fresh OAuth authorization",
                                 },
                             }
                         },
@@ -816,6 +954,13 @@ class MetaConnectorAPI:
                 },
             },
         }
+        if self.supports_relink:
+            specification["components"]["securitySchemes"]["oauth"]["flows"][
+                "authorizationCode"
+            ]["scopes"]["cf.audit.link"] = "Relink after a fresh OAuth authorization"
+        if self.public_base_url:
+            specification["servers"] = [{"url": self.public_base_url}]
+        return specification
 
     def __call__(
         self, environ: Mapping[str, Any], start_response: Callable
@@ -831,7 +976,7 @@ class MetaConnectorAPI:
                 exc.status,
                 {"error": {"code": exc.code, "message": exc.message}},
             )
-        except sqlite3.Error:
+        except (sqlite3.Error, StorageUnavailable):
             status, value = (
                 "503 Service Unavailable",
                 {
@@ -856,16 +1001,10 @@ class MetaConnectorAPI:
         return [body]
 
 
-def create_meta_connector_app_from_env(
-    environ: Mapping[str, str] | None = None,
-) -> MetaConnectorAPI:
-    """Construct the production resource server; an external OAuth2 IdP owns linking."""
-    env = dict(os.environ if environ is None else environ)
+def _validated_provider(env: Mapping[str, str]) -> str:
     required = (
         "FACTORY_META_DATABASE",
         "FACTORY_META_OIDC_ISSUER",
-        "FACTORY_META_OIDC_AUDIENCE",
-        "FACTORY_META_JWKS_URL",
         "FACTORY_META_AUTHORIZATION_URL",
         "FACTORY_META_TOKEN_URL",
     )
@@ -875,18 +1014,86 @@ def create_meta_connector_app_from_env(
             "CONFIG_MISSING",
             "Meta connector identity and storage configuration required",
         )
+    if env.get("VERCEL") and not is_postgres(env["FACTORY_META_DATABASE"]):
+        raise ConnectorError(
+            "500 Internal Server Error",
+            "CONFIG_INVALID",
+            "Vercel connector requires durable PostgreSQL storage",
+        )
+    provider = env.get("FACTORY_META_OIDC_PROVIDER", "generic")
+    if provider not in {"generic", "clerk"}:
+        raise ConnectorError(
+            "500 Internal Server Error", "CONFIG_INVALID", "unsupported OIDC provider"
+        )
+    provider_required = (
+        ("FACTORY_META_OIDC_AUDIENCE", "FACTORY_META_JWKS_URL")
+        if provider == "generic"
+        else ("FACTORY_META_CLERK_CLIENT_ID", "FACTORY_META_CLERK_CLIENT_SECRET")
+    )
+    if any(not env.get(key) for key in provider_required):
+        raise ConnectorError(
+            "500 Internal Server Error",
+            "CONFIG_MISSING",
+            "Meta connector identity configuration required",
+        )
     https_fields = (
         "FACTORY_META_OIDC_ISSUER",
-        "FACTORY_META_JWKS_URL",
         "FACTORY_META_AUTHORIZATION_URL",
         "FACTORY_META_TOKEN_URL",
     )
+    if provider == "generic":
+        https_fields += ("FACTORY_META_JWKS_URL",)
     if any(not env[key].startswith("https://") for key in https_fields):
         raise ConnectorError(
             "500 Internal Server Error",
             "CONFIG_INVALID",
             "identity endpoints must use HTTPS",
         )
+    return provider
+
+
+def _validated_public_base(env: Mapping[str, str]) -> str:
+    public_base_url = env.get("FACTORY_META_PUBLIC_BASE_URL", "").rstrip("/")
+    public_url = urlsplit(public_base_url)
+    if public_base_url and (
+        public_url.scheme != "https"
+        or not public_url.hostname
+        or public_url.username is not None
+        or public_url.password is not None
+        or public_url.query
+        or public_url.fragment
+    ):
+        raise ConnectorError(
+            "500 Internal Server Error",
+            "CONFIG_INVALID",
+            "public base URL must use HTTPS",
+        )
+    return public_base_url
+
+
+def _connector_verifier(
+    env: Mapping[str, str], provider: str
+) -> tuple[Callable[[str], dict[str, Any]], str | None]:
+    if provider == "clerk":
+        fixed_tenant = env.get("FACTORY_META_TENANT_ID", "")
+        if not fixed_tenant or len(fixed_tenant) > 100:
+            raise ConnectorError(
+                "500 Internal Server Error",
+                "CONFIG_INVALID",
+                "dedicated Clerk tenant ID required",
+            )
+        issuer = env["FACTORY_META_OIDC_ISSUER"].rstrip("/")
+        introspection_url = f"{issuer}/oauth/token_info"
+
+        def verify(token: str) -> dict[str, Any]:
+            return verify_clerk_oauth_token(
+                token,
+                introspection_url,
+                env["FACTORY_META_CLERK_CLIENT_ID"],
+                env["FACTORY_META_CLERK_CLIENT_SECRET"],
+            )
+
+        return verify, fixed_tenant
     jwks = JwksCache(env["FACTORY_META_JWKS_URL"], HttpxTransport())
 
     def verify(token: str) -> dict[str, Any]:
@@ -897,11 +1104,32 @@ def create_meta_connector_app_from_env(
             env["FACTORY_META_OIDC_AUDIENCE"],
         )
 
+    return verify, None
+
+
+def create_meta_connector_app_from_env(
+    environ: Mapping[str, str] | None = None,
+) -> MetaConnectorAPI:
+    """Construct the production resource server; an external OAuth2 IdP owns linking."""
+    env = dict(os.environ if environ is None else environ)
+    # Piped provider CLI input can retain a terminal newline in a DSN or
+    # client secret. Neither value permits raw line breaks.
+    for key in ("FACTORY_META_DATABASE", "FACTORY_META_CLERK_CLIENT_SECRET"):
+        if key in env:
+            env[key] = env[key].rstrip("\r\n")
+    provider = _validated_provider(env)
+    public_base_url = _validated_public_base(env)
+    verify, fixed_tenant = _connector_verifier(env, provider)
+
     return MetaConnectorAPI(
         env["FACTORY_META_DATABASE"],
         verify,
         authorization_url=env["FACTORY_META_AUTHORIZATION_URL"],
         token_url=env["FACTORY_META_TOKEN_URL"],
+        public_base_url=public_base_url or None,
+        fixed_tenant=fixed_tenant,
+        supports_relink=provider != "clerk",
+        max_token_seconds=MAX_TOKEN_SECONDS,
     )
 
 

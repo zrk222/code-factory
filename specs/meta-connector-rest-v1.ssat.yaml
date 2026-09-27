@@ -12,6 +12,18 @@ modules:
         args: ["value: Any", "now: datetime"]
         returns: "dict[str, Any]"
         doc: "Bound a commit and policy-bound summary without granting audit authority."
+      - name: connect
+        args: ["database: str"]
+        returns: "sqlite3.Connection | PostgresConnection"
+        doc: "Select durable PostgreSQL on stateless hosts and SQLite for local runs."
+  - name: meta_connector_vercel
+    path: api/index.py
+    imports: [factoryline.meta_connector_api]
+    functions:
+      - name: app
+        args: ["environ: Mapping[str, Any]", "start_response: Callable"]
+        returns: "list[bytes]"
+        doc: "Route the isolated Vercel function to the connector resource."
 invariants:
   - name: meta_connector_never_runs_repository_code
     forbid_pattern: "subprocess|spawnSync|os.system|shell=True"
@@ -19,3 +31,9 @@ invariants:
       - module: meta_connector_api
         symbol: create_meta_connector_app_from_env
         max_lines: 80
+  - name: meta_connector_never_imports_wizeme
+    forbid_pattern: "zoria|wizeme"
+    scopes:
+      - module: meta_connector_vercel
+        symbol: app
+        max_lines: 30

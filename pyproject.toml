@@ -59,6 +59,8 @@ classifiers = [
 ]
 dependencies = [
   "cryptography>=42,<50",
+  "httpx>=0.28,<1",
+  "psycopg[binary]>=3.2,<4",
   "PyYAML>=6,<7",
   "reportlab>=4,<5",
   "tomli>=2.0; python_version < '3.11'",
@@ -83,9 +85,10 @@ sigstore = ["sigstore>=4.4,<5"]
 enterprise = ["cryptography>=42,<50"]
 hosted = [
   "gunicorn>=23,<24; platform_system != 'Windows'",
-  "httpx>=0.28,<1",
-  "psycopg[binary]>=3.2,<4",
 ]
+
+[tool.vercel]
+entrypoint = "api.index:app"
 langgraph = [
   "langgraph>=1.1,<2",
   "langgraph-checkpoint-sqlite>=3,<4",
