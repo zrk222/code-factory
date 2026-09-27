@@ -990,9 +990,7 @@ def test_muse_audit_mcp_supports_json_rpc_batches() -> None:
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
     ]
-    notification_batch = [
-        {"jsonrpc": "2.0", "method": "notifications/initialized"}
-    ]
+    notification_batch = [{"jsonrpc": "2.0", "method": "notifications/initialized"}]
     request_stream = "\n".join(
         [
             json.dumps(batch),
