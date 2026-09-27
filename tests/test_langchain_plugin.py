@@ -983,6 +983,57 @@ def test_standalone_muse_installer_preserves_settings_and_is_idempotent(
     assert "empty or corrupt" in corrupt_result["reason"]
 
 
+def test_muse_audit_mcp_handles_protocol_errors_without_hanging() -> None:
+    server = ROOT / "plugins" / "muse-code-factory-audit" / "mcp" / "server.mjs"
+    initialize = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-03-26"},
+    }
+    notification = {"jsonrpc": "2.0", "method": "notifications/initialized"}
+    list_tools = {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}
+    request_stream = "\n".join(
+        [
+            json.dumps(initialize),
+            json.dumps(notification),
+            json.dumps(list_tools),
+            "{invalid",
+            "x" * 32_769,
+        ]
+    )
+    process = subprocess.run(
+        ["node", str(server)],
+        input=request_stream + "\n",
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
+    )
+    replies = [json.loads(line) for line in process.stdout.splitlines()]
+
+    assert len(replies) == 4
+    assert replies[0]["result"]["protocolVersion"] == "2025-03-26"
+    assert replies[0]["result"]["serverInfo"]["version"] == "0.2.0"
+    assert [item["name"] for item in replies[1]["result"]["tools"]] == [
+        "cf_audit_run",
+        "cf_audit_status",
+        "cf_audit_findings",
+        "cf_audit_coverage",
+        "cf_pr_review_brief",
+    ]
+    assert replies[2] == {
+        "jsonrpc": "2.0",
+        "id": None,
+        "error": {"code": -32700, "message": "Parse error"},
+    }
+    assert replies[3] == {
+        "jsonrpc": "2.0",
+        "id": None,
+        "error": {"code": -32600, "message": "Message too large"},
+    }
+
+
 def test_muse_audit_mcp_reads_current_receipt_and_rejects_changed_workspace(
     tmp_path: Path,
 ) -> None:

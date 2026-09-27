@@ -11,6 +11,7 @@ import { buildAudit, gitState, receiptMac } from '../hooks/audit.mjs';
 const STATE_DIR = path.join(process.env.MUSE_PLUGIN_DATA_DIR || os.tmpdir(), 'cf-build-audit', 'receipts');
 const MAX_RECEIPT_BYTES = 8 * 1024 * 1024;
 const MAX_FINDINGS_PAGE = 50;
+const MAX_MESSAGE_BYTES = 32_768;
 const names = ['cf_audit_run', 'cf_audit_status', 'cf_audit_findings', 'cf_audit_coverage', 'cf_pr_review_brief'];
 const tools = names.map((name) => ({
   name,
@@ -92,7 +93,7 @@ function toolResult(value) { return { content: [{ type: 'text', text: JSON.strin
 function handle(message) {
   if (!message || message.jsonrpc !== '2.0' || typeof message.method !== 'string') return error(message?.id, -32600, 'Invalid Request');
   if (message.method.startsWith('notifications/')) return null;
-  if (message.method === 'initialize') return result(message.id, { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'muse-code-factory-audit', version: '0.1.0' } });
+  if (message.method === 'initialize') return result(message.id, { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'muse-code-factory-audit', version: '0.2.0' } });
   if (message.method === 'ping') return result(message.id, {});
   if (message.method === 'tools/list') return result(message.id, { tools });
   if (message.method !== 'tools/call') return error(message.id, -32601, 'Method not found');
@@ -121,9 +122,15 @@ function handle(message) {
 
 const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity, terminal: false });
 input.on('line', (line) => {
-  if (Buffer.byteLength(line, 'utf8') > 32_768) return;
+  if (Buffer.byteLength(line, 'utf8') > MAX_MESSAGE_BYTES) {
+    process.stdout.write(`${JSON.stringify(error(null, -32600, 'Message too large'))}\n`);
+    return;
+  }
   let message;
-  try { message = JSON.parse(line); } catch { return; }
+  try { message = JSON.parse(line); } catch {
+    process.stdout.write(`${JSON.stringify(error(null, -32700, 'Parse error'))}\n`);
+    return;
+  }
   let reply;
   try { reply = handle(message); } catch { reply = error(message?.id, -32603, 'Audit tool failed closed.'); }
   if (reply) process.stdout.write(`${JSON.stringify(reply)}\n`);
