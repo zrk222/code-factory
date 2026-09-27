@@ -640,6 +640,30 @@ def test_clerk_profile_requires_dedicated_tenant_and_valid_public_url(tmp_path):
         raise AssertionError("public URL must not contain credentials")
 
 
+def test_clerk_profile_does_not_advertise_or_allow_unprovable_relink(tmp_path):
+    config = {
+        "FACTORY_META_DATABASE": str(tmp_path / "clerk.sqlite"),
+        "FACTORY_META_OIDC_ISSUER": "https://id.example/",
+        "FACTORY_META_AUTHORIZATION_URL": "https://id.example/authorize",
+        "FACTORY_META_TOKEN_URL": "https://id.example/token",
+        "FACTORY_META_OIDC_PROVIDER": "clerk",
+        "FACTORY_META_CLERK_CLIENT_ID": "client-id",
+        "FACTORY_META_CLERK_CLIENT_SECRET": "client-secret",
+        "FACTORY_META_TENANT_ID": "code-factory",
+    }
+    application = create_meta_connector_app_from_env(config)
+    specification = application.openapi()
+    assert "/v1/account/relink" not in specification["paths"]
+    scopes = specification["components"]["securitySchemes"]["oauth"]["flows"][
+        "authorizationCode"
+    ]["scopes"]
+    assert "cf.audit.link" not in scopes
+    status, body, _ = _call(application, "POST", "/v1/account/relink")
+    assert status == "501 Not Implemented"
+    assert body["error"]["code"] == "RELINK_UNSUPPORTED"
+    assert "/v1/account/relink" in _app(tmp_path).openapi()["paths"]
+
+
 def test_clerk_introspection_pins_client_and_active_scope(monkeypatch):
     import httpx
 

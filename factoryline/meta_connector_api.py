@@ -394,6 +394,7 @@ class MetaConnectorAPI:
         token_url: str,
         public_base_url: str | None = None,
         fixed_tenant: str | None = None,
+        supports_relink: bool = True,
         max_token_seconds: int = MAX_TOKEN_SECONDS,
     ):
         self.database, self.verifier = database, verifier
@@ -401,6 +402,7 @@ class MetaConnectorAPI:
         self.authorization_url, self.token_url = authorization_url, token_url
         self.public_base_url = public_base_url
         self.fixed_tenant = fixed_tenant
+        self.supports_relink = supports_relink
         self.max_token_seconds = max_token_seconds
         with self._db() as db:
             db.execute(
@@ -589,6 +591,16 @@ class MetaConnectorAPI:
         if method == "GET" and path == "/openapi.json":
             return "200 OK", self.openapi()
         if method == "GET" and path == "/v1/capabilities":
+            limits = [
+                "submitted summaries are not independent attestations",
+                "no repository execution",
+                "no release approval or certification",
+                "full-depth state follows supplied receipt",
+            ]
+            if not self.supports_relink:
+                limits.append(
+                    "self-service relink is unavailable for this OAuth provider"
+                )
             return "200 OK", {
                 "schema": "factory.meta.capabilities.v1",
                 "mode": "receipt-backed",
@@ -600,12 +612,7 @@ class MetaConnectorAPI:
                     "repair plan",
                     "delete account",
                 ],
-                "limits": [
-                    "submitted summaries are not independent attestations",
-                    "no repository execution",
-                    "no release approval or certification",
-                    "full-depth state follows supplied receipt",
-                ],
+                "limits": limits,
             }
         if path == "/v1/account":
             return self._account_route(method, environ)
@@ -651,6 +658,12 @@ class MetaConnectorAPI:
     def _relink_route(self, method: str, environ: Mapping[str, Any]) -> tuple[str, Any]:
         if method != "POST":
             raise ConnectorError("404 Not Found", "NOT_FOUND", "route not found")
+        if not self.supports_relink:
+            raise ConnectorError(
+                "501 Not Implemented",
+                "RELINK_UNSUPPORTED",
+                "this OAuth provider does not prove fresh authorization; contact support",
+            )
         tenant, subject, claims = self._verified_identity(environ, "cf.audit.link")
         auth_time = claims.get("auth_time")
         if (
@@ -832,13 +845,14 @@ class MetaConnectorAPI:
             "/openapi.json": ["get"],
             "/v1/capabilities": ["get"],
             "/v1/account": ["get", "delete"],
-            "/v1/account/relink": ["post"],
             "/v1/audits": ["get", "post"],
             "/v1/audits/{id}": ["get", "delete"],
             "/v1/audits/{id}/findings": ["get"],
             "/v1/audits/{id}/coverage": ["get"],
             "/v1/audits/{id}/repair-plan": ["get"],
         }
+        if self.supports_relink:
+            paths["/v1/account/relink"] = ["post"]
         specification = {
             "openapi": "3.1.0",
             "info": {
@@ -933,7 +947,6 @@ class MetaConnectorAPI:
                                 "scopes": {
                                     "cf.audit.read": "Read own audit summaries",
                                     "cf.audit.write": "Upload and delete own audit summaries",
-                                    "cf.audit.link": "Relink after a fresh OAuth authorization",
                                 },
                             }
                         },
@@ -941,6 +954,10 @@ class MetaConnectorAPI:
                 },
             },
         }
+        if self.supports_relink:
+            specification["components"]["securitySchemes"]["oauth"]["flows"][
+                "authorizationCode"
+            ]["scopes"]["cf.audit.link"] = "Relink after a fresh OAuth authorization"
         if self.public_base_url:
             specification["servers"] = [{"url": self.public_base_url}]
         return specification
@@ -1111,6 +1128,7 @@ def create_meta_connector_app_from_env(
         token_url=env["FACTORY_META_TOKEN_URL"],
         public_base_url=public_base_url or None,
         fixed_tenant=fixed_tenant,
+        supports_relink=provider != "clerk",
         max_token_seconds=MAX_TOKEN_SECONDS,
     )
 

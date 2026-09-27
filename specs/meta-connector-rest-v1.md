@@ -84,9 +84,12 @@ The generic OIDC profile keeps its existing 15-minute JWT ceiling.
 `GET /v1/audits/{id}/repair-plan` require `cf.audit.read`.
 `POST /v1/audits`, `DELETE /v1/audits/{id}`, and `DELETE /v1/account`
 require `cf.audit.write`. Account deletion removes all its audit summaries and
-revokes its local link. `POST /v1/account/relink` requires `cf.audit.link` from
-a fresh OAuth authorization whose `auth_time` follows the unlink time. Old
-access tokens cannot relink an account.
+revokes its local link. In the generic OIDC profile,
+`POST /v1/account/relink` requires `cf.audit.link` from a fresh OAuth
+authorization whose `auth_time` follows the unlink time. Old access tokens
+cannot relink an account. Clerk's token introspection does not provide
+`auth_time`, so the Clerk profile does not advertise self-service relink and
+returns `RELINK_UNSUPPORTED`; contact support to restore a deleted account.
 
 ## OAuth and hosting
 
@@ -122,6 +125,8 @@ than a 15-minute lifetime. The service validates signature, issuer, audience,
 time, account revocation, and read/write scope; it never accepts account IDs
 from request paths or bodies as authority. Relink tokens additionally need an
 `auth_time` claim from a fresh OAuth grant and the `cf.audit.link` scope.
+The Clerk profile does not infer freshness from token `iat`: refresh tokens
+can mint new access tokens without a new user authorization.
 
 The external identity provider owns OAuth consent, refresh-token storage,
 unlinking at the provider, and authorization-server operation. This repository
@@ -238,7 +243,9 @@ profile verifies each OAuth access token through Clerk's `/oauth/token_info`
 endpoint, requires the configured client ID and `cf.audit.read` scope, and
 maps the dedicated instance to the fixed tenant. An inactive token fails
 closed. Use authorization-code + PKCE with Meta's assigned callback. Keep
-write and relink scopes out of Meta's assistant tools. Provision the database
+write scopes out of Meta's assistant tools. The Clerk profile does not
+support self-service relink because its introspection response lacks
+`auth_time`. Provision the database
 and OAuth application as separate Code Factory resources. Confirm their
 free-tier limits or obtain a budget before creation; an existing Vercel
 subscription does not make extra provider usage free.
@@ -252,7 +259,8 @@ subscription does not make extra provider usage free.
    cannot upload or delete, and wrong-tenant requests cannot read a record.
 3. Link a test account, upload one bounded summary, read its findings and
    coverage from a second function invocation, unlink, prove old access is
-   rejected, relink with fresh authorization, and delete the account. Verify
+   rejected, and delete the account. In generic OIDC mode, also relink with
+   fresh authorization. In Clerk mode, verify `RELINK_UNSUPPORTED`. Verify
    the database retains only the intended rows after each step.
 4. Exercise concurrent uploads against the per-account limit and a concurrent
    unlink/upload race on the real PostgreSQL service. Local dialect tests do
