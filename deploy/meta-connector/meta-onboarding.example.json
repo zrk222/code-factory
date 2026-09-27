@@ -1,0 +1,34 @@
+{
+  "note": "Operator mapping for Meta's guided onboarding; this is not an official Meta manifest schema.",
+  "name": "Code Factory Audit Evidence",
+  "description": "Read the latest account-linked audit summary, coverage gaps, findings, and repair steps for a named repository. Results are advisory and may include uploader assertions.",
+  "api_base_url": "https://connector.example.com",
+  "openapi_url": "https://connector.example.com/openapi.json",
+  "account_linking": {
+    "flow": "OAuth 2.0 authorization code with PKCE S256",
+    "authorization_url": "https://identity.example.com/oauth/authorize",
+    "token_url": "https://identity.example.com/oauth/token",
+    "redirect_uri": "META_ASSIGNED_CALLBACK_URI",
+    "assistant_scope": "cf.audit.read"
+  },
+  "assistant_operations": [
+    "get_v1_capabilities",
+    "get_v1_account",
+    "get_v1_audits",
+    "get_v1_audits_id",
+    "get_v1_audits_id_findings",
+    "get_v1_audits_id_coverage",
+    "get_v1_audits_id_repair-plan"
+  ],
+  "private_operator_operations": [
+    "post_v1_audits",
+    "delete_v1_audits_id",
+    "delete_v1_account",
+    "post_v1_account_relink"
+  ],
+  "examples": [
+    "What did Code Factory verify for owner/repo on commit SHA?",
+    "Which audit lanes are incomplete and why?",
+    "Show the highest severity findings and exact rerun steps."
+  ]
+}
