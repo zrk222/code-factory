@@ -129,8 +129,10 @@ backed by a dedicated Neon database and production Clerk instance. On
 OpenAPI advertised the production Clerk URLs, and an unauthenticated audit
 request returned `AUTH_REQUIRED`. These checks do not establish a completed
 OAuth link or a populated account. The production read-only client has no
-Meta-assigned redirect URI yet; scoped account access, upload, unlink/relink,
-and cross-account isolation still need an end-to-end live exercise. Public
+Meta-assigned redirect URI yet; scoped account access, upload, unlink, and
+cross-account isolation still need an end-to-end live exercise. Clerk does
+not support self-service relink because introspection lacks `auth_time`; the
+generic OIDC profile supports fresh relink. Public
 connector-specific privacy and terms pages now return 200 under
 `cf.wizeme.app/meta-connector/`. The Muse Overview and Technical specs forms
 are prepared, but final terms acceptance and directory submission remain
