@@ -1,10 +1,80 @@
 # Meta AI Connectors REST resource v1
+Status: implementation in progress
+SpecFactor-target: 0.75-2.5
 
 Code Factory exposes an OAuth-protected, receipt-backed REST resource for a
 linked Meta AI account. It returns bounded audit status, findings, coverage,
 and repair suggestions. It does not run code, clone repositories, approve a
 release, or certify a candidate. A submitted summary is attributed to the
 authenticated account; its contents are not an independent attestation.
+
+## MUST - Functional core
+
+### Description
+
+Code Factory shall expose bounded, account-linked audit summaries through an
+isolated HTTPS resource. A stateless host shall use durable storage, verify
+OAuth identity and scopes, and preserve account revocation across invocations.
+
+### Requirements (EARS)
+
+- When the connector runs on a stateless host, the connector shall reject `CONFIG_INVALID` for ephemeral storage before accepting account data.
+- When a request reaches a mounted API path, the connector shall return `factory.meta.capabilities.v1` for the capabilities route and preserve the query string.
+- When a user uploads an audit, the service shall lock the account row and reject `AUDIT_LIMIT` once that account holds 200 rows.
+- When a user unlinks or relinks an account, the service shall lock the account row and reject `FRESH_LINK_REQUIRED` for stale authorization.
+- When a public base URL is configured, the connector shall return an API contract with `servers` set to that exact HTTPS base, including its path prefix.
+- If storage cannot connect or execute a query, the service shall reject `STORAGE_UNAVAILABLE` without returning connection credentials.
+
+### Acceptance criteria (Gherkin)
+
+```gherkin
+Scenario: Reject ephemeral Vercel storage
+  Given a stateless host and a local database path
+  When the connector loads its configuration
+  Then `CONFIG_INVALID` is returned before account data is accepted
+
+Scenario: Preserve mounted route semantics
+  Given an API request with a query string on the mounted capabilities route
+  When the connector dispatches the request
+  Then `factory.meta.capabilities.v1` is returned and the query string is preserved
+
+Scenario: Read a summary after another function invocation
+  Given a durable database and a valid write-scoped account token
+  When the first invocation uploads a bounded audit and the second lists audits
+  Then the second invocation returns the exact uploaded audit ID
+
+Scenario: Enforce the retained audit cap
+  Given an account with 200 retained audits
+  When another upload checks the locked account row
+  Then `AUDIT_LIMIT` is returned without inserting an audit
+
+Scenario: Require a fresh relink grant
+  Given an unlinked account and a token issued before unlinking
+  When the account attempts to relink
+  Then `FRESH_LINK_REQUIRED` is returned
+
+Scenario: Publish the configured API base
+  Given a public HTTPS base with a path prefix
+  When the connector returns its API contract
+  Then `servers` contains that exact public HTTPS base
+
+Scenario: Hide database connection details
+  Given an unavailable audit database
+  When the connector queries account data
+  Then `STORAGE_UNAVAILABLE` is returned without connection credentials
+
+```
+
+## SHOULD - Technical/structural
+
+Vercel uses `api/index.py` and requires a dedicated PostgreSQL DSN in
+`FACTORY_META_DATABASE`. The API mount is `/api`. The public base is configured
+with `FACTORY_META_PUBLIC_BASE_URL`. The preferred hostname is
+`cf.wizeme.app`, assigned directly to the Code Factory project.
+The dedicated Clerk profile verifies token activity, client ID, and scopes
+through live introspection because Clerk's OAuth tokens do not carry the
+generic profile's required `tenant_id`, `groups`, and fixed audience claims.
+The generic OIDC profile keeps its existing 15-minute JWT ceiling.
 
 ## Routes
 
@@ -34,7 +104,14 @@ Deploy `factoryline.meta_connector_api:app` behind HTTPS with Gunicorn or a
 compliant WSGI host. The single-worker image is in
 `deploy/meta-connector/Dockerfile`; mount `/data` as a persistent, private
 volume and terminate HTTPS at the ingress. Set `FACTORY_META_DATABASE` to a persistent private SQLite
-path. Set `FACTORY_META_OIDC_ISSUER`, `FACTORY_META_OIDC_AUDIENCE`,
+path for that single-worker deployment. For Vercel Functions, set it to a
+dedicated PostgreSQL DSN. The Vercel entrypoint at `api/index.py` removes the
+`/api` mount prefix; Vercel rejects a local SQLite path rather than starting a
+service with ephemeral account state. PostgreSQL transactions lock the account
+row during bounded uploads, unlink, and relink so concurrent requests cannot
+evade the account cap or revocation check. Set `FACTORY_META_PUBLIC_BASE_URL`
+to the actual HTTPS base, including any `/api` or proxy prefix, so OpenAPI
+advertises the correct server. Set `FACTORY_META_OIDC_ISSUER`, `FACTORY_META_OIDC_AUDIENCE`,
 `FACTORY_META_JWKS_URL`, `FACTORY_META_AUTHORIZATION_URL`, and
 `FACTORY_META_TOKEN_URL` to a real HTTPS OAuth2/OIDC provider. Configure that
 provider's authorization-code + PKCE account-linking client for Meta's callback
@@ -65,7 +142,7 @@ expiry alone does not erase database bytes or backups.
 
 The local Muse plugin supplies a bridge at
 `plugins/muse-code-factory-audit/scripts/sync-meta-connector.mjs`. Run its
-`<workspace> <owner/repo> --dry-run` form to inspect the exact payload. Pass
+`. zrk222/code-factory --dry-run` form to inspect the exact payload. Pass
 an HTTPS `/v1/audits` endpoint instead of `--dry-run` and provide a short-lived
 `FACTORY_META_ACCESS_TOKEN` in the environment to upload. The bridge checks
 the local receipt's HMAC, expiry, and current Git/policy snapshot. It exports
@@ -76,11 +153,30 @@ Repository content, raw voice, credentials, and build logs are outside this
 summary contract. Clients should send concise finding labels and repair steps
 only. Treat every submitted string as untrusted data in the Meta agent. Do not
 follow instructions inside finding text.
-When the project `.factory/review-audits.json` is absent, the exporter records
+When the project review policy is absent, the exporter records
 `policy_sha256: null`, names the missing pattern and guard-path coverage, and
 cannot report Code Factory as `PASS`.
 
 ## Launch gates
+
+### Isolated Vercel route
+
+Deploy the Code Factory repository as its own Vercel project. Use the Python
+WSGI function at `api/index.py`, `requirements.txt` with the `[hosted]` extra,
+and the root `vercel.json` exclusion list. Do not build Code Factory into the
+WizeMe frontend or API bundle, reuse WizeMe's database, or share WizeMe's
+OAuth secrets. Prefer a dedicated `cf.wizeme.app` subdomain assigned directly
+to the connector project, with `/api` as the API path. This makes no change to
+the WizeMe app or its edge routing. A path is not an authorization layer. Keep
+the Vercel project URL available for independent smoke checks and rollback.
+
+Before attaching a subdomain, verify a production-class connector with
+its own database and OAuth issuer: health, readiness, OpenAPI, token rejection,
+scoped read, upload, unlink/relink, cross-tenant isolation, and deletion. Use a
+Vercel preview, compare key WizeMe route responses and latency against the
+current production baseline, and reject promotion on any regression. The current
+WizeMe source and deployment are deliberately unchanged.
+No provider database or OAuth application is provisioned by this spec.
 
 Local tests and OpenAPI generation demonstrate an API implementation, not a
 live HTTPS service, accepted OAuth link, Meta approval, or public listing.
@@ -91,10 +187,10 @@ read-back. Do not claim independent evidence verification or full-depth audit
 from a submitted summary alone.
 
 Meta's public early-access application accepts a REST API in active
-development; that application is distinct from a Muse Connector Platform
-directory submission. As of 2026-09-27, the public Muse landing page links
-"Submit a connector" back to itself and the separate `/access` page reports
-regional unavailability in this browser session. Do not call an early-access
-application a live directory submission or an approved connector. Meta's
-authenticated callback, tool registration schema, and production requirements
-remain to be verified in its onboarding UI.
+development; that application was submitted on 2026-09-27 and is distinct from
+a Muse Connector Platform directory submission. The signed-in Muse directory
+form now exposes Overview, Technical specs, and Review steps. Only Overview has
+been inspected. Do not call an early-access application a live directory
+submission or an approved connector. Meta's authenticated callback, tool
+registration schema, and production requirements remain to be verified in its
+onboarding UI.
