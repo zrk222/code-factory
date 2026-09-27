@@ -2,7 +2,7 @@ name: meta-connector-rest-v1
 modules:
   - name: meta_connector_api
     path: factoryline/meta_connector_api.py
-    imports: [factoryline.hosted_identity, factoryline.pr_assurance, factoryline.meta_connector_storage]
+    imports: [factoryline.hosted_identity, factoryline.pr_assurance]
     functions:
       - name: create_meta_connector_app_from_env
         args: ["environ: Mapping[str, str] | None"]
@@ -12,10 +12,6 @@ modules:
         args: ["value: Any", "now: datetime"]
         returns: "dict[str, Any]"
         doc: "Bound a commit and policy-bound summary without granting audit authority."
-  - name: meta_connector_storage
-    path: factoryline/meta_connector_storage.py
-    imports: []
-    functions:
       - name: connect
         args: ["database: str"]
         returns: "sqlite3.Connection | PostgresConnection"

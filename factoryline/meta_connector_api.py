@@ -7,20 +7,20 @@ independent attestation. OAuth authorization is delegated to a configured IdP.
 
 from __future__ import annotations
 
+from base64 import b64encode
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import os
 import re
 import sqlite3
+import time
 from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
 from urllib.parse import parse_qs
 from uuid import uuid4
 
 from .hosted_identity import HttpxTransport, JwksCache, get_jwks
-from .meta_connector_clerk import ClerkTokenError, verify_clerk_oauth_token
-from .meta_connector_storage import StorageUnavailable, connect, is_postgres
 from .pr_assurance import PRAssuranceError, verify_oidc_token
 
 
@@ -34,6 +34,99 @@ HEX64 = re.compile(r"[a-f0-9]{64}\Z")
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}\Z")
 LABELS = frozenset({"PASS", "FAIL", "NOT_RUN", "INCOMPLETE", "BLOCKED"})
 LANES = ("code_factory", "forgeline", "appforge", "saasforge", "full_depth")
+
+
+class StorageUnavailable(Exception):
+    """A database operation failed without exposing provider details."""
+
+
+class PostgresConnection:
+    """Expose the subset of sqlite3.Connection used by the connector."""
+
+    def __init__(self, dsn: str):
+        try:
+            import psycopg
+
+            self._driver = psycopg
+            self._connection = psycopg.connect(dsn, connect_timeout=5)
+        except Exception:
+            raise StorageUnavailable("audit storage is unavailable") from None
+
+    def __enter__(self) -> PostgresConnection:
+        return self
+
+    def __exit__(self, kind: Any, value: Any, traceback: Any) -> None:
+        try:
+            if kind is None:
+                self._connection.commit()
+            else:
+                self._connection.rollback()
+        except self._driver.Error:
+            raise StorageUnavailable("audit storage is unavailable") from None
+        finally:
+            self._connection.close()
+
+    def execute(self, statement: str, parameters: tuple[Any, ...] = ()) -> Any:
+        if statement == "BEGIN IMMEDIATE":
+            return None
+        try:
+            return self._connection.execute(statement.replace("?", "%s"), parameters)
+        except self._driver.Error:
+            raise StorageUnavailable("audit storage is unavailable") from None
+
+
+def connect(database: str) -> sqlite3.Connection | PostgresConnection:
+    """Select durable PostgreSQL by DSN; retain SQLite for local workflows."""
+    if is_postgres(database):
+        return PostgresConnection(database)
+    return sqlite3.connect(database, timeout=5)
+
+
+def is_postgres(database: str) -> bool:
+    return database.startswith(("postgresql://", "postgres://"))
+
+
+class ClerkTokenError(Exception):
+    """The access token could not be verified or is not authorized."""
+
+
+def verify_clerk_oauth_token(
+    token: str, endpoint: str, client_id: str, client_secret: str
+) -> dict[str, Any]:
+    """Require an active token from the one configured OAuth client."""
+    import httpx
+
+    if not token or len(token) > 8192 or not client_id or not client_secret:
+        raise ClerkTokenError("access token could not be verified")
+    credentials = b64encode(f"{client_id}:{client_secret}".encode()).decode()
+    try:
+        response = httpx.post(
+            endpoint,
+            data={"token": token},
+            headers={"Authorization": f"Basic {credentials}"},
+            timeout=5,
+            follow_redirects=False,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError):
+        raise ClerkTokenError("access token could not be verified") from None
+    if not isinstance(payload, dict) or payload.get("active") is not True:
+        raise ClerkTokenError("access token is inactive")
+    if payload.get("client_id") != client_id:
+        raise ClerkTokenError("access token client does not match")
+    if not isinstance(payload.get("sub"), str) or not payload["sub"]:
+        raise ClerkTokenError("access token subject is invalid")
+    if not isinstance(payload.get("scope"), str):
+        raise ClerkTokenError("access token scopes are invalid")
+    now = int(time.time())
+    return {
+        "signature_verified": True,
+        "sub": payload["sub"],
+        "scope": payload["scope"],
+        "iat": now,
+        "exp": now + 1,
+    }
 
 
 class ConnectorError(Exception):
@@ -356,7 +449,9 @@ class MetaConnectorAPI:
             if self.fixed_tenant is not None:
                 if tenant_claim is not None and tenant_claim != self.fixed_tenant:
                     raise ConnectorError(
-                        "401 Unauthorized", "TOKEN_INVALID", "identity claims are invalid"
+                        "401 Unauthorized",
+                        "TOKEN_INVALID",
+                        "identity claims are invalid",
                     )
                 tenant_claim = self.fixed_tenant
             tenant = _text(tenant_claim, "tenant_id", 100)
@@ -970,6 +1065,7 @@ def _connector_verifier(
                 env["FACTORY_META_CLERK_CLIENT_ID"],
                 env["FACTORY_META_CLERK_CLIENT_SECRET"],
             )
+
         return verify, fixed_tenant
     jwks = JwksCache(env["FACTORY_META_JWKS_URL"], HttpxTransport())
 
@@ -980,6 +1076,7 @@ def _connector_verifier(
             env["FACTORY_META_OIDC_ISSUER"],
             env["FACTORY_META_OIDC_AUDIENCE"],
         )
+
     return verify, None
 
 
