@@ -67,6 +67,7 @@ class PostgresConnection:
             self._connection.close()
 
     def execute(self, statement: str, parameters: tuple[Any, ...] = ()) -> Any:
+        """Execute the connector's limited SQL dialect using PostgreSQL parameters."""
         if statement == "BEGIN IMMEDIATE":
             return None
         try:
@@ -83,6 +84,7 @@ def connect(database: str) -> sqlite3.Connection | PostgresConnection:
 
 
 def is_postgres(database: str) -> bool:
+    """Identify PostgreSQL connection strings without opening a database connection."""
     return database.startswith(("postgresql://", "postgres://"))
 
 
