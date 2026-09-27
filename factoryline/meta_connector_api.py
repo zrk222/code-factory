@@ -700,6 +700,7 @@ class MetaConnectorAPI:
         raise ConnectorError("404 Not Found", "NOT_FOUND", "route not found")
 
     def openapi(self) -> dict[str, Any]:
+        """Return the public OpenAPI contract for account-linked audit resource queries."""
         paths = {
             "/health": ["get"],
             "/ready": ["get"],

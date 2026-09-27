@@ -10,6 +10,7 @@ from threading import Thread
 from urllib.request import urlopen
 from wsgiref.simple_server import make_server
 
+import factoryline.meta_connector_api as meta_connector_api
 from factoryline.meta_connector_api import (
     ConnectorError,
     MetaConnectorAPI,
@@ -249,7 +250,13 @@ def test_openapi_and_capability_boundary(tmp_path):
     )
 
 
-def test_documented_production_environment_accepts_non_url_audience(tmp_path):
+def test_documented_production_environment_accepts_non_url_audience(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(meta_connector_api, "HttpxTransport", lambda: object())
+    monkeypatch.setattr(
+        meta_connector_api, "JwksCache", lambda _url, _transport: object()
+    )
     config = {
         "FACTORY_META_DATABASE": str(tmp_path / "meta.sqlite"),
         "FACTORY_META_OIDC_ISSUER": "https://id.example/",
