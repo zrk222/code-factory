@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from base64 import urlsafe_b64encode
 from io import BytesIO
 import json
 import os
@@ -15,6 +16,8 @@ from uuid import uuid4
 import api.index as vercel_entrypoint
 import factoryline.meta_connector_api as meta_connector_api
 import pytest
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from factoryline.meta_connector_api import (
     ClerkTokenError,
     ConnectorError,
@@ -24,6 +27,7 @@ from factoryline.meta_connector_api import (
     create_meta_connector_app_from_env,
     is_postgres,
     verify_clerk_oauth_token,
+    verify_clerk_mcp_token,
 )
 
 
@@ -93,6 +97,121 @@ def _snapshot():
         ],
         "coverage": ["Python AST only; JavaScript and DAST not run"],
     }
+
+
+def _mcp_call(
+    app, method, params=None, *, token="test-token", origin=None, request_id=1
+):
+    payload = {"jsonrpc": "2.0", "id": request_id, "method": method}
+    if params is not None:
+        payload["params"] = params
+    raw = json.dumps(payload).encode()
+    env = {
+        "REQUEST_METHOD": "POST",
+        "PATH_INFO": "/mcp",
+        "CONTENT_TYPE": "application/json",
+        "CONTENT_LENGTH": str(len(raw)),
+        "HTTP_ACCEPT": "application/json, text/event-stream",
+        "HTTP_AUTHORIZATION": f"Bearer {token}" if token else "",
+        "wsgi.input": BytesIO(raw),
+    }
+    if origin:
+        env["HTTP_ORIGIN"] = origin
+    captured = {}
+
+    def respond(status, headers):
+        captured["status"], captured["headers"] = status, dict(headers)
+
+    data = b"".join(app(env, respond))
+    return captured["status"], json.loads(data) if data else None, captured["headers"]
+
+
+def test_read_only_mcp_lifecycle_and_account_boundary(tmp_path):
+    owner = _app(tmp_path)
+    audit_id = _call(owner, "POST", "/v1/audits", _snapshot())[1]["id"]
+    status, initialized, _ = _mcp_call(
+        owner,
+        "initialize",
+        {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "test", "version": "1"},
+        },
+    )
+    assert (
+        status == "200 OK" and initialized["result"]["protocolVersion"] == "2025-11-25"
+    )
+    status, compatible, _ = _mcp_call(
+        owner,
+        "initialize",
+        {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "zapier", "version": "1"},
+        },
+    )
+    assert (
+        status == "200 OK" and compatible["result"]["protocolVersion"] == "2025-06-18"
+    )
+    status, tools, _ = _mcp_call(owner, "tools/list")
+    assert status == "200 OK" and len(tools["result"]["tools"]) == 5
+    assert all(tool["annotations"]["readOnlyHint"] for tool in tools["result"]["tools"])
+    status, listed, _ = _mcp_call(
+        owner, "tools/call", {"name": "list_audits", "arguments": {"limit": 1}}
+    )
+    assert (
+        status == "200 OK"
+        and listed["result"]["structuredContent"]["items"][0]["id"] == audit_id
+    )
+    status, coverage, _ = _mcp_call(
+        owner,
+        "tools/call",
+        {"name": "get_coverage", "arguments": {"audit_id": audit_id}},
+    )
+    assert coverage["result"]["structuredContent"]["full_depth"] == "INCOMPLETE"
+    other = _app(tmp_path, _claims(subject="other"))
+    status, missing, _ = _mcp_call(
+        other, "tools/call", {"name": "get_audit", "arguments": {"audit_id": audit_id}}
+    )
+    assert status == "200 OK" and missing["result"]["isError"] is True
+
+
+def test_mcp_rejects_untrusted_input_and_advertises_oauth(tmp_path):
+    claims = _claims()
+    claims["aud"] = "https://cf.example/api/mcp"
+    app = MetaConnectorAPI(
+        str(tmp_path / "meta.sqlite"),
+        lambda _: claims,
+        authorization_url="https://clerk.example/oauth/authorize",
+        token_url="https://clerk.example/oauth/token",
+        public_base_url="https://cf.example/api",
+    )
+    status, metadata, _ = _call(
+        app, "GET", "/.well-known/oauth-protected-resource", token=""
+    )
+    assert status == "200 OK" and metadata["resource"] == "https://cf.example/api/mcp"
+    assert metadata["scopes_supported"] == ["cf.audit.read"]
+    assert metadata["authorization_servers"] == ["https://clerk.example"]
+    status, _, headers = _mcp_call(app, "initialize", token="")
+    assert (
+        status == "401 Unauthorized"
+        and "resource_metadata" in headers["WWW-Authenticate"]
+    )
+    assert (
+        _mcp_call(app, "initialize", origin="https://untrusted.example")[0]
+        == "403 Forbidden"
+    )
+    claims["aud"] = "https://different.example/mcp"
+    assert _mcp_call(app, "initialize")[0] == "401 Unauthorized"
+    claims["aud"] = "https://cf.example/api/mcp"
+    status, result, _ = _mcp_call(
+        app, "tools/call", {"name": "get_audit", "arguments": {"audit_id": "bad"}}
+    )
+    assert status == "200 OK" and result["result"]["isError"] is True
+    status, result, _ = _mcp_call(
+        app, "tools/call", {"name": "delete_audit", "arguments": {}}
+    )
+    assert status == "200 OK" and result["result"]["isError"] is True
 
 
 def test_full_audit_resource_lifecycle(tmp_path):
@@ -631,6 +750,8 @@ def test_clerk_profile_requires_dedicated_tenant_and_valid_public_url(tmp_path):
     else:
         raise AssertionError("Clerk must be bound to a dedicated tenant")
     config["FACTORY_META_TENANT_ID"] = "code-factory"
+    unbound = create_meta_connector_app_from_env(config)
+    assert _mcp_call(unbound, "initialize")[0] == "401 Unauthorized"
     config["FACTORY_META_PUBLIC_BASE_URL"] = "https://user:pass@cf.wizeme.app/api"
     try:
         create_meta_connector_app_from_env(config)
@@ -638,6 +759,63 @@ def test_clerk_profile_requires_dedicated_tenant_and_valid_public_url(tmp_path):
         assert exc.code == "CONFIG_INVALID"
     else:
         raise AssertionError("public URL must not contain credentials")
+
+
+def test_clerk_mcp_jwt_requires_valid_resource_signature_and_read_scope():
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    numbers = key.public_key().public_numbers()
+
+    def encode(value):
+        return urlsafe_b64encode(value).rstrip(b"=").decode()
+
+    def integer(value):
+        return encode(value.to_bytes((value.bit_length() + 7) // 8, "big"))
+
+    jwks = {
+        "keys": [
+            {
+                "kid": "test",
+                "kty": "RSA",
+                "use": "sig",
+                "n": integer(numbers.n),
+                "e": integer(numbers.e),
+            }
+        ]
+    }
+    now = int(time.time())
+    claims = {
+        "iss": "https://clerk.example",
+        "aud": "https://cf.example/api/mcp",
+        "sub": "user_123",
+        "client_id": "dynamically-registered-client",
+        "scope": "cf.audit.read offline_access",
+        "iat": now,
+        "exp": now + 86400,
+    }
+
+    def token(payload):
+        header = encode(json.dumps({"alg": "RS256", "kid": "test"}).encode())
+        body = encode(json.dumps(payload).encode())
+        signature = key.sign(
+            f"{header}.{body}".encode(), padding.PKCS1v15(), hashes.SHA256()
+        )
+        return f"{header}.{body}.{encode(signature)}"
+
+    valid = token(claims)
+    assert (
+        verify_clerk_mcp_token(valid, jwks, claims["iss"], claims["aud"])["sub"]
+        == "user_123"
+    )
+    prefix, signature = valid.rsplit(".", 1)
+    bad_signature = prefix + "." + ("A" if signature[0] != "A" else "B") + signature[1:]
+    for invalid in (
+        bad_signature,
+        token({**claims, "aud": "https://other.example/mcp"}),
+        token({**claims, "scope": "cf.audit.write"}),
+        token({**claims, "exp": now - 10_000}),
+    ):
+        with pytest.raises(ClerkTokenError):
+            verify_clerk_mcp_token(invalid, jwks, claims["iss"], claims["aud"])
 
 
 def test_clerk_profile_does_not_advertise_or_allow_unprovable_relink(tmp_path):

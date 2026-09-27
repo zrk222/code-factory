@@ -262,16 +262,18 @@ operate that packet under its own controls.
 
 **Not claimed:** universal support by clients that do not implement local
 stdio MCP, automatic client configuration, a Cursor-specific extension listing,
-a Cursor Marketplace publication, or a hosted MCP endpoint with OIDC or OAuth.
+or a Cursor Marketplace publication. A separate hosted, OAuth-protected MCP
+endpoint at `https://cf.wizeme.app/api/mcp` exposes five read-only queries over
+submitted audit summaries; it does not run the local audit tools or access a
+client's repository. Zapier connection and tool-call success require live
+OAuth verification and are not established by local tests alone.
 The HTTP adapter is a local request/response slice, not complete feature parity
 with subscriptions or event streams. Use the portable CLI handoff when a
 client lacks MCP support. A Cursor-specific extension smoke test is not part
 of the current CI matrix.
 
-**Remote future path:** a hosted adapter would need its own authenticated
-endpoint, tenant isolation, rate limits, audit receipts, and explicit
-authorization. Do not replace the local command above with an unreviewed
-remote URL.
+Do not replace the local command above with the hosted evidence reader when
+repository execution or full local tool coverage is required.
 
 See the underlying [local MCP contract](MCP.md) for the complete tool list,
 input validation, and failure behavior.

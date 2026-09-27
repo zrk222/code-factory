@@ -141,6 +141,17 @@ get in touch." No submission ID was shown. This is a review submission,
 not a directory listing or approval. Meta's separate early-access application
 was also submitted; neither receipt proves live OAuth account linking.
 
+The hosted `/api/mcp` route offers `list_audits`, `get_audit`, `get_findings`,
+`get_coverage`, and `get_repair_plan` over the caller's submitted summaries.
+It uses Streamable HTTP with Clerk OAuth discovery, a resource-bound JWT,
+`cf.audit.read`, and account/subject isolation. It cannot upload, delete, run
+audits, or read repositories. For Zapier's MCP Client, use the server URL
+`https://cf.wizeme.app/api/mcp`, Streamable HTTP, and OAuth. Clerk's dedicated
+Code Factory instance advertises dynamic client registration with PKCE and
+consent; the default scopes are `cf.audit.read` and `offline_access`. A
+connected Zapier account and a live tool invocation are separate verification
+steps; this code and configuration alone do not prove them.
+
 Candidate requests for user research—not evidence of market demand—include:
 
 - “Compare this renewal with the dated pricing records I provide, and show

@@ -7,7 +7,8 @@ independent attestation. OAuth authorization is delegated to a configured IdP.
 
 from __future__ import annotations
 
-from base64 import b64encode
+from base64 import b64encode, urlsafe_b64decode
+from binascii import Error as Base64Error
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
@@ -20,6 +21,10 @@ from urllib.parse import urlsplit
 from urllib.parse import parse_qs
 from uuid import uuid4
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+
 from .hosted_identity import HttpxTransport, JwksCache, get_jwks
 from .pr_assurance import PRAssuranceError, verify_oidc_token
 
@@ -28,12 +33,49 @@ MAX_BODY = 524_288
 MAX_FINDINGS = 500
 MAX_AUDITS = 200
 MAX_TOKEN_SECONDS = 900
+MAX_MCP_TOKEN_SECONDS = 86400
 RETENTION_SECONDS = 7 * 86400
 SHA = re.compile(r"[a-f0-9]{40}(?:[a-f0-9]{24})?\Z")
 HEX64 = re.compile(r"[a-f0-9]{64}\Z")
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}\Z")
 LABELS = frozenset({"PASS", "FAIL", "NOT_RUN", "INCOMPLETE", "BLOCKED"})
 LANES = ("code_factory", "forgeline", "appforge", "saasforge", "full_depth")
+MCP_PROTOCOL = "2025-11-25"
+MCP_SUPPORTED_PROTOCOLS = frozenset({"2025-03-26", "2025-06-18", MCP_PROTOCOL})
+MCP_TOOLS = (
+    (
+        "list_audits",
+        "List recent, account-owned audit summaries",
+        {
+            "offset": {"type": "integer", "minimum": 0},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+        },
+    ),
+    (
+        "get_audit",
+        "Read one audit summary and its lane outcomes",
+        {"audit_id": {"type": "string", "format": "uuid"}},
+    ),
+    (
+        "get_findings",
+        "Read bounded findings and their suggested resolutions",
+        {
+            "audit_id": {"type": "string", "format": "uuid"},
+            "offset": {"type": "integer", "minimum": 0},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+        },
+    ),
+    (
+        "get_coverage",
+        "Read covered and incomplete audit lanes",
+        {"audit_id": {"type": "string", "format": "uuid"}},
+    ),
+    (
+        "get_repair_plan",
+        "Read advisory repair actions from one audit",
+        {"audit_id": {"type": "string", "format": "uuid"}},
+    ),
+)
 
 
 class StorageUnavailable(Exception):
@@ -92,6 +134,78 @@ class ClerkTokenError(Exception):
     """The access token could not be verified or is not authorized."""
 
 
+def verify_clerk_mcp_token(
+    token: str, jwks: Mapping[str, Any], issuer: str, resource: str
+) -> dict[str, Any]:
+    """Verify a resource-bound Clerk OAuth JWT without trusting client registration."""
+    try:
+        if len(token) > 8192 or token.count(".") != 2:
+            raise ValueError("token shape")
+        header_part, claims_part, signature_part = token.split(".")
+
+        def decode(part: str) -> bytes:
+            return urlsafe_b64decode(part + "=" * (-len(part) % 4))
+
+        header, claims = (
+            json.loads(decode(header_part)),
+            json.loads(decode(claims_part)),
+        )
+        if not isinstance(header, dict) or not isinstance(claims, dict):
+            raise ValueError("token payload")
+        if header.get("alg") != "RS256" or not isinstance(header.get("kid"), str):
+            raise ValueError("token algorithm")
+        key = next(
+            key
+            for key in jwks["keys"]
+            if isinstance(key, dict)
+            and key.get("kid") == header["kid"]
+            and key.get("kty") == "RSA"
+            and key.get("use", "sig") == "sig"
+        )
+        modulus = int.from_bytes(decode(key["n"]), "big")
+        exponent = int.from_bytes(decode(key["e"]), "big")
+        if modulus.bit_length() < 2048 or exponent != 65537:
+            raise ValueError("token key")
+        rsa.RSAPublicNumbers(exponent, modulus).public_key().verify(
+            decode(signature_part),
+            f"{header_part}.{claims_part}".encode("ascii"),
+            padding.PKCS1v15(),
+            hashes.SHA256(),
+        )
+        now = int(time.time())
+        audience = claims.get("aud")
+        audiences = [audience] if isinstance(audience, str) else audience
+        if (
+            claims.get("iss") != issuer
+            or not isinstance(audiences, list)
+            or resource not in audiences
+            or not isinstance(claims.get("sub"), str)
+            or not claims["sub"]
+            or not isinstance(claims.get("scope"), str)
+            or "cf.audit.read" not in claims["scope"].split()
+            or type(claims.get("iat")) is not int
+            or type(claims.get("exp")) is not int
+            or not 0 < claims["exp"] - claims["iat"] <= MAX_MCP_TOKEN_SECONDS
+            or claims["iat"] > now + 60
+            or claims["exp"] < now - 60
+            or (
+                "nbf" in claims
+                and (type(claims["nbf"]) is not int or claims["nbf"] > now + 60)
+            )
+        ):
+            raise ValueError("token claims")
+    except (
+        ValueError,
+        TypeError,
+        KeyError,
+        StopIteration,
+        Base64Error,
+        InvalidSignature,
+    ):
+        raise ClerkTokenError("access token could not be verified") from None
+    return {**claims, "signature_verified": True}
+
+
 def verify_clerk_oauth_token(
     token: str, endpoint: str, client_id: str, client_secret: str
 ) -> dict[str, Any]:
@@ -122,10 +236,20 @@ def verify_clerk_oauth_token(
     if not isinstance(payload.get("scope"), str):
         raise ClerkTokenError("access token scopes are invalid")
     now = int(time.time())
+    audience = payload.get("aud")
+    if audience is None and token.count(".") == 2:
+        try:
+            segment = token.split(".")[1]
+            audience = json.loads(
+                urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+            ).get("aud")
+        except (ValueError, TypeError, AttributeError):
+            audience = None
     return {
         "signature_verified": True,
         "sub": payload["sub"],
         "scope": payload["scope"],
+        "aud": audience,
         "iat": now,
         "exp": now + 1,
     }
@@ -392,14 +516,19 @@ class MetaConnectorAPI:
         *,
         authorization_url: str,
         token_url: str,
+        issuer_url: str | None = None,
         public_base_url: str | None = None,
         fixed_tenant: str | None = None,
         supports_relink: bool = True,
         max_token_seconds: int = MAX_TOKEN_SECONDS,
+        mcp_verifier: Callable[[str], dict[str, Any]] | None = None,
     ):
         self.database, self.verifier = database, verifier
+        self.mcp_verifier = mcp_verifier or verifier
         self._postgres = is_postgres(database)
         self.authorization_url, self.token_url = authorization_url, token_url
+        authority = urlsplit(authorization_url)
+        self.issuer_url = issuer_url or f"{authority.scheme}://{authority.netloc}"
         self.public_base_url = public_base_url
         self.fixed_tenant = fixed_tenant
         self.supports_relink = supports_relink
@@ -433,7 +562,12 @@ class MetaConnectorAPI:
         return db.execute(statement, (tenant, subject)).fetchone()
 
     def _verified_identity(
-        self, environ: Mapping[str, Any], scope: str
+        self,
+        environ: Mapping[str, Any],
+        scope: str,
+        *,
+        verifier: Callable[[str], dict[str, Any]] | None = None,
+        max_token_seconds: int | None = None,
     ) -> tuple[str, str, dict[str, Any]]:
         header = environ.get("HTTP_AUTHORIZATION", "")
         if (
@@ -445,7 +579,7 @@ class MetaConnectorAPI:
                 "401 Unauthorized", "AUTH_REQUIRED", "Bearer access token required"
             )
         try:
-            claims = self.verifier(header[7:])
+            claims = (verifier or self.verifier)(header[7:])
         except (PRAssuranceError, ClerkTokenError, ValueError, TypeError) as exc:
             raise ConnectorError(
                 "401 Unauthorized",
@@ -482,7 +616,13 @@ class MetaConnectorAPI:
             or isinstance(issued, bool)
             or not isinstance(expires, int)
             or isinstance(expires, bool)
-            or not 0 < expires - issued <= self.max_token_seconds
+            or not 0
+            < expires - issued
+            <= (
+                self.max_token_seconds
+                if max_token_seconds is None
+                else max_token_seconds
+            )
         ):
             raise ConnectorError(
                 "401 Unauthorized",
@@ -590,6 +730,16 @@ class MetaConnectorAPI:
             return "200 OK", {"schema": "factory.meta.ready.v1", "ok": True}
         if method == "GET" and path == "/openapi.json":
             return "200 OK", self.openapi()
+        if method == "GET" and path == "/.well-known/oauth-protected-resource":
+            if not self.public_base_url:
+                raise ConnectorError(
+                    "404 Not Found", "NOT_FOUND", "resource metadata unavailable"
+                )
+            return "200 OK", {
+                "resource": self.public_base_url.rstrip("/") + "/mcp",
+                "authorization_servers": [self.issuer_url],
+                "scopes_supported": ["cf.audit.read"],
+            }
         if method == "GET" and path == "/v1/capabilities":
             limits = [
                 "submitted summaries are not independent attestations",
@@ -624,6 +774,239 @@ class MetaConnectorAPI:
         if len(parts) in (3, 4) and parts[:2] == ["v1", "audits"]:
             return self._item_route(method, parts, environ)
         raise ConnectorError("404 Not Found", "NOT_FOUND", "route not found")
+
+    def _mcp_result(
+        self,
+        name: str,
+        arguments: Any,
+        environ: Mapping[str, Any],
+        tenant: str,
+        subject: str,
+    ) -> dict[str, Any]:
+        if not isinstance(arguments, dict):
+            raise ConnectorError(
+                "400 Bad Request",
+                "INVALID_ARGUMENTS",
+                "tool arguments must be an object",
+            )
+        tools = {item[0]: item[2] for item in MCP_TOOLS}
+        if name not in tools or set(arguments) - set(tools[name]):
+            raise ConnectorError(
+                "400 Bad Request", "INVALID_TOOL", "unknown tool or argument"
+            )
+        audit_id = arguments.get("audit_id")
+        if name != "list_audits" and (
+            not isinstance(audit_id, str)
+            or not re.fullmatch(r"[0-9a-f-]{36}", audit_id)
+        ):
+            raise ConnectorError(
+                "400 Bad Request", "INVALID_ARGUMENTS", "audit_id is invalid"
+            )
+        query = {}
+        for key, maximum in (("offset", 1_000_000), ("limit", 50)):
+            if key not in arguments:
+                continue
+            value = arguments[key]
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or not (1 if key == "limit" else 0) <= value <= maximum
+            ):
+                raise ConnectorError(
+                    "400 Bad Request", "INVALID_ARGUMENTS", f"{key} is invalid"
+                )
+            query[key] = value
+        mounted = dict(environ)
+        mounted["QUERY_STRING"] = "&".join(
+            f"{key}={value}" for key, value in query.items()
+        )
+        if name == "list_audits":
+            _, value = self._list_audits(tenant, subject, mounted)
+        else:
+            audit = self._owned(audit_id, tenant, subject)
+            if name == "get_audit":
+                value = {
+                    "id": audit_id,
+                    **{key: item for key, item in audit.items() if key != "findings"},
+                    "finding_count": len(audit["findings"]),
+                    "provenance": "authenticated_submitter; not independent attestation",
+                }
+            else:
+                resource = {
+                    "get_findings": "findings",
+                    "get_coverage": "coverage",
+                    "get_repair_plan": "repair-plan",
+                }[name]
+                _, value = self._audit_detail_route(resource, audit, mounted)
+        return {
+            "content": [
+                {"type": "text", "text": json.dumps(value, ensure_ascii=False)}
+            ],
+            "structuredContent": value,
+        }
+
+    def _mcp_route(
+        self, environ: Mapping[str, Any]
+    ) -> tuple[str, Any, list[tuple[str, str]]]:
+        """Stateless, read-only Streamable HTTP over account-scoped summaries."""
+        origin = environ.get("HTTP_ORIGIN")
+        public = urlsplit(self.public_base_url or "")
+        allowed_origin = f"{public.scheme}://{public.netloc}" if public.netloc else ""
+        if origin and origin != allowed_origin:
+            raise ConnectorError(
+                "403 Forbidden", "ORIGIN_FORBIDDEN", "origin is not allowed"
+            )
+        method = str(environ.get("REQUEST_METHOD", "GET")).upper()
+        if method != "POST":
+            return (
+                "405 Method Not Allowed",
+                {"error": "POST required"},
+                [("Allow", "POST")],
+            )
+        if "application/json" not in str(environ.get("CONTENT_TYPE", "")):
+            raise ConnectorError(
+                "415 Unsupported Media Type",
+                "INVALID_CONTENT_TYPE",
+                "JSON content type required",
+            )
+        accept = str(environ.get("HTTP_ACCEPT", ""))
+        if "application/json" not in accept or "text/event-stream" not in accept:
+            raise ConnectorError(
+                "406 Not Acceptable",
+                "INVALID_ACCEPT",
+                "JSON and event-stream acceptance required",
+            )
+        version = str(environ.get("HTTP_MCP_PROTOCOL_VERSION", MCP_PROTOCOL))
+        if version not in MCP_SUPPORTED_PROTOCOLS:
+            raise ConnectorError(
+                "400 Bad Request",
+                "INVALID_PROTOCOL",
+                "unsupported MCP protocol version",
+            )
+        tenant, subject, claims = self._verified_identity(
+            environ,
+            "cf.audit.read",
+            verifier=self.mcp_verifier,
+            max_token_seconds=MAX_MCP_TOKEN_SECONDS,
+        )
+        if self.public_base_url:
+            audience = claims.get("aud")
+            audiences = [audience] if isinstance(audience, str) else audience
+            if (
+                not isinstance(audiences, list)
+                or self.public_base_url.rstrip("/") + "/mcp" not in audiences
+            ):
+                raise ConnectorError(
+                    "401 Unauthorized",
+                    "TOKEN_AUDIENCE",
+                    "token is not issued for this MCP resource",
+                )
+        with self._db() as db:
+            row = self._account_row(db, tenant, subject)
+            if row and row[0] is not None:
+                raise ConnectorError(
+                    "401 Unauthorized", "ACCOUNT_REVOKED", "linked account is revoked"
+                )
+        request = self._body(environ)
+        if (
+            not isinstance(request, dict)
+            or request.get("jsonrpc") != "2.0"
+            or not isinstance(request.get("method"), str)
+        ):
+            raise ConnectorError(
+                "400 Bad Request", "INVALID_RPC", "one JSON-RPC message required"
+            )
+        rpc_method, request_id = request["method"], request.get("id")
+        if request_id is None:
+            if rpc_method == "notifications/initialized":
+                return "202 Accepted", None, []
+            raise ConnectorError(
+                "400 Bad Request", "INVALID_RPC", "unsupported notification"
+            )
+        if isinstance(request_id, bool) or not isinstance(request_id, (int, str)):
+            raise ConnectorError(
+                "400 Bad Request", "INVALID_RPC", "request id is invalid"
+            )
+        params = request.get("params", {})
+        if not isinstance(params, dict):
+            raise ConnectorError(
+                "400 Bad Request", "INVALID_RPC", "request params must be an object"
+            )
+        try:
+            if rpc_method == "initialize":
+                requested = params.get("protocolVersion")
+                result = {
+                    "protocolVersion": (
+                        requested
+                        if isinstance(requested, str)
+                        and requested in MCP_SUPPORTED_PROTOCOLS
+                        else MCP_PROTOCOL
+                    ),
+                    "capabilities": {"tools": {"listChanged": False}},
+                    "serverInfo": {
+                        "name": "code-factory-audit-evidence",
+                        "version": "0.46.9",
+                    },
+                }
+            elif rpc_method == "ping":
+                result = {}
+            elif rpc_method == "tools/list":
+                result = {
+                    "tools": [
+                        {
+                            "name": name,
+                            "description": description
+                            + ". Submitted evidence is not independent certification.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": properties,
+                                "required": ["audit_id"]
+                                if "audit_id" in properties
+                                else [],
+                                "additionalProperties": False,
+                            },
+                            "annotations": {
+                                "readOnlyHint": True,
+                                "destructiveHint": False,
+                                "idempotentHint": True,
+                                "openWorldHint": False,
+                            },
+                        }
+                        for name, description, properties in MCP_TOOLS
+                    ]
+                }
+            elif rpc_method == "tools/call":
+                result = self._mcp_result(
+                    params.get("name"),
+                    params.get("arguments", {}),
+                    environ,
+                    tenant,
+                    subject,
+                )
+            else:
+                return (
+                    "200 OK",
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {"code": -32601, "message": "method not found"},
+                    },
+                    [],
+                )
+        except ConnectorError as exc:
+            return (
+                "200 OK",
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "content": [{"type": "text", "text": exc.message}],
+                        "isError": True,
+                    },
+                },
+                [],
+            )
+        return "200 OK", {"jsonrpc": "2.0", "id": request_id, "result": result}, []
 
     def _account_route(
         self, method: str, environ: Mapping[str, Any]
@@ -966,16 +1349,32 @@ class MetaConnectorAPI:
         self, environ: Mapping[str, Any], start_response: Callable
     ) -> list[bytes]:
         try:
-            status, value = self._route(
-                str(environ.get("REQUEST_METHOD", "GET")).upper(),
-                str(environ.get("PATH_INFO", "/")),
-                environ,
-            )
+            path = str(environ.get("PATH_INFO", "/"))
+            if path == "/mcp":
+                status, value, extra_headers = self._mcp_route(environ)
+            else:
+                status, value = self._route(
+                    str(environ.get("REQUEST_METHOD", "GET")).upper(), path, environ
+                )
+                extra_headers = []
         except ConnectorError as exc:
             status, value = (
                 exc.status,
                 {"error": {"code": exc.code, "message": exc.message}},
             )
+            extra_headers = []
+            if (
+                path == "/mcp"
+                and self.public_base_url
+                and status in {"401 Unauthorized", "403 Forbidden"}
+            ):
+                challenge = (
+                    f'Bearer resource_metadata="{self.public_base_url.rstrip("/")}/.well-known/oauth-protected-resource", '
+                    'scope="cf.audit.read"'
+                )
+                if status == "403 Forbidden" and exc.code == "SCOPE_REQUIRED":
+                    challenge += ', error="insufficient_scope"'
+                extra_headers.append(("WWW-Authenticate", challenge))
         except (sqlite3.Error, StorageUnavailable):
             status, value = (
                 "503 Service Unavailable",
@@ -986,8 +1385,13 @@ class MetaConnectorAPI:
                     }
                 },
             )
-        body = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode(
-            "utf-8"
+            extra_headers = []
+        body = (
+            b""
+            if value is None
+            else json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
         )
         start_response(
             status,
@@ -996,7 +1400,8 @@ class MetaConnectorAPI:
                 ("Content-Length", str(len(body))),
                 ("Cache-Control", "no-store"),
                 ("X-Content-Type-Options", "nosniff"),
-            ],
+            ]
+            + extra_headers,
         )
         return [body]
 
@@ -1120,16 +1525,32 @@ def create_meta_connector_app_from_env(
     provider = _validated_provider(env)
     public_base_url = _validated_public_base(env)
     verify, fixed_tenant = _connector_verifier(env, provider)
+    mcp_verify = None
+    if provider == "clerk":
+        if not public_base_url:
+
+            def mcp_verify(_token: str) -> dict[str, Any]:
+                raise ClerkTokenError("MCP resource URL is not configured")
+
+        else:
+            issuer = env["FACTORY_META_OIDC_ISSUER"].rstrip("/")
+            jwks = JwksCache(f"{issuer}/.well-known/jwks.json", HttpxTransport())
+            resource = public_base_url + "/mcp"
+
+            def mcp_verify(token: str) -> dict[str, Any]:
+                return verify_clerk_mcp_token(token, get_jwks(jwks), issuer, resource)
 
     return MetaConnectorAPI(
         env["FACTORY_META_DATABASE"],
         verify,
         authorization_url=env["FACTORY_META_AUTHORIZATION_URL"],
         token_url=env["FACTORY_META_TOKEN_URL"],
+        issuer_url=env["FACTORY_META_OIDC_ISSUER"].rstrip("/"),
         public_base_url=public_base_url or None,
         fixed_tenant=fixed_tenant,
         supports_relink=provider != "clerk",
         max_token_seconds=MAX_TOKEN_SECONDS,
+        mcp_verifier=mcp_verify,
     )
 
 
