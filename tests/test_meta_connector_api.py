@@ -323,6 +323,22 @@ def test_is_postgres_recognizes_only_postgres_dsns():
     assert not is_postgres("/data/audit.sqlite")
 
 
+def test_hosted_config_trims_terminal_newlines_only(tmp_path, monkeypatch):
+    database = str(tmp_path / "audit.sqlite")
+    config = {
+        "FACTORY_META_DATABASE": database + "\r\n",
+        "FACTORY_META_OIDC_PROVIDER": "clerk",
+        "FACTORY_META_OIDC_ISSUER": "https://clerk.example",
+        "FACTORY_META_AUTHORIZATION_URL": "https://clerk.example/oauth/authorize",
+        "FACTORY_META_TOKEN_URL": "https://clerk.example/oauth/token",
+        "FACTORY_META_CLERK_CLIENT_ID": "client",
+        "FACTORY_META_CLERK_CLIENT_SECRET": "secret\n",
+        "FACTORY_META_TENANT_ID": "tenant",
+    }
+    app = create_meta_connector_app_from_env(config)
+    assert app.database == database
+
+
 def test_vercel_mount_strips_only_api_prefix(monkeypatch):
     seen = []
 

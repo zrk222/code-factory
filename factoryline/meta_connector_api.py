@@ -1087,6 +1087,11 @@ def create_meta_connector_app_from_env(
 ) -> MetaConnectorAPI:
     """Construct the production resource server; an external OAuth2 IdP owns linking."""
     env = dict(os.environ if environ is None else environ)
+    # Piped provider CLI input can retain a terminal newline in a DSN or
+    # client secret. Neither value permits raw line breaks.
+    for key in ("FACTORY_META_DATABASE", "FACTORY_META_CLERK_CLIENT_SECRET"):
+        if key in env:
+            env[key] = env[key].rstrip("\r\n")
     provider = _validated_provider(env)
     public_base_url = _validated_public_base(env)
     verify, fixed_tenant = _connector_verifier(env, provider)

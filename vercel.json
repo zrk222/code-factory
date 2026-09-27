@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": ["iad1"],
+  "rewrites": [{"source": "/api/:path*", "destination": "/api"}],
   "functions": {
     "api/index.py": {
       "excludeFiles": "{tests/**,docs/**,evidence/**,videos/**,products/**,editors/**,plugins/**,specs/**}",
