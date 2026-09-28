@@ -37,6 +37,13 @@ def test_scope_guard_blocks_compound_product_filenames(path: str) -> None:
     assert _matches_scope_segment(path, blocked) in blocked
 
 
+def test_scope_guard_reserves_the_products_root_without_blocking_generic_docs() -> None:
+    blocked = {"products", "agent-oven", "agentoven"}
+
+    assert _matches_scope_segment("products/new-product/main.ts", blocked) == "products"
+    assert _matches_scope_segment("docs/products.md", blocked) is None
+
+
 def _stale_proof_workspace(root: Path) -> None:
     (root / "input.txt").write_text("before", encoding="utf-8")
     (root / "output.txt").write_text("green", encoding="utf-8")
@@ -299,6 +306,7 @@ def test_change_review_explicit_paths_bypass_git_collection(
 SCOPE_POLICY = {
     "schema": "factory.repository_scope.v1",
     "blocked_path_segments": [
+        "products",
         "agent-cloud",
         "agentcloud",
         "agent-oven",
@@ -347,6 +355,7 @@ def test_scope_guard_blocks_reserved_names_and_preserves_historical_receipts(
             "src/AgentCloudBackend.kt",
             "src/AgentOvenServer.ts",
             "products/agent_cloud/src/server.ts",
+            "products/new-saas-app/src/main.ts",
             "examples/factory-trust-core-client/index.ts",
             "adr/agent-cloud-budget-enforcement-v1.md",
             "docs/AgentOven-readiness.md",
@@ -372,7 +381,11 @@ def test_scope_guard_blocks_reserved_names_and_preserves_historical_receipts(
         },
         {
             "path": "products/agent_cloud/src/server.ts",
-            "matched_segment": "agent-cloud",
+            "matched_segment": "products",
+        },
+        {
+            "path": "products/new-saas-app/src/main.ts",
+            "matched_segment": "products",
         },
         {
             "path": "src/AgentCloudBackend.kt",
@@ -470,7 +483,7 @@ def test_scope_guard_runs_trusted_base_code_against_a_fetched_candidate_ref(
     assert payload["blocked_paths"] == [
         {
             "path": "products/agent-cloud/src/server.ts",
-            "matched_segment": "agent-cloud",
+            "matched_segment": "products",
         }
     ]
 

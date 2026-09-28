@@ -34,6 +34,11 @@ Define reserved path-name segments in `.factory/repository-scope.json`:
 }
 ```
 
+Reserve a top-level namespace root such as `products` when the repository must
+reject entire product subtrees, including products whose names are not yet
+known. This reserves only that root; ordinary files such as `docs/products.md`
+remain allowed.
+
 The checker normalizes case, camel-case names, spaces, underscores, and
 punctuation, and checks path components and filenames. For example,
 `AgentOvenServer.ts` matches the reserved `agent-oven` segment. Added, modified,

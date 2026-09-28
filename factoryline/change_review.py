@@ -213,11 +213,18 @@ def _git_scope_paths(root: Path, base: str, head: str) -> list[str]:
 
 
 def _matches_scope_segment(path: str, blocked: set[str]) -> str | None:
-    for segment in path.split("/"):
+    segments = path.split("/")
+    if segments and "products" in blocked:
+        root = _normalize_scope_name(segments[0])
+        if root == "products":
+            return "products"
+    for segment in segments:
         normalized = _normalize_scope_name(segment)
         compact = normalized.replace("-", "")
         tokens = normalized.split("-")
         for candidate in sorted(blocked, key=lambda value: (-len(value), value)):
+            if candidate == "products":
+                continue
             if candidate.replace("-", "") in compact:
                 return candidate
             blocked_tokens = candidate.split("-")

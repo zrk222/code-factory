@@ -1,6 +1,7 @@
 {
   "schema": "factory.repository_scope.v1",
   "blocked_path_segments": [
+    "products",
     "agent-cloud",
     "agentcloud",
     "agent-oven",
