@@ -1,5 +1,23 @@
 # FactoryLine for VS Code
 
+## Native CF and ForgeLine evidence
+
+Version 1.0.2 adds **FactoryLine Evidence** in Explorer for VS Code and
+Open VSX compatible editors. Select **Run CF + ForgeLine Audits**, choose a
+workspace, then confirm local execution. The panel shows CF change review,
+architecture health, security patterns, runtime readiness, and ForgeLine
+repository inventory as separate lanes. Open a lane to inspect the report or
+copy the combined build summary. The run is cancellable, works from the
+workspace extension host in remote environments, and marks existing results
+stale after source changes.
+
+The panel makes coverage limits explicit: pattern and guard-path checks need
+`.factory/review-audits.json`; the security check is bounded Python static
+analysis; runtime readiness does not execute the tests; ForgeLine's repo-wide
+mode is inventory, not a feature gate. Results remain `UNBOUND` observations.
+Configure `factoryline.command` and `factoryline.forgeCommand` if the CLI
+executables have nonstandard paths.
+
 You used an AI agent to change the app. The tests are green. Before you merge,
 you need one answer: **could the test actually fail when the behavior is
 wrong?**
@@ -161,7 +179,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-1.0.1.vsix
+code --install-extension factoryline-vscode-1.0.2.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

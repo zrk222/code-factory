@@ -18,6 +18,12 @@ coverage, and quality thresholds; FactoryLine asks a different question:
 could the test and supplied run evidence actually reject a broken result? It
 does not replace, control, or imply endorsement by either JetBrains product.
 
+**1.0.2 release preview:** open the native CF + ForgeLine tab to run five
+bounded local audit lanes. The Junie taxonomy now directs a reviewer from
+source and intent to gaps, repairs, reruns, and independent specialty AI
+review. Missing tools and unbound evidence stay visible; a local scan cannot
+approve a release.
+
 **1.0.1 release preview:** follow typed handoffs from approved intent through
 agent route, candidate, and current evidence. Graph Ops makes no-gain repair
 stops and the next supported human action visible. Junie is supported, not

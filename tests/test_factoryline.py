@@ -44,7 +44,7 @@ from factoryline.protocol import (
 def test_runtime_version_matches_the_release():
     import factoryline
 
-    assert factoryline.__version__ == "0.46.9"
+    assert factoryline.__version__ == "0.47.0"
 
 
 def test_cli_mvp_builds_one_contained_web_starter_with_a_proof_path(tmp_path, capsys):
@@ -1244,6 +1244,22 @@ def test_app_builder_scaffolds_full_stack_repo(tmp_path):
         if line.startswith("- `") and line.endswith("`")
     }
     assert mapped == set(result["files"])
+
+
+def test_app_builder_direct_and_prd_paths_preserve_blueprint_and_output_map(tmp_path):
+    from factoryline.app_builder import app_from_prd, build_blueprint, scaffold_app
+
+    prd = tmp_path / "PRD.md"
+    prd.write_text("# Expense Desk\n\nTrack invoice approval and payment risk.\n")
+    blueprint = build_blueprint(prd.read_text(), source=str(prd), name="expense-desk")
+    assert blueprint.purpose == "fintech"
+    direct = scaffold_app(
+        blueprint, out_dir=tmp_path / "direct", prd_text=prd.read_text()
+    )
+    from_prd = app_from_prd(prd, out_dir=tmp_path / "from-prd", name="expense-desk")
+    assert set(direct["files"]) == set(from_prd["files"])
+    assert Path(direct["output_map"]).is_file()
+    assert Path(from_prd["output_map"]).is_file()
 
 
 def test_app_builder_requirement_coverage_blocks_uncovered_product_reqs(tmp_path):

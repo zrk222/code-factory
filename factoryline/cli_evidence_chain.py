@@ -39,6 +39,33 @@ def add_parser(sub) -> None:
     )
     change_review.add_argument("--json", action="store_true")
 
+    scope_check = change_sub.add_parser(
+        "scope-check",
+        help="block changed paths that cross a trusted repository product boundary",
+    )
+    scope_check.add_argument("--root", default=".")
+    scope_check.add_argument(
+        "--base",
+        help="Git base ref; added and modified paths are collected automatically",
+    )
+    scope_check.add_argument(
+        "--head",
+        default="HEAD",
+        help="Git candidate ref; defaults to the checked-out HEAD",
+    )
+    scope_check.add_argument("--policy", default=".factory/repository-scope.json")
+    scope_check.add_argument(
+        "--policy-ref",
+        help="read the scope policy from a trusted Git ref, such as the PR base SHA",
+    )
+    scope_check.add_argument(
+        "--changed",
+        action="append",
+        default=None,
+        help="explicit added or modified path; repeat for multiple paths",
+    )
+    scope_check.add_argument("--json", action="store_true")
+
     proof_ops = sub.add_parser(
         "proof-ops",
         help="join intent, change, observed-session, and repair evidence into one local record",
@@ -194,6 +221,9 @@ def add_parser(sub) -> None:
 
 def _run_change(a) -> int:
     """Handle one evidence-chain command family with lazy imports."""
+    if a.change_cmd == "scope-check":
+        return _run_scope_check(a)
+
     from .change_review import (
         ChangeReviewError,
         review_change,
@@ -239,6 +269,45 @@ def _run_change(a) -> int:
             "authority   : no execution, merge, publication, deployment, or credential access"
         )
     return 0
+
+
+def _run_scope_check(a) -> int:
+    """Check a candidate diff against the trusted repository scope policy."""
+    from .change_review import RepositoryScopeError, check_repository_scope
+
+    try:
+        review = check_repository_scope(
+            Path(a.root),
+            policy_path=a.policy,
+            policy_ref=a.policy_ref,
+            base=a.base,
+            head=a.head,
+            changed_paths=a.changed,
+        )
+    except RepositoryScopeError as exc:
+        payload = {
+            "schema": "factory.repository_scope_review.error.v1",
+            "marker": "REPOSITORY_SCOPE_REJECTED",
+            "code": exc.code,
+            "message": str(exc),
+        }
+        print(
+            json.dumps(payload, indent=2, sort_keys=True)
+            if a.json
+            else f"repository scope check failed: {exc.code}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+    if a.json:
+        print(json.dumps(review, indent=2, sort_keys=True))
+    else:
+        print(f"repository scope: {review['state']}")
+        print(f"changed paths : {len(review['changed_paths'])}")
+        print(f"blocked paths : {len(review['blocked_paths'])}")
+        for item in review["blocked_paths"]:
+            print(f"  {item['path']} (reserved: {item['matched_segment']})")
+        print(f"next action   : {review['next_action']['action']}")
+    return 2 if review["state"] == "blocked" else 0
 
 
 def _proof_ops_payload(a):

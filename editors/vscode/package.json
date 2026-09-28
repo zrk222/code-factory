@@ -2,7 +2,7 @@
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
   "description": "Trace AI changes from intent through six audits to reviewable proof and a human-owned release decision.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
   "repository": {
@@ -11,6 +11,11 @@
   },
   "engines": {
     "vscode": "^1.85.0"
+  },
+  "extensionKind": ["workspace"],
+  "capabilities": {
+    "untrustedWorkspaces": { "supported": "limited", "description": "Audit execution requires Workspace Trust." },
+    "virtualWorkspaces": { "supported": false, "description": "FactoryLine executes local tools in a filesystem workspace." }
   },
   "categories": [
     "Testing"
@@ -37,6 +42,9 @@
     "verifier-calibration"
   ],
   "activationEvents": [
+    "onView:factorylineEvidence",
+    "onCommand:factoryline.auditWorkspace",
+    "onCommand:factoryline.copyAuditSummary",
     "onCommand:factoryline.assemble",
     "onCommand:factoryline.continue",
     "onCommand:factoryline.verify",
@@ -50,7 +58,14 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "views": { "explorer": [{ "id": "factorylineEvidence", "name": "FactoryLine Evidence" }] },
+    "menus": { "view/title": [
+      { "command": "factoryline.auditWorkspace", "when": "view == factorylineEvidence", "group": "navigation" },
+      { "command": "factoryline.copyAuditSummary", "when": "view == factorylineEvidence", "group": "navigation" }
+    ] },
     "commands": [
+      { "command": "factoryline.auditWorkspace", "title": "FactoryLine: Run CF + ForgeLine Audits", "icon": "$(beaker)" },
+      { "command": "factoryline.copyAuditSummary", "title": "FactoryLine: Copy CF + ForgeLine Summary", "icon": "$(copy)" },
       {
         "command": "factoryline.assemble",
         "title": "FactoryLine: Run Spec-to-Ship Assembly"
@@ -99,13 +114,18 @@
           "type": "string",
           "default": "factory",
           "description": "FactoryLine CLI command or absolute executable path."
+        },
+        "factoryline.forgeCommand": {
+          "type": "string",
+          "default": "forge",
+          "description": "ForgeLine CLI executable for repository inventory. Arguments are fixed by the extension."
         }
       }
     }
   },
   "scripts": {
-    "compile": "tsc -p .",
-    "test": "node --test scripts/audit-lockfile.test.mjs && npm run compile && node ./dist/test/receipt.test.js",
+    "compile": "tsc -p . && node scripts/bundle.mjs",
+    "test": "node --test scripts/audit-lockfile.test.mjs && node --test ../proof-client/test/client.test.cjs && npm run compile && node ./dist/test/receipt.test.js",
     "audit": "node scripts/audit-lockfile.mjs",
     "package": "npm run test && vsce package --no-dependencies"
   },
@@ -115,6 +135,8 @@
     "js-yaml": "^4.3.2"
   },
   "devDependencies": {
+    "@factoryline/proof-client": "file:../proof-client",
+    "esbuild": "0.28.2",
     "@types/node": "^20.17.30",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.2.1",

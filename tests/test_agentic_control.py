@@ -10,6 +10,7 @@ from factoryline.cli import main
 
 from factoryline.agentic_control import (
     AgenticControlError,
+    audit_model_route_policy,
     audit_a2a_agent_card,
     agentic_control_projection,
     build_extended_assurance_receipt,
@@ -19,9 +20,11 @@ from factoryline.agentic_control import (
     create_sandbox_boundary,
     create_typed_handoff,
     load_cookbook_recipe,
+    list_cookbook_recipes,
     new_swimlane_event,
     route_model,
     verify_model_route,
+    verify_model_route_policy_audit,
     verify_route_trace,
     verify_reusable_workflow,
     verify_sandbox_boundary,
@@ -151,6 +154,23 @@ def test_model_route_receipt_rejects_tampering_and_unknown_tiers() -> None:
                 "approval_required": True,
             }
         )
+
+
+def test_model_route_policy_audit_binds_current_rule_and_rejects_tampering() -> None:
+    audit = audit_model_route_policy(route_model("routine", latency_budget_ms=1000))
+    assert audit["status"] == "MATCH"
+    assert verify_model_route_policy_audit(audit) == audit
+    with pytest.raises(AgenticControlError, match="digest"):
+        verify_model_route_policy_audit({**audit, "audit_sha256": "0" * 64})
+
+
+def test_cookbook_catalog_loads_only_the_requested_recipe() -> None:
+    names = list_cookbook_recipes()
+    assert names == sorted(set(names))
+    assert "pr-review" in names
+    recipe = load_cookbook_recipe("pr-review")
+    assert recipe["name"] == "pr-review"
+    assert recipe["marker"] == "COOKBOOK_CONTEXT_LAZY"
 
 
 def test_capability_registry_is_hash_bound_and_cannot_grant_authority() -> None:

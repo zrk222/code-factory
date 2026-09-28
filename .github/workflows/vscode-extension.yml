@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - "editors/vscode/**"
+      - "editors/proof-client/**"
       - ".github/workflows/vscode-extension.yml"
   pull_request:
     paths:
       - "editors/vscode/**"
+      - "editors/proof-client/**"
       - ".github/workflows/vscode-extension.yml"
   workflow_dispatch:
 

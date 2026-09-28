@@ -1,0 +1,23 @@
+{
+  "name": "code-factory-opencode",
+  "version": "0.1.0",
+  "description": "Native OpenCode CF and ForgeLine audit tools with explicit evidence freshness and limits.",
+  "type": "module",
+  "exports": { ".": "./dist/index.js" },
+  "files": ["dist/index.js", "README.md", "LICENSE"],
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "repository": { "type": "git", "url": "https://github.com/zrk222/code-factory.git", "directory": "plugins/code-factory-opencode" },
+  "scripts": {
+    "build": "tsc --noEmit && node build.mjs",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "prepack": "npm test"
+  },
+  "devDependencies": {
+    "@factoryline/proof-client": "file:../../editors/proof-client",
+    "@opencode-ai/plugin": "1.18.33",
+    "@types/node": "^20.17.30",
+    "esbuild": "0.28.2",
+    "typescript": "^5.8.3"
+  }
+}

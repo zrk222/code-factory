@@ -26,8 +26,33 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: "22"
       - name: Install local FactoryLine source
         run: python -m pip install .
+      - name: Test Muse audit MCP adapters
+        run: node --test plugins/muse-code-factory-audit/tests/*.test.mjs
+      - name: Enforce trusted repository product boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_sha='${{ github.event.pull_request.base.sha }}'
+          policy_path='.factory/repository-scope.json'
+          policy_args=()
+          if git cat-file -e "${base_sha}:${policy_path}" 2>/dev/null; then
+            policy_args+=(--policy-ref "$base_sha")
+          fi
+          if python -m factoryline.cli change scope-check \
+            --root . \
+            --base "$base_sha" \
+            "${policy_args[@]}" \
+            --json > repository-scope-review.json; then
+            cat repository-scope-review.json >> "$GITHUB_STEP_SUMMARY"
+          else
+            cat repository-scope-review.json
+            exit 1
+          fi
       - name: Compile the local advisory payload
         shell: bash
         run: |
@@ -136,5 +161,6 @@ jobs:
           name: factoryline-github-proof-review
           path: |
             github-proof-review.json
+            repository-scope-review.json
             .factory/github-proof-review/
           if-no-files-found: error

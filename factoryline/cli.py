@@ -2034,6 +2034,10 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         help="JSON file containing a dimensioned instruction-edit array",
     )
+    learning_propose.add_argument(
+        "--forensic-packet",
+        help="optional sealed factory.forensic-rejection.v1 packet; enables replay and specialty-review gates",
+    )
     learning_propose.add_argument("--force", action="store_true")
     learning_propose.add_argument("--json", action="store_true")
     learning_validate = learning_sub.add_parser(
@@ -2042,6 +2046,10 @@ def _build_parser() -> argparse.ArgumentParser:
     learning_validate.add_argument("candidate")
     learning_validate.add_argument("--root", default=".")
     learning_validate.add_argument("--validator", required=True)
+    learning_validate.add_argument(
+        "--observer-trust-root",
+        help="administered DSSE trust-root JSON outside the candidate workspace; required for forensic candidates",
+    )
     learning_validate.add_argument(
         "--results",
         required=True,
@@ -2053,7 +2061,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "promote",
         help="activate a validated instruction candidate under owner authority",
     )
-    learning_promote.add_argument("validation")
+    learning_promote.add_argument("validation", nargs="?")
+    learning_promote.add_argument(
+        "--restore",
+        metavar="PROMOTION_SHA256",
+        help="restore a prior immutable promotion by its SHA-256",
+    )
+    learning_promote.add_argument(
+        "--task",
+        help="learning task JSON path (required with --restore)",
+    )
     learning_promote.add_argument("--owner", required=True)
     learning_promote.add_argument("--force", action="store_true")
     learning_promote.add_argument("--json", action="store_true")

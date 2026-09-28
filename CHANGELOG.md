@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.47.0 - 2026-09-28 (release candidate; publication gated)
+
+- Add native CF and ForgeLine evidence views to the VS Code/Open VSX and
+  JetBrains 1.0.2 adapters, with explicit execution, missing-lane states,
+  per-lane limits, source locations where supplied, and unbound-candidate labels.
+- Add a self-contained OpenCode plugin with native tools, command, session
+  hooks, bounded local audit runs, and review summaries.
+- Extend Junie's progressive taxonomy with a JetBrains evidence route,
+  actionable repair handoff, scanner limits, and independent specialty AI
+  review instructions.
+- Fix the editor preview gap: show which checks ran, which could not run, and
+  what still requires candidate-bound verification instead of implying that
+  a repository inventory is a full audit.
+- Fix editor release admission to use the VS Code or JetBrains tag history
+  and version, so a recent core release does not masquerade as an editor release.
+- Core 0.47.0 and editor 1.0.2 publication are separate provider-gated steps;
+  this source entry does not claim PyPI or Marketplace availability.
+
 ## 0.46.9 - 2026-09-25 (release candidate; publication gated)
 
 - Add an explicit isolated deep-audit coordinator, signed execution contracts,

@@ -9,33 +9,6 @@
       "prevented_recurrence": 22,
       "status": "active"
     },
-    "J_PARSER_UNSUPPORTED": {
-      "code": "J_PARSER_UNSUPPORTED",
-      "rule": "J_PARSER_UNSUPPORTED products/agent-cloud/app/src/components/IntentComposer.tsx: TypeScript compiler is required for TSX",
-      "promoted_from_count": 3,
-      "promoted_at": "2026-08-24T05:48:00.503689+00:00",
-      "times_enforced": 1,
-      "prevented_recurrence": 1,
-      "status": "active"
-    },
-    "A_PARSER_UNSUPPORTED": {
-      "code": "A_PARSER_UNSUPPORTED",
-      "rule": "A_PARSER_UNSUPPORTED products/agent-cloud/app/src/components/IntentComposer.tsx: TypeScript compiler is required for TSX",
-      "promoted_from_count": 3,
-      "promoted_at": "2026-08-24T05:48:00.504678+00:00",
-      "times_enforced": 1,
-      "prevented_recurrence": 1,
-      "status": "active"
-    },
-    "QA_PARSER_UNSUPPORTED": {
-      "code": "QA_PARSER_UNSUPPORTED",
-      "rule": "QA_PARSER_UNSUPPORTED products/agent-cloud/app/src/components/IntentComposer.tsx: TypeScript compiler is required for TSX",
-      "promoted_from_count": 3,
-      "promoted_at": "2026-08-24T05:48:00.504678+00:00",
-      "times_enforced": 1,
-      "prevented_recurrence": 1,
-      "status": "active"
-    },
     "QA_COMPLEXITY": {
       "code": "QA_COMPLEXITY",
       "rule": "QA_COMPLEXITY factoryline/appforge_oracle.py:verify_appforge_oracle_authority complexity 13 > 10; policy=hard",

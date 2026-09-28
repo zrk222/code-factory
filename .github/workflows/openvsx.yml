@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_ref:
-        description: "Immutable repository tag to package (for example v0.24.1)"
+        description: "Immutable VS Code adapter tag to package (for example vscode-v1.0.2)"
         required: true
         type: string
       publish:
@@ -61,8 +61,8 @@ jobs:
           RELEASE_REF: ${{ inputs.release_ref }}
         run: |
           set -euo pipefail
-          [[ "$RELEASE_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || {
-            echo "release_ref must be an immutable tag such as v0.24.1." >&2
+          [[ "$RELEASE_REF" =~ ^vscode-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "release_ref must be a dedicated tag such as vscode-v1.0.2." >&2
             exit 1
           }
           test "$(git rev-list -n 1 "$RELEASE_REF")" = "$(git rev-parse HEAD)" || {
@@ -127,12 +127,15 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           RELEASE_CONTRACT_PATH: ${{ inputs.release_contract }}
+          RELEASE_REF: ${{ inputs.release_ref }}
         run: |
           set -euo pipefail
           [[ "$RELEASE_CONTRACT_PATH" != /* && "$RELEASE_CONTRACT_PATH" != *..* ]] || { echo "release_contract must be a workspace-relative path" >&2; exit 1; }
           test -f "$RELEASE_CONTRACT_PATH" || { echo "release contract is not present in the immutable checkout" >&2; exit 1; }
           python -m factoryline.cli release preflight \
             --root . \
+            --channel vscode \
+            --candidate-tag "$RELEASE_REF" \
             --contract "$RELEASE_CONTRACT_PATH" \
             --artifact-dir editors/vscode \
             --metadata-path context/PROGRESS.md \

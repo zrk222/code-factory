@@ -25,6 +25,35 @@ const tools = names.map((name) => ({
   annotations: { readOnlyHint: name !== 'cf_audit_run', destructiveHint: false, idempotentHint: name !== 'cf_audit_run', openWorldHint: false },
 }));
 
+function isReceiptCurrent(receipt, root, state) {
+  return receipt.schemaVersion === 'muse.cf-build-review.v2' && receipt.workspace === root &&
+    receipt.head === state.head && receipt.worktreeSha256 === state.worktreeSha256 &&
+    receipt.policySha256 === state.policySha256 && Number.isFinite(Date.parse(receipt.expiresAt)) &&
+    Date.parse(receipt.expiresAt) > Date.now();
+}
+
+function hasValidReceiptContents(receipt) {
+  return typeof receipt.summary === 'string' && Number.isSafeInteger(receipt.findings?.total) &&
+    receipt.findings.total >= 0 && Array.isArray(receipt.findings?.rows) &&
+    receipt.findings.rows.length <= 1_000 && receipt.findings.rows.length <= receipt.findings.total &&
+    receipt.outcomes?.deepPenetration === 'incomplete';
+}
+
+function isAuthenticatedReceipt(receipt, root, state) {
+  const { sha256, hmacSha256, ...body } = receipt;
+  const payload = JSON.stringify(body);
+  const digest = createHash('sha256').update(payload).digest('hex');
+  let authenticated = false;
+  try {
+    const expected = receiptMac(payload);
+    authenticated = typeof hmacSha256 === 'string' && /^[a-f0-9]{64}$/.test(hmacSha256) &&
+      timingSafeEqual(Buffer.from(hmacSha256, 'hex'), Buffer.from(expected, 'hex'));
+  } catch { return { status: 'unavailable', reason: 'The local audit key is unavailable or invalid; rerun the audit.' }; }
+  const valid = receipt.schemaVersion === 'muse.cf-build-review.v2' && sha256 === digest && authenticated &&
+    isReceiptCurrent(receipt, root, state) && hasValidReceiptContents(receipt);
+  return valid ? null : { status: 'stale_or_invalid', reason: 'Audit receipt is stale, expired, or invalid for the current commit/workspace; call cf_audit_run.' };
+}
+
 function readReceipt(workspace) {
   const root = realpathSync(workspace);
   const state = gitState(root);
@@ -36,28 +65,8 @@ function readReceipt(workspace) {
     receipt = JSON.parse(readFileSync(file, 'utf8'));
   } catch { return { status: 'unavailable', reason: 'No readable audit receipt exists for this workspace; call cf_audit_run.' }; }
   if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return { status: 'unavailable', reason: 'Audit receipt is corrupt; rerun the audit.' };
-  const { sha256, hmacSha256, ...body } = receipt;
-  const payload = JSON.stringify(body);
-  const digest = createHash('sha256').update(payload).digest('hex');
-  let authenticated = false;
-  try {
-    const expected = receiptMac(payload);
-    authenticated = typeof hmacSha256 === 'string' && /^[a-f0-9]{64}$/.test(hmacSha256) &&
-      timingSafeEqual(Buffer.from(hmacSha256, 'hex'), Buffer.from(expected, 'hex'));
-  } catch {
-    return { status: 'unavailable', reason: 'The local audit key is unavailable or invalid; rerun the audit.' };
-  }
-  if (receipt.schemaVersion !== 'muse.cf-build-review.v2' || sha256 !== digest || !authenticated || receipt.workspace !== root ||
-      receipt.head !== state.head || receipt.worktreeSha256 !== state.worktreeSha256 ||
-      receipt.policySha256 !== state.policySha256 ||
-      !Number.isFinite(Date.parse(receipt.expiresAt)) || Date.parse(receipt.expiresAt) <= Date.now() ||
-      typeof receipt.summary !== 'string' ||
-      !receipt.findings || !Number.isSafeInteger(receipt.findings.total) || receipt.findings.total < 0 ||
-      !Array.isArray(receipt.findings.rows) || receipt.findings.rows.length > 1_000 ||
-      receipt.findings.rows.length > receipt.findings.total ||
-      !receipt.outcomes || receipt.outcomes.deepPenetration !== 'incomplete') {
-    return { status: 'stale_or_invalid', reason: 'Audit receipt is stale, expired, or invalid for the current commit/workspace; call cf_audit_run.' };
-  }
+  const invalid = isAuthenticatedReceipt(receipt, root, state);
+  if (invalid) return invalid;
   return { status: 'current', receipt };
 }
 
@@ -89,23 +98,11 @@ function result(id, value) { return { jsonrpc: '2.0', id: id ?? null, result: va
 function error(id, code, message) { return { jsonrpc: '2.0', id: id ?? null, error: { code, message } }; }
 function toolResult(value) { return { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value, isError: false }; }
 
-function handle(message) {
-  if (!message || message.jsonrpc !== '2.0' || typeof message.method !== 'string') return error(message?.id, -32600, 'Invalid Request');
-  if (message.method.startsWith('notifications/')) return null;
-  if (message.method === 'initialize') return result(message.id, { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'muse-code-factory-audit', version: '0.2.0' } });
-  if (message.method === 'ping') return result(message.id, {});
-  if (message.method === 'tools/list') return result(message.id, { tools });
-  if (message.method !== 'tools/call') return error(message.id, -32601, 'Method not found');
+function handleToolCall(message) {
   const params = message.params;
   if (!params || !names.includes(params.name) || !params.arguments || typeof params.arguments !== 'object' || Array.isArray(params.arguments)) return error(message.id, -32602, 'Invalid params');
   const args = params.arguments;
-  const allowed = params.name === 'cf_audit_findings' ? ['workspace', 'offset', 'limit'] : ['workspace'];
-  if (Object.keys(args).some((key) => !allowed.includes(key)) || typeof args.workspace !== 'string' ||
-      !path.isAbsolute(args.workspace) || args.workspace.length > 1000 ||
-      (args.offset !== undefined && (!Number.isSafeInteger(args.offset) || args.offset < 0)) ||
-      (args.limit !== undefined && (!Number.isSafeInteger(args.limit) || args.limit < 1 || args.limit > MAX_FINDINGS_PAGE))) {
-    return error(message.id, -32602, 'Invalid workspace or pagination');
-  }
+  if (!validToolArguments(params.name, args)) return error(message.id, -32602, 'Invalid workspace or pagination');
   let root;
   try { root = realpathSync(args.workspace); } catch { return result(message.id, toolResult({ status: 'unavailable', reason: 'Workspace cannot be resolved.' })); }
   if (params.name === 'cf_audit_run') {
@@ -117,6 +114,30 @@ function handle(message) {
   if (loaded.status !== 'current') return result(message.id, toolResult(loaded));
   const selected = params.name === 'cf_audit_run' ? 'cf_pr_review_brief' : params.name;
   return result(message.id, toolResult({ ...packet(selected, loaded.receipt, args), trigger: params.name === 'cf_audit_run' ? 'on_demand' : 'stored_receipt' }));
+}
+
+function validToolArguments(name, args) {
+  const allowed = name === 'cf_audit_findings' ? ['workspace', 'offset', 'limit'] : ['workspace'];
+  const validWorkspace = typeof args.workspace === 'string' && path.isAbsolute(args.workspace) && args.workspace.length <= 1000;
+  const validOffset = args.offset === undefined || (Number.isSafeInteger(args.offset) && args.offset >= 0);
+  const validLimit = args.limit === undefined ||
+    (Number.isSafeInteger(args.limit) && args.limit >= 1 && args.limit <= MAX_FINDINGS_PAGE);
+  return !Object.keys(args).some((key) => !allowed.includes(key)) && validWorkspace && validOffset && validLimit;
+}
+
+function handle(message) {
+  if (!message || message.jsonrpc !== '2.0' || typeof message.method !== 'string') return error(message?.id, -32600, 'Invalid Request');
+  if (message.method.startsWith('notifications/')) return null;
+  const simpleMethods = {
+    initialize: () => result(message.id, { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'muse-code-factory-audit', version: '0.2.0' } }),
+    ping: () => result(message.id, {}),
+    'tools/list': () => result(message.id, { tools }),
+  };
+  if (Object.hasOwn(simpleMethods, message.method)) {
+    return simpleMethods[message.method]();
+  }
+  if (message.method === 'tools/call') return handleToolCall(message);
+  return error(message.id, -32601, 'Method not found');
 }
 
 function handleMessage(message) {

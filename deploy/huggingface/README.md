@@ -25,7 +25,17 @@ short_description: Audit code, review evidence, and resolve defects.
 
 # Code Factory
 
-## 0.46.9 audit evidence preview
+## 0.47.0 audit and editor preview
+
+- **Fixed:** local editor evidence now distinguishes missing, incomplete,
+  unavailable, failed, and stale lanes instead of presenting inventory as a
+  complete audit.
+- **Changed:** Junie taxonomy now maps a diff to bounded checks, repair steps,
+  reruns, and independent specialty AI review.
+- **Added:** VS Code/Open VSX 1.0.2 evidence tree, JetBrains 1.0.2 CF +
+  ForgeLine tab, and native OpenCode 0.1.0 plugin with bounded session hooks.
+
+These are source preview targets until each provider confirms publication.
 
 Specialty AI audit evidence is available in [the reviewed change and findings](https://github.com/zrk222/code-factory/pull/108). The agent inspected source, identified defects, and reviewed their corrections. Test and CI receipts are separate evidence linked in the same change.
 

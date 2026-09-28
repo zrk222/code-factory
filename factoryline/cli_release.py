@@ -30,6 +30,12 @@ def add_parser(sub: Any) -> None:
         help="draft release tag at HEAD to exclude from prior-release cadence",
     )
     preflight.add_argument(
+        "--channel",
+        choices=("core", "vscode", "jetbrains"),
+        default="core",
+        help="check cadence and candidate version for this release channel",
+    )
+    preflight.add_argument(
         "--contract",
         required=True,
         help="workspace-contained release contract with candidate source binding",
@@ -114,6 +120,7 @@ def _preflight_payload(args: Any, root: Path, candidate: Any) -> dict[str, Any]:
         "intake_parameters": intake_parameters,
         "require_intake": args.require_intake,
         "candidate_tag": args.candidate_tag,
+        "channel": args.channel,
     }
     if args.out:
         return preflight(*call_args, Path(args.out), **options)

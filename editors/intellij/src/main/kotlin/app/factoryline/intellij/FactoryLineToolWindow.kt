@@ -29,6 +29,7 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         val appForge = FactoryLineAppForgePanel(project)
         val oracle = FactoryLineOraclePanel(project)
         val junie = FactoryLineJuniePanel(project)
+        val audit = FactoryLineAuditPanel(project)
         project.putUserData(FactoryLinePanels.guardianKey, guardian)
         project.putUserData(FactoryLinePanels.key, panel)
         project.putUserData(FactoryLinePanels.proofReviewKey, proofReview)
@@ -76,6 +77,9 @@ class FactoryLineToolWindowFactory : ToolWindowFactory {
         )
         toolWindow.contentManager.addContent(
             ContentFactory.getInstance().createContent(junie, "Junie", false)
+        )
+        toolWindow.contentManager.addContent(
+            ContentFactory.getInstance().createContent(audit, "CF + ForgeLine", false)
         )
     }
 }

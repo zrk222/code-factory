@@ -531,6 +531,7 @@ def test_required_release_train_validates_channels_and_states(tmp_path: Path) ->
         "status": "valid",
         "channels": 1,
         "cadence": {
+            "scope": "per_channel",
             "max_releases_30d": 4,
             "minimum_days_between_releases": 7,
             "effective_at": "2026-09-01T00:00:00Z",
@@ -624,6 +625,7 @@ def test_release_cadence_fails_closed_when_policy_and_train_diverge(
         lambda *_args: {
             "status": "valid",
             "cadence": {
+                "scope": "per_channel",
                 "max_releases_30d": 4,
                 "minimum_days_between_releases": 7,
                 "exception_requires": "human-release-authority",
@@ -682,3 +684,38 @@ def test_release_cadence_excludes_only_bound_candidate(tmp_path, monkeypatch):
         release_cadence_status(tmp_path, now, candidate_tag="v0.46.8")
     with pytest.raises(ValueError, match="vMAJOR"):
         release_cadence_status(tmp_path, now, candidate_tag="--all")
+
+
+def test_editor_cadence_is_measured_from_its_own_tags(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    cadence = {
+        "max_releases_30d": 4,
+        "minimum_days_between_releases": 7,
+        "effective_at": "2026-09-01T00:00:00Z",
+        "exception_requires": "human-release-authority",
+        "requires_changelog_entry": True,
+    }
+    (tmp_path / "architecture-policy.json").write_text(json.dumps({"release": cadence}))
+    monkeypatch.setattr(architecture_health, "_tracked_files", lambda root: [])
+    monkeypatch.setattr(
+        architecture_health,
+        "_release_train",
+        lambda *args: {"status": "valid", "cadence": cadence},
+    )
+
+    def git(argv, **kwargs):
+        if "refs/tags/vscode-v*" in argv:
+            return SimpleNamespace(stdout="")
+        if "refs/tags/jetbrains-v*" in argv:
+            return SimpleNamespace(
+                stdout="jetbrains-v0.9.6\t2026-09-10T00:00:00+00:00\n"
+            )
+        return SimpleNamespace(stdout="v0.46.9\t2026-09-26T00:00:00+00:00\n")
+
+    monkeypatch.setattr(architecture_health.subprocess, "run", git)
+    now = datetime(2026, 9, 28, tzinfo=timezone.utc)
+    assert not release_cadence_status(tmp_path, now)["admission"]
+    assert release_cadence_status(tmp_path, now, channel="vscode")["admission"]
+    assert release_cadence_status(tmp_path, now, channel="jetbrains")["admission"]

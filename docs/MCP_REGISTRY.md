@@ -13,10 +13,11 @@ write or release authority.**
 uvx --from factoryline-code-factory==0.46.8 factory mcp serve
 ```
 
-The 0.46.9 candidate package coordinate is
-`uvx --from factoryline-code-factory==0.46.9 factory mcp serve`. It is not
-published yet; keep using the 0.46.8 command above until the protected release
-gates and publication complete.
+PyPI 0.46.9 is public and can be run directly with
+`uvx --from factoryline-code-factory==0.46.9 factory mcp serve`.
+The 0.47.0 source candidate descriptor uses
+`uvx --from factoryline-code-factory==0.47.0 factory mcp serve`; use it only
+after the protected PyPI publication and registry read-back succeed.
 
 The server needs a workspace root. Configure that explicit path in a client
 that supports local stdio MCP, or use the existing configuration renderer:
@@ -39,9 +40,9 @@ publishes, deploys, signs, sends a message, or accesses credentials.
 The source inventory also includes `factory.project_scope_review`, which reads
 bounded, workspace-relative PRD/spec Markdown and routes matching scope to the
 existing AppForge and provider-neutral SaaS proof status projections. The
-published registry entry remains on 0.46.8 until a protected 0.46.9 release
-publishes the matching candidate descriptor. This branch's additional tool is
-not available from the live registry yet.
+0.47.0 descriptor remains a candidate until a protected release publishes it
+and the public registry entry is read back. Inspect the live registry version
+before claiming that this branch's tools are available there.
 
 The registry descriptor has `stdio` transport only and contains no environment
 variables or remote endpoint. Your MCP client remains responsible for its own
