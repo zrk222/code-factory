@@ -56,7 +56,50 @@ The worker, validator, and recorded owner must be three distinct identities.
 Only the final command activates the AKU. Promotion rechecks every bound file,
 so changed outcomes or validation evidence fail closed.
 
-The local CLI records identity strings; it does not authenticate the operating
+When intentionally superseding an active promotion, pass `--force`. The prior
+sealed promotion is retained under the task's `promotions/history/` directory.
+Restore it by exact promotion hash; the restore writes a hash-sealed rollback
+receipt and makes the selected version active again:
+
+```powershell
+factory learning promote --restore <promotion-sha256> `
+  --task .factory/learning/checkout-hardening/task.json `
+  --owner product-owner --json
+```
+
+The command rejects hashes outside that task's immutable promotion history and
+requires the task owner. It restores the exact prior promotion; it does not
+rewrite the archived record or authenticate the local CLI caller.
+
+## Observer intake from forensic rejection
+
+Factory-B evidence can enter the same learning lane as a sealed
+`factory.forensic-rejection.v1` packet. Create and validate one with
+`seal_forensic_rejection_packet` and `validate_forensic_rejection_packet` in
+`factoryline.learning_loop`; bind the candidate and source SHA, mutation seeds,
+policy breaches, counterfactual profiles, reviewer corrections, validator
+versions, evidence file hashes, and explicit unknowns. The packet validator
+rejects missing fields, unbound evidence, and changed files.
+
+Pass the sealed packet to `factory learning propose --forensic-packet`. The
+Observer emits a bounded cause hypothesis and the affected control dimension;
+it cannot edit packaged skills, approve itself, or activate instructions.
+Forensic milestones must include `forensic-replay`, `holdout-regression`,
+`false-positive-control`, and `specialty-ai-review`. Replay artifacts must bind
+the exact candidate and packet hashes, and the specialty review artifact must
+name the distinct `specialty-ai:<agent-id>` validator. Every gate receipt must
+be a DSSE Ed25519 envelope using
+`application/vnd.factory.observer-gate.v1+json`. Validate with
+`factory learning validate ... --observer-trust-root <path>`; the offline trust
+root must be administered separately and stored outside the candidate
+workspace. Unsigned JSON, unknown keys, changed payloads, or signer/validator
+mismatches fail closed. This authenticates the signer against that configured
+trust root; it does not independently prove that a claimed remote run occurred
+or authenticate a live AI provider session. Promotion remains a separate owner
+action. Promoted instructions are versioned and enter only the fresh,
+task-scoped worker packet; they do not rewrite the installed skill library.
+
+The local CLI records identity strings and does not authenticate the operating
 system caller. A hosted adapter must map authenticated principals to worker,
 validator, and owner identities before invoking promotion.
 

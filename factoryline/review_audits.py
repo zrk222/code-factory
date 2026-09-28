@@ -1110,36 +1110,10 @@ def security_scan(root: Path) -> dict[str, Any]:
 
 def security_evals() -> dict[str, Any]:
     """Evaluate security rules against fixed adversarial and safe-control fixtures."""
-    fixtures = (
-        ("dynamic-execution", "eval(value)", {"SECURITY_DYNAMIC_EXECUTION"}),
-        (
-            "shell-command",
-            "import subprocess\nsubprocess.run(value, shell=True)",
-            {"SECURITY_SHELL_COMMAND"},
-        ),
-        ("os-command", "import os\nos.system(value)", {"SECURITY_OS_COMMAND"}),
-        (
-            "unsafe-deserialization",
-            "import pickle\npickle.loads(value)",
-            {"SECURITY_UNSAFE_DESERIALIZATION"},
-        ),
-        ("unsafe-yaml", "import yaml\nyaml.load(value)", {"SECURITY_UNSAFE_YAML"}),
-        (
-            "tls-disabled",
-            "import requests\nrequests.get(url, verify=False)",
-            {"SECURITY_TLS_VERIFY_DISABLED"},
-        ),
-        (
-            "literal-secret",
-            "api_key = 'live-secret-material'",
-            {"SECURITY_HARDCODED_SECRET"},
-        ),
-        ("bare-except", "try:\n    work()\nexcept:\n    pass", {"QUALITY_BARE_EXCEPT"}),
-        (
-            "safe-controls",
-            "import subprocess\nimport yaml\nyaml.load(value, Loader=yaml.SafeLoader)\nsubprocess.run(['tool', value], shell=False, check=True)",
-            set(),
-        ),
+    fixture_path = Path(__file__).parent / "data" / "security_evals.json"
+    fixtures = tuple(
+        (item["name"], item["source"], set(item["expected"]))
+        for item in json.loads(fixture_path.read_text(encoding="utf-8"))
     )
     rows: list[dict[str, Any]] = []
     for name, source, expected in fixtures:

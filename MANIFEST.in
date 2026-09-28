@@ -9,6 +9,7 @@ recursive-include docs *.md *.gif *.png *.svg *.json
 recursive-include editors *.md *.svg
 recursive-include plugins *
 recursive-include factoryline/builtin_packs *
+recursive-include factoryline/data *.json
 prune editors/vscode/node_modules
 prune editors/vscode/dist
 prune editors/intellij/.gradle

@@ -109,13 +109,11 @@ the coordinator records that assessment, separately from test evidence. It is
 not a second human approval. Provider publication and marketplace approval are
 separate outcomes. See [release channels](docs/RELEASE_CHANNELS.md).
 
-Architecture health checks growth budgets. The [2026-09-26 ForgeLine reassessment](evidence/self-audit/quality-reassessment-2026-09-26.json)
-grades this checkout A (87.5/100; zero static findings in its report). Maximum
-branch complexity is 10, the hard limit; the static security-pattern score is
-100, test-intent match is 0.74, and documented-symbol ratio is 0.77. The earlier
-deep-audit complexity-83 score uses a different metric, so the figures are not
-directly comparable. Test-intent and security scores are static signals, not
-executed coverage or a security certification. Historical receipts remain snapshots.
+Architecture health checks growth budgets. ForgeLine's repository inventory
+and feature QA are separate checks. The [current gap review](docs/AUTONOMOUS_OPS_EDITOR_PLAN.md)
+records this candidate's failed repo-wide assessment and its parser and
+complexity limits. A prior score does not establish this candidate's quality;
+static signals are neither executed coverage nor a security certification.
 
 ## More detail
 

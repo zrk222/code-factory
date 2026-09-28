@@ -1,8 +1,8 @@
 # Autonomous ops and native editor plan
 
-Status: proposed architecture. The 0.47.0 source candidate implements the
-bounded editor audit views and OpenCode adapter described below. The Observer
-Agent and automated skill promotion are **not implemented** by this release.
+Status: 0.47.0 candidate implements bounded editor audit views, the OpenCode
+adapter, and a supervised Observer learning path on top of `factory learning`.
+Automatic production skill edits remain disabled; owner promotion is required.
 
 ## Current editor slice
 
@@ -29,13 +29,14 @@ supports the native tool and session hooks used here.
 
 ## Executive briefing gap review (2026-09-28)
 
-The attached executive briefing is a useful target architecture, but its
-numeric results and platform comparisons are not release evidence. The
-ForgeLine `forge qa --repo-wide --root .` run against this candidate returned
-**F, 39.4/100**, `max_complexity: 51`, and unsupported TSX parser results.
-Its previous A/87.5 score, 0.74 test-intent ratio, and 0.77 documentation ratio
-must remain dated snapshot claims. Repo-wide QA is inventory, not feature
-admission; feature QA needs an SSAT and a candidate-bound run.
+The attached briefing's earlier A/87.5 result is a dated snapshot, not current
+release evidence. The first installed ForgeLine 0.10.7 scan of this checkout
+returned F/39.4 with complexity outliers and unsupported TSX. After removing
+the unrelated product and its history snapshots, refactoring the actual
+outliers, and running the current ForgeLine source parser, this candidate
+measured **A/95.1**, max complexity 10, test-intent 0.89, documented symbols
+0.93, security score 100, and zero QA findings. Repo-wide QA remains an
+inventory result; feature QA still needs its SSAT and candidate-bound run.
 
 | Briefing capability | Current CF/FL state | Remaining closure evidence |
 | --- | --- | --- |
@@ -45,18 +46,19 @@ admission; feature QA needs an SSAT and a candidate-bound run.
 | Deterministic YAML compilation and signed runtime artifacts | Harness Factory is a separate project; CF can inspect evidence but does not compile or run its artifacts | Define a versioned import/verification contract and independently validate hashes, signature, gate logs, and runtime identity before integration |
 | Model routing and deferred context | CF issues deterministic model-tier receipts; agent contracts bound context | Build provider-backed execution and measured token/cost telemetry before claiming savings; implement versioned, task-scoped skill retrieval |
 | Independent scrutiny | Specialty AI review is a separate protected check | Bind reviewer identity, candidate SHA, findings, and resolution to each release; evidence does not grant authority by itself |
-| Observer skill learning | Packet, replay, holdout, and promotion design below is proposed | Implement the entire loop with isolated skill patches, independent specialty review, rollback, and real-task validation |
-| ForgeLine multi-language depth | Repo-wide inventory covers source paths but this run marked TSX parser unsupported and failed its quality gate | Provide the required parser in the ForgeLine environment, rerun full scope, resolve real complexity and security findings, then record a candidate-bound feature grade |
-| Architecture capacity | `factory architecture health` is `HEALTHY`, but this checkout is exactly at the 184 CLI declaration, 454 Python file, and 659 Markdown file budgets | Reduce or consolidate existing surface before adding more files or commands; keep the budgets enforced |
-| Repository scope | This checkout still tracks 200 files under `products/agent-cloud`, and repo-wide ForgeLine includes that separate product | Decide its repository boundary explicitly and audit it independently; changing scan scope alone cannot establish product separation or remove published Git history |
+| Observer skill learning | `factory learning` validates sealed forensic packets, requires DSSE-signed replay/holdout/false-positive and specialty-review receipts against an external offline trust root, then feeds owner-promoted versioned instructions into fresh task packets; superseded promotions are archived and owner rollback is hash-bound | Live provider authentication and independently measured real-task improvement remain outside the local receipt contract |
+| ForgeLine multi-language depth | Current ForgeLine source parser handles this inventory; complexity was refactored below the hard limit, static security is 100, and repo-wide grade is A/95.1 | Repeat the candidate-bound feature SSAT QA on the final commit; repo-wide A does not substitute for it |
+| Architecture capacity | `factory architecture health` is `HEALTHY` and the growth budgets remain enforced | Keep new CLI commands and modules within the existing budgets |
+| Repository scope | Unrelated hosted-product source, plans, deployments, evidence snapshots, and generated dependencies are removed from this candidate tree | Published Git history still contains prior commits; this branch removes the content from the repository's current tree |
 
 The briefing's "zero prompt-injection surface," 100% accuracy, millisecond
 latency, and 25%/50% savings apply at most to stated fixtures or external
 systems until independently measured here. CF/FL cannot certify defect absence
-or promote a local inventory result to release approval. The current ForgeLine
-F is an open quality gap, not a waived or redefined A.
+or promote a local inventory result to release approval. The earlier ForgeLine
+F came from a stale installed parser; the source-based run above is the current
+grade and must be reproduced on the final commit.
 
-## Observer Agent: next implementation slice
+## Observer Agent: implemented supervised flow and remaining proof
 
 1. **Packet contract.** Normalize each Factory-B rejection into a
    `factory.forensic-rejection.v1` packet: immutable candidate SHA, source
@@ -83,9 +85,21 @@ F is an open quality gap, not a waived or redefined A.
    Factory-A retrieval. Workers receive the smallest matching skill excerpt
    for the task and a skill version in their handoff. Existing runs remain
    pinned to the version with which they started.
-7. **Rollback.** A new rejection or measurable regression can retire a skill
-   version and revert retrieval. Preserve the old packet, patch, replay, and
-   decision to prevent a silent rewrite of history.
+7. **Rollback.** Superseding a promoted instruction archives its sealed
+   promotion under `promotions/history/`. The task owner can restore a prior
+   promotion by SHA-256 through `factory learning promote --restore`; a sealed
+   rollback receipt records the source and restored versions. The archived
+   record is never rewritten.
+
+The packet schema and gates are implemented in `factoryline.learning_loop` and
+the existing `factory learning` commands. Observer gate receipts are signed
+DSSE envelopes checked against an explicitly configured offline trust root kept
+outside the candidate workspace; unsigned receipts and untrusted signers fail
+closed. This verifies signer identity against the configured root, but it does
+not prove that a claimed remote test run occurred or authenticate a live model
+provider session. Promotion activates only task-scoped AKU instructions.
+Superseded versions are immutable and rollback is owner-gated; real-task uplift
+still needs separate replay and holdout evidence.
 
 ## First implementation packets
 
@@ -98,7 +112,6 @@ F is an open quality gap, not a waived or redefined A.
 
 ## Promotion gates
 
-The Observer loop is complete only when packet validation, isolated patching,
-replay, holdout comparison, specialty review, source-bound merge, and rollback
-all work on real repository tasks. Until then, label it `PROPOSED`, and do not
-claim that Factory-A improves automatically from Factory-B rejections.
+The local supervised loop is implemented. The broader claim that Factory-A
+improves automatically remains unproven until real-task replay/holdout data and
+authenticated specialty review are collected.

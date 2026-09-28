@@ -10,6 +10,9 @@ from factoryline.agent_license import (
     AgentLicenseError,
     derive_license,
     issue_license,
+    license_projection,
+    load_governed_runs,
+    normalize_agent_identity,
     record_governed_run,
     verify_license,
 )
@@ -23,6 +26,21 @@ AGENT = {
     "provider": "deepseek",
     "model": "reasoner",
 }
+
+
+def test_declared_agent_identity_is_stable_and_rejects_digest_drift():
+    normalized = normalize_agent_identity(AGENT)
+    assert normalize_agent_identity(normalized) == normalized
+    with pytest.raises(AgentLicenseError, match="identity_sha256"):
+        normalize_agent_identity({**normalized, "identity_sha256": "0" * 64})
+
+
+def test_empty_governed_ledger_cannot_project_an_available_license(tmp_path: Path):
+    assert load_governed_runs(tmp_path, agent=AGENT) == []
+    projection = license_projection(tmp_path)
+    assert projection["available"] is False
+    assert projection["licenses"] == []
+    assert all(value is False for value in projection["authority"].values())
 
 
 def _passport(root: Path, autonomy: str = "human_controlled") -> Path:

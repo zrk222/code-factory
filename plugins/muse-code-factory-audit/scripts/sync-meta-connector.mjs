@@ -53,26 +53,34 @@ function laneFor(value) {
   return 'code_factory';
 }
 
-export function snapshotFromReceipt(receipt, repository) {
+function validateRepository(repository) {
   if (!/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/.test(repository) ||
       repository.split('/').some((part) => part.startsWith('.') || part.includes('..'))) {
     throw new Error('Repository must be an owner/name slug.');
   }
-  const outcomes = Object.fromEntries(Object.entries(LANES).map(([key, lane]) =>
-    [lane, STATUS[receipt.outcomes?.[key]] || 'INCOMPLETE']));
-  const rows = Array.isArray(receipt.findings?.rows) ? receipt.findings.rows : [];
-  const total = Number.isSafeInteger(receipt.findings?.total) ? receipt.findings.total : rows.length;
-  const findings = rows.slice(0, 500).map((row) => {
-    const severity = String(row?.severity || '').toLowerCase();
-    const safeSeverity = ['critical', 'high', 'medium', 'low', 'info'].includes(severity) ? severity : 'info';
-    const candidatePath = safeText(row?.path || 'unknown', 300).replaceAll('\\', '/');
-    const safePath = candidatePath.startsWith('/') || /^[A-Za-z]:/.test(candidatePath) ||
-      candidatePath.includes('://') || candidatePath.split('/').includes('..') ? 'unknown' : candidatePath;
-    return { path: safePath || 'unknown', line: Number.isInteger(row?.line) && row.line > 0 ? row.line : 0,
-      severity: safeSeverity, title: safeText(row?.code || 'finding', 160) || 'finding',
-      resolution: safeText(row?.action || 'Inspect the finding at its source and rerun the lane.', 500) || 'Inspect and rerun.',
-      lane: laneFor(row?.lane) };
-  });
+}
+
+function safeFindingPath(value) {
+  const candidate = safeText(value || 'unknown', 300).replaceAll('\\', '/');
+  if (candidate.startsWith('/') || /^[A-Za-z]:/.test(candidate) || candidate.includes('://') ||
+      candidate.split('/').includes('..')) return 'unknown';
+  return candidate || 'unknown';
+}
+
+function normalizeFinding(row) {
+  const severity = String(row?.severity || '').toLowerCase();
+  const safeSeverity = ['critical', 'high', 'medium', 'low', 'info'].includes(severity) ? severity : 'info';
+  return {
+    path: safeFindingPath(row?.path),
+    line: Number.isInteger(row?.line) && row.line > 0 ? row.line : 0,
+    severity: safeSeverity,
+    title: safeText(row?.code || 'finding', 160) || 'finding',
+    resolution: safeText(row?.action || 'Inspect the finding at its source and rerun the lane.', 500) || 'Inspect and rerun.',
+    lane: laneFor(row?.lane),
+  };
+}
+
+function coverageForReceipt(receipt, outcomes, findingCount, total) {
   const coverage = [
     'Source: current local Muse audit receipt; local HMAC and Git snapshot verified, not independent attestation.',
     'Code Factory pattern and guard-path coverage needs .factory/review-audits.json; its security check analyzes Python ASTs only.',
@@ -83,12 +91,23 @@ export function snapshotFromReceipt(receipt, repository) {
     coverage.push('Project .factory/review-audits.json is absent; pattern and guard-path checks are unavailable.');
     if (outcomes.code_factory === 'PASS') outcomes.code_factory = 'INCOMPLETE';
   }
-  if (total > findings.length) {
-    coverage.push(`Only ${findings.length} of ${total} finding rows are exported. Inspect the local scanner output.`);
+  if (total > findingCount) {
+    coverage.push(`Only ${findingCount} of ${total} finding rows are exported. Inspect the local scanner output.`);
     for (const lane of Object.keys(outcomes)) {
       if (outcomes[lane] === 'PASS') outcomes[lane] = 'INCOMPLETE';
     }
   }
+  return coverage;
+}
+
+export function snapshotFromReceipt(receipt, repository) {
+  validateRepository(repository);
+  const outcomes = Object.fromEntries(Object.entries(LANES).map(([key, lane]) =>
+    [lane, STATUS[receipt.outcomes?.[key]] || 'INCOMPLETE']));
+  const rows = Array.isArray(receipt.findings?.rows) ? receipt.findings.rows : [];
+  const total = Number.isSafeInteger(receipt.findings?.total) ? receipt.findings.total : rows.length;
+  const findings = rows.slice(0, 500).map(normalizeFinding);
+  const coverage = coverageForReceipt(receipt, outcomes, findings.length, total);
   return { schema: 'factory.meta.audit.v1', repository, commit_sha: receipt.head,
     policy_sha256: receipt.policySha256, created_at: receipt.createdAt,
     outcomes, findings, coverage };

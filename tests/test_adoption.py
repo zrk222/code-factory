@@ -14,6 +14,7 @@ from factoryline.adoption import (
     record_adoption_event,
     run_first_proof,
     verify_proof_card,
+    write_proof_card,
 )
 from factoryline.cli import main
 
@@ -56,6 +57,14 @@ def test_proof_card_reuses_only_verified_receipt_facts_and_rejects_tampering(
     tampered["headline"] = "Everything is production ready"
     with pytest.raises(AdoptionError, match="hash does not match"):
         verify_proof_card(tampered)
+
+
+def test_direct_proof_card_writer_exports_the_same_verified_receipt(tmp_path: Path):
+    first = run_first_proof(tmp_path)
+    saved = write_proof_card(first["proof"], tmp_path / "direct-card")
+    assert saved["card"]["source_receipt_sha256"] == first["proof"]["receipt_sha256"]
+    assert Path(saved["paths"]["json"]).is_file()
+    assert Path(saved["paths"]["svg"]).is_file()
 
 
 def test_local_adoption_funnel_withholds_provider_metrics_and_never_stores_identity(

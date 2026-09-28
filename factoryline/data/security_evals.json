@@ -1,0 +1,11 @@
+[
+  {"name":"dynamic-execution","source":"eval(value)","expected":["SECURITY_DYNAMIC_EXECUTION"]},
+  {"name":"shell-command","source":"import subprocess\nsubprocess.run(value, shell=True)","expected":["SECURITY_SHELL_COMMAND"]},
+  {"name":"os-command","source":"import os\nos.system(value)","expected":["SECURITY_OS_COMMAND"]},
+  {"name":"unsafe-deserialization","source":"import pickle\npickle.loads(value)","expected":["SECURITY_UNSAFE_DESERIALIZATION"]},
+  {"name":"unsafe-yaml","source":"import yaml\nyaml.load(value)","expected":["SECURITY_UNSAFE_YAML"]},
+  {"name":"tls-disabled","source":"import requests\nrequests.get(url, verify=False)","expected":["SECURITY_TLS_VERIFY_DISABLED"]},
+  {"name":"literal-secret","source":"api_key = 'live-secret-material'","expected":["SECURITY_HARDCODED_SECRET"]},
+  {"name":"bare-except","source":"try:\n    work()\nexcept:\n    pass","expected":["QUALITY_BARE_EXCEPT"]},
+  {"name":"safe-controls","source":"import subprocess\nimport yaml\nyaml.load(value, Loader=yaml.SafeLoader)\nsubprocess.run(['tool', value], shell=False, check=True)","expected":[]}
+]

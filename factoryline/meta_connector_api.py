@@ -134,6 +134,53 @@ class ClerkTokenError(Exception):
     """The access token could not be verified or is not authorized."""
 
 
+def _jwt_part(part: str) -> bytes:
+    return urlsafe_b64decode(part + "=" * (-len(part) % 4))
+
+
+def _clerk_public_key(jwks: Mapping[str, Any], kid: str) -> Any:
+    key = next(
+        key
+        for key in jwks["keys"]
+        if isinstance(key, dict)
+        and key.get("kid") == kid
+        and key.get("kty") == "RSA"
+        and key.get("use", "sig") == "sig"
+    )
+    modulus = int.from_bytes(_jwt_part(key["n"]), "big")
+    exponent = int.from_bytes(_jwt_part(key["e"]), "big")
+    if modulus.bit_length() < 2048 or exponent != 65537:
+        raise ValueError("token key")
+    return rsa.RSAPublicNumbers(exponent, modulus).public_key()
+
+
+def _validate_clerk_identity(
+    claims: dict[str, Any], issuer: str, resource: str
+) -> None:
+    audience = claims.get("aud")
+    audiences = [audience] if isinstance(audience, str) else audience
+    if claims.get("iss") != issuer or not isinstance(audiences, list):
+        raise ValueError("token claims")
+    if resource not in audiences or not isinstance(claims.get("sub"), str):
+        raise ValueError("token claims")
+    if not claims["sub"] or not isinstance(claims.get("scope"), str):
+        raise ValueError("token claims")
+    if "cf.audit.read" not in claims["scope"].split():
+        raise ValueError("token claims")
+
+
+def _validate_clerk_time(claims: dict[str, Any], now: int) -> None:
+    issued, expires = claims.get("iat"), claims.get("exp")
+    if type(issued) is not int or type(expires) is not int:
+        raise ValueError("token claims")
+    if not 0 < expires - issued <= MAX_MCP_TOKEN_SECONDS:
+        raise ValueError("token claims")
+    if issued > now + 60 or expires < now - 60:
+        raise ValueError("token claims")
+    if "nbf" in claims and (type(claims["nbf"]) is not int or claims["nbf"] > now + 60):
+        raise ValueError("token claims")
+
+
 def verify_clerk_mcp_token(
     token: str, jwks: Mapping[str, Any], issuer: str, resource: str
 ) -> dict[str, Any]:
@@ -143,57 +190,22 @@ def verify_clerk_mcp_token(
             raise ValueError("token shape")
         header_part, claims_part, signature_part = token.split(".")
 
-        def decode(part: str) -> bytes:
-            return urlsafe_b64decode(part + "=" * (-len(part) % 4))
-
         header, claims = (
-            json.loads(decode(header_part)),
-            json.loads(decode(claims_part)),
+            json.loads(_jwt_part(header_part)),
+            json.loads(_jwt_part(claims_part)),
         )
         if not isinstance(header, dict) or not isinstance(claims, dict):
             raise ValueError("token payload")
         if header.get("alg") != "RS256" or not isinstance(header.get("kid"), str):
             raise ValueError("token algorithm")
-        key = next(
-            key
-            for key in jwks["keys"]
-            if isinstance(key, dict)
-            and key.get("kid") == header["kid"]
-            and key.get("kty") == "RSA"
-            and key.get("use", "sig") == "sig"
-        )
-        modulus = int.from_bytes(decode(key["n"]), "big")
-        exponent = int.from_bytes(decode(key["e"]), "big")
-        if modulus.bit_length() < 2048 or exponent != 65537:
-            raise ValueError("token key")
-        rsa.RSAPublicNumbers(exponent, modulus).public_key().verify(
-            decode(signature_part),
+        _clerk_public_key(jwks, header["kid"]).verify(
+            _jwt_part(signature_part),
             f"{header_part}.{claims_part}".encode("ascii"),
             padding.PKCS1v15(),
             hashes.SHA256(),
         )
-        now = int(time.time())
-        audience = claims.get("aud")
-        audiences = [audience] if isinstance(audience, str) else audience
-        if (
-            claims.get("iss") != issuer
-            or not isinstance(audiences, list)
-            or resource not in audiences
-            or not isinstance(claims.get("sub"), str)
-            or not claims["sub"]
-            or not isinstance(claims.get("scope"), str)
-            or "cf.audit.read" not in claims["scope"].split()
-            or type(claims.get("iat")) is not int
-            or type(claims.get("exp")) is not int
-            or not 0 < claims["exp"] - claims["iat"] <= MAX_MCP_TOKEN_SECONDS
-            or claims["iat"] > now + 60
-            or claims["exp"] < now - 60
-            or (
-                "nbf" in claims
-                and (type(claims["nbf"]) is not int or claims["nbf"] > now + 60)
-            )
-        ):
-            raise ValueError("token claims")
+        _validate_clerk_identity(claims, issuer, resource)
+        _validate_clerk_time(claims, int(time.time()))
     except (
         ValueError,
         TypeError,
@@ -214,6 +226,33 @@ def verify_clerk_oauth_token(
 
     if not token or len(token) > 8192 or not client_id or not client_secret:
         raise ClerkTokenError("access token could not be verified")
+    payload = _introspect_clerk_token(token, endpoint, client_id, client_secret, httpx)
+    _validate_clerk_introspection(payload, client_id)
+    now = int(time.time())
+    return {
+        "signature_verified": True,
+        "sub": payload["sub"],
+        "scope": payload["scope"],
+        "aud": _oauth_audience(payload, token),
+        "iat": now,
+        "exp": now + 1,
+    }
+
+
+def _validate_clerk_introspection(payload: Any, client_id: str) -> None:
+    if not isinstance(payload, dict) or payload.get("active") is not True:
+        raise ClerkTokenError("access token is inactive")
+    if payload.get("client_id") != client_id:
+        raise ClerkTokenError("access token client does not match")
+    if not isinstance(payload.get("sub"), str) or not payload["sub"]:
+        raise ClerkTokenError("access token subject is invalid")
+    if not isinstance(payload.get("scope"), str):
+        raise ClerkTokenError("access token scopes are invalid")
+
+
+def _introspect_clerk_token(
+    token: str, endpoint: str, client_id: str, client_secret: str, httpx: Any
+) -> Any:
     credentials = b64encode(f"{client_id}:{client_secret}".encode()).decode()
     try:
         response = httpx.post(
@@ -224,35 +263,19 @@ def verify_clerk_oauth_token(
             follow_redirects=False,
         )
         response.raise_for_status()
-        payload = response.json()
+        return response.json()
     except (httpx.HTTPError, ValueError):
         raise ClerkTokenError("access token could not be verified") from None
-    if not isinstance(payload, dict) or payload.get("active") is not True:
-        raise ClerkTokenError("access token is inactive")
-    if payload.get("client_id") != client_id:
-        raise ClerkTokenError("access token client does not match")
-    if not isinstance(payload.get("sub"), str) or not payload["sub"]:
-        raise ClerkTokenError("access token subject is invalid")
-    if not isinstance(payload.get("scope"), str):
-        raise ClerkTokenError("access token scopes are invalid")
-    now = int(time.time())
+
+
+def _oauth_audience(payload: dict[str, Any], token: str) -> Any:
     audience = payload.get("aud")
-    if audience is None and token.count(".") == 2:
-        try:
-            segment = token.split(".")[1]
-            audience = json.loads(
-                urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
-            ).get("aud")
-        except (ValueError, TypeError, AttributeError):
-            audience = None
-    return {
-        "signature_verified": True,
-        "sub": payload["sub"],
-        "scope": payload["scope"],
-        "aud": audience,
-        "iat": now,
-        "exp": now + 1,
-    }
+    if audience is not None or token.count(".") != 2:
+        return audience
+    try:
+        return json.loads(_jwt_part(token.split(".")[1])).get("aud")
+    except (ValueError, TypeError, AttributeError):
+        return None
 
 
 class ConnectorError(Exception):

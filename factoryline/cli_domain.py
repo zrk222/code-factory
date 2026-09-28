@@ -693,6 +693,7 @@ def _workflow_action_48(a):
             a.worker,
             Path(a.outcome),
             instructions,
+            forensic_packet_path=Path(a.forensic_packet) if a.forensic_packet else None,
             force=a.force,
         )
         return result
@@ -708,6 +709,9 @@ def _workflow_action_49(a):
             a.validator,
             results,
             force=a.force,
+            observer_trust_root=(
+                Path(a.observer_trust_root) if a.observer_trust_root else None
+            ),
         )
         return result
     return _UNHANDLED
@@ -733,9 +737,22 @@ def _workflow_action_50(a):
 
 def _workflow_action_51(a):
     if a.cmd == "learning":
-        result = _lazy_import("learning_loop", "promote_instruction_candidate")(
-            Path(a.validation), a.owner, force=a.force
-        )
+        if a.restore:
+            if not a.task or a.validation:
+                raise ValueError(
+                    "learning promote --restore requires --task and no validation positional"
+                )
+            result = _lazy_import("learning_loop", "restore_instruction_promotion")(
+                Path(a.task), a.owner, a.restore
+            )
+        else:
+            if not a.validation or a.task:
+                raise ValueError(
+                    "learning promote requires a validation positional; --task is only used with --restore"
+                )
+            result = _lazy_import("learning_loop", "promote_instruction_candidate")(
+                Path(a.validation), a.owner, force=a.force
+            )
         return result
     return _UNHANDLED
 
