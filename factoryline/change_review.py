@@ -72,12 +72,19 @@ def _scope_segment(value: object) -> str:
         raise RepositoryScopeError(
             "SCOPE_POLICY_INVALID", "blocked_path_segments must contain path segments"
         )
-    segment = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+    segment = _normalize_scope_name(value)
     if not segment or segment in {".", ".."}:
         raise RepositoryScopeError(
             "SCOPE_POLICY_INVALID", "blocked path segment is invalid"
         )
     return segment
+
+
+def _normalize_scope_name(value: str) -> str:
+    """Normalize separators, including camel-case product names in filenames."""
+    split_words = re.sub(r"([A-Z])([A-Z][a-z])", r"\1-\2", value)
+    split_words = re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", split_words)
+    return re.sub(r"[^a-z0-9]+", "-", split_words.casefold()).strip("-")
 
 
 def _validate_scope_policy(value: object) -> dict[str, Any]:
@@ -207,7 +214,7 @@ def _git_scope_paths(root: Path, base: str, head: str) -> list[str]:
 
 def _matches_scope_segment(path: str, blocked: set[str]) -> str | None:
     for segment in path.split("/"):
-        normalized = re.sub(r"[^a-z0-9]+", "-", segment.casefold()).strip("-")
+        normalized = _normalize_scope_name(segment)
         tokens = normalized.split("-")
         for candidate in blocked:
             blocked_tokens = candidate.split("-")

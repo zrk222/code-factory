@@ -327,6 +327,8 @@ def test_scope_guard_blocks_reserved_names_and_preserves_historical_receipts(
     review = check_repository_scope(
         tmp_path,
         changed_paths=[
+            "src/AgentCloudBackend.kt",
+            "src/AgentOvenServer.ts",
             "products/agent_cloud/src/server.ts",
             "examples/factory-trust-core-client/index.ts",
             "adr/agent-cloud-budget-enforcement-v1.md",
@@ -345,7 +347,7 @@ def test_scope_guard_blocks_reserved_names_and_preserves_historical_receipts(
         },
         {
             "path": "docs/AgentOven-readiness.md",
-            "matched_segment": "agentoven",
+            "matched_segment": "agent-oven",
         },
         {
             "path": "examples/factory-trust-core-client/index.ts",
@@ -354,6 +356,14 @@ def test_scope_guard_blocks_reserved_names_and_preserves_historical_receipts(
         {
             "path": "products/agent_cloud/src/server.ts",
             "matched_segment": "agent-cloud",
+        },
+        {
+            "path": "src/AgentCloudBackend.kt",
+            "matched_segment": "agent-cloud",
+        },
+        {
+            "path": "src/AgentOvenServer.ts",
+            "matched_segment": "agent-oven",
         },
     ]
     assert review["next_action"]["action"] == "remove_or_rehome_unrelated_product_files"
