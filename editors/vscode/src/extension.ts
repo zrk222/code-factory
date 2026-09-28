@@ -8,6 +8,8 @@ import { meterHtml, savingsHtml } from "./meter";
 import { factoryExecutable, factoryStudioUrl, isFeatureName } from "./runner";
 import { findRequirementEvidence, requirementIds } from "./requirement";
 import { GITHUB_REPOSITORY_URL, shouldOfferGitHubStar, starPromptKey } from "./star_prompt";
+import { registerEvidence } from "./evidence";
+import { runCommand } from "@factoryline/proof-client";
 
 const output = vscode.window.createOutputChannel("FactoryLine");
 const receiptDirectories = [".factory", "receipts"];
@@ -32,7 +34,11 @@ class RequirementCodeLensProvider implements vscode.CodeLensProvider {
 }
 
 function workspaceRoot(): string | undefined {
-  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const uri = vscode.window.activeTextEditor?.document.uri;
+  const active = uri && vscode.workspace.getWorkspaceFolder(uri);
+  if (active?.uri.scheme === "file") return active.uri.fsPath;
+  const folders = vscode.workspace.workspaceFolders;
+  return folders?.length === 1 && folders[0].uri.scheme === "file" ? folders[0].uri.fsPath : undefined;
 }
 
 function requireTrustedWorkspace(): string | undefined {
@@ -53,16 +59,14 @@ async function runFactory(root: string, args: string[]): Promise<string> {
   output.clear();
   output.appendLine(`$ ${command} ${args.join(" ")}`);
   output.show(true);
-  return new Promise<string>((resolve, reject) => {
-    let combined = "";
-    const child = childProcess.spawn(command, args, {
-      cwd: root,
-      shell: false,
-    });
-    child.stdout.on("data", (chunk: Buffer) => { const text = chunk.toString(); combined += text; output.append(text); });
-    child.stderr.on("data", (chunk: Buffer) => { const text = chunk.toString(); combined += text; output.append(text); });
-    child.on("error", reject);
-    child.on("close", (code) => code === 0 ? resolve(combined) : reject(new Error(`FactoryLine exited with ${code ?? "an unknown error"}.`)));
+  return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "FactoryLine", cancellable: true }, async (_progress, token) => {
+    const controller = new AbortController();
+    const cancel = token.onCancellationRequested(() => controller.abort());
+    try {
+      const result = await runCommand(command, args, { root, signal: controller.signal, timeoutMs: 30 * 60 * 1000, onOutput: text => output.append(text) });
+      if (result.state !== "OBSERVED") throw new Error(`FactoryLine ${result.state.toLowerCase()} (exit ${result.exitCode ?? "unavailable"}).`);
+      return result.stdout;
+    } finally { cancel.dispose(); }
   });
 }
 
@@ -356,6 +360,7 @@ async function openFactoryStudio(view: StudioView = "studio"): Promise<void> {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  registerEvidence(context);
   context.subscriptions.push(
     output,
     vscode.languages.registerCodeLensProvider({ scheme: "file" }, new RequirementCodeLensProvider()),

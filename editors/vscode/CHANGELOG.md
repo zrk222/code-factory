@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.2 - 2026-09-28 (release candidate; publication gated)
+
+- Fix opaque audit status by showing NOT_RUN, INCOMPLETE, UNAVAILABLE, FAILED,
+  and STALE per lane, with explicit scope limits and unbound candidate state.
+- Change the workspace audit flow to use cancellable, bounded local processes
+  and a native Explorer evidence tree with navigable source findings.
+- Add explicit CF change review, architecture, security pattern, and runtime
+  readiness lanes beside ForgeLine repository inventory and a copyable summary.
+
 ## 1.0.1 - 2026-09-23 (release preview; publication gated)
 
 - Show typed intent-to-proof agent handoffs, route traces, and checkpoint

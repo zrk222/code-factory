@@ -1,5 +1,9 @@
 # JetBrains Marketplace Growth and Release Guide
 
+Historical candidate checklists for 0.8.14 and 0.8.15 remain in Git history.
+Current upload and approval decisions must use the live Marketplace status and
+the versioned 1.0.2 candidate evidence.
+
 ## Public listing
 
 FactoryLine is public as Marketplace plugin `33009`:

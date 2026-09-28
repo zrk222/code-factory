@@ -25,6 +25,7 @@
     "core_modules": 150
   },
   "release": {
+    "scope": "per_channel",
     "max_releases_30d": 4,
     "minimum_days_between_releases": 7,
     "exception_requires": "human-release-authority",

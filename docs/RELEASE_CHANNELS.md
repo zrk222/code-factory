@@ -23,12 +23,13 @@ not turn a source merge into release approval.
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
 | GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Dispatch `publish.yml` with an existing draft tag; its protected publisher attaches the verified bundle and publishes the release after PyPI | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.46.9` candidate (not yet published) | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| PyPI | `factoryline-code-factory==0.47.0` candidate; 0.46.9 is the prior public release | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Manually dispatch the `huggingface` environment workflow | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
-| VS Code / Open VSX | `factoryline-vscode-1.0.1.vsix` | Upload through the Microsoft Marketplace website; use the protected publisher workflow for Open VSX | Installable VSIX and public marketplace version |
-| JetBrains | `factoryline-intellij-1.0.1.zip` | Use the separate protected JetBrains publisher workflow after its live binary-slot and metadata gates permit the update | Compatible ZIP plus an accepted Marketplace upload receipt; public availability still requires moderation |
+| VS Code / Open VSX | `factoryline-vscode-1.0.2.vsix` | Upload VS Code through the Microsoft Marketplace website; use the protected publisher workflow for Open VSX | Installable VSIX and public marketplace version |
+| JetBrains | `factoryline-intellij-1.0.2.zip` | Use the separate protected JetBrains publisher workflow after its live binary-slot and metadata gates permit the update | Compatible ZIP plus an accepted Marketplace upload receipt; public availability still requires moderation |
+| OpenCode | Native `code-factory-opencode` plugin 0.1.0 | Build a self-contained module and install under `.opencode/plugins/`; publish a registry package only after registry authentication and independent receipt | Project plugin loads and CF/ForgeLine lanes run or report exact limits |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
 The release pipeline never treats a queued review, draft listing, uploaded
@@ -36,17 +37,17 @@ artifact, or workflow dispatch as a completed publication. Each channel is
 reported as published, pending review, blocked, or not configured. Direct
 marketplace uploads require their own provider acceptance and approval evidence.
 
-The 0.46.9 source candidate is unpublished. Release preflight must pass strict
-architecture health and prospective cadence; the current quality reassessment
-remains blocked on the repository-wide complexity gate. Applicable source-review
-and protected provider gates must also be satisfied before publication. Do not
-weaken or skip release preflight to force a provider upload.
+The 0.47.0 source candidate is separate from the already published 0.46.9.
+Release preflight must pass strict architecture health, prospective cadence,
+source review, and protected provider gates before publication. Do not weaken
+or skip release preflight to force a provider upload.
 
 The release-train cap took effect at `2026-09-21T15:01:54Z`, the recorded
-commit time when the policy was added. The latest core tag (`v0.46.7`,
-2026-09-19) and the other tags already present at adoption remain visible as
-historical evidence; only tags created at or after the effective time count
-toward the prospective 4-per-30-day limit and 7-day interval. The publish
+commit time when the policy was added. Core admission reads `v*` tags and
+published GitHub timestamps. Adapter preflight reads its own immutable
+`vscode-v*` or `jetbrains-v*` tags and checks the corresponding editor version;
+a core release cannot be counted as an editor release. Each channel retains
+the 4-per-30-day limit and 7-day interval. The publish
 workflow dispatches only from protected `main`, accepts only an existing draft
 release, validates the immutable tag, waits at the protected `pypi` environment,
 and marks the GitHub release public only after the approved PyPI publication

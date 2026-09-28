@@ -171,11 +171,12 @@ credits, or turn on BYOK on the user's behalf.
 
 ### Cursor and OpenCode
 
-Cursor and OpenCode can use this same local proof-context server without a
-client-specific plugin. See [AI client connections](AI_CLIENTS.md) for the
-exact `.cursor/mcp.json` and `opencode.json` snippets. The connection remains
-local and read-only; client support does not add provider credentials,
-network transport, or mutation authority.
+Cursor and OpenCode can use the same local proof-context server. OpenCode
+also has a [native FactoryLine plugin](../plugins/code-factory-opencode/README.md)
+with CF and ForgeLine audit tools, session evidence, and post-edit scans.
+See [AI client connections](AI_CLIENTS.md) for the `.cursor/mcp.json` and
+`opencode.json` MCP snippets. The MCP connection remains local and read-only;
+the native plugin runs explicit local CLI checks when installed.
 
 ## Tools and resources
 

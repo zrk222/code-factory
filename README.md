@@ -5,6 +5,16 @@ software review evidence. It can inspect a repository, run configured checks,
 and produce receipts for a human to review. It does not certify software,
 guarantee that defects are absent, or approve a release.
 
+## 0.47.0 source preview
+
+**Fixed:** editor audit views now expose missing and incomplete checks.
+**Changed:** Junie's route connects a diff to bounded evidence and a concrete
+repair handoff. **Added:** VS Code/Open VSX 1.0.2 evidence tree, JetBrains
+1.0.2 CF + ForgeLine tab, and a native [OpenCode plugin](plugins/code-factory-opencode/README.md).
+The [autonomous ops plan](docs/AUTONOMOUS_OPS_EDITOR_PLAN.md) explains the
+proposed Observer Agent loop and its gates. These versions remain release
+candidates until each channel has a verified provider publication receipt.
+
 ## Graph Ops in action
 
 ![Full-page Graph Ops dashboard capture: lineage runs, a forensic finding, first semantic divergence, recovery preview, guarded actions, graph lanes, and the next action](docs/assets/marketplace/graph-ops-forensics.png)

@@ -1,0 +1,36 @@
+name: OpenCode native plugin
+
+on:
+  push:
+    paths:
+      - "plugins/code-factory-opencode/**"
+      - "editors/proof-client/**"
+      - ".github/workflows/opencode-plugin.yml"
+  pull_request:
+    paths:
+      - "plugins/code-factory-opencode/**"
+      - "editors/proof-client/**"
+      - ".github/workflows/opencode-plugin.yml"
+  workflow_dispatch:
+
+jobs:
+  build-test-pack:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/code-factory-opencode
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: plugins/code-factory-opencode/package-lock.json
+      - run: npm ci --no-audit
+      - run: npm test
+      - run: npm pack
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: code-factory-opencode-0.1.0
+          path: plugins/code-factory-opencode/code-factory-opencode-0.1.0.tgz
+          if-no-files-found: error

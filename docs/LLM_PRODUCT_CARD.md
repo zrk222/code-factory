@@ -21,8 +21,10 @@ primary_question: Did the change fulfill approved intent, what could break, and 
 
 ## Current release preview
 
-Core 0.46.9 is an unpublished release candidate; VS Code/Open VSX 1.0.1 and
-JetBrains 1.0.1 remain preview targets. The candidate adds Muse Code native
+Core 0.47.0 is a release candidate; VS Code/Open VSX 1.0.2 and
+JetBrains 1.0.2 remain preview targets until provider publication is verified.
+The new source adds native dual-audit evidence views, an OpenCode plugin, and
+the Junie IDE evidence route. The prior 0.46.9 release added Muse Code native
 packages plus a standalone skills/hooks/MCP installation path for Muse builds
 without plugin commands, alongside bounded PRD/spec routing and workflow MCP
 tools. It also includes intent-to-proof agent handoffs, deterministic route

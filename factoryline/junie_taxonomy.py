@@ -511,9 +511,27 @@ def junie_taxonomy(root: Path | str) -> dict[str, object]:
             "Read the relevant status before proposing a change; do not invent absent evidence.",
             "Request human confirmation before capturing or changing intent, scope, thresholds, exceptions, or release decisions.",
             "Use a sealed repair scope before implementation; stop on scope expansion or oracle weakening.",
-            "Return exact changed paths, tests, supplied evidence, failures, and unknowns for independent human review.",
+            "Return exact changed paths, tests, supplied evidence, failures, and unknowns for independent specialty AI review; the owner retains release authority.",
             "Do not treat any FactoryLine read-only result as permission to approve, merge, publish, deploy, sign, access credentials, or contact a provider.",
         ],
+        "ide_workflow": {
+            "schema": "factory.junie-ide-workflow.v1",
+            "entry": "Open the JetBrains FactoryLine Junie tab, inspect this taxonomy, then open CF + ForgeLine evidence for the current project.",
+            "verify": [
+                "Inspect the changed diff and sealed intent in JetBrains before choosing a lane.",
+                "Use the CF + ForgeLine tab to run local review, architecture, security patterns, runtime readiness, and repository inventory explicitly.",
+                "Treat UNAVAILABLE, INCOMPLETE, NOT_RUN, and stale results as gaps; no lane grants approval.",
+                "For each finding, return a path, why it matters, a concrete repair, and the exact check to rerun.",
+                "Use JetBrains inspections or Qodana as additional evidence when configured; do not claim they ran from a FactoryLine receipt.",
+                "Hand the changed diff and actual test evidence to an independent specialty AI reviewer before owner release authorization.",
+            ],
+            "audit_limits": {
+                "change_review": "Pattern and guard-path audits require the project's .factory/review-audits.json; the review lane does not execute tests.",
+                "security": "The built-in security pattern scan is Python AST focused; use language-specific security tooling for other code.",
+                "forgeline": "Repository-wide inventory is static and does not substitute for a feature-scoped release gate.",
+            },
+            "candidate_binding": "UNBOUND until a source-bound release gate ties findings, tests, and reviewer receipt to the same candidate.",
+        },
         "claim_boundary": "Taxonomy describes local FactoryLine tools. It does not install, enable, start, observe, or control Junie, and does not prove any external JetBrains state.",
         "authority": dict(_AUTHORITY),
         "project_pack": junie_manifest(workspace),
@@ -552,7 +570,18 @@ task.
 4. Never delete, skip, weaken, replace, or reclassify a failing test, threshold,
    exception, or negative case to make a result green. Report the conflict.
 5. Return exact changed paths, tests run, supplied evidence paths, failures,
-   and unknowns. A human decides approval, merge, release, and deployment.
+   and unknowns. Obtain an independent specialty AI review of the candidate.
+   The owner retains release and deployment authority.
+
+## JetBrains evidence route
+
+In the FactoryLine tool window, open the **CF + ForgeLine** tab and explicitly
+run the five local lanes for this project. The results expose missing checks,
+lane limits, and candidate binding. A reported green state from one lane is
+not certification. Use JetBrains inspections or Qodana as additional evidence
+only when actually run. For each finding, return the affected path, cause,
+repair, and the exact rerun. If an audit requires a project manifest, a
+language scanner, or runtime setup that is absent, report that gap.
 
 ## Efficiency profile (bounded by the manifest)
 

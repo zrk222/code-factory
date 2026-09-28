@@ -1,5 +1,14 @@
 # FactoryLine for IntelliJ Changelog
 
+## 1.0.2 - 2026-09-28 (release candidate; publication gated)
+
+- Fix the missing dual-audit view with a native CF + ForgeLine tool-window tab
+  that labels unavailable, incomplete, failed, and unbound results.
+- Change Junie's taxonomy to route from local facts through bounded audit
+  evidence, concrete repairs, and independent specialty AI review.
+- Add a Junie-tab shortcut to the new evidence view; project commands still
+  require explicit confirmation and never grant release authority.
+
 ## 1.0.1 - 2026-09-23 (release preview; publication gated)
 
 - Show candidate-bound route traces and typed, proof-coupled agent handoffs so

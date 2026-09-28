@@ -361,6 +361,7 @@ def _valid_release_cadence_contract(
         and type(minimum_days) is int
         and minimum_days > 0
         and effective_time is not None
+        and cadence.get("scope", "per_channel") == "per_channel"
         and cadence.get("exception_requires") == "human-release-authority"
         and cadence.get("requires_changelog_entry") is True
     )
@@ -409,6 +410,7 @@ def _release_cadence_summary(
         cadence = {}
     effective_at = cadence.get("effective_at")
     return {
+        "scope": cadence.get("scope", "per_channel"),
         "max_releases_30d": cadence.get("max_releases_30d"),
         "minimum_days_between_releases": cadence.get("minimum_days_between_releases"),
         "effective_at": effective_time.isoformat().replace("+00:00", "Z")
@@ -628,6 +630,7 @@ def _recent_release_tags(
     minimum_days_between_releases: int = 7,
     effective_at: datetime | None = None,
     candidate_tag: str | None = None,
+    tag_ref: str = "refs/tags/v*",
 ) -> dict[str, Any]:
     """Measure release-tag cadence and expose a forward release guard."""
     now = now or datetime.now(timezone.utc)
@@ -638,7 +641,7 @@ def _recent_release_tags(
                 "-C",
                 str(root),
                 "for-each-ref",
-                "refs/tags/v*",
+                tag_ref,
                 "--format=%(refname:short)\t%(creatordate:iso-strict)",
             ],
             check=True,
@@ -674,13 +677,17 @@ def _recent_release_tags(
 
 
 def release_cadence_status(
-    root: Path, now: datetime | None = None, *, candidate_tag: str | None = None
+    root: Path, now: datetime | None = None, *, candidate_tag: str | None = None,
+    channel: str = "core",
 ) -> dict[str, Any]:
     """Return release-train validity and its tag-derived admission projection."""
     root = Path(root).resolve()
+    tag_prefixes = {"core": "v", "vscode": "vscode-v", "jetbrains": "jetbrains-v"}
+    if channel not in tag_prefixes:
+        raise ValueError("release channel must be core, vscode, or jetbrains")
     if candidate_tag is not None:
-        if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", candidate_tag):
-            raise ValueError("candidate tag must use vMAJOR.MINOR.PATCH")
+        if not re.fullmatch(re.escape(tag_prefixes[channel]) + r"[0-9]+\.[0-9]+\.[0-9]+", candidate_tag):
+            raise ValueError(f"candidate tag must use {tag_prefixes[channel]}MAJOR.MINOR.PATCH")
 
         def commit(ref: str) -> str:
             return subprocess.run(
@@ -719,6 +726,7 @@ def release_cadence_status(
     if not isinstance(policy_cadence, dict) or any(
         policy_cadence.get(key) != cadence.get(key)
         for key in (
+            "scope",
             "max_releases_30d",
             "minimum_days_between_releases",
             "effective_at",
@@ -742,7 +750,9 @@ def release_cadence_status(
         minimum_days_between_releases=cadence["minimum_days_between_releases"],
         effective_at=_parse_timestamp(cadence["effective_at"]),
         candidate_tag=candidate_tag,
+        tag_ref=f"refs/tags/{tag_prefixes[channel]}*",
     )
+    projection["channel"] = channel
     projection["excluded_candidate_tag"] = candidate_tag
     projection["release_train_status"] = train["status"]
     if not projection.get("available"):

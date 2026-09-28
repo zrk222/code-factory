@@ -115,7 +115,7 @@
         <div class="eyebrow">Open source · Local first · Evidence backed</div>
         <h1>Audit code.<br>Review evidence.<br>Resolve defects.</h1>
         <p class="lede"><strong>A code audit system for the entire development workflow.</strong> Connect requirements and architecture checks, security analysis, behavioral tests, workflow integrity, and specialty AI review. Follow source-bound findings through actionable repairs and fresh verification, with coverage gaps visible at every step.</p>
-        <p class="boundary"><strong>Current source preview:</strong> connect approved intent, agent handoffs, verification routes, and current evidence in one review path. <a href="https://github.com/zrk222/code-factory/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">See what changed in 0.46.9</a>. Publication remains a separate, gated step.</p>
+        <p class="boundary"><strong>0.47.0 source preview:</strong> see what was fixed, changed, and added in the audit workflow. Editor adapters target 1.0.2. <a href="https://github.com/zrk222/code-factory/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">Read the release notes</a>. Publication remains a separate, gated step.</p>
         <div class="actions">
           <a class="button primary" href="#audit-update">Explore the audit workflow</a>
           <a class="button" href="https://github.com/zrk222/code-factory/blob/main/docs/PRODUCT_VISUALS.md" target="_blank" rel="noopener noreferrer">See actual Factory Studio</a>
@@ -137,8 +137,13 @@
     <section id="audit-update" aria-labelledby="audit-update-title">
       <div class="shell">
         <div class="section-head">
-          <h2 id="audit-update-title">0.46.9: follow the audit. See what needs fixing.</h2>
+          <h2 id="audit-update-title">0.47.0: see what ran, what failed, and what to fix.</h2>
           <p>Inspect progress, findings, and repair tasks from one candidate-bound run. This static preview explains the workflow; it does not scan or upload your repository.</p>
+        </div>
+        <div class="grid" aria-label="What changed in 0.47.0 and editor 1.0.2">
+          <article class="card"><span>Fixed</span><h3>Missing audit status</h3><p>Native editor views distinguish unavailable, incomplete, failed, stale, and not-run checks. A static inventory no longer looks like a completed audit.</p></article>
+          <article class="card"><span>Changed</span><h3>Review the evidence route</h3><p>Junie's taxonomy now directs reviewers from intent and diff through bounded checks, concrete repairs, reruns, and independent specialty AI review.</p></article>
+          <article class="card"><span>Added</span><h3>Three native paths</h3><p>VS Code/Open VSX 1.0.2 adds an Explorer evidence tree; JetBrains 1.0.2 adds a CF + ForgeLine tab; OpenCode adds native tools and a session audit hook.</p></article>
         </div>
         <div class="grid">
           <article class="card"><span>During a run</span><h3>Progress with evidence</h3><p>Deep-audit execution records lane progress, cancellation, source bindings, and coverage gaps. Unsupported or missing evidence remains incomplete.</p></article>
@@ -473,7 +478,7 @@ Never substitute CI or repository traffic for installs.</code></pre>
   </main>
 
   <div class="shell">
-    <footer><span>Source preview · Code Factory 0.46.9 · VS Code/Open VSX 1.0.1 · JetBrains 1.0.1 · Dual licensed MIT or Apache-2.0</span><span><a href="https://github.com/zrk222/code-factory" target="_blank" rel="noopener noreferrer">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/" target="_blank" rel="noopener noreferrer">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases" target="_blank" rel="noopener noreferrer">Published releases</a> · <a href="https://doi.org/10.5281/zenodo.21381405" target="_blank" rel="noopener noreferrer">Zenodo</a></span></footer>
+    <footer><span>Source preview · Code Factory 0.47.0 candidate · VS Code/Open VSX 1.0.2 candidate · JetBrains 1.0.2 candidate · OpenCode 0.1.0 candidate</span><span><a href="https://github.com/zrk222/code-factory" target="_blank" rel="noopener noreferrer">GitHub</a> · <a href="https://pypi.org/project/factoryline-code-factory/" target="_blank" rel="noopener noreferrer">PyPI</a> · <a href="https://github.com/zrk222/code-factory/releases" target="_blank" rel="noopener noreferrer">Published releases</a> · <a href="https://doi.org/10.5281/zenodo.21381405" target="_blank" rel="noopener noreferrer">Zenodo</a></span></footer>
   </div>
 </body>
 </html>

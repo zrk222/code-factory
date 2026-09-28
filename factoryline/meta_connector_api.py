@@ -945,7 +945,7 @@ class MetaConnectorAPI:
                     "capabilities": {"tools": {"listChanged": False}},
                     "serverInfo": {
                         "name": "code-factory-audit-evidence",
-                        "version": "0.46.9",
+                        "version": "0.47.0",
                     },
                 }
             elif rpc_method == "ping":

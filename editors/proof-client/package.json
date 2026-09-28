@@ -1,0 +1,9 @@
+{
+  "name": "@factoryline/proof-client",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.cjs",
+  "types": "index.d.ts",
+  "scripts": { "test": "node --test test/*.test.cjs" },
+  "license": "MIT OR Apache-2.0"
+}

@@ -51,6 +51,7 @@ class FactoryLineJuniePanel(private val project: Project) : JPanel(BorderLayout(
             add(JButton("View FactoryLine taxonomy").apply { addActionListener { FactoryLineController.inspectJunieTaxonomy(project) } })
             add(JButton("Install Junie FactoryLine Pack").apply { addActionListener { FactoryLineController.installJunieFactoryLinePack(project) } })
             add(JButton("Open Repair Sandbox").apply { addActionListener { FactoryLinePanels.selectTab(project, "Repair Sandbox") } })
+            add(JButton("Open CF + ForgeLine evidence").apply { addActionListener { FactoryLinePanels.selectTab(project, "CF + ForgeLine") } })
         }
         add(controls, BorderLayout.NORTH)
         add(JBScrollPane(output), BorderLayout.CENTER)
