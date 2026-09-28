@@ -30,7 +30,9 @@ def add_parser(sub: Any) -> None:
         help="draft release tag at HEAD to exclude from prior-release cadence",
     )
     preflight.add_argument(
-        "--channel", choices=("core", "vscode", "jetbrains"), default="core",
+        "--channel",
+        choices=("core", "vscode", "jetbrains"),
+        default="core",
         help="check cadence and candidate version for this release channel",
     )
     preflight.add_argument(

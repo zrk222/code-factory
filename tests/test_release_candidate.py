@@ -20,12 +20,20 @@ def test_candidate_tag_must_match_package_version(tmp_path, monkeypatch):
 
 
 def test_editor_candidate_tag_must_match_editor_version(tmp_path, monkeypatch):
-    monkeypatch.setattr(candidate, "source_snapshot", lambda root: {
-        "version": "0.47.0", "platform_versions": {"vscode": "1.0.2", "intellij": "1.0.2"}
-    })
+    monkeypatch.setattr(
+        candidate,
+        "source_snapshot",
+        lambda root: {
+            "version": "0.47.0",
+            "platform_versions": {"vscode": "1.0.2", "intellij": "1.0.2"},
+        },
+    )
     with pytest.raises(ValueError, match="channel source version"):
         candidate.release_candidate_preflight(
-            tmp_path, Path("contract.json"), candidate_tag="vscode-v1.0.1", channel="vscode"
+            tmp_path,
+            Path("contract.json"),
+            candidate_tag="vscode-v1.0.1",
+            channel="vscode",
         )
 
 

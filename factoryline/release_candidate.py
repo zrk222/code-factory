@@ -873,22 +873,33 @@ def release_candidate_preflight(
     channel_versions = {
         "core": ("v", source.get("version")),
         "vscode": ("vscode-v", source.get("platform_versions", {}).get("vscode")),
-        "jetbrains": ("jetbrains-v", source.get("platform_versions", {}).get("intellij")),
+        "jetbrains": (
+            "jetbrains-v",
+            source.get("platform_versions", {}).get("intellij"),
+        ),
     }
     if channel not in channel_versions:
         raise ValueError("release channel must be core, vscode, or jetbrains")
     prefix, version = channel_versions[channel]
     if candidate_tag is not None and candidate_tag != f"{prefix}{version}":
-        raise ValueError("candidate tag must match the source package version" if channel == "core" else "candidate tag must match the channel source version")
+        raise ValueError(
+            "candidate tag must match the source package version"
+            if channel == "core"
+            else "candidate tag must match the channel source version"
+        )
     if channel == "core":
         release_cadence = (
             release_cadence_status(workspace, candidate_tag=candidate_tag)
-            if candidate_tag is not None else release_cadence_status(workspace)
+            if candidate_tag is not None
+            else release_cadence_status(workspace)
         )
     else:
         release_cadence = (
-            release_cadence_status(workspace, candidate_tag=candidate_tag, channel=channel)
-            if candidate_tag is not None else release_cadence_status(workspace, channel=channel)
+            release_cadence_status(
+                workspace, candidate_tag=candidate_tag, channel=channel
+            )
+            if candidate_tag is not None
+            else release_cadence_status(workspace, channel=channel)
         )
     architecture_health, architecture_check, architecture_blocker = (
         _architecture_preflight(workspace)

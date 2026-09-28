@@ -699,13 +699,19 @@ def test_editor_cadence_is_measured_from_its_own_tags(tmp_path, monkeypatch):
     }
     (tmp_path / "architecture-policy.json").write_text(json.dumps({"release": cadence}))
     monkeypatch.setattr(architecture_health, "_tracked_files", lambda root: [])
-    monkeypatch.setattr(architecture_health, "_release_train", lambda *args: {"status": "valid", "cadence": cadence})
+    monkeypatch.setattr(
+        architecture_health,
+        "_release_train",
+        lambda *args: {"status": "valid", "cadence": cadence},
+    )
 
     def git(argv, **kwargs):
         if "refs/tags/vscode-v*" in argv:
             return SimpleNamespace(stdout="")
         if "refs/tags/jetbrains-v*" in argv:
-            return SimpleNamespace(stdout="jetbrains-v0.9.6\t2026-09-10T00:00:00+00:00\n")
+            return SimpleNamespace(
+                stdout="jetbrains-v0.9.6\t2026-09-10T00:00:00+00:00\n"
+            )
         return SimpleNamespace(stdout="v0.46.9\t2026-09-26T00:00:00+00:00\n")
 
     monkeypatch.setattr(architecture_health.subprocess, "run", git)

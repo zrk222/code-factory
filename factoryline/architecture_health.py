@@ -677,7 +677,10 @@ def _recent_release_tags(
 
 
 def release_cadence_status(
-    root: Path, now: datetime | None = None, *, candidate_tag: str | None = None,
+    root: Path,
+    now: datetime | None = None,
+    *,
+    candidate_tag: str | None = None,
     channel: str = "core",
 ) -> dict[str, Any]:
     """Return release-train validity and its tag-derived admission projection."""
@@ -686,8 +689,12 @@ def release_cadence_status(
     if channel not in tag_prefixes:
         raise ValueError("release channel must be core, vscode, or jetbrains")
     if candidate_tag is not None:
-        if not re.fullmatch(re.escape(tag_prefixes[channel]) + r"[0-9]+\.[0-9]+\.[0-9]+", candidate_tag):
-            raise ValueError(f"candidate tag must use {tag_prefixes[channel]}MAJOR.MINOR.PATCH")
+        if not re.fullmatch(
+            re.escape(tag_prefixes[channel]) + r"[0-9]+\.[0-9]+\.[0-9]+", candidate_tag
+        ):
+            raise ValueError(
+                f"candidate tag must use {tag_prefixes[channel]}MAJOR.MINOR.PATCH"
+            )
 
         def commit(ref: str) -> str:
             return subprocess.run(
