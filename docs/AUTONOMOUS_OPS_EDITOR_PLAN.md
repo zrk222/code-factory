@@ -94,10 +94,12 @@ grade and must be reproduced on the final commit.
 The packet schema and gates are implemented in `factoryline.learning_loop` and
 the existing `factory learning` commands. Observer gate receipts are signed
 DSSE envelopes checked against an explicitly configured offline trust root kept
-outside the candidate workspace; unsigned receipts and untrusted signers fail
-closed. This verifies signer identity against the configured root, but it does
-not prove that a claimed remote test run occurred or authenticate a live model
-provider session. Promotion activates only task-scoped AKU instructions.
+outside the candidate workspace; runner keys need the `observer-gate-runner`
+role, reviewer keys need `specialty-ai-reviewer`, and unsigned receipts,
+untrusted signers, or wrong-purpose keys fail closed. This verifies signer
+identity against the configured root, but it does not prove that a claimed
+remote test run occurred or authenticate a live model provider session.
+Promotion activates only task-scoped AKU instructions.
 Superseded versions are immutable and rollback is owner-gated; real-task uplift
 still needs separate replay and holdout evidence.
 

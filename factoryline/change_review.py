@@ -17,8 +17,9 @@ from .review_audits import ReviewAuditError, audit_code
 CHANGE_REVIEW_SCHEMA = "factory.change_review.v1"
 # The PR delivery workflow analyzes release-sized source, docs, and media changes
 # in one exact packet. Keep a firm cap so review rendering remains bounded, while
-# accepting an ordinary multi-surface release without silently dropping paths.
-MAX_CHANGED_PATHS = 200
+# accepting broad repository cleanup and multi-surface releases without silently
+# dropping paths.
+MAX_CHANGED_PATHS = 500
 AUTHORITY = {
     "execution": False,
     "approval": False,

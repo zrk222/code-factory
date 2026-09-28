@@ -26,6 +26,8 @@ FORENSIC_SCHEMA = "factory.forensic-rejection.v1"
 OBSERVER_GATE_PAYLOAD_TYPE = "application/vnd.factory.observer-gate.v1+json"
 OBSERVER_REPLAY_SCHEMA = "factory.observer-replay.v1"
 OBSERVER_REVIEW_SCHEMA = "factory.specialty-ai-review.v1"
+OBSERVER_RUNNER_ROLE = "observer-gate-runner"
+OBSERVER_REVIEWER_ROLE = "specialty-ai-reviewer"
 AKU_SCHEMA = "hsf.aku.v1"
 MAX_MILESTONES = 50
 MAX_CRITERIA = 100
@@ -706,6 +708,11 @@ def _observer_payload(
             payload_type=OBSERVER_GATE_PAYLOAD_TYPE,
             schema=schema,
             trust_root_path=trust_root_path,
+            required_key_role=(
+                OBSERVER_REVIEWER_ROLE
+                if result["id"] == "specialty-ai-review"
+                else OBSERVER_RUNNER_ROLE
+            ),
         )
     except (EnterpriseReceiptError, OSError) as exc:
         raise LearningLoopError(
@@ -786,9 +793,7 @@ def _verify_observer_results(
     trusted_root = _observer_trust_root(Path(forensic["root"]), trust_root_path)
     for result in results:
         if result["id"] in OBSERVER_GATES:
-            _verify_observer_gate_receipt(
-                result, candidate, validator, trusted_root
-            )
+            _verify_observer_gate_receipt(result, candidate, validator, trusted_root)
 
 
 def validate_instruction_candidate(

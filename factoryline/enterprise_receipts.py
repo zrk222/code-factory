@@ -383,6 +383,27 @@ def _trusted_signer(signature: dict, trust_root: dict) -> tuple[Any, Any]:
     return key, _load_public_key(key.get("public_key"))
 
 
+def _require_key_role(signature: dict, trust_root: dict, required_role: str) -> None:
+    keyid = signature.get("keyid")
+    key = next(
+        (
+            item
+            for item in trust_root["keys"]
+            if isinstance(item, dict) and item.get("keyid") == keyid
+        ),
+        None,
+    )
+    roles = key.get("roles") if key else None
+    if not isinstance(roles, list) or not all(isinstance(role, str) for role in roles):
+        raise EnterpriseReceiptError(
+            "E_KEY_ROLE_MISMATCH", "trusted key has no valid role grants"
+        )
+    if required_role not in roles:
+        raise EnterpriseReceiptError(
+            "E_KEY_ROLE_MISMATCH", f"trusted key is not authorized for {required_role}"
+        )
+
+
 def _verify_signature(
     signature: dict,
     public_key: Any,
@@ -440,6 +461,7 @@ def verify_signed_document(
     payload_type: str,
     schema: str,
     trust_root_path: Path,
+    required_key_role: str | None = None,
 ) -> dict:
     """Verify one typed DSSE document against an explicit offline trust root.
 
@@ -452,6 +474,8 @@ def verify_signed_document(
     payload, signature = _verify_signed_document(
         Path(path), payload_type=payload_type, schema=schema, trust_root=trust_root
     )
+    if required_key_role is not None:
+        _require_key_role(signature, trust_root, required_key_role)
     return {
         "payload": payload,
         "signature": signature,

@@ -98,6 +98,9 @@ trust root; it does not independently prove that a claimed remote run occurred
 or authenticate a live AI provider session. Promotion remains a separate owner
 action. Promoted instructions are versioned and enter only the fresh,
 task-scoped worker packet; they do not rewrite the installed skill library.
+The trust root must grant `observer-gate-runner` to replay, holdout, and
+false-positive-control signing keys, and `specialty-ai-reviewer` to review
+signing keys. A key trusted for another purpose cannot satisfy these gates.
 
 The local CLI records identity strings and does not authenticate the operating
 system caller. A hosted adapter must map authenticated principals to worker,

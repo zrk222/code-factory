@@ -1253,7 +1253,9 @@ def test_app_builder_direct_and_prd_paths_preserve_blueprint_and_output_map(tmp_
     prd.write_text("# Expense Desk\n\nTrack invoice approval and payment risk.\n")
     blueprint = build_blueprint(prd.read_text(), source=str(prd), name="expense-desk")
     assert blueprint.purpose == "fintech"
-    direct = scaffold_app(blueprint, out_dir=tmp_path / "direct", prd_text=prd.read_text())
+    direct = scaffold_app(
+        blueprint, out_dir=tmp_path / "direct", prd_text=prd.read_text()
+    )
     from_prd = app_from_prd(prd, out_dir=tmp_path / "from-prd", name="expense-desk")
     assert set(direct["files"]) == set(from_prd["files"])
     assert Path(direct["output_map"]).is_file()

@@ -118,7 +118,13 @@ def _observer_candidate(tmp_path: Path):
     return task, candidate, packet_path, packet
 
 
-def _observer_gate_evidence(tmp_path: Path, packet: dict, *, signed: bool = True):
+def _observer_gate_evidence(
+    tmp_path: Path,
+    packet: dict,
+    *,
+    signed: bool = True,
+    runner_role: str = "observer-gate-runner",
+):
     trust_dir = tmp_path.parent / f"{tmp_path.name}-observer-trust"
     runner = generate_key_material(
         out_dir=trust_dir / "runner",
@@ -142,11 +148,14 @@ def _observer_gate_evidence(tmp_path: Path, packet: dict, *, signed: bool = True
                     {
                         "keyid": key["keyid"],
                         "algorithm": "ed25519",
-                        "public_key": Path(key["public_key"]).read_text(
-                            encoding="ascii"
-                        ).strip(),
+                        "public_key": Path(key["public_key"])
+                        .read_text(encoding="ascii")
+                        .strip(),
                         "identity": key["identity"],
                         "issuer": key["issuer"],
+                        "roles": [
+                            runner_role if key is runner else "specialty-ai-reviewer"
+                        ],
                     }
                     for key in (runner, reviewer)
                 ],
@@ -417,6 +426,21 @@ def test_forensic_observer_binds_packet_replay_specialty_review_and_deferred_ski
 def test_forensic_observer_rejects_unsigned_gate_receipts(tmp_path: Path):
     _, candidate, _, packet = _observer_candidate(tmp_path)
     results, trust_root = _observer_gate_evidence(tmp_path, packet, signed=False)
+    with pytest.raises(LearningLoopError, match="OBSERVER_SIGNATURE_INVALID"):
+        validate_instruction_candidate(
+            Path(candidate["path"]),
+            tmp_path,
+            "specialty-ai:cf-reviewer",
+            results,
+            observer_trust_root=trust_root,
+        )
+
+
+def test_forensic_observer_rejects_trusted_key_without_gate_role(tmp_path: Path):
+    _, candidate, _, packet = _observer_candidate(tmp_path)
+    results, trust_root = _observer_gate_evidence(
+        tmp_path, packet, runner_role="worker"
+    )
     with pytest.raises(LearningLoopError, match="OBSERVER_SIGNATURE_INVALID"):
         validate_instruction_candidate(
             Path(candidate["path"]),

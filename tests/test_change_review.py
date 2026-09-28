@@ -8,6 +8,8 @@ import pytest
 
 from factoryline.change_review import (
     ChangeReviewError,
+    MAX_CHANGED_PATHS,
+    _resolve_changed_paths,
     review_change,
     write_review_artifacts,
 )
@@ -131,7 +133,7 @@ def test_change_review_writes_only_explicit_local_artifacts(tmp_path: Path) -> N
         ["../secret.txt"],
         ["C:/secret.txt"],
         [""],
-        [f"path-{index}.py" for index in range(201)],
+        [f"path-{index}.py" for index in range(MAX_CHANGED_PATHS + 1)],
     ],
 )
 def test_change_review_rejects_unsafe_or_oversized_paths(
@@ -141,6 +143,15 @@ def test_change_review_rejects_unsafe_or_oversized_paths(
         review_change(tmp_path, changed=changed)
     assert exc.value.code in {"CHANGED_PATH_INVALID", "CHANGED_PATH_LIMIT"}
     assert not list(tmp_path.rglob("change-review-*"))
+
+
+def test_change_review_accepts_repository_wide_cleanup_path_count(
+    tmp_path: Path,
+) -> None:
+    changed = [f"products/retired-product/path-{index}.txt" for index in range(322)]
+    source, paths = _resolve_changed_paths(tmp_path, "base", changed)
+    assert source == "explicit"
+    assert paths == sorted(changed)
 
 
 def test_change_review_cli_writes_opt_in_packet_and_keeps_machine_readability(
