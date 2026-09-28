@@ -283,7 +283,7 @@ def check_repository_scope(
         "scope_limits": [
             "This check classifies paths only; it cannot determine semantic relevance from file contents.",
             "Deletions are allowed so a change can remove files outside the repository's product boundary.",
-            "The pull-request workflow reads the policy from the base commit so a candidate cannot relax its own gate.",
+            "Trusted enforcement requires the checker and policy to come from the protected base revision.",
         ],
     }
 
