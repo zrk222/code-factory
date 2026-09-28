@@ -9,7 +9,9 @@ import pytest
 from factoryline.change_review import (
     ChangeReviewError,
     MAX_CHANGED_PATHS,
+    RepositoryScopeError,
     _resolve_changed_paths,
+    check_repository_scope,
     review_change,
     write_review_artifacts,
 )
@@ -275,3 +277,209 @@ def test_change_review_explicit_paths_bypass_git_collection(
 
     assert review["input_source"] == "explicit"
     assert review["changed_paths"] == ["src/only.py"]
+
+
+SCOPE_POLICY = {
+    "schema": "factory.repository_scope.v1",
+    "blocked_path_segments": [
+        "agent-cloud",
+        "agentcloud",
+        "agent-oven",
+        "agentoven",
+        "factory-memory-core",
+        "factory-trust-core",
+    ],
+}
+
+
+def _scope_git(root: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
+
+def _scope_commit(root: Path, message: str) -> None:
+    _scope_git(root, "add", "--all")
+    _scope_git(root, "commit", "-m", message)
+
+
+def _scope_repository(root: Path) -> None:
+    _scope_git(root, "init")
+    _scope_git(root, "config", "user.email", "factoryline@example.test")
+    _scope_git(root, "config", "user.name", "FactoryLine Test")
+    (root / ".factory").mkdir()
+    (root / ".factory/repository-scope.json").write_text(
+        json.dumps(SCOPE_POLICY), encoding="utf-8"
+    )
+    (root / "agent-oven").mkdir()
+    (root / "agent-oven/old.ts").write_text("old product\n", encoding="utf-8")
+    (root / "factoryline").mkdir()
+    (root / "factoryline/module.py").write_text("before\n", encoding="utf-8")
+    _scope_commit(root, "base")
+
+
+def test_scope_guard_blocks_reserved_names_and_preserves_historical_receipts(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / ".factory/repository-scope.json").write_text(
+        json.dumps(SCOPE_POLICY), encoding="utf-8"
+    )
+
+    review = check_repository_scope(
+        tmp_path,
+        changed_paths=[
+            "products/agent_cloud/src/server.ts",
+            "examples/factory-trust-core-client/index.ts",
+            "adr/agent-cloud-budget-enforcement-v1.md",
+            "docs/AgentOven-readiness.md",
+            "evidence/self-audit/quality-refactor-2026-09-25.json",
+            "factoryline/graph_ops.py",
+        ],
+    )
+
+    assert review["state"] == "blocked"
+    assert review["marker"] == "REPOSITORY_SCOPE_BLOCKED"
+    assert review["blocked_paths"] == [
+        {
+            "path": "adr/agent-cloud-budget-enforcement-v1.md",
+            "matched_segment": "agent-cloud",
+        },
+        {
+            "path": "docs/AgentOven-readiness.md",
+            "matched_segment": "agentoven",
+        },
+        {
+            "path": "examples/factory-trust-core-client/index.ts",
+            "matched_segment": "factory-trust-core",
+        },
+        {
+            "path": "products/agent_cloud/src/server.ts",
+            "matched_segment": "agent-cloud",
+        },
+    ]
+    assert review["next_action"]["action"] == "remove_or_rehome_unrelated_product_files"
+
+
+def test_scope_guard_reads_trusted_base_policy_and_allows_cleanup_deletions(
+    tmp_path: Path,
+) -> None:
+    _scope_repository(tmp_path)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    (tmp_path / "agent-oven/old.ts").unlink()
+    (tmp_path / "factoryline/module.py").write_text("after\n", encoding="utf-8")
+    (tmp_path / "products/agent-cloud/src").mkdir(parents=True)
+    (tmp_path / "products/agent-cloud/src/server.ts").write_text(
+        "separate product\n", encoding="utf-8"
+    )
+    (tmp_path / ".factory/repository-scope.json").write_text(
+        json.dumps({**SCOPE_POLICY, "blocked_path_segments": []}), encoding="utf-8"
+    )
+    _scope_commit(tmp_path, "change scope")
+
+    review = check_repository_scope(tmp_path, base=base, policy_ref=base)
+
+    assert review["state"] == "blocked"
+    assert review["policy_ref"] == base
+    assert review["changed_paths"] == [
+        ".factory/repository-scope.json",
+        "factoryline/module.py",
+        "products/agent-cloud/src/server.ts",
+    ]
+    assert review["blocked_paths"][0]["path"] == "products/agent-cloud/src/server.ts"
+
+
+def test_scope_guard_allows_removal_without_hiding_other_changes(
+    tmp_path: Path,
+) -> None:
+    _scope_repository(tmp_path)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    (tmp_path / "agent-oven/old.ts").unlink()
+    (tmp_path / "factoryline/module.py").write_text("after\n", encoding="utf-8")
+    _scope_commit(tmp_path, "remove unrelated file")
+
+    review = check_repository_scope(tmp_path, base=base, policy_ref=base)
+
+    assert review["state"] == "clear"
+    assert review["changed_paths"] == ["factoryline/module.py"]
+
+
+@pytest.mark.parametrize("path", ["../secret.py", "C:/secret.py", "", "/secret.py"])
+def test_scope_guard_rejects_unsafe_paths(tmp_path: Path, path: str) -> None:
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / ".factory/repository-scope.json").write_text(
+        json.dumps(SCOPE_POLICY), encoding="utf-8"
+    )
+
+    with pytest.raises(RepositoryScopeError) as exc:
+        check_repository_scope(tmp_path, changed_paths=[path])
+
+    assert exc.value.code == "SCOPE_PATH_INVALID"
+
+
+def test_scope_guard_cli_returns_blocking_machine_readable_result(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / ".factory/repository-scope.json").write_text(
+        json.dumps(SCOPE_POLICY), encoding="utf-8"
+    )
+
+    result = main(
+        [
+            "change",
+            "scope-check",
+            "--root",
+            str(tmp_path),
+            "--changed",
+            "products/agent-cloud/app.ts",
+            "--json",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert result == 2
+    assert output["marker"] == "REPOSITORY_SCOPE_BLOCKED"
+    assert output["blocked_paths"][0]["path"] == "products/agent-cloud/app.ts"
+
+
+def test_standard_change_review_applies_configured_product_boundary(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / ".factory/repository-scope.json").write_text(
+        json.dumps(SCOPE_POLICY), encoding="utf-8"
+    )
+
+    review = review_change(
+        tmp_path,
+        changed=["factoryline/graph_ops.py", "products/agent-cloud/api.ts"],
+    )
+
+    assert review["repository_scope"]["state"] == "blocked"
+    assert review["findings"][0]["kind"] == "repository_scope_violation"
+    assert review["next_action"] == {
+        "action": "remove_or_rehome_unrelated_product_files",
+        "reason": "Changed paths cross a reserved repository product boundary.",
+        "paths": ["products/agent-cloud/api.ts"],
+    }
+    assert any(
+        "products/agent-cloud/api.ts" in claim for claim in review["unproven_claims"]
+    )
+
+
+def test_scope_guard_rejects_an_untrusted_policy_revision(tmp_path: Path) -> None:
+    with pytest.raises(RepositoryScopeError) as exc:
+        check_repository_scope(tmp_path, changed_paths=[], policy_ref="not-a-ref")
+
+    assert exc.value.code == "SCOPE_POLICY_UNAVAILABLE"

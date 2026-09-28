@@ -39,3 +39,12 @@ authorize a marketplace upload or establish provider approval.
 
 Entries in `context/PROGRESS.md` record pipeline activity. `GATE`, `PROOF`, and
 `DONE` entries do not establish human authorship or independent review.
+
+## Product boundary checks
+
+Pull request CI checks added, modified, and renamed paths against
+`.factory/repository-scope.json`. Keep unrelated products in their own
+repositories; deleting an out-of-scope path is allowed so accidental additions
+can be cleaned up. After the initial policy is merged, the workflow reads it
+from the base commit so a candidate cannot relax its own boundary. Run the same
+check locally with `factory change scope-check --root . --base origin/main`.

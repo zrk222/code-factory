@@ -6,6 +6,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import re
+import subprocess
 from typing import Any
 
 from .coverage import requirement_coverage
@@ -15,6 +16,8 @@ from .review_audits import ReviewAuditError, audit_code
 
 
 CHANGE_REVIEW_SCHEMA = "factory.change_review.v1"
+REPOSITORY_SCOPE_SCHEMA = "factory.repository_scope.v1"
+REPOSITORY_SCOPE_REVIEW_SCHEMA = "factory.repository_scope_review.v1"
 # The PR delivery workflow analyzes release-sized source, docs, and media changes
 # in one exact packet. Keep a firm cap so review rendering remains bounded, while
 # accepting broad repository cleanup and multi-surface releases without silently
@@ -38,6 +41,231 @@ class ChangeReviewError(ValueError):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
+
+
+class RepositoryScopeError(ValueError):
+    """A malformed scope policy or unavailable changed-path source."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+def _scope_policy_path(value: object) -> str:
+    if not isinstance(value, str):
+        raise RepositoryScopeError("SCOPE_PATH_INVALID", "changed path must be text")
+    path = value.replace("\\", "/").strip().removeprefix("./")
+    if (
+        not path
+        or path.startswith("/")
+        or re.match(r"^[A-Za-z]:/", path)
+        or any(part in {"", ".", ".."} for part in path.split("/"))
+    ):
+        raise RepositoryScopeError(
+            "SCOPE_PATH_INVALID", "changed paths must be safe workspace-relative paths"
+        )
+    return path
+
+
+def _scope_segment(value: object) -> str:
+    if not isinstance(value, str) or not value.strip() or "/" in value or "\\" in value:
+        raise RepositoryScopeError(
+            "SCOPE_POLICY_INVALID", "blocked_path_segments must contain path segments"
+        )
+    segment = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+    if not segment or segment in {".", ".."}:
+        raise RepositoryScopeError(
+            "SCOPE_POLICY_INVALID", "blocked path segment is invalid"
+        )
+    return segment
+
+
+def _validate_scope_policy(value: object) -> dict[str, Any]:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"schema", "blocked_path_segments"}
+        or value.get("schema") != REPOSITORY_SCOPE_SCHEMA
+        or not isinstance(value.get("blocked_path_segments"), list)
+    ):
+        raise RepositoryScopeError(
+            "SCOPE_POLICY_INVALID",
+            f"policy must contain schema {REPOSITORY_SCOPE_SCHEMA} and blocked_path_segments",
+        )
+    segments = [_scope_segment(item) for item in value["blocked_path_segments"]]
+    if len(segments) != len(set(segments)):
+        raise RepositoryScopeError(
+            "SCOPE_POLICY_INVALID", "blocked_path_segments must be unique"
+        )
+    return {"schema": REPOSITORY_SCOPE_SCHEMA, "blocked_path_segments": segments}
+
+
+def _read_scope_policy(
+    root: Path, policy_path: str, policy_ref: str | None
+) -> dict[str, Any]:
+    relative = _scope_policy_path(policy_path)
+    if policy_ref:
+        if policy_ref.startswith("-") or any(char in policy_ref for char in "\r\n\0"):
+            raise RepositoryScopeError("SCOPE_POLICY_INVALID", "policy ref is invalid")
+        try:
+            result = subprocess.run(
+                ["git", "show", f"{policy_ref}:{relative}"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise RepositoryScopeError(
+                "SCOPE_POLICY_UNAVAILABLE",
+                f"cannot read {relative} from trusted policy ref {policy_ref}",
+            ) from exc
+        raw = result.stdout
+    else:
+        candidate = (root / relative).resolve()
+        if not candidate.is_relative_to(root):
+            raise RepositoryScopeError(
+                "SCOPE_POLICY_INVALID", "policy path must remain inside the repository"
+            )
+        try:
+            raw = candidate.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise RepositoryScopeError(
+                "SCOPE_POLICY_UNAVAILABLE", f"cannot read scope policy: {exc}"
+            ) from exc
+    try:
+        return _validate_scope_policy(json.loads(raw))
+    except json.JSONDecodeError as exc:
+        raise RepositoryScopeError(
+            "SCOPE_POLICY_INVALID", "scope policy is not valid JSON"
+        ) from exc
+
+
+def _git_scope_paths(root: Path, base: str) -> list[str]:
+    if not base or base.startswith("-") or any(char in base for char in "\r\n\0"):
+        raise RepositoryScopeError("SCOPE_BASE_INVALID", "base ref is invalid")
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-status", "-z", "--find-renames", base, "HEAD"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RepositoryScopeError(
+            "SCOPE_DIFF_UNAVAILABLE", f"cannot compare changes with {base}"
+        ) from exc
+    try:
+        fields = result.stdout.decode("utf-8", errors="strict").split("\0")
+    except UnicodeDecodeError as exc:
+        raise RepositoryScopeError(
+            "SCOPE_DIFF_INVALID", "Git returned a path that is not valid UTF-8"
+        ) from exc
+    paths: list[str] = []
+    index = 0
+    while index < len(fields) and fields[index]:
+        status = fields[index]
+        index += 1
+        if status.startswith(("R", "C")):
+            if index + 1 >= len(fields):
+                raise RepositoryScopeError(
+                    "SCOPE_DIFF_INVALID", "Git returned a truncated rename record"
+                )
+            index += 1
+            path = fields[index]
+            index += 1
+        else:
+            if index >= len(fields):
+                raise RepositoryScopeError(
+                    "SCOPE_DIFF_INVALID", "Git returned a truncated path record"
+                )
+            path = fields[index]
+            index += 1
+            if status.startswith("D"):
+                continue
+        if status.startswith(("A", "M", "R", "C", "T")):
+            paths.append(path)
+    return paths
+
+
+def _matches_scope_segment(path: str, blocked: set[str]) -> str | None:
+    for segment in path.split("/"):
+        normalized = re.sub(r"[^a-z0-9]+", "-", segment.casefold()).strip("-")
+        tokens = normalized.split("-")
+        for candidate in blocked:
+            blocked_tokens = candidate.split("-")
+            if any(
+                tokens[index : index + len(blocked_tokens)] == blocked_tokens
+                for index in range(len(tokens) - len(blocked_tokens) + 1)
+            ):
+                return candidate
+    return None
+
+
+def check_repository_scope(
+    root: Path,
+    *,
+    policy_path: str = ".factory/repository-scope.json",
+    policy_ref: str | None = None,
+    base: str | None = None,
+    changed_paths: list[str] | None = None,
+) -> dict[str, Any]:
+    """Compare added or modified paths against a repository's trusted path policy."""
+    workspace = Path(root).resolve()
+    if changed_paths is None:
+        if base is None:
+            raise RepositoryScopeError(
+                "SCOPE_DIFF_UNAVAILABLE", "provide changed paths or a base ref"
+            )
+        raw_paths = _git_scope_paths(workspace, base)
+    else:
+        raw_paths = changed_paths
+    paths = sorted({_scope_policy_path(path) for path in raw_paths})
+    policy = _read_scope_policy(workspace, policy_path, policy_ref)
+    blocked_segments = set(policy["blocked_path_segments"])
+    blocked_paths = [
+        {"path": path, "matched_segment": match}
+        for path in paths
+        if (match := _matches_scope_segment(path, blocked_segments)) is not None
+    ]
+    state = "blocked" if blocked_paths else "clear"
+    return {
+        "schema": REPOSITORY_SCOPE_REVIEW_SCHEMA,
+        "marker": "REPOSITORY_SCOPE_BLOCKED"
+        if blocked_paths
+        else "REPOSITORY_SCOPE_CLEAR",
+        "state": state,
+        "base": base,
+        "policy_path": policy_path.replace("\\", "/"),
+        "policy_ref": policy_ref,
+        "policy_sha256": _sha(policy).lower(),
+        "changed_paths": paths,
+        "blocked_paths": blocked_paths,
+        "next_action": (
+            {
+                "action": "remove_or_rehome_unrelated_product_files",
+                "paths": [item["path"] for item in blocked_paths],
+                "reason": "These paths match a product boundary reserved by the trusted repository policy.",
+            }
+            if blocked_paths
+            else {
+                "action": "continue_review",
+                "reason": "No changed path matched a reserved product boundary.",
+            }
+        ),
+        "authority": {
+            "execution": False,
+            "approval": False,
+            "merge": False,
+            "publication": False,
+            "deployment": False,
+            "credential": False,
+        },
+        "scope_limits": [
+            "This check classifies paths only; it cannot determine semantic relevance from file contents.",
+            "Deletions are allowed so a change can remove files outside the repository's product boundary.",
+            "The pull-request workflow reads the policy from the base commit so a candidate cannot relax its own gate.",
+        ],
+    }
 
 
 def _canonical(value: object) -> bytes:
@@ -188,6 +416,109 @@ def _unproven_claims(impact: dict[str, Any], coverage: dict[str, Any]) -> list[s
     ]
 
 
+def _repository_scope_review(
+    workspace: Path, changed_paths: list[str]
+) -> dict[str, Any]:
+    policy = workspace / ".factory" / "repository-scope.json"
+    try:
+        return check_repository_scope(workspace, changed_paths=changed_paths)
+    except RepositoryScopeError as exc:
+        if (
+            exc.code == "SCOPE_POLICY_UNAVAILABLE"
+            and not policy.exists()
+            and not policy.is_symlink()
+        ):
+            return {
+                "schema": "factory.repository_scope_review.v1",
+                "state": "not_configured",
+                "policy_path": ".factory/repository-scope.json",
+                "blocked_paths": [],
+            }
+        return {
+            "schema": "factory.repository_scope_review.error.v1",
+            "state": "unavailable",
+            "policy_path": ".factory/repository-scope.json",
+            "error": {"code": exc.code, "message": str(exc)},
+            "blocked_paths": [],
+        }
+
+
+def _apply_repository_scope_finding(
+    scope: dict[str, Any], findings: list[dict[str, Any]], next_action: dict[str, Any]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if scope["state"] == "blocked":
+        blocked = scope["blocked_paths"]
+        finding = _finding(
+            "repository_scope_violation",
+            "blocking",
+            "Changed paths cross a reserved repository product boundary.",
+            paths=[item["path"] for item in blocked],
+            matches=blocked,
+        )
+        return [finding, *findings], {
+            "action": "remove_or_rehome_unrelated_product_files",
+            "reason": finding["message"],
+            "paths": [item["path"] for item in blocked],
+        }
+    if scope["state"] == "unavailable":
+        finding = _finding(
+            "repository_scope_unavailable",
+            "blocking",
+            "The configured repository scope policy could not be verified.",
+            error=scope["error"],
+        )
+        return [finding, *findings], {
+            "action": "repair_repository_scope_policy",
+            "reason": finding["message"],
+            "policy_path": scope["policy_path"],
+        }
+    return findings, next_action
+
+
+def _apply_code_audit(
+    workspace: Path,
+    audit_policy: str | None,
+    findings: list[dict[str, Any]],
+    next_action: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    policy_path = audit_policy or ".factory/review-audits.json"
+    code_audits: dict[str, Any] = {
+        "state": "not_configured",
+        "unconfigured_tools": ["patterns", "guard-paths"],
+    }
+    if audit_policy is not None or (workspace / policy_path).exists():
+        try:
+            code_audits = audit_code(workspace, policy_path)
+        except ReviewAuditError as exc:
+            raise ChangeReviewError(exc.code, str(exc)) from exc
+        for item in code_audits["findings"]:
+            findings.append(
+                _finding(item["code"], "review", item["message"], audit=item)
+            )
+        if code_audits["state"] == "incomplete":
+            findings.append(
+                _finding(
+                    "code_audit_incomplete",
+                    "review",
+                    "Code audit coverage has unresolved analysis gaps.",
+                )
+            )
+    if (
+        code_audits["state"] != "no_structural_findings"
+        and next_action["action"] == "review_packet"
+    ):
+        findings = [
+            finding
+            for finding in findings
+            if finding["kind"] != "ready_for_human_review"
+        ]
+        next_action = {
+            "action": "review_code_audit",
+            "reason": "Resolve pattern, guard-path or analysis-gap findings.",
+        }
+    return code_audits, findings, next_action
+
+
 def _mermaid_label(value: object) -> str:
     text = re.sub(r"[^A-Za-z0-9._/: -]+", "?", str(value)).strip()
     return (text or "unknown")[:96]
@@ -278,37 +609,21 @@ def review_change(
     coverage = requirement_coverage(workspace)
     risk = risk_for_paths(changed_paths)
     findings, next_action = _findings(impact, coverage, risk)
-    policy_path = audit_policy or ".factory/review-audits.json"
-    code_audits: dict = {
-        "state": "not_configured",
-        "unconfigured_tools": ["patterns", "guard-paths"],
-    }
-    if audit_policy is not None or (workspace / policy_path).exists():
-        try:
-            code_audits = audit_code(workspace, policy_path)
-        except ReviewAuditError as exc:
-            raise ChangeReviewError(exc.code, str(exc)) from exc
-        for item in code_audits["findings"]:
-            findings.append(
-                _finding(item["code"], "review", item["message"], audit=item)
-            )
-        if code_audits["state"] == "incomplete":
-            findings.append(
-                _finding(
-                    "code_audit_incomplete",
-                    "review",
-                    "Code audit coverage has unresolved analysis gaps.",
-                )
-            )
-        if (
-            code_audits["state"] != "no_structural_findings"
-            and next_action["action"] == "review_packet"
-        ):
-            findings = [f for f in findings if f["kind"] != "ready_for_human_review"]
-            next_action = {
-                "action": "review_code_audit",
-                "reason": "Resolve pattern, guard-path or analysis-gap findings.",
-            }
+    repository_scope = _repository_scope_review(workspace, changed_paths)
+    findings, next_action = _apply_repository_scope_finding(
+        repository_scope, findings, next_action
+    )
+    code_audits, findings, next_action = _apply_code_audit(
+        workspace, audit_policy, findings, next_action
+    )
+    scope_claims = [
+        f"Repository scope policy blocks `{item['path']}` (reserved segment `{item['matched_segment']}`)."
+        for item in repository_scope["blocked_paths"]
+    ]
+    if repository_scope["state"] == "unavailable":
+        scope_claims.append(
+            "Repository scope policy is configured but could not be verified."
+        )
     core = {
         "schema": CHANGE_REVIEW_SCHEMA,
         "markers": [
@@ -325,6 +640,11 @@ def review_change(
             ["DIFF_TO_PROOF_UNMATCHED_PRIORITY"]
             if impact["unmatched_changed_paths"]
             else []
+        )
+        + (
+            ["DIFF_TO_PROOF_REPOSITORY_SCOPE_ENFORCED"]
+            if repository_scope["state"] != "not_configured"
+            else []
         ),
         "root": str(workspace),
         "base": base,
@@ -334,9 +654,11 @@ def review_change(
         "coverage": coverage,
         "risk": risk,
         "code_audits": code_audits,
+        "repository_scope": repository_scope,
         "findings": findings,
         "next_action": next_action,
         "unproven_claims": _unproven_claims(impact, coverage)
+        + scope_claims
         + [
             f"Pattern and guard-path audit state: {code_audits['state']}; no runtime correctness or release approval is implied."
         ],
@@ -345,6 +667,7 @@ def review_change(
             "The review analyzes existing local facts and never executes a gate or replay plan.",
             "Risk recommendations are plan-only and do not prove a test has run.",
             "Missing coverage, unmatched paths, stale proofs, and source errors remain explicit.",
+            "Repository product-boundary checks are path-based and run when a workspace scope policy exists.",
         ],
     }
     review_sha256 = _sha(core)

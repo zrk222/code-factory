@@ -51,16 +51,16 @@ for (const source of [hookSource, hookLauncherSource, mcpSource, auditMcpSource,
   if (!existsSync(source)) throw new Error(`Required Muse extension file is missing: ${source}`);
 }
 
-function loadSettings() {
-  const settingsPath = path.join(museHome, 'settings.json');
-  let settings = { schema_version: 1 };
-  if (existsSync(settingsPath)) {
-    try {
-      settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
-    } catch (error) {
-      throw new Error(`Refusing to replace invalid Muse settings: ${error.message}`);
-    }
+function readSettings(settingsPath) {
+  if (!existsSync(settingsPath)) return { schema_version: 1 };
+  try {
+    return JSON.parse(readFileSync(settingsPath, 'utf8'));
+  } catch (error) {
+    throw new Error(`Refusing to replace invalid Muse settings: ${error.message}`);
   }
+}
+
+function validateSettings(settings) {
   if (!settings || typeof settings !== 'object' || Array.isArray(settings) || settings.schema_version !== 1) {
     throw new Error('Muse settings must be a JSON object with schema_version 1.');
   }
@@ -69,19 +69,38 @@ function loadSettings() {
       throw new Error(`Refusing to replace malformed Muse settings member: ${key}`);
     }
   }
+}
+
+function loadSettings() {
+  const settings = readSettings(path.join(museHome, 'settings.json'));
+  validateSettings(settings);
   return settings;
 }
 
-function addHook(settings, event, matcher, statusMessage) {
+function hookGroups(settings, event) {
   settings.hooks ||= {};
   const groups = settings.hooks[event] ?? [];
   if (!Array.isArray(groups)) throw new Error(`Refusing to replace malformed hooks.${event}.`);
+  return groups;
+}
+
+function findOrCreateGroup(groups, matcher, event) {
   let group = groups.find((item) => (item.matcher ?? '') === (matcher ?? ''));
   if (!group) {
     group = matcher ? { matcher, hooks: [] } : { hooks: [] };
     groups.push(group);
   }
   if (!Array.isArray(group.hooks)) throw new Error(`Refusing to replace malformed hooks.${event} matcher group.`);
+  return group;
+}
+
+function getHookGroup(settings, event, matcher) {
+  const groups = hookGroups(settings, event);
+  const group = findOrCreateGroup(groups, matcher, event);
+  return { groups, group };
+}
+
+function upsertHook(group, event, statusMessage) {
   const command = `node "${hookTarget.replaceAll('"', '\\"')}"`;
   const timeout = event === 'Stop' ? 10 : 240;
   const managedHook = group.hooks.find((handler) => handler.type === 'command' && handler.command === command);
@@ -89,11 +108,15 @@ function addHook(settings, event, matcher, statusMessage) {
     managedHook.timeout = timeout;
     managedHook.statusMessage = statusMessage;
   } else group.hooks.push({ type: 'command', command, timeout, statusMessage });
+}
+
+function addHook(settings, event, matcher, statusMessage) {
+  const { groups, group } = getHookGroup(settings, event, matcher);
+  upsertHook(group, event, statusMessage);
   settings.hooks[event] = groups;
 }
 
-function configuredSettings() {
-  const settings = loadSettings();
+function removeObsoleteHooks(settings) {
   const obsoleteHookCommand = `node "${path.join(installRoot, 'hooks', 'build-audit.mjs').replaceAll('"', '\\"')}"`;
   for (const groups of Object.values(settings.hooks || {})) {
     if (!Array.isArray(groups)) continue;
@@ -104,9 +127,15 @@ function configuredSettings() {
       ));
     }
   }
+}
+
+function configureHooks(settings) {
   addHook(settings, 'PostToolUse', 'Bash|shell|Edit|Write|MultiEdit|NotebookEdit|ApplyPatch', 'Running bounded Code Factory and ForgeLine checks; full-depth penetration remains incomplete');
   addHook(settings, 'PostToolUseFailure', 'Bash|shell|Edit|Write|MultiEdit|NotebookEdit|ApplyPatch', 'Checking bounded audit results and actionable resolutions after a failed build');
   addHook(settings, 'Stop', undefined, 'Checking final audit outcomes and required next actions');
+}
+
+function configureMcp(settings) {
   settings.mcpServers ||= {};
   const desired = {
     type: 'stdio',
@@ -128,6 +157,13 @@ function configuredSettings() {
     }
     settings.mcpServers[id] = config;
   }
+}
+
+function configuredSettings() {
+  const settings = loadSettings();
+  removeObsoleteHooks(settings);
+  configureHooks(settings);
+  configureMcp(settings);
   return settings;
 }
 

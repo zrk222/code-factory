@@ -20,6 +20,20 @@ function safeText(value, max) {
     .join('').trim();
 }
 
+function receiptMatchesState(receipt, root, current) {
+  const { sha256, hmacSha256, ...body } = receipt;
+  const payload = JSON.stringify(body);
+  const actual = createHash('sha256').update(payload).digest('hex');
+  const mac = receiptMac(payload);
+  const authentic = typeof sha256 === 'string' && sha256 === actual && typeof hmacSha256 === 'string' &&
+    /^[a-f0-9]{64}$/.test(hmacSha256) && timingSafeEqual(Buffer.from(hmacSha256, 'hex'), Buffer.from(mac, 'hex'));
+  const currentReceipt = receipt.schemaVersion === 'muse.cf-build-review.v2' && receipt.workspace === root &&
+    receipt.head === current.head && receipt.worktreeSha256 === current.worktreeSha256 &&
+    receipt.policySha256 === current.policySha256 && Number.isFinite(Date.parse(receipt.expiresAt)) &&
+    Date.parse(receipt.expiresAt) > Date.now();
+  return authentic && currentReceipt;
+}
+
 function readCurrentReceipt(workspace) {
   const root = realpathSync(workspace);
   const current = gitState(root);
@@ -28,17 +42,7 @@ function readCurrentReceipt(workspace) {
   const file = path.join(dir, `${createHash('sha256').update(root).digest('hex')}.json`);
   if (statSync(file).size > MAX_RECEIPT_BYTES) throw new Error('Audit receipt exceeds size limit.');
   const receipt = JSON.parse(readFileSync(file, 'utf8'));
-  const { sha256, hmacSha256, ...body } = receipt;
-  const payload = JSON.stringify(body);
-  const actual = createHash('sha256').update(payload).digest('hex');
-  const mac = receiptMac(payload);
-  if (typeof sha256 !== 'string' || sha256 !== actual ||
-      typeof hmacSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(hmacSha256) ||
-      !timingSafeEqual(Buffer.from(hmacSha256, 'hex'), Buffer.from(mac, 'hex')) ||
-      receipt.schemaVersion !== 'muse.cf-build-review.v2' || receipt.workspace !== root ||
-      receipt.head !== current.head || receipt.worktreeSha256 !== current.worktreeSha256 ||
-      receipt.policySha256 !== current.policySha256 ||
-      !Number.isFinite(Date.parse(receipt.expiresAt)) || Date.parse(receipt.expiresAt) <= Date.now()) {
+  if (!receiptMatchesState(receipt, root, current)) {
     throw new Error('Audit receipt is stale, tampered, expired, or for another worktree.');
   }
   return receipt;
@@ -67,13 +71,16 @@ function safeFindingPath(value) {
   return candidate || 'unknown';
 }
 
-function normalizeFinding(row) {
+function normalizeSeverity(row) {
   const severity = String(row?.severity || '').toLowerCase();
-  const safeSeverity = ['critical', 'high', 'medium', 'low', 'info'].includes(severity) ? severity : 'info';
+  return ['critical', 'high', 'medium', 'low', 'info'].includes(severity) ? severity : 'info';
+}
+
+function normalizeFinding(row) {
   return {
     path: safeFindingPath(row?.path),
     line: Number.isInteger(row?.line) && row.line > 0 ? row.line : 0,
-    severity: safeSeverity,
+    severity: normalizeSeverity(row),
     title: safeText(row?.code || 'finding', 160) || 'finding',
     resolution: safeText(row?.action || 'Inspect the finding at its source and rerun the lane.', 500) || 'Inspect and rerun.',
     lane: laneFor(row?.lane),
@@ -113,19 +120,15 @@ export function snapshotFromReceipt(receipt, repository) {
     outcomes, findings, coverage };
 }
 
-async function main() {
-  const [workspace, repository, endpoint] = process.argv.slice(2);
-  if (!workspace || !repository || !endpoint) {
-    throw new Error('Usage: node sync-meta-connector.mjs <workspace> <owner/repo> <--dry-run|https://host/v1/audits>');
-  }
-  const snapshot = snapshotFromReceipt(readCurrentReceipt(workspace), repository);
-  if (endpoint === '--dry-run') {
-    process.stdout.write(`${JSON.stringify(snapshot)}\n`);
-    return;
-  }
+function validateEndpoint(endpoint) {
   const url = new URL(endpoint);
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash ||
       !url.pathname.endsWith('/v1/audits')) throw new Error('Endpoint must be credential-free HTTPS /v1/audits.');
+  return url;
+}
+
+async function uploadSnapshot(snapshot, endpoint) {
+  const url = validateEndpoint(endpoint);
   const token = process.env.FACTORY_META_ACCESS_TOKEN;
   if (!token || token.length > 8192) throw new Error('FACTORY_META_ACCESS_TOKEN is required.');
   const response = await fetch(url, { method: 'POST', redirect: 'error',
@@ -135,6 +138,17 @@ async function main() {
   const result = await response.json();
   if (!result.id || !result.snapshot_sha256) throw new Error('Meta connector response is incomplete.');
   process.stdout.write(`${JSON.stringify({ id: result.id, snapshot_sha256: result.snapshot_sha256, status: 'uploaded' })}\n`);
+}
+
+async function main() {
+  const [workspace, repository, endpoint] = process.argv.slice(2);
+  if (!workspace || !repository || !endpoint) throw new Error('Usage: node sync-meta-connector.mjs <workspace> <owner/repo> <--dry-run|https://host/v1/audits>');
+  const snapshot = snapshotFromReceipt(readCurrentReceipt(workspace), repository);
+  if (endpoint === '--dry-run') {
+    process.stdout.write(`${JSON.stringify(snapshot)}\n`);
+    return;
+  }
+  await uploadSnapshot(snapshot, endpoint);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

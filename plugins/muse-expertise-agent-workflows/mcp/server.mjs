@@ -43,6 +43,36 @@ function error(id, code, message) {
   return { jsonrpc: '2.0', id: id ?? null, error: { code, message } };
 }
 
+function validCallParams(params) {
+  return Boolean(params && typeof params.name === 'string' && params.arguments &&
+    typeof params.arguments === 'object' && !Array.isArray(params.arguments));
+}
+
+function validWorkflowArgs(args) {
+  const invalidKeys = Object.keys(args).some((key) => !['request', 'sourceRefs'].includes(key));
+  const invalidRequest = typeof args.request !== 'string' || args.request.trim() !== args.request ||
+    args.request.length < 1 || args.request.length > 4000;
+  const refs = args.sourceRefs;
+  const invalidRefs = refs !== undefined && (!Array.isArray(refs) || refs.length > 20 ||
+    refs.some((ref) => typeof ref !== 'string' || ref.length > 260 || ref.trim() !== ref));
+  return !invalidKeys && !invalidRequest && !invalidRefs;
+}
+
+function workflowPacket(name, workflow, args) {
+  return {
+    schemaVersion: 'expertise.muse-workflow.v1',
+    status: 'prepared_for_muse_review',
+    workflow: name,
+    skillId: workflow.skill,
+    title: workflow.title,
+    request: args.request,
+    sourceRefs: args.sourceRefs || [],
+    requiredInputs: workflow.inputs,
+    boundaries: workflow.limits,
+    execution: 'Muse agent performs an advisory review from authorized supplied context; this MCP tool does not fetch data or call Expertise.ai.',
+  };
+}
+
 function handle(message) {
   if (!message || message.jsonrpc !== '2.0' || typeof message.method !== 'string') {
     return error(message?.id, -32600, 'Invalid Request');
@@ -59,31 +89,18 @@ function handle(message) {
   if (message.method !== 'tools/call') return error(message.id, -32601, 'Method not found');
 
   const params = message.params;
-  if (!params || typeof params.name !== 'string' || !params.arguments || typeof params.arguments !== 'object' || Array.isArray(params.arguments)) {
+  if (!validCallParams(params)) {
     return error(message.id, -32602, 'Invalid params');
   }
   const workflow = Object.values(workflows).find((item) => item.tool === params.name);
   if (!workflow) return result(message.id, { content: [{ type: 'text', text: 'unknown_tool' }], isError: true });
 
   const args = params.arguments;
-  if (Object.keys(args).some((key) => !['request', 'sourceRefs'].includes(key)) ||
-      typeof args.request !== 'string' || args.request.trim() !== args.request || args.request.length < 1 || args.request.length > 4000 ||
-      (args.sourceRefs !== undefined && (!Array.isArray(args.sourceRefs) || args.sourceRefs.length > 20 || args.sourceRefs.some((ref) => typeof ref !== 'string' || ref.length > 260 || ref.trim() !== ref)))) {
+  if (!validWorkflowArgs(args)) {
     return result(message.id, { content: [{ type: 'text', text: 'invalid_workflow_request' }], isError: true });
   }
 
-  const packet = {
-    schemaVersion: 'expertise.muse-workflow.v1',
-    status: 'prepared_for_muse_review',
-    workflow: params.name,
-    skillId: workflow.skill,
-    title: workflow.title,
-    request: args.request,
-    sourceRefs: args.sourceRefs || [],
-    requiredInputs: workflow.inputs,
-    boundaries: workflow.limits,
-    execution: 'Muse agent performs an advisory review from authorized supplied context; this MCP tool does not fetch data or call Expertise.ai.',
-  };
+  const packet = workflowPacket(params.name, workflow, args);
   return result(message.id, { content: [{ type: 'text', text: JSON.stringify(packet) }], structuredContent: packet, isError: false });
 }
 

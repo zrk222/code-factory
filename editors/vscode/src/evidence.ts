@@ -25,16 +25,26 @@ class EvidenceView implements vscode.TreeDataProvider<Row>, vscode.Disposable {
   }
 
   getChildren(row?: Row): Row[] {
-    if (row?.result) return findings(row.result).map(item => ({ label: item.message, description: item.severity, detail: item.path ? `${item.path}${item.line ? `:${item.line}` : ""}` : "Location not supplied by this audit", child: true,
+    if (row?.result) return this.findingRows(row.result);
+    return this.laneRows();
+  }
+
+  private findingRows(result: Result): Row[] {
+    return findings(result).map(item => ({ label: item.message, description: item.severity, detail: item.path ? `${item.path}${item.line ? `:${item.line}` : ""}` : "Location not supplied by this audit", child: true,
       location: item.path && this.selected ? { root: this.selected.uri.fsPath, path: item.path, line: item.line } : undefined }));
+  }
+
+  private laneRows(): Row[] {
     const key = this.selected?.uri.toString();
     const observed = key ? this.results.get(key) || [] : [];
     const rows: Row[] = [{ label: this.selected?.name || "Select a workspace with Run CF + ForgeLine", detail: "Local observations; candidate binding remains UNBOUND." }];
-    for (const lane of Object.keys(LANES) as Lane[]) {
-      const result = observed.find(item => item.lane === lane);
-      rows.push({ label: LANES[lane].label, description: result ? (this.stale.has(key!) ? "STALE" : result.state) : "NOT_RUN", detail: result ? `${result.detail}\n${result.limit}` : LANES[lane].limit, result });
-    }
+    for (const lane of Object.keys(LANES) as Lane[]) rows.push(this.laneRow(lane, observed, key));
     return rows;
+  }
+
+  private laneRow(lane: Lane, observed: Result[], key?: string): Row {
+    const result = observed.find(item => item.lane === lane);
+    return { label: LANES[lane].label, description: result ? (key && this.stale.has(key) ? "STALE" : result.state) : "NOT_RUN", detail: result ? `${result.detail}\n${result.limit}` : LANES[lane].limit, result };
   }
 
   invalidate(uri: vscode.Uri): void {

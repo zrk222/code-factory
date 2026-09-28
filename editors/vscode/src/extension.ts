@@ -274,11 +274,84 @@ async function openSavings(): Promise<void> {
 
 type StudioView = "studio" | "product" | "graph";
 
+function _studioRoute(view: StudioView, url: string): string {
+  if (view === "graph") return `${url}graph-ops`;
+  return view === "product" ? `${url}?mode=product` : url;
+}
+
+function _studioTitle(view: StudioView): string {
+  if (view === "graph") return "Open Graph Ops";
+  return view === "product" ? "Open Product Missions" : "Start Factory Studio";
+}
+
+function _markStudioIntent(view: StudioView): void {
+  output.appendLine("marker: EDITOR_TRUST_CONFIRMED");
+  if (view === "product") output.appendLine("marker: EDITOR_PRODUCT_MISSION_CONFIRMED");
+  if (view === "graph") output.appendLine("marker: EDITOR_GRAPH_OPS_CONFIRMED");
+}
+
+async function _reuseStudio(view: StudioView): Promise<void> {
+  if (studioUrl) {
+    await vscode.env.openExternal(vscode.Uri.parse(_studioRoute(view, studioUrl)));
+  } else {
+    void vscode.window.showInformationMessage("Factory Studio is still starting. See the FactoryLine output channel.");
+  }
+}
+
+function _attachStudioProcess(view: StudioView, process: childProcess.ChildProcessWithoutNullStreams): void {
+  let combined = "";
+  const timeout = setTimeout(() => {
+    if (!studioUrl && studioProcess?.exitCode === null) {
+      studioProcess.kill();
+      void vscode.window.showErrorMessage("Factory Studio did not report a loopback URL within 15 seconds.");
+    }
+  }, 15_000);
+  process.stdout.on("data", async (chunk: Buffer) => {
+    const text = chunk.toString();
+    combined += text;
+    output.append(text);
+    await _openStudioUrl(view, combined, timeout);
+  });
+  process.stderr.on("data", (chunk: Buffer) => output.append(chunk.toString()));
+  process.on("error", error => {
+    clearTimeout(timeout);
+    studioProcess = undefined;
+    void vscode.window.showErrorMessage(`Factory Studio failed to start: ${error.message}`);
+  });
+  process.on("close", code => {
+    clearTimeout(timeout);
+    studioProcess = undefined;
+    studioUrl = undefined;
+    if (code && code !== 0) void vscode.window.showErrorMessage(`Factory Studio exited with ${code}. See the FactoryLine output channel.`);
+  });
+}
+
+async function _openStudioUrl(view: StudioView, combined: string, timeout: NodeJS.Timeout): Promise<void> {
+  const parsed = factoryStudioUrl(combined);
+  if (studioUrl || !parsed) return;
+  studioUrl = parsed;
+  clearTimeout(timeout);
+  const opened = await vscode.env.openExternal(vscode.Uri.parse(_studioRoute(view, parsed)));
+  if (!opened) void vscode.window.showWarningMessage(`Factory Studio is running at ${parsed}`);
+}
+
+function _startStudio(root: string, view: StudioView): void {
+  const configuredCommand = vscode.workspace.getConfiguration("factoryline").get<string>("command", "factory");
+  const command = factoryExecutable(configuredCommand);
+  const args = ["studio", "--root", root, "--port", "0", "--no-browser"];
+  output.clear();
+  _markStudioIntent(view);
+  output.appendLine(`$ ${command} studio --root <workspace> --port 0 --no-browser`);
+  output.show(true);
+  studioUrl = undefined;
+  studioProcess = childProcess.spawn(command, args, { cwd: root, shell: false });
+  _attachStudioProcess(view, studioProcess);
+}
+
 async function openFactoryStudio(view: StudioView = "studio"): Promise<void> {
   const productMode = view === "product";
   const graphMode = view === "graph";
-  const title = graphMode ? "Open Graph Ops" : productMode ? "Open Product Missions" : "Start Factory Studio";
-  const route = (url: string): string => graphMode ? `${url}graph-ops` : productMode ? `${url}?mode=product` : url;
+  const title = _studioTitle(view);
   const root = requireTrustedWorkspace();
   if (!root) {
     return;
@@ -291,72 +364,12 @@ async function openFactoryStudio(view: StudioView = "studio"): Promise<void> {
   if (confirmed !== "Start local Studio") {
     return;
   }
-  output.appendLine("marker: EDITOR_TRUST_CONFIRMED");
-  if (productMode) {
-    output.appendLine("marker: EDITOR_PRODUCT_MISSION_CONFIRMED");
-  }
-  if (graphMode) {
-    output.appendLine("marker: EDITOR_GRAPH_OPS_CONFIRMED");
-  }
+  _markStudioIntent(view);
   if (studioProcess && studioProcess.exitCode === null) {
-    if (studioUrl) {
-      await vscode.env.openExternal(vscode.Uri.parse(route(studioUrl)));
-    } else {
-      void vscode.window.showInformationMessage("Factory Studio is still starting. See the FactoryLine output channel.");
-    }
+    await _reuseStudio(view);
     return;
   }
-
-  const configuredCommand = vscode.workspace.getConfiguration("factoryline").get<string>("command", "factory");
-  const command = factoryExecutable(configuredCommand);
-  const args = ["studio", "--root", root, "--port", "0", "--no-browser"];
-  output.clear();
-  output.appendLine("marker: EDITOR_TRUST_CONFIRMED");
-  if (productMode) {
-    output.appendLine("marker: EDITOR_PRODUCT_MISSION_CONFIRMED");
-  }
-  if (graphMode) {
-    output.appendLine("marker: EDITOR_GRAPH_OPS_CONFIRMED");
-  }
-  output.appendLine(`$ ${command} studio --root <workspace> --port 0 --no-browser`);
-  output.show(true);
-  studioUrl = undefined;
-  let combined = "";
-  studioProcess = childProcess.spawn(command, args, { cwd: root, shell: false });
-  const timeout = setTimeout(() => {
-    if (!studioUrl && studioProcess?.exitCode === null) {
-      studioProcess.kill();
-      void vscode.window.showErrorMessage("Factory Studio did not report a loopback URL within 15 seconds.");
-    }
-  }, 15_000);
-  studioProcess.stdout.on("data", async (chunk: Buffer) => {
-    const text = chunk.toString();
-    combined += text;
-    output.append(text);
-    const parsed = factoryStudioUrl(combined);
-    if (!studioUrl && parsed) {
-      studioUrl = parsed;
-      clearTimeout(timeout);
-      const opened = await vscode.env.openExternal(vscode.Uri.parse(route(parsed)));
-      if (!opened) {
-        void vscode.window.showWarningMessage(`Factory Studio is running at ${parsed}`);
-      }
-    }
-  });
-  studioProcess.stderr.on("data", (chunk: Buffer) => output.append(chunk.toString()));
-  studioProcess.on("error", (error) => {
-    clearTimeout(timeout);
-    studioProcess = undefined;
-    void vscode.window.showErrorMessage(`Factory Studio failed to start: ${error.message}`);
-  });
-  studioProcess.on("close", (code) => {
-    clearTimeout(timeout);
-    studioProcess = undefined;
-    studioUrl = undefined;
-    if (code && code !== 0) {
-      void vscode.window.showErrorMessage(`Factory Studio exited with ${code}. See the FactoryLine output channel.`);
-    }
-  });
+  _startStudio(root, view);
 }
 
 export function activate(context: vscode.ExtensionContext): void {

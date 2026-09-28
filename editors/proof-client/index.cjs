@@ -31,19 +31,23 @@ function stopTree(child) {
 }
 
 function runCommand(command, args, options) {
-  const { root, signal, timeoutMs = 120000, maxBytes = 8 * 1024 * 1024, onOutput } = options;
+  const { root } = options;
   if (!path.isAbsolute(root)) return Promise.reject(new Error("An absolute workspace root is required."));
-  return new Promise((resolve) => {
+  return new Promise(resolve => _executeCommand(command, args, options, resolve));
+}
+
+function _executeCommand(command, args, options, resolve) {
+  const { root, signal, timeoutMs = 120000, maxBytes = 8 * 1024 * 1024, onOutput } = options;
     let stdout = "", stderr = "", bytes = 0, stopped, finished = false, fallback;
     const started = Date.now();
-    if (signal?.aborted) { resolve({ state: "CANCELLED", stdout, stderr, exitCode: null, durationMs: 0 }); return; }
+    if (signal?.aborted) { resolve(_commandResult("CANCELLED", stdout, stderr, null, 0)); return; }
     const child = spawn(executable(command), args, { cwd: root, shell: false, windowsHide: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] });
     const finish = (state, exitCode = null) => {
       if (finished) return;
       finished = true;
       clearTimeout(timer); clearTimeout(fallback);
       signal?.removeEventListener("abort", abort);
-      resolve({ state, exitCode, stdout, stderr: redact(stderr), durationMs: Date.now() - started });
+      resolve(_commandResult(state, stdout, stderr, exitCode, Date.now() - started));
     };
     const stop = (state) => {
       if (finished || stopped) return;
@@ -66,7 +70,10 @@ function runCommand(command, args, options) {
     child.stderr.on("data", chunk => collect("err", chunk));
     child.on("error", error => { stderr = error.message; finish(error.code === "ENOENT" ? "UNAVAILABLE" : "ERROR"); });
     child.on("close", code => finish(stopped || (code === 0 ? "OBSERVED" : "FAILED"), code));
-  });
+}
+
+function _commandResult(state, stdout, stderr, exitCode, durationMs) {
+  return { state, exitCode, stdout, stderr: redact(stderr), durationMs };
 }
 
 function parseReport(stdout) {
@@ -108,15 +115,28 @@ function summary(results, stale = false) {
   return [...lines, "Candidate binding: UNBOUND. These observations do not approve a release; execute candidate-bound verification separately."].join("\n");
 }
 
+function _findingMessage(item) {
+  return redact(item.message || item.description || item.kind || item.code || "Inspect report for details").slice(0, 1000);
+}
+
+function _findingPath(item) {
+  const value = item.path ?? item.facts?.path;
+  return typeof value === "string" ? value : undefined;
+}
+
+function _findingLine(item) {
+  const value = item.line ?? item.facts?.line;
+  return Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function _normalizeFinding(item) {
+  return { message: _findingMessage(item), severity: String(item.severity || "information").toLowerCase(), path: _findingPath(item), line: _findingLine(item) };
+}
+
 function findings(result) {
   const source = result.report?.findings || result.report?.violations || [];
   if (!Array.isArray(source)) return [];
-  return source.slice(0, 200).filter(x => x && typeof x === "object").map(x => ({
-    message: redact(x.message || x.description || x.kind || x.code || "Inspect report for details").slice(0, 1000),
-    severity: String(x.severity || "information").toLowerCase(),
-    path: typeof (x.path ?? x.facts?.path) === "string" ? (x.path ?? x.facts.path) : undefined,
-    line: Number.isInteger(x.line ?? x.facts?.line) && (x.line ?? x.facts.line) > 0 ? (x.line ?? x.facts.line) : undefined,
-  }));
+  return source.slice(0, 200).filter(x => x && typeof x === "object").map(_normalizeFinding);
 }
 
 module.exports = { LANES, redact, runCommand, parseReport, auditArgs, audit, summary, findings };

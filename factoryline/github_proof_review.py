@@ -40,7 +40,7 @@ _REVIEW_CORE_KEYS = frozenset(
 _REVIEW_RENDERED_KEYS = frozenset(
     {"review_sha256", "mermaid", "review_markdown", "artifacts"}
 )
-_REVIEW_OPTIONAL_CORE_KEYS = frozenset({"code_audits"})
+_REVIEW_OPTIONAL_CORE_KEYS = frozenset({"code_audits", "repository_scope"})
 _PATH_PREFIXES = (
     ("specs/", "contracts"),
     ("requirements/", "contracts"),
@@ -291,6 +291,46 @@ def _validate_audit_digest(value: dict[str, Any]) -> None:
         _reject("the code-audit SHA-256 does not match its facts")
 
 
+def _valid_repository_scope(value: object, changed_paths: list[str]) -> bool:
+    if not isinstance(value, dict) or value.get("state") not in {
+        "not_configured",
+        "clear",
+        "blocked",
+        "unavailable",
+    }:
+        return False
+    state = value["state"]
+    if state == "not_configured":
+        return (
+            value.get("schema") == "factory.repository_scope_review.v1"
+            and value.get("policy_path") == ".factory/repository-scope.json"
+            and value.get("blocked_paths") == []
+        )
+    if state == "unavailable":
+        error = value.get("error")
+        return (
+            value.get("schema") == "factory.repository_scope_review.error.v1"
+            and value.get("policy_path") == ".factory/repository-scope.json"
+            and isinstance(error, dict)
+            and all(isinstance(error.get(key), str) for key in ("code", "message"))
+            and value.get("blocked_paths") == []
+        )
+    blocked = value.get("blocked_paths")
+    matches_valid = isinstance(blocked, list) and all(
+        isinstance(item, dict)
+        and isinstance(item.get("path"), str)
+        and item["path"] in changed_paths
+        and isinstance(item.get("matched_segment"), str)
+        for item in blocked
+    )
+    return (
+        value.get("schema") == "factory.repository_scope_review.v1"
+        and value.get("changed_paths") == changed_paths
+        and matches_valid
+        and (bool(blocked) if state == "blocked" else not blocked)
+    )
+
+
 def _review_envelope(review: object) -> dict[str, Any]:
     if not isinstance(review, dict) or review.get("schema") != CHANGE_REVIEW_SCHEMA:
         _reject("a factory.change_review.v1 payload is required")
@@ -319,6 +359,12 @@ def _valid_review(review: object) -> dict[str, Any]:
     if "code_audits" in review:
         _valid_code_audits(review["code_audits"])
         core["code_audits"] = review["code_audits"]
+    if "repository_scope" in review:
+        if not _valid_repository_scope(
+            review["repository_scope"], review["changed_paths"]
+        ):
+            _reject("the repository-scope review does not match changed paths")
+        core["repository_scope"] = review["repository_scope"]
     expected = _sha(core)
     if review.get("review_sha256") != expected:
         _reject("the change-review SHA-256 does not match its canonical facts")
