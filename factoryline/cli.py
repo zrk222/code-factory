@@ -13,6 +13,8 @@ factory init <root>       # create the shared factory layout
 from __future__ import annotations
 import argparse
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,6 +24,21 @@ from pathlib import Path
 from typing import Any
 from functools import lru_cache
 from importlib import import_module
+
+_FEATURE_CANARY_FIXTURES = {
+    "mjs": (
+        "/** Recall a verified value. */\nexport function recall(id) { return id; }\n",
+        "[id]",
+    ),
+    "ts": (
+        "/** Recall a verified value. */\nexport function recall(id: string): string { return id; }\n",
+        '["id: string"]',
+    ),
+    "tsx": (
+        "/** Recall a verified value. */\nexport function recall(id: string): string { const view = <span>{id}</span>; return id; }\n",
+        '["id: string"]',
+    ),
+}
 
 
 @lru_cache(maxsize=256)
@@ -85,20 +102,96 @@ def _canary_provenance(payload: dict) -> tuple[bool | None, dict | None]:
     return complete, None
 
 
-def _run_feature_canary(
-    module, root: Path, payload: dict, provenance_ok: bool, suffix: str
-) -> dict | None:
-    source, args = (
-        (
-            "/** Recall a verified value. */\nexport function recall(id) { return id; }\n",
-            "[id]",
-        )
-        if suffix == "mjs"
-        else (
-            "/** Recall a verified value. */\nexport function recall(id: string): string { return id; }\n",
-            '["id: string"]',
-        )
+def _project_typescript_inventory(root: Path) -> tuple[set[str], list[Path], bool]:
+    """Find TypeScript source and compiler lookup roots, excluding dependencies."""
+    ignored = {
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        "node_modules",
+        "vendor",
+        "build",
+        "dist",
+        "coverage",
+        ".next",
+        ".nuxt",
+        ".cache",
+        "target",
+    }
+    typescript_roots: list[Path] = []
+    tsx_roots: list[Path] = []
+    seen: set[Path] = set()
+    suffixes: set[str] = set()
+    errors: list[OSError] = []
+
+    def record_error(error: OSError) -> None:
+        errors.append(error)
+
+    for current, directories, files in os.walk(
+        root, topdown=True, onerror=record_error
+    ):
+        directories[:] = [name for name in directories if name.lower() not in ignored]
+        source_suffixes = {Path(name).suffix.lower() for name in files} & {
+            ".ts",
+            ".tsx",
+        }
+        if source_suffixes:
+            suffixes.update(source_suffixes)
+            directory = Path(current).resolve()
+            if directory not in seen:
+                seen.add(directory)
+                if ".tsx" in source_suffixes and len(tsx_roots) < 128:
+                    tsx_roots.append(directory)
+                elif len(typescript_roots) < 128:
+                    typescript_roots.append(directory)
+    return suffixes, [*tsx_roots, *typescript_roots][:128], not errors
+
+
+def _typescript_node_path(search_roots: list[Path] | None = None) -> str | None:
+    """Expose a workspace TypeScript compiler to temporary QA canaries."""
+    node = shutil.which("node")
+    if node is None:
+        return None
+    project_root = Path.cwd().resolve()
+    candidates = [project_root, *project_root.parents, *(search_roots or [])]
+    unique_candidates = list(dict.fromkeys(str(path) for path in candidates))
+    resolver = (
+        "const roots = JSON.parse(require('fs').readFileSync(0, 'utf8')); "
+        "for (const root of roots) { try { process.stdout.write(require.resolve('typescript', {paths: [root]})); process.exit(0); } catch (_) {} } "
+        "process.exit(1);"
     )
+    try:
+        result = subprocess.run(
+            [node, "-e", resolver],
+            cwd=project_root,
+            input=json.dumps(unique_candidates),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    module = Path(result.stdout.strip())
+    return next(
+        (str(parent) for parent in module.parents if parent.name == "node_modules"),
+        None,
+    )
+
+
+def _run_feature_canary(
+    module,
+    root: Path,
+    payload: dict,
+    provenance_ok: bool,
+    suffix: str,
+    typescript_roots: list[Path] | None = None,
+) -> dict | None:
+    source, args = _FEATURE_CANARY_FIXTURES[suffix]
     target = root / "services" / f"canary.{suffix}"
     target.write_text(source, encoding="utf-8")
     (root / "services" / f"canary.test.{suffix}").write_text(
@@ -110,6 +203,14 @@ def _run_feature_canary(
         f"name: canary-{suffix}\nmodules:\n  - name: canary\n    path: services/canary.{suffix}\n    functions:\n      - name: recall\n        args: {args}\n        returns: string\ndependencies: []\ninvariants: []\n",
         encoding="utf-8",
     )
+    env = os.environ.copy()
+    typescript_node_path = (
+        _typescript_node_path(typescript_roots) if suffix in {"ts", "tsx"} else None
+    )
+    if typescript_node_path:
+        env["NODE_PATH"] = os.pathsep.join(
+            item for item in (typescript_node_path, env.get("NODE_PATH", "")) if item
+        )
     result = subprocess.run(
         [
             _cli_command(module.cli),
@@ -121,6 +222,7 @@ def _run_feature_canary(
             str(root),
             "--strict",
         ],
+        env=env,
         capture_output=True,
         text=True,
         timeout=30,
@@ -142,6 +244,14 @@ def _run_feature_canary(
             "reason": f"{suffix} feature canary was not JSON",
             "provenance": payload,
         }
+    if qa.get("passed") is not True:
+        return {
+            "ok": False,
+            "provenance_ok": provenance_ok,
+            "reason": f"{suffix} feature QA did not pass",
+            "output": result.stdout[-1000:],
+            "provenance": payload,
+        }
     if qa.get("metrics", {}).get("coverage_assessment") != "measured":
         return {
             "ok": False,
@@ -153,18 +263,38 @@ def _run_feature_canary(
 
 
 def _forgeline_feature_canaries(module, payload: dict, provenance_ok: bool) -> dict:
+    project_root = Path.cwd()
+    ts_suffixes, ts_roots, inventory_complete = _project_typescript_inventory(
+        project_root
+    )
+    if not inventory_complete:
+        return {
+            "ok": False,
+            "provenance_ok": provenance_ok,
+            "reason": "TypeScript source inventory could not be inspected completely",
+            "provenance": payload,
+        }
+    suffixes = ["mjs"]
+    if ".ts" in ts_suffixes:
+        suffixes.append("ts")
+    if ".tsx" in ts_suffixes:
+        suffixes.append("tsx")
     with tempfile.TemporaryDirectory(prefix="factory-doctor-") as directory:
         root = Path(directory)
         (root / "services").mkdir()
-        for suffix in ("mjs", "ts"):
-            failure = _run_feature_canary(module, root, payload, provenance_ok, suffix)
+        for suffix in suffixes:
+            failure = _run_feature_canary(
+                module, root, payload, provenance_ok, suffix, ts_roots
+            )
             if failure is not None:
                 return failure
     return {
         "ok": True,
         "provenance_ok": provenance_ok,
         "provenance": payload,
-        "canary": "mjs-and-ts-feature-qa",
+        "canary": "mjs-ts-and-tsx-feature-qa"
+        if suffixes == ["mjs", "ts", "tsx"]
+        else f"feature-qa:{'+'.join(suffixes)}",
     }
 
 

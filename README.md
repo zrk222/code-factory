@@ -111,9 +111,10 @@ separate outcomes. See [release channels](docs/RELEASE_CHANNELS.md).
 
 Architecture health checks growth budgets. ForgeLine's repository inventory
 and feature QA are separate checks. The [current gap review](docs/AUTONOMOUS_OPS_EDITOR_PLAN.md)
-records this candidate's failed repo-wide assessment and its parser and
-complexity limits. A prior score does not establish this candidate's quality;
-static signals are neither executed coverage nor a security certification.
+records how the published ForgeLine 0.10.7 graded this source F/70.7 while
+parser-corrected ForgeLine 0.10.8 grades it A/95.1. CF 0.47.0 requires 0.10.8
+and checks real MJS, TS, and TSX feature QA during `factory doctor --strict`.
+Static signals are neither executed coverage nor a security certification.
 
 ## More detail
 

@@ -342,33 +342,41 @@ async function onEvent(
   textFor: ReturnType<typeof makeText>,
   { event }: any,
 ): Promise<void> {
-  if (
-    (event.type === "file.edited" || event.type === "file.watcher.updated") &&
-    typeof event.properties?.file === "string" &&
-    isSourceFile(event.properties.file)
-  ) {
-    invalidate(state);
-  }
-  if (
-    event.type === "session.diff" &&
-    Array.isArray(event.properties?.diff) &&
-    event.properties.diff.length > 0
-  ) {
-    diffEvent(state, event.properties);
-  }
-  if (event.type === "session.deleted") {
-    deleteSession(state, event.properties?.info?.id);
-  }
-  if (event.type === "session.idle") {
-    await onIdle(
-      state,
-      event.properties?.sessionID,
-      autoAudit,
-      options,
-      client,
-      textFor,
-    );
-  }
+  invalidateForFileEvent(state, event);
+  recordDiffEvent(state, event);
+  await handleSessionEvent(state, autoAudit, options, client, textFor, event);
+}
+
+function invalidateForFileEvent(state: State, event: any): void {
+  if (!isSourceEditEvent(event)) return;
+  invalidate(state);
+}
+
+function isSourceEditEvent(event: any): boolean {
+  const sourceEvent = event.type === "file.edited" || event.type === "file.watcher.updated";
+  return sourceEvent && typeof event.properties?.file === "string" && isSourceFile(event.properties.file);
+}
+
+function recordDiffEvent(state: State, event: any): void {
+  if (!hasChangedDiff(event)) return;
+  diffEvent(state, event.properties);
+}
+
+function hasChangedDiff(event: any): boolean {
+  return event.type === "session.diff" && Array.isArray(event.properties?.diff) && event.properties.diff.length > 0;
+}
+
+async function handleSessionEvent(
+  state: State,
+  autoAudit: boolean,
+  options: Options,
+  client: any,
+  textFor: ReturnType<typeof makeText>,
+  event: any,
+): Promise<void> {
+  if (event.type === "session.deleted") deleteSession(state, event.properties?.info?.id);
+  if (event.type !== "session.idle") return;
+  await onIdle(state, event.properties?.sessionID, autoAudit, options, client, textFor);
 }
 
 function markPendingEdit(state: State, input: any): void {

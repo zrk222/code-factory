@@ -30,13 +30,15 @@ supports the native tool and session hooks used here.
 ## Executive briefing gap review (2026-09-28)
 
 The attached briefing's earlier A/87.5 result is a dated snapshot, not current
-release evidence. The first installed ForgeLine 0.10.7 scan of this checkout
-returned F/39.4 with complexity outliers and unsupported TSX. After removing
-the unrelated product and its history snapshots, refactoring the actual
-outliers, and running the current ForgeLine source parser, this candidate
-measured **A/95.1**, max complexity 10, test-intent 0.89, documented symbols
-0.93, security score 100, and zero QA findings. Repo-wide QA remains an
-inventory result; feature QA still needs its SSAT and candidate-bound run.
+release evidence. The published ForgeLine 0.10.7 artifact graded this checkout
+**F/70.7** (complexity 18) and reported valid TSX as unsupported. The parser
+corrections are now released as ForgeLine 0.10.8. Against this checkout the
+published artifact returns **A/95.1**, max complexity 10, test-intent 0.89,
+documented symbols 0.93, security score 100, and no parser or complexity
+findings. CF 0.47.0 requires ForgeLine 0.10.8; `factory doctor --strict` checks
+the installed version and exercises MJS, TS, and TSX QA so the older artifact
+cannot report a healthy workflow. Repo-wide QA remains an inventory result;
+feature QA still needs its SSAT and candidate-bound run.
 
 | Briefing capability | Current CF/FL state | Remaining closure evidence |
 | --- | --- | --- |
@@ -47,7 +49,7 @@ inventory result; feature QA still needs its SSAT and candidate-bound run.
 | Model routing and deferred context | CF issues deterministic model-tier receipts; agent contracts bound context | Build provider-backed execution and measured token/cost telemetry before claiming savings; implement versioned, task-scoped skill retrieval |
 | Independent scrutiny | Specialty AI review is a separate protected check | Bind reviewer identity, candidate SHA, findings, and resolution to each release; evidence does not grant authority by itself |
 | Observer skill learning | `factory learning` validates sealed forensic packets, requires DSSE-signed replay/holdout/false-positive and specialty-review receipts against an external offline trust root, then feeds owner-promoted versioned instructions into fresh task packets; superseded promotions are archived and owner rollback is hash-bound | Live provider authentication and independently measured real-task improvement remain outside the local receipt contract |
-| ForgeLine multi-language depth | Current ForgeLine source parser handles this inventory; complexity was refactored below the hard limit, static security is 100, and repo-wide grade is A/95.1 | Repeat the candidate-bound feature SSAT QA on the final commit; repo-wide A does not substitute for it |
+| ForgeLine multi-language depth | ForgeLine 0.10.8 is published; repo-wide QA returns A/95.1 and CF strict doctor passes its MJS/TS/TSX canaries | Repeat feature SSAT QA against the exact release candidate; repo-wide A does not substitute for it |
 | Architecture capacity | `factory architecture health` is `HEALTHY` and the growth budgets remain enforced | Keep new CLI commands and modules within the existing budgets |
 | Repository scope | Unrelated hosted-product source, plans, deployments, evidence snapshots, and generated dependencies are removed from this candidate tree | Published Git history still contains prior commits; this branch removes the content from the repository's current tree |
 
@@ -55,8 +57,9 @@ The briefing's "zero prompt-injection surface," 100% accuracy, millisecond
 latency, and 25%/50% savings apply at most to stated fixtures or external
 systems until independently measured here. CF/FL cannot certify defect absence
 or promote a local inventory result to release approval. The earlier ForgeLine
-F came from a stale installed parser; the source-based run above is the current
-grade and must be reproduced on the final commit.
+F came from the stale 0.10.7 parser; the 0.10.8 published artifact now produces
+the recorded repo-wide grade, which must still be reproduced on each final
+release candidate.
 
 ## Observer Agent: implemented supervised flow and remaining proof
 
