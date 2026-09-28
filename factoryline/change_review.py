@@ -142,8 +142,10 @@ def _read_scope_policy(
 
 def _git_scope_paths(root: Path, base: str, head: str) -> list[str]:
     for name, value in (("base", base), ("head", head)):
-        if not value or value.startswith("-") or any(
-            char in value for char in "\r\n\0"
+        if (
+            not value
+            or value.startswith("-")
+            or any(char in value for char in "\r\n\0")
         ):
             raise RepositoryScopeError(
                 f"SCOPE_{name.upper()}_INVALID", f"{name} ref is invalid"
