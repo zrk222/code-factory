@@ -11,6 +11,7 @@ from factoryline.change_review import (
     MAX_CHANGED_PATHS,
     RepositoryScopeError,
     _resolve_changed_paths,
+    _matches_scope_segment,
     check_repository_scope,
     review_change,
     write_review_artifacts,
@@ -18,6 +19,22 @@ from factoryline.change_review import (
 from factoryline.proof import git_changed_paths
 from factoryline.cli import main
 from factoryline.proof_reuse import record_proof
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "AgentOvenServer.ts",
+        "agentovenserver.ts",
+        "AGENTOVENserver.ts",
+        "AgentCloudBackend.kt",
+        "agentcloudbackend.kt",
+    ],
+)
+def test_scope_guard_blocks_compound_product_filenames(path: str) -> None:
+    blocked = {"agent-oven", "agentoven", "agent-cloud", "agentcloud"}
+
+    assert _matches_scope_segment(path, blocked) in blocked
 
 
 def _stale_proof_workspace(root: Path) -> None:

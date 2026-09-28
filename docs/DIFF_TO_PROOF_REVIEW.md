@@ -34,12 +34,14 @@ Define reserved path-name segments in `.factory/repository-scope.json`:
 }
 ```
 
-The checker normalizes case, spaces, underscores, and punctuation, and checks
-path components and filenames. Added, modified, copied-from or -to,
-renamed-from or -to, and type-changed paths that match a reserved segment return exit code `2` with
-`REPOSITORY_SCOPE_BLOCKED` and exact paths. Deletions are permitted, so teams
-can remove an accidental product import. Invalid or missing policy and Git
-diff errors fail closed. This is a path boundary guard, not semantic source
+The checker normalizes case, camel-case names, spaces, underscores, and
+punctuation, and checks path components and filenames. For example,
+`AgentOvenServer.ts` matches the reserved `agent-oven` segment. Added, modified,
+copied, renamed, or type-changed paths that match a reserved segment return
+exit code `2` with `REPOSITORY_SCOPE_BLOCKED` and exact paths. Copies and
+renames check both the source and destination. Deletions are permitted, so
+teams can remove an accidental product import. Invalid or missing policy and
+Git diff errors fail closed. This is a path boundary guard, not semantic source
 classification; choose names that identify the product reliably.
 
 When the policy exists, the regular `factory change review` packet also places
