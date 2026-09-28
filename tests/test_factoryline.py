@@ -376,7 +376,103 @@ def test_factory_verify_strict_release_accepts_a_current_oracle_bound_contract(
 
 def test_protocol_requires_design_md_compatible_prestige():
     assert MINIMUM_VERSIONS["prestige"] == "0.7.4"
-    assert MINIMUM_VERSIONS["forgeline"] == "0.10.7"
+    assert MINIMUM_VERSIONS["forgeline"] == "0.10.8"
+
+
+def test_forgeline_doctor_canary_checks_tsx_and_rejects_nonpassing_json(
+    tmp_path, monkeypatch
+):
+    import json
+    from types import SimpleNamespace
+    import factoryline.cli as cli
+
+    module = SimpleNamespace(cli="forge")
+    (tmp_path / "services").mkdir()
+    monkeypatch.setattr(cli, "_cli_command", lambda _name: "forge")
+    monkeypatch.setattr(cli, "_typescript_node_path", lambda *_args: None)
+    monkeypatch.setattr(
+        cli.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {"passed": False, "metrics": {"coverage_assessment": "measured"}}
+            ),
+            stderr="",
+        ),
+    )
+
+    failure = cli._run_feature_canary(
+        module, tmp_path, {"version": "0.10.7"}, True, "tsx"
+    )
+
+    assert failure["reason"] == "tsx feature QA did not pass"
+    assert "<span>{id}</span>" in (tmp_path / "services" / "canary.tsx").read_text()
+    assert (tmp_path / "services" / "canary.test.tsx").exists()
+
+
+def test_forgeline_doctor_only_runs_typescript_canaries_for_project_sources(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+    import factoryline.cli as cli
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.tsx").write_text("export const App = () => <main />;\n")
+    (tmp_path / "node_modules" / "dependency").mkdir(parents=True)
+    (tmp_path / "node_modules" / "dependency" / "unused.tsx").write_text(
+        "invalid fixture"
+    )
+    monkeypatch.chdir(tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        cli,
+        "_run_feature_canary",
+        lambda _module, _root, _payload, _provenance, suffix, roots: calls.append(
+            (suffix, roots)
+        ),
+    )
+
+    result = cli._forgeline_feature_canaries(
+        SimpleNamespace(cli="forge"), {"version": "0.10.8"}, True
+    )
+
+    assert result["ok"] is True
+    assert [suffix for suffix, _roots in calls] == ["mjs", "tsx"]
+    assert calls[-1][1] == [tmp_path / "src"]
+
+
+def test_forgeline_typescript_resolver_searches_nested_package_roots(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+    import factoryline.cli as cli
+
+    nested = tmp_path / "frontend" / "src"
+    nested.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli.shutil, "which", lambda _name: "node")
+    monkeypatch.setattr(
+        cli.subprocess,
+        "run",
+        lambda _command, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=str(
+                tmp_path
+                / "frontend"
+                / "node_modules"
+                / "typescript"
+                / "lib"
+                / "index.js"
+            ),
+        )
+        if str(nested) in json.loads(kwargs["input"])
+        else SimpleNamespace(returncode=1, stdout=""),
+    )
+
+    result = cli._typescript_node_path([nested])
+
+    assert result == str(tmp_path / "frontend" / "node_modules")
 
 
 def test_receipt_roundtrip(tmp_path):
