@@ -32,10 +32,6 @@ jobs:
             context: .
             file: deploy/hosted/Dockerfile
             description: "FactoryLine hosted assurance adapter"
-          - name: factoryline-source-worker
-            context: products/agent-cloud/app
-            file: products/agent-cloud/app/Dockerfile.source-worker
-            description: "FactoryLine governed source worker"
     steps:
       - name: Check out source
         uses: actions/checkout@v4
