@@ -35,8 +35,8 @@ Define reserved path-name segments in `.factory/repository-scope.json`:
 ```
 
 The checker normalizes case, spaces, underscores, and punctuation, and checks
-path components and filenames. Added, modified, copied, renamed-to, and
-type-changed paths that match a reserved segment return exit code `2` with
+path components and filenames. Added, modified, copied-from or -to,
+renamed-from or -to, and type-changed paths that match a reserved segment return exit code `2` with
 `REPOSITORY_SCOPE_BLOCKED` and exact paths. Deletions are permitted, so teams
 can remove an accidental product import. Invalid or missing policy and Git
 diff errors fail closed. This is a path boundary guard, not semantic source
@@ -48,24 +48,33 @@ is shown as `not_configured`; malformed or unreadable configured policy is a
 blocking finding. The standalone `scope-check` is useful for an enforcing CI
 step because it returns a failing exit code directly.
 
-For automatic PR enforcement, run the same CLI after checkout and installation
-of Code Factory. Fetch the PR base at full depth and pass its immutable SHA as
-both the diff base and trusted policy revision:
+For automatic PR enforcement, use a `pull_request_target` workflow already
+present on the protected target branch. Check out only the base commit, fetch
+the PR head as a Git ref without checking out or running its files, and run the
+CLI from the base checkout:
 
 ```yaml
 - name: Enforce repository product boundaries
   env:
+    PR_NUMBER: ${{ github.event.pull_request.number }}
     PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-  run: >-
-    factory change scope-check --root . --base "$PR_BASE_SHA"
-    --policy-ref "$PR_BASE_SHA" --json
+    PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+  run: |
+    git fetch --no-tags origin "+refs/pull/${PR_NUMBER}/head:refs/remotes/origin/pr/${PR_NUMBER}"
+    test "$(git rev-parse "refs/remotes/origin/pr/${PR_NUMBER}^{commit}")" = "$PR_HEAD_SHA"
+    factory change scope-check --root . --base "$PR_BASE_SHA" \
+      --head "$PR_HEAD_SHA" --policy-ref "$PR_BASE_SHA" --json
 ```
 
-Keeping the policy on the target branch prevents a candidate PR from editing
-the policy to permit its own unrelated files. If a project is bootstrapping the
-guard for the first time, merge the policy and CI step together, then require
-the check on subsequent PRs. The Code Factory repository uses this same check
-in its pull-request review workflow.
+The workflow and CLI must come from the base commit, and the scope policy must
+be read from that same commit. Require the `repository-scope-guard` status check
+in branch protection. The Code Factory repository supplies
+`.github/workflows/repository-scope-guard.yml`; it inspects Git metadata only
+and does not execute candidate code. Its existing `pull_request` proof workflow
+also emits a scope report for visibility, but is not the trusted enforcement
+root. When first installing this guard, the initial policy/workflow change
+requires independent review; the protected workflow enforces later PRs after it
+is present on the target branch.
 
 ## Optional GitHub pull-request surface
 

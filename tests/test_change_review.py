@@ -393,6 +393,61 @@ def test_scope_guard_reads_trusted_base_policy_and_allows_cleanup_deletions(
     assert review["blocked_paths"][0]["path"] == "products/agent-cloud/src/server.ts"
 
 
+def test_scope_guard_runs_trusted_base_code_against_a_fetched_candidate_ref(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _scope_repository(tmp_path)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    (tmp_path / "products/agent-cloud/src").mkdir(parents=True)
+    (tmp_path / "products/agent-cloud/src/server.ts").write_text(
+        "unrelated product\n", encoding="utf-8"
+    )
+    _scope_commit(tmp_path, "candidate adds unrelated product")
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    _scope_git(tmp_path, "checkout", "--detach", base)
+
+    result = main(
+        [
+            "change",
+            "scope-check",
+            "--root",
+            str(tmp_path),
+            "--base",
+            base,
+            "--head",
+            head,
+            "--policy-ref",
+            base,
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert result == 2
+    assert payload["marker"] == "REPOSITORY_SCOPE_BLOCKED"
+    assert payload["head"] == head
+    assert payload["policy_ref"] == base
+    assert payload["blocked_paths"] == [
+        {
+            "path": "products/agent-cloud/src/server.ts",
+            "matched_segment": "agent-cloud",
+        }
+    ]
+
+
 def test_scope_guard_allows_removal_without_hiding_other_changes(
     tmp_path: Path,
 ) -> None:
@@ -412,6 +467,58 @@ def test_scope_guard_allows_removal_without_hiding_other_changes(
 
     assert review["state"] == "clear"
     assert review["changed_paths"] == ["factoryline/module.py"]
+
+
+def test_scope_guard_blocks_renaming_reserved_path_to_neutral_name(
+    tmp_path: Path,
+) -> None:
+    _scope_repository(tmp_path)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    destination = tmp_path / "factoryline/product_data.ts"
+    (tmp_path / "agent-oven/old.ts").replace(destination)
+    _scope_commit(tmp_path, "rename reserved file to a neutral name")
+
+    review = check_repository_scope(tmp_path, base=base, policy_ref=base)
+
+    assert review["state"] == "blocked"
+    assert review["blocked_paths"] == [
+        {"path": "agent-oven/old.ts", "matched_segment": "agent-oven"}
+    ]
+
+
+def test_scope_guard_blocks_copying_reserved_path_to_neutral_name(
+    tmp_path: Path,
+) -> None:
+    _scope_repository(tmp_path)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    (tmp_path / "factoryline/copied_product.ts").write_text(
+        (tmp_path / "agent-oven/old.ts").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    _scope_commit(tmp_path, "copy reserved product file to a neutral name")
+
+    review = check_repository_scope(tmp_path, base=base, policy_ref=base)
+
+    assert review["state"] == "blocked"
+    assert review["changed_paths"] == [
+        "agent-oven/old.ts",
+        "factoryline/copied_product.ts",
+    ]
+    assert review["blocked_paths"] == [
+        {"path": "agent-oven/old.ts", "matched_segment": "agent-oven"}
+    ]
 
 
 @pytest.mark.parametrize("path", ["../secret.py", "C:/secret.py", "", "/secret.py"])

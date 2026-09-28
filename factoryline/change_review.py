@@ -140,12 +140,26 @@ def _read_scope_policy(
         ) from exc
 
 
-def _git_scope_paths(root: Path, base: str) -> list[str]:
-    if not base or base.startswith("-") or any(char in base for char in "\r\n\0"):
-        raise RepositoryScopeError("SCOPE_BASE_INVALID", "base ref is invalid")
+def _git_scope_paths(root: Path, base: str, head: str) -> list[str]:
+    for name, value in (("base", base), ("head", head)):
+        if not value or value.startswith("-") or any(
+            char in value for char in "\r\n\0"
+        ):
+            raise RepositoryScopeError(
+                f"SCOPE_{name.upper()}_INVALID", f"{name} ref is invalid"
+            )
     try:
         result = subprocess.run(
-            ["git", "diff", "--name-status", "-z", "--find-renames", base, "HEAD"],
+            [
+                "git",
+                "diff",
+                "--name-status",
+                "-z",
+                "--find-renames",
+                "--find-copies-harder",
+                base,
+                head,
+            ],
             cwd=root,
             check=True,
             capture_output=True,
@@ -170,9 +184,11 @@ def _git_scope_paths(root: Path, base: str) -> list[str]:
                 raise RepositoryScopeError(
                     "SCOPE_DIFF_INVALID", "Git returned a truncated rename record"
                 )
+            source_path = fields[index]
             index += 1
             path = fields[index]
             index += 1
+            paths.append(source_path)
         else:
             if index >= len(fields):
                 raise RepositoryScopeError(
@@ -207,6 +223,7 @@ def check_repository_scope(
     policy_path: str = ".factory/repository-scope.json",
     policy_ref: str | None = None,
     base: str | None = None,
+    head: str | None = None,
     changed_paths: list[str] | None = None,
 ) -> dict[str, Any]:
     """Compare added or modified paths against a repository's trusted path policy."""
@@ -216,7 +233,7 @@ def check_repository_scope(
             raise RepositoryScopeError(
                 "SCOPE_DIFF_UNAVAILABLE", "provide changed paths or a base ref"
             )
-        raw_paths = _git_scope_paths(workspace, base)
+        raw_paths = _git_scope_paths(workspace, base, head or "HEAD")
     else:
         raw_paths = changed_paths
     paths = sorted({_scope_policy_path(path) for path in raw_paths})
@@ -235,6 +252,7 @@ def check_repository_scope(
         else "REPOSITORY_SCOPE_CLEAR",
         "state": state,
         "base": base,
+        "head": head or ("HEAD" if base is not None else None),
         "policy_path": policy_path.replace("\\", "/"),
         "policy_ref": policy_ref,
         "policy_sha256": _sha(policy).lower(),

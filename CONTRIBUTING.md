@@ -45,6 +45,8 @@ Entries in `context/PROGRESS.md` record pipeline activity. `GATE`, `PROOF`, and
 Pull request CI checks added, modified, and renamed paths against
 `.factory/repository-scope.json`. Keep unrelated products in their own
 repositories; deleting an out-of-scope path is allowed so accidental additions
-can be cleaned up. After the initial policy is merged, the workflow reads it
-from the base commit so a candidate cannot relax its own boundary. Run the same
-check locally with `factory change scope-check --root . --base origin/main`.
+can be cleaned up. The protected `repository-scope-guard` workflow reads the
+policy and checker from the base commit, fetches the pull request head as Git
+objects, and never executes candidate files. Require its status check in main
+branch protection. Run the local report with
+`factory change scope-check --root . --base origin/main`.

@@ -48,6 +48,11 @@ def add_parser(sub) -> None:
         "--base",
         help="Git base ref; added and modified paths are collected automatically",
     )
+    scope_check.add_argument(
+        "--head",
+        default="HEAD",
+        help="Git candidate ref; defaults to the checked-out HEAD",
+    )
     scope_check.add_argument("--policy", default=".factory/repository-scope.json")
     scope_check.add_argument(
         "--policy-ref",
@@ -276,6 +281,7 @@ def _run_scope_check(a) -> int:
             policy_path=a.policy,
             policy_ref=a.policy_ref,
             base=a.base,
+            head=a.head,
             changed_paths=a.changed,
         )
     except RepositoryScopeError as exc:
