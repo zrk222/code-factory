@@ -51,17 +51,28 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import subprocess
           from pathlib import Path
-          from factoryline.release_integrity import _canonical_json, _run_forgeline_reassessment, _source_snapshot_digest
+          from factoryline.release_integrity import _canonical_json, _source_snapshot_digest, _valid_quality_reassessment
           root = Path.cwd().resolve()
           saved = json.loads((root / 'evidence/self-audit/quality-reassessment-2026-09-28.json').read_text(encoding='utf-8'))
-          measured = _run_forgeline_reassessment(root)
+          version = subprocess.run(['forge', '--version', '--json'], capture_output=True, text=True, timeout=20)
+          rerun = subprocess.run(['forge', 'qa', '--repo-wide', '--root', str(root), '--strict'], capture_output=True, text=True, timeout=240)
+          try:
+              measured = json.loads(rerun.stdout)
+          except json.JSONDecodeError:
+              measured = None
           actual_digest = _source_snapshot_digest(root, saved['report']['metrics']['scope']['code_files'])
           before = {item['unit']: item for item in saved['report'].get('attribution', {}).get('units', [])}
           after = {item['unit']: item for item in measured.get('attribution', {}).get('units', [])} if measured else {}
           print(json.dumps({
               'source_digest_matches': actual_digest == saved['source_sha256'],
+              'forge_version_exit': version.returncode,
+              'forge_version': version.stdout.strip()[:500],
+              'forge_exit': rerun.returncode,
+              'forge_stderr_tail': rerun.stderr[-1000:],
               'forge_report_available': measured is not None,
+              'forge_report_valid': _valid_quality_reassessment(measured),
               'forge_report_matches': measured is not None and _canonical_json(measured) == _canonical_json(saved['report']),
               'saved_metrics': {key: value for key, value in saved['report'].get('metrics', {}).items() if key != 'scope'},
               'measured_metrics': {key: value for key, value in measured.get('metrics', {}).items() if key != 'scope'} if measured else None,
