@@ -17,15 +17,15 @@ from scripts.jetbrains_release_artifact import (
 COMMIT = "a" * 40
 
 
-def test_intellij_workflow_deduplicates_identical_sha_triggers() -> None:
+def test_intellij_workflow_cancels_superseded_commits_on_same_ref() -> None:
     workflow = (
         Path(__file__).parents[1] / ".github" / "workflows" / "intellij-plugin.yml"
     ).read_text(encoding="utf-8")
     assert "branches: [main]" in workflow
     assert "pull_request:" in workflow
+    assert "group: intellij-plugin-${{ github.ref }}" in workflow
     assert (
-        "group: intellij-plugin-${{ github.event.pull_request.head.sha || github.sha }}"
-        in workflow
+        "group: intellij-plugin-${{ github.event.pull_request.head.sha" not in workflow
     )
     assert "cancel-in-progress: true" in workflow
 

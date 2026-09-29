@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import os
 import re
 import subprocess
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +18,16 @@ from .release_route_integrity import release_route_checks
 
 
 SCHEMA = "factory.release_integrity.v1"
+FORGELINE_REASSESSMENT_VERSION = "0.10.8"
+REASSESSMENT_SCHEMA = "factory.forgeline_reassessment.v1"
+REASSESSMENT_POLICY_FILES = (
+    "architecture-policy.json",
+    "architecture-boundaries.json",
+    ".factory/repository-scope.json",
+    "pyproject.toml",
+    "CONTRIBUTING.md",
+    "docs/RELEASE_CHANNELS.md",
+)
 AUTHORITY = {
     "execution": False,
     "approval": False,
@@ -748,23 +761,238 @@ def _fresh_reassessment_date(root: Path, relative: str) -> str | None:
     match = re.search(r"(\d{4}-\d{2}-\d{2})[^/]*\.json$", relative)
     if not match or not relative.startswith("evidence/self-audit/"):
         return None
+    reassessment_date = match.group(1)
+    try:
+        parsed_date = date.fromisoformat(reassessment_date)
+        if parsed_date.isoformat() != reassessment_date or parsed_date > date.today():
+            return None
+    except ValueError:
+        return None
     path = root / relative
     try:
-        if path.stat().st_size > 2_000_000:
+        with path.open("rb") as stream:
+            raw = stream.read(2_000_001)
+        if len(raw) > 2_000_000:
             return None
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(raw.decode("utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         return None
-    if (
-        not isinstance(payload, dict)
-        or not isinstance(payload.get("grade"), str)
-        or not isinstance(payload.get("passed"), bool)
-        or not isinstance(payload.get("metrics"), dict)
-        or not isinstance(payload.get("findings"), list)
-        or not isinstance(payload.get("attribution"), dict)
-    ):
+    if not _valid_reassessment_envelope(payload):
         return None
-    return match.group(1)
+    report = payload["report"]
+    source_digest = _source_snapshot_digest(
+        root, report["metrics"]["scope"]["code_files"]
+    )
+    if source_digest is None or source_digest != payload.get("source_sha256"):
+        return None
+    measured = _run_forgeline_reassessment(root)
+    if measured is None:
+        return None
+    try:
+        matches = _canonical_json(measured) == _canonical_json(report)
+    except (TypeError, ValueError):
+        return None
+    if not matches:
+        return None
+    return reassessment_date
+
+
+def _canonical_json(payload: Any) -> str:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _source_snapshot_digest(root: Path, code_files: list[str]) -> str | None:
+    paths = set(code_files)
+    paths.update(REASSESSMENT_POLICY_FILES)
+    digest = hashlib.sha256()
+    total_bytes = 0
+    for relative in sorted(paths):
+        if (
+            not isinstance(relative, str)
+            or not relative
+            or Path(relative).is_absolute()
+            or ".." in relative.replace("\\", "/").split("/")
+        ):
+            return None
+        path = root / relative
+        try:
+            resolved = path.resolve(strict=True)
+            if not resolved.is_relative_to(root.resolve()) or not resolved.is_file():
+                return None
+            raw_size = resolved.stat().st_size
+            total_bytes += raw_size
+            if raw_size > 50_000_000 or total_bytes > 500_000_000:
+                return None
+            # Git's text checkout may use CRLF on Windows and LF in CI. Bind
+            # canonical text bytes so the same committed source is portable.
+            content = resolved.read_bytes().replace(b"\r\n", b"\n")
+            size = len(content)
+            if size > 50_000_000:
+                return None
+            path_hash = hashlib.sha256(content)
+        except OSError:
+            return None
+        digest.update(os.fsencode(relative))
+        digest.update(b"\0")
+        digest.update(size.to_bytes(8, "big"))
+        digest.update(path_hash.digest())
+    return digest.hexdigest()
+
+
+def _run_forgeline_reassessment(root: Path) -> dict[str, Any] | None:
+    try:
+        provenance_result = subprocess.run(
+            ["forge", "--version", "--json"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        provenance = json.loads(provenance_result.stdout)
+        if (
+            provenance_result.returncode != 0
+            or not isinstance(provenance, dict)
+            or provenance.get("package") != "code-factory-2-forge"
+            or provenance.get("version") != FORGELINE_REASSESSMENT_VERSION
+            or provenance.get("identity_complete") is not True
+        ):
+            return None
+        result = subprocess.run(
+            ["forge", "qa", "--repo-wide", "--root", str(root), "--strict"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=240,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        return None
+    if result.returncode != 0 or len(result.stdout.encode("utf-8")) > 2_000_000:
+        return None
+    try:
+        report = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    return report if _valid_quality_reassessment(report) else None
+
+
+def _finite_number(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _valid_reassessment_metrics(metrics: Any) -> bool:
+    if not isinstance(metrics, dict):
+        return False
+    scope = metrics.get("scope")
+    if not isinstance(scope, dict) or scope.get("kind") != "repo_wide":
+        return False
+    code_files = scope.get("code_files")
+    if (
+        not isinstance(code_files, list)
+        or not code_files
+        or any(not isinstance(item, str) or not item for item in code_files)
+        or len(set(code_files)) != len(code_files)
+    ):
+        return False
+    if metrics.get("skipped_paths") != []:
+        return False
+    if metrics.get("complexity_policy") != "hard":
+        return False
+    if metrics.get("coverage_assessment") != "measured":
+        return False
+    if metrics.get("behavioral_proof_status") != "available":
+        return False
+    for key in ("coverage_intent", "doc_ratio"):
+        value = metrics.get(key)
+        if not _finite_number(value) or not 0 <= value <= 1:
+            return False
+    for key in ("composite", "security_score"):
+        value = metrics.get(key)
+        if not _finite_number(value) or not 95 <= value <= 100:
+            return False
+    complexity = metrics.get("max_complexity")
+    if not isinstance(complexity, int) or isinstance(complexity, bool):
+        return False
+    return 0 <= complexity <= 10
+
+
+def _valid_reassessment_units(units: Any, checked: int, passed: int) -> bool:
+    if not isinstance(units, list) or len(units) != checked:
+        return False
+    unit_passes = 0
+    for unit in units:
+        if not isinstance(unit, dict) or unit.get("stage") != "qa_audit":
+            return False
+        unit_id = unit.get("unit")
+        if not isinstance(unit_id, str) or not unit_id:
+            return False
+        if not isinstance(unit.get("passed"), bool):
+            return False
+        if not isinstance(unit.get("evidence"), str) or not unit["evidence"].strip():
+            return False
+        failure_class = unit.get("failure_class")
+        if failure_class is not None and (
+            not isinstance(failure_class, str) or not failure_class
+        ):
+            return False
+        unit_passes += unit["passed"]
+    return unit_passes == passed
+
+
+def _valid_reassessment_attribution(attribution: Any) -> bool:
+    if not isinstance(attribution, dict) or attribution.get("stage") != "qa_audit":
+        return False
+    checked = attribution.get("n_checked")
+    passed = attribution.get("n_passed")
+    if not isinstance(checked, int) or isinstance(checked, bool) or checked <= 0:
+        return False
+    if (
+        not isinstance(passed, int)
+        or isinstance(passed, bool)
+        or not 0 <= passed <= checked
+    ):
+        return False
+    if not _valid_reassessment_units(attribution.get("units"), checked, passed):
+        return False
+    rate = attribution.get("rate")
+    return (
+        _finite_number(rate)
+        and 0 <= rate <= 1
+        and math.isclose(rate, passed / checked, rel_tol=0, abs_tol=1e-9)
+    )
+
+
+def _valid_quality_reassessment(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("grade") != "A" or payload.get("passed") is not True:
+        return False
+    return (
+        payload.get("findings") == []
+        and _valid_reassessment_metrics(payload.get("metrics"))
+        and _valid_reassessment_attribution(payload.get("attribution"))
+    )
+
+
+def _valid_reassessment_envelope(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    tool = payload.get("tool")
+    return (
+        payload.get("schema") == REASSESSMENT_SCHEMA
+        and isinstance(tool, dict)
+        and tool.get("package") == "code-factory-2-forge"
+        and tool.get("version") == FORGELINE_REASSESSMENT_VERSION
+        and tool.get("identity_complete") is True
+        and isinstance(payload.get("source_sha256"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", payload["source_sha256"]) is not None
+        and _valid_quality_reassessment(payload.get("report"))
+    )
 
 
 def _validate_historical_evidence_changes(

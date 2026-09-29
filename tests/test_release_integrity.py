@@ -11,14 +11,93 @@ import pytest
 
 from factoryline.cli import main
 from factoryline.release_integrity import (
+    FORGELINE_REASSESSMENT_VERSION,
+    REASSESSMENT_SCHEMA,
+    _source_snapshot_digest,
     release_integrity,
     render_release_integrity,
     review_regression_audit,
+    _fresh_reassessment_date,
 )
 from factoryline.release_route_integrity import release_route_checks
 
 
 ROOT = Path(__file__).parents[1]
+
+
+def _passing_reassessment() -> dict[str, object]:
+    passed_unit = {
+        "unit": "qa_audit:factoryline/release_integrity.py:review",
+        "stage": "qa_audit",
+        "passed": True,
+        "evidence": "metrics within thresholds",
+        "failure_class": None,
+    }
+    return {
+        "grade": "A",
+        "passed": True,
+        "metrics": {
+            "coverage_intent": 1.0,
+            "max_complexity": 10,
+            "security_score": 100,
+            "doc_ratio": 1.0,
+            "composite": 95.0,
+            "complexity_policy": "hard",
+            "coverage_assessment": "measured",
+            "behavioral_proof_status": "available",
+            "scope": {"kind": "repo_wide", "code_files": ["factoryline/a.py"]},
+            "skipped_paths": [],
+        },
+        "findings": [],
+        "attribution": {
+            "stage": "qa_audit",
+            "n_checked": 1,
+            "n_passed": 1,
+            "rate": 1.0,
+            "units": [passed_unit],
+        },
+    }
+
+
+def _reassessment_envelope(report: dict[str, object]) -> dict[str, object]:
+    return {
+        "schema": REASSESSMENT_SCHEMA,
+        "tool": {
+            "package": "code-factory-2-forge",
+            "version": FORGELINE_REASSESSMENT_VERSION,
+            "identity_complete": True,
+        },
+        "source_sha256": "a" * 64,
+        "report": report,
+    }
+
+
+def test_source_snapshot_digest_binds_audited_code_and_policy(tmp_path: Path) -> None:
+    source = tmp_path / "factoryline" / "a.py"
+    source.parent.mkdir()
+    source.write_text("def check(): return True\n", encoding="utf-8")
+    for relative in (
+        "architecture-policy.json",
+        "architecture-boundaries.json",
+        ".factory/repository-scope.json",
+        "pyproject.toml",
+        "CONTRIBUTING.md",
+        "docs/RELEASE_CHANNELS.md",
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(relative, encoding="utf-8")
+
+    first = _source_snapshot_digest(tmp_path, ["factoryline/a.py"])
+    assert first is not None
+    source.write_bytes(b"def check(): return True\r\n")
+    assert _source_snapshot_digest(tmp_path, ["factoryline/a.py"]) == first
+    source.write_bytes(b"def check(): return True\n")
+    assert _source_snapshot_digest(tmp_path, ["factoryline/a.py"]) == first
+    source.write_text("def check(): return False\n", encoding="utf-8")
+    second = _source_snapshot_digest(tmp_path, ["factoryline/a.py"])
+    assert second is not None and second != first
+    assert _source_snapshot_digest(tmp_path, ["../outside.py"]) is None
 
 
 def test_container_publish_targets_exist_in_this_repository() -> None:
@@ -99,7 +178,7 @@ def test_review_regression_audit_catches_devin_failure_classes(tmp_path: Path) -
 
 
 def test_review_regression_audit_accepts_only_hash_verified_evidence_retirement(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     for args in (
         ["init", "-q"],
@@ -149,17 +228,16 @@ def test_review_regression_audit_accepts_only_hash_verified_evidence_retirement(
     assert missing["findings"][0]["code"] == "EVIDENCE_RETIREMENT_WITHOUT_REASSESSMENT"
 
     fresh = tmp_path / "evidence" / "self-audit" / "quality-2026-09-26.json"
-    fresh.write_text(
-        json.dumps(
-            {
-                "grade": "A",
-                "passed": True,
-                "metrics": {},
-                "findings": [],
-                "attribution": {},
-            }
-        ),
-        encoding="utf-8",
+    report = _passing_reassessment()
+    envelope = _reassessment_envelope(report)
+    fresh.write_text(json.dumps(envelope), encoding="utf-8")
+    monkeypatch.setattr(
+        "factoryline.release_integrity._run_forgeline_reassessment",
+        lambda _root: report,
+    )
+    monkeypatch.setattr(
+        "factoryline.release_integrity._source_snapshot_digest",
+        lambda _root, _files: "a" * 64,
     )
     subprocess.run(
         ["git", "add", str(fresh.relative_to(tmp_path))],
@@ -182,6 +260,115 @@ def test_review_regression_audit_accepts_only_hash_verified_evidence_retirement(
     rejected = review_regression_audit(tmp_path, "HEAD")
     assert rejected["state"] == "BLOCKED"
     assert rejected["findings"][0]["code"] == "EVIDENCE_RETIREMENT_DIGEST_MISMATCH"
+
+
+def test_fresh_reassessment_requires_valid_date_and_matching_forgeline_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    invalid_date = "evidence/self-audit/fake-9999-99-99.json"
+    path = tmp_path / invalid_date
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(_passing_reassessment()), encoding="utf-8")
+    assert _fresh_reassessment_date(tmp_path, invalid_date) is None
+    future_date = "evidence/self-audit/quality-2099-01-01.json"
+    future_path = tmp_path / future_date
+    future_path.write_text(
+        json.dumps(_reassessment_envelope(_passing_reassessment())), encoding="utf-8"
+    )
+    assert _fresh_reassessment_date(tmp_path, future_date) is None
+
+    shallow = "evidence/self-audit/quality-2026-09-26.json"
+    path = tmp_path / shallow
+    path.write_text(
+        json.dumps(
+            {
+                "grade": "A",
+                "passed": True,
+                "metrics": {},
+                "findings": [],
+                "attribution": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert _fresh_reassessment_date(tmp_path, shallow) is None
+
+    report = _passing_reassessment()
+    envelope = _reassessment_envelope(report)
+    path.write_text(json.dumps(envelope), encoding="utf-8")
+    monkeypatch.setattr(
+        "factoryline.release_integrity._run_forgeline_reassessment",
+        lambda _root: {**report, "metrics": {**report["metrics"], "composite": 100.0}},
+    )
+    monkeypatch.setattr(
+        "factoryline.release_integrity._source_snapshot_digest",
+        lambda _root, _files: "a" * 64,
+    )
+    assert _fresh_reassessment_date(tmp_path, shallow) is None
+
+    monkeypatch.setattr(
+        "factoryline.release_integrity._run_forgeline_reassessment",
+        lambda _root: report,
+    )
+    assert _fresh_reassessment_date(tmp_path, shallow) == "2026-09-26"
+
+    envelope["source_sha256"] = "b" * 64
+    path.write_text(json.dumps(envelope), encoding="utf-8")
+    assert _fresh_reassessment_date(tmp_path, shallow) is None
+
+
+def test_forgeline_reassessment_requires_pinned_runtime_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factoryline.release_integrity import _run_forgeline_reassessment
+
+    calls: list[list[str]] = []
+    report = _passing_reassessment()
+
+    def run(command: list[str], **_kwargs: object) -> object:
+        calls.append(command)
+        if command == ["forge", "--version", "--json"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                json.dumps(
+                    {
+                        "package": "code-factory-2-forge",
+                        "version": FORGELINE_REASSESSMENT_VERSION,
+                        "identity_complete": True,
+                    }
+                ),
+                "",
+            )
+        return subprocess.CompletedProcess(command, 0, json.dumps(report), "")
+
+    monkeypatch.setattr("factoryline.release_integrity.subprocess.run", run)
+    assert _run_forgeline_reassessment(tmp_path) == report
+    assert calls == [
+        ["forge", "--version", "--json"],
+        ["forge", "qa", "--repo-wide", "--root", str(tmp_path), "--strict"],
+    ]
+
+    calls.clear()
+
+    def wrong_version(command: list[str], **_kwargs: object) -> object:
+        calls.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            json.dumps(
+                {
+                    "package": "code-factory-2-forge",
+                    "version": "0.10.7",
+                    "identity_complete": True,
+                }
+            ),
+            "",
+        )
+
+    monkeypatch.setattr("factoryline.release_integrity.subprocess.run", wrong_version)
+    assert _run_forgeline_reassessment(tmp_path) is None
+    assert calls == [["forge", "--version", "--json"]]
 
 
 WORKFLOWS = (
