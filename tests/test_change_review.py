@@ -24,6 +24,11 @@ from factoryline.proof_reuse import record_proof
 @pytest.mark.parametrize(
     "path",
     [
+        "AgentOvenServer.ts",
+        "agentovenserver.ts",
+        "AGENTOVENserver.ts",
+        "AgentCloudBackend.kt",
+        "agentcloudbackend.kt",
         "ConfidentialProductServer.ts",
         "confidentialproductserver.ts",
         "CONFIDENTIALPRODUCTserver.ts",
@@ -33,6 +38,10 @@ from factoryline.proof_reuse import record_proof
 )
 def test_scope_guard_blocks_compound_product_filenames(path: str) -> None:
     blocked = {
+        "agent-oven",
+        "agentoven",
+        "agent-cloud",
+        "agentcloud",
         "confidential-product",
         "confidentialproduct",
         "external-product",
@@ -47,6 +56,22 @@ def test_scope_guard_reserves_the_products_root_without_blocking_generic_docs() 
 
     assert _matches_scope_segment("products/new-product/main.ts", blocked) == "products"
     assert _matches_scope_segment("docs/products.md", blocked) is None
+
+
+def test_current_scope_policy_keeps_external_product_names_reserved() -> None:
+    policy = json.loads(
+        (Path(__file__).parents[1] / ".factory/repository-scope.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    blocked = set(policy["blocked_path_segments"])
+    for path in (
+        "src/AgentOvenServer.ts",
+        "src/AgentCloudBackend.kt",
+        "examples/factory-memory-core/client.py",
+        "examples/factory-trust-core/client.py",
+    ):
+        assert _matches_scope_segment(path, blocked) in blocked
 
 
 def _stale_proof_workspace(root: Path) -> None:
@@ -312,6 +337,12 @@ SCOPE_POLICY = {
     "schema": "factory.repository_scope.v1",
     "blocked_path_segments": [
         "products",
+        "agent-cloud",
+        "agentcloud",
+        "agent-oven",
+        "agentoven",
+        "factory-memory-core",
+        "factory-trust-core",
         "external-product",
         "externalproduct",
         "confidential-product",

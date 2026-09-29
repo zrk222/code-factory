@@ -2,6 +2,12 @@
   "schema": "factory.repository_scope.v1",
   "blocked_path_segments": [
     "products",
+    "agent-cloud",
+    "agentcloud",
+    "agent-oven",
+    "agentoven",
+    "factory-memory-core",
+    "factory-trust-core",
     "external-product",
     "externalproduct",
     "confidential-product",
