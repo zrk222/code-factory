@@ -4,6 +4,7 @@ import base64
 from contextlib import contextmanager
 from io import BytesIO
 import json
+import socket
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,7 @@ from factoryline.hosted_control import (
     initialize_control_schema,
     issue_installation_state,
 )
+from factoryline.hosted_identity import HttpxTransport
 from factoryline.pr_assurance import PRAssuranceError
 
 
@@ -187,6 +189,147 @@ def test_dynamic_tenant_identity_uses_hint_only_for_lookup_then_verifies_every_c
     with pytest.raises(PRAssuranceError) as malformed_hint:
         verifier.verify(_token(private, tenant_id="../other"))
     assert malformed_hint.value.code == "E_TENANT_INVALID"
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "127.0.0.1",
+        "10.1.2.3",
+        "172.16.0.1",
+        "192.168.1.1",
+        "169.254.169.254",
+        "0.0.0.0",
+        "::1",
+        "fc00::1",
+        "fe80::1",
+        "::ffff:127.0.0.1",
+        "2001:db8::1",
+        "224.0.0.1",
+    ],
+)
+def test_jwks_transport_rejects_literal_non_public_destinations(address):
+    transport = object.__new__(HttpxTransport)
+    transport._client = object()
+    with pytest.raises(PRAssuranceError) as rejected:
+        transport.request(
+            "GET",
+            f"https://[{address}]/jwks"
+            if ":" in address
+            else f"https://{address}/jwks",
+        )
+    assert rejected.value.code == "E_HTTP_DESTINATION"
+
+
+def test_jwks_transport_requires_allowlisted_hostname_and_rejects_private_dns(
+    monkeypatch,
+):
+    transport = object.__new__(HttpxTransport)
+    transport._client = object()
+    monkeypatch.delenv("FACTORY_HOSTED_JWKS_ALLOWED_HOSTS", raising=False)
+    with pytest.raises(PRAssuranceError, match="allowlist"):
+        transport.request("GET", "https://id.acme.test/jwks")
+
+    monkeypatch.setenv("FACTORY_HOSTED_JWKS_ALLOWED_HOSTS", "id.acme.test")
+    monkeypatch.setattr(
+        "factoryline.hosted_identity.socket.getaddrinfo",
+        lambda *args, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.4", 443))
+        ],
+    )
+    with pytest.raises(PRAssuranceError, match="non-public"):
+        transport.request("GET", "https://id.acme.test/jwks")
+
+
+def test_jwks_transport_pins_the_validated_address_and_preserves_tls_identity(
+    monkeypatch,
+):
+    httpx = pytest.importorskip("httpx")
+    events = []
+
+    def handle_request(request):
+        parts = request.url
+        events.append(
+            (
+                "request",
+                parts.host,
+                request.headers["Host"],
+                request.extensions.get("sni_hostname"),
+                parts.path,
+            )
+        )
+        return httpx.Response(200, json={"ok": True})
+
+    transport = object.__new__(HttpxTransport)
+    transport._client = httpx.Client(
+        transport=httpx.MockTransport(handle_request),
+        follow_redirects=False,
+        trust_env=False,
+    )
+    monkeypatch.setenv("FACTORY_HOSTED_JWKS_ALLOWED_HOSTS", "id.acme.test")
+    monkeypatch.setattr(
+        "factoryline.hosted_identity.socket.getaddrinfo",
+        lambda host, port, **kwargs: events.append(("resolve", host, port))
+        or [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                6,
+                "",
+                ("8.8.8.8", 443),
+            )
+        ],
+    )
+    assert transport.request("GET", "https://id.acme.test/jwks").status_code == 200
+    assert events == [
+        ("resolve", "id.acme.test", 443),
+        ("request", "8.8.8.8", "id.acme.test", "id.acme.test", "/jwks"),
+    ]
+
+
+def test_jwks_public_ip_literal_is_allowed():
+    transport = object.__new__(HttpxTransport)
+    transport._client = type(
+        "Client",
+        (),
+        {
+            "build_request": lambda self, *args, **kwargs: type(
+                "Request", (), {"extensions": {}}
+            )(),
+            "send": lambda self, request: "ok",
+        },
+    )()
+    assert transport.request("GET", "https://8.8.8.8/jwks") == "ok"
+
+
+def test_jwks_transport_allows_and_pins_the_github_app_api_host(monkeypatch):
+    class Request:
+        extensions = {}
+
+    class Client:
+        def build_request(self, method, url, **kwargs):
+            self.url = url
+            self.headers = kwargs["headers"]
+            return Request()
+
+        def send(self, request):
+            return self.url
+
+    transport = object.__new__(HttpxTransport)
+    transport._client = Client()
+    monkeypatch.delenv("FACTORY_HOSTED_JWKS_ALLOWED_HOSTS", raising=False)
+    monkeypatch.setattr(
+        "factoryline.hosted_identity.socket.getaddrinfo",
+        lambda *args, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("140.82.112.5", 443))
+        ],
+    )
+
+    assert (
+        transport.request("GET", "https://api.github.com/app")
+        == "https://140.82.112.5/app"
+    )
+    assert transport._client.headers["Host"] == "api.github.com"
 
 
 class FakeAssuranceStore:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -17,6 +18,35 @@ from factoryline.release_route_integrity import release_route_checks
 
 
 ROOT = Path(__file__).parents[1]
+
+
+def test_container_publish_targets_exist_in_this_repository() -> None:
+    workflow = ROOT / ".github/workflows/github-packages.yml"
+    source = workflow.read_text(encoding="utf-8")
+
+    contexts = re.findall(r"^\s+context:\s*(\S+)\s*$", source, re.MULTILINE)
+    dockerfiles = re.findall(r"^\s+file:\s*(\S+)\s*$", source, re.MULTILINE)
+
+    assert contexts
+    assert len(contexts) == len(dockerfiles)
+    assert all((ROOT / context).is_dir() for context in contexts)
+    assert all((ROOT / dockerfile).is_file() for dockerfile in dockerfiles)
+
+
+def test_container_publish_requires_the_canonical_release_and_verifies_digest() -> None:
+    source = (ROOT / ".github/workflows/github-packages.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "workflow_dispatch:" in source
+    assert not re.search(r"^  push:", source, re.MULTILINE)
+    assert '[[ "$GITHUB_REF" == refs/heads/main ]]' in source
+    assert "actions/workflows/publish.yml/runs" in source
+    assert 'run.get("head_sha")==sys.argv[2]' in source
+    assert "steps.build.outputs.digest" in source
+    assert 'docker buildx imagetools inspect "$IMAGE:$VERSION"' in source
+    assert "registry inspection must return exactly one manifest digest" in source
+    assert '[[ "$actual" == "$EXPECTED_DIGEST" ]]' in source
 
 
 def test_review_regression_audit_catches_devin_failure_classes(tmp_path: Path) -> None:

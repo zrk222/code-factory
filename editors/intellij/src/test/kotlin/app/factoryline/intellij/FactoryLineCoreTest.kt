@@ -22,6 +22,22 @@ class FactoryLineCoreTest {
     }
 
     @Test
+    fun forgeLineRequiresAnExplicitAbsoluteExecutablePath() {
+        assertNull(ForgeLineExecutable.resolve(""))
+        assertNull(ForgeLineExecutable.resolve("forge"))
+        assertNull(ForgeLineExecutable.resolve(Files.createTempDirectory("factoryline-missing").resolve("forge").toString()))
+
+        val executable = Files.createTempFile("factoryline-forge", if (com.intellij.openapi.util.SystemInfo.isWindows) ".exe" else "")
+        if (!com.intellij.openapi.util.SystemInfo.isWindows) executable.toFile().setExecutable(true)
+        try {
+            val resolved = ForgeLineExecutable.resolve(executable.toString())
+            assertEquals(executable.toRealPath(), resolved)
+        } finally {
+            Files.deleteIfExists(executable)
+        }
+    }
+
+    @Test
     fun aiAgentProofMissionKeepsJunieSupervisedAndVerificationIndependent() {
         val mission = buildAiAgentProofMission("Scope: abc123\nSealed paths: 2")
 

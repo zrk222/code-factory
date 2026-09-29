@@ -6,6 +6,8 @@ import hashlib
 import json
 from pathlib import Path
 import zipfile
+import tarfile
+import io
 
 import pytest
 
@@ -14,10 +16,16 @@ from factoryline.enterprise_receipts import generate_key_material, sign_payload
 from factoryline.supply_chain import (
     ATTESTATION_SCHEMA,
     PAYLOAD_TYPE,
+    SupplyChainError,
     evaluate_supply_chain,
     supply_chain_status,
     verify_signed_supply_chain_attestation,
     write_supply_chain_receipt,
+    _descriptor as validate_file_descriptor,
+    _scan_tar_archive,
+    _scan_zip_archive,
+    MAX_ARCHIVE_BYTES,
+    MAX_ARCHIVE_MEMBERS,
 )
 
 
@@ -131,6 +139,68 @@ def test_supply_chain_passes_and_writes_hash_bound_receipt(tmp_path: Path) -> No
         {key: value for key, value in written.items() if key != "receipt_sha256"}
     )
     assert supply_chain_status(tmp_path)["state"] == "PASS"
+
+
+def test_descriptor_rejects_oversized_file_before_hashing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    path = tmp_path / "large.bin"
+    path.write_bytes(b"x" * (16 * 1024 * 1024 + 1))
+
+    def unexpected_read(*args, **kwargs):
+        raise AssertionError("oversized file must not be read")
+
+    monkeypatch.setattr(Path, "open", unexpected_read)
+    with pytest.raises(SupplyChainError) as error:
+        validate_file_descriptor(
+            tmp_path,
+            {"path": "large.bin", "sha256": "0" * 64, "bytes": 0},
+            "test",
+        )
+    assert error.value.code == "E_FILE_SIZE"
+
+
+def test_descriptor_rechecks_size_after_open_before_reading(
+    tmp_path: Path, monkeypatch
+) -> None:
+    path = tmp_path / "growing.bin"
+    path.write_bytes(b"x")
+    original_open = Path.open
+
+    def grow_before_open(candidate, mode="r", *args, **kwargs):
+        if candidate == path and mode == "rb":
+            with original_open(candidate, "wb") as stream:
+                stream.write(b"x" * (MAX_ARCHIVE_BYTES + 1))
+        return original_open(candidate, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", grow_before_open)
+    with pytest.raises(SupplyChainError) as error:
+        validate_file_descriptor(
+            tmp_path,
+            {"path": "growing.bin", "sha256": "0" * 64, "bytes": 1},
+            "test",
+        )
+    assert error.value.code == "E_FILE_SIZE"
+
+
+@pytest.mark.parametrize("archive_type", ["zip", "tar"])
+def test_archive_member_count_is_capped(tmp_path: Path, archive_type: str) -> None:
+    path = tmp_path / ("many.zip" if archive_type == "zip" else "many.tar.gz")
+    if archive_type == "zip":
+        with zipfile.ZipFile(path, "w") as archive:
+            for index in range(MAX_ARCHIVE_MEMBERS + 1):
+                archive.writestr(f"empty-{index}", b"")
+        scan = _scan_zip_archive
+    else:
+        with tarfile.open(path, "w:gz") as archive:
+            for index in range(MAX_ARCHIVE_MEMBERS + 1):
+                info = tarfile.TarInfo(f"empty-{index}")
+                info.size = 0
+                archive.addfile(info, io.BytesIO(b""))
+        scan = _scan_tar_archive
+    with pytest.raises(SupplyChainError) as error:
+        scan(path)
+    assert error.value.code == "E_ARCHIVE_MEMBERS"
 
 
 def test_rebuild_drift_and_license_policy_fail_closed(tmp_path: Path) -> None:

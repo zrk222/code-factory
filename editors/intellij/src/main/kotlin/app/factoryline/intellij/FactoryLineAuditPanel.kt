@@ -44,7 +44,18 @@ class FactoryLineAuditPanel(private val project: Project) : JPanel(BorderLayout(
     }
 
     private fun runAudit() {
-        if (!FactoryLineExecutionConfirmation.confirm(project, "Run CF and ForgeLine evidence")) return
+        val forgeExecutable = FactoryLineSettings.instance().forgeExecutable()
+        if (forgeExecutable == null) {
+            status.text = "BLOCKED · ForgeLine executable is not configured."
+            output.text = "Set an absolute, executable ForgeLine path in Settings | Tools | FactoryLine. The combined audit never searches PATH."
+            return
+        }
+        if (!FactoryLineExecutionConfirmation.confirm(
+                project,
+                "Run CF and ForgeLine evidence",
+                "ForgeLine executable resolved to:\n$forgeExecutable",
+            )
+        ) return
         val root = project.basePath?.let(Path::of) ?: return
         status.text = "Running local audits · Candidate binding: UNBOUND."
         output.text = ""
@@ -54,7 +65,7 @@ class FactoryLineAuditPanel(private val project: Project) : JPanel(BorderLayout(
                 for (lane in lanes) {
                     if (indicator.isCanceled) break
                     indicator.text = lane.label
-                    val executable = if (lane.executable == "factory") FactoryLineSettings.instance().executable() else "forge"
+                    val executable = if (lane.executable == "factory") FactoryLineSettings.instance().executable() else forgeExecutable.toString()
                     val args = lane.args + listOf("--root", root.toString()) + if (lane.executable == "factory") listOf("--json") else emptyList()
                     val result = try {
                         val process = CapturingProcessHandler(GeneralCommandLine(executable).withParameters(args).withWorkDirectory(root.toFile()))

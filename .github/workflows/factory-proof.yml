@@ -23,8 +23,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
-  attestations: write
 
 jobs:
   passport:
@@ -37,6 +35,22 @@ jobs:
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: "22"
+      - name: Validate workflow inputs
+        env:
+          FEATURE: ${{ inputs.feature }}
+          CHALLENGE_GLOB: ${{ inputs.challenge_glob }}
+        run: |
+          python - <<'PY'
+          import os, re
+          feature = os.environ["FEATURE"]
+          pattern = os.environ["CHALLENGE_GLOB"]
+          if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", feature):
+              raise SystemExit("feature must be a simple identifier")
+          if not pattern or pattern.startswith("/") or ".." in pattern.split("/") or not pattern.startswith(".factory/challenges/"):
+              raise SystemExit("challenge_glob must stay under .factory/challenges")
+          if not re.fullmatch(r"[A-Za-z0-9_./*?-]+", pattern):
+              raise SystemExit("challenge_glob contains unsupported characters")
+          PY
       - name: Install the five-brick factory
         run: >-
           python -m pip install
@@ -50,39 +64,60 @@ jobs:
           factory doctor --json > factory-doctor.json
           python -c "import json; payload = json.load(open('factory-doctor.json')); assert payload['installation_ok'] and payload['workflow_ok'], payload"
       - name: Build trace and baseplate challenge
+        env:
+          FEATURE: ${{ inputs.feature }}
         run: |
-          factory trace "${{ inputs.feature }}"
-          factory challenge "${{ inputs.feature }}" \
-            --trace ".factory/traces/${{ inputs.feature }}.trace.json" \
-            --out ".factory/challenges/factoryline.json"
+          factory trace "$FEATURE"
+          factory challenge "$FEATURE" --trace ".factory/traces/$FEATURE.trace.json" --out ".factory/challenges/factoryline.json"
       - name: Build Factory Passport
         shell: bash
+        env:
+          FEATURE: ${{ inputs.feature }}
+          CHALLENGE_GLOB: ${{ inputs.challenge_glob }}
         run: |
-          shopt -s nullglob
-          challenges=( ${{ inputs.challenge_glob }} )
+          set -euo pipefail
+          mapfile -t challenges < <(python - <<'PY'
+          import glob, os
+          for path in sorted(glob.glob(os.environ["CHALLENGE_GLOB"])):
+              print(path)
+          PY
+          )
           if (( ${#challenges[@]} == 0 )); then
-            echo "No challenge receipts matched ${{ inputs.challenge_glob }}" >&2
+            echo "No challenge receipts matched configured glob." >&2
             exit 1
           fi
           args=()
           for receipt in "${challenges[@]}"; do args+=(--challenge "$receipt"); done
-          factory passport "${{ inputs.feature }}" \
-            --trace ".factory/traces/${{ inputs.feature }}.trace.json" \
-            "${args[@]}"
-          factory verify-passport ".factory/passports/${{ inputs.feature }}.passport.json"
+          factory passport "$FEATURE" --trace ".factory/traces/$FEATURE.trace.json" "${args[@]}"
+          factory verify-passport ".factory/passports/$FEATURE.passport.json"
       - name: Publish Mermaid proof graph to job summary
+        env:
+          FEATURE: ${{ inputs.feature }}
         run: |
           echo '## Factory Passport' >> "$GITHUB_STEP_SUMMARY"
           echo '```mermaid' >> "$GITHUB_STEP_SUMMARY"
-          cat ".factory/passports/${{ inputs.feature }}.passport.mmd" >> "$GITHUB_STEP_SUMMARY"
+          cat ".factory/passports/$FEATURE.passport.mmd" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7.0.1
         with:
-          name: factory-passport-${{ inputs.feature }}
+          name: factory-passport
           path: |
             .factory/passports/
             .factory/challenges/
             .factory/traces/
+
+  attest:
+    needs: passport
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: factory-passport
+          path: .factory
       - uses: actions/attest-build-provenance@v2
         with:
           subject-path: .factory/passports/${{ inputs.feature }}.passport.json

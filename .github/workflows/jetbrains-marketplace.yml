@@ -28,6 +28,16 @@ jobs:
     runs-on: ubuntu-latest
     environment: jetbrains-marketplace
     steps:
+      - name: Validate Marketplace channel
+        shell: bash
+        env:
+          MARKETPLACE_CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          [[ "$MARKETPLACE_CHANNEL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,49}$ ]] || {
+            echo "channel must be a 1-50 character Marketplace identifier." >&2
+            exit 1
+          }
       - name: Require the scoped Marketplace publisher token before candidate work
         shell: bash
         env:
@@ -303,9 +313,11 @@ jobs:
       - name: Publish verified plugin update
         env:
           PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+          MARKETPLACE_CHANNEL: ${{ inputs.channel }}
         run: |
           set -euo pipefail
+          [[ "$MARKETPLACE_CHANNEL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,49}$ ]]
           chmod +x gradlew
           ./gradlew publishPlugin --stacktrace \
-            -PfactorylineMarketplaceChannel="${{ inputs.channel }}" \
+            -PfactorylineMarketplaceChannel="$MARKETPLACE_CHANNEL" \
             -PfactorylineMarketplaceArchive="$GITHUB_WORKSPACE/marketplace-candidate/factoryline-intellij.zip"

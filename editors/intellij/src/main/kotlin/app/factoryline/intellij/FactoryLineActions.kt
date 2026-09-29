@@ -19,14 +19,14 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 object FactoryLineExecutionConfirmation {
-    fun confirm(project: Project, action: String): Boolean {
+    fun confirm(project: Project, action: String, details: String? = null): Boolean {
         val root = project.basePath ?: run {
             Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
             return false
         }
         return Messages.showYesNoDialog(
             project,
-            "FactoryLine will run a local command in:\n$root\n\nContinue only if you trust this workspace and its configured FactoryLine executable.",
+            "FactoryLine will run a local command in:\n$root\n\nContinue only if you trust this workspace and its configured FactoryLine executable.${details?.let { "\n\n$it" }.orEmpty()}",
             "FactoryLine: $action",
             "Run local command",
             "Cancel",

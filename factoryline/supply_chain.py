@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import tarfile
@@ -34,6 +35,7 @@ PAYLOAD_TYPE = "application/vnd.factory.supply-chain-attestation.v1+json"
 MAX_FILES = 2048
 MAX_COMPONENTS = 4096
 MAX_ARCHIVE_BYTES = 16 * 1024 * 1024
+MAX_ARCHIVE_MEMBERS = 10_000
 ARTIFACT_SUFFIXES = (".whl", ".tar.gz", ".vsix", ".zip", ".tgz")
 VEX_STATUSES = frozenset({"not_affected", "affected", "fixed", "under_investigation"})
 SEVERITIES = frozenset({"critical", "high", "medium", "low"})
@@ -114,11 +116,39 @@ def _descriptor(
         raise SupplyChainError(
             "E_FILE_BOUNDARY", f"{label} is missing or a symlink: {relative}"
         )
-    actual_digest, actual_bytes = _file_digest(path)
     supplied_digest = require_digest(value["sha256"], f"{label}.sha256")
     supplied_bytes = require_int(
         value["bytes"], f"{label}.bytes", minimum=0, maximum=MAX_ARCHIVE_BYTES
     )
+    try:
+        expected_bytes = path.stat().st_size
+        if expected_bytes > MAX_ARCHIVE_BYTES:
+            raise SupplyChainError(
+                "E_FILE_SIZE", f"{relative} exceeds {MAX_ARCHIVE_BYTES} bytes"
+            )
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            opened_bytes = os.fstat(stream.fileno()).st_size
+            if opened_bytes > MAX_ARCHIVE_BYTES or opened_bytes != expected_bytes:
+                raise SupplyChainError(
+                    "E_FILE_SIZE", f"{relative} changed before it could be read"
+                )
+            actual_bytes = 0
+            while chunk := stream.read(64 * 1024):
+                actual_bytes += len(chunk)
+                if actual_bytes > MAX_ARCHIVE_BYTES:
+                    raise SupplyChainError(
+                        "E_FILE_SIZE", f"{relative} exceeds {MAX_ARCHIVE_BYTES} bytes"
+                    )
+                digest.update(chunk)
+            final_bytes = os.fstat(stream.fileno()).st_size
+    except SupplyChainError:
+        raise
+    except OSError as exc:
+        raise SupplyChainError("E_FILE_READ", f"cannot read {path}: {exc}") from exc
+    actual_digest = digest.hexdigest()
+    if actual_bytes != expected_bytes or final_bytes != actual_bytes:
+        raise SupplyChainError("E_FILE_SIZE", f"{relative} changed while being read")
     if actual_digest != supplied_digest:
         raise SupplyChainError(
             "E_FILE_DIGEST", f"{relative} digest does not match its descriptor"
@@ -214,7 +244,12 @@ def _scan_zip_archive(path: Path) -> list[tuple[str, bytes]]:
     members: list[tuple[str, bytes]] = []
     with zipfile.ZipFile(path) as archive:
         total = 0
-        for info in archive.infolist():
+        for index, info in enumerate(archive.infolist(), start=1):
+            if index > MAX_ARCHIVE_MEMBERS:
+                raise SupplyChainError(
+                    "E_ARCHIVE_MEMBERS",
+                    f"archive contains more than {MAX_ARCHIVE_MEMBERS} members",
+                )
             name = _safe_archive_member_name(info.filename)
             if info.is_dir():
                 continue
@@ -232,7 +267,12 @@ def _scan_tar_archive(path: Path) -> list[tuple[str, bytes]]:
     members: list[tuple[str, bytes]] = []
     with tarfile.open(path, mode="r:*") as archive:
         total = 0
-        for info in archive.getmembers():
+        for index, info in enumerate(archive, start=1):
+            if index > MAX_ARCHIVE_MEMBERS:
+                raise SupplyChainError(
+                    "E_ARCHIVE_MEMBERS",
+                    f"archive contains more than {MAX_ARCHIVE_MEMBERS} members",
+                )
             name = _safe_archive_member_name(info.name)
             if not info.isfile():
                 continue

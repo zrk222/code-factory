@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ipaddress
+import os
+import socket
 import time
 from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import urlsplit
@@ -41,7 +44,7 @@ class HttpTransport(Protocol):
 
 
 class HttpxTransport:
-    """Production HTTPS transport with fixed timeout and redirects disabled."""
+    """Production HTTPS transport with public-address pinning and host allowlists."""
 
     def __init__(self, *, timeout_seconds: float = NETWORK_TIMEOUT_SECONDS):
         if timeout_seconds != NETWORK_TIMEOUT_SECONDS:
@@ -54,7 +57,70 @@ class HttpxTransport:
             raise PRAssuranceError(
                 "E_HOSTED_DEPENDENCY", "install factoryline-code-factory[hosted]"
             ) from exc
-        self._client = httpx.Client(timeout=timeout_seconds, follow_redirects=False)
+        self._client = httpx.Client(
+            timeout=timeout_seconds, follow_redirects=False, trust_env=False
+        )
+
+    @staticmethod
+    def _is_public_ip(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+        return address.is_global and not address.is_multicast
+
+    @staticmethod
+    def _validate_https_destination(url: str) -> tuple[str, str]:
+        parts = urlsplit(url)
+        host = (parts.hostname or "").rstrip(".").lower()
+        if (
+            not host
+            or parts.username
+            or parts.password
+            or parts.port not in (None, 443)
+        ):
+            raise PRAssuranceError("E_HTTP_DESTINATION", "HTTPS host is invalid")
+        try:
+            literal = ipaddress.ip_address(host)
+        except ValueError:
+            allowed = {"api.github.com"}
+            allowed.update(
+                item.strip().rstrip(".").lower()
+                for item in os.environ.get(
+                    "FACTORY_HOSTED_JWKS_ALLOWED_HOSTS", ""
+                ).split(",")
+                if item.strip()
+            )
+            if host not in allowed:
+                raise PRAssuranceError(
+                    "E_HTTP_DESTINATION",
+                    "HTTPS hostname is not in the deployment allowlist",
+                )
+            try:
+                resolved = socket.getaddrinfo(
+                    host, parts.port or 443, type=socket.SOCK_STREAM
+                )
+                addresses = list(
+                    dict.fromkeys(ipaddress.ip_address(item[4][0]) for item in resolved)
+                )
+            except (OSError, ValueError, IndexError) as exc:
+                raise PRAssuranceError(
+                    "E_HTTP_DESTINATION", "HTTPS hostname did not resolve safely"
+                ) from exc
+            if (
+                not addresses
+                or len(addresses) > 16
+                or any(
+                    not HttpxTransport._is_public_ip(address) for address in addresses
+                )
+            ):
+                raise PRAssuranceError(
+                    "E_HTTP_DESTINATION",
+                    "HTTPS hostname resolves to a non-public address",
+                )
+            return host, str(addresses[0])
+        else:
+            if not HttpxTransport._is_public_ip(literal):
+                raise PRAssuranceError(
+                    "E_HTTP_DESTINATION", "HTTPS IP address is not globally routable"
+                )
+            return host, str(literal)
 
     def request(
         self,
@@ -69,10 +135,30 @@ class HttpxTransport:
             raise PRAssuranceError(
                 "E_HTTP_SCHEME", "hosted network destinations must use HTTPS"
             )
+        host, address = self._validate_https_destination(url)
         try:
-            return self._client.request(
-                method, url, headers=dict(headers or {}), json=json
+            parts = urlsplit(url)
+            pinned_host = f"[{address}]" if ":" in address else address
+            pinned_netloc = (
+                f"{pinned_host}:{parts.port}" if parts.port is not None else pinned_host
             )
+            pinned_url = parts._replace(netloc=pinned_netloc).geturl()
+            request_headers = dict(headers or {})
+            host_header_name = host.encode("idna").decode("ascii")
+            host_header = (
+                f"[{host_header_name}]" if ":" in host_header_name else host_header_name
+            )
+            if parts.port is not None:
+                host_header = f"{host_header}:{parts.port}"
+            request_headers["Host"] = host_header
+            request = self._client.build_request(
+                method, pinned_url, headers=request_headers, json=json
+            )
+            try:
+                ipaddress.ip_address(host)
+            except ValueError:
+                request.extensions["sni_hostname"] = host_header_name
+            return self._client.send(request)
         except Exception as exc:
             raise PRAssuranceError(
                 "E_HTTP_UNAVAILABLE", "hosted HTTPS request failed"

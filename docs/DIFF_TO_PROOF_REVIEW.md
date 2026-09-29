@@ -30,7 +30,7 @@ Define reserved path-name segments in `.factory/repository-scope.json`:
 ```json
 {
   "schema": "factory.repository_scope.v1",
-  "blocked_path_segments": ["agent-oven", "private-product"]
+  "blocked_path_segments": ["confidential-product", "private-product"]
 }
 ```
 
@@ -41,7 +41,7 @@ remain allowed.
 
 The checker normalizes case, camel-case names, spaces, underscores, and
 punctuation, and checks path components and filenames. For example,
-`AgentOvenServer.ts` matches the reserved `agent-oven` segment. Added, modified,
+`ConfidentialProductServer.ts` matches the reserved `confidential-product` segment. Added, modified,
 copied, renamed, or type-changed paths that match a reserved segment return
 exit code `2` with `REPOSITORY_SCOPE_BLOCKED` and exact paths. Copies and
 renames check both the source and destination. Deletions are permitted, so
