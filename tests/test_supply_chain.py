@@ -11,6 +11,7 @@ import io
 
 import pytest
 
+from factoryline import supply_chain
 from factoryline.assurance import build_cyclonedx_sbom, build_vex
 from factoryline.enterprise_receipts import generate_key_material, sign_payload
 from factoryline.supply_chain import (
@@ -158,6 +159,31 @@ def test_descriptor_rejects_oversized_file_before_hashing(
             "test",
         )
     assert error.value.code == "E_FILE_SIZE"
+
+
+def test_zip_member_limit_preflights_directory_before_zipinfo_allocation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    path = tmp_path / "too-many-members.zip"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as archive:
+        for index in range(MAX_ARCHIVE_MEMBERS + 1):
+            archive.writestr(f"{index}.txt", b"")
+
+    payload = bytearray(path.read_bytes())
+    end_record = payload.rfind(b"PK\x05\x06")
+    assert end_record >= 0
+    payload[end_record + 8 : end_record + 12] = b"\x01\x00\x01\x00"
+    path.write_bytes(payload)
+
+    def unexpected_zip_open(*args, **kwargs):
+        raise AssertionError(
+            "member limit must run before ZipFile materializes entries"
+        )
+
+    monkeypatch.setattr(supply_chain.zipfile, "ZipFile", unexpected_zip_open)
+    with pytest.raises(SupplyChainError) as error:
+        _scan_zip_archive(path)
+    assert error.value.code == "E_ARCHIVE_MEMBERS"
 
 
 def test_descriptor_rechecks_size_after_open_before_reading(

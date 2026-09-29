@@ -130,8 +130,6 @@ def test_review_regression_audit_accepts_only_hash_verified_evidence_retirement(
         subprocess.check_output(["git", "show", f"HEAD:{old_relative}"], cwd=tmp_path)
     ).hexdigest()
     old_evidence.unlink()
-    fresh = tmp_path / "evidence" / "self-audit" / "quality-2026-09-26.json"
-    fresh.write_text('{"grade":"A","source":"fresh"}\n', encoding="utf-8")
     manifest = tmp_path / ".factory" / "evidence-retirement.json"
     manifest.parent.mkdir()
     entry = {
@@ -146,6 +144,29 @@ def test_review_regression_audit_accepts_only_hash_verified_evidence_retirement(
         encoding="utf-8",
     )
 
+    missing = review_regression_audit(tmp_path, "HEAD")
+    assert missing["state"] == "BLOCKED"
+    assert missing["findings"][0]["code"] == "EVIDENCE_RETIREMENT_WITHOUT_REASSESSMENT"
+
+    fresh = tmp_path / "evidence" / "self-audit" / "quality-2026-09-26.json"
+    fresh.write_text(
+        json.dumps(
+            {
+                "grade": "A",
+                "passed": True,
+                "metrics": {},
+                "findings": [],
+                "attribution": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(
+        ["git", "add", str(fresh.relative_to(tmp_path))],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
     result = review_regression_audit(tmp_path, "HEAD")
     assert result["state"] == "CLEAN", result
     assert result["findings"] == []

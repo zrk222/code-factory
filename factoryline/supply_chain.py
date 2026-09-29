@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import struct
 import tarfile
 from typing import Any
 import zipfile
@@ -240,7 +241,31 @@ def _safe_archive_member_name(raw_name: str) -> str:
     return name
 
 
+def _preflight_zip_member_count(path: Path) -> None:
+    try:
+        with path.open("rb") as stream:
+            end_record = zipfile._EndRecData(stream)
+    except (OSError, ValueError, struct.error) as exc:
+        raise SupplyChainError(
+            "E_ARCHIVE_INVALID", f"{path.name} cannot be inspected: {exc}"
+        ) from exc
+    if end_record is None:
+        raise SupplyChainError("E_ARCHIVE_INVALID", f"{path.name} has no ZIP directory")
+    member_count = end_record[zipfile._ECD_ENTRIES_TOTAL]
+    central_directory_bytes = end_record[zipfile._ECD_SIZE]
+    minimum_member_bytes = zipfile.sizeCentralDir
+    if (
+        member_count > MAX_ARCHIVE_MEMBERS
+        or central_directory_bytes > MAX_ARCHIVE_MEMBERS * minimum_member_bytes
+    ):
+        raise SupplyChainError(
+            "E_ARCHIVE_MEMBERS",
+            f"archive exceeds the {MAX_ARCHIVE_MEMBERS}-member limit",
+        )
+
+
 def _scan_zip_archive(path: Path) -> list[tuple[str, bytes]]:
+    _preflight_zip_member_count(path)
     members: list[tuple[str, bytes]] = []
     with zipfile.ZipFile(path) as archive:
         total = 0

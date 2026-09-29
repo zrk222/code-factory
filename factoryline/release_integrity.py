@@ -653,7 +653,7 @@ def _changed_evidence_paths(output: bytes) -> tuple[list[tuple[str, str]], str |
     changed = [
         (status, path)
         for status, path in zip(parts[::2], parts[1::2])
-        if status != "A" and re.search(r"\d{4}-\d{2}-\d{2}.*\.json$", path)
+        if re.search(r"\d{4}-\d{2}-\d{2}.*\.json$", path)
     ]
     return changed, None
 
@@ -744,6 +744,29 @@ def _git_blob_sha256(
     return hashlib.sha256(result.stdout).hexdigest(), None
 
 
+def _fresh_reassessment_date(root: Path, relative: str) -> str | None:
+    match = re.search(r"(\d{4}-\d{2}-\d{2})[^/]*\.json$", relative)
+    if not match or not relative.startswith("evidence/self-audit/"):
+        return None
+    path = root / relative
+    try:
+        if path.stat().st_size > 2_000_000:
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if (
+        not isinstance(payload, dict)
+        or not isinstance(payload.get("grade"), str)
+        or not isinstance(payload.get("passed"), bool)
+        or not isinstance(payload.get("metrics"), dict)
+        or not isinstance(payload.get("findings"), list)
+        or not isinstance(payload.get("attribution"), dict)
+    ):
+        return None
+    return match.group(1)
+
+
 def _validate_historical_evidence_changes(
     root: Path,
     base_oid: str | None,
@@ -753,7 +776,14 @@ def _validate_historical_evidence_changes(
     findings: list[dict[str, str]] = []
     retired: list[dict[str, str]] = []
     gaps: list[str] = []
+    reassessment_dates: list[str] = []
+    retired_dates: list[str] = []
     for status, relative in historical:
+        if status == "A":
+            fresh_date = _fresh_reassessment_date(root, relative)
+            if fresh_date:
+                reassessment_dates.append(fresh_date)
+            continue
         expected_digest = retirements.get(relative)
         if status == "D" and expected_digest is not None and base_oid is not None:
             actual_digest, error = _git_blob_sha256(root, base_oid, relative)
@@ -761,6 +791,9 @@ def _validate_historical_evidence_changes(
                 gaps.append(error)
             elif actual_digest == expected_digest:
                 retired.append({"path": relative, "sha256": actual_digest or ""})
+                date_match = re.search(r"(\d{4}-\d{2}-\d{2})[^/]*\.json$", relative)
+                if date_match:
+                    retired_dates.append(date_match.group(1))
                 retirements.pop(relative)
                 continue
             else:
@@ -787,6 +820,17 @@ def _validate_historical_evidence_changes(
                 "code": "UNMATCHED_EVIDENCE_RETIREMENT",
                 "path": ".factory/evidence-retirement.json",
                 "action": "Remove retirement entries that do not exactly match a deleted historical evidence blob.",
+            }
+        )
+    if retired and (
+        not reassessment_dates
+        or max(reassessment_dates) <= max(retired_dates, default="0000-00-00")
+    ):
+        findings.append(
+            {
+                "code": "EVIDENCE_RETIREMENT_WITHOUT_REASSESSMENT",
+                "path": "evidence/self-audit",
+                "action": "Add a valid, newer dated ForgeLine reassessment when retiring historical audit evidence.",
             }
         )
     return findings, retired, gaps
