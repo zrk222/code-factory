@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import shutil
 import subprocess
@@ -95,6 +96,71 @@ def test_review_regression_audit_catches_devin_failure_classes(tmp_path: Path) -
         review_regression_audit(tmp_path, "--output=unexpected")["state"]
         == "INCOMPLETE"
     )
+
+
+def test_review_regression_audit_accepts_only_hash_verified_evidence_retirement(
+    tmp_path: Path,
+) -> None:
+    for args in (
+        ["init", "-q"],
+        ["config", "user.name", "Audit Test"],
+        ["config", "user.email", "audit@example.invalid"],
+    ):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+    old_relative = "evidence/self-audit/quality-2026-09-25.json"
+    old_evidence = tmp_path / old_relative
+    old_evidence.parent.mkdir(parents=True)
+    old_evidence.write_text('{"grade":"F"}\n', encoding="utf-8")
+    channels = tmp_path / "docs" / "RELEASE_CHANNELS.md"
+    channels.parent.mkdir()
+    channels.write_text(
+        "The owner selected a specialty AI reviewer.\n", encoding="utf-8"
+    )
+    contributing = tmp_path / "CONTRIBUTING.md"
+    contributing.write_text("A specialty AI agent reviews source.\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "baseline"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    digest = hashlib.sha256(
+        subprocess.check_output(["git", "show", f"HEAD:{old_relative}"], cwd=tmp_path)
+    ).hexdigest()
+    old_evidence.unlink()
+    fresh = tmp_path / "evidence" / "self-audit" / "quality-2026-09-26.json"
+    fresh.write_text('{"grade":"A","source":"fresh"}\n', encoding="utf-8")
+    manifest = tmp_path / ".factory" / "evidence-retirement.json"
+    manifest.parent.mkdir()
+    entry = {
+        "path": old_relative,
+        "sha256": digest,
+        "reason": "Superseded inventory replaced by a fresh dated reassessment.",
+    }
+    manifest.write_text(
+        json.dumps(
+            {"schema": "factory.evidence_retirement.v1", "retirements": [entry]}
+        ),
+        encoding="utf-8",
+    )
+
+    result = review_regression_audit(tmp_path, "HEAD")
+    assert result["state"] == "CLEAN", result
+    assert result["findings"] == []
+    assert result["retired_evidence"] == [{"path": old_relative, "sha256": digest}]
+
+    entry["sha256"] = "0" * 64
+    manifest.write_text(
+        json.dumps(
+            {"schema": "factory.evidence_retirement.v1", "retirements": [entry]}
+        ),
+        encoding="utf-8",
+    )
+    rejected = review_regression_audit(tmp_path, "HEAD")
+    assert rejected["state"] == "BLOCKED"
+    assert rejected["findings"][0]["code"] == "EVIDENCE_RETIREMENT_DIGEST_MISMATCH"
 
 
 WORKFLOWS = (

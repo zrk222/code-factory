@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -639,7 +641,7 @@ def _git_evidence_delta(root: Path, oid: str) -> tuple[bytes, str | None]:
     return result.stdout, None
 
 
-def _changed_evidence_paths(output: bytes) -> tuple[list[str], str | None]:
+def _changed_evidence_paths(output: bytes) -> tuple[list[tuple[str, str]], str | None]:
     if not output:
         return [], None
     try:
@@ -649,24 +651,145 @@ def _changed_evidence_paths(output: bytes) -> tuple[list[str], str | None]:
     if len(parts) % 2:
         return [], "Git delta has an unexpected name-status shape."
     changed = [
-        path
+        (status, path)
         for status, path in zip(parts[::2], parts[1::2])
         if status != "A" and re.search(r"\d{4}-\d{2}-\d{2}.*\.json$", path)
     ]
     return changed, None
 
 
-def _review_git_delta(root: Path, base: str) -> tuple[list[str], str | None]:
+def _review_git_delta(
+    root: Path, base: str
+) -> tuple[list[tuple[str, str]], str | None, str | None]:
     """Read a bounded Git delta without interpreting file content as instructions."""
     if not isinstance(base, str) or not base or len(base) > 200 or "\0" in base:
-        return [], "Git base is missing or invalid."
+        return [], None, "Git base is missing or invalid."
     oid, error = _resolve_git_base(root, base)
     if error:
-        return [], error
+        return [], None, error
     output, error = _git_evidence_delta(root, oid)
     if error:
-        return [], error
-    return _changed_evidence_paths(output)
+        return [], oid, error
+    changed, error = _changed_evidence_paths(output)
+    return changed, oid, error
+
+
+def _retired_evidence_digests(root: Path) -> tuple[dict[str, str], str | None]:
+    """Read explicit hash receipts for historical self-audits retired from the tree."""
+    path = root / ".factory" / "evidence-retirement.json"
+    try:
+        if path.stat().st_size > 64_000:
+            return {}, "Evidence retirement manifest exceeds the review bound."
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}, None
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}, "Evidence retirement manifest is unreadable or invalid JSON."
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != "factory.evidence_retirement.v1"
+    ):
+        return {}, "Evidence retirement manifest has an unsupported schema."
+    entries = payload.get("retirements")
+    if not isinstance(entries, list) or len(entries) > 32:
+        return {}, "Evidence retirement manifest has an invalid retirement list."
+    result: dict[str, str] = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"path", "sha256", "reason"}:
+            return (
+                {},
+                "Evidence retirement entries must declare path, sha256, and reason.",
+            )
+        relative = entry["path"]
+        digest = entry["sha256"]
+        reason = entry["reason"]
+        if (
+            not isinstance(relative, str)
+            or not re.fullmatch(
+                r"evidence/self-audit/[^/]*\d{4}-\d{2}-\d{2}[^/]*\.json", relative
+            )
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[a-f0-9]{64}", digest)
+            or not isinstance(reason, str)
+            or not reason.strip()
+            or len(reason) > 500
+            or relative in result
+        ):
+            return (
+                {},
+                "Evidence retirement entry is malformed, duplicated, or out of scope.",
+            )
+        result[relative] = digest
+    return result, None
+
+
+def _git_blob_sha256(
+    root: Path, oid: str, relative: str
+) -> tuple[str | None, str | None]:
+    try:
+        result = subprocess.run(
+            ["git", "show", f"{oid}:{relative}"],
+            cwd=root,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None, "Historical evidence blob could not be read."
+    if result.returncode or len(result.stdout) > 2_000_000:
+        return (
+            None,
+            "Historical evidence blob is unavailable or exceeds the review bound.",
+        )
+    return hashlib.sha256(result.stdout).hexdigest(), None
+
+
+def _validate_historical_evidence_changes(
+    root: Path,
+    base_oid: str | None,
+    historical: list[tuple[str, str]],
+    retirements: dict[str, str],
+) -> tuple[list[dict[str, str]], list[dict[str, str]], list[str]]:
+    findings: list[dict[str, str]] = []
+    retired: list[dict[str, str]] = []
+    gaps: list[str] = []
+    for status, relative in historical:
+        expected_digest = retirements.get(relative)
+        if status == "D" and expected_digest is not None and base_oid is not None:
+            actual_digest, error = _git_blob_sha256(root, base_oid, relative)
+            if error:
+                gaps.append(error)
+            elif actual_digest == expected_digest:
+                retired.append({"path": relative, "sha256": actual_digest or ""})
+                retirements.pop(relative)
+                continue
+            else:
+                findings.append(
+                    {
+                        "code": "EVIDENCE_RETIREMENT_DIGEST_MISMATCH",
+                        "path": relative,
+                        "action": "Retain the original evidence or correct the hash-only retirement record.",
+                    }
+                )
+                retirements.pop(relative)
+                continue
+        findings.append(
+            {
+                "code": "HISTORICAL_EVIDENCE_MUTATED",
+                "path": relative,
+                "action": "Restore the historical receipt or retire it with an exact base-blob SHA-256 record and a new dated reassessment.",
+            }
+        )
+        retirements.pop(relative, None)
+    if retirements:
+        findings.append(
+            {
+                "code": "UNMATCHED_EVIDENCE_RETIREMENT",
+                "path": ".factory/evidence-retirement.json",
+                "action": "Remove retirement entries that do not exactly match a deleted historical evidence blob.",
+            }
+        )
+    return findings, retired, gaps
 
 
 def _release_review_conflict(root: Path) -> tuple[bool, str | None]:
@@ -701,16 +824,12 @@ def _release_review_conflict(root: Path) -> tuple[bool, str | None]:
 def review_regression_audit(root: Path, base: str) -> dict[str, Any]:
     """Catch dated-evidence rewrites and conflicting release-review rules in a PR."""
     workspace = Path(root).resolve()
-    historical, git_error = _review_git_delta(workspace, base)
+    historical, base_oid, git_error = _review_git_delta(workspace, base)
     conflict, document_error = _release_review_conflict(workspace)
-    findings = [
-        {
-            "code": "HISTORICAL_EVIDENCE_MUTATED",
-            "path": path,
-            "action": "Restore the historical receipt and write a new dated reassessment.",
-        }
-        for path in historical
-    ]
+    retirements, retirement_error = _retired_evidence_digests(workspace)
+    findings, retired, retirement_gaps = _validate_historical_evidence_changes(
+        workspace, base_oid, historical, retirements
+    )
     if conflict:
         findings.append(
             {
@@ -719,15 +838,20 @@ def review_regression_audit(root: Path, base: str) -> dict[str, Any]:
                 "action": "Align both documents with the selected reviewer and provider gates.",
             }
         )
-    gaps = [item for item in (git_error, document_error) if item]
+    gaps = [
+        item
+        for item in (git_error, document_error, retirement_error, *retirement_gaps)
+        if item
+    ]
     return {
         "schema": "factory.review-regression-audit.v1",
         "state": "INCOMPLETE" if gaps else "BLOCKED" if findings else "CLEAN",
         "base": base,
         "root": str(workspace),
         "findings": findings,
+        "retired_evidence": retired,
         "gaps": gaps,
-        "scope": "Dated self-audit JSON history and two release-review documents; text matching is bounded.",
+        "scope": "Dated self-audit JSON history, hash-verified evidence retirement, and two release-review documents; text matching is bounded.",
         "behavioral_checks": "Muse receipt freshness, ignored-policy binding, HMAC tampering, and on-demand lifecycle require adversarial tests in tests/test_langchain_plugin.py; this static check does not execute them.",
         "authority": "Read-only diagnostic; no approval, merge, publication, or security certification.",
     }
