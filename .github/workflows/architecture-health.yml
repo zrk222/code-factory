@@ -45,3 +45,30 @@ jobs:
         env:
           REVIEW_BASE: ${{ github.event.pull_request.base.sha || 'HEAD^' }}
         run: python -m factoryline.cli audit governance --root . --base "$REVIEW_BASE" --json
+      - name: Diagnose reassessment mismatch without changing the receipt
+        if: failure()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from factoryline.release_integrity import _canonical_json, _run_forgeline_reassessment, _source_snapshot_digest
+          root = Path.cwd().resolve()
+          saved = json.loads((root / 'evidence/self-audit/quality-reassessment-2026-09-28.json').read_text(encoding='utf-8'))
+          measured = _run_forgeline_reassessment(root)
+          actual_digest = _source_snapshot_digest(root, saved['report']['metrics']['scope']['code_files'])
+          before = {item['unit']: item for item in saved['report'].get('attribution', {}).get('units', [])}
+          after = {item['unit']: item for item in measured.get('attribution', {}).get('units', [])} if measured else {}
+          print(json.dumps({
+              'source_digest_matches': actual_digest == saved['source_sha256'],
+              'forge_report_available': measured is not None,
+              'forge_report_matches': measured is not None and _canonical_json(measured) == _canonical_json(saved['report']),
+              'saved_metrics': {key: value for key, value in saved['report'].get('metrics', {}).items() if key != 'scope'},
+              'measured_metrics': {key: value for key, value in measured.get('metrics', {}).items() if key != 'scope'} if measured else None,
+              'saved_code_files': len(saved['report'].get('metrics', {}).get('scope', {}).get('code_files', [])),
+              'measured_code_files': len(measured.get('metrics', {}).get('scope', {}).get('code_files', [])) if measured else None,
+              'changed_units': [key for key in sorted(before.keys() | after.keys()) if before.get(key) != after.get(key)][:20],
+              'saved_attribution': {key: value for key, value in saved['report'].get('attribution', {}).items() if key != 'units'},
+              'measured_attribution': {key: value for key, value in measured.get('attribution', {}).items() if key != 'units'} if measured else None,
+          }, default=str))
+          PY
