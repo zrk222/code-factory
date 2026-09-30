@@ -213,8 +213,14 @@ def _read_scope_policy(
             ) from exc
     try:
         value = json.loads(raw)
-        if policy_ref:
-            value = _upgrade_trusted_scope_policy(root, policy_ref, value)
+        if (
+            policy_ref
+            and isinstance(value, dict)
+            and set(value) == {"schema", "blocked_path_segments"}
+        ):
+            value["allowed_top_level_directories"] = _trusted_tree_directories(
+                root, policy_ref
+            )
         return _validate_scope_policy(value)
     except json.JSONDecodeError as exc:
         raise RepositoryScopeError(
@@ -222,24 +228,15 @@ def _read_scope_policy(
         ) from exc
 
 
-def _upgrade_trusted_scope_policy(root: Path, ref: str, value: object) -> object:
+def _trusted_tree_directories(root: Path, ref: str) -> list[str]:
     """Derive legacy allowlists only from directories in the trusted base tree."""
-    if not isinstance(value, dict) or set(value) != {"schema", "blocked_path_segments"}:
-        return value
     directories = subprocess.check_output(
         ["git", "ls-tree", "-d", "--name-only", "-z", ref],
         cwd=root,
     )
-    return {
-        **value,
-        "allowed_top_level_directories": sorted(
-            {
-                _scope_segment(os.fsdecode(path))
-                for path in directories.split(b"\0")
-                if path
-            }
-        ),
-    }
+    return sorted(
+        {_scope_segment(os.fsdecode(path)) for path in directories.split(b"\0") if path}
+    )
 
 
 def _git_scope_paths(root: Path, base: str, head: str) -> list[str]:

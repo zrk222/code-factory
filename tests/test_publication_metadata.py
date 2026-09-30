@@ -394,9 +394,11 @@ def test_openvsx_workflow_seals_a_tested_immutable_candidate_before_manual_publi
     assert (
         "Require the scoped Open VSX publisher token before candidate work" in workflow
     )
-    assert "needs: authorize" in workflow
+    assert "needs: [authorize, attested-source]" in workflow
+    assert "ref: main" in workflow
+    assert "git merge-base --is-ancestor" in workflow
     assert "inputs.publish == false || needs.authorize.result == 'success'" in workflow
-    assert "needs: [authorize, validate]" in workflow
+    assert "needs: [authorize, validate, attested-source]" in workflow
     assert "secrets.OPENVSX_TOKEN" in workflow
     assert "ovsx@1.1.0 publish" in workflow
     assert "OPENVSX_TOKEN is required" in workflow
@@ -412,7 +414,7 @@ def test_marketplace_workflow_uses_current_gradle_action_and_scoped_secret():
 
     assert "  validate:" in workflow
     assert "  publish:" in workflow
-    assert "needs: validate" in workflow
+    assert "needs: [validate, attested-source]" in workflow
     assert "environment: jetbrains-marketplace" in workflow
     assert "gradle/actions/setup-gradle@v6.2.0" in workflow
     assert "gradle/actions/setup-gradle@v4" not in workflow
@@ -762,7 +764,7 @@ def test_jetbrains_publication_workflow_blocks_an_occupied_binary_update_slot():
     assert "guardianReleaseGate" in workflow
     assert "verify sealed candidate" in workflow
     assert "Restore Gradle wrapper execute permission" in workflow
-    assert "needs: [authorize, validate, compatibility]" in workflow
+    assert "needs: [authorize, validate, compatibility, attested-source]" in workflow
 
 
 def test_jetbrains_reviewer_and_growth_docs_keep_external_approval_and_reviews_honest():

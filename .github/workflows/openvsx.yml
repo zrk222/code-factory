@@ -27,6 +27,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  attested-source:
+    name: resolve protected source and verify CI evidence
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install .
+      - name: Require a reviewed immutable tag on protected main
+        id: source
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          [[ "$RELEASE_REF" =~ ^vscode-v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]
+          candidate=$(git rev-parse --verify "${RELEASE_REF}^{commit}")
+          git merge-base --is-ancestor "$candidate" origin/main
+          python -m factoryline.signed_receipts fetch-ci "$candidate" "$RUNNER_TEMP/ci-release-evidence"
+          echo "commit=$candidate" >> "$GITHUB_OUTPUT"
+
   authorize:
     name: authorize protected Open VSX publication
     if: inputs.publish == true
@@ -46,8 +75,8 @@ jobs:
 
   validate:
     name: validate immutable Open VSX candidate
-    needs: authorize
-    if: ${{ always() && (inputs.publish == false || needs.authorize.result == 'success') }}
+    needs: [authorize, attested-source]
+    if: ${{ always() && needs.attested-source.result == 'success' && (inputs.publish == false || needs.authorize.result == 'success') }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -55,7 +84,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.release_ref }}
+          ref: ${{ needs.attested-source.outputs.commit }}
           fetch-depth: 0
       - name: Require an immutable release tag
         shell: bash
@@ -125,10 +154,6 @@ jobs:
             --out "$RELEASE_CONTRACT_PATH" \
             --approved-by "$APPROVED_BY"
 
-      - name: Require attested clean-runner evidence for this commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python -m factoryline.signed_receipts fetch-ci "$(git rev-parse HEAD)" "$RUNNER_TEMP/ci-release-evidence"
       - name: Require the sealed candidate preflight
         working-directory: ${{ github.workspace }}
         env:
@@ -172,13 +197,13 @@ jobs:
   publish:
     name: publish verified Open VSX candidate
     if: ${{ always() && inputs.publish == true && needs.authorize.result == 'success' && needs.validate.result == 'success' }}
-    needs: [authorize, validate]
+    needs: [authorize, validate, attested-source]
     runs-on: ubuntu-latest
     environment: openvsx
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.release_ref }}
+          ref: ${{ needs.attested-source.outputs.commit }}
           fetch-depth: 0
       - uses: actions/download-artifact@v8.0.1
         with:

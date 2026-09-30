@@ -788,6 +788,8 @@ def test_scope_guard_upgrades_only_trusted_legacy_base(tmp_path: Path) -> None:
     }
     (tmp_path / ".factory/repository-scope.json").write_text(json.dumps(legacy))
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    _scope_git(tmp_path, "config", "user.name", "FactoryLine Test")
+    _scope_git(tmp_path, "config", "user.email", "factoryline@example.test")
     _scope_commit(tmp_path, "legacy trusted base")
     review = check_repository_scope(
         tmp_path,

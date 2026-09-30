@@ -25,6 +25,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  attested-source:
+    name: resolve protected source and verify CI evidence
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install .
+      - name: Require a reviewed immutable tag on protected main
+        id: source
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          [[ "$RELEASE_REF" =~ ^jetbrains-v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]
+          candidate=$(git rev-parse --verify "${RELEASE_REF}^{commit}")
+          git merge-base --is-ancestor "$candidate" origin/main
+          python -m factoryline.signed_receipts fetch-ci "$candidate" "$RUNNER_TEMP/ci-release-evidence"
+          echo "commit=$candidate" >> "$GITHUB_OUTPUT"
+
   authorize:
     name: authorize protected Marketplace publication
     runs-on: ubuntu-latest
@@ -53,7 +82,7 @@ jobs:
 
   validate:
     name: validate Marketplace candidate
-    needs: authorize
+    needs: [authorize, attested-source]
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -61,7 +90,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.release_ref }}
+          ref: ${{ needs.attested-source.outputs.commit }}
           fetch-depth: 0
       - name: Require an immutable release tag
         shell: bash
@@ -114,10 +143,6 @@ jobs:
             --out .factory/release-contracts/jetbrains.json \
             --approved-by "$APPROVED_BY"
 
-      - name: Require attested clean-runner evidence for this commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python -m factoryline.signed_receipts fetch-ci "$(git rev-parse HEAD)" "$RUNNER_TEMP/ci-release-evidence"
       - name: Require the sealed candidate preflight
         working-directory: ${{ github.workspace }}
         env:
@@ -176,7 +201,7 @@ jobs:
 
   compatibility:
     name: verify sealed candidate (${{ matrix.product }})
-    needs: validate
+    needs: [validate, attested-source]
     strategy:
       fail-fast: false
       matrix:
@@ -196,7 +221,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.release_ref }}
+          ref: ${{ needs.attested-source.outputs.commit }}
           fetch-depth: 0
       - uses: actions/setup-java@v5
         with:
@@ -269,7 +294,7 @@ jobs:
 
   publish:
     name: publish verified Marketplace candidate
-    needs: [authorize, validate, compatibility]
+    needs: [authorize, validate, compatibility, attested-source]
     runs-on: ubuntu-latest
     environment: jetbrains-marketplace
     defaults:
@@ -278,7 +303,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.release_ref }}
+          ref: ${{ needs.attested-source.outputs.commit }}
           fetch-depth: 0
       - uses: actions/setup-java@v5
         with:
