@@ -16,6 +16,8 @@ on:
         type: string
 
 permissions:
+  actions: read
+  attestations: read
   contents: read
 
 concurrency:
@@ -112,6 +114,10 @@ jobs:
             --out .factory/release-contracts/jetbrains.json \
             --approved-by "$APPROVED_BY"
 
+      - name: Require attested clean-runner evidence for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -m factoryline.signed_receipts fetch-ci "$(git rev-parse HEAD)" "$RUNNER_TEMP/ci-release-evidence"
       - name: Require the sealed candidate preflight
         working-directory: ${{ github.workspace }}
         env:

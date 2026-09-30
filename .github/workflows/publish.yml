@@ -10,6 +10,8 @@ on:
 
 permissions:
   contents: read
+  actions: read
+  attestations: read
 
 concurrency:
   group: publish-release-train
@@ -21,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # GitHub requires write access to read unpublished drafts.
+      actions: read
+      attestations: read
     outputs:
       candidate_commit: ${{ steps.candidate.outputs.commit }}
     steps:
@@ -57,6 +61,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - run: python -m pip install -e .
+      - name: Require attested clean-runner evidence for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -m factoryline.signed_receipts fetch-ci "${{ steps.candidate.outputs.commit }}" "$RUNNER_TEMP/ci-release-evidence"
       - name: Enforce cadence using actual GitHub publication timestamps
         env:
           GH_TOKEN: ${{ github.token }}

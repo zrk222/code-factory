@@ -112,7 +112,7 @@ quote-style = "double"
 indent-style = "space"
 
 [project.scripts]
-factory = "factoryline.bootstrap:main"
+factory = "factoryline.provenance:main"
 
 [tool.setuptools]
 packages = ["factoryline", "factoryline.builtin_packs"]

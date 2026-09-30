@@ -7,6 +7,7 @@ from factoryline.benchmark_lab import (
     SCHEMA,
     evaluate_benchmark,
     validate_benchmark_manifest,
+    run_public_benchmark,
 )
 
 
@@ -89,3 +90,21 @@ def test_manifest_rejects_urls_duplicates_and_unknown_category():
         validate_benchmark_manifest(
             {**base, "cases": [{**_case("a"), "category": "fuzz"}]}
         )
+
+
+def test_public_seeded_corpus_executes_real_scanner_and_reports_unsupported_fns():
+    receipt = run_public_benchmark()
+    assert receipt["scanner"] == "factoryline.review_audits.security_scan"
+    assert receipt["decision"] == "BLOCKED"
+    assert receipt["metrics"]["stateful_invariant"]["tp"] == 1
+    assert receipt["metrics"]["stateful_invariant"]["tn"] == 1
+    assert receipt["metrics"]["tenant_isolation"]["fn"] == 1
+    assert receipt["metrics"]["consumer_compatibility"]["fn"] == 1
+    assert receipt["metrics"]["overall"]["tp"] == 2
+    assert receipt["metrics"]["overall"]["fn"] == 2
+    assert receipt["metrics"]["overall"]["recall"] == 0.5
+    assert receipt["metrics"]["tenant_isolation"]["fp"] == 0
+    assert receipt["metrics"]["tenant_isolation"]["recall_ci95_wilson"] is not None
+    assert receipt["corpus_sha256"] and receipt["scanner_version"]
+    assert len(receipt["source_bindings"]) == 12
+    assert "not independently held out" in receipt["claim_boundary"]

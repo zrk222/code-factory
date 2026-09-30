@@ -39,6 +39,8 @@ def cli_command(name: str) -> str:
 
 def add_parser(sub: Any) -> None:
     """Register the foundational proof and architecture command families."""
+    version = sub.add_parser("version", help="show package provenance")
+    version.add_argument("--json", action="store_true")
     architecture = sub.add_parser(
         "architecture", help="measure architecture debt and enforce growth budgets"
     )

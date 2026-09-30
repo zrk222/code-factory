@@ -153,6 +153,19 @@ consent; the default scopes are `cf.audit.read` and `offline_access`. A
 connected Zapier account and a live tool invocation are separate verification
 steps; this code and configuration alone do not prove them.
 
+The hosted audit read/upload features are free through December 31, 2026 and
+require a server-provisioned entitlement at or after 2027-01-01 00:00 UTC.
+The Vercel adapter reads `FACTORY_META_ENTITLED_SUBJECTS_JSON` as a bounded
+tenant-to-subject allowlist; it never accepts entitlement from request fields or
+OAuth scopes. An absent or malformed allowlist grants no paid access (malformed
+configuration fails closed at startup). Operators must provision entries only
+after their separate human-approved commercial process. No checkout, billing,
+or automatic entitlement feed is implemented, so paid activation remains
+unavailable until that process and deployment configuration exist. OAuth
+discovery, API contracts, account revocation, and account/audit deletion remain
+available after the cutoff. The daily retention cron uses the same warm-process
+application cache as API requests; the operator console and API do not poll.
+
 Candidate requests for user research—not evidence of market demand—include:
 
 - “Compare this renewal with the dated pricing records I provide, and show

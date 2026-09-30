@@ -2263,8 +2263,6 @@ def _build_parser() -> argparse.ArgumentParser:
     outcome_summary_parser.add_argument("--mission-id")
     outcome_summary_parser.add_argument("--json", action="store_true")
 
-    version = sub.add_parser("version", help="show package provenance")
-    version.add_argument("--json", action="store_true")
     return p
 
 

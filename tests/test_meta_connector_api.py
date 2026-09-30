@@ -52,6 +52,18 @@ def _app(tmp_path, claims=None):
     )
 
 
+def _cutoff_app(tmp_path, clock, claims=None, entitled=(), public_base_url=None):
+    return MetaConnectorAPI(
+        str(tmp_path / "meta.sqlite"),
+        lambda _: claims or _claims(),
+        authorization_url="https://id.example/authorize",
+        token_url="https://id.example/token",
+        entitled_subjects=frozenset(entitled),
+        clock=lambda: clock,
+        public_base_url=public_base_url,
+    )
+
+
 def _call(app, method, path, body=None, query="", token="test-token"):
     raw = json.dumps(body).encode() if body is not None else b""
     env = {
@@ -249,6 +261,95 @@ def test_auth_scope_and_account_revocation(tmp_path):
     assert _call(read_only, "POST", "/v1/audits", _snapshot())[0] == "403 Forbidden"
     assert _call(app, "DELETE", "/v1/account")[0] == "200 OK"
     assert _call(app, "GET", "/v1/account")[1]["error"]["code"] == "ACCOUNT_REVOKED"
+
+
+def test_paid_cutoff_is_default_deny_and_entitlement_is_server_scoped(
+    tmp_path, monkeypatch
+):
+    before = _cutoff_app(
+        tmp_path, datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+    )
+    status, created, _ = _call(before, "POST", "/v1/audits", _snapshot())
+    assert status == "201 Created"
+    audit_id = created["id"]
+
+    original_connect = meta_connector_api.connect
+    connections = []
+
+    def counted_connect(database):
+        connections.append(database)
+        return original_connect(database)
+
+    monkeypatch.setattr(meta_connector_api, "connect", counted_connect)
+    for cutoff in (
+        datetime(2027, 1, 1, tzinfo=timezone.utc),
+        datetime(2027, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
+    ):
+        denied = _cutoff_app(tmp_path, cutoff)
+        connections.clear()
+        status, result, _ = _call(denied, "GET", f"/v1/audits/{audit_id}")
+        assert status == "402 Payment Required"
+        assert result["error"]["code"] == "ENTITLEMENT_REQUIRED"
+        assert not connections
+
+    entitled = _cutoff_app(
+        tmp_path,
+        datetime(2027, 1, 1, tzinfo=timezone.utc),
+        entitled={("team", "one")},
+    )
+    assert _call(entitled, "GET", f"/v1/audits/{audit_id}")[0] == "200 OK"
+    assert connections
+
+
+def test_mcp_tool_call_is_cut_off_before_database_lookup(tmp_path, monkeypatch):
+    app = _cutoff_app(tmp_path, datetime(2027, 1, 1, tzinfo=timezone.utc))
+    original_connect = meta_connector_api.connect
+    connections = []
+
+    def counted_connect(database):
+        connections.append(database)
+        return original_connect(database)
+
+    monkeypatch.setattr(meta_connector_api, "connect", counted_connect)
+    status, result, _ = _mcp_call(
+        app, "tools/call", {"name": "list_audits", "arguments": {}}
+    )
+    assert status == "402 Payment Required"
+    assert result["error"]["code"] == "ENTITLEMENT_REQUIRED"
+    assert not connections
+
+
+def test_cutoff_keeps_public_metadata_and_account_erasure_available(tmp_path):
+    app = _cutoff_app(
+        tmp_path,
+        datetime(2027, 1, 1, tzinfo=timezone.utc),
+        public_base_url="https://cf.example/api",
+    )
+    status, metadata, _ = _call(
+        app, "GET", "/.well-known/oauth-protected-resource", token=""
+    )
+    assert status == "200 OK"
+    assert metadata["resource"] == "https://cf.example/api/mcp"
+    assert _call(app, "GET", "/openapi.json", token="")[0] == "200 OK"
+    assert _call(app, "DELETE", "/v1/account")[0] == "200 OK"
+
+
+def test_entitlement_allowlist_configuration_is_bounded_and_validated(tmp_path):
+    config = {
+        "FACTORY_META_DATABASE": str(tmp_path / "meta.sqlite"),
+        "FACTORY_META_OIDC_ISSUER": "https://id.example/",
+        "FACTORY_META_OIDC_AUDIENCE": "code-factory",
+        "FACTORY_META_JWKS_URL": "https://id.example/jwks.json",
+        "FACTORY_META_AUTHORIZATION_URL": "https://id.example/authorize",
+        "FACTORY_META_TOKEN_URL": "https://id.example/token",
+        "FACTORY_META_ENTITLED_SUBJECTS_JSON": '{"team":["one"]}',
+    }
+    app = create_meta_connector_app_from_env(config)
+    assert ("team", "one") in app.entitled_subjects
+    config["FACTORY_META_ENTITLED_SUBJECTS_JSON"] = '{"team":[" one "]}'
+    with pytest.raises(ConnectorError) as error:
+        create_meta_connector_app_from_env(config)
+    assert error.value.code == "CONFIG_INVALID"
 
 
 def test_revocation_between_identity_check_and_upload_still_blocks(tmp_path):
@@ -502,7 +603,7 @@ def test_vercel_retention_requires_configured_cron_secret(monkeypatch):
         def purge_expired(self):
             return 3
 
-    monkeypatch.setattr(vercel_entrypoint, "create_meta_connector_app_from_env", Stub)
+    monkeypatch.setattr(vercel_entrypoint, "get_meta_connector_app", Stub)
     secret = "s" * 40
     monkeypatch.setenv("CRON_SECRET", secret)
 

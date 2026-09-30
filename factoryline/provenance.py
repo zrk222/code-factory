@@ -83,3 +83,24 @@ def provenance() -> dict:
         "receipt_schema": "factory.receipt.v2",
         "identity_complete": bool(commit and build_hash),
     }
+
+
+def _emit_version(as_json: bool) -> int:
+    """Print the same provenance envelope as the full CLI."""
+    payload = provenance()
+    print(
+        json.dumps(payload, indent=2, sort_keys=True)
+        if as_json
+        else f"factory {payload['version']}"
+    )
+    return 0
+
+
+def main(argv=None) -> int:
+    """Dispatch version probes without loading the 490-command registry."""
+    values = list(sys.argv[1:] if argv is None else argv)
+    if values and values[0] == "--version":
+        return _emit_version("--json" in values)
+    from .cli import main as cli_main
+
+    return cli_main(values)

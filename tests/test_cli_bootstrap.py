@@ -3,7 +3,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from factoryline import bootstrap
+from factoryline import provenance as bootstrap
 from factoryline import provenance as provenance_module
 
 

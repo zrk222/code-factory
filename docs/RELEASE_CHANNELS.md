@@ -32,6 +32,43 @@ not turn a source merge into release approval.
 | OpenCode | Native `code-factory-opencode` plugin 0.1.0 | Build a self-contained module and install under `.opencode/plugins/`; publish a registry package only after registry authentication and independent receipt | Project plugin loads and CF/ForgeLine lanes run or report exact limits |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
+### Editor marketplace snapshot
+
+Release-grade test evidence must come from the protected-main
+`signed-receipts.yml` runner. It records the source commit, environment,
+dependency versions, exact commands, logs and JUnit digest; any tracked source
+change during checks aborts receipt creation.
+Each check runs on a separate fresh Actions runner, preventing a test process
+from modifying the source inspected by another lane. The aggregation runner
+validates each check's GitHub job/step result, source identity and artifact
+digests before combining its results. Test/scanner runners have no signing
+permissions; only the separate attestor signs, and it never executes repository
+code or installs the candidate package.
+Publishers verify GitHub artifact
+attestation against that exact commit, workflow and main ref, rejecting
+self-hosted runners. Local checks are development evidence and cannot replace
+this receipt. Attestation establishes provenance, not software correctness.
+
+The public seeded Python AST benchmark runs in `audit-benchmark.yml`. Its six
+hand-labeled cases currently yield 2 true positives, 2 true negatives, 0 false
+positives and 2 false negatives: precision 100%, recall 50%. Hollow-test
+semantics and tenant-isolation defects remain unsupported by this scanner.
+This small, public corpus is not independent holdout or production evidence;
+the workflow preserves measurements rather than approving a release. Mutation
+testing has a separate manual workflow; configuring it is not a measured
+mutation-survival result.
+
+Queried the public provider APIs on 2026-09-30 at 16:29 UTC:
+
+| Listing | Published version | Provider-reported downloads | Other provider metric |
+| --- | --- | ---: | ---: |
+| [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=zrk222.factoryline-vscode) | 1.0.1 | 380 | 3 installs |
+| [Open VSX](https://open-vsx.org/extension/zrk222/factoryline-vscode) | 0.9.9 | 4,682 | 0 reviews |
+
+These are channel counters, not unique users. The VS Code Marketplace API
+returned 378–380 across three consecutive reads, so treat its counter as an
+eventually consistent snapshot. Neither listing has published 1.0.2 yet.
+
 The release pipeline never treats a queued review, draft listing, uploaded
 artifact, or workflow dispatch as a completed publication. Each channel is
 reported as published, pending review, blocked, or not configured. Direct

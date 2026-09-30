@@ -335,6 +335,15 @@ def test_change_review_explicit_paths_bypass_git_collection(
 
 SCOPE_POLICY = {
     "schema": "factory.repository_scope.v1",
+    "allowed_top_level_directories": [
+        ".factory",
+        "adr",
+        "docs",
+        "evidence",
+        "examples",
+        "factoryline",
+        "src",
+    ],
     "blocked_path_segments": [
         "products",
         "agent-cloud",
@@ -369,6 +378,10 @@ def _scope_repository(root: Path) -> None:
     (root / ".factory").mkdir()
     (root / ".factory/repository-scope.json").write_text(
         json.dumps(SCOPE_POLICY), encoding="utf-8"
+    )
+    (root / ".factory/repository-scope-decisions.json").write_text(
+        json.dumps({"schema": "factory.repository_scope_decision.v1", "decisions": []}),
+        encoding="utf-8",
     )
     (root / "confidential-product").mkdir()
     (root / "confidential-product/old.ts").write_text("old product\n", encoding="utf-8")
@@ -466,8 +479,9 @@ def test_scope_guard_reads_trusted_base_policy_and_allows_cleanup_deletions(
         "factoryline/module.py",
         "products/external-product/src/server.ts",
     ]
-    assert (
-        review["blocked_paths"][0]["path"] == "products/external-product/src/server.ts"
+    assert any(
+        item["path"] == "products/external-product/src/server.ts"
+        for item in review["blocked_paths"]
     )
 
 
@@ -605,6 +619,93 @@ def test_scope_guard_blocks_copying_reserved_path_to_neutral_name(
     ]
 
 
+def test_scope_guard_blocks_unexpected_top_level_directory_even_when_name_is_neutral(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / ".factory/repository-scope.json").write_text(
+        json.dumps(SCOPE_POLICY), encoding="utf-8"
+    )
+    review = check_repository_scope(
+        tmp_path, changed_paths=["fresh-neutral-area/src/module.py"]
+    )
+    assert review["state"] == "blocked"
+    assert review["blocked_paths"] == [
+        {
+            "path": "fresh-neutral-area/src/module.py",
+            "matched_segment": "unapproved-top-level:fresh-neutral-area",
+        }
+    ]
+
+
+def test_scope_policy_addition_requires_candidate_evidence_record_and_never_bypasses_base(
+    tmp_path: Path,
+) -> None:
+    _scope_repository(tmp_path)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    candidate_policy = {
+        **SCOPE_POLICY,
+        "allowed_top_level_directories": [
+            *SCOPE_POLICY["allowed_top_level_directories"],
+            "new-area",
+        ],
+    }
+    (tmp_path / ".factory/repository-scope.json").write_text(
+        json.dumps(candidate_policy), encoding="utf-8"
+    )
+    (tmp_path / "new-area").mkdir()
+    (tmp_path / "new-area/module.py").write_text("new content\n", encoding="utf-8")
+    _scope_commit(tmp_path, "add directory policy without decision")
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    with pytest.raises(RepositoryScopeError) as exc:
+        check_repository_scope(tmp_path, base=base, head=head, policy_ref=base)
+    assert exc.value.code == "SCOPE_DECISION_MISSING"
+
+    record = {
+        "schema": "factory.repository_scope_decision.v1",
+        "decisions": [
+            {
+                "top_level_directory": "new-area",
+                "rationale": "The repository owns this new subsystem.",
+                "evidence": ["adr/0001-new-area.md"],
+            }
+        ],
+    }
+    (tmp_path / ".factory/repository-scope-decisions.json").write_text(
+        json.dumps(record), encoding="utf-8"
+    )
+    _scope_commit(tmp_path, "record evidence decision")
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    review = check_repository_scope(tmp_path, base=base, head=head, policy_ref=base)
+    assert review["scope_decisions"] == "evidence_recorded_pending_trusted_merge"
+    assert review["state"] == "blocked"
+    assert review["blocked_paths"] == [
+        {
+            "path": "new-area/module.py",
+            "matched_segment": "unapproved-top-level:new-area",
+        }
+    ]
+
+
 @pytest.mark.parametrize("path", ["../secret.py", "C:/secret.py", "", "/secret.py"])
 def test_scope_guard_rejects_unsafe_paths(tmp_path: Path, path: str) -> None:
     (tmp_path / ".factory").mkdir()
@@ -675,3 +776,26 @@ def test_scope_guard_rejects_an_untrusted_policy_revision(tmp_path: Path) -> Non
         check_repository_scope(tmp_path, changed_paths=[], policy_ref="not-a-ref")
 
     assert exc.value.code == "SCOPE_POLICY_UNAVAILABLE"
+
+
+def test_scope_guard_upgrades_only_trusted_legacy_base(tmp_path: Path) -> None:
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / "factoryline").mkdir()
+    (tmp_path / "factoryline/main.py").write_text("VALUE = 1\n")
+    legacy = {
+        "schema": "factory.repository_scope.v1",
+        "blocked_path_segments": ["products"],
+    }
+    (tmp_path / ".factory/repository-scope.json").write_text(json.dumps(legacy))
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    _scope_commit(tmp_path, "legacy trusted base")
+    review = check_repository_scope(
+        tmp_path,
+        changed_paths=["factoryline/main.py", "new-saas/main.py"],
+        policy_ref="HEAD",
+    )
+    assert review["blocked_paths"] == [
+        {"path": "new-saas/main.py", "matched_segment": "unapproved-top-level:new-saas"}
+    ]
+    with pytest.raises(RepositoryScopeError, match="policy must contain"):
+        check_repository_scope(tmp_path, changed_paths=["factoryline/main.py"])

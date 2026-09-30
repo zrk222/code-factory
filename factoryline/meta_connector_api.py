@@ -35,6 +35,7 @@ MAX_AUDITS = 200
 MAX_TOKEN_SECONDS = 900
 MAX_MCP_TOKEN_SECONDS = 86400
 RETENTION_SECONDS = 7 * 86400
+PAID_CUTOFF = datetime(2027, 1, 1, tzinfo=timezone.utc)
 SHA = re.compile(r"[a-f0-9]{40}(?:[a-f0-9]{24})?\Z")
 HEX64 = re.compile(r"[a-f0-9]{64}\Z")
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}\Z")
@@ -545,6 +546,8 @@ class MetaConnectorAPI:
         supports_relink: bool = True,
         max_token_seconds: int = MAX_TOKEN_SECONDS,
         mcp_verifier: Callable[[str], dict[str, Any]] | None = None,
+        entitled_subjects: frozenset[tuple[str, str]] = frozenset(),
+        clock: Callable[[], datetime] | None = None,
     ):
         self.database, self.verifier = database, verifier
         self.mcp_verifier = mcp_verifier or verifier
@@ -556,6 +559,8 @@ class MetaConnectorAPI:
         self.fixed_tenant = fixed_tenant
         self.supports_relink = supports_relink
         self.max_token_seconds = max_token_seconds
+        self.entitled_subjects = entitled_subjects
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
         with self._db() as db:
             db.execute(
                 "CREATE TABLE IF NOT EXISTS meta_accounts (tenant TEXT NOT NULL, subject TEXT NOT NULL, revoked_at INTEGER, PRIMARY KEY (tenant, subject))"
@@ -659,8 +664,16 @@ class MetaConnectorAPI:
             )
         return tenant, subject, claims
 
-    def _identity(self, environ: Mapping[str, Any], scope: str) -> tuple[str, str]:
+    def _identity(
+        self,
+        environ: Mapping[str, Any],
+        scope: str,
+        *,
+        require_paid: bool = False,
+    ) -> tuple[str, str]:
         tenant, subject, _claims = self._verified_identity(environ, scope)
+        if require_paid:
+            self._require_paid_access(tenant, subject)
         with self._db() as db:
             row = db.execute(
                 "SELECT revoked_at FROM meta_accounts WHERE tenant=? AND subject=?",
@@ -676,6 +689,21 @@ class MetaConnectorAPI:
                 (tenant, subject),
             )
         return tenant, subject
+
+    def _require_paid_access(self, tenant: str, subject: str) -> None:
+        if (
+            self.clock().astimezone(timezone.utc) >= PAID_CUTOFF
+            and (
+                tenant,
+                subject,
+            )
+            not in self.entitled_subjects
+        ):
+            raise ConnectorError(
+                "402 Payment Required",
+                "ENTITLEMENT_REQUIRED",
+                "audit access requires a provisioned entitlement",
+            )
 
     @staticmethod
     def _body(environ: Mapping[str, Any]) -> Any:
@@ -924,12 +952,6 @@ class MetaConnectorAPI:
                     "TOKEN_AUDIENCE",
                     "token is not issued for this MCP resource",
                 )
-        with self._db() as db:
-            row = self._account_row(db, tenant, subject)
-            if row and row[0] is not None:
-                raise ConnectorError(
-                    "401 Unauthorized", "ACCOUNT_REVOKED", "linked account is revoked"
-                )
         request = self._body(environ)
         if (
             not isinstance(request, dict)
@@ -940,6 +962,15 @@ class MetaConnectorAPI:
                 "400 Bad Request", "INVALID_RPC", "one JSON-RPC message required"
             )
         rpc_method, request_id = request["method"], request.get("id")
+        params = request.get("params", {})
+        if isinstance(params, dict) and rpc_method == "tools/call":
+            self._require_paid_access(tenant, subject)
+        with self._db() as db:
+            row = self._account_row(db, tenant, subject)
+            if row and row[0] is not None:
+                raise ConnectorError(
+                    "401 Unauthorized", "ACCOUNT_REVOKED", "linked account is revoked"
+                )
         if request_id is None:
             if rpc_method == "notifications/initialized":
                 return "202 Accepted", None, []
@@ -950,7 +981,6 @@ class MetaConnectorAPI:
             raise ConnectorError(
                 "400 Bad Request", "INVALID_RPC", "request id is invalid"
             )
-        params = request.get("params", {})
         if not isinstance(params, dict):
             raise ConnectorError(
                 "400 Bad Request", "INVALID_RPC", "request params must be an object"
@@ -1104,7 +1134,9 @@ class MetaConnectorAPI:
         if method not in {"GET", "POST"}:
             raise ConnectorError("404 Not Found", "NOT_FOUND", "route not found")
         tenant, subject = self._identity(
-            environ, "cf.audit.write" if method == "POST" else "cf.audit.read"
+            environ,
+            "cf.audit.write" if method == "POST" else "cf.audit.read",
+            require_paid=True,
         )
         if method == "POST":
             return self._create_audit(tenant, subject, environ)
@@ -1186,7 +1218,9 @@ class MetaConnectorAPI:
         if method not in {"GET", "DELETE"}:
             raise ConnectorError("404 Not Found", "NOT_FOUND", "route not found")
         tenant, subject = self._identity(
-            environ, "cf.audit.write" if method == "DELETE" else "cf.audit.read"
+            environ,
+            "cf.audit.write" if method == "DELETE" else "cf.audit.read",
+            require_paid=method == "GET",
         )
         audit_id = parts[2]
         if not re.fullmatch(r"[0-9a-f-]{36}", audit_id):
@@ -1480,6 +1514,59 @@ def _validated_provider(env: Mapping[str, str]) -> str:
     return provider
 
 
+def _entitled_subjects(env: Mapping[str, str]) -> frozenset[tuple[str, str]]:
+    """Read a bounded, operator-provisioned tenant-to-subject entitlement map."""
+    try:
+        raw = json.loads(env.get("FACTORY_META_ENTITLED_SUBJECTS_JSON", "{}"))
+    except json.JSONDecodeError as exc:
+        raise ConnectorError(
+            "500 Internal Server Error",
+            "CONFIG_INVALID",
+            "entitlement allowlist must be valid JSON",
+        ) from exc
+    if not isinstance(raw, dict) or len(raw) > 1000:
+        raise ConnectorError(
+            "500 Internal Server Error",
+            "CONFIG_INVALID",
+            "entitlement allowlist is invalid",
+        )
+    values: set[tuple[str, str]] = set()
+    for tenant, subjects in raw.items():
+        if (
+            not isinstance(tenant, str)
+            or not tenant
+            or len(tenant) > 100
+            or tenant.strip() != tenant
+            or not isinstance(subjects, list)
+            or len(subjects) > 1000
+        ):
+            raise ConnectorError(
+                "500 Internal Server Error",
+                "CONFIG_INVALID",
+                "entitlement allowlist is invalid",
+            )
+        for subject in subjects:
+            if (
+                not isinstance(subject, str)
+                or not subject
+                or len(subject) > 200
+                or subject.strip() != subject
+            ):
+                raise ConnectorError(
+                    "500 Internal Server Error",
+                    "CONFIG_INVALID",
+                    "entitlement allowlist is invalid",
+                )
+            values.add((tenant, subject))
+            if len(values) > 10_000:
+                raise ConnectorError(
+                    "500 Internal Server Error",
+                    "CONFIG_INVALID",
+                    "entitlement allowlist is too large",
+                )
+    return frozenset(values)
+
+
 def _validated_public_base(env: Mapping[str, str]) -> str:
     public_base_url = env.get("FACTORY_META_PUBLIC_BASE_URL", "").rstrip("/")
     public_url = urlsplit(public_base_url)
@@ -1574,15 +1661,21 @@ def create_meta_connector_app_from_env(
         supports_relink=provider != "clerk",
         max_token_seconds=MAX_TOKEN_SECONDS,
         mcp_verifier=mcp_verify,
+        entitled_subjects=_entitled_subjects(env),
     )
+
+
+def get_meta_connector_app() -> MetaConnectorAPI:
+    """Return the per-process app, initializing its database only once."""
+    global _APP
+    if _APP is None:
+        _APP = create_meta_connector_app_from_env()
+    return _APP
 
 
 def app(environ: Mapping[str, Any], start_response: Callable) -> list[bytes]:
     """Lazy WSGI entrypoint for gunicorn factoryline.meta_connector_api:app."""
-    global _APP
-    if _APP is None:
-        _APP = create_meta_connector_app_from_env()
-    return _APP(environ, start_response)
+    return get_meta_connector_app()(environ, start_response)
 
 
 _APP: MetaConnectorAPI | None = None

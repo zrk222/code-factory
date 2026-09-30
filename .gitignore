@@ -13,6 +13,9 @@ tmp/
 .venv/
 venv/
 .factory/
+!.factory/
+.factory/*
+!.factory/repository-scope-decisions.json
 .forge/
 receipts/
 *.adoption.ssat.yaml
