@@ -73,6 +73,8 @@ jobs:
           echo "A scoped Visual Studio Marketplace publisher credential is available."
 
   validate:
+    permissions:
+      contents: read
     name: validate immutable Marketplace candidate
     needs: [authorize, attested-source]
     if: ${{ always() && needs.attested-source.result == 'success' && (inputs.publish == false || needs.authorize.result == 'success') }}
@@ -83,8 +85,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ needs.attested-source.outputs.commit }}
+          ref: main
           fetch-depth: 0
+          persist-credentials: false
+      - name: Bind protected-main checkout to approved candidate
+        env:
+          APPROVED_COMMIT: ${{ needs.attested-source.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$APPROVED_COMMIT"
 
       - name: Require an immutable release tag
         shell: bash

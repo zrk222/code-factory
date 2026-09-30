@@ -527,7 +527,9 @@ def test_release_integrity_rejects_late_openvsx_authorization(tmp_path: Path) ->
     root = _workflow_copy(tmp_path)
     workflow = root / ".github" / "workflows" / "openvsx.yml"
     workflow.write_text(
-        workflow.read_text(encoding="utf-8").replace("needs: authorize\n", ""),
+        workflow.read_text(encoding="utf-8").replace(
+            "needs: [authorize, attested-source]\n", "needs: [attested-source]\n"
+        ),
         encoding="utf-8",
     )
 
@@ -544,7 +546,7 @@ def test_release_integrity_rejects_vscode_candidate_validation_without_authoriza
     workflow = root / ".github" / "workflows" / "vscode-marketplace.yml"
     workflow.write_text(
         workflow.read_text(encoding="utf-8").replace(
-            "needs: authorize\n", "needs: []\n", 1
+            "needs: [authorize, attested-source]\n", "needs: [attested-source]\n", 1
         ),
         encoding="utf-8",
     )
@@ -613,10 +615,10 @@ def test_release_integrity_rejects_java17_in_any_intellij_gradle_workflow(
     [
         ("environment: jetbrains-marketplace", "environment: missing"),
         ('test -n "$PUBLISH_TOKEN"', "false"),
-        ("needs: authorize\n", "needs: []\n"),
+        ("needs: [authorize, attested-source]\n", "needs: [attested-source]\n"),
         (
-            "needs: [authorize, validate, compatibility]",
-            "needs: [validate, compatibility]",
+            "needs: [authorize, validate, compatibility, attested-source]",
+            "needs: [validate, compatibility, attested-source]",
         ),
     ],
 )

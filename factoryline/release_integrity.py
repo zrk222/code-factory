@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from .release_route_integrity import release_route_checks
+from .release_route_integrity import _needs_include, release_route_checks
 
 
 SCHEMA = "factory.release_integrity.v1"
@@ -62,7 +62,7 @@ def _job(workflow: str, name: str) -> str:
     if match is None:
         return ""
     start = match.end()
-    next_job = re.search(r"(?m)^  [A-Za-z_][A-Za-z0-9_]*:\n", workflow[start:])
+    next_job = re.search(r"(?m)^  [A-Za-z_][A-Za-z0-9_-]*:\n", workflow[start:])
     return workflow[start : start + next_job.start()] if next_job else workflow[start:]
 
 
@@ -411,9 +411,9 @@ def _openvsx_authorization_passes(authorize: str) -> bool:
 
 def _openvsx_dependency_passes(validate: str, publish: str) -> bool:
     return (
-        "needs: authorize" in validate
+        _needs_include(validate, {"authorize"})
         and "inputs.publish == false || needs.authorize.result == 'success'" in validate
-        and "needs: [authorize, validate]" in publish
+        and _needs_include(publish, {"authorize", "validate"})
         and "needs.authorize.result == 'success'" in publish
     )
 

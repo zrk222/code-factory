@@ -81,6 +81,8 @@ jobs:
           }
 
   validate:
+    permissions:
+      contents: read
     name: validate Marketplace candidate
     needs: [authorize, attested-source]
     runs-on: ubuntu-latest
@@ -90,8 +92,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ needs.attested-source.outputs.commit }}
+          ref: main
           fetch-depth: 0
+          persist-credentials: false
+      - name: Bind protected-main checkout to approved candidate
+        env:
+          APPROVED_COMMIT: ${{ needs.attested-source.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$APPROVED_COMMIT"
       - name: Require an immutable release tag
         shell: bash
         env:
@@ -200,6 +207,8 @@ jobs:
           retention-days: 14
 
   compatibility:
+    permissions:
+      contents: read
     name: verify sealed candidate (${{ matrix.product }})
     needs: [validate, attested-source]
     strategy:
@@ -221,8 +230,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ needs.attested-source.outputs.commit }}
+          ref: main
           fetch-depth: 0
+          persist-credentials: false
+      - name: Bind compatibility source to approved candidate
+        env:
+          APPROVED_COMMIT: ${{ needs.attested-source.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$APPROVED_COMMIT"
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -303,8 +317,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ needs.attested-source.outputs.commit }}
+          ref: main
           fetch-depth: 0
+          persist-credentials: false
+      - name: Bind publisher source to approved candidate
+        env:
+          APPROVED_COMMIT: ${{ needs.attested-source.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$APPROVED_COMMIT"
       - uses: actions/setup-java@v5
         with:
           distribution: temurin

@@ -230,10 +230,12 @@ def _read_scope_policy(
 
 def _trusted_tree_directories(root: Path, ref: str) -> list[str]:
     """Derive legacy allowlists only from directories in the trusted base tree."""
-    directories = subprocess.check_output(
+    directories = subprocess.run(
         ["git", "ls-tree", "-d", "--name-only", "-z", ref],
         cwd=root,
-    )
+        check=True,
+        capture_output=True,
+    ).stdout
     return sorted(
         {_scope_segment(os.fsdecode(path)) for path in directories.split(b"\0") if path}
     )
