@@ -150,7 +150,7 @@ jobs:
               folder = Path('ci-checks') / f'ci-check-{name}'
               path = folder / f'ci-{name}.json'
               assert path.stat().st_size <= 2_000_000, 'receipt exceeds size limit'
-              provider_log = subprocess.check_output(['gh', 'api', f"repos/{identity['repository']}/actions/jobs/{job['id']}/logs"], text=True)
+              provider_log = subprocess.check_output(['gh', 'api', '--allow-escape-sequences', f"repos/{identity['repository']}/actions/jobs/{job['id']}/logs"], text=True)
               recorded_hashes = re.findall(r'CF_CI_RECEIPT_SHA256:([a-f0-9]{64})(?:\s|$)', provider_log)
               actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
               assert recorded_hashes == [actual_hash], 'uploaded receipt differs from trusted recorder log'
