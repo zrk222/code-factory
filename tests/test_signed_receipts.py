@@ -173,3 +173,171 @@ def test_sigstore_workflow_uses_oidc_and_verifies_exact_workflow_identity():
     assert "factory verify-receipts" in workflow
     assert ".factory/challenges/verify-receipts.json" in workflow
     assert "PYPI_TOKEN" not in workflow
+
+
+def test_release_receipts_reject_local_runner(tmp_path, monkeypatch):
+    from factoryline.signed_receipts import produce_ci_receipt
+
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    with pytest.raises(SignedReceiptError, match="E_CI_IDENTITY"):
+        produce_ci_receipt(tmp_path, tmp_path / "receipt.json")
+
+
+@pytest.mark.parametrize("index_flag", [None, "--assume-unchanged", "--skip-worktree"])
+def test_ci_check_rejects_tracked_source_mutation(tmp_path, index_flag):
+    import sys
+    from factoryline.signed_receipts import _ci_run
+
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    source = tmp_path / "candidate.py"
+    source.write_text("VALUE = 1\n")
+    subprocess.run(["git", "add", "candidate.py"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=CI fixture",
+            "-c",
+            "user.email=ci@example.invalid",
+            "commit",
+            "-m",
+            "candidate",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    if index_flag:
+        subprocess.run(
+            ["git", "update-index", index_flag, "candidate.py"],
+            cwd=tmp_path,
+            check=True,
+        )
+    with pytest.raises(SignedReceiptError, match="E_CI_SOURCE_CHANGED"):
+        _ci_run(
+            tmp_path,
+            "mutation",
+            (
+                sys.executable,
+                "-c",
+                "from pathlib import Path; Path('candidate.py').write_text('VALUE = 2\\n')",
+            ),
+        )
+    assert not (tmp_path / "ci-mutation.log").exists()
+
+
+def test_release_receipts_bind_commands_and_commit(tmp_path):
+    from factoryline.signed_receipts import (
+        CI_COMMANDS,
+        CI_RECEIPT_SCHEMA,
+        validate_ci_receipt,
+    )
+
+    path = tmp_path / "receipt.json"
+    payload = {
+        "schema": CI_RECEIPT_SCHEMA,
+        "ok": True,
+        "identity": {"commit": "a" * 40, "ref": "refs/heads/main"},
+        "junit_sha256": "b" * 64,
+        "commands": [
+            {"name": n, "argv": list(a), "exit_code": 0} for n, a in CI_COMMANDS
+        ],
+    }
+    path.write_text(json.dumps(payload))
+    assert validate_ci_receipt(path, "a" * 40)["ok"]
+    with pytest.raises(SignedReceiptError, match="E_CI_RECEIPT"):
+        validate_ci_receipt(path, "c" * 40)
+    payload["commands"][0]["exit_code"] = 1
+    path.write_text(json.dumps(payload))
+    with pytest.raises(SignedReceiptError, match="E_CI_RECEIPT"):
+        validate_ci_receipt(path, "a" * 40)
+
+
+def test_every_publisher_requires_attested_candidate_evidence():
+    for name in (
+        "publish",
+        "jetbrains-marketplace",
+        "vscode-marketplace",
+        "openvsx",
+        "huggingface-space",
+    ):
+        workflow = Path(f".github/workflows/{name}.yml").read_text()
+        assert "factoryline.signed_receipts fetch-ci" in workflow, name
+
+
+def test_ci_receipt_executes_only_one_fixed_check(tmp_path, monkeypatch):
+    import factoryline.signed_receipts as receipts
+
+    monkeypatch.setattr(receipts, "_ci_identity", lambda root: {"commit": "a" * 40})
+    monkeypatch.setattr(receipts, "_ci_pristine", lambda root: None)
+    executed = []
+
+    def run(root, name, argv):
+        executed.append(name)
+        return {"name": name, "argv": list(argv), "exit_code": 0}
+
+    monkeypatch.setattr(receipts, "_ci_run", run)
+    monkeypatch.setattr(
+        receipts.subprocess, "check_output", lambda *args, **kwargs: "pytest==8\n"
+    )
+    with pytest.raises(SignedReceiptError, match="E_CI_CHECK"):
+        receipts.produce_ci_receipt(tmp_path, tmp_path / "receipt.json")
+    result = receipts.produce_ci_receipt(tmp_path, tmp_path / "receipt.json", "quality")
+    assert executed == ["quality"]
+    assert result["schema"] == receipts.CI_CHECK_SCHEMA
+
+
+def test_ci_aggregation_requires_all_source_bound_checks(tmp_path, monkeypatch):
+    import factoryline.signed_receipts as receipts
+
+    identity = {"commit": "a" * 40, "ref": "refs/heads/main"}
+    monkeypatch.setattr(receipts, "_ci_identity", lambda root: identity)
+    monkeypatch.setattr(receipts, "_ci_pristine", lambda root: None)
+    for name, argv in receipts.CI_COMMANDS:
+        check = {
+            "schema": receipts.CI_CHECK_SCHEMA,
+            "ok": True,
+            "identity": identity,
+            "commands": [{"name": name, "argv": list(argv), "exit_code": 0}],
+            "environment": {},
+            "dependencies": [],
+            "junit_sha256": "b" * 64,
+        }
+        (tmp_path / f"ci-{name}.json").write_text(json.dumps(check))
+    result = receipts.combine_ci_receipts(
+        tmp_path, tmp_path, tmp_path / "combined.json"
+    )
+    assert receipts.validate_ci_payload(result, "a" * 40)["ok"]
+    path = tmp_path / "ci-quality.json"
+    invalid = json.loads(path.read_text())
+    invalid["identity"]["commit"] = "c" * 40
+    path.write_text(json.dumps(invalid))
+    with pytest.raises(SignedReceiptError, match="E_CI_RECEIPT"):
+        receipts.combine_ci_receipts(tmp_path, tmp_path, tmp_path / "bad.json")
+    assert not (tmp_path / "bad.json").exists()
+
+
+def test_ci_workflow_isolates_checks_and_signing_permissions():
+    workflow = Path(".github/workflows/signed-receipts.yml").read_text()
+    assert "check: [tests, architecture, quality, scanner_controls]" in workflow
+    assert "needs: isolated-check" in workflow
+    check_job, attestor = workflow.split("  sign-and-verify:", 1)
+    check_permissions = check_job.split("    permissions:", 1)[1].split(
+        "    steps:", 1
+    )[0]
+    assert "id-token:" not in check_permissions
+    assert "attestations:" not in check_permissions
+    assert "actions/checkout" not in attestor
+    assert "pip install" not in attestor
+    assert (
+        "python -m pytest -n 2 -q --junitxml=ci-tests.xml > ci-tests.log" in check_job
+    )
+    assert "factoryline.signed_receipts run-ci" not in check_job
+    assert check_job.index("factory verify-receipts") < check_job.index(
+        "Record fixed-command evidence"
+    )
+    assert "recorded_hashes == [actual_hash]" in attestor
+    assert "step['conclusion'] == 'success'" in attestor
+    assert attestor.index("Validate isolated runner results") < attestor.index(
+        "Attest the runner and source commit"
+    )

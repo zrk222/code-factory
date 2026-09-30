@@ -8,7 +8,7 @@ import os
 from typing import Any, Callable, Mapping
 
 from factoryline.meta_connector_api import app as connector_app
-from factoryline.meta_connector_api import create_meta_connector_app_from_env
+from factoryline.meta_connector_api import get_meta_connector_app
 
 
 def app(environ: Mapping[str, Any], start_response: Callable) -> list[bytes]:
@@ -17,15 +17,24 @@ def app(environ: Mapping[str, Any], start_response: Callable) -> list[bytes]:
     if path == "/api/internal/retention":
         secret = os.environ.get("CRON_SECRET", "")
         token = str(environ.get("HTTP_AUTHORIZATION", ""))
-        if not secret or len(secret) < 32 or not compare_digest(token, f"Bearer {secret}"):
+        if (
+            not secret
+            or len(secret) < 32
+            or not compare_digest(token, f"Bearer {secret}")
+        ):
             body, status = b'{"error":"unauthorized"}', "401 Unauthorized"
         elif environ.get("REQUEST_METHOD") != "GET":
             body, status = b'{"error":"not found"}', "404 Not Found"
         else:
-            deleted = create_meta_connector_app_from_env().purge_expired()
-            body = json.dumps({"schema": "factory.meta.retention.v1", "deleted": deleted}).encode()
+            deleted = get_meta_connector_app().purge_expired()
+            body = json.dumps(
+                {"schema": "factory.meta.retention.v1", "deleted": deleted}
+            ).encode()
             status = "200 OK"
-        start_response(status, [("Content-Type", "application/json"), ("Cache-Control", "no-store")])
+        start_response(
+            status,
+            [("Content-Type", "application/json"), ("Cache-Control", "no-store")],
+        )
         return [body]
     if path == "/api":
         path = "/"

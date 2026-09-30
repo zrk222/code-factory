@@ -7,6 +7,13 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 
+from scripts.jetbrains_marketplace_measurement import (
+    BASELINE_SCHEMA,
+    MEASUREMENT_SCHEMA,
+    BaselineError,
+    build_measurement,
+    load_baseline,
+)
 from scripts.jetbrains_release_artifact import (
     ArtifactError,
     create_manifest,
@@ -15,17 +22,18 @@ from scripts.jetbrains_release_artifact import (
 
 
 COMMIT = "a" * 40
+ROOT = Path(__file__).resolve().parent.parent
 
 
-def test_intellij_workflow_deduplicates_identical_sha_triggers() -> None:
+def test_intellij_workflow_cancels_superseded_commits_on_same_ref() -> None:
     workflow = (
         Path(__file__).parents[1] / ".github" / "workflows" / "intellij-plugin.yml"
     ).read_text(encoding="utf-8")
     assert "branches: [main]" in workflow
     assert "pull_request:" in workflow
+    assert "group: intellij-plugin-${{ github.ref }}" in workflow
     assert (
-        "group: intellij-plugin-${{ github.event.pull_request.head.sha || github.sha }}"
-        in workflow
+        "group: intellij-plugin-${{ github.event.pull_request.head.sha" not in workflow
     )
     assert "cancel-in-progress: true" in workflow
 
@@ -156,3 +164,83 @@ def test_manifest_rejects_tag_plugin_version_mismatch(tmp_path: Path) -> None:
             commit=COMMIT,
             channel="default",
         )
+
+
+# Keep IntelliJ workflow and Marketplace contract checks beside the release artifact.
+
+
+def test_intellij_required_checks_are_emitted_for_every_pull_request() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "intellij-plugin.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "  pull_request:\n  workflow_dispatch:" in workflow
+    assert "  changes:" in workflow
+    assert "    needs: changes\n    runs-on: ubuntu-latest" in workflow
+    assert "  test-package:\n    needs: [changes, test-package-verify]" in workflow
+    assert "  compatibility:\n    needs: [changes, test-package-verify]" in workflow
+    assert "Mark package verification not applicable" in workflow
+    assert "Mark compatibility not applicable" in workflow
+    assert (
+        "defaults:\n      run:\n        working-directory: editors/intellij"
+        not in workflow
+    )
+    assert workflow.count("working-directory: editors/intellij") == 4
+
+
+def test_intellij_heavy_validation_is_scoped_without_suppressing_required_statuses() -> (
+    None
+):
+    workflow = (ROOT / ".github" / "workflows" / "intellij-plugin.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "^(editors/intellij/|\\.github/workflows/intellij-plugin\\.yml$)" in workflow
+    assert workflow.count("if: needs.changes.outputs.intellij == 'true'") >= 10
+    assert "needs.changes.outputs.intellij != 'true'" in workflow
+    assert "paths:" not in workflow.split("jobs:", maxsplit=1)[0]
+
+
+def test_marketplace_measurement_reports_only_observed_download_movement() -> None:
+    baseline = {
+        "schema": BASELINE_SCHEMA,
+        "recorded_at": "2026-08-04T05:00:00Z",
+        "plugin_id": 33009,
+        "downloads": 46,
+        "listed_version": "0.7.1",
+    }
+    plugin = {
+        "downloads": 53,
+        "version": "0.8.4",
+        "pricingModel": "FREE",
+        "approve": False,
+        "hasUnapprovedUpdate": True,
+    }
+
+    result = build_measurement(baseline, plugin)
+
+    assert result["schema"] == MEASUREMENT_SCHEMA
+    assert result["download_delta"] == 7
+    assert result["download_delta_state"] == "observed"
+    assert result["conversion_rate"] is None
+    assert result["causal_uplift"] is None
+    assert (
+        result["conversion_rate_state"]
+        == "unavailable_without_marketplace_impressions_or_page_views"
+    )
+    assert (
+        result["causal_uplift_state"]
+        == "unavailable_without_a_controlled_experiment_or_attribution_data"
+    )
+
+
+def test_marketplace_measurement_requires_a_well_formed_baseline(
+    tmp_path: Path,
+) -> None:
+    invalid = tmp_path / "baseline.json"
+    invalid.write_text(
+        json.dumps({"schema": BASELINE_SCHEMA, "plugin_id": 33009, "downloads": -1})
+    )
+
+    with pytest.raises(BaselineError, match="BASELINE_DOWNLOADS_INVALID"):
+        load_baseline(invalid)

@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: intellij-plugin-${{ github.event.pull_request.head.sha || github.sha }}
+  group: intellij-plugin-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

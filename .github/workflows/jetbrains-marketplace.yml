@@ -16,6 +16,8 @@ on:
         type: string
 
 permissions:
+  actions: read
+  attestations: read
   contents: read
 
 concurrency:
@@ -23,11 +25,50 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  attested-source:
+    name: resolve protected source and verify CI evidence
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install .
+      - name: Require a reviewed immutable tag on protected main
+        id: source
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          [[ "$RELEASE_REF" =~ ^jetbrains-v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]
+          candidate=$(git rev-parse --verify "${RELEASE_REF}^{commit}")
+          git merge-base --is-ancestor "$candidate" origin/main
+          python -m factoryline.signed_receipts fetch-ci "$candidate" "$RUNNER_TEMP/ci-release-evidence"
+          echo "commit=$candidate" >> "$GITHUB_OUTPUT"
+
   authorize:
     name: authorize protected Marketplace publication
     runs-on: ubuntu-latest
     environment: jetbrains-marketplace
     steps:
+      - name: Validate Marketplace channel
+        shell: bash
+        env:
+          MARKETPLACE_CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          [[ "$MARKETPLACE_CHANNEL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,49}$ ]] || {
+            echo "channel must be a 1-50 character Marketplace identifier." >&2
+            exit 1
+          }
       - name: Require the scoped Marketplace publisher token before candidate work
         shell: bash
         env:
@@ -40,8 +81,10 @@ jobs:
           }
 
   validate:
+    permissions:
+      contents: read
     name: validate Marketplace candidate
-    needs: authorize
+    needs: [authorize, attested-source]
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -49,8 +92,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.release_ref }}
+          ref: main
           fetch-depth: 0
+          persist-credentials: false
+      - name: Bind protected-main checkout to approved candidate
+        env:
+          APPROVED_COMMIT: ${{ needs.attested-source.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$APPROVED_COMMIT"
       - name: Require an immutable release tag
         shell: bash
         env:
@@ -159,8 +207,10 @@ jobs:
           retention-days: 14
 
   compatibility:
+    permissions:
+      contents: read
     name: verify sealed candidate (${{ matrix.product }})
-    needs: validate
+    needs: [validate, attested-source]
     strategy:
       fail-fast: false
       matrix:
@@ -180,8 +230,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.release_ref }}
+          ref: main
           fetch-depth: 0
+          persist-credentials: false
+      - name: Bind compatibility source to approved candidate
+        env:
+          APPROVED_COMMIT: ${{ needs.attested-source.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$APPROVED_COMMIT"
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -253,7 +308,7 @@ jobs:
 
   publish:
     name: publish verified Marketplace candidate
-    needs: [authorize, validate, compatibility]
+    needs: [authorize, validate, compatibility, attested-source]
     runs-on: ubuntu-latest
     environment: jetbrains-marketplace
     defaults:
@@ -262,8 +317,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.release_ref }}
+          ref: main
           fetch-depth: 0
+          persist-credentials: false
+      - name: Bind publisher source to approved candidate
+        env:
+          APPROVED_COMMIT: ${{ needs.attested-source.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$APPROVED_COMMIT"
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -303,9 +363,11 @@ jobs:
       - name: Publish verified plugin update
         env:
           PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+          MARKETPLACE_CHANNEL: ${{ inputs.channel }}
         run: |
           set -euo pipefail
+          [[ "$MARKETPLACE_CHANNEL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,49}$ ]]
           chmod +x gradlew
           ./gradlew publishPlugin --stacktrace \
-            -PfactorylineMarketplaceChannel="${{ inputs.channel }}" \
+            -PfactorylineMarketplaceChannel="$MARKETPLACE_CHANNEL" \
             -PfactorylineMarketplaceArchive="$GITHUB_WORKSPACE/marketplace-candidate/factoryline-intellij.zip"

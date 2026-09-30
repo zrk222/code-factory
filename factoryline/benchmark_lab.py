@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import platform
+import tempfile
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+from importlib.metadata import PackageNotFoundError, version
 
 from .runtime_audit_common import (
     canonical_bytes,
@@ -290,3 +293,155 @@ def load_benchmark_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise BenchmarkError("E_BENCHMARK_JSON", "JSON must be an object")
     return value
+
+
+def _wilson(successes: int, trials: int) -> list[float] | None:
+    """Return a two-sided 95% Wilson interval, or None without observations."""
+    if not trials:
+        return None
+    z = 1.96
+    p = successes / trials
+    d = 1 + z * z / trials
+    center = (p + z * z / (2 * trials)) / d
+    radius = z * ((p * (1 - p) / trials + z * z / (4 * trials * trials)) ** 0.5) / d
+    return [round(max(0, center - radius), 6), round(min(1, center + radius), 6)]
+
+
+def _public_cases(corpus: Path) -> tuple[dict, list]:
+    try:
+        data = json.loads(corpus.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BenchmarkError("E_BENCHMARK_CORPUS", str(exc)) from exc
+    cases = data.get("cases") if isinstance(data, dict) else None
+    if not isinstance(cases, list) or not cases:
+        raise BenchmarkError("E_BENCHMARK_CORPUS", "corpus requires cases")
+    return data, cases
+
+
+def _public_case(case: object, index: int) -> tuple[str, str]:
+    if not isinstance(case, dict) or case.get("category") not in CATEGORIES:
+        raise BenchmarkError("E_BENCHMARK_CORPUS", f"invalid case {index}")
+    cid = case.get("id")
+    if not isinstance(cid, str) or not cid:
+        raise BenchmarkError("E_BENCHMARK_CORPUS", f"invalid case id {index}")
+    if not all(
+        isinstance(case.get(key), str)
+        for key in ("source", "fixed_source", "expected_finding")
+    ):
+        raise BenchmarkError("E_BENCHMARK_CORPUS", f"invalid source in case {index}")
+    return cid, case["category"]
+
+
+def _public_pair(
+    root: Path, case: dict, index: int, scanner
+) -> tuple[list, list, list]:
+    observed, hashes, sources = [], [], []
+    for label, source in (("buggy", case["source"]), ("fixed", case["fixed_source"])):
+        path = root / f"{index}-{label}.py"
+        path.write_text(source, encoding="utf-8")
+        digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        hashes.append(digest)
+        result = scanner(root)
+        observed.append(
+            sorted({f["code"] for f in result["findings"] if f["path"] == path.name})
+        )
+        sources.append({"case": case["id"], "side": label, "sha256": digest})
+    return observed, hashes, sources
+
+
+def _public_metrics(counts: dict[str, int]) -> dict[str, Any]:
+    rden, pden = counts["tp"] + counts["fn"], counts["tp"] + counts["fp"]
+    return {
+        **counts,
+        "n_positive": rden,
+        "n_predicted_positive": pden,
+        "n_negative": counts["tn"] + counts["fp"],
+        "recall": counts["tp"] / rden if rden else None,
+        "recall_ci95_wilson": _wilson(counts["tp"], rden),
+        "precision": counts["tp"] / pden if pden else None,
+        "precision_ci95_wilson": _wilson(counts["tp"], pden),
+    }
+
+
+def _public_observations(cases: list, totals: dict) -> tuple[list, list]:
+    from .review_audits import security_scan
+
+    rows, sources = [], []
+    with tempfile.TemporaryDirectory(prefix="factory-public-benchmark-") as tmp:
+        for index, case in enumerate(cases):
+            cid, cat = _public_case(case, index)
+            pair, hashes, bindings = _public_pair(Path(tmp), case, index, security_scan)
+            sources.extend(bindings)
+            clean = case["expected_finding"] == CLEAN_FINDING
+            detected = not pair[0] if clean else case["expected_finding"] in pair[0]
+            key = (
+                ("tn" if detected else "fp") if clean else ("tp" if detected else "fn")
+            )
+            totals[cat][key] += 1
+            rows.append(
+                {
+                    "id": cid,
+                    "category": cat,
+                    "expected_finding": case["expected_finding"],
+                    "buggy_findings": pair[0],
+                    "fixed_findings": pair[1],
+                    "buggy_correct": detected,
+                    "fixed_clean": not pair[1],
+                    "buggy_sha256": hashes[0],
+                    "fixed_sha256": hashes[1],
+                }
+            )
+    return rows, sources
+
+
+def run_public_benchmark(corpus: Path | None = None) -> dict[str, Any]:
+    """Run the seeded public corpus through review_audits.security_scan.
+
+    Corpus truth is hand-labeled and public. The isolated source snippets are
+    temporary inputs; the production scanner is the only observation engine.
+    """
+    corpus = corpus or Path(__file__).parent / "data" / "public_defect_corpus.json"
+    data, cases = _public_cases(Path(corpus))
+    totals = {c: {"tp": 0, "fp": 0, "tn": 0, "fn": 0} for c in CATEGORIES}
+    rows, sources = _public_observations(cases, totals)
+    metrics = {cat: _public_metrics(counts) for cat, counts in totals.items()}
+    overall = {
+        key: sum(m[key] for m in totals.values()) for key in ("tp", "fp", "tn", "fn")
+    }
+    metrics["overall"] = _public_metrics(overall)
+    try:
+        package_version = version("factoryline-code-factory")
+    except PackageNotFoundError:
+        package_version = "source-checkout"
+    core = {
+        "schema": "factory.public-seeded-benchmark.v1",
+        "marker": "PUBLIC_SEEDED_BENCHMARK",
+        "benchmark_id": data.get("benchmark_id"),
+        "version": data.get("version"),
+        "scanner": "factoryline.review_audits.security_scan",
+        "scanner_version": package_version,
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "corpus_sha256": hashlib.sha256(Path(corpus).read_bytes()).hexdigest(),
+        "source_bindings": sources,
+        "cases": rows,
+        "metrics": metrics,
+        "decision": "PASS"
+        if all(r["buggy_correct"] and r["fixed_clean"] for r in rows)
+        else "BLOCKED",
+        "authority": "none",
+        "release_approval": False,
+        "claim_boundary": "Public hand-labeled seeded Python AST corpus; not independently held out, AI-written, representative, runtime, or production evidence. Tenant isolation and hollow-test semantics are unsupported scanner behaviors and are scored as false negatives.",
+    }
+    core["receipt_sha256"] = hashlib.sha256(canonical_bytes(core)).hexdigest()
+    return core
+
+
+def main() -> int:
+    """Print a measured run of the built-in public seeded corpus."""
+    print(json.dumps(run_public_benchmark(), indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

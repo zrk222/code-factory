@@ -78,6 +78,7 @@ dev = [
   "hypothesis>=6.135,<7",
   "pytest>=8.0",
   "pytest-asyncio>=0.24,<1",
+  "pytest-xdist==3.8.0",
   "ruff>=0.14,<0.15",
   "tomli>=2.0; python_version < '3.11'",
 ]
@@ -111,7 +112,7 @@ quote-style = "double"
 indent-style = "space"
 
 [project.scripts]
-factory = "factoryline.bootstrap:main"
+factory = "factoryline.provenance:main"
 
 [tool.setuptools]
 packages = ["factoryline", "factoryline.builtin_packs"]

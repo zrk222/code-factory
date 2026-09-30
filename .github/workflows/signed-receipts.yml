@@ -7,11 +7,18 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  sign-and-verify:
+  isolated-check:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [tests, architecture, quality, scanner_controls]
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v5
         with:
@@ -19,12 +26,153 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Create a real factory receipt
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Install the reviewed audit environment
         run: |
-          python -m pip install -e ".[sigstore,enterprise]"
-          python -c "from pathlib import Path; from factoryline.contract import Receipt; p=Receipt('factoryline','signed-receipts','ci',True).write(Path('.')); Path('ci-receipt.json').write_bytes(p.read_bytes())"
+          python -m pip install -e ".[dev,enterprise]" code-factory-2-forge==0.10.8
+          npm install --no-save --no-package-lock typescript@5.9.3
+      - name: Run fixed audit command
+        env:
+          CHECK_NAME: ${{ matrix.check }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$CHECK_NAME" in
+            tests) python -m pytest -n 2 -q --junitxml=ci-tests.xml > ci-tests.log 2>&1 ;;
+            architecture) python -m factoryline.cli architecture health --root . --json > ci-architecture.log 2>&1 ;;
+            quality) forge qa --repo-wide --root . --strict > ci-quality.log 2>&1 ;;
+            scanner_controls) python -m factoryline.cli audit evals --json > ci-scanner_controls.log 2>&1 ;;
+            *) exit 1 ;;
+          esac
       - name: Challenge the offline receipt verification chain
+        if: matrix.check == 'tests'
         run: factory verify-receipts --root . --out .factory/challenges/verify-receipts.json --json
+      - name: Record fixed-command evidence without importing candidate code
+        env:
+          CHECK_NAME: ${{ matrix.check }}
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, platform, subprocess, sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+          checks = {
+              'tests': ['python', '-m', 'pytest', '-n', '2', '-q', '--junitxml=ci-tests.xml'],
+              'architecture': ['python', '-m', 'factoryline.cli', 'architecture', 'health', '--root', '.', '--json'],
+              'quality': ['forge', 'qa', '--repo-wide', '--root', '.', '--strict'],
+              'scanner_controls': ['python', '-m', 'factoryline.cli', 'audit', 'evals', '--json'],
+          }
+          head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert head == os.environ['GITHUB_SHA'], 'source identity changed'
+          tree = subprocess.check_output(['git', 'ls-tree', '-rz', 'HEAD'])
+          for entry in filter(None, tree.split(b'\0')):
+              metadata, relative = entry.split(b'\t', 1)
+              mode, kind, oid = metadata.split()
+              assert kind == b'blob', 'unsupported tree entry'
+              path = Path(os.fsdecode(relative))
+              content = os.fsencode(os.readlink(path)) if mode == b'120000' else path.read_bytes()
+              actual = hashlib.sha1(b'blob ' + str(len(content)).encode() + b'\0' + content, usedforsecurity=False)
+              assert actual.hexdigest().encode() == oid, 'checkout differs from committed source'
+          name = os.environ['CHECK_NAME']
+          junit = Path('ci-tests.xml')
+          payload = {'schema': 'factory.receipt.ci.check.v1', 'ok': True,
+                     'identity': {'commit': head, 'repository': os.environ['GITHUB_REPOSITORY'],
+                                  'run_id': os.environ['GITHUB_RUN_ID'], 'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+                                  'ref': os.environ['GITHUB_REF'], 'runner_os': os.environ['RUNNER_OS']},
+                     'issued_at': datetime.now(timezone.utc).isoformat(),
+                     'commands': [{'name': name, 'argv': checks[name], 'exit_code': 0,
+                                   'log_sha256': hashlib.sha256(Path(f'ci-{name}.log').read_bytes()).hexdigest()}],
+                     'environment': {'python': sys.version, 'platform': platform.platform()},
+                     'dependencies': subprocess.check_output([sys.executable, '-m', 'pip', 'freeze'], text=True).splitlines(),
+                     'junit_sha256': hashlib.sha256(junit.read_bytes()).hexdigest() if junit.is_file() else None,
+                     'authority': 'none', 'signature_status': 'requires_verified_ci_attestation'}
+          encoded = (json.dumps(payload, indent=2, sort_keys=True) + '\n').encode()
+          Path(f'ci-{name}.json').write_bytes(encoded)
+          print('CF_CI_RECEIPT_SHA256:' + hashlib.sha256(encoded).hexdigest())
+          PY
+      - name: Preserve the check and diagnostic material
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ci-check-${{ matrix.check }}
+          path: |
+            ci-${{ matrix.check }}.json
+            ci-${{ matrix.check }}.log
+            ci-tests.xml
+            .factory/challenges/verify-receipts.json
+  sign-and-verify:
+    needs: isolated-check
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      actions: read
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: ci-check-*
+          path: ci-checks
+      - name: Validate isolated runner results without executing repository code
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json, os, re, subprocess
+          from datetime import datetime, timezone
+          from pathlib import Path
+          checks = {
+              'tests': ['python', '-m', 'pytest', '-n', '2', '-q', '--junitxml=ci-tests.xml'],
+              'architecture': ['python', '-m', 'factoryline.cli', 'architecture', 'health', '--root', '.', '--json'],
+              'quality': ['forge', 'qa', '--repo-wide', '--root', '.', '--strict'],
+              'scanner_controls': ['python', '-m', 'factoryline.cli', 'audit', 'evals', '--json'],
+          }
+          identity = {'commit': os.environ['GITHUB_SHA'], 'repository': os.environ['GITHUB_REPOSITORY'],
+                      'run_id': os.environ['GITHUB_RUN_ID'], 'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+                      'ref': 'refs/heads/main', 'runner_os': 'Linux'}
+          endpoint = f"repos/{identity['repository']}/actions/runs/{identity['run_id']}/attempts/{identity['run_attempt']}/jobs?per_page=100"
+          jobs = json.loads(subprocess.check_output(['gh', 'api', endpoint], text=True))['jobs']
+          results, hashes = [], {}
+          for name, argv in checks.items():
+              job = next(j for j in jobs if j['name'] == f'isolated-check ({name})')
+              assert job['conclusion'] == 'success', f'{name}: runner did not succeed'
+              step = next(s for s in job['steps'] if s['name'] == 'Run fixed audit command')
+              assert step['conclusion'] == 'success', f'{name}: check step did not succeed'
+              record_step = next(s for s in job['steps'] if s['name'] == 'Record fixed-command evidence without importing candidate code')
+              assert record_step['conclusion'] == 'success', f'{name}: source check did not succeed'
+              folder = Path('ci-checks') / f'ci-check-{name}'
+              path = folder / f'ci-{name}.json'
+              assert path.stat().st_size <= 2_000_000, 'receipt exceeds size limit'
+              provider_log = subprocess.check_output(['gh', 'api', f"repos/{identity['repository']}/actions/jobs/{job['id']}/logs"], text=True)
+              recorded_hashes = re.findall(r'CF_CI_RECEIPT_SHA256:([a-f0-9]{64})(?:\s|$)', provider_log)
+              actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+              assert recorded_hashes == [actual_hash], 'uploaded receipt differs from trusted recorder log'
+              receipt = json.loads(path.read_text())
+              assert receipt['schema'] == 'factory.receipt.ci.check.v1'
+              assert receipt['identity'] == identity and receipt['ok'] is True
+              command, = receipt['commands']
+              assert command['name'] == name and command['argv'] == argv and command['exit_code'] == 0
+              assert command['log_sha256'] == hashlib.sha256((folder / f'ci-{name}.log').read_bytes()).hexdigest()
+              hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+              results.append(receipt)
+          junit = results[0]['junit_sha256']
+          assert re.fullmatch(r'[a-f0-9]{64}', junit)
+          assert junit == hashlib.sha256(Path('ci-checks/ci-check-tests/ci-tests.xml').read_bytes()).hexdigest()
+          payload = {'schema': 'factory.receipt.ci.v1', 'ok': True, 'identity': identity,
+                     'issued_at': datetime.now(timezone.utc).isoformat(), 'commands': [r['commands'][0] for r in results],
+                     'environment': {name: r['environment'] for name, r in zip(checks, results)},
+                     'dependencies': {name: r['dependencies'] for name, r in zip(checks, results)},
+                     'junit_sha256': junit, 'check_receipt_sha256': hashes,
+                     'authority': 'none', 'signature_status': 'requires_verified_ci_attestation'}
+          Path('ci-receipt.json').write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
+          PY
       - name: Sign and verify with the GitHub OIDC identity
         uses: sigstore/gh-action-sigstore-python@v3.2.0
         with:
@@ -32,6 +180,10 @@ jobs:
           verify: true
           verify-cert-identity: https://github.com/zrk222/code-factory/.github/workflows/signed-receipts.yml@refs/heads/main
           verify-oidc-issuer: https://token.actions.githubusercontent.com
+      - name: Attest the runner and source commit
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ci-receipt.json
       - name: Prove changed receipt bytes are rejected
         run: |
           cp ci-receipt.json ci-receipt.original.json
@@ -42,10 +194,11 @@ jobs:
           fi
           mv ci-receipt.original.json ci-receipt.json
       - name: Preserve public verification material
+        if: always()
         uses: actions/upload-artifact@v7.0.1
         with:
           name: signed-factory-receipt
           path: |
             ci-receipt.json
             ci-receipt.json.sigstore.json
-            .factory/challenges/verify-receipts.json
+            ci-checks/

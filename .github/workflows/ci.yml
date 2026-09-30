@@ -19,6 +19,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python: ["3.10", "3.11", "3.12"]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -30,7 +31,14 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev,enterprise]"
       - name: Test
-        run: python -m pytest -q
+        run: python -m pytest -n 2 -q --junitxml=pytest-results.xml --durations=20
+      - name: Upload test results and timing evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: pytest-${{ matrix.os }}-${{ matrix.python }}
+          path: pytest-results.xml
+          if-no-files-found: error
 
   native-process-parity:
     strategy:

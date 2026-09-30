@@ -885,15 +885,10 @@ def _secret_literal(node: ast.Assign | ast.AnnAssign) -> str | None:
     return value.value
 
 
-def _secret_assignment_finding(
-    relative: str, node: ast.Assign | ast.AnnAssign, target: ast.expr, value: str
+def _literal_assignment_diagnostic(
+    relative: str, node: ast.Assign | ast.AnnAssign, target: ast.expr
 ) -> dict[str, Any] | None:
     if not isinstance(target, ast.Name) or not _SECRET_ASSIGNMENT.search(target.id):
-        return None
-    # Recognizable non-secret sentinels remain available to scanner self-tests.
-    if relative.startswith("tests/") and re.search(
-        r"(?i)(?:do[-_ ]not|fake|dummy|fixture|not[-_ ]real|test)", value
-    ):
         return None
     return _security_finding(
         "SECURITY_HARDCODED_SECRET",
@@ -905,16 +900,22 @@ def _secret_assignment_finding(
     )
 
 
-def _secret_assignment_findings(
+def _literal_assignment_diagnostics(
     relative: str, node: ast.Assign | ast.AnnAssign
 ) -> list[dict[str, Any]]:
     value = _secret_literal(node)
     if value is None:
         return []
+    # Evaluate the exception at the input boundary; diagnostic builders receive
+    # only symbol/location metadata, never the credential literal itself.
+    if relative.startswith("tests/") and re.search(
+        r"(?i)(?:do[-_ ]not|fake|dummy|fixture|not[-_ ]real|test)", value
+    ):
+        return []
     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
     findings = []
     for target in targets:
-        finding = _secret_assignment_finding(relative, node, target, value)
+        finding = _literal_assignment_diagnostic(relative, node, target)
         if finding is not None:
             findings.append(finding)
     return findings
@@ -965,7 +966,7 @@ def _security_scan_tree(root: Path, path: Path, tree: ast.AST) -> list[dict[str,
             if finding is not None:
                 findings.append(finding)
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-            findings.extend(_secret_assignment_findings(relative, node))
+            findings.extend(_literal_assignment_diagnostics(relative, node))
     return findings
 
 

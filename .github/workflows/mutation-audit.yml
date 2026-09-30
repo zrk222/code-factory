@@ -1,0 +1,48 @@
+name: Scoped mutation audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      sources:
+        description: 'JSON array of production Python files to mutate'
+        required: true
+        default: '["factoryline/supply_chain.py"]'
+      behavioral_checks:
+        description: 'JSON array of reviewed behavioral check files (not source-text checks)'
+        required: true
+        default: '["tests/test_supply_chain.py"]'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install pinned mutation engine and checks
+        run: python -m pip install -e '.[dev]' mutmut==3.8.0
+      - name: Run scoped adequacy audit
+        env:
+          MUTATION_SOURCES: ${{ inputs.sources }}
+          MUTATION_TESTS: ${{ inputs.behavioral_checks }}
+          MUTATION_OUTPUT: ${{ runner.temp }}/mutation-evidence/receipt.json
+        run: python scripts/ci_mutation_gate.py
+      - name: Preserve results, survivor diffs, and diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: mutation-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/mutation-evidence/
+          if-no-files-found: error

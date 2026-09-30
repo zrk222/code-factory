@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -18,6 +19,8 @@ from .review_audits import ReviewAuditError, audit_code
 CHANGE_REVIEW_SCHEMA = "factory.change_review.v1"
 REPOSITORY_SCOPE_SCHEMA = "factory.repository_scope.v1"
 REPOSITORY_SCOPE_REVIEW_SCHEMA = "factory.repository_scope_review.v1"
+REPOSITORY_SCOPE_DECISION_SCHEMA = "factory.repository_scope_decision.v1"
+REPOSITORY_SCOPE_DECISION_PATH = ".factory/repository-scope-decisions.json"
 # The PR delivery workflow analyzes release-sized source, docs, and media changes
 # in one exact packet. Keep a firm cap so review rendering remains bounded, while
 # accepting broad repository cleanup and multi-surface releases without silently
@@ -90,20 +93,89 @@ def _normalize_scope_name(value: str) -> str:
 def _validate_scope_policy(value: object) -> dict[str, Any]:
     if (
         not isinstance(value, dict)
-        or set(value) != {"schema", "blocked_path_segments"}
+        or set(value)
+        != {"schema", "allowed_top_level_directories", "blocked_path_segments"}
         or value.get("schema") != REPOSITORY_SCOPE_SCHEMA
+        or not isinstance(value.get("allowed_top_level_directories"), list)
         or not isinstance(value.get("blocked_path_segments"), list)
     ):
         raise RepositoryScopeError(
             "SCOPE_POLICY_INVALID",
-            f"policy must contain schema {REPOSITORY_SCOPE_SCHEMA} and blocked_path_segments",
+            f"policy must contain schema {REPOSITORY_SCOPE_SCHEMA}, allowed_top_level_directories, and blocked_path_segments",
+        )
+    allowed = [_scope_segment(item) for item in value["allowed_top_level_directories"]]
+    if len(allowed) != len(set(allowed)):
+        raise RepositoryScopeError(
+            "SCOPE_POLICY_INVALID", "allowed_top_level_directories must be unique"
         )
     segments = [_scope_segment(item) for item in value["blocked_path_segments"]]
     if len(segments) != len(set(segments)):
         raise RepositoryScopeError(
             "SCOPE_POLICY_INVALID", "blocked_path_segments must be unique"
         )
-    return {"schema": REPOSITORY_SCOPE_SCHEMA, "blocked_path_segments": segments}
+    return {
+        "schema": REPOSITORY_SCOPE_SCHEMA,
+        "allowed_top_level_directories": allowed,
+        "blocked_path_segments": segments,
+    }
+
+
+def _read_scope_decisions(root: Path, ref: str | None) -> dict[str, Any]:
+    """Read candidate evidence records; records never override the trusted policy."""
+    try:
+        if ref:
+            result = subprocess.run(
+                ["git", "show", f"{ref}:{REPOSITORY_SCOPE_DECISION_PATH}"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            raw = result.stdout
+        else:
+            raw = (root / REPOSITORY_SCOPE_DECISION_PATH).read_text(encoding="utf-8")
+        record = json.loads(raw)
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        raise RepositoryScopeError(
+            "SCOPE_DECISION_UNAVAILABLE",
+            "scope decision record is unavailable or invalid",
+        ) from exc
+    if (
+        not isinstance(record, dict)
+        or set(record) != {"schema", "decisions"}
+        or record.get("schema") != REPOSITORY_SCOPE_DECISION_SCHEMA
+        or not isinstance(record.get("decisions"), list)
+    ):
+        raise RepositoryScopeError(
+            "SCOPE_DECISION_INVALID", "scope decision record has an invalid schema"
+        )
+    seen: set[str] = set()
+    for decision in record["decisions"]:
+        if not isinstance(decision, dict) or set(decision) != {
+            "top_level_directory",
+            "rationale",
+            "evidence",
+        }:
+            raise RepositoryScopeError(
+                "SCOPE_DECISION_INVALID",
+                "each scope decision must name a directory, rationale, and evidence",
+            )
+        directory = _scope_segment(decision["top_level_directory"])
+        rationale, evidence = decision["rationale"], decision["evidence"]
+        if (
+            directory in seen
+            or not isinstance(rationale, str)
+            or not rationale.strip()
+            or not isinstance(evidence, list)
+            or not evidence
+            or any(not isinstance(item, str) or not item.strip() for item in evidence)
+        ):
+            raise RepositoryScopeError(
+                "SCOPE_DECISION_INVALID",
+                "scope decisions require unique directories, a rationale, and non-empty evidence references",
+            )
+        seen.add(directory)
+    return record
 
 
 def _read_scope_policy(
@@ -140,11 +212,33 @@ def _read_scope_policy(
                 "SCOPE_POLICY_UNAVAILABLE", f"cannot read scope policy: {exc}"
             ) from exc
     try:
-        return _validate_scope_policy(json.loads(raw))
+        value = json.loads(raw)
+        if (
+            policy_ref
+            and isinstance(value, dict)
+            and set(value) == {"schema", "blocked_path_segments"}
+        ):
+            value["allowed_top_level_directories"] = _trusted_tree_directories(
+                root, policy_ref
+            )
+        return _validate_scope_policy(value)
     except json.JSONDecodeError as exc:
         raise RepositoryScopeError(
             "SCOPE_POLICY_INVALID", "scope policy is not valid JSON"
         ) from exc
+
+
+def _trusted_tree_directories(root: Path, ref: str) -> list[str]:
+    """Derive legacy allowlists only from directories in the trusted base tree."""
+    directories = subprocess.run(
+        ["git", "ls-tree", "-d", "--name-only", "-z", ref],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    ).stdout
+    return sorted(
+        {_scope_segment(os.fsdecode(path)) for path in directories.split(b"\0") if path}
+    )
 
 
 def _git_scope_paths(root: Path, base: str, head: str) -> list[str]:
@@ -236,6 +330,50 @@ def _matches_scope_segment(path: str, blocked: set[str]) -> str | None:
     return None
 
 
+def _scope_blocked_paths(
+    paths: list[str], policy: dict[str, Any]
+) -> list[dict[str, str]]:
+    blocked = set(policy["blocked_path_segments"])
+    allowed = set(policy["allowed_top_level_directories"])
+    findings = []
+    for path in paths:
+        match = _matches_scope_segment(path, blocked)
+        if match is None and "/" in path:
+            top = _normalize_scope_name(path.split("/", 1)[0])
+            if top not in allowed:
+                match = f"unapproved-top-level:{top}"
+        if match is not None:
+            findings.append({"path": path, "matched_segment": match})
+    return findings
+
+
+def _scope_decision_status(
+    workspace: Path,
+    policy_path: str,
+    base: str | None,
+    policy_ref: str | None,
+    head: str | None,
+) -> str:
+    if base is None or policy_ref is None:
+        return "not_applicable"
+    baseline = _read_scope_policy(workspace, policy_path, base)
+    candidate = _read_scope_policy(workspace, policy_path, head or "HEAD")
+    additions = set(candidate["allowed_top_level_directories"]) - set(
+        baseline["allowed_top_level_directories"]
+    )
+    if not additions:
+        return "not_applicable"
+    record = _read_scope_decisions(workspace, head or "HEAD")
+    recorded = {item["top_level_directory"] for item in record["decisions"]}
+    missing = sorted(additions - recorded)
+    if missing:
+        raise RepositoryScopeError(
+            "SCOPE_DECISION_MISSING",
+            f"new allowed directories lack evidence decisions: {', '.join(missing)}",
+        )
+    return "evidence_recorded_pending_trusted_merge"
+
+
 def check_repository_scope(
     root: Path,
     *,
@@ -257,12 +395,11 @@ def check_repository_scope(
         raw_paths = changed_paths
     paths = sorted({_scope_policy_path(path) for path in raw_paths})
     policy = _read_scope_policy(workspace, policy_path, policy_ref)
-    blocked_segments = set(policy["blocked_path_segments"])
-    blocked_paths = [
-        {"path": path, "matched_segment": match}
-        for path in paths
-        if (match := _matches_scope_segment(path, blocked_segments)) is not None
-    ]
+    allowed_directories = set(policy["allowed_top_level_directories"])
+    blocked_paths = _scope_blocked_paths(paths, policy)
+    decision_status = _scope_decision_status(
+        workspace, policy_path, base, policy_ref, head
+    )
     state = "blocked" if blocked_paths else "clear"
     return {
         "schema": REPOSITORY_SCOPE_REVIEW_SCHEMA,
@@ -275,6 +412,8 @@ def check_repository_scope(
         "policy_path": policy_path.replace("\\", "/"),
         "policy_ref": policy_ref,
         "policy_sha256": _sha(policy).lower(),
+        "allowed_top_level_directories": sorted(allowed_directories),
+        "scope_decisions": decision_status,
         "changed_paths": paths,
         "blocked_paths": blocked_paths,
         "next_action": (

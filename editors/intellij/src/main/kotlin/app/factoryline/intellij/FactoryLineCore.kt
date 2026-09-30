@@ -389,7 +389,7 @@ object ReceiptLocator {
 
 @State(name = "FactoryLineSettings", storages = [Storage("factoryline.xml")])
 class FactoryLineSettings : PersistentStateComponent<FactoryLineSettings.State> {
-    data class State(var command: String = "factory")
+    data class State(var command: String = "factory", var forgeCommand: String = "")
 
     private var state = State()
 
@@ -406,8 +406,16 @@ class FactoryLineSettings : PersistentStateComponent<FactoryLineSettings.State> 
 
     fun configuredCommand(): String = state.command
 
+    fun forgeExecutable(): Path? = ForgeLineExecutable.resolve(state.forgeCommand)
+
+    fun configuredForgeCommand(): String = state.forgeCommand
+
     fun setConfiguredCommand(command: String) {
         state.command = command.trim().ifBlank { "factory" }
+    }
+
+    fun setConfiguredForgeCommand(command: String) {
+        state.forgeCommand = command.trim()
     }
 
     companion object {
@@ -417,29 +425,46 @@ class FactoryLineSettings : PersistentStateComponent<FactoryLineSettings.State> 
 
 class FactoryLineSettingsConfigurable : Configurable {
     private var commandField: JBTextField? = null
+    private var forgeCommandField: JBTextField? = null
 
     override fun getDisplayName(): String = "FactoryLine"
 
     override fun createComponent(): JComponent {
         commandField = JBTextField(FactoryLineSettings.instance().configuredCommand())
+        forgeCommandField = JBTextField(FactoryLineSettings.instance().configuredForgeCommand())
         return FormBuilder.createFormBuilder()
             .addLabeledComponent("FactoryLine executable:", commandField!!)
+            .addLabeledComponent("ForgeLine executable (absolute path):", forgeCommandField!!)
             .addComponentFillVertically(javax.swing.JPanel(), 0)
             .panel
     }
 
-    override fun isModified(): Boolean = commandField?.text?.trim() != FactoryLineSettings.instance().configuredCommand()
+    override fun isModified(): Boolean =
+        commandField?.text?.trim() != FactoryLineSettings.instance().configuredCommand() ||
+            forgeCommandField?.text?.trim() != FactoryLineSettings.instance().configuredForgeCommand()
 
     override fun apply() {
         FactoryLineSettings.instance().setConfiguredCommand(commandField?.text.orEmpty())
+        FactoryLineSettings.instance().setConfiguredForgeCommand(forgeCommandField?.text.orEmpty())
     }
 
     override fun reset() {
         commandField?.text = FactoryLineSettings.instance().configuredCommand()
+        forgeCommandField?.text = FactoryLineSettings.instance().configuredForgeCommand()
     }
 
     override fun disposeUIResources() {
         commandField = null
+        forgeCommandField = null
+    }
+}
+
+/** Resolves only an explicitly configured ForgeLine executable; never falls back to PATH. */
+object ForgeLineExecutable {
+    fun resolve(configured: String): Path? {
+        val candidate = runCatching { Path.of(configured.trim()) }.getOrNull() ?: return null
+        if (!candidate.isAbsolute || !Files.isRegularFile(candidate) || !Files.isExecutable(candidate)) return null
+        return runCatching { candidate.toRealPath() }.getOrNull()
     }
 }
 

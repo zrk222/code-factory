@@ -18,6 +18,8 @@ on:
         type: string
 
 permissions:
+  actions: read
+  attestations: read
   contents: read
 
 concurrency:
@@ -25,6 +27,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  attested-source:
+    name: resolve protected source and verify CI evidence
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install .
+      - name: Require a reviewed immutable tag on protected main
+        id: source
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          [[ "$RELEASE_REF" =~ ^vscode-v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]
+          candidate=$(git rev-parse --verify "${RELEASE_REF}^{commit}")
+          git merge-base --is-ancestor "$candidate" origin/main
+          python -m factoryline.signed_receipts fetch-ci "$candidate" "$RUNNER_TEMP/ci-release-evidence"
+          echo "commit=$candidate" >> "$GITHUB_OUTPUT"
+
   authorize:
     name: authorize protected Marketplace publication
     if: inputs.publish == true
@@ -42,9 +73,11 @@ jobs:
           echo "A scoped Visual Studio Marketplace publisher credential is available."
 
   validate:
+    permissions:
+      contents: read
     name: validate immutable Marketplace candidate
-    needs: authorize
-    if: ${{ always() && (inputs.publish == false || needs.authorize.result == 'success') }}
+    needs: [authorize, attested-source]
+    if: ${{ always() && needs.attested-source.result == 'success' && (inputs.publish == false || needs.authorize.result == 'success') }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -52,8 +85,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.release_ref }}
+          ref: main
           fetch-depth: 0
+          persist-credentials: false
+      - name: Bind protected-main checkout to approved candidate
+        env:
+          APPROVED_COMMIT: ${{ needs.attested-source.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$APPROVED_COMMIT"
 
       - name: Require an immutable release tag
         shell: bash

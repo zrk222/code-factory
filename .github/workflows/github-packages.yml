@@ -4,97 +4,104 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version to tag (for example 0.44.4)"
+        description: "Published release version (for example 0.44.4)"
         required: true
-        default: "0.44.4"
         type: string
-  push:
-    tags:
-      - "v*"
 
 permissions:
   contents: read
-  packages: write
 
 concurrency:
   group: github-packages-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Publish container packages
+  release-gate:
+    name: require canonical published release
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: true
-      matrix:
-        include:
-          - name: factoryline-hosted
-            context: .
-            file: deploy/hosted/Dockerfile
-            description: "FactoryLine hosted assurance adapter"
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      commit: ${{ steps.release.outputs.commit }}
     steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Resolve package version
-        id: version
-        shell: bash
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Verify canonical release flow and exact version
+        id: release
         env:
+          GH_TOKEN: ${{ github.token }}
           INPUT_VERSION: ${{ inputs.version }}
-          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          version="${INPUT_VERSION:-}"
-          if [[ -z "$version" && "$REF_NAME" == v* ]]; then
-            version="${REF_NAME#v}"
-          fi
-          if [[ -z "$version" ]]; then
-            echo "A version input or v* tag is required." >&2
-            exit 1
-          fi
-          python - "$version" <<'PY'
+          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo "Dispatch only from main." >&2; exit 1; }
+          python - "$INPUT_VERSION" <<'PY'
           import re, sys
-          version = sys.argv[1]
-          if not re.fullmatch(r"(?:0|[1-9]\d*)\.\d+\.\d+(?:[.-][0-9A-Za-z.-]+)?", version):
-              raise SystemExit(f"invalid release version: {version}")
+          if not re.fullmatch(r"(?:0|[1-9][0-9]*)\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", sys.argv[1]):
+              raise SystemExit("invalid version")
           PY
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          tag="v${INPUT_VERSION}"
+          release_json="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,tagName)"
+          python - "$release_json" "$tag" <<'PY'
+          import json, sys
+          release=json.loads(sys.argv[1])
+          if release["tagName"] != sys.argv[2] or release["isDraft"] or release["isPrerelease"]:
+              raise SystemExit("version must identify an exact published stable GitHub release")
+          PY
+          commit="$(git rev-parse --verify "refs/tags/${tag}^{commit}")"
+          git merge-base --is-ancestor "$commit" origin/main || { echo "Release commit is not on main." >&2; exit 1; }
+          runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/publish.yml/runs?branch=main&status=success&per_page=100")"
+          python - "$runs" "$commit" <<'PY'
+          import json, sys
+          runs=json.loads(sys.argv[1]).get("workflow_runs", [])
+          if not any(run.get("conclusion")=="success" and run.get("head_branch")=="main" and run.get("head_sha")==sys.argv[2] for run in runs):
+              raise SystemExit("no successful canonical publish.yml run exists for the exact release commit")
+          PY
+          echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
 
+  publish:
+    name: build and publish verified container
+    needs: release-gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.release-gate.outputs.commit }}
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Prepare image metadata
-        id: metadata
-        uses: docker/metadata-action@v5
+      - name: Build and publish exact release version
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
-          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}
-          tags: |
-            type=raw,value=${{ steps.version.outputs.version }}
-            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/v') }}
-          labels: |
-            org.opencontainers.image.title=${{ matrix.name }}
-            org.opencontainers.image.description=${{ matrix.description }}
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-
-      - name: Build and publish package
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.file }}
+          context: .
+          file: deploy/hosted/Dockerfile
           push: true
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
-
-      - name: Emit package receipt
-        shell: bash
+          tags: ghcr.io/${{ github.repository_owner }}/factoryline-hosted:${{ needs.release-gate.outputs.version }}
+          labels: |
+            org.opencontainers.image.title=FactoryLine hosted assurance adapter
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.release-gate.outputs.version }}
+            org.opencontainers.image.revision=${{ needs.release-gate.outputs.commit }}
+      - name: Verify published version resolves to the built digest
         env:
-          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}
-          VERSION: ${{ steps.version.outputs.version }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/factoryline-hosted
+          VERSION: ${{ needs.release-gate.outputs.version }}
+          EXPECTED_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
-          echo "Published package: ${IMAGE}:${VERSION}"
-          docker buildx imagetools inspect "${IMAGE}:${VERSION}"
+          inspection="$(docker buildx imagetools inspect "$IMAGE:$VERSION")"
+          actual="$(printf '%s\n' "$inspection" | python -c 'import re,sys; values=re.findall(r"(?m)^Digest:\s*(sha256:[0-9a-f]{64})$", sys.stdin.read()); len(values)==1 or sys.exit("registry inspection must return exactly one manifest digest"); print(values[0])')"
+          test -n "$EXPECTED_DIGEST"
+          [[ "$actual" == "$EXPECTED_DIGEST" ]] || { echo "Registry digest differs from build output." >&2; exit 1; }
+          echo "Verified $IMAGE:$VERSION@$actual"

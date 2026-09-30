@@ -186,7 +186,9 @@ def test_expertise_mcp_server_lists_and_routes_each_workflow() -> None:
         text=True,
         capture_output=True,
         check=True,
-        timeout=10,
+        # Shared Windows CI runners may take longer to start Node under xdist.
+        # Keep a finite bound without dropping or retrying protocol assertions.
+        timeout=30,
         env={**os.environ, "NO_COLOR": "1"},
     )
     replies = [json.loads(line) for line in process.stdout.splitlines()]

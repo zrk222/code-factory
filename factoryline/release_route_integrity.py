@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import re
 from typing import Any
+import yaml
 
 
 def _check(check_id: str, passed: bool, evidence: str) -> dict[str, Any]:
@@ -28,8 +29,25 @@ def _job(workflow: str, name: str) -> str:
     if match is None:
         return ""
     start = match.end()
-    next_job = re.search(r"(?m)^  [A-Za-z_][A-Za-z0-9_]*:\n", workflow[start:])
+    next_job = re.search(r"(?m)^  [A-Za-z_][A-Za-z0-9_-]*:\n", workflow[start:])
     return workflow[start : start + next_job.start()] if next_job else workflow[start:]
+
+
+def _needs_include(job: str, required: set[str]) -> bool:
+    """Require dependency edges regardless of harmless ordering or extra gates."""
+    try:
+        value = yaml.safe_load(job)
+    except yaml.YAMLError:
+        return False
+    if not isinstance(value, dict):
+        return False
+    needs = value.get("needs", [])
+    needs = [needs] if isinstance(needs, str) else needs
+    return (
+        isinstance(needs, list)
+        and all(isinstance(item, str) for item in needs)
+        and required.issubset(needs)
+    )
 
 
 def _vscode_marketplace_authorization_check(workflow: str) -> dict[str, Any]:
@@ -40,9 +58,9 @@ def _vscode_marketplace_authorization_check(workflow: str) -> dict[str, Any]:
         "if: inputs.publish == true" in authorize
         and "environment: vscode-marketplace" in authorize
         and "VSCE_PAT" in authorize
-        and "needs: authorize" in validate
+        and _needs_include(validate, {"authorize"})
         and "inputs.publish == false || needs.authorize.result == 'success'" in validate
-        and "needs: [authorize, validate]" in publish
+        and _needs_include(publish, {"authorize", "validate"})
         and "needs.authorize.result == 'success'" in publish
     )
     return _check(
@@ -97,7 +115,7 @@ def _jetbrains_marketplace_authorization_check(root: Path) -> dict[str, Any]:
     publish = _job(workflow, "publish")
     passed = _jetbrains_authorization_preflight(workflow, authorize, validate) and (
         "scripts/verify_release_preflight.py" in publish
-        and "needs: [authorize, validate, compatibility]" in publish
+        and _needs_include(publish, {"authorize", "validate", "compatibility"})
         and "release-preflight.json" in publish
     )
     return _check(
@@ -115,7 +133,7 @@ def _jetbrains_authorization_preflight(
         and "JETBRAINS_MARKETPLACE_TOKEN" in authorize
         and 'test -n "$PUBLISH_TOKEN"' in authorize
         and "release_contract:" in workflow
-        and "needs: authorize" in validate
+        and _needs_include(validate, {"authorize"})
         and "python -m factoryline.cli release preflight" in validate
         and "--metadata-path context/PROGRESS.md" in validate
         and "scripts/verify_release_preflight.py" in validate

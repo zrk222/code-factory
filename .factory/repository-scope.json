@@ -1,12 +1,5 @@
 {
   "schema": "factory.repository_scope.v1",
-  "blocked_path_segments": [
-    "products",
-    "agent-cloud",
-    "agentcloud",
-    "agent-oven",
-    "agentoven",
-    "factory-memory-core",
-    "factory-trust-core"
-  ]
+  "allowed_top_level_directories": [".claude-plugin", ".factory", ".github", "adr", "api", "context", "deploy", "docs", "editors", "envelopes", "evals", "evidence", "examples", "factoryline", "mcp", "packets", "plans", "plugins", "public", "scripts", "skills", "smoke", "specs", "tests", "videos"],
+  "blocked_path_segments": ["products", "agent-cloud", "agentcloud", "agent-oven", "agentoven", "factory-memory-core", "factory-trust-core", "external-product", "externalproduct", "confidential-product", "confidentialproduct", "external-data-core", "external-policy-core"]
 }

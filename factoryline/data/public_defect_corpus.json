@@ -1,0 +1,13 @@
+{
+  "benchmark_id": "factory-review-audits-public-seeded",
+  "version": "1",
+  "provenance": "Public hand-authored deterministic fixtures; no independent holdout or AI authorship claim.",
+  "cases": [
+    {"id":"dynamic-execution","category":"stateful_invariant","expected_finding":"SECURITY_DYNAMIC_EXECUTION","source":"result = eval(user_input)\n","fixed_source":"result = parse_value(user_input)\n"},
+    {"id":"shell-command","category":"failure_recovery","expected_finding":"SECURITY_SHELL_COMMAND","source":"import subprocess\nsubprocess.run(command, shell=True)\n","fixed_source":"import subprocess\nsubprocess.run(command, shell=False, check=True)\n"},
+    {"id":"safe-control","category":"stateful_invariant","expected_finding":"NO_FINDING","source":"def add(a, b):\n    return a + b\n","fixed_source":"def add(a, b):\n    return a + b\n"},
+    {"id":"hollow-test-assert-true","category":"consumer_compatibility","expected_finding":"QUALITY_HOLLOW_TEST","source":"def test_contract():\n    assert True\n","fixed_source":"def test_contract():\n    assert True\n"},
+    {"id":"missing-tenant-scope","category":"tenant_isolation","expected_finding":"SECURITY_MISSING_TENANT_ISOLATION","source":"def get_record(record_id):\n    return db.get(record_id)\n","fixed_source":"def get_record(record_id, tenant_id):\n    return db.get(record_id, tenant_id=tenant_id)\n"},
+    {"id":"clean-control-import","category":"tenant_isolation","expected_finding":"NO_FINDING","source":"from pathlib import Path\nROOT = Path('.')\n","fixed_source":"from pathlib import Path\nROOT = Path('.')\n"}
+  ]
+}
