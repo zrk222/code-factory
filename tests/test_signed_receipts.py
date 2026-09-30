@@ -329,8 +329,14 @@ def test_ci_workflow_isolates_checks_and_signing_permissions():
     assert "attestations:" not in check_permissions
     assert "actions/checkout" not in attestor
     assert "pip install" not in attestor
-    assert "python -m pytest -n 2 -q --junitxml=ci-tests.xml > ci-tests.log" in check_job
+    assert (
+        "python -m pytest -n 2 -q --junitxml=ci-tests.xml > ci-tests.log" in check_job
+    )
     assert "factoryline.signed_receipts run-ci" not in check_job
+    assert check_job.index("factory verify-receipts") < check_job.index(
+        "Record fixed-command evidence"
+    )
+    assert "recorded_hashes == [actual_hash]" in attestor
     assert "step['conclusion'] == 'success'" in attestor
     assert attestor.index("Validate isolated runner results") < attestor.index(
         "Attest the runner and source commit"

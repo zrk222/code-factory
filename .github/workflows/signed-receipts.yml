@@ -46,6 +46,9 @@ jobs:
             scanner_controls) python -m factoryline.cli audit evals --json > ci-scanner_controls.log 2>&1 ;;
             *) exit 1 ;;
           esac
+      - name: Challenge the offline receipt verification chain
+        if: matrix.check == 'tests'
+        run: factory verify-receipts --root . --out .factory/challenges/verify-receipts.json --json
       - name: Record fixed-command evidence without importing candidate code
         env:
           CHECK_NAME: ${{ matrix.check }}
@@ -84,11 +87,10 @@ jobs:
                      'dependencies': subprocess.check_output([sys.executable, '-m', 'pip', 'freeze'], text=True).splitlines(),
                      'junit_sha256': hashlib.sha256(junit.read_bytes()).hexdigest() if junit.is_file() else None,
                      'authority': 'none', 'signature_status': 'requires_verified_ci_attestation'}
-          Path(f'ci-{name}.json').write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
+          encoded = (json.dumps(payload, indent=2, sort_keys=True) + '\n').encode()
+          Path(f'ci-{name}.json').write_bytes(encoded)
+          print('CF_CI_RECEIPT_SHA256:' + hashlib.sha256(encoded).hexdigest())
           PY
-      - name: Challenge the offline receipt verification chain
-        if: matrix.check == 'tests'
-        run: factory verify-receipts --root . --out .factory/challenges/verify-receipts.json --json
       - name: Preserve the check and diagnostic material
         if: always()
         uses: actions/upload-artifact@v7.0.1
@@ -148,6 +150,10 @@ jobs:
               folder = Path('ci-checks') / f'ci-check-{name}'
               path = folder / f'ci-{name}.json'
               assert path.stat().st_size <= 2_000_000, 'receipt exceeds size limit'
+              provider_log = subprocess.check_output(['gh', 'api', f"repos/{identity['repository']}/actions/jobs/{job['id']}/logs"], text=True)
+              recorded_hashes = re.findall(r'CF_CI_RECEIPT_SHA256:([a-f0-9]{64})(?:\s|$)', provider_log)
+              actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+              assert recorded_hashes == [actual_hash], 'uploaded receipt differs from trusted recorder log'
               receipt = json.loads(path.read_text())
               assert receipt['schema'] == 'factory.receipt.ci.check.v1'
               assert receipt['identity'] == identity and receipt['ok'] is True
