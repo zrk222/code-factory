@@ -41,7 +41,7 @@ jobs:
         run: python scripts/ci_mutation_gate.py
       - name: Preserve results, survivor diffs, and diagnostic logs
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: mutation-evidence-${{ github.sha }}
           path: ${{ runner.temp }}/mutation-evidence/

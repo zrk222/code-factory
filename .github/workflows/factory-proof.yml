@@ -98,7 +98,7 @@ jobs:
           echo '```mermaid' >> "$GITHUB_STEP_SUMMARY"
           cat ".factory/passports/$FEATURE.passport.mmd" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7
         with:
           name: factory-passport
           path: |

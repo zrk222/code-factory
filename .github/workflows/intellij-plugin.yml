@@ -80,7 +80,7 @@ jobs:
             fi
           done
           exit 1
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7
         if: needs.changes.outputs.intellij == 'true'
         with:
           name: factoryline-intellij-plugin

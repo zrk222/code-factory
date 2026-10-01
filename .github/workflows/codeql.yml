@@ -65,7 +65,7 @@ jobs:
           output: '${{ runner.temp }}/codeql-results'
       - name: Preserve native findings even when upload fails
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: codeql-${{ matrix.language }}-${{ github.sha }}
           path: '${{ runner.temp }}/codeql-results/*.sarif'

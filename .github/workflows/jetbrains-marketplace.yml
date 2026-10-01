@@ -202,7 +202,7 @@ jobs:
             --release-ref "$RELEASE_REF" \
             --commit "$(git rev-parse HEAD)" \
             --channel "$MARKETPLACE_CHANNEL"
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7
         with:
           name: jetbrains-marketplace-${{ inputs.release_ref }}
           path: marketplace-candidate/
@@ -210,7 +210,7 @@ jobs:
           retention-days: 14
       - name: Preserve verifier and test reports
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: jetbrains-validation-reports-${{ inputs.release_ref }}
           path: editors/intellij/build/reports/
@@ -315,7 +315,7 @@ jobs:
           exit 1
       - name: Preserve compatibility report
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: jetbrains-compatibility-${{ inputs.release_ref }}-${{ matrix.product }}
           path: editors/intellij/build/reports/pluginVerifier/
