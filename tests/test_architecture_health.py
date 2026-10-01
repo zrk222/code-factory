@@ -719,3 +719,54 @@ def test_editor_cadence_is_measured_from_its_own_tags(tmp_path, monkeypatch):
     assert not release_cadence_status(tmp_path, now)["admission"]
     assert release_cadence_status(tmp_path, now, channel="vscode")["admission"]
     assert release_cadence_status(tmp_path, now, channel="jetbrains")["admission"]
+
+
+def test_cadence_selects_exact_channel_tags_and_keeps_version_suffixes(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    cadence = {
+        "scope": "per_channel",
+        "max_releases_30d": 4,
+        "minimum_days_between_releases": 7,
+        "effective_at": "2026-09-21T15:01:54Z",
+        "exception_requires": "human-release-authority",
+        "requires_changelog_entry": True,
+    }
+    (tmp_path / "architecture-policy.json").write_text(json.dumps({"release": cadence}))
+    monkeypatch.setattr(architecture_health, "_tracked_files", lambda root: [])
+    monkeypatch.setattr(
+        architecture_health,
+        "_release_train",
+        lambda *args: {"status": "valid", "cadence": cadence},
+    )
+
+    core_tags = (
+        "v0.46.4+openvsxfix\t2026-09-15T00:00:00+00:00\n"
+        "v0.46.9\t2026-09-26T05:53:51+00:00\n"
+        "vscode-v1.0.2\t2026-09-30T17:42:41+00:00\n"
+    )
+    vscode_tags = "vscode-v1.0.2\t2026-09-30T17:42:41+00:00\n"
+    jetbrains_tags = "jetbrains-v1.0.2\t2026-09-30T17:42:41+00:00\n"
+
+    def git(argv, **kwargs):
+        if "refs/tags/vscode-v*" in argv:
+            return SimpleNamespace(stdout=vscode_tags)
+        if "refs/tags/jetbrains-v*" in argv:
+            return SimpleNamespace(stdout=jetbrains_tags)
+        return SimpleNamespace(stdout=core_tags)
+
+    monkeypatch.setattr(architecture_health.subprocess, "run", git)
+    now = datetime(2026, 9, 30, 18, tzinfo=timezone.utc)
+
+    core = release_cadence_status(tmp_path, now)
+    vscode = release_cadence_status(tmp_path, now, channel="vscode")
+    jetbrains = release_cadence_status(tmp_path, now, channel="jetbrains")
+
+    assert core["latest_tag"] == "v0.46.9"
+    assert core["pre_policy_release_count"] == 1
+    assert core["recent_count"] == 1
+    assert core["next_eligible_at"] == "2026-10-03T05:53:51Z"
+    assert vscode["latest_tag"] == "vscode-v1.0.2"
+    assert jetbrains["latest_tag"] == "jetbrains-v1.0.2"

@@ -631,6 +631,7 @@ def _recent_release_tags(
     effective_at: datetime | None = None,
     candidate_tag: str | None = None,
     tag_ref: str = "refs/tags/v*",
+    tag_prefix: str = "v",
 ) -> dict[str, Any]:
     """Measure release-tag cadence and expose a forward release guard."""
     now = now or datetime.now(timezone.utc)
@@ -655,7 +656,9 @@ def _recent_release_tags(
     for line in completed.stdout.splitlines():
         try:
             name, stamp = line.split("\t", 1)
-            if name == candidate_tag:
+            if name == candidate_tag or not _matches_release_tag_prefix(
+                name, tag_prefix
+            ):
                 continue
             releases.append(
                 (
@@ -673,6 +676,17 @@ def _recent_release_tags(
         max_releases_30d=max_releases_30d,
         minimum_days_between_releases=minimum_days_between_releases,
         effective_at=effective_at,
+    )
+
+
+def _matches_release_tag_prefix(name: str, prefix: str) -> bool:
+    """Accept version tags for one channel, including historic SemVer suffixes."""
+    if not name.startswith(prefix):
+        return False
+    version = name[len(prefix) :]
+    return (
+        re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", version)
+        is not None
     )
 
 
@@ -758,6 +772,7 @@ def release_cadence_status(
         effective_at=_parse_timestamp(cadence["effective_at"]),
         candidate_tag=candidate_tag,
         tag_ref=f"refs/tags/{tag_prefixes[channel]}*",
+        tag_prefix=tag_prefixes[channel],
     )
     projection["channel"] = channel
     projection["excluded_candidate_tag"] = candidate_tag
