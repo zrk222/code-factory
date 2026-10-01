@@ -339,16 +339,21 @@ def test_vscode_supply_chain_is_patched_and_audited_before_tests():
     assert "requireSuccessfulScan(spawnSync" in auditor
     assert "--omit" not in auditor
     assert package["overrides"] == {
-        "brace-expansion": "5.0.9",
-        "fast-uri": "3.1.6",
+        "brace-expansion": "5.0.12",
+        "fast-uri": "3.1.8",
         "js-yaml": "^4.3.2",
+        "markdown-it": "14.3.1",
+        "undici": "7.29.1",
     }
-    assert lock["packages"]["node_modules/brace-expansion"]["version"] == "5.0.9"
-    assert lock["packages"]["node_modules/fast-uri"]["version"] == "3.1.6"
+    assert lock["packages"]["node_modules/brace-expansion"]["version"] == "5.0.12"
+    assert lock["packages"]["node_modules/fast-uri"]["version"] == "3.1.8"
+    assert lock["packages"]["node_modules/markdown-it"]["version"] == "14.3.1"
+    assert lock["packages"]["node_modules/undici"]["version"] == "7.29.1"
     assert lock["packages"]["node_modules/js-yaml"]["version"] == "4.3.2"
     assert "dependencies" not in package
 
     for relative in (
+        "ci.yml",
         "vscode-extension.yml",
         "publish.yml",
         "openvsx.yml",
