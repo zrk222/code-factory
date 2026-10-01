@@ -851,6 +851,29 @@ def test_publication_guard_uses_published_timestamps(tmp_path, ages, draft, admi
     assert (result.returncode == 0) is admitted, result.stderr
 
 
+@pytest.mark.parametrize(
+    "channel,tag,valid",
+    [
+        ("vscode", "vscode-v1.0.2+build.1", True),
+        ("jetbrains", "jetbrains-v1.0.2+build.2", True),
+        ("vscode", "vscode-v1.0.3+build.1", False),
+        ("vscode", "vscode-v1.0.2+build.0", False),
+        ("vscode", "vscode-v1.0.2+other.1", False),
+        ("core", "v0.47.0+build.1", False),
+    ],
+)
+def test_editor_build_revision_preserves_package_version(channel, tag, valid):
+    source = {
+        "version": "0.47.0",
+        "platform_versions": {"vscode": "1.0.2", "intellij": "1.0.2"},
+    }
+    if valid:
+        candidate._validate_channel_tag(source, channel, tag)
+    else:
+        with pytest.raises(ValueError, match="candidate tag must match"):
+            candidate._validate_channel_tag(source, channel, tag)
+
+
 def test_release_preflight_cli_writes_machine_receipt(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:

@@ -866,9 +866,10 @@ def _validate_channel_tag(
     }
     if channel not in prefixes:
         raise ValueError("release channel must be core, vscode, or jetbrains")
-    if (
-        candidate_tag is not None
-        and candidate_tag != f"{prefixes[channel]}{versions[channel]}"
+    expected = f"{prefixes[channel]}{versions[channel]}"
+    revision = r"(?:\+build\.[1-9][0-9]*)?" if channel != "core" else ""
+    if candidate_tag is not None and not re.fullmatch(
+        re.escape(expected) + revision, candidate_tag
     ):
         raise ValueError(
             "candidate tag must match the source package version"
