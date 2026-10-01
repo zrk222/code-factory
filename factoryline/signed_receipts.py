@@ -291,16 +291,8 @@ def _ci_fetch_main(values: list[str]) -> int:
     return 0
 
 
-def fetch_ci_receipt(commit: str, output: Path) -> dict:
-    """Fetch and verify protected-main CI evidence for exactly one release candidate."""
-    repository = os.environ.get("GITHUB_REPOSITORY", "")
-    if not re.fullmatch(r"[a-f0-9]{40}", commit) or not re.fullmatch(
-        r"[\w.-]+/[\w.-]+", repository
-    ):
-        raise SignedReceiptError(
-            "E_CI_RECEIPT", "candidate or repository identity is invalid"
-        )
-    runs = json.loads(
+def _ci_successful_runs(repository: str) -> list[dict]:
+    return json.loads(
         subprocess.check_output(
             [
                 "gh",
@@ -310,14 +302,12 @@ def fetch_ci_receipt(commit: str, output: Path) -> dict:
                 repository,
                 "--workflow",
                 "signed-receipts.yml",
-                "--commit",
-                commit,
                 "--branch",
                 "main",
                 "--status",
                 "success",
                 "--limit",
-                "1",
+                "50",
                 "--json",
                 "databaseId,headSha,event",
             ],
@@ -325,12 +315,79 @@ def fetch_ci_receipt(commit: str, output: Path) -> dict:
             timeout=30,
         )
     )
-    if not runs or runs[0].get("headSha") != commit:
+
+
+def _ci_run_details(repository: str, run: dict, commit: str) -> dict:
+    workflow = run.get("headSha", "")
+    if not re.fullmatch(r"[a-f0-9]{40}", workflow):
+        raise SignedReceiptError("E_CI_RECEIPT", "invalid workflow commit")
+    trusted = os.environ.get("GITHUB_SHA", "")
+    if os.environ.get("GITHUB_REF") != "refs/heads/main" or not re.fullmatch(
+        r"[a-f0-9]{40}", trusted
+    ):
         raise SignedReceiptError(
-            "E_CI_RECEIPT", "no successful clean-main receipt for this candidate"
+            "E_CI_RECEIPT", "trusted workflow identity is required"
         )
-    run_id = str(runs[0]["databaseId"])
-    output.mkdir(parents=True, exist_ok=False)
+    for ancestor, descendant in ((workflow, trusted), (commit, workflow)):
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+            check=True,
+            timeout=30,
+        )
+    details = json.loads(
+        subprocess.check_output(
+            ["gh", "api", f"repos/{repository}/actions/runs/{run['databaseId']}"],
+            text=True,
+            timeout=30,
+        )
+    )
+    expected = {
+        "head_sha": workflow,
+        "head_branch": "main",
+        "conclusion": "success",
+        "path": ".github/workflows/signed-receipts.yml",
+    }
+    if any(details.get(key) != value for key, value in expected.items()):
+        raise SignedReceiptError("E_CI_RECEIPT", "selected run is not trusted-main CI")
+    if details.get("event") not in {"push", "workflow_dispatch"}:
+        raise SignedReceiptError("E_CI_RECEIPT", "unsupported CI event")
+    return details
+
+
+def _ci_verify_run_payload(payload: dict, repository: str, details: dict) -> None:
+    identity = payload["identity"]
+    workflow = identity.get("workflow_commit")
+    if workflow is None and identity.get("commit") == details["head_sha"]:
+        workflow = identity["commit"]
+    if workflow != details["head_sha"]:
+        raise SignedReceiptError(
+            "E_CI_RECEIPT", "receipt workflow commit does not match"
+        )
+    expected = {
+        "repository": repository,
+        "run_id": str(details["id"]),
+        "run_attempt": str(details["run_attempt"]),
+        "runner_os": "Linux",
+    }
+    if any(identity.get(key) != value for key, value in expected.items()):
+        raise SignedReceiptError("E_CI_RECEIPT", "receipt run identity does not match")
+    try:
+        issued = datetime.fromisoformat(payload["issued_at"].replace("Z", "+00:00"))
+        start = datetime.fromisoformat(details["run_started_at"].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(details["updated_at"].replace("Z", "+00:00"))
+        valid = start <= issued <= end
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SignedReceiptError(
+            "E_CI_RECEIPT", "invalid receipt issuance time"
+        ) from exc
+    if not valid:
+        raise SignedReceiptError(
+            "E_CI_RECEIPT", "receipt predates or postdates selected run"
+        )
+
+
+def _ci_download_run(repository: str, run_id: str, directory: Path) -> Path:
+    directory.mkdir()
     subprocess.run(
         [
             "gh",
@@ -342,12 +399,15 @@ def fetch_ci_receipt(commit: str, output: Path) -> dict:
             "--name",
             "signed-factory-receipt",
             "--dir",
-            str(output),
+            str(directory),
         ],
         check=True,
         timeout=120,
     )
-    path = output / "ci-receipt.json"
+    return directory / "ci-receipt.json"
+
+
+def _ci_verify_attestation(path: Path, repository: str, workflow: str) -> None:
     subprocess.run(
         [
             "gh",
@@ -358,8 +418,10 @@ def fetch_ci_receipt(commit: str, output: Path) -> dict:
             repository,
             "--signer-workflow",
             f"{repository}/.github/workflows/signed-receipts.yml",
+            "--signer-digest",
+            workflow,
             "--source-digest",
-            commit,
+            workflow,
             "--source-ref",
             "refs/heads/main",
             "--deny-self-hosted-runners",
@@ -367,15 +429,32 @@ def fetch_ci_receipt(commit: str, output: Path) -> dict:
         check=True,
         timeout=120,
     )
-    payload = validate_ci_receipt(path, commit)
-    if (
-        payload["identity"].get("repository") != repository
-        or payload["identity"].get("run_id") != run_id
+
+
+def fetch_ci_receipt(commit: str, output: Path) -> dict:
+    """Verify a current trusted-main workflow audit of one protected ancestor."""
+    repository = os.environ.get("GITHUB_REPOSITORY", "")
+    if not re.fullmatch(r"[a-f0-9]{40}", commit) or not re.fullmatch(
+        r"[\w.-]+/[\w.-]+", repository
     ):
         raise SignedReceiptError(
-            "E_CI_RECEIPT", "receipt must bind the selected repository and CI run"
+            "E_CI_RECEIPT", "candidate or repository identity is invalid"
         )
-    return payload
+    output.mkdir(parents=True, exist_ok=False)
+    for run in _ci_successful_runs(repository):
+        run_id = str(run["databaseId"])
+        try:
+            details = _ci_run_details(repository, run, commit)
+            path = _ci_download_run(repository, run_id, output / run_id)
+            payload = validate_ci_receipt(path, commit)
+            _ci_verify_run_payload(payload, repository, details)
+            _ci_verify_attestation(path, repository, details["head_sha"])
+        except (SignedReceiptError, subprocess.CalledProcessError):
+            continue
+        return payload
+    raise SignedReceiptError(
+        "E_CI_RECEIPT", "no verified successful main audit for candidate"
+    )
 
 
 class SignedReceiptError(RuntimeError):

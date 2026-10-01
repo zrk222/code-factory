@@ -36,6 +36,12 @@ jobs:
           ref: main
           fetch-depth: 0
           persist-credentials: false
+      - name: Bind trusted tools to the workflow commit
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          git checkout --detach "$GITHUB_SHA"
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -50,7 +56,7 @@ jobs:
           test "$GITHUB_REF" = refs/heads/main
           [[ "$RELEASE_REF" =~ ^jetbrains-v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]
           candidate=$(git rev-parse --verify "${RELEASE_REF}^{commit}")
-          git merge-base --is-ancestor "$candidate" origin/main
+          git merge-base --is-ancestor "$candidate" "$GITHUB_SHA"
           python -m factoryline.signed_receipts fetch-ci "$candidate" "$RUNNER_TEMP/ci-release-evidence"
           echo "commit=$candidate" >> "$GITHUB_OUTPUT"
 
@@ -98,7 +104,12 @@ jobs:
       - name: Bind protected-main checkout to approved candidate
         env:
           APPROVED_COMMIT: ${{ needs.attested-source.outputs.commit }}
-        run: test "$(git rev-parse HEAD)" = "$APPROVED_COMMIT"
+        run: |
+          set -euo pipefail
+          [[ "$APPROVED_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          git merge-base --is-ancestor "$APPROVED_COMMIT" "$GITHUB_SHA"
+          git checkout --detach "$APPROVED_COMMIT"
+          test "$(git rev-parse HEAD)" = "$APPROVED_COMMIT"
       - name: Require an immutable release tag
         shell: bash
         env:
@@ -236,7 +247,12 @@ jobs:
       - name: Bind compatibility source to approved candidate
         env:
           APPROVED_COMMIT: ${{ needs.attested-source.outputs.commit }}
-        run: test "$(git rev-parse HEAD)" = "$APPROVED_COMMIT"
+        run: |
+          set -euo pipefail
+          [[ "$APPROVED_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          git merge-base --is-ancestor "$APPROVED_COMMIT" "$GITHUB_SHA"
+          git checkout --detach "$APPROVED_COMMIT"
+          test "$(git rev-parse HEAD)" = "$APPROVED_COMMIT"
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -320,10 +336,19 @@ jobs:
           ref: main
           fetch-depth: 0
           persist-credentials: false
-      - name: Bind publisher source to approved candidate
+      - name: Bind trusted publisher and recheck immutable candidate tag
         env:
           APPROVED_COMMIT: ${{ needs.attested-source.outputs.commit }}
-        run: test "$(git rev-parse HEAD)" = "$APPROVED_COMMIT"
+          RELEASE_REF: ${{ inputs.release_ref }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          [[ "$APPROVED_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          git merge-base --is-ancestor "$APPROVED_COMMIT" "$GITHUB_SHA"
+          git checkout --detach "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git fetch --no-tags origin "refs/tags/$RELEASE_REF"
+          test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$APPROVED_COMMIT"
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -350,6 +375,7 @@ jobs:
       - name: Verify the promoted candidate
         shell: bash
         env:
+          APPROVED_COMMIT: ${{ needs.attested-source.outputs.commit }}
           RELEASE_REF: ${{ inputs.release_ref }}
           MARKETPLACE_CHANNEL: ${{ inputs.channel }}
         run: |
@@ -358,7 +384,7 @@ jobs:
             --archive "$GITHUB_WORKSPACE/marketplace-candidate/factoryline-intellij.zip" \
             --manifest "$GITHUB_WORKSPACE/marketplace-candidate/manifest.json" \
             --release-ref "$RELEASE_REF" \
-            --commit "$(git rev-parse HEAD)" \
+            --commit "$APPROVED_COMMIT" \
             --channel "$MARKETPLACE_CHANNEL"
       - name: Publish verified plugin update
         env:
