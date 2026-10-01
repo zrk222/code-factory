@@ -1,15 +1,4 @@
 {
   "schema": "factory.evidence_retirement.v1",
-  "retirements": [
-    {
-      "path": "evidence/self-audit/quality-reassessment-2026-09-26.json",
-      "sha256": "c3ef30f9f54bb2850fa6f71f4a4f78edf24022d74a55b5e0f1e09c0c9e8cb514",
-      "reason": "Superseded repository-wide audit inventory; replaced with a fresh dated reassessment."
-    },
-    {
-      "path": "evidence/self-audit/quality-refactor-2026-09-25.json",
-      "sha256": "2a90b928da4f898ed4a652dc80278c9fae7f2e85c0f943f85edf34f346ea82cc",
-      "reason": "Superseded repository-wide audit inventory; replaced with a fresh dated reassessment."
-    }
-  ]
+  "retirements": []
 }
