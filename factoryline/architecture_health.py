@@ -690,6 +690,11 @@ def _matches_release_tag_prefix(name: str, prefix: str) -> bool:
     )
 
 
+def _candidate_tag_pattern(prefix: str, channel: str) -> str:
+    revision = r"(?:\+build\.[1-9][0-9]*)?" if channel != "core" else ""
+    return re.escape(prefix) + r"[0-9]+\.[0-9]+\.[0-9]+" + revision
+
+
 def release_cadence_status(
     root: Path,
     now: datetime | None = None,
@@ -704,7 +709,8 @@ def release_cadence_status(
         raise ValueError("release channel must be core, vscode, or jetbrains")
     if candidate_tag is not None:
         if not re.fullmatch(
-            re.escape(tag_prefixes[channel]) + r"[0-9]+\.[0-9]+\.[0-9]+", candidate_tag
+            _candidate_tag_pattern(tag_prefixes[channel], channel),
+            candidate_tag,
         ):
             raise ValueError(
                 f"candidate tag must use {tag_prefixes[channel]}MAJOR.MINOR.PATCH"
