@@ -320,7 +320,7 @@ def test_ci_aggregation_requires_all_source_bound_checks(tmp_path, monkeypatch):
 def test_ci_workflow_isolates_checks_and_signing_permissions():
     workflow = Path(".github/workflows/signed-receipts.yml").read_text()
     assert "check: [tests, architecture, quality, scanner_controls]" in workflow
-    assert "needs: isolated-check" in workflow
+    assert "needs: [resolve-source, isolated-check]" in workflow
     check_job, attestor = workflow.split("  sign-and-verify:", 1)
     check_permissions = check_job.split("    permissions:", 1)[1].split(
         "    steps:", 1
@@ -341,3 +341,154 @@ def test_ci_workflow_isolates_checks_and_signing_permissions():
     assert attestor.index("Validate isolated runner results") < attestor.index(
         "Attest the runner and source commit"
     )
+
+
+def _historical_payload():
+    import factoryline.signed_receipts as receipts
+
+    return {
+        "schema": receipts.CI_RECEIPT_SCHEMA,
+        "ok": True,
+        "identity": {
+            "commit": "a" * 40,
+            "workflow_commit": "b" * 40,
+            "repository": "owner/repo",
+            "run_id": "12",
+            "run_attempt": "2",
+            "ref": "refs/heads/main",
+            "runner_os": "Linux",
+        },
+        "issued_at": "2026-09-30T12:01:00+00:00",
+        "junit_sha256": "c" * 64,
+        "commands": [
+            {"name": n, "argv": list(a), "exit_code": 0}
+            for n, a in receipts.CI_COMMANDS
+        ],
+    }
+
+
+def _historical_run():
+    return {
+        "id": 12,
+        "head_sha": "b" * 40,
+        "head_branch": "main",
+        "path": ".github/workflows/signed-receipts.yml",
+        "conclusion": "success",
+        "event": "workflow_dispatch",
+        "run_attempt": 2,
+        "run_started_at": "2026-09-30T12:00:00Z",
+        "updated_at": "2026-09-30T12:02:00Z",
+    }
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("commit", "d" * 40),
+        ("workflow_commit", "d" * 40),
+        ("run_id", "13"),
+        ("run_attempt", "1"),
+        ("repository", "other/repo"),
+    ],
+)
+def test_historical_audit_rejects_changed_bindings(field, value):
+    import factoryline.signed_receipts as receipts
+
+    payload = _historical_payload()
+    payload["identity"][field] = value
+    with pytest.raises(SignedReceiptError, match="E_CI_RECEIPT"):
+        receipts.validate_ci_payload(payload, "a" * 40)
+        receipts._ci_verify_run_payload(payload, "owner/repo", _historical_run())
+
+
+@pytest.mark.parametrize(
+    "issued", ["2026-09-30T11:59:59Z", "2026-09-30T12:02:01Z", "invalid"]
+)
+def test_historical_audit_rejects_issuance_outside_selected_attempt(issued):
+    import factoryline.signed_receipts as receipts
+
+    payload = _historical_payload()
+    payload["issued_at"] = issued
+    with pytest.raises(SignedReceiptError, match="E_CI_RECEIPT"):
+        receipts._ci_verify_run_payload(payload, "owner/repo", _historical_run())
+
+
+def test_historical_fetch_verifies_workflow_digest_and_exact_candidate(
+    tmp_path, monkeypatch
+):
+    import factoryline.signed_receipts as receipts
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    monkeypatch.setenv("GITHUB_SHA", "e" * 40)
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    monkeypatch.setattr(
+        receipts,
+        "_ci_successful_runs",
+        lambda repo: [
+            {"databaseId": 12, "headSha": "b" * 40, "event": "workflow_dispatch"}
+        ],
+    )
+    commands = []
+
+    def run(argv, **kwargs):
+        commands.append(argv)
+        if argv[:3] == ["gh", "run", "download"]:
+            directory = Path(argv[-1])
+            (directory / "ci-receipt.json").write_text(
+                json.dumps(_historical_payload())
+            )
+
+    monkeypatch.setattr(receipts.subprocess, "run", run)
+    monkeypatch.setattr(
+        receipts.subprocess,
+        "check_output",
+        lambda *a, **kw: json.dumps(_historical_run()),
+    )
+    payload = receipts.fetch_ci_receipt("a" * 40, tmp_path / "evidence")
+    assert payload["identity"]["commit"] == "a" * 40
+    assert ["git", "merge-base", "--is-ancestor", "b" * 40, "e" * 40] in commands
+    assert ["git", "merge-base", "--is-ancestor", "a" * 40, "b" * 40] in commands
+    verify = next(c for c in commands if c[:3] == ["gh", "attestation", "verify"])
+    assert verify[verify.index("--source-digest") + 1] == "b" * 40
+    assert verify[verify.index("--signer-digest") + 1] == "b" * 40
+    assert "--deny-self-hosted-runners" in verify
+
+
+def test_historical_workflow_checks_source_before_installation_and_after_commands():
+    workflow = Path(".github/workflows/signed-receipts.yml").read_text()
+    assert 'git merge-base --is-ancestor "$candidate" "$GITHUB_SHA"' in workflow
+    isolated = workflow.split("  isolated-check:", 1)[1].split("  sign-and-verify:", 1)[
+        0
+    ]
+    assert isolated.index(
+        "Verify pristine candidate before installation"
+    ) < isolated.index("pip install")
+    assert isolated.index("Run fixed audit command") < isolated.index(
+        "Record fixed-command evidence"
+    )
+    assert "assert head == os.environ['CANDIDATE_SHA']" in isolated
+    attestor = workflow.split("  sign-and-verify:", 1)[1]
+    assert "os.environ['WORKFLOW_SHA'] == os.environ['GITHUB_SHA']" in attestor
+    assert "'commit': os.environ['CANDIDATE_SHA']" in attestor
+    assert "actions/checkout" not in attestor
+
+
+def test_editor_publishers_keep_trusted_tools_and_bind_approved_candidate():
+    for name in ("vscode-marketplace", "openvsx", "jetbrains-marketplace"):
+        workflow = Path(f".github/workflows/{name}.yml").read_text()
+        assert 'git checkout --detach "$APPROVED_COMMIT"' in workflow
+        assert 'git checkout --detach "$GITHUB_SHA"' in workflow
+        assert 'git fetch --no-tags origin "refs/tags/$RELEASE_REF"' in workflow
+        assert 'test "$(git rev-parse HEAD)" = "$APPROVED_COMMIT"' in workflow
+        assert "Bind trusted publisher and recheck immutable candidate tag" in workflow
+
+
+def test_legacy_receipt_is_valid_only_when_candidate_is_workflow_commit():
+    import factoryline.signed_receipts as receipts
+
+    payload = _historical_payload()
+    del payload["identity"]["workflow_commit"]
+    with pytest.raises(SignedReceiptError, match="E_CI_RECEIPT"):
+        receipts._ci_verify_run_payload(payload, "owner/repo", _historical_run())
+    payload["identity"]["commit"] = "b" * 40
+    receipts._ci_verify_run_payload(payload, "owner/repo", _historical_run())

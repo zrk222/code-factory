@@ -4,12 +4,48 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Protected-main ancestor commit to audit (empty audits workflow commit)
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
 
 jobs:
+  resolve-source:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      candidate: ${{ steps.source.outputs.candidate }}
+      workflow: ${{ steps.source.outputs.workflow }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve the reviewed ancestor of the workflow commit
+        id: source
+        env:
+          REQUESTED_CANDIDATE: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          git cat-file -e "$GITHUB_SHA^{commit}"
+          candidate="${REQUESTED_CANDIDATE:-$GITHUB_SHA}"
+          [[ "$candidate" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git rev-parse --verify "$candidate^{commit}")" = "$candidate"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          git merge-base --is-ancestor "$candidate" "$GITHUB_SHA"
+          echo "candidate=$candidate" >> "$GITHUB_OUTPUT"
+          echo "workflow=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
   isolated-check:
+    needs: resolve-source
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -19,20 +55,72 @@ jobs:
         check: [tests, architecture, quality, scanner_controls]
     permissions:
       contents: read
+    env:
+      CANDIDATE_SHA: ${{ needs.resolve-source.outputs.candidate }}
+      WORKFLOW_SHA: ${{ needs.resolve-source.outputs.workflow }}
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: main
+          fetch-depth: 0
           persist-credentials: false
+      - name: Select the reviewed ancestor without credentials
+        run: |
+          set -euo pipefail
+          test "$WORKFLOW_SHA" = "$GITHUB_SHA"
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          git merge-base --is-ancestor "$CANDIDATE_SHA" "$WORKFLOW_SHA"
+          git checkout --detach "$CANDIDATE_SHA"
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
+      - name: Verify pristine candidate before installation
+        env:
+          CANDIDATE_SHA: ${{ needs.resolve-source.outputs.candidate }}
+          WORKFLOW_SHA: ${{ needs.resolve-source.outputs.workflow }}
+        run: |
+          python - <<'PY'
+          import hashlib, os, subprocess
+          from pathlib import Path
+          head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert head == os.environ['CANDIDATE_SHA'], 'source identity changed'
+          tree = subprocess.check_output(['git', 'ls-tree', '-rz', 'HEAD'])
+          for entry in filter(None, tree.split(b'\0')):
+              metadata, relative = entry.split(b'\t', 1)
+              mode, kind, oid = metadata.split()
+              assert kind == b'blob', 'unsupported tree entry'
+              path = Path(os.fsdecode(relative))
+              content = os.fsencode(os.readlink(path)) if mode == b'120000' else path.read_bytes()
+              actual = hashlib.sha1(b'blob ' + str(len(content)).encode() + b'\0' + content, usedforsecurity=False)
+              assert actual.hexdigest().encode() == oid, 'checkout differs from committed source'
+          PY
       - name: Install the reviewed audit environment
         run: |
           python -m pip install -e ".[dev,enterprise]" code-factory-2-forge==0.10.8
           npm install --no-save --no-package-lock typescript@5.9.3
+      - name: Verify pristine candidate before fixed audit
+        env:
+          CANDIDATE_SHA: ${{ needs.resolve-source.outputs.candidate }}
+          WORKFLOW_SHA: ${{ needs.resolve-source.outputs.workflow }}
+        run: |
+          python - <<'PY'
+          import hashlib, os, subprocess
+          from pathlib import Path
+          head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert head == os.environ['CANDIDATE_SHA'], 'source identity changed'
+          tree = subprocess.check_output(['git', 'ls-tree', '-rz', 'HEAD'])
+          for entry in filter(None, tree.split(b'\0')):
+              metadata, relative = entry.split(b'\t', 1)
+              mode, kind, oid = metadata.split()
+              assert kind == b'blob', 'unsupported tree entry'
+              path = Path(os.fsdecode(relative))
+              content = os.fsencode(os.readlink(path)) if mode == b'120000' else path.read_bytes()
+              actual = hashlib.sha1(b'blob ' + str(len(content)).encode() + b'\0' + content, usedforsecurity=False)
+              assert actual.hexdigest().encode() == oid, 'checkout differs from committed source'
+          PY
       - name: Run fixed audit command
         env:
           CHECK_NAME: ${{ matrix.check }}
@@ -51,6 +139,8 @@ jobs:
         run: factory verify-receipts --root . --out .factory/challenges/verify-receipts.json --json
       - name: Record fixed-command evidence without importing candidate code
         env:
+          CANDIDATE_SHA: ${{ needs.resolve-source.outputs.candidate }}
+          WORKFLOW_SHA: ${{ needs.resolve-source.outputs.workflow }}
           CHECK_NAME: ${{ matrix.check }}
         run: |
           python - <<'PY'
@@ -64,7 +154,7 @@ jobs:
               'scanner_controls': ['python', '-m', 'factoryline.cli', 'audit', 'evals', '--json'],
           }
           head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
-          assert head == os.environ['GITHUB_SHA'], 'source identity changed'
+          assert head == os.environ['CANDIDATE_SHA'], 'source identity changed'
           tree = subprocess.check_output(['git', 'ls-tree', '-rz', 'HEAD'])
           for entry in filter(None, tree.split(b'\0')):
               metadata, relative = entry.split(b'\t', 1)
@@ -77,7 +167,7 @@ jobs:
           name = os.environ['CHECK_NAME']
           junit = Path('ci-tests.xml')
           payload = {'schema': 'factory.receipt.ci.check.v1', 'ok': True,
-                     'identity': {'commit': head, 'repository': os.environ['GITHUB_REPOSITORY'],
+                     'identity': {'commit': head, 'workflow_commit': os.environ['WORKFLOW_SHA'], 'repository': os.environ['GITHUB_REPOSITORY'],
                                   'run_id': os.environ['GITHUB_RUN_ID'], 'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
                                   'ref': os.environ['GITHUB_REF'], 'runner_os': os.environ['RUNNER_OS']},
                      'issued_at': datetime.now(timezone.utc).isoformat(),
@@ -102,7 +192,7 @@ jobs:
             ci-tests.xml
             .factory/challenges/verify-receipts.json
   sign-and-verify:
-    needs: isolated-check
+    needs: [resolve-source, isolated-check]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -111,6 +201,9 @@ jobs:
       id-token: write
       attestations: write
       actions: read
+    env:
+      CANDIDATE_SHA: ${{ needs.resolve-source.outputs.candidate }}
+      WORKFLOW_SHA: ${{ needs.resolve-source.outputs.workflow }}
     steps:
       - uses: actions/setup-python@v6
         with:
@@ -134,7 +227,9 @@ jobs:
               'quality': ['forge', 'qa', '--repo-wide', '--root', '.', '--strict'],
               'scanner_controls': ['python', '-m', 'factoryline.cli', 'audit', 'evals', '--json'],
           }
-          identity = {'commit': os.environ['GITHUB_SHA'], 'repository': os.environ['GITHUB_REPOSITORY'],
+          assert os.environ['WORKFLOW_SHA'] == os.environ['GITHUB_SHA']
+          assert re.fullmatch(r'[a-f0-9]{40}', os.environ['CANDIDATE_SHA'])
+          identity = {'commit': os.environ['CANDIDATE_SHA'], 'workflow_commit': os.environ['WORKFLOW_SHA'], 'repository': os.environ['GITHUB_REPOSITORY'],
                       'run_id': os.environ['GITHUB_RUN_ID'], 'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
                       'ref': 'refs/heads/main', 'runner_os': 'Linux'}
           endpoint = f"repos/{identity['repository']}/actions/runs/{identity['run_id']}/attempts/{identity['run_attempt']}/jobs?per_page=100"
@@ -145,6 +240,10 @@ jobs:
               assert job['conclusion'] == 'success', f'{name}: runner did not succeed'
               step = next(s for s in job['steps'] if s['name'] == 'Run fixed audit command')
               assert step['conclusion'] == 'success', f'{name}: check step did not succeed'
+              pristine_step = next(s for s in job['steps'] if s['name'] == 'Verify pristine candidate before installation')
+              assert pristine_step['conclusion'] == 'success', f'{name}: initial source check failed'
+              audit_source_step = next(s for s in job['steps'] if s['name'] == 'Verify pristine candidate before fixed audit')
+              assert audit_source_step['conclusion'] == 'success', f'{name}: source changed during installation'
               record_step = next(s for s in job['steps'] if s['name'] == 'Record fixed-command evidence without importing candidate code')
               assert record_step['conclusion'] == 'success', f'{name}: source check did not succeed'
               folder = Path('ci-checks') / f'ci-check-{name}'
