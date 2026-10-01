@@ -211,7 +211,7 @@ jobs:
           printf 'release_ref=%s\ncommit=%s\npublisher=zrk222\nextension=factoryline-vscode\n' \
             "$RELEASE_REF" "$(git rev-parse HEAD)" > "$GITHUB_WORKSPACE/vscode-marketplace-candidate/manifest.txt"
 
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7
         with:
           name: vscode-marketplace-candidate-${{ inputs.release_ref }}
           path: vscode-marketplace-candidate/

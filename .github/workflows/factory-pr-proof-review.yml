@@ -156,7 +156,7 @@ jobs:
           import json
           print(json.load(open("github-proof-review.json", encoding="utf-8"))["github_comment"])
           PY
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7
         with:
           name: factoryline-github-proof-review
           path: |

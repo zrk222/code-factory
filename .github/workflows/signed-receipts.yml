@@ -183,7 +183,7 @@ jobs:
           PY
       - name: Preserve the check and diagnostic material
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: ci-check-${{ matrix.check }}
           path: |
@@ -294,7 +294,7 @@ jobs:
           mv ci-receipt.original.json ci-receipt.json
       - name: Preserve public verification material
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: signed-factory-receipt
           path: |

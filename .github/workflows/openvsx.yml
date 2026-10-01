@@ -205,7 +205,7 @@ jobs:
           python "$GITHUB_WORKSPACE/scripts/verify_release_preflight.py" openvsx-preflight.json
           printf 'release_ref=%s\ncommit=%s\npublisher=zrk222\n' \
             "$RELEASE_REF" "$(git rev-parse HEAD)" > "$GITHUB_WORKSPACE/openvsx-candidate/manifest.txt"
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7
         with:
           name: openvsx-candidate-${{ inputs.release_ref }}
           path: openvsx-candidate/

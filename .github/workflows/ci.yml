@@ -1,4 +1,4 @@
-﻿name: ci
+name: ci
 on:
   push:
     branches: [ main ]
@@ -54,7 +54,7 @@ jobs:
         run: python -m pytest -n 2 -q --junitxml=pytest-results.xml --durations=20
       - name: Upload test results and timing evidence
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: pytest-${{ matrix.os }}-${{ matrix.python }}
           path: pytest-results.xml
@@ -80,7 +80,7 @@ jobs:
         run: >-
           python -m pytest -q -rA tests/test_ci_platform_parity.py
           --junitxml=native-process-parity.junit.xml
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7
         with:
           name: native-process-parity-${{ matrix.os }}
           path: native-process-parity.junit.xml
@@ -111,7 +111,7 @@ jobs:
           ! /tmp/factory-wheel/bin/factory verify missing-feature --root /tmp --strict-release --json
           /tmp/factory-wheel/bin/python -c "import factoryline; print(factoryline.__version__)"
           /tmp/factory-wheel/bin/python /tmp/release_train_e2e.py
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7
         with:
           name: python-distributions
           path: dist/
