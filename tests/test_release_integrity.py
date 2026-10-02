@@ -558,6 +558,17 @@ def test_release_integrity_rejects_vscode_candidate_validation_without_authoriza
     assert result["next_action"]["action"] == "repair_release_workflow"
 
 
+def test_vscode_marketplace_token_is_passed_through_step_environment() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "vscode-marketplace.yml").read_text(
+        encoding="utf-8"
+    )
+    authorize = workflow.split("  authorize:", 1)[1].split("  validate:", 1)[0]
+
+    assert "VSCE_PAT: ${{ secrets.VSCE_PAT }}" in authorize
+    assert 'test -n "$VSCE_PAT"' in authorize
+    assert 'test -n "${{ secrets.VSCE_PAT }}"' not in authorize
+
+
 def test_release_integrity_rejects_publication_without_candidate_preflight(
     tmp_path: Path,
 ) -> None:
