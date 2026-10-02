@@ -70,9 +70,11 @@ jobs:
     steps:
       - name: Record the protected release authorization
         shell: bash
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
           set -euo pipefail
-          test -n "${{ secrets.VSCE_PAT }}" || {
+          test -n "$VSCE_PAT" || {
             echo "VSCE_PAT is required in the vscode-marketplace environment." >&2
             exit 1
           }
