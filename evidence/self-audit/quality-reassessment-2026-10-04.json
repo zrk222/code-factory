@@ -2,9 +2,9 @@
   "report": {
     "attribution": {
       "dominant_failure_class": "inconsistent_logic",
-      "n_checked": 1089,
-      "n_passed": 1059,
-      "rate": 0.9724517906336089,
+      "n_checked": 1085,
+      "n_passed": 1055,
+      "rate": 0.9723502304147466,
       "stage": "qa_audit",
       "units": [
         {
@@ -7579,35 +7579,7 @@
           "failure_class": null,
           "passed": true,
           "stage": "qa_audit",
-          "unit": "qa_audit:tools/workflow-audit/bind-local.py:artifact"
-        },
-        {
-          "evidence": "metrics within thresholds",
-          "failure_class": null,
-          "passed": true,
-          "stage": "qa_audit",
-          "unit": "qa_audit:tools/workflow-audit/bind-local.py:valid_run_receipt"
-        },
-        {
-          "evidence": "metrics within thresholds",
-          "failure_class": null,
-          "passed": true,
-          "stage": "qa_audit",
-          "unit": "qa_audit:tools/workflow-audit/bind-local.py:valid_runtime_coverage_evidence"
-        },
-        {
-          "evidence": "metrics within thresholds",
-          "failure_class": null,
-          "passed": true,
-          "stage": "qa_audit",
-          "unit": "qa_audit:tools/workflow-audit/bind-local.py:main"
-        },
-        {
-          "evidence": "metrics within thresholds",
-          "failure_class": null,
-          "passed": true,
-          "stage": "qa_audit",
-          "unit": "qa_audit:tools/workflow-audit/write-ci-runtime-coverage.py:main"
+          "unit": "qa_audit:scripts/write_ci_runtime_coverage.py:main"
         },
         {
           "evidence": "coverage_intent=0; required=1",
@@ -7936,8 +7908,7 @@
           "scripts/render_verify_policy_gif.py",
           "scripts/smoke_review_audits_wheel.py",
           "scripts/verify_release_preflight.py",
-          "tools/workflow-audit/bind-local.py",
-          "tools/workflow-audit/write-ci-runtime-coverage.py",
+          "scripts/write_ci_runtime_coverage.py",
           "videos/code-factory-proof-of-survival/remotion/src/FactoryEngine.tsx",
           "videos/code-factory-proof-of-survival/remotion/src/index.ts",
           "videos/code-factory-proof-of-survival/remotion/src/root.tsx",
@@ -7951,7 +7922,7 @@
     "passed": true
   },
   "schema": "factory.forgeline_reassessment.v1",
-  "source_sha256": "c7b7f152b5d3795c33b56a8f015f56b67d42718d08bf884debf9eb9865a6615d",
+  "source_sha256": "9a2ee1ad200ea5ce35fb88a36ed1fc2d722eae5f952823d5774e919f3a6aff48",
   "tool": {
     "identity_complete": true,
     "package": "code-factory-2-forge",
