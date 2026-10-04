@@ -33,6 +33,10 @@
     "verification": [
       "factoryline/*proof*.py",
       "factoryline/*audit*.py",
+      "factoryline/architecture_guard.py",
+      "factoryline/github_account_overview.py",
+      "factoryline/junie_review.py",
+      "factoryline/runtime_coverage.py",
       "factoryline/gauntlet.py",
       "factoryline/oracle*.py"
     ],
