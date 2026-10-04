@@ -951,11 +951,140 @@ def _security_source_files(root: Path) -> list[Path]:
     return sorted(files, key=lambda path: path.relative_to(root).as_posix())[:512]
 
 
-def _security_scan_tree(root: Path, path: Path, tree: ast.AST) -> list[dict[str, Any]]:
+def _vacuous_assertion(node: ast.expr) -> bool:
+    if isinstance(node, ast.Constant):
+        return bool(node.value)
+    if not isinstance(node, ast.Compare) or len(node.ops) != 1:
+        return False
+    if not isinstance(node.ops[0], (ast.Eq, ast.Is, ast.LtE, ast.GtE)):
+        return False
+    operands = [node.left, *node.comparators]
+    # Repeated calls may return different values. Never call these tautologies.
+    if any(isinstance(n, (ast.Call, ast.Await)) for x in operands for n in ast.walk(x)):
+        return False
+    return ast.dump(operands[0]) == ast.dump(operands[1])
+
+
+def _assertion_call(node: ast.AST, aliases: dict[str, str]) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    name = _normalized_call_name(node, aliases)
+    leaf = name.rsplit(".", 1)[-1]
+    return leaf.startswith("assert") or name in {"pytest.raises", "pytest.warns"}
+
+
+def _explicit_failure_oracle(node: ast.AST) -> bool:
+    # A fail-on-use callback is a legitimate negative oracle. Its invocation
+    # requires runtime evidence, so do not mislabel it a proven hollow test.
+    for child in ast.walk(node):
+        if isinstance(child, ast.Raise) and isinstance(child.exc, ast.Call):
+            if _name(child.exc.func) == "AssertionError":
+                return True
+    return False
+
+
+def _hollow_test_finding(
+    relative: str, node: ast.AST, aliases: dict[str, str]
+) -> dict[str, Any] | None:
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    if not node.name.startswith("test_"):
+        return None
+    nodes = [n for statement in node.body for n in _body_nodes(statement)]
+    assertions = [n for n in nodes if isinstance(n, ast.Assert)]
+    if any(_assertion_call(n, aliases) for n in nodes) or _explicit_failure_oracle(
+        node
+    ):
+        return None
+    if assertions and any(not _vacuous_assertion(n.test) for n in assertions):
+        return None
+    return _security_finding(
+        "QUALITY_HOLLOW_TEST",
+        relative,
+        node,
+        "Test has no local non-vacuous assertion. Add an independent expected outcome and a negative control; delegated helper checks need separate evidence.",
+        "MEDIUM",
+        symbol=node.name,
+    )
+
+
+def _tenant_contract_calls(value: tuple[str, ...]) -> tuple[str, ...]:
+    if not isinstance(value, tuple) or len(value) > MAX_RULES:
+        raise ReviewAuditError(
+            "Tenant read calls must be a bounded tuple of qualified names."
+        )
+    if any(not isinstance(x, str) or not NAME.fullmatch(x) for x in value):
+        raise ReviewAuditError("Tenant read calls must contain qualified Python names.")
+    return tuple(sorted(set(value)))
+
+
+def _tenant_keyword_bound(node: ast.Call, parameters: set[str]) -> bool:
+    value = next((k.value for k in node.keywords if k.arg == "tenant_id"), None)
+    return (
+        isinstance(value, ast.Name)
+        and value.id == "tenant_id"
+        and value.id in parameters
+    )
+
+
+def _tenant_function_findings(
+    relative: str, function: ast.AST, calls: tuple[str, ...], aliases: dict
+) -> list[dict]:
+    findings = []
+    parameters = {
+        a.arg
+        for a in (
+            *function.args.posonlyargs,
+            *function.args.args,
+            *function.args.kwonlyargs,
+        )
+    }
+    nodes = (n for statement in function.body for n in _body_nodes(statement))
+    for node in nodes:
+        if not isinstance(node, ast.Call):
+            continue
+        call = _normalized_call_name(node, aliases)
+        if call in calls and not _tenant_keyword_bound(node, parameters):
+            findings.append(
+                _security_finding(
+                    "SECURITY_MISSING_TENANT_ISOLATION",
+                    relative,
+                    node,
+                    "Declared tenant read lacks an explicit tenant_id keyword bound to a function parameter. Scope the read and independently challenge cross-tenant access; this static check does not authenticate identity.",
+                    "HIGH",
+                    call=call,
+                    symbol=function.name,
+                )
+            )
+    return findings
+
+
+def _tenant_read_findings(
+    relative: str, tree: ast.AST, calls: tuple[str, ...]
+) -> list[dict]:
+    if not calls:
+        return []
+    aliases = _security_aliases(tree)
+    return [
+        finding
+        for function in ast.walk(tree)
+        if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+        for finding in _tenant_function_findings(relative, function, calls, aliases)
+    ]
+
+
+def _security_scan_tree(
+    root: Path, path: Path, tree: ast.AST, tenant_read_calls: tuple[str, ...] = ()
+) -> list[dict[str, Any]]:
     relative = path.relative_to(root).as_posix()
-    findings: list[dict[str, Any]] = []
+    findings: list[dict[str, Any]] = _tenant_read_findings(
+        relative, tree, tenant_read_calls
+    )
     aliases = _security_aliases(tree)
     for node in ast.walk(tree):
+        hollow = _hollow_test_finding(relative, node, aliases)
+        if hollow is not None:
+            findings.append(hollow)
         if isinstance(node, ast.Call):
             call = _normalized_call_name(node, aliases)
             finding = _security_call_finding(call, relative, node)
@@ -971,7 +1100,7 @@ def _security_scan_tree(root: Path, path: Path, tree: ast.AST) -> list[dict[str,
 
 
 def _security_scan_file(
-    workspace: Path, path: Path
+    workspace: Path, path: Path, tenant_read_calls: tuple[str, ...] = ()
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]], bool]:
     """Scan one bounded Python source and return its byte binding and findings."""
     relative = path.relative_to(workspace).as_posix()
@@ -1029,7 +1158,7 @@ def _security_scan_file(
             ],
             True,
         )
-    return binding, _security_scan_tree(workspace, path, tree), False
+    return binding, _security_scan_tree(workspace, path, tree, tenant_read_calls), False
 
 
 def _verify_security_bindings(workspace: Path, bindings: list[dict[str, Any]]) -> None:
@@ -1051,15 +1180,20 @@ def _verify_security_bindings(workspace: Path, bindings: list[dict[str, Any]]) -
             )
 
 
-def security_scan(root: Path) -> dict[str, Any]:
+def security_scan(
+    root: Path, *, tenant_read_calls: tuple[str, ...] = ()
+) -> dict[str, Any]:
     """Run a bounded AST security and code-quality scan without importing or executing source."""
     workspace = Path(root).resolve()
+    tenant_read_calls = _tenant_contract_calls(tenant_read_calls)
     files = _security_source_files(workspace)
     findings: list[dict[str, Any]] = []
     bindings: list[dict[str, Any]] = []
     parse_errors = 0
     for path in files:
-        binding, file_findings, parse_error = _security_scan_file(workspace, path)
+        binding, file_findings, parse_error = _security_scan_file(
+            workspace, path, tenant_read_calls
+        )
         if binding is not None:
             bindings.append(binding)
         findings.extend(file_findings)
@@ -1084,6 +1218,11 @@ def security_scan(root: Path) -> dict[str, Any]:
         "state": state,
         "files_scanned": len(bindings),
         "parse_errors": parse_errors,
+        "tenant_read_contract": {
+            "calls": list(tenant_read_calls),
+            "keyword": "tenant_id",
+            "identity_authentication_proven": False,
+        },
         "sources": bindings,
         "findings": findings,
         "finding_counts": dict(sorted(counts.items())),

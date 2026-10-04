@@ -121,6 +121,27 @@ def _descriptor(
     supplied_bytes = require_int(
         value["bytes"], f"{label}.bytes", minimum=0, maximum=MAX_ARCHIVE_BYTES
     )
+    expected_bytes, actual_bytes, final_bytes, actual_digest = _hash_descriptor_file(
+        path, relative
+    )
+    if actual_bytes != expected_bytes or final_bytes != actual_bytes:
+        raise SupplyChainError("E_FILE_SIZE", f"{relative} changed while being read")
+    if actual_digest != supplied_digest:
+        raise SupplyChainError(
+            "E_FILE_DIGEST", f"{relative} digest does not match its descriptor"
+        )
+    if actual_bytes != supplied_bytes:
+        raise SupplyChainError(
+            "E_FILE_SIZE", f"{relative} byte count does not match its descriptor"
+        )
+    if suffixes and not relative.lower().endswith(suffixes):
+        raise SupplyChainError(
+            "E_ARTIFACT_SUFFIX", f"{relative} is not an allowed release artifact"
+        )
+    return {"path": relative, "sha256": actual_digest, "bytes": actual_bytes}
+
+
+def _hash_descriptor_file(path: Path, relative: str) -> tuple[int, int, int, str]:
     try:
         expected_bytes = path.stat().st_size
         if expected_bytes > MAX_ARCHIVE_BYTES:
@@ -147,22 +168,7 @@ def _descriptor(
         raise
     except OSError as exc:
         raise SupplyChainError("E_FILE_READ", f"cannot read {path}: {exc}") from exc
-    actual_digest = digest.hexdigest()
-    if actual_bytes != expected_bytes or final_bytes != actual_bytes:
-        raise SupplyChainError("E_FILE_SIZE", f"{relative} changed while being read")
-    if actual_digest != supplied_digest:
-        raise SupplyChainError(
-            "E_FILE_DIGEST", f"{relative} digest does not match its descriptor"
-        )
-    if actual_bytes != supplied_bytes:
-        raise SupplyChainError(
-            "E_FILE_SIZE", f"{relative} byte count does not match its descriptor"
-        )
-    if suffixes and not relative.lower().endswith(suffixes):
-        raise SupplyChainError(
-            "E_ARTIFACT_SUFFIX", f"{relative} is not an allowed release artifact"
-        )
-    return {"path": relative, "sha256": actual_digest, "bytes": actual_bytes}
+    return expected_bytes, actual_bytes, final_bytes, digest.hexdigest()
 
 
 def _list_descriptors(

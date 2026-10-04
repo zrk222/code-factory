@@ -35,6 +35,12 @@ def add_parser(sub: Any) -> None:
     code_audit.add_argument("--policy", default=".factory/review-audits.json")
     code_audit.add_argument("--root", default=".")
     code_audit.add_argument(
+        "--tenant-read-call",
+        action="append",
+        default=[],
+        help="qualified read call requiring an explicit tenant_id parameter (repeatable; security audit only)",
+    )
+    code_audit.add_argument(
         "--base", default="origin/main", help="Git base for dated-evidence review"
     )
     code_audit.add_argument(
@@ -108,9 +114,16 @@ def _run_evals(args: Any) -> int:
 
 
 def _run_security(args: Any) -> int:
-    from .review_audits import security_scan
+    from .review_audits import ReviewAuditError, security_scan
 
-    result = security_scan(Path(args.root))
+    try:
+        result = security_scan(
+            Path(args.root),
+            tenant_read_calls=tuple(getattr(args, "tenant_read_call", [])),
+        )
+    except ReviewAuditError as error:
+        print(json.dumps({"state": "INVALID", "message": str(error)}), file=sys.stderr)
+        return 2
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:

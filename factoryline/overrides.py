@@ -58,8 +58,8 @@ jobs:
   proof:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: '3.12'
       - run: pip install factoryline-code-factory code-factory-1-spec code-factory-2-forge code-factory-3-compile code-factory-4-design
@@ -71,7 +71,7 @@ jobs:
         env:
           GH_TOKEN: ${{{{ github.token }}}}
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: factory-proof
           path: factory-verify.json

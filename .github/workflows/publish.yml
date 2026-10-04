@@ -28,7 +28,7 @@ jobs:
     outputs:
       candidate_commit: ${{ steps.candidate.outputs.commit }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           ref: main
           fetch-depth: 0
@@ -58,7 +58,7 @@ jobs:
             exit 1
           }
           echo "commit=$candidate_commit" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
       - run: python -m pip install -e .
@@ -96,12 +96,12 @@ jobs:
     needs: [guard]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           ref: ${{ needs.guard.outputs.candidate_commit }}
           fetch-depth: 0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
           cache: pip
@@ -130,7 +130,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-python-${{ inputs.release_tag }}
           path: dist/
@@ -145,12 +145,12 @@ jobs:
       run:
         working-directory: editors/vscode
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           ref: ${{ needs.guard.outputs.candidate_commit }}
           fetch-depth: 0
 
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "22"
           cache: npm
@@ -167,7 +167,7 @@ jobs:
           version="$(node -p "require('./package.json').version")"
           npx vsce package --no-dependencies --out "factoryline-vscode-${version}.vsix"
 
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-vscode-${{ inputs.release_tag }}
           path: editors/vscode/factoryline-vscode-*.vsix
@@ -182,24 +182,24 @@ jobs:
       run:
         working-directory: editors/intellij
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           ref: ${{ needs.guard.outputs.candidate_commit }}
           fetch-depth: 0
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
         with:
           distribution: temurin
           java-version: "21"
 
-      - uses: gradle/actions/setup-gradle@v6.2.0
+      - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92
 
       - name: Test and package JetBrains plugin
         run: |
           chmod +x gradlew
           ./gradlew check guardianReleaseGate
 
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-intellij-${{ inputs.release_tag }}
           path: editors/intellij/build/distributions/*.zip
@@ -215,27 +215,27 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           ref: ${{ needs.guard.outputs.candidate_commit }}
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v8.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-python-${{ inputs.release_tag }}
           path: release-bundle/python
 
-      - uses: actions/download-artifact@v8.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-vscode-${{ inputs.release_tag }}
           path: release-bundle/editors
 
-      - uses: actions/download-artifact@v8.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-intellij-${{ inputs.release_tag }}
           path: release-bundle/editors
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
 
@@ -293,7 +293,7 @@ jobs:
           gh release upload "$RELEASE_TAG" release-bundle/python/* release-bundle/editors/* docs/assets/factoryline-logo-480.png docs/assets/marketplace/factoryline-0.44-live-dashboard.png docs/assets/marketplace/factoryline-jetbrains-0.44-all-controls.jpg docs/assets/marketplace/factoryline-jetbrains-0.44-in-action.jpg docs/assets/marketplace/factoryline-60-day-personal-case-study.png docs/assets/marketplace/code-factory-60-day-personal-case-study.png docs/assets/marketplace/factory-studio-mvp-1280x800.png docs/assets/marketplace/graph-ops-studio-1280x800.png docs/assets/marketplace/graph-ops-proofsearch.png docs/assets/marketplace/graph-ops-proofsearch-controls.png docs/assets/marketplace/graph-ops-evidence-frontier.png docs/assets/*.svg docs/assets/verify-policy.gif --clobber
 
       - name: Publish package distributions to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
         with:
           packages-dir: release-bundle/python/
           attestations: true
@@ -320,7 +320,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           ref: ${{ needs.guard.outputs.candidate_commit }}
           fetch-depth: 0

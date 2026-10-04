@@ -242,6 +242,12 @@ def _trusted_tree_directories(root: Path, ref: str) -> list[str]:
 
 
 def _git_scope_paths(root: Path, base: str, head: str) -> list[str]:
+    _validate_scope_refs(base, head)
+    result = _run_scope_diff(root, base, head)
+    return _parse_scope_diff(result.stdout)
+
+
+def _validate_scope_refs(base: str, head: str) -> None:
     for name, value in (("base", base), ("head", head)):
         if (
             not value
@@ -251,8 +257,11 @@ def _git_scope_paths(root: Path, base: str, head: str) -> list[str]:
             raise RepositoryScopeError(
                 f"SCOPE_{name.upper()}_INVALID", f"{name} ref is invalid"
             )
+
+
+def _run_scope_diff(root: Path, base: str, head: str) -> subprocess.CompletedProcess:
     try:
-        result = subprocess.run(
+        return subprocess.run(
             [
                 "git",
                 "diff",
@@ -271,8 +280,11 @@ def _git_scope_paths(root: Path, base: str, head: str) -> list[str]:
         raise RepositoryScopeError(
             "SCOPE_DIFF_UNAVAILABLE", f"cannot compare changes with {base}"
         ) from exc
+
+
+def _parse_scope_diff(output: bytes) -> list[str]:
     try:
-        fields = result.stdout.decode("utf-8", errors="strict").split("\0")
+        fields = output.decode("utf-8", errors="strict").split("\0")
     except UnicodeDecodeError as exc:
         raise RepositoryScopeError(
             "SCOPE_DIFF_INVALID", "Git returned a path that is not valid UTF-8"

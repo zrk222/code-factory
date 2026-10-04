@@ -711,3 +711,33 @@ def test_cli_returns_nonzero_for_missing_or_blocked_evidence(tmp_path, capsys):
     _write(tmp_path, "observations.json", observations)
     assert main(args) == 2
     assert json.loads(capsys.readouterr().out)["state"] == "INCOMPLETE"
+
+
+def test_workflow_action_pin_gate_rejects_tags_and_accepts_immutable_refs(tmp_path):
+    from factoryline.workflow_audit import audit_action_pins
+
+    directory = tmp_path / ".github" / "workflows"
+    directory.mkdir(parents=True)
+    path = directory / "ci.yml"
+    path.write_text(
+        "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@mutable-tag\n"
+    )
+    assert audit_action_pins(tmp_path)["findings"][0]["code"] == "UNPINNED_ACTION"
+    path.write_text(
+        "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@"
+        + "a" * 40
+        + "\n      - uses: ./local-action\n"
+    )
+    assert audit_action_pins(tmp_path)["state"] == "PASS"
+    path.write_text(
+        "jobs:\n  reuse:\n    uses: owner/repo/.github/workflows/build.yml@main\n"
+    )
+    assert audit_action_pins(tmp_path)["state"] == "BLOCKED"
+    path.write_text("jobs: [broken\n")
+    assert audit_action_pins(tmp_path)["findings"][0]["code"] == "INVALID_WORKFLOW"
+
+
+def test_repository_action_refs_are_pinned():
+    from factoryline.workflow_audit import audit_action_pins
+
+    assert audit_action_pins(Path(__file__).resolve().parents[1])["state"] == "PASS"

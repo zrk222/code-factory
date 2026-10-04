@@ -12,13 +12,18 @@ software, guarantee that defects are absent, or approve a release.
 **Fixed:** editor audit views now expose missing and incomplete checks.
 **Changed:** Junie's route connects a diff to bounded evidence and a concrete
 repair handoff. **Added:** project-neutral `factory audit workflows` contracts
-with hash-bound candidate and execution evidence, plus VS Code/Open VSX 1.0.2
-evidence tree, JetBrains 1.0.2 CF + ForgeLine tab, and a native
+with hash-bound candidate and execution evidence, plus VS Code/Open VSX 1.1.0
+evidence tree, JetBrains 1.1.0 CF + ForgeLine tab, and a native
 [OpenCode plugin](plugins/code-factory-opencode/README.md).
-**Improved:** the latest local strict ForgeLine report grades A (98.2/100)
-and attributes 1,046/1,067 functions (98.03%) to test intent, with the hard
-complexity limit still at 10. This is static test-intent matching, not runtime
-coverage or software certification.
+**Candidate detection fixes:** the Python scanner flags tests without a local
+assertion, constant-true assertions, and reflexive comparisons. Declared tenant
+reads can be checked with `factory audit security --tenant-read-call db.get`;
+this checks the declared `tenant_id` parameter binding, not tenant authentication.
+The unchanged eight-case public regression corpus now gives 6 true positives,
+2 true negatives, and no false positives or false negatives locally, with the
+same tenant-read contract applied to defective, repaired, and clean inputs.
+This is a small development regression result, not independent accuracy,
+runtime coverage, or release approval. CI verification is still required.
 The [autonomous ops plan](docs/AUTONOMOUS_OPS_EDITOR_PLAN.md) explains the
 proposed Observer Agent loop and its gates. These versions remain release
 candidates until each channel has a verified provider publication receipt.
@@ -103,10 +108,20 @@ To display individual tests in Graph Ops, run your suite with a JUnit report at
 Studio reads the report and labels its candidate binding `UNBOUND`; it does
 not infer that those results still apply after source changes.
 
-The latest repository-wide ForgeLine grade is **A (98.2/100)**. The current,
-source-bound [repository self-audit receipt](evidence/self-audit/quality-reassessment-2026-10-04.json)
-records the exact report. This local grade is not CI provenance, release approval,
-or certification.
+The prior snapshot's [repository self-audit receipt](evidence/self-audit/quality-reassessment-2026-10-04.json)
+records **A (97.9/100)** and 1,055/1,085 functions attributed to test intent
+(97.24%). That static measurement applies to its recorded source digest;
+it is not a grade for later edits, runtime coverage, or certification.
+
+ForgeLine 0.10.8 computes Python complexity for public module functions and
+public class methods in its recorded `metrics.scope.code_files`; names starting
+with `_` are excluded. Its AST metric counts branches, boolean alternatives,
+exception handlers, `with`, and assertions. Ruff C901 uses a different McCabe
+metric and also checks private functions. CI therefore runs
+`python -m ruff check --select C901 factoryline tests` separately at limit 10.
+The ForgeLine maximum must not be read as the maximum of every Python function.
+CI also checks action and reusable workflow references for immutable commit
+pins; the generic workflow evidence validator alone does not inspect those refs.
 <!-- mcp-name: io.github.zrk222/code-factory -->
 
 ## Release controls

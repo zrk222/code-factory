@@ -11,6 +11,17 @@ ROOT = Path(__file__).resolve().parents[1]
 SPACE = ROOT / "deploy" / "huggingface"
 
 
+def test_preview_separates_candidate_regressions_from_accuracy_and_review() -> None:
+    page = (SPACE / "index.html").read_text(encoding="utf-8")
+    readme = (SPACE / "README.md").read_text(encoding="utf-8")
+    assert "6 defects detected; 2 clean cases accepted" in page
+    assert "CI verification is still required" in page
+    assert "not independent accuracy or release approval" in page
+    assert "not authenticate tenants or prove runtime isolation" in page
+    assert "not subsequent detection fixes" in readme
+    assert "latest local strict ForgeLine report" not in page + readme
+
+
 def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> None:
     readme = (SPACE / "README.md").read_text(encoding="utf-8")
     page = (SPACE / "index.html").read_text(encoding="utf-8")
@@ -27,7 +38,10 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "Source preview" in page
     assert 'href="https://github.com/zrk222/code-factory/releases"' in page
     assert "Specialty AI audit evidence is available" in page
-    assert "https://github.com/zrk222/code-factory/pull/108" in page
+    assert (
+        "https://github.com/zrk222/code-factory/pull/131#issuecomment-5980528354"
+        in page
+    )
     assert "Gitleaks input accounting" in page
     assert "doi.org/10.5281/zenodo.21381405" in page
     assert "Actual product capture set" in page
@@ -112,7 +126,9 @@ def test_huggingface_workflow_uses_secret_and_scoped_source_directory() -> None:
     assert 'repo_type="space"' in workflow
     assert 'folder_path="deploy/huggingface"' in workflow
     token = workflow.index('test -n "$HF_TOKEN"')
-    checkout = workflow.index("actions/checkout@v4")
+    checkout = workflow.index(
+        "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+    )
     validate = workflow.index("Validate static Space metadata before remote upload")
     install = workflow.index("Install Hugging Face CLI")
     publish = workflow.index("Publish static Space")

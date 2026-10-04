@@ -366,13 +366,18 @@ def _public_metrics(counts: dict[str, int]) -> dict[str, Any]:
 
 
 def _public_observations(cases: list, totals: dict) -> tuple[list, list]:
+    from functools import partial
     from .review_audits import security_scan
 
     rows, sources = [], []
+    # A tenant boundary is a declared requirement, not something inferred from
+    # a method name. Apply one fixed contract to every buggy and clean input;
+    # the scanner never receives a case label or its expected finding.
+    scanner = partial(security_scan, tenant_read_calls=("db.get",))
     with tempfile.TemporaryDirectory(prefix="factory-public-benchmark-") as tmp:
         for index, case in enumerate(cases):
             cid, cat = _public_case(case, index)
-            pair, hashes, bindings = _public_pair(Path(tmp), case, index, security_scan)
+            pair, hashes, bindings = _public_pair(Path(tmp), case, index, scanner)
             sources.extend(bindings)
             clean = case["expected_finding"] == CLEAN_FINDING
             detected = not pair[0] if clean else case["expected_finding"] in pair[0]
@@ -466,7 +471,20 @@ def run_public_benchmark(corpus: Path | None = None) -> dict[str, Any]:
         "benchmark_id": data.get("benchmark_id"),
         "version": data.get("version"),
         "scanner": "factoryline.review_audits.security_scan",
+        "scanner_contract": {
+            "tenant_read_calls": ["db.get"],
+            "tenant_keyword": "tenant_id",
+        },
         "scanner_version": package_version,
+        "scanner_sources": [
+            {
+                "path": name,
+                "sha256": hashlib.sha256(
+                    (Path(__file__).parent / name).read_bytes()
+                ).hexdigest(),
+            }
+            for name in ("review_audits.py", "benchmark_lab.py")
+        ],
         "python": platform.python_version(),
         "platform": platform.platform(),
         "corpus_sha256": corpus_sha256,
@@ -480,7 +498,7 @@ def run_public_benchmark(corpus: Path | None = None) -> dict[str, Any]:
         else "BLOCKED",
         "authority": "none",
         "release_approval": False,
-        "claim_boundary": "Public hand-labeled seeded Python AST corpus; not independently held out, AI-written, representative, runtime, or production evidence. Tenant-isolation and test-oracle-strength cases have explicit per-category confusion counts; a measured miss is a false negative, not coverage.",
+        "claim_boundary": "Public hand-labeled seeded Python AST corpus with one declared db.get tenant-read contract applied uniformly to all inputs; not independently held out, AI-written, representative, runtime, or production evidence. Static keyword presence does not authenticate tenants; mutation and cross-tenant runtime checks remain separate. Tenant-isolation and test-oracle-strength cases have explicit per-category confusion counts; a measured miss is a false negative, not coverage.",
     }
     core["receipt_sha256"] = hashlib.sha256(canonical_bytes(core)).hexdigest()
     return core

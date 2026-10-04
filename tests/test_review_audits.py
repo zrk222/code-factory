@@ -432,6 +432,103 @@ def test_security_evals_kill_all_adversarial_fixtures_and_keep_safe_control_clea
     assert result["authority"]["approval"] is False
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "assert True",
+        "compute_value()",
+        "actual = compute_value()\n    assert actual == actual",
+    ],
+)
+def test_security_scan_detects_local_hollow_test_oracles(tmp_path, body):
+    (tmp_path / "case.py").write_text("def test_behavior():\n    " + body + "\n")
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert result["findings"][0]["facts"]["symbol"] == "test_behavior"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "assert compute_value() == 1",
+        "self.assertEqual(compute_value(), 1)",
+        "with pytest.raises(ValueError):\n        compute_value()",
+        "assert next_value() == next_value()",
+    ],
+)
+def test_security_scan_preserves_real_assertions_and_exception_controls(tmp_path, body):
+    (tmp_path / "case.py").write_text("def test_behavior():\n    " + body + "\n")
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_tenant_contract_is_explicit_and_hash_bound(tmp_path):
+    path = tmp_path / "service.py"
+    path.write_text(
+        "async def fetch(record_id):\n    return await store.fetch(record_id)\n"
+    )
+    assert security_scan(tmp_path)["findings"] == []
+    missing = security_scan(tmp_path, tenant_read_calls=("store.fetch",))
+    assert missing["finding_counts"] == {"SECURITY_MISSING_TENANT_ISOLATION": 1}
+    assert missing["tenant_read_contract"]["calls"] == ["store.fetch"]
+    assert missing["audit_sha256"] != security_scan(tmp_path)["audit_sha256"]
+    path.write_text(
+        "async def fetch(record_id, tenant_id):\n    return await store.fetch(record_id, tenant_id=tenant_id)\n"
+    )
+    assert security_scan(tmp_path, tenant_read_calls=("store.fetch",))["findings"] == []
+    path.write_text(
+        "def fetch(record_id):\n    return store.fetch(record_id, tenant_id=record_id)\n"
+    )
+    assert (
+        security_scan(tmp_path, tenant_read_calls=("store.fetch",))["state"]
+        == "BLOCKED"
+    )
+
+
+def test_security_scan_rejects_invalid_tenant_contract(tmp_path):
+    with pytest.raises(ReviewAuditError, match="qualified"):
+        security_scan(tmp_path, tenant_read_calls=("invalid.call()",))
+
+
+def test_security_scan_keeps_negative_callback_and_import_alias_controls(tmp_path):
+    path = tmp_path / "test_controls.py"
+    path.write_text(
+        "from pytest import raises as expect_error\n"
+        "def test_error():\n"
+        "    with expect_error(ValueError):\n"
+        "        compute()\n"
+        "def test_no_read(monkeypatch):\n"
+        "    def fail_on_read(*args):\n"
+        "        raise AssertionError('unexpected read')\n"
+        "    monkeypatch.setattr(store, 'fetch', fail_on_read)\n"
+        "    compute()\n"
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_cli_applies_explicit_tenant_contract(tmp_path, capsys):
+    (tmp_path / "app.py").write_text(
+        "def fetch(record_id):\n    return store.fetch(record_id)\n"
+    )
+    assert main(["audit", "security", "--root", str(tmp_path), "--json"]) == 0
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--tenant-read-call",
+                "store.fetch",
+                "--json",
+            ]
+        )
+        == 2
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["finding_counts"] == {"SECURITY_MISSING_TENANT_ISOLATION": 1}
+
+
 def test_security_evals_cli_reports_fail_closed_contract(tmp_path, capsys):
     assert main(["audit", "evals", "--root", str(tmp_path), "--json"]) == 0
     result = json.loads(capsys.readouterr().out)

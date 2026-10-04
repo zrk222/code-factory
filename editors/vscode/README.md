@@ -2,7 +2,7 @@
 
 ## Native CF and ForgeLine evidence
 
-Version 1.1.0 aligns the editor package with Code Factory 0.47.0 and provides
+Version 1.1.0 targets the Code Factory 0.47.0 candidate and provides
 **FactoryLine Evidence** in Explorer for VS Code and Open VSX compatible
 editors. Select **Run CF + ForgeLine Audits**, choose a
 workspace, then confirm local execution. The panel shows CF change review,
@@ -55,12 +55,20 @@ hollow negative control caught in a disposable sandbox, then open
 `factory mvp "Build an approval tracker" --root .`. The
 extension never calls a starter production-ready by itself.
 
-**1.0.1 release preview:** the editor surfaces typed intent-to-proof handoffs,
+**1.1.0 release preview:** the editor surfaces typed intent-to-proof handoffs,
 route traces, current checkpoints, and proof-delta retry stops beside the
 existing First Proof and AppForge paths. Searchable audit rules and exact-hash
 receipt reuse make evidence easier to locate without loading the whole rule set.
 This is a release preview; marketplace publication requires its own verified
 provider read-back.
+
+**Core candidate detection fixes:** bounded Python checks flag missing local
+assertions, constant-true assertions, and reflexive comparisons. Configure
+`factory audit security --tenant-read-call db.get` for explicit tenant-read
+parameter checks. The unchanged eight-case public regression corpus detects
+six defects and accepts two clean cases locally; this is not independent
+accuracy or runtime isolation. These core fixes require a verified core
+release and are not bundled into the editor extension.
 
 **New First Lap control:** `factory first-lap init` creates plain-language
 `MISSION.md`, `END-TO-END.md`, and verifier-only holdout scenarios. Critical

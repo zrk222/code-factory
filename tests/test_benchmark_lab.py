@@ -94,26 +94,28 @@ def test_manifest_rejects_urls_duplicates_and_unknown_category():
         )
 
 
-def test_public_seeded_corpus_executes_real_scanner_and_reports_unsupported_fns():
+def test_public_seeded_corpus_executes_real_scanner_and_declared_tenant_contract():
     receipt = run_public_benchmark()
     assert receipt["scanner"] == "factoryline.review_audits.security_scan"
-    assert receipt["decision"] == "BLOCKED"
+    assert receipt["decision"] == "PASS"
     assert receipt["metrics"]["stateful_invariant"]["tp"] == 1
     assert receipt["metrics"]["stateful_invariant"]["tn"] == 1
-    assert receipt["metrics"]["tenant_isolation"]["fn"] == 1
-    assert receipt["metrics"]["test_oracle_strength"]["fn"] == 3
-    assert receipt["metrics"]["overall"]["tp"] == 2
-    assert receipt["metrics"]["overall"]["fn"] == 4
-    assert receipt["metrics"]["overall"]["recall"] == pytest.approx(1 / 3)
+    assert receipt["metrics"]["tenant_isolation"]["tp"] == 1
+    assert receipt["metrics"]["test_oracle_strength"]["tp"] == 3
+    assert receipt["metrics"]["overall"]["tp"] == 6
+    assert receipt["metrics"]["overall"]["fn"] == 0
+    assert receipt["metrics"]["overall"]["recall"] == 1.0
+    assert receipt["scanner_contract"]["tenant_read_calls"] == ["db.get"]
+    assert all(row["fixed_clean"] for row in receipt["cases"])
     assert receipt["metrics"]["tenant_isolation"]["fp"] == 0
     assert receipt["metrics"]["tenant_isolation"]["recall_ci95_wilson"] is not None
     assert receipt["measured_unsupported_behaviors"]["test_oracle_strength"] == {
         "state": "MEASURED",
         "positive_cases": 3,
-        "true_positives": 0,
-        "false_negatives": 3,
-        "recall": 0.0,
-        "recall_ci95_wilson": [0.0, 0.561506],
+        "true_positives": 3,
+        "false_negatives": 0,
+        "recall": 1.0,
+        "recall_ci95_wilson": [0.438494, 1],
     }
     assert receipt["corpus_sha256"] and receipt["scanner_version"]
     assert len(receipt["source_bindings"]) == 16
@@ -143,4 +145,4 @@ def test_public_benchmark_hashes_and_parses_one_corpus_snapshot(tmp_path, monkey
 
     assert reads == 1
     assert receipt["corpus_sha256"] == hashlib.sha256(snapshot).hexdigest()
-    assert receipt["metrics"]["overall"]["tp"] == 2
+    assert receipt["metrics"]["overall"]["tp"] == 6

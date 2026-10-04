@@ -3499,6 +3499,24 @@ def _tool_call_dispatch_8(
 def _tool_call_dispatch_9(
     root: Path, name: str, arguments: object
 ) -> dict[str, object] | None:
+    result = _tool_call_dispatch_9a(root, name, arguments)
+    if result is not None:
+        return result
+    return _tool_call_dispatch_9b(root, name, arguments)
+
+
+def _tool_call_dispatch_9a(
+    root: Path, name: str, arguments: object
+) -> dict[str, object] | None:
+    result = _tool_call_dispatch_9a1(root, name, arguments)
+    if result is not None:
+        return result
+    return _tool_call_dispatch_9a2(root, name, arguments)
+
+
+def _tool_call_dispatch_9a1(
+    root: Path, name: str, arguments: object
+) -> dict[str, object] | None:
     if name == "factory.release_readiness":
         return _content(_release_readiness_status(root, arguments))
     if name == "factory.release_decision":
@@ -3509,6 +3527,12 @@ def _tool_call_dispatch_9(
         return _content(_appforge_fastlane_capture_status(root, arguments))
     if name == "factory.appforge_submission_integrity_status":
         return _content(_appforge_submission_integrity_status(root, arguments))
+    return None
+
+
+def _tool_call_dispatch_9a2(
+    root: Path, name: str, arguments: object
+) -> dict[str, object] | None:
     if name == "factory.proof_continuity_status":
         return _content(_proof_continuity_status(root, arguments))
     if name == "factory.saas_status":
@@ -3519,6 +3543,12 @@ def _tool_call_dispatch_9(
         return _content(_audit_taxonomy(arguments))
     if name == "factory.audit_agent_context":
         return _content(_audit_agent_context(arguments))
+    return None
+
+
+def _tool_call_dispatch_9b(
+    root: Path, name: str, arguments: object
+) -> dict[str, object] | None:
     if name == "factory.junie_taxonomy":
         return _content(_junie_taxonomy(root, arguments))
     if name == "factory.junie_contribution":

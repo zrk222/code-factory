@@ -288,16 +288,29 @@ def test_publish_workflow_uses_trusted_publishing_without_stored_credentials():
     assert "must exist and remain a draft" in workflow
     assert "environment: pypi" in workflow
     assert "id-token: write" in workflow
-    assert "actions/setup-node@v7.0.0" in workflow
-    assert "actions/upload-artifact@v7.0.1" in workflow
-    assert "actions/download-artifact@v8.0.1" in workflow
+    assert "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" in workflow
+    assert (
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in workflow
+    )
+    assert (
+        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" in workflow
+    )
     assert "actions/setup-node@v4" not in workflow
-    assert "actions/upload-artifact@v4" not in workflow
+    assert (
+        "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        not in workflow
+    )
     assert "actions/download-artifact@v4" not in workflow
     assert "packages-dir: release-bundle/python/" in workflow
-    assert "pypa/gh-action-pypi-publish@release/v1" in workflow
+    assert (
+        "pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33"
+        in workflow
+    )
     assert "attestations: true" in workflow
-    assert "gradle/actions/setup-gradle@v6.2.0" in workflow
+    assert (
+        "gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92"
+        in workflow
+    )
     assert ".[dev,enterprise,hosted]" in workflow
     assert "name: release-python-${{ inputs.release_tag }}" in workflow
     assert "name: release-vscode-${{ inputs.release_tag }}" in workflow
@@ -413,13 +426,20 @@ def test_marketplace_workflow_uses_current_gradle_action_and_scoped_secret():
     assert "  publish:" in workflow
     assert "needs: [validate, attested-source]" in workflow
     assert "environment: jetbrains-marketplace" in workflow
-    assert "gradle/actions/setup-gradle@v6.2.0" in workflow
+    assert (
+        "gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92"
+        in workflow
+    )
     assert "gradle/actions/setup-gradle@v4" not in workflow
     assert "secrets.JETBRAINS_MARKETPLACE_TOKEN" in workflow
     assert "Test, verify, and check Marketplace package metadata" in workflow
     assert "jetbrains_release_artifact.py" in workflow
-    assert "actions/upload-artifact@v7.0.1" in workflow
-    assert "actions/download-artifact@v8.0.1" in workflow
+    assert (
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in workflow
+    )
+    assert (
+        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" in workflow
+    )
     assert "factorylineMarketplaceArchive" in workflow
     assert "Publish verified plugin update" in workflow
     assert workflow.count("chmod +x gradlew") == 3
@@ -447,11 +467,18 @@ def test_intellij_compatibility_reuses_verified_package_with_cached_dependencies
     )
     package_job = workflow.split("  compatibility:", maxsplit=1)[0]
 
-    assert workflow.count("gradle/actions/setup-gradle@v6.2.0") == 2
+    assert (
+        workflow.count(
+            "gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92"
+        )
+        == 2
+    )
     assert "Build, verify, and preflight plugin package" in package_job
     assert "Package verification attempt $attempt failed" in package_job
     assert package_job.count("for attempt in 1 2 3") == 1
-    assert "actions/download-artifact@v8.0.1" in workflow
+    assert (
+        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" in workflow
+    )
     assert "name: factoryline-intellij-plugin" in workflow
     assert "Resolve verified plugin archive" in workflow
     assert 'test "${#archives[@]}" -eq 1' in workflow
@@ -804,8 +831,10 @@ def test_ci_builds_checks_and_smokes_the_installable_package():
     assert "python -m build" in workflow
     assert "python -m twine check dist/*" in workflow
     assert "python -m pip install dist/*.whl" in workflow
-    assert "actions/setup-node@v7.0.0" in workflow
-    assert "actions/upload-artifact@v7.0.1" in workflow
+    assert "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" in workflow
+    assert (
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in workflow
+    )
 
 
 def test_zenodo_metadata_and_visual_evidence_are_publicly_archivable():

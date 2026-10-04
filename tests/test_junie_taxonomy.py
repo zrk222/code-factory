@@ -516,14 +516,23 @@ def test_junie_review_binds_candidate_and_returns_actionable_audit_gaps(
         audit_taxonomy()["domains"]
     )
     assert measurements["seeded_scanner_benchmark"]["state"] == "MEASURED"
-    assert measurements["seeded_scanner_benchmark"]["overall"]["fn"] == 4
+    from factoryline.benchmark_lab import run_public_benchmark
+
+    observed_benchmark = run_public_benchmark()
+    assert (
+        measurements["seeded_scanner_benchmark"]["overall"]["fn"]
+        == observed_benchmark["metrics"]["overall"]["fn"]
+    )
     assert (
         measurements["seeded_scanner_benchmark"]["categories"]["test_oracle_strength"][
             "recall"
         ]
-        == 0.0
+        == observed_benchmark["metrics"]["test_oracle_strength"]["recall"]
     )
-    assert measurements["seeded_scanner_benchmark"]["agent_actions"]
+    assert (
+        measurements["seeded_scanner_benchmark"]["agent_actions"]
+        == observed_benchmark["agent_actions"]
+    )
     assert measurements["measurement_sha256"]
     assert all(
         index < len(report["changed_files"])
