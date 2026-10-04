@@ -434,7 +434,7 @@ def test_studio_route_contract_golden_preserves_public_and_token_bound_surfaces(
     tmp_path: Path,
 ):
     """Keep the externally visible Studio route, token, and error contract stable."""
-    from test_runtime_coverage import _fixture, _write_report
+    from test_runtime_audit import _fixture, _write_report
 
     _write_report(tmp_path, _fixture(tmp_path))
     server, token = create_server(tmp_path)
