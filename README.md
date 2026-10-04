@@ -12,11 +12,11 @@ software, guarantee that defects are absent, or approve a release.
 **Fixed:** editor audit views now expose missing and incomplete checks.
 **Changed:** Junie's route connects a diff to bounded evidence and a concrete
 repair handoff. **Added:** project-neutral `factory audit workflows` contracts
-with hash-bound candidate and execution evidence, plus VS Code/Open VSX 1.0.2
-evidence tree, JetBrains 1.0.2 CF + ForgeLine tab, and a native
+with hash-bound candidate and execution evidence, plus VS Code/Open VSX 1.1.0
+evidence tree, JetBrains 1.1.0 CF + ForgeLine tab, and a native
 [OpenCode plugin](plugins/code-factory-opencode/README.md).
-**Improved:** the latest local strict ForgeLine report grades A (98.2/100)
-and attributes 1,046/1,067 functions (98.03%) to test intent, with the hard
+**Improved:** the latest local strict ForgeLine report grades A (97.9/100)
+and attributes 1,055/1,085 functions (97.24%) to test intent, with the hard
 complexity limit still at 10. This is static test-intent matching, not runtime
 coverage or software certification.
 The [autonomous ops plan](docs/AUTONOMOUS_OPS_EDITOR_PLAN.md) explains the
@@ -103,7 +103,7 @@ To display individual tests in Graph Ops, run your suite with a JUnit report at
 Studio reads the report and labels its candidate binding `UNBOUND`; it does
 not infer that those results still apply after source changes.
 
-The latest repository-wide ForgeLine grade is **A (98.2/100)**. The current,
+The latest repository-wide ForgeLine grade is **A (97.9/100)**. The current,
 source-bound [repository self-audit receipt](evidence/self-audit/quality-reassessment-2026-10-04.json)
 records the exact report. This local grade is not CI provenance, release approval,
 or certification.
