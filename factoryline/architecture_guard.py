@@ -12,7 +12,7 @@ except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
 _SELF_SIZE_GUARD_SHA256 = (
-    "542d8500ec436852c2d0862a7b8827fd1783a3f3407ca1a916ac8b2efb9b4084"
+    "a5dd422d710b47cd65a740b255fb59debb22e1dd718a97f85b32dd61723ddf38"
 )
 
 

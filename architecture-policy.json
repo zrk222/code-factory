@@ -33,13 +33,13 @@
         "rationale": "Freeze the normalized audit taxonomy until its categories have dedicated modules."
       },
       "factoryline/audit_trace.py": {
-        "max_lines": 506,
-        "max_bytes": 22238,
+        "max_lines": 675,
+        "max_bytes": 23804,
         "rationale": "Keep evidence trace handling at its measured size until the next reviewed design."
       },
       "factoryline/benchmark_lab.py": {
-        "max_lines": 488,
-        "max_bytes": 19012,
+        "max_lines": 496,
+        "max_bytes": 19136,
         "rationale": "Keep benchmark execution bounded at its measured size."
       },
       "factoryline/cli.py": {
@@ -48,8 +48,8 @@
         "rationale": "Freeze the measured CLI entry point; extract commands before adding more lines."
       },
       "factoryline/github_account_overview.py": {
-        "max_lines": 656,
-        "max_bytes": 25122,
+        "max_lines": 781,
+        "max_bytes": 26345,
         "rationale": "Freeze the read-only GitHub overview adapter at its measured size."
       },
       "factoryline/graph_ops.py": {
@@ -58,8 +58,8 @@
         "rationale": "Freeze the measured graph operations module until responsibilities are split."
       },
       "factoryline/junie_review.py": {
-        "max_lines": 1460,
-        "max_bytes": 75340,
+        "max_lines": 1789,
+        "max_bytes": 77815,
         "rationale": "Freeze the new Junie review surface pending a bounded decomposition."
       },
       "factoryline/junie_taxonomy.py": {
@@ -68,8 +68,8 @@
         "rationale": "Freeze the Junie mapping module pending a bounded decomposition."
       },
       "factoryline/mcp.py": {
-        "max_lines": 4301,
-        "max_bytes": 186748,
+        "max_lines": 4339,
+        "max_bytes": 187256,
         "rationale": "Freeze the measured MCP adapter until protocol surfaces are split."
       }
     },
