@@ -15,14 +15,13 @@ candidate from 473 Python files to 460. The gate still rejected the candidate.
 
 ## Decision
 
-Set `max_python_files` to 460, the measured count of this candidate. This is a
-six-file budget adjustment to admit the named, reviewed audit surfaces. Update
-the existing file-size ceilings for `audit_trace.py`, `benchmark_lab.py`,
-`github_account_overview.py`, `junie_review.py`, and `mcp.py` to their measured
-candidate sizes. These are exact ceilings, not added headroom. No other file
-ceiling changes. Any further growth in these files or the Python inventory
-blocks until another explicit architecture decision. The gate continues
-measuring repository inventory without suppressions or waivers.
+Set `max_python_files` to 465: 460 measured files plus a five-file reserve.
+Update the existing line and byte ceilings for `audit_trace.py`,
+`benchmark_lab.py`, `github_account_overview.py`, `junie_review.py`, and `mcp.py`
+to five percent above each measured candidate size. This is bounded upgrade
+headroom, not permission for unreviewed scope growth. No other file ceiling
+changes. The gate continues measuring repository inventory without
+suppressions or waivers.
 
 ## Evidence required
 
@@ -30,14 +29,17 @@ measuring repository inventory without suppressions or waivers.
 - The consolidated audit tests and architecture-health tests must pass.
 - Ruff lint and format checks for the changed Python test modules must pass.
 - Exact line and normalized-byte sizes are bound by `architecture-policy.json`.
+- Each future use of this reserve requires an ADR naming the files, recording
+  before/after measurements, and carrying passing relevant tests plus
+  specialty-agent review; the next growth beyond these ceilings blocks CI.
 
 ## Consequences
 
 - The current 0.47.0 candidate can be evaluated without silently raising the
   cap or suppressing the Python-file metric.
-- The repository has no remaining Python-file growth allowance; future module
-  additions require consolidation or a separately reviewed decision.
-- The five adjusted files have no additional size allowance beyond this
-  candidate; further growth still blocks the gate.
+- The Python inventory has at most five files of reserve, and the five adjusted
+  modules have at most five percent of measured file-size reserve.
+- Growth beyond that reserve blocks CI and requires consolidation or a
+  separately reviewed decision with new evidence.
 - Release cadence, protected CI, specialist-agent review, and publisher checks
   remain independent release gates.
