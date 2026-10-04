@@ -54,6 +54,7 @@ from .lifecycle_ledger import lifecycle_projection
 from .repair_loop import repair_loop_projection
 from .deep_audit_loop import deep_audit_lineage
 from .deep_audit_loop import deep_scan_projection, read_junit_report
+from .runtime_coverage import read_runtime_coverage_report
 from .mission_control_status import mission_control_status
 from .senior_engineering import senior_engineering_projection
 from .continuous_controls import continuous_controls_projection, build_control_graph
@@ -5623,6 +5624,14 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
     test_report_summary = {
         key: value for key, value in test_report.items() if key != "cases"
     }
+    runtime_coverage = read_runtime_coverage_report(workspace)
+    if runtime_coverage["state"] == "INCOMPLETE":
+        _record_error(
+            state["errors"], runtime_coverage["source"], "RUNTIME_COVERAGE_INCOMPLETE"
+        )
+    runtime_coverage_summary = {
+        key: value for key, value in runtime_coverage.items() if key != "files"
+    }
     projected_nodes = sorted(state["nodes"].values(), key=lambda item: item["id"])
     projected_edges = sorted(
         state["edges"],
@@ -5651,6 +5660,7 @@ def graph_ops_snapshot(root: Path) -> dict[str, Any]:
         "portfolio": portfolio,
         "admissions": admissions,
         "test_report": test_report_summary,
+        "runtime_coverage": runtime_coverage_summary,
         "agent_supervision": p["agent_supervision"],
         "judgment": p["judgment"],
         "continuous_proof": p["continuous_proof"],

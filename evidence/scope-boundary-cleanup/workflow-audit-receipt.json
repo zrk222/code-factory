@@ -1,0 +1,58 @@
+{
+  "agent_actions": [],
+  "authority": {
+    "approval": false,
+    "connector": false,
+    "credential": false,
+    "deployment": false,
+    "execution": false,
+    "merge": false,
+    "messaging": false,
+    "publication": false,
+    "repair": false,
+    "signing": false
+  },
+  "candidate_sha256": "5a1c341fbe9e93b09c9f14993a69e8493fd2f2e0542af7eca9684123be8b44a9",
+  "checks": 5,
+  "contract_sha256": "d07a0fac157ca6fc67483f6a456795771627e5e74fcbd740ae0231485cebfa09",
+  "errors": [],
+  "inapplicability_evidence": {
+    "accessibility": {
+      "actual_sha256": "c3ddaaba1a1ee9a39ad7cf9af10fb5e56b993bec9e009af79e1a5269f503ebe0",
+      "current": true,
+      "kind": "review",
+      "path": "evidence/scope-boundary-cleanup/applicability-review.md",
+      "sha256": "c3ddaaba1a1ee9a39ad7cf9af10fb5e56b993bec9e009af79e1a5269f503ebe0"
+    },
+    "external_effects": {
+      "actual_sha256": "c3ddaaba1a1ee9a39ad7cf9af10fb5e56b993bec9e009af79e1a5269f503ebe0",
+      "current": true,
+      "kind": "review",
+      "path": "evidence/scope-boundary-cleanup/applicability-review.md",
+      "sha256": "c3ddaaba1a1ee9a39ad7cf9af10fb5e56b993bec9e009af79e1a5269f503ebe0"
+    },
+    "performance": {
+      "actual_sha256": "c3ddaaba1a1ee9a39ad7cf9af10fb5e56b993bec9e009af79e1a5269f503ebe0",
+      "current": true,
+      "kind": "review",
+      "path": "evidence/scope-boundary-cleanup/applicability-review.md",
+      "sha256": "c3ddaaba1a1ee9a39ad7cf9af10fb5e56b993bec9e009af79e1a5269f503ebe0"
+    }
+  },
+  "limits": [
+    "Recorded evidence completeness and hashes only; observations require review.",
+    "Inapplicability review evidence is hash-bound but its judgment and identity are not authenticated.",
+    "Each contract/observation JSON input and evidence artifact is limited to 16 MiB; total evidence hashing is limited to 128 MiB, 4096 artifact references, and 4096 required check/profile pairs.",
+    "No project command or provider is executed.",
+    "No approval, certification or deployment authority."
+  ],
+  "observations_sha256": "b86b04a191af76807bc1a7d873f2d2effbf3a36172e6f15636e2a672ef143e15",
+  "project_id": "code-factory-scope-boundary-cleanup",
+  "receipt_sha256": "8dc229262cb04fcf6dc5efee43f1e5000c929d9f1a8c272432936ee9ad05bd86",
+  "resource_usage": {
+    "artifact_references": 15,
+    "bytes_hashed": 85140
+  },
+  "schema": "factory.workflow-audit.receipt.v1",
+  "state": "PASS"
+}

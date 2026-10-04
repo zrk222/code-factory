@@ -1,11 +1,4 @@
-"""Deterministic architecture-health measurements and regression policy.
-
-This module deliberately does not pretend that a large existing surface is
-healthy.  It separates *baseline debt* (reported for review) from *new
-regressions* (which can block CI).  The policy is data-driven so a human can
-review an intentional architectural change instead of an agent silently
-redefining the gate.
-"""
+"""Measure architecture health; report baseline debt and block new growth."""
 
 from __future__ import annotations
 
@@ -15,9 +8,14 @@ import fnmatch
 import re
 import subprocess
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .architecture_guard import (
+    default_policy_guard_is_pinned,
+    file_size_guard_is_pinned,
+    is_code_factory_root,
+)
 
 DEFAULT_POLICY_NAME = "architecture-policy.json"
 DOCUMENTATION_INDEX_NAME = "docs/DOCUMENTATION_INDEX.json"
@@ -1049,6 +1047,136 @@ def _budget_regressions(
     return findings
 
 
+def _file_size_report(
+    root: Path, policy: dict[str, Any]
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Measure explicitly budgeted files and block missing or growing targets."""
+    guard = policy.get("file_size_guard")
+    findings: list[dict[str, Any]] = []
+    guard = guard if isinstance(guard, dict) else {}
+    budgets = guard.get("files")
+    required_paths = guard.get("required_paths")
+    factory_root = is_code_factory_root(root)
+    if (
+        guard.get("required") is not True
+        or not isinstance(budgets, dict)
+        or not budgets
+        or not isinstance(required_paths, list)
+        or any(not isinstance(path, str) for path in required_paths)
+        or len(set(required_paths)) != len(required_paths)
+        or set(required_paths) != set(budgets)
+        or (
+            factory_root
+            and (
+                not file_size_guard_is_pinned(guard)
+                or not default_policy_guard_is_pinned(root)
+            )
+        )
+    ):
+        return {"enforced": False, "files": {}}, [
+            _finding(
+                "E_ARCH_FILE_SIZE_POLICY_INVALID",
+                "BLOCKER",
+                "Per-file size guard inventory is invalid.",
+                "Restore pinned paths and line/byte ceilings.",
+                blocking=True,
+            )
+        ]
+
+    measurements: dict[str, dict[str, int]] = {}
+    for raw_path, entry in budgets.items():
+        relative = PurePosixPath(raw_path) if isinstance(raw_path, str) else None
+        valid_path = (
+            relative is not None
+            and not relative.is_absolute()
+            and "\\" not in raw_path
+            and bool(relative.parts)
+            and all(part not in {".", ".."} for part in relative.parts)
+            and relative.as_posix() == raw_path
+        )
+        max_lines = entry.get("max_lines") if isinstance(entry, dict) else None
+        max_bytes = entry.get("max_bytes") if isinstance(entry, dict) else None
+        rationale = entry.get("rationale") if isinstance(entry, dict) else None
+        if (
+            not valid_path
+            or type(max_lines) is not int
+            or max_lines < 1
+            or type(max_bytes) is not int
+            or max_bytes < 1
+            or not isinstance(rationale, str)
+            or not rationale.strip()
+        ):
+            findings.append(
+                _finding(
+                    "E_ARCH_FILE_SIZE_POLICY_INVALID",
+                    "BLOCKER",
+                    f"Invalid file size budget entry for {raw_path!r}.",
+                    "Use a repository-relative path, positive max_lines and max_bytes, and a review rationale.",
+                    blocking=True,
+                )
+            )
+            continue
+
+        target = root.joinpath(*relative.parts).resolve()
+        if not target.is_relative_to(root.resolve()) or not target.is_file():
+            findings.append(
+                _finding(
+                    "E_ARCH_FILE_SIZE_TARGET_MISSING",
+                    "BLOCKER",
+                    f"Budgeted source file is missing or escapes the repository: {raw_path}.",
+                    "Restore the source file at its reviewed repository path or update the policy through architecture review.",
+                    blocking=True,
+                )
+            )
+            continue
+        try:
+            payload = target.read_bytes()
+            text = payload.decode("utf-8")
+            lines = len(text.splitlines())
+            normalized_text = text.replace("\r\n", "\n").replace("\r", "\n")
+            size_bytes = len(normalized_text.encode("utf-8"))
+        except (OSError, UnicodeDecodeError):
+            findings.append(
+                _finding(
+                    "E_ARCH_FILE_SIZE_TARGET_UNREADABLE",
+                    "BLOCKER",
+                    f"Budgeted source file could not be measured as UTF-8: {raw_path}.",
+                    "Restore a readable UTF-8 source file before architecture health can pass.",
+                    blocking=True,
+                )
+            )
+            continue
+
+        measurements[raw_path] = {
+            "lines": lines,
+            "bytes": size_bytes,
+            "max_lines": max_lines,
+            "max_bytes": max_bytes,
+        }
+        if lines > max_lines:
+            findings.append(
+                _finding(
+                    "E_ARCH_FILE_LINES_GROWTH",
+                    "BLOCKER",
+                    f"{raw_path} grew to {lines} lines; its frozen ceiling is {max_lines}.",
+                    "Split or shrink this file before expanding it; do not raise its ceiling without a reviewed architecture decision.",
+                    blocking=True,
+                )
+            )
+        if size_bytes > max_bytes:
+            findings.append(
+                _finding(
+                    "E_ARCH_FILE_BYTES_GROWTH",
+                    "BLOCKER",
+                    f"{raw_path} grew to {size_bytes} normalized UTF-8 bytes; its frozen ceiling is {max_bytes}.",
+                    "Reduce or split this file before increasing its byte size; do not raise its ceiling without a reviewed architecture decision.",
+                    blocking=True,
+                )
+            )
+
+    return {"enforced": True, "files": measurements}, findings
+
+
 def _integrity_regressions(
     metrics: dict[str, Any], policy: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -1254,7 +1382,10 @@ def evaluate_architecture_health(
     snapshot = collect_architecture_health(root)
     metrics = snapshot["metrics"]
     budgets = policy.get("budgets", {})
+    file_size_report, file_size_findings = _file_size_report(root, policy)
+    metrics["file_size_guard"] = file_size_report
     regressions = _budget_regressions(metrics, budgets)
+    regressions.extend(file_size_findings)
     regressions.extend(_integrity_regressions(metrics, policy))
     regressions.extend(_changelog_regressions(root, metrics, policy))
     debt = _surface_baseline_debt(metrics, policy)

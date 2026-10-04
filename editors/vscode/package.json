@@ -2,7 +2,7 @@
   "name": "factoryline-vscode",
   "displayName": "FactoryLine",
   "description": "Trace AI changes from intent through six audits to reviewable proof and a human-owned release decision.",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "publisher": "zrk222",
   "license": "MIT OR Apache-2.0",
   "repository": {
@@ -12,10 +12,18 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "extensionKind": ["workspace"],
+  "extensionKind": [
+    "workspace"
+  ],
   "capabilities": {
-    "untrustedWorkspaces": { "supported": "limited", "description": "Audit execution requires Workspace Trust." },
-    "virtualWorkspaces": { "supported": false, "description": "FactoryLine executes local tools in a filesystem workspace." }
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Audit execution requires Workspace Trust."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "FactoryLine executes local tools in a filesystem workspace."
+    }
   },
   "categories": [
     "Testing"
@@ -58,14 +66,39 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
-    "views": { "explorer": [{ "id": "factorylineEvidence", "name": "FactoryLine Evidence" }] },
-    "menus": { "view/title": [
-      { "command": "factoryline.auditWorkspace", "when": "view == factorylineEvidence", "group": "navigation" },
-      { "command": "factoryline.copyAuditSummary", "when": "view == factorylineEvidence", "group": "navigation" }
-    ] },
+    "views": {
+      "explorer": [
+        {
+          "id": "factorylineEvidence",
+          "name": "FactoryLine Evidence"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "factoryline.auditWorkspace",
+          "when": "view == factorylineEvidence",
+          "group": "navigation"
+        },
+        {
+          "command": "factoryline.copyAuditSummary",
+          "when": "view == factorylineEvidence",
+          "group": "navigation"
+        }
+      ]
+    },
     "commands": [
-      { "command": "factoryline.auditWorkspace", "title": "FactoryLine: Run CF + ForgeLine Audits", "icon": "$(beaker)" },
-      { "command": "factoryline.copyAuditSummary", "title": "FactoryLine: Copy CF + ForgeLine Summary", "icon": "$(copy)" },
+      {
+        "command": "factoryline.auditWorkspace",
+        "title": "FactoryLine: Run CF + ForgeLine Audits",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "factoryline.copyAuditSummary",
+        "title": "FactoryLine: Copy CF + ForgeLine Summary",
+        "icon": "$(copy)"
+      },
       {
         "command": "factoryline.assemble",
         "title": "FactoryLine: Run Spec-to-Ship Assembly"
@@ -130,18 +163,14 @@
     "package": "npm run test && vsce package --no-dependencies"
   },
   "overrides": {
-    "brace-expansion": "5.0.12",
-    "fast-uri": "3.1.8",
-    "js-yaml": "^4.3.2",
-    "markdown-it": "14.3.1",
-    "undici": "7.29.1"
+    "brace-expansion": "5.0.12"
   },
   "devDependencies": {
     "@factoryline/proof-client": "file:../proof-client",
-    "esbuild": "0.28.2",
     "@types/node": "^20.17.30",
     "@types/vscode": "^1.85.0",
-    "@vscode/vsce": "^3.2.1",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "0.28.2",
     "typescript": "^5.8.3"
   }
 }

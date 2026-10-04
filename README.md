@@ -1,16 +1,24 @@
 # Code Factory
 
-Code Factory is a Python package and command-line tool for collecting local
-software review evidence. It can inspect a repository, run configured checks,
-and produce receipts for a human to review. It does not certify software,
-guarantee that defects are absent, or approve a release.
+Code Factory + ForgeLine (CF/FL) is a robust, local-first code-audit factory.
+It starts by collecting local software review evidence for the candidate change.
+It connects requirements, architecture checks, Python AST security analysis,
+behavioral test evidence, workflow integrity, specialty AI review, and
+actionable repair. Its receipts support review; the tool does not certify
+software, guarantee that defects are absent, or approve a release.
 
-## 0.47.0 source preview
+## 0.47.0 audit workflow preview
 
 **Fixed:** editor audit views now expose missing and incomplete checks.
 **Changed:** Junie's route connects a diff to bounded evidence and a concrete
-repair handoff. **Added:** VS Code/Open VSX 1.0.2 evidence tree, JetBrains
-1.0.2 CF + ForgeLine tab, and a native [OpenCode plugin](plugins/code-factory-opencode/README.md).
+repair handoff. **Added:** project-neutral `factory audit workflows` contracts
+with hash-bound candidate and execution evidence, plus VS Code/Open VSX 1.0.2
+evidence tree, JetBrains 1.0.2 CF + ForgeLine tab, and a native
+[OpenCode plugin](plugins/code-factory-opencode/README.md).
+**Improved:** the latest local strict ForgeLine report grades A (98.2/100)
+and attributes 1,046/1,067 functions (98.03%) to test intent, with the hard
+complexity limit still at 10. This is static test-intent matching, not runtime
+coverage or software certification.
 The [autonomous ops plan](docs/AUTONOMOUS_OPS_EDITOR_PLAN.md) explains the
 proposed Observer Agent loop and its gates. These versions remain release
 candidates until each channel has a verified provider publication receipt.
@@ -95,10 +103,10 @@ To display individual tests in Graph Ops, run your suite with a JUnit report at
 Studio reads the report and labels its candidate binding `UNBOUND`; it does
 not infer that those results still apply after source changes.
 
-The [repository self-audit receipt](evidence/self-audit/code-factory-2026-09-24.json)
-records the checks run against Code Factory, including blocked and unavailable
-checks. It is local evidence for review, not an independent audit or release
-approval.
+The latest repository-wide ForgeLine grade is **A (98.2/100)**. The current,
+source-bound [repository self-audit receipt](evidence/self-audit/quality-reassessment-2026-10-04.json)
+records the exact report. This local grade is not CI provenance, release approval,
+or certification.
 <!-- mcp-name: io.github.zrk222/code-factory -->
 
 ## Release controls

@@ -2,9 +2,9 @@
   "report": {
     "attribution": {
       "dominant_failure_class": "inconsistent_logic",
-      "n_checked": 1063,
-      "n_passed": 943,
-      "rate": 0.8871119473189087,
+      "n_checked": 1085,
+      "n_passed": 1055,
+      "rate": 0.9723502304147466,
       "stage": "qa_audit",
       "units": [
         {
@@ -295,9 +295,9 @@
           "unit": "qa_audit:factoryline/agent_license.py:normalize_agent_identity"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/agent_license.py:record_bound_governed_event"
         },
@@ -337,16 +337,16 @@
           "unit": "qa_audit:factoryline/agent_license.py:verify_license"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/agent_license.py:seal_license"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/agent_license.py:admission_license_decision"
         },
@@ -855,9 +855,9 @@
           "unit": "qa_audit:factoryline/appforge_mobile_evidence.py:verify_mobile_evidence"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/appforge_mobile_evidence.py:verify_mobile_evidence_receipt"
         },
@@ -904,9 +904,9 @@
           "unit": "qa_audit:factoryline/appforge_quality_audit.py:verify_quality_audit"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/appforge_quality_audit.py:quality_audit_projection"
         },
@@ -993,6 +993,27 @@
           "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/appforge_surface_matrix.py:surface_matrix_projection"
+        },
+        {
+          "evidence": "coverage_intent=0; required=1",
+          "failure_class": "inconsistent_logic",
+          "passed": false,
+          "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/architecture_guard.py:is_code_factory_root"
+        },
+        {
+          "evidence": "coverage_intent=0; required=1",
+          "failure_class": "inconsistent_logic",
+          "passed": false,
+          "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/architecture_guard.py:file_size_guard_is_pinned"
+        },
+        {
+          "evidence": "coverage_intent=0; required=1",
+          "failure_class": "inconsistent_logic",
+          "passed": false,
+          "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/architecture_guard.py:default_policy_guard_is_pinned"
         },
         {
           "evidence": "metrics within thresholds",
@@ -1093,9 +1114,9 @@
           "unit": "qa_audit:factoryline/assurance.py:build_vex"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/assurance.py:policy_mutations"
         },
@@ -1191,11 +1212,95 @@
           "unit": "qa_audit:factoryline/attribution.py:attribution"
         },
         {
+          "evidence": "coverage_intent=0; required=1",
+          "failure_class": "inconsistent_logic",
+          "passed": false,
+          "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/audit_action_refs.py:derive_agent_action_references"
+        },
+        {
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
+          "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/audit_action_refs.py:resolve_agent_action_reference"
+        },
+        {
           "evidence": "metrics within thresholds",
           "failure_class": null,
           "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/audit_rule_search.py:search_audit_rules"
+        },
+        {
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
+          "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/audit_taxonomy.py:audit_taxonomy"
+        },
+        {
+          "evidence": "coverage_intent=0; required=1",
+          "failure_class": "inconsistent_logic",
+          "passed": false,
+          "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/audit_taxonomy.py:audit_domain_ids"
+        },
+        {
+          "evidence": "coverage_intent=0; required=1",
+          "failure_class": "inconsistent_logic",
+          "passed": false,
+          "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/audit_taxonomy.py:agent_taxonomy_context"
+        },
+        {
+          "evidence": "coverage_intent=0; required=1",
+          "failure_class": "inconsistent_logic",
+          "passed": false,
+          "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/audit_taxonomy.py:domain_definition"
+        },
+        {
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
+          "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/audit_taxonomy.py:resolve_agent_action_reference"
+        },
+        {
+          "evidence": "coverage_intent=0; required=1",
+          "failure_class": "inconsistent_logic",
+          "passed": false,
+          "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/audit_taxonomy.py:derive_agent_action_references"
+        },
+        {
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
+          "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/audit_taxonomy.py:normalize_measurement_state"
+        },
+        {
+          "evidence": "coverage_intent=0; required=1",
+          "failure_class": "inconsistent_logic",
+          "passed": false,
+          "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/audit_taxonomy.py:validate_measurement_ledger"
+        },
+        {
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
+          "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/audit_trace.py:build_audit_trace"
+        },
+        {
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
+          "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/audit_trace.py:verify_audit_trace"
         },
         {
           "evidence": "metrics within thresholds",
@@ -1331,16 +1436,16 @@
           "unit": "qa_audit:factoryline/capability_evidence.py:audit_capability_evidence"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/capability_packs.py:pack_payload"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/capability_packs.py:sign_pack"
         },
@@ -1422,9 +1527,9 @@
           "unit": "qa_audit:factoryline/cdte.py:record_scan"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/cdte.py:load_scans"
         },
@@ -1450,9 +1555,9 @@
           "unit": "qa_audit:factoryline/cdte.py:public_cdte_report"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/cdte.py:export_public_cdte_report"
         },
@@ -1695,16 +1800,16 @@
           "unit": "qa_audit:factoryline/cli_first_lap.py:run"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/cli_foundations.py:emit_version"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/cli_foundations.py:cli_command"
         },
@@ -2045,9 +2150,9 @@
           "unit": "qa_audit:factoryline/codex_metadata.py:audit_metadata"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/codex_metadata.py:write_metadata_audit"
         },
@@ -2080,9 +2185,9 @@
           "unit": "qa_audit:factoryline/combine.py:seal_combine_scoreboard"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/combine.py:combine_projection"
         },
@@ -2115,9 +2220,9 @@
           "unit": "qa_audit:factoryline/context_efficiency.py:context_efficiency_status"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/continuation.py:discover_features"
         },
@@ -2143,9 +2248,9 @@
           "unit": "qa_audit:factoryline/continuation.py:continue_assembly"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/continuity.py:recall_continuity_metadata_read_only"
         },
@@ -2325,9 +2430,9 @@
           "unit": "qa_audit:factoryline/continuous_proof.py:continuous_proof_history"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/continuous_proof.py:continuous_proof_projection"
         },
@@ -2360,16 +2465,16 @@
           "unit": "qa_audit:factoryline/contract.py:ensure_layout"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/contract.py:sha_of"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/control_api.py:create_app"
         },
@@ -2451,9 +2556,9 @@
           "unit": "qa_audit:factoryline/control_plane.py:principal_from_args"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/counterexample.py:validate_counterexample_source"
         },
@@ -2500,9 +2605,9 @@
           "unit": "qa_audit:factoryline/deep_audit.py:deep_run_status"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/deep_audit.py:cancel_deep_run"
         },
@@ -2591,9 +2696,9 @@
           "unit": "qa_audit:factoryline/deep_audit_io.py:local_file"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/deep_audit_io.py:bound_bytes"
         },
@@ -2605,9 +2710,9 @@
           "unit": "qa_audit:factoryline/deep_audit_io.py:strict_json"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/deep_audit_io.py:source_language"
         },
@@ -2654,9 +2759,9 @@
           "unit": "qa_audit:factoryline/deep_audit_loop.py:deep_audit_lineage"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/deep_audit_loop.py:deep_scan_projection"
         },
@@ -2696,9 +2801,9 @@
           "unit": "qa_audit:factoryline/domain_ontology.py:validate_domain_ontology"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/domain_ontology.py:domain_ontology_template"
         },
@@ -2710,9 +2815,9 @@
           "unit": "qa_audit:factoryline/e2e_proof.py:validate_e2e_proof_manifest"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/e2e_proof.py:run_supervised_command"
         },
@@ -2752,30 +2857,30 @@
           "unit": "qa_audit:factoryline/engineering_memory.py:recall_engineering_memory"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/enterprise_enforcement.py:validate_workload_identity"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/enterprise_enforcement.py:validate_enforcement_policy"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/enterprise_enforcement.py:verify_workload_identity"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/enterprise_enforcement.py:verify_enforcement_policy"
         },
@@ -2920,9 +3025,9 @@
           "unit": "qa_audit:factoryline/enterprise_receipts.py:canonical_json"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/enterprise_receipts.py:dsse_pae"
         },
@@ -3046,9 +3151,9 @@
           "unit": "qa_audit:factoryline/external_evidence.py:verify_external_runtime_receipt"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/failure_guidance.py:explain_failure"
         },
@@ -3088,9 +3193,9 @@
           "unit": "qa_audit:factoryline/first_lap.py:promote_incident"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/first_lap.py:verify_promoted_incident_gates"
         },
@@ -3123,9 +3228,9 @@
           "unit": "qa_audit:factoryline/first_lap.py:verify_activation"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/first_lap.py:verify_activation_receipt"
         },
@@ -3137,9 +3242,9 @@
           "unit": "qa_audit:factoryline/fix_workflow.py:run_fix_workflow"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/fix_workflow.py:load_fix_json"
         },
@@ -3151,9 +3256,9 @@
           "unit": "qa_audit:factoryline/full_stack_ux_harness.py:quality_harness_template"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/full_stack_ux_harness.py:write_quality_harness_template"
         },
@@ -3274,6 +3379,13 @@
           "failure_class": null,
           "passed": true,
           "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/github_account_overview.py:build_github_account_overview"
+        },
+        {
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
+          "stage": "qa_audit",
           "unit": "qa_audit:factoryline/github_assurance_dossier.py:policy_snapshot_sha256"
         },
         {
@@ -3312,9 +3424,9 @@
           "unit": "qa_audit:factoryline/github_plan_proof_review.py:write_github_plan_proof_review_artifacts"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/github_proof_review.py:validate_github_proof_review_payload"
         },
@@ -3452,9 +3564,9 @@
           "unit": "qa_audit:factoryline/grill_engine.py:confirm_grill"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/guardrails.py:validate_guardrail_manifest"
         },
@@ -3522,9 +3634,9 @@
           "unit": "qa_audit:factoryline/habituation.py:record_resample_outcome"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/habituation.py:load_resamples"
         },
@@ -4040,9 +4152,9 @@
           "unit": "qa_audit:factoryline/intake_parameters.py:intake_parameters_status"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/integrations.py:roles_from_groups"
         },
@@ -4068,9 +4180,9 @@
           "unit": "qa_audit:factoryline/integrations.py:normalize_scm_event"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/integrations.py:event_json"
         },
@@ -4096,16 +4208,16 @@
           "unit": "qa_audit:factoryline/intent_ledger.py:inspect_intent_ledger"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/intent_quality.py:as_dict"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/intent_quality.py:normalize"
         },
@@ -4124,9 +4236,9 @@
           "unit": "qa_audit:factoryline/intent_quality.py:require_clear"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/intent_quality.py:findings_as_dict"
         },
@@ -4145,23 +4257,23 @@
           "unit": "qa_audit:factoryline/jetbrains_handshake.py:evaluate_jetbrains_handshake"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/jetbrains_handshake.py:validate_jetbrains_handshake"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/jetbrains_handshake.py:write_jetbrains_handshake"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/jetbrains_handshake.py:jetbrains_handshake_projection"
         },
@@ -4208,9 +4320,9 @@
           "unit": "qa_audit:factoryline/journey_proof.py:create_failure_capsule"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/journey_proof.py:validate_failure_capsule"
         },
@@ -4271,11 +4383,18 @@
           "unit": "qa_audit:factoryline/judgment.py:safety_case"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/judgment.py:judgment_projection"
+        },
+        {
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
+          "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/junie_review.py:build_junie_review"
         },
         {
           "evidence": "metrics within thresholds",
@@ -4425,9 +4544,9 @@
           "unit": "qa_audit:factoryline/lifecycle_ledger.py:lifecycle_projection"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/lifecycle_ledger.py:lifecycle_template"
         },
@@ -4453,9 +4572,9 @@
           "unit": "qa_audit:factoryline/live_activity.py:stage_started"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/live_activity.py:stage_finished"
         },
@@ -4467,9 +4586,9 @@
           "unit": "qa_audit:factoryline/live_activity.py:finish"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/live_activity.py:cancel_requested"
         },
@@ -4488,9 +4607,9 @@
           "unit": "qa_audit:factoryline/live_activity.py:request_stop"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/live_feedback.py:validate_live_manifest"
         },
@@ -4502,9 +4621,9 @@
           "unit": "qa_audit:factoryline/live_feedback.py:run_live_feedback"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/live_feedback.py:load_live_json"
         },
@@ -4600,9 +4719,9 @@
           "unit": "qa_audit:factoryline/mcp_mrt.py:release_gate_completed"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/mcp_mrt.py:evaluate_release_gate"
         },
@@ -4754,9 +4873,9 @@
           "unit": "qa_audit:factoryline/meter.py:live_summary_table"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/migration.py:git_lines"
         },
@@ -4922,9 +5041,9 @@
           "unit": "qa_audit:factoryline/operations_control.py:operations_control_projection"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/operations_control.py:operations_control_template"
         },
@@ -4936,9 +5055,9 @@
           "unit": "qa_audit:factoryline/ops_telemetry.py:is_read_only_command"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/ops_telemetry.py:record_lifecycle"
         },
@@ -5034,16 +5153,16 @@
           "unit": "qa_audit:factoryline/oracle_firewall.py:record_oracle_incident"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/oracle_firewall.py:oracle_incidents_for_agent"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/oracle_firewall.py:admission_oracle_decision"
         },
@@ -5062,9 +5181,9 @@
           "unit": "qa_audit:factoryline/oracle_firewall.py:oracle_firewall_projection"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/output_map.py:write_output_map"
         },
@@ -5083,9 +5202,9 @@
           "unit": "qa_audit:factoryline/overrides.py:ci_template"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/passport.py:mermaid_for"
         },
@@ -5118,9 +5237,9 @@
           "unit": "qa_audit:factoryline/plan_proof_review.py:review_plan_proof"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/plan_proof_review.py:validate_plan_proof_review"
         },
@@ -5251,9 +5370,9 @@
           "unit": "qa_audit:factoryline/prd_grill.py:verify_prd_grill"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/privacy.py:merkle_root"
         },
@@ -5391,9 +5510,9 @@
           "unit": "qa_audit:factoryline/proof.py:build_trace"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/proof.py:load_trace"
         },
@@ -5419,9 +5538,9 @@
           "unit": "qa_audit:factoryline/proof.py:replay_plan"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/proof.py:execute_replay"
         },
@@ -5629,9 +5748,9 @@
           "unit": "qa_audit:factoryline/proof_review_workflow.py:verify_proof_card"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/proof_review_workflow.py:proof_review_projection"
         },
@@ -5678,9 +5797,9 @@
           "unit": "qa_audit:factoryline/proofsearch.py:verify_proofsearch_evaluation"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/protocol.py:version_tuple"
         },
@@ -5818,9 +5937,9 @@
           "unit": "qa_audit:factoryline/receipt_index.py:write_receipt_index"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/receipt_index.py:indexed_receipt_paths"
         },
@@ -5832,9 +5951,9 @@
           "unit": "qa_audit:factoryline/refinement.py:select_edit"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/refinement.py:pareto_win"
         },
@@ -5881,9 +6000,9 @@
           "unit": "qa_audit:factoryline/release_contract.py:verify_release_contract"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/release_contract.py:release_readiness_projection"
         },
@@ -5958,9 +6077,9 @@
           "unit": "qa_audit:factoryline/repair_loop.py:repair_loop_projection"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/repair_loop.py:repair_loop_template"
         },
@@ -5979,9 +6098,9 @@
           "unit": "qa_audit:factoryline/repair_sandbox.py:verify_repair_scope"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/repair_sandbox.py:validate_repair_scope_envelope"
         },
@@ -6028,9 +6147,9 @@
           "unit": "qa_audit:factoryline/repo_coordination.py:coordinate_repositories"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/repo_coordination.py:repo_coordination_template"
         },
@@ -6098,9 +6217,9 @@
           "unit": "qa_audit:factoryline/revenue_evidence.py:query_evidence_memory"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/revenue_evidence.py:revenue_evidence_projection"
         },
@@ -6231,9 +6350,9 @@
           "unit": "qa_audit:factoryline/run_admission.py:verify_admission"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/run_metrics.py:load_run_receipts"
         },
@@ -6259,9 +6378,9 @@
           "unit": "qa_audit:factoryline/run_metrics.py:public_metrics"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/run_metrics.py:export_public_metrics"
         },
@@ -6329,79 +6448,79 @@
           "unit": "qa_audit:factoryline/runtime_audit_common.py:sha256_bytes"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/runtime_audit_common.py:exact_keys"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/runtime_audit_common.py:require_str"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/runtime_audit_common.py:require_digest"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/runtime_audit_common.py:require_bool"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/runtime_audit_common.py:require_int"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/runtime_audit_common.py:require_number"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/runtime_audit_common.py:require_unique_strings"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/runtime_audit_common.py:reject_secret_material"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/runtime_audit_common.py:parse_json_bytes"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/runtime_audit_common.py:read_stable_json"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/runtime_audit_common.py:lane_result"
         },
@@ -6434,9 +6553,9 @@
           "unit": "qa_audit:factoryline/runtime_audit_integrity.py:repair_guidance"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/runtime_audit_integrity.py:validate_receipt_decision"
         },
@@ -6462,9 +6581,9 @@
           "unit": "qa_audit:factoryline/runtime_audit_policy.py:records"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/runtime_audit_policy.py:validate_lane_policy"
         },
@@ -6508,6 +6627,27 @@
           "failure_class": null,
           "passed": true,
           "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/runtime_coverage.py:source_code_digest"
+        },
+        {
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
+          "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/runtime_coverage.py:digest_test_sources"
+        },
+        {
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
+          "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/runtime_coverage.py:read_runtime_coverage_report"
+        },
+        {
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
+          "stage": "qa_audit",
           "unit": "qa_audit:factoryline/saas_proof.py:verify_saas_proof"
         },
         {
@@ -6525,9 +6665,9 @@
           "unit": "qa_audit:factoryline/savings.py:record_savings_pair"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/savings.py:load_savings_pairs"
         },
@@ -6658,9 +6798,9 @@
           "unit": "qa_audit:factoryline/service_boundaries.py:check_service_boundaries"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/service_boundaries.py:service_boundary_template"
         },
@@ -6763,9 +6903,9 @@
           "unit": "qa_audit:factoryline/signed_receipts.py:validate_ci_payload"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/signed_receipts.py:ci_receipt_main"
         },
@@ -6889,16 +7029,16 @@
           "unit": "qa_audit:factoryline/studio.py:decide_product_mission_from_studio"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/studio.py:authorize_graph_ops_from_studio"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/studio.py:run_graph_ops_reality_check_from_studio"
         },
@@ -6924,9 +7064,9 @@
           "unit": "qa_audit:factoryline/studio.py:serve_studio"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/supply_chain.py:validate_attestation"
         },
@@ -7050,9 +7190,9 @@
           "unit": "qa_audit:factoryline/update_notifier.py:check_for_update"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/update_notifier.py:read_manifest"
         },
@@ -7090,6 +7230,13 @@
           "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:factoryline/webmcp.py:webmcp_manifest"
+        },
+        {
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
+          "stage": "qa_audit",
+          "unit": "qa_audit:factoryline/workflow_audit.py:audit_workflows"
         },
         {
           "evidence": "metrics within thresholds",
@@ -7344,9 +7491,9 @@
           "unit": "qa_audit:scripts/prooflab_e2e.py:run"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:scripts/prooflab_e2e.py:run_module"
         },
@@ -7358,9 +7505,9 @@
           "unit": "qa_audit:scripts/prooflab_e2e.py:main"
         },
         {
-          "evidence": "coverage_intent=0; required=1",
-          "failure_class": "inconsistent_logic",
-          "passed": false,
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
           "stage": "qa_audit",
           "unit": "qa_audit:scripts/release_train_e2e.py:write_complete"
         },
@@ -7428,6 +7575,13 @@
           "unit": "qa_audit:scripts/verify_release_preflight.py:main"
         },
         {
+          "evidence": "metrics within thresholds",
+          "failure_class": null,
+          "passed": true,
+          "stage": "qa_audit",
+          "unit": "qa_audit:scripts/write_ci_runtime_coverage.py:main"
+        },
+        {
           "evidence": "coverage_intent=0; required=1",
           "failure_class": "inconsistent_logic",
           "passed": false,
@@ -7455,9 +7609,9 @@
     "metrics": {
       "behavioral_proof_status": "available",
       "complexity_policy": "hard",
-      "composite": 95.1,
+      "composite": 97.9,
       "coverage_assessment": "measured",
-      "coverage_intent": 0.89,
+      "coverage_intent": 0.97,
       "doc_ratio": 0.93,
       "max_complexity": 10,
       "scope": {
@@ -7503,13 +7657,17 @@
           "factoryline/appforge_submission_assurance.py",
           "factoryline/appforge_submission_integrity.py",
           "factoryline/appforge_surface_matrix.py",
+          "factoryline/architecture_guard.py",
           "factoryline/architecture_health.py",
           "factoryline/assembly.py",
           "factoryline/assembly_process.py",
           "factoryline/assurance.py",
           "factoryline/atomic_proof_adapter.py",
           "factoryline/attribution.py",
+          "factoryline/audit_action_refs.py",
           "factoryline/audit_rule_search.py",
+          "factoryline/audit_taxonomy.py",
+          "factoryline/audit_trace.py",
           "factoryline/benchmark_lab.py",
           "factoryline/blueprint.py",
           "factoryline/boundary.py",
@@ -7593,6 +7751,7 @@
           "factoryline/full_stack_ux_spec.py",
           "factoryline/gauntlet.py",
           "factoryline/gauntlet_draft.py",
+          "factoryline/github_account_overview.py",
           "factoryline/github_assurance_dossier.py",
           "factoryline/github_plan_proof_review.py",
           "factoryline/github_proof_review.py",
@@ -7621,6 +7780,7 @@
           "factoryline/jev_classifier.py",
           "factoryline/journey_proof.py",
           "factoryline/judgment.py",
+          "factoryline/junie_review.py",
           "factoryline/junie_taxonomy.py",
           "factoryline/knowledge_handoff.py",
           "factoryline/langgraph_assurance.py",
@@ -7699,6 +7859,7 @@
           "factoryline/runtime_audit_runner.py",
           "factoryline/runtime_audit_stateful.py",
           "factoryline/runtime_audit_tenant.py",
+          "factoryline/runtime_coverage.py",
           "factoryline/saas_proof.py",
           "factoryline/savings.py",
           "factoryline/semantic_authority.py",
@@ -7719,6 +7880,7 @@
           "factoryline/verification.py",
           "factoryline/verifier_plane.py",
           "factoryline/webmcp.py",
+          "factoryline/workflow_audit.py",
           "factoryline/workspace_advisor.py",
           "factoryline/builtin_packs/__init__.py",
           "plugins/code-factory-opencode/build.mjs",
@@ -7746,6 +7908,7 @@
           "scripts/render_verify_policy_gif.py",
           "scripts/smoke_review_audits_wheel.py",
           "scripts/verify_release_preflight.py",
+          "scripts/write_ci_runtime_coverage.py",
           "videos/code-factory-proof-of-survival/remotion/src/FactoryEngine.tsx",
           "videos/code-factory-proof-of-survival/remotion/src/index.ts",
           "videos/code-factory-proof-of-survival/remotion/src/root.tsx",
@@ -7759,7 +7922,7 @@
     "passed": true
   },
   "schema": "factory.forgeline_reassessment.v1",
-  "source_sha256": "3cd0e7e1fe373115bd31a95b632865de38431d6e4699b2fc1e914befe38b114f",
+  "source_sha256": "40fc54619efc172cb605a78647170b71cc484ba7591b6174dd9e8ebc196843af",
   "tool": {
     "identity_complete": true,
     "package": "code-factory-2-forge",

@@ -25,7 +25,7 @@ def test_editor_candidate_tag_must_match_editor_version(tmp_path, monkeypatch):
         "source_snapshot",
         lambda root: {
             "version": "0.47.0",
-            "platform_versions": {"vscode": "1.0.2", "intellij": "1.0.2"},
+            "platform_versions": {"vscode": "1.1.0", "intellij": "1.1.0"},
         },
     )
     with pytest.raises(ValueError, match="channel source version"):

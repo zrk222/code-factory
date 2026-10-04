@@ -713,3 +713,96 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-09-25] Historical targeted checks for user intent to fix review regressions in PR108: 54 tests passed after docstring correction; Muse 9 tests passed, installed hook hash matched, wheel/sdist and twine passed. Evidence: https://github.com/zrk222/code-factory/pull/108
 
 - [2026-09-25] Quality refactor: MCP HTTP parsing/authentication/dispatch split into bounded stages; specialty review validation split by concern. Both modules individually ForgeLine A. Private-stage complexity checks enforce <=10. Repository-wide ForgeLine remains F, with raw-string fixture false positives and parser/complexity debt retained. Full clean-env suite 1759 passed, 7 skipped (374.46s); final affected rerun 92 passed (45.39s). No deployment or certification claimed. Historical evidence: https://github.com/zrk222/code-factory/pull/108
+
+- [2026-10-02 03:27] GATE spec universal-workflow-audit approver=user-authorized-cf-upgrade strict=True sha=b5dc15052633fb0a
+- [2026-10-02 03:27] GATE plan universal-workflow-audit approver=user-authorized-cf-upgrade tasks=2 sha=b5dc15052633fb0a
+- [2026-10-02 03:29] GATE spec universal-workflow-audit approver=user-authorized-cf-upgrade strict=True sha=65fd0a0ae5bee040
+- [2026-10-02 03:29] GATE plan universal-workflow-audit approver=user-authorized-cf-upgrade tasks=2 sha=65fd0a0ae5bee040[2026-10-02UTC] universal-workflow-audit LOCAL_SOURCE_VERIFIED: new project-neutral factory audit workflows source CLI, exact check/profile coverage, all eight category applicability, source/catalog/observation/artifact hashes, explicit non-authority. Global AGENTS and CF skill now route every coding change through workflow-qa.md. Existing installed PyPI CLI unchanged; documented source invocation verified. 97 regression tests passed, one known pytest config warning due plugin-autoload-disabled environment. Strict0warnings,5specmutantskilled,driftPASS, scopedQAmax7PASS. Local self-audit5requirements source-pinned PASS; evidence completeness is not semantic runtime certification. CF proof receipt and global file SHA read-back saved tools/workflow-audit. No package/PR/publish/install claim. Founders Tank60test/180rowaudit remains NO_GO unexecuted; prior coaching-grounding743primary216isolated locallypassed remains unreleased. Fullgamegoal ACTIVEINCOMPLETE.
+
+[2026-10-01] Universal workflow audit recheck: CF doctor strict healthy. Corrected stale local evidence binder to supply hash-bound review evidence for inapplicable categories and use actual regression summary; added binder to candidate coverage. Global workflow router documents review_evidence. Current source regression suite: 111 passed, one known pytest config warning, 12.19s. Current workflow self-audit PASS, 5 checks, no errors, receipt 3fa52dcfd033a6d887f343883019e831f7c69c1f0977e71cafdb3d0a944b5376. Previous 97-test receipt is historical. Installed package unchanged; no package publication, project runtime certification, or release approval claimed.
+
+- [2026-10-02 05:00] GATE spec universal-workflow-audit approver=human strict=True sha=a8f217415c438655
+- [2026-10-03 08:55] GATE plan universal-workflow-audit approver=human tasks=3 sha=744ba23ef638278a
+- [2026-10-03 08:56] GATE spec pr-mutation-oracle-gate approver=human strict=True sha=d3b8b3c985f5324a
+- [2026-10-03 08:56] GATE spec pr-mutation-oracle-gate approver=human strict=True sha=d3b8b3c985f5324a
+- [2026-10-03 08:57] GATE spec pr-mutation-oracle-gate approver=human strict=True sha=d3b8b3c985f5324a
+- [2026-10-03 08:58] GATE spec pr-mutation-oracle-gate approver=human strict=True sha=d3b8b3c985f5324a
+- [2026-10-03 08:58] GATE plan pr-mutation-oracle-gate approver=human tasks=5 sha=d3b8b3c985f5324a
+- [2026-10-03 09:03] GATE plan pr-mutation-oracle-gate approver=human tasks=5 sha=d565624715dba854
+- [2026-10-03 09:03] GATE spec pr-mutation-oracle-gate approver=human strict=True sha=d565624715dba854
+- [2026-10-03 09:04] GATE spec pr-mutation-oracle-gate approver=human strict=True sha=d565624715dba854
+- [2026-10-03 09:04] GATE plan pr-mutation-oracle-gate approver=human tasks=5 sha=d565624715dba854
+- [2026-10-03 09:30] GATE spec attribution-rate-96 approver=human strict=True sha=a1741f336ec36205
+- [2026-10-03 09:30] GATE plan attribution-rate-96 approver=human tasks=6 sha=a1741f336ec36205
+- [2026-10-04 00:31] GATE spec attribution-rate-96 approver=human strict=True sha=8c1e2482164b4870
+- [2026-10-04 00:31] GATE plan attribution-rate-96 approver=human tasks=7 sha=8c1e2482164b4870
+- [2026-10-04 01:12] GATE spec runtime-coverage-panel approver=User instruction: include runtime coverage strict=True sha=cba47a68a6505330
+- [2026-10-04 01:12] GATE plan runtime-coverage-panel approver=User instruction: include runtime coverage tasks=14 sha=cba47a68a6505330
+- [2026-10-04 01:12] PACKET runtime-coverage-panel T1 tokens=742 sha=e6b3e6dca08e760d
+- [2026-10-04 01:14] DONE runtime-coverage-panel T1 verify_pass=true  # context resets now
+- [2026-10-04 01:14] PACKET runtime-coverage-panel T2 tokens=859 sha=6f8fec8489f382fd
+- [2026-10-04 01:20] PACKET runtime-coverage-panel T2 tokens=859 sha=6f8fec8489f382fd
+- [2026-10-04 01:21] DONE runtime-coverage-panel T2 verify_pass=true  # context resets now
+- [2026-10-04 01:21] PACKET runtime-coverage-panel T3 tokens=845 sha=0032d72fd8771165
+- [2026-10-04 01:21] DONE runtime-coverage-panel T3 verify_pass=true  # context resets now
+- [2026-10-04 01:21] DONE runtime-coverage-panel T4 verify_pass=true  # context resets now
+- [2026-10-04 01:22] DONE runtime-coverage-panel T6 verify_pass=true  # context resets now
+- [2026-10-04 01:22] DONE runtime-coverage-panel T5 verify_pass=true  # context resets now
+- [2026-10-04 01:22] DONE runtime-coverage-panel T6 verify_pass=true  # context resets now
+- [2026-10-04 01:22] PACKET runtime-coverage-panel T7 tokens=818 sha=ae973a290e125688
+- [2026-10-04 01:23] DONE runtime-coverage-panel T7 verify_pass=true  # context resets now
+- [2026-10-04 01:23] DONE runtime-coverage-panel T8 verify_pass=true  # context resets now
+- [2026-10-04 02:24] GATE spec junie-native-audit-kit-v2 approver=human strict=True sha=bcc0603c8e2370c8
+- [2026-10-04 02:27] GATE spec junie-native-audit-kit-v2 approver=human strict=True sha=1e7dd69a9117bffa
+- [2026-10-04 02:40] GATE spec junie-native-audit-kit-v2 approver=human strict=True sha=10b31ac3415c2a1e
+- [2026-10-04 05:17] GATE spec github-account-overview approver=human strict=True sha=8667cc84cbcf871f
+- [2026-10-04 05:17] GATE plan github-account-overview approver=human tasks=8 sha=8667cc84cbcf871f
+- [2026-10-04 05:18] PACKET github-account-overview T1 tokens=831 sha=d9f65e89630114c6
+- [2026-10-04 05:54] GATE spec github-account-overview approver=human strict=True sha=b040cd9c1477ea56
+- [2026-10-04 05:54] GATE plan github-account-overview approver=human tasks=8 sha=b040cd9c1477ea56
+- [2026-10-04 05:54] DONE github-account-overview T1 verify_pass=true  # context resets now
+- [2026-10-04 05:54] GATE plan github-account-overview approver=human tasks=8 sha=b040cd9c1477ea56
+- [2026-10-04 06:19] GATE spec github-account-overview approver=user-request strict=True sha=ef8079e847e1633d
+- [2026-10-04 06:19] GATE plan github-account-overview approver=user-request tasks=8 sha=ef8079e847e1633d
+- [2026-10-04 06:22] DONE github-account-overview T1 verify_pass=true  # context resets now
+- [2026-10-04 06:22] DONE github-account-overview T2 verify_pass=true  # context resets now
+- [2026-10-04 06:22] DONE github-account-overview T3 verify_pass=true  # context resets now
+- [2026-10-04 06:22] DONE github-account-overview T4 verify_pass=true  # context resets now
+- [2026-10-04 06:22] DONE github-account-overview T5 verify_pass=true  # context resets now
+- [2026-10-04 06:22] DONE github-account-overview T6 verify_pass=true  # context resets now
+- [2026-10-04 06:24] GATE plan github-account-overview approver=user-request tasks=8 sha=ef8079e847e1633d
+- [2026-10-04 06:24] DONE github-account-overview T8 verify_pass=true  # context resets now
+- [2026-10-04 06:25] DONE github-account-overview T7 verify_pass=true  # context resets now
+- [2026-10-04 06:29] GATE plan github-account-overview approver=human tasks=8 sha=ef8079e847e1633d
+- [2026-10-04 06:33] GATE spec github-account-overview approver=human strict=True sha=5f1d62e52fb700c6
+- [2026-10-04 06:34] GATE plan github-account-overview approver=human tasks=12 sha=5f1d62e52fb700c6
+- [2026-10-04 06:35] PACKET github-account-overview T9 tokens=910 sha=35373516e4635eb1
+- [2026-10-04 06:36] GATE plan github-account-overview approver=human tasks=12 sha=5f1d62e52fb700c6
+- [2026-10-04 06:36] GATE plan github-account-overview approver=human tasks=12 sha=5f1d62e52fb700c6
+- [2026-10-04 06:36] DONE github-account-overview T9 verify_pass=true  # context resets now
+- [2026-10-04 06:36] PACKET github-account-overview T10 tokens=911 sha=123e505d9e66cdba
+- [2026-10-04 06:36] DONE github-account-overview T10 verify_pass=true  # context resets now
+- [2026-10-04 06:36] PACKET github-account-overview T11 tokens=926 sha=bd0da1ecc13d0453
+- [2026-10-04 06:36] DONE github-account-overview T11 verify_pass=true  # context resets now
+- [2026-10-04 06:36] PACKET github-account-overview T12 tokens=886 sha=9fb257907e48d600
+- [2026-10-04 06:36] GATE plan github-account-overview approver=human tasks=12 sha=5f1d62e52fb700c6
+- [2026-10-04 06:37] GATE plan github-account-overview approver=human tasks=12 sha=5f1d62e52fb700c6
+- [2026-10-04 06:37] DONE github-account-overview T12 verify_pass=true  # context resets now
+- [2026-10-04 06:42] GATE plan github-account-overview approver=human tasks=12 sha=12cd53ef264c4a05
+- [2026-10-04 06:42] GATE code github-account-overview approver=human reviewer=personas/reviewer.md auditor=personas/security_auditor.md
+- [2026-10-04 06:43] GATE spec github-account-overview approver=human strict=True sha=12cd53ef264c4a05
+- [2026-10-04 06:43] GATE plan github-account-overview approver=human tasks=12 sha=12cd53ef264c4a05
+- [2026-10-04 06:43] GATE code github-account-overview approver=human reviewer=personas/reviewer.md auditor=personas/security_auditor.md
+- [2026-10-04 06:44] GATE plan github-account-overview approver=human tasks=12 sha=f0c2693fc4f30a1e
+- [2026-10-04 06:45] GATE spec github-account-overview approver=human strict=True sha=f0c2693fc4f30a1e
+- [2026-10-04 06:45] GATE plan github-account-overview approver=human tasks=12 sha=f0c2693fc4f30a1e
+- [2026-10-04 06:45] GATE code github-account-overview approver=human reviewer=personas/reviewer.md auditor=personas/security_auditor.md
+- [2026-10-04 06:51] GATE spec github-account-overview approver=human strict=True sha=b4a59a964456929a
+- [2026-10-04 06:51] GATE plan github-account-overview approver=human tasks=15 sha=b4a59a964456929a
+- [2026-10-04 06:51] PACKET github-account-overview T13 tokens=906 sha=5de9b4fc11eb9fd2
+- [2026-10-04 06:51] DONE github-account-overview T13 verify_pass=true  # context resets now
+- [2026-10-04 06:52] DONE github-account-overview T14 verify_pass=true  # context resets now
+- [2026-10-04 06:52] DONE github-account-overview T15 verify_pass=true  # context resets now
+- [2026-10-04 06:54] GATE spec github-account-overview approver=human strict=True sha=b4a59a964456929a
+- [2026-10-04 06:54] GATE plan github-account-overview approver=human tasks=15 sha=b4a59a964456929a
+- [2026-10-04 06:54] GATE code github-account-overview approver=human reviewer=personas/reviewer.md auditor=personas/security_auditor.md

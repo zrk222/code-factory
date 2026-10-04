@@ -29,15 +29,20 @@ def test_cli_evaluates_signed_inputs_and_status(tmp_path, capsys, clean):
     assert main(argv) == (0 if clean else 1)
     output = json.loads(capsys.readouterr().out)
     assert output["authority"] == "none"
+    assert output["agent_actions"] == output["receipt"]["agent_actions"]
     assert main(["deep-audit", "status", "--root", str(tmp_path)]) == (
         0 if clean else 1
     )
-    assert json.loads(capsys.readouterr().out)["state"] == output["receipt"]["decision"]
+    status = json.loads(capsys.readouterr().out)
+    assert status["state"] == output["receipt"]["decision"]
+    assert "agent_actions" in status
 
 
 def test_no_evidence_is_not_a_green_cli(tmp_path, capsys):
     assert main(["deep-audit", "status", "--root", str(tmp_path)]) == 1
-    assert json.loads(capsys.readouterr().out)["state"] == "NOT_RUN"
+    report = json.loads(capsys.readouterr().out)
+    assert report["state"] == "NOT_RUN"
+    assert report["agent_actions"]
 
 
 @pytest.mark.parametrize("clean", [False, True])

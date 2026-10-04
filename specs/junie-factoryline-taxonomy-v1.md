@@ -20,7 +20,7 @@ authority.
 
 ### Requirements (EARS)
 <!-- Every requirement uses an EARS keyword: shall / When / While / If / Where -->
-- The system shall emit `JUNIE_FACTORYLINE_TAXONOMY_READY` with 58 distinct MCP tool identifiers assigned to exactly seven ordered stages. [R10]
+- The system shall emit `JUNIE_FACTORYLINE_TAXONOMY_READY` with every currently registered MCP tool identifier assigned exactly once across seven ordered stages; the emitted inventory shall equal the live MCP `tools/list` inventory and shall not rely on a hard-coded tool count. [R10]
 - When a client calls `factory.junie_taxonomy`, the system shall emit every external-effect authority field as `false`. [R20]
 - The system shall emit an install confirmation rule containing `INSTALL Junie FactoryLine Pack`. [R25]
 - When `confirmation` equals `INSTALL Junie FactoryLine Pack`, the system shall emit `JUNIE_FACTORYLINE_PACK_INSTALLED` after writing only `.junie/AGENTS.md` and `.junie/mcp/mcp.json` with SHA-256 fields. [R30]
@@ -61,7 +61,10 @@ Scenario: evidence-bound Junie acknowledgement
 - Data model: `factory.junie-taxonomy.v1`, `factory.junie-install.v1`,
   `factory.junie-factoryline-contribution.v1`
 - API contract: `factory junie taxonomy|install|contribution`; MCP
-  `factory.junie_taxonomy`, `factory.junie_contribution`
+  `factory.junie_taxonomy`, `factory.junie_contribution`, and the optional
+  `factory.github_overview` for bounded, read-only repository inventory and
+  account-visible open-work context, plus operational details for the current
+  workspace origin, when an existing GitHub CLI session is connected.
 - Validation: `tests/test_junie_taxonomy.py`, `tests/test_mcp.py`, and
   `editors/intellij/src/test/kotlin/app/factoryline/intellij/FactoryLineCoreTest.kt`
 

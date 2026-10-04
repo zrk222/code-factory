@@ -208,8 +208,9 @@ jobs:
           sha256sum "${packages[0]}" > "$GITHUB_WORKSPACE/vscode-marketplace-candidate/SHA256SUMS.txt"
           cp release-preflight.json "$GITHUB_WORKSPACE/vscode-marketplace-candidate/"
           python "$GITHUB_WORKSPACE/scripts/verify_release_preflight.py" release-preflight.json
-          printf 'release_ref=%s\ncommit=%s\npublisher=zrk222\nextension=factoryline-vscode\n' \
-            "$RELEASE_REF" "$(git rev-parse HEAD)" > "$GITHUB_WORKSPACE/vscode-marketplace-candidate/manifest.txt"
+          version="$(node -p "require('./package.json').version")"
+          printf 'release_ref=%s\ncommit=%s\npublisher=zrk222\nextension=factoryline-vscode\nversion=%s\n' \
+            "$RELEASE_REF" "$(git rev-parse HEAD)" "$version" > "$GITHUB_WORKSPACE/vscode-marketplace-candidate/manifest.txt"
 
       - uses: actions/upload-artifact@v7.0.1
         with:
@@ -250,6 +251,10 @@ jobs:
           name: vscode-marketplace-candidate-${{ inputs.release_ref }}
           path: vscode-marketplace-candidate
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - name: Verify sealed candidate
         shell: bash
         env:
@@ -262,11 +267,25 @@ jobs:
           test -f manifest.txt
           grep -Fx "commit=$APPROVED_COMMIT" manifest.txt >/dev/null
           grep -Fx "release_ref=$RELEASE_REF" manifest.txt >/dev/null
-          find . -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print -quit | grep -q .
+          mapfile -t packages < <(find . -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print)
+          test "${#packages[@]}" -eq 1
+          vsix="${packages[0]}"
           test -f release-preflight.json
           python "$GITHUB_WORKSPACE/scripts/verify_release_preflight.py" release-preflight.json
           grep -Fx 'publisher=zrk222' manifest.txt >/dev/null
           grep -Fx 'extension=factoryline-vscode' manifest.txt >/dev/null
+          python - "$vsix" "$(cut -d= -f2- < <(grep -m1 '^version=' manifest.txt))" <<'PY'
+          import json
+          import sys
+          import zipfile
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              package = json.loads(archive.read("extension/package.json"))
+          if (package.get("publisher"), package.get("name"), package.get("version")) != (
+              "zrk222", "factoryline-vscode", sys.argv[2]
+          ):
+              raise SystemExit("sealed VSIX identity does not match its manifest")
+          PY
+          echo "VSCODE_VSIX_PATH=vscode-marketplace-candidate/${vsix#./}" >> "$GITHUB_ENV"
 
       - name: Publish verified VSIX to Visual Studio Marketplace
         env:
@@ -274,6 +293,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npx --yes @vscode/vsce@3.9.1 publish \
-            --packagePath "$(find vscode-marketplace-candidate -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print -quit)" \
+          test -n "$VSCODE_VSIX_PATH"
+          test -f "$VSCODE_VSIX_PATH"
+          (cd vscode-marketplace-candidate && sha256sum --check SHA256SUMS.txt)
+          npx --yes @vscode/vsce@4.0.0 publish \
+            --packagePath "$VSCODE_VSIX_PATH" \
             --skip-duplicate

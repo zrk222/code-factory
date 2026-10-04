@@ -1,0 +1,4 @@
+command: ruff check tests/test_change_review.py
+exit_code: 0
+
+All checks passed!

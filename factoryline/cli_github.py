@@ -8,12 +8,21 @@ from pathlib import Path
 
 
 def add_parser(sub) -> None:
-    """Register advisory GitHub proof-review and assurance-dossier commands."""
+    """Register GitHub context and advisory proof-review commands."""
     github = sub.add_parser(
         "github",
         help="prepare an evidence-bound, advisory GitHub pull-request review without a network call",
     )
     github_sub = github.add_subparsers(required=True, dest="github_cmd")
+    github_overview = github_sub.add_parser(
+        "overview",
+        help="read a bounded overview for this workspace's connected GitHub repository",
+    )
+    github_overview.add_argument("--root", default=".")
+    github_overview.add_argument(
+        "--limit", type=int, default=30, help="maximum rows per section (1-100)"
+    )
+    github_overview.add_argument("--json", action="store_true")
     github_proof_review = github_sub.add_parser(
         "proof-review",
         help="compile a Diff-to-Proof Review into an advisory Check/comment payload",
@@ -144,6 +153,10 @@ def _compile_diff_review(a) -> dict:
 
 def _compile_payload(a) -> dict:
     """Dispatch to the command-specific local evidence compiler."""
+    if a.github_cmd == "overview":
+        from .github_account_overview import build_github_account_overview
+
+        return build_github_account_overview(Path(a.root), limit=a.limit)
     if a.github_cmd == "policy-snapshot":
         return _compile_policy_snapshot(a)
     if a.github_cmd == "assurance-dossier":
@@ -184,6 +197,14 @@ def _write_payload_artifacts(a, payload: dict) -> dict:
 
 def _error_payload(a, exc: Exception) -> dict:
     """Map a caught command failure to its stable public error envelope."""
+    if a.github_cmd == "overview":
+        code = getattr(exc, "code", "GITHUB_OVERVIEW_FAILED")
+        return {
+            "schema": "factory.github-account-overview.error.v1",
+            "marker": code,
+            "code": code,
+            "message": str(exc),
+        }
     assurance = a.github_cmd in {"policy-snapshot", "assurance-dossier"}
     fallback = (
         "GITHUB_ASSURANCE_INPUT_INVALID"
@@ -211,10 +232,11 @@ def _error_payload(a, exc: Exception) -> dict:
 def _report_error(a, exc: Exception) -> int:
     """Print the command failure in JSON or human-readable form."""
     error = _error_payload(a, exc)
+    command = "github overview" if a.github_cmd == "overview" else "github proof review"
     message = (
         json.dumps(error, indent=2, sort_keys=True)
         if a.json
-        else f"github proof review failed: {error['code']}: {exc}"
+        else f"{command} failed: {error['code']}: {exc}"
     )
     print(message, file=sys.stderr)
     return 2
@@ -224,6 +246,46 @@ def _print_success(a, payload: dict) -> None:
     """Render the stable concise terminal summary for a successful command."""
     if a.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    if a.github_cmd == "overview":
+        repository = payload.get("repository") or {}
+        account = payload.get("connected_account") or {}
+        sections = payload.get("sections") or {}
+        print("factory github overview (read-only, connected account context)")
+        print("=" * 58)
+        print(f"state        : {payload['state']}")
+        print(
+            f"repository   : {repository.get('hostname', 'unknown')}/{repository.get('owner', '')}/{repository.get('name', '')}"
+        )
+        print(f"account      : {account.get('login') or 'not connected'}")
+        print(f"branch       : {payload['local_checkout'].get('branch') or 'unknown'}")
+        inventory = sections.get("account_repositories") or {}
+        repository_detail = inventory.get("state", "UNAVAILABLE")
+        if "returned_count" in inventory:
+            repository_detail = (
+                f"{inventory['returned_count']} rows ({repository_detail})"
+            )
+        print(f"repositories : {repository_detail}")
+        for name in (
+            "pull_requests",
+            "issues",
+            "actions",
+            "releases",
+            "rulesets",
+            "branch_protection",
+        ):
+            section = sections.get(name) or {}
+            count = section.get("returned_count")
+            detail = (
+                f"{count} rows"
+                if count is not None
+                else section.get("state", "UNAVAILABLE")
+            )
+            print(f"{name:15}: {detail}")
+        print(f"next action  : {payload['next_action']}")
+        print(
+            "authority    : read-only repository context; no token access or persistence"
+        )
         return
     print(f"factory github {a.github_cmd} (local, advisory only)")
     print("=" * 54)
@@ -251,6 +313,8 @@ def _print_success(a, payload: dict) -> None:
 
 def _success_exit_code(a, payload: dict) -> int:
     """Return review-required status only when explicitly requested."""
+    if a.github_cmd == "overview":
+        return 0 if payload.get("state") == "COMPLETE" else 3
     if (
         a.github_cmd == "assurance-dossier"
         and a.require_aligned
@@ -261,10 +325,11 @@ def _success_exit_code(a, payload: dict) -> int:
 
 
 def run(a) -> int:
-    """Compile local GitHub evidence without network, merge, or credential actions."""
+    """Run bounded GitHub reads or compile local proof without write actions."""
     from .github_assurance_dossier import GitHubAssuranceDossierError
     from .github_plan_proof_review import GitHubPlanProofReviewError
     from .github_proof_review import GitHubProofReviewError
+    from .github_account_overview import GitHubOverviewError
     from .plan_proof_review import PlanProofReviewError
 
     try:
@@ -275,6 +340,7 @@ def run(a) -> int:
         GitHubProofReviewError,
         GitHubPlanProofReviewError,
         GitHubAssuranceDossierError,
+        GitHubOverviewError,
         OSError,
         UnicodeDecodeError,
         json.JSONDecodeError,

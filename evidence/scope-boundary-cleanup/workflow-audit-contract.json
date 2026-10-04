@@ -1,0 +1,115 @@
+{
+  "applicability": [
+    {
+      "applicable": true,
+      "category": "happy_path",
+      "reason": "Focused regression suite covers permitted scope behavior."
+    },
+    {
+      "applicable": true,
+      "category": "validation",
+      "reason": "Focused regression suite and JSON parsing validate policy inputs."
+    },
+    {
+      "applicable": true,
+      "category": "failure_recovery",
+      "reason": "Regression suite verifies blocked paths produce a closed result."
+    },
+    {
+      "applicable": true,
+      "category": "state_consistency",
+      "reason": "Regression suite checks policy and generic boundary fixtures."
+    },
+    {
+      "applicable": true,
+      "category": "security_privacy",
+      "reason": "Regression suite verifies unrelated product paths are rejected."
+    },
+    {
+      "applicable": false,
+      "category": "performance",
+      "reason": "The path-matching algorithm and runtime path are unchanged.",
+      "review_evidence": {
+        "kind": "review",
+        "path": "evidence/scope-boundary-cleanup/applicability-review.md",
+        "sha256": "c3ddaaba1a1ee9a39ad7cf9af10fb5e56b993bec9e009af79e1a5269f503ebe0"
+      }
+    },
+    {
+      "applicable": false,
+      "category": "accessibility",
+      "reason": "No user interface changed.",
+      "review_evidence": {
+        "kind": "review",
+        "path": "evidence/scope-boundary-cleanup/applicability-review.md",
+        "sha256": "c3ddaaba1a1ee9a39ad7cf9af10fb5e56b993bec9e009af79e1a5269f503ebe0"
+      }
+    },
+    {
+      "applicable": false,
+      "category": "external_effects",
+      "reason": "The local configuration/test change makes no provider or network calls.",
+      "review_evidence": {
+        "kind": "review",
+        "path": "evidence/scope-boundary-cleanup/applicability-review.md",
+        "sha256": "c3ddaaba1a1ee9a39ad7cf9af10fb5e56b993bec9e009af79e1a5269f503ebe0"
+      }
+    }
+  ],
+  "candidate": [
+    {
+      "kind": "candidate-config",
+      "path": ".factory/repository-scope.json",
+      "sha256": "c094170e941b4b99d1ae2a5417160e26f4aa74f869d635de064eaafebf5b5698"
+    },
+    {
+      "kind": "candidate-test-source",
+      "path": "tests/test_change_review.py",
+      "sha256": "02a0b17db3c1eff65fb8900e530f8ab83af9dbb3462479e064187282adcea810"
+    }
+  ],
+  "checks": [
+    {
+      "category": "happy_path",
+      "id": "SCOPE_REGRESSION_SUITE",
+      "profiles": [
+        "windows-cpython-3.11"
+      ],
+      "requirement": "Scope guard tests continue to pass with generic external-product fixtures."
+    },
+    {
+      "category": "validation",
+      "id": "POLICY_JSON",
+      "profiles": [
+        "windows-cpython-3.11"
+      ],
+      "requirement": "Repository-scope configuration parses and retains the reserved products root."
+    },
+    {
+      "category": "failure_recovery",
+      "id": "BLOCKED_PRODUCT_ROOT",
+      "profiles": [
+        "windows-cpython-3.11"
+      ],
+      "requirement": "The complete products root remains rejected by the scope guard."
+    },
+    {
+      "category": "state_consistency",
+      "id": "POLICY_FIXTURE_PARITY",
+      "profiles": [
+        "windows-cpython-3.11"
+      ],
+      "requirement": "Generic policy and regression fixture boundaries remain consistent."
+    },
+    {
+      "category": "security_privacy",
+      "id": "OUT_OF_SCOPE_REJECTION",
+      "profiles": [
+        "windows-cpython-3.11"
+      ],
+      "requirement": "Generic external product, memory, and trust path segments remain blocked."
+    }
+  ],
+  "project_id": "code-factory-scope-boundary-cleanup",
+  "schema": "factory.workflow-audit.contract.v1"
+}

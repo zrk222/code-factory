@@ -1,0 +1,5 @@
+command: python -m pytest -q -p pytest_asyncio.plugin tests/test_change_review.py
+exit_code: 0
+
+.....................................                                    [100%]
+37 passed in 10.29s

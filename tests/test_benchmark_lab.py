@@ -1,4 +1,6 @@
 import hashlib
+import json
+from pathlib import Path
 import pytest
 
 from factoryline.benchmark_lab import (
@@ -99,12 +101,46 @@ def test_public_seeded_corpus_executes_real_scanner_and_reports_unsupported_fns(
     assert receipt["metrics"]["stateful_invariant"]["tp"] == 1
     assert receipt["metrics"]["stateful_invariant"]["tn"] == 1
     assert receipt["metrics"]["tenant_isolation"]["fn"] == 1
-    assert receipt["metrics"]["consumer_compatibility"]["fn"] == 1
+    assert receipt["metrics"]["test_oracle_strength"]["fn"] == 3
     assert receipt["metrics"]["overall"]["tp"] == 2
-    assert receipt["metrics"]["overall"]["fn"] == 2
-    assert receipt["metrics"]["overall"]["recall"] == 0.5
+    assert receipt["metrics"]["overall"]["fn"] == 4
+    assert receipt["metrics"]["overall"]["recall"] == pytest.approx(1 / 3)
     assert receipt["metrics"]["tenant_isolation"]["fp"] == 0
     assert receipt["metrics"]["tenant_isolation"]["recall_ci95_wilson"] is not None
+    assert receipt["measured_unsupported_behaviors"]["test_oracle_strength"] == {
+        "state": "MEASURED",
+        "positive_cases": 3,
+        "true_positives": 0,
+        "false_negatives": 3,
+        "recall": 0.0,
+        "recall_ci95_wilson": [0.0, 0.561506],
+    }
     assert receipt["corpus_sha256"] and receipt["scanner_version"]
-    assert len(receipt["source_bindings"]) == 12
+    assert len(receipt["source_bindings"]) == 16
     assert "not independently held out" in receipt["claim_boundary"]
+
+
+def test_public_benchmark_hashes_and_parses_one_corpus_snapshot(tmp_path, monkeypatch):
+    source = (
+        Path(__file__).parents[1] / "factoryline" / "data" / "public_defect_corpus.json"
+    )
+    corpus = tmp_path / "corpus.json"
+    snapshot = source.read_bytes()
+    corpus.write_bytes(snapshot)
+    real_read_bytes = Path.read_bytes
+    reads = 0
+
+    def read_then_replace(path: Path) -> bytes:
+        nonlocal reads
+        payload = real_read_bytes(path)
+        if path.resolve() == corpus.resolve():
+            reads += 1
+            path.write_text(json.dumps({"cases": []}), encoding="utf-8")
+        return payload
+
+    monkeypatch.setattr(Path, "read_bytes", read_then_replace)
+    receipt = run_public_benchmark(corpus)
+
+    assert reads == 1
+    assert receipt["corpus_sha256"] == hashlib.sha256(snapshot).hexdigest()
+    assert receipt["metrics"]["overall"]["tp"] == 2

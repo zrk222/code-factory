@@ -100,11 +100,18 @@ def _vscode_candidate_publish(publish: str) -> bool:
     return (
         "sha256sum --check SHA256SUMS.txt" in publish
         and "test -f manifest.txt" in publish
-        and "factoryline-vscode-*.vsix" in publish
+        and "mapfile -t packages < <(find . -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print)"
+        in publish
+        and 'test "${#packages[@]}" -eq 1' in publish
         and "release-preflight.json" in publish
         and "grep -Fx 'publisher=zrk222' manifest.txt" in publish
         and "grep -Fx 'extension=factoryline-vscode' manifest.txt" in publish
-        and "@vscode/vsce@3.9.1 publish" in publish
+        and 'python - "$vsix"' in publish
+        and 'package.get("publisher"), package.get("name"), package.get("version")'
+        in publish
+        and "VSCODE_VSIX_PATH=vscode-marketplace-candidate/${vsix#./}" in publish
+        and '--packagePath "$VSCODE_VSIX_PATH"' in publish
+        and "@vscode/vsce@4.0.0 publish" in publish
     )
 
 

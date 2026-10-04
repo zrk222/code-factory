@@ -7,6 +7,16 @@ from factoryline.cli import main
 from factoryline.ops_telemetry import lifecycle_inventory
 
 
+def test_github_overview_cli_does_not_write_lifecycle_or_snapshot_data(
+    tmp_path: Path, capsys
+) -> None:
+    assert main(["github", "overview", "--root", str(tmp_path), "--json"]) == 3
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["state"] == "UNAVAILABLE"
+    assert payload["origin_state"] == "UNRESOLVED"
+    assert lifecycle_inventory(tmp_path)["receipt_count"] == 0
+
+
 def test_cli_writes_privacy_safe_lifecycle_receipt(tmp_path: Path, capsys) -> None:
     assert main(["home", "--root", str(tmp_path), "--json"]) == 0
     capsys.readouterr()

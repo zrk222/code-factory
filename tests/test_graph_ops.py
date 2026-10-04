@@ -1349,3 +1349,46 @@ def test_graph_ops_junit_reader_reports_every_case_and_rejects_missing_cases(
     assert unknown["state"] == "INCOMPLETE"
     assert unknown["cases"] == []
     assert "unrecognized status" in unknown["reason"]
+
+
+def test_graph_ops_runtime_coverage_projection_omits_module_details(
+    tmp_path: Path,
+) -> None:
+    from test_runtime_audit import _fixture, _write_report
+
+    _write_report(tmp_path, _fixture(tmp_path))
+
+    snapshot = graph_ops_snapshot(tmp_path)
+    coverage = snapshot["runtime_coverage"]
+
+    assert coverage["schema"] == "factory.runtime-coverage.v1"
+    assert coverage["state"] == "OBSERVED"
+    assert coverage["statements"]["percent"] == 200 / 3
+    assert coverage["branches"]["percent"] == 50.0
+    assert coverage["file_count"] == 1
+    assert coverage["candidate_binding"] == "UNBOUND"
+    assert "files" not in coverage
+
+
+def test_graph_ops_runtime_coverage_absence_is_not_zero(tmp_path: Path) -> None:
+    coverage = graph_ops_snapshot(tmp_path)["runtime_coverage"]
+
+    assert coverage["state"] == "NOT_RUN"
+    assert coverage["statements"] is None
+    assert coverage["branches"] is None
+    assert coverage["file_count"] is None
+
+
+def test_graph_ops_runtime_coverage_ui_separates_metrics_and_uses_token_api() -> None:
+    page = graph_ops_html("session-token")
+
+    assert "Executed Python runtime coverage" in page
+    assert "Runtime statement coverage" in page
+    assert "Runtime branch coverage" in page
+    assert "FORGELINE_STATIC_TEST_INTENT" in page
+    assert "Candidate binding" in page
+    assert "RUNTIME_COVERAGE_STATEMENT_BRANCH_SEPARATE" in page
+    assert "fetch('/api/coverage-report'" in page
+    assert "detail_truncated" in page
+    assert "does not demonstrate test assertion quality" in page
+    assert "innerHTML" not in page
