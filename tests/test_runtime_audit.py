@@ -353,6 +353,20 @@ def _writer(root: Path, monkeypatch, commit: str, outcome: str):
     return writer
 
 
+def test_ci_runtime_coverage_keeps_default_data_file_in_ignored_reports_dir() -> None:
+    import yaml
+
+    workflow_path = Path(__file__).parents[1] / ".github" / "workflows" / "ci.yml"
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    runtime_step = next(
+        step
+        for step in workflow["jobs"]["test"]["steps"]
+        if step.get("id") == "runtime-tests"
+    )
+
+    assert runtime_step["env"]["COVERAGE_FILE"] == ".factory/test-reports/.coverage"
+
+
 def test_ci_receipt_binds_clean_commit_exact_command_and_required_artifacts(
     tmp_path: Path, monkeypatch
 ) -> None:

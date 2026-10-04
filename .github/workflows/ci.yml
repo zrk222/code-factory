@@ -63,6 +63,7 @@ jobs:
         id: runtime-tests
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
         env:
+          COVERAGE_FILE: .factory/test-reports/.coverage
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
         run: >-
           python -m pytest -p pytest_asyncio.plugin -p xdist.plugin -q -n 2 -p pytest_cov.plugin
