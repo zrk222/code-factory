@@ -914,12 +914,16 @@ class MetaConnectorAPI:
         self, environ: Mapping[str, Any]
     ) -> tuple[str, Any, list[tuple[str, str]]]:
         """Stateless, read-only Streamable HTTP over account-scoped summaries."""
-        self._validate_mcp_transport(environ)
+        rejected = self._validate_mcp_transport(environ)
+        if rejected is not None:
+            return rejected
         tenant, subject = self._mcp_identity(environ)
         request = self._mcp_request(environ)
         return self._dispatch_mcp_request(request, environ, tenant, subject)
 
-    def _validate_mcp_transport(self, environ: Mapping[str, Any]) -> None:
+    def _validate_mcp_transport(
+        self, environ: Mapping[str, Any]
+    ) -> tuple[str, Any, list[tuple[str, str]]] | None:
         origin = environ.get("HTTP_ORIGIN")
         public = urlsplit(self.public_base_url or "")
         allowed_origin = f"{public.scheme}://{public.netloc}" if public.netloc else ""

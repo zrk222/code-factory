@@ -112,14 +112,21 @@ def _snapshot():
 
 
 def _mcp_call(
-    app, method, params=None, *, token="test-token", origin=None, request_id=1
+    app,
+    method,
+    params=None,
+    *,
+    token="test-token",
+    origin=None,
+    request_id=1,
+    request_method="POST",
 ):
     payload = {"jsonrpc": "2.0", "id": request_id, "method": method}
     if params is not None:
         payload["params"] = params
     raw = json.dumps(payload).encode()
     env = {
-        "REQUEST_METHOD": "POST",
+        "REQUEST_METHOD": request_method,
         "PATH_INFO": "/mcp",
         "CONTENT_TYPE": "application/json",
         "CONTENT_LENGTH": str(len(raw)),
@@ -136,6 +143,24 @@ def _mcp_call(
 
     data = b"".join(app(env, respond))
     return captured["status"], json.loads(data) if data else None, captured["headers"]
+
+
+def test_mcp_rejects_get_before_authentication_or_body_dispatch(tmp_path, monkeypatch):
+    app = _app(tmp_path)
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("GET must return before authentication or body parsing")
+
+    monkeypatch.setattr(app, "_mcp_identity", unexpected)
+    monkeypatch.setattr(app, "_mcp_request", unexpected)
+
+    status, response, headers = _mcp_call(
+        app, "initialize", request_method="GET", token=""
+    )
+
+    assert status == "405 Method Not Allowed"
+    assert response == {"error": "POST required"}
+    assert headers["Allow"] == "POST"
 
 
 def test_read_only_mcp_lifecycle_and_account_boundary(tmp_path):
