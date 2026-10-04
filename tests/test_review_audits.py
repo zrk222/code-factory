@@ -27,13 +27,25 @@ def test_audit_command_boundary_is_lazily_loaded() -> None:
 
 
 def test_audit_agent_context_cli_routes_specialist_domains(capsys) -> None:
-    assert main([
-        "audit", "agent-context", "--role", "specialty_ai_security_reviewer", "--json"
-    ]) == 0
+    assert (
+        main(
+            [
+                "audit",
+                "agent-context",
+                "--role",
+                "specialty_ai_security_reviewer",
+                "--json",
+            ]
+        )
+        == 0
+    )
     result = json.loads(capsys.readouterr().out)
     assert result["schema"] == "factory.audit-agent-context.v1"
     assert result["role_resolution_state"] == "RESOLVED_FROM_CANONICAL_REGISTRY"
-    assert result["specialist_roles"][0]["specialist_role"] == "specialty_ai_security_reviewer"
+    assert (
+        result["specialist_roles"][0]["specialist_role"]
+        == "specialty_ai_security_reviewer"
+    )
     assert result["domains"]
     assert all(
         row["specialist_role"] == "specialty_ai_security_reviewer"

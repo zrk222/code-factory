@@ -396,26 +396,34 @@ def _public_observations(cases: list, totals: dict) -> tuple[list, list]:
     return rows, sources
 
 
-def _public_agent_actions(rows: list[dict[str, Any]], corpus_sha256: str) -> list[dict[str, Any]]:
+def _public_agent_actions(
+    rows: list[dict[str, Any]], corpus_sha256: str
+) -> list[dict[str, Any]]:
     actions = []
     for row in rows:
         if row["buggy_correct"] and row["fixed_clean"]:
             continue
-        miss_kind = "false negative" if not row["buggy_correct"] else "fixed-case false positive"
+        miss_kind = (
+            "false negative"
+            if not row["buggy_correct"]
+            else "fixed-case false positive"
+        )
         high_risk = row["category"] in {"tenant_isolation", "test_oracle_strength"}
-        actions.append({
-            "id": f"benchmark-{row['id']}",
-            "priority": "P1" if high_risk else "P2",
-            "agent_role": "specialty_ai_security_reviewer"
-            if row["category"] in {"tenant_isolation", "stateful_invariant"}
-            else "specialty_ai_test_reviewer",
-            "category": row["category"],
-            "action": f"Investigate the measured {miss_kind} for seeded case {row['id']}; improve detection or reduce the false alarm without changing the public case labels.",
-            "evidence_to_attach": "Candidate scanner rule/source hash, case and corpus hashes, observed finding codes, and a rerun receipt showing buggy/fixed discrimination.",
-            "case_sha256": row["buggy_sha256"],
-            "corpus_sha256": corpus_sha256,
-            "stop_condition": "Keep the benchmark BLOCKED while a required seeded case is missed or a fixed control is falsely flagged.",
-        })
+        actions.append(
+            {
+                "id": f"benchmark-{row['id']}",
+                "priority": "P1" if high_risk else "P2",
+                "agent_role": "specialty_ai_security_reviewer"
+                if row["category"] in {"tenant_isolation", "stateful_invariant"}
+                else "specialty_ai_test_reviewer",
+                "category": row["category"],
+                "action": f"Investigate the measured {miss_kind} for seeded case {row['id']}; improve detection or reduce the false alarm without changing the public case labels.",
+                "evidence_to_attach": "Candidate scanner rule/source hash, case and corpus hashes, observed finding codes, and a rerun receipt showing buggy/fixed discrimination.",
+                "case_sha256": row["buggy_sha256"],
+                "corpus_sha256": corpus_sha256,
+                "stop_condition": "Keep the benchmark BLOCKED while a required seeded case is missed or a fixed control is falsely flagged.",
+            }
+        )
     return actions
 
 

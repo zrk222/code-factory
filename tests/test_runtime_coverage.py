@@ -46,13 +46,17 @@ def _fixture(root: Path, *, missing_lines: list[int] | None = None) -> dict:
     total = 3 if missing_lines is None else len(missing_lines) + 1
     covered = total - 1
     row = {
-        "summary": _summary(covered=covered, total=total, branches_covered=1, branches_total=2),
+        "summary": _summary(
+            covered=covered, total=total, branches_covered=1, branches_total=2
+        ),
         "executed_lines": [1, 2],
         "missing_lines": [3] if missing_lines is None else missing_lines,
         "executed_branches": [[2, 3]],
         "missing_branches": [[2, -4]],
     }
-    totals = _summary(covered=covered, total=total, branches_covered=1, branches_total=2)
+    totals = _summary(
+        covered=covered, total=total, branches_covered=1, branches_total=2
+    )
     return {
         "meta": {
             "format": 3,
@@ -78,10 +82,18 @@ def _initialize_git(root: Path) -> str:
     tests.parent.mkdir(parents=True, exist_ok=True)
     tests.write_text("def test_demo():\n    assert True\n", encoding="utf-8")
     subprocess.run(["git", "init", "--quiet", str(root)], check=True)
-    for key, value in (("user.name", "Coverage Fixture"), ("user.email", "coverage@example.invalid")):
+    for key, value in (
+        ("user.name", "Coverage Fixture"),
+        ("user.email", "coverage@example.invalid"),
+    ):
         subprocess.run(["git", "-C", str(root), "config", key, value], check=True)
-    subprocess.run(["git", "-C", str(root), "add", ".gitignore", "factoryline", "tests"], check=True)
-    subprocess.run(["git", "-C", str(root), "commit", "--quiet", "-m", "fixture"], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "add", ".gitignore", "factoryline", "tests"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(root), "commit", "--quiet", "-m", "fixture"], check=True
+    )
     return subprocess.run(
         ["git", "-C", str(root), "rev-parse", "HEAD"],
         check=True,
@@ -270,9 +282,7 @@ def test_report_must_cover_the_exact_factoryline_source_inventory(
     tmp_path: Path,
 ) -> None:
     report = _fixture(tmp_path)
-    (tmp_path / "factoryline" / "second.py").write_text(
-        "value = 2\n", encoding="utf-8"
-    )
+    (tmp_path / "factoryline" / "second.py").write_text("value = 2\n", encoding="utf-8")
     _write_report(tmp_path, report)
 
     observed = read_runtime_coverage_report(tmp_path, include_files=True)
@@ -316,7 +326,10 @@ def test_matching_local_receipt_reports_source_hash_match_but_not_authenticity(
         target.parent.mkdir(parents=True, exist_ok=True)
         if name != "coverage_json":
             target.write_text("<testsuites/>\n", encoding="utf-8")
-        hashed_artifacts[name] = {"path": relative, "sha256": sha256(target.read_bytes()).hexdigest()}
+        hashed_artifacts[name] = {
+            "path": relative,
+            "sha256": sha256(target.read_bytes()).hexdigest(),
+        }
     commit = _initialize_git(tmp_path)
     code_hash = source_code_digest(tmp_path)
     started = datetime.now(timezone.utc) - timedelta(minutes=1)
@@ -368,7 +381,9 @@ def test_matching_local_receipt_reports_source_hash_match_but_not_authenticity(
     ).isoformat()
     receipt_path.write_text(json.dumps(receipt_data), encoding="utf-8")
     target = tmp_path / "factoryline" / "demo.py"
-    target.write_text(target.read_text(encoding="utf-8") + "# changed\n", encoding="utf-8")
+    target.write_text(
+        target.read_text(encoding="utf-8") + "# changed\n", encoding="utf-8"
+    )
 
     changed = read_runtime_coverage_report(tmp_path)
 

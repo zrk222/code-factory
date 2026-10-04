@@ -58,7 +58,7 @@ jobs:
         run: python -m pytest -n 2 -q --junitxml=pytest-results.xml --durations=20
       - name: Start runtime coverage receipt
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
-        run: python tools/workflow-audit/write-ci-runtime-coverage.py start
+        run: python scripts/write_ci_runtime_coverage.py start
       - name: Test with runtime statement and branch coverage
         id: runtime-tests
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
@@ -74,7 +74,7 @@ jobs:
         if: always() && matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
         env:
           TEST_OUTCOME: ${{ steps.runtime-tests.outcome }}
-        run: python tools/workflow-audit/write-ci-runtime-coverage.py finish
+        run: python scripts/write_ci_runtime_coverage.py finish
       - name: Upload test results and timing evidence
         if: always() && (matrix.os != 'ubuntu-latest' || matrix.python != '3.11')
         uses: actions/upload-artifact@v7.0.1

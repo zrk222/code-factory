@@ -18,9 +18,7 @@ MAX_RECEIPT_BYTES = 256 * 1024
 MAX_FILES = 5_000
 MAX_SOURCE_FILES = 5_000
 MAX_GAP_LOCATIONS = 20
-LIMITATION = (
-    "Executed-line counts do not establish test assertion quality or software correctness."
-)
+LIMITATION = "Executed-line counts do not establish test assertion quality or software correctness."
 LOCAL_RUNNER = "local-powershell"
 CI_RUNNER = "github-actions"
 LOCAL_COVERAGE_COMMAND = (
@@ -156,11 +154,18 @@ def _count_set(summary: dict[str, Any], *, branches: bool = False) -> dict[str, 
     if covered + missing != total:
         raise ValueError(f"{label} counts do not add up.")
     reported_rate = _rate(covered, total, summary.get(rate_key), rate_key)
-    return {"covered": covered, "total": total, "missing": missing, "percent": reported_rate}
+    return {
+        "covered": covered,
+        "total": total,
+        "missing": missing,
+        "percent": reported_rate,
+    }
 
 
 def _line_locations(value: object, name: str) -> list[int]:
-    if not isinstance(value, list) or any(type(item) is not int or item < 1 for item in value):
+    if not isinstance(value, list) or any(
+        type(item) is not int or item < 1 for item in value
+    ):
         raise ValueError(f"{name} must contain positive line numbers.")
     return value
 
@@ -204,7 +209,9 @@ def _report_module_path(root: Path, raw_path: object) -> str:
     if relative.is_absolute() or ".." in relative.parts or not relative.parts:
         raise ValueError("coverage file path escapes the workspace.")
     if relative.parts[0] != "factoryline" or relative.suffix != ".py":
-        raise ValueError("coverage report includes a path outside factoryline Python source.")
+        raise ValueError(
+            "coverage report includes a path outside factoryline Python source."
+        )
     target = _contained_file(root, Path(*relative.parts))
     if not target.is_file():
         raise ValueError("coverage report references a missing workspace source file.")
@@ -252,7 +259,8 @@ def _module_row(root: Path, raw_path: object, raw_data: object) -> dict[str, Any
         "branches": branches,
         "missing_lines": missing_lines[:MAX_GAP_LOCATIONS],
         "missing_branches": missing_branches[:MAX_GAP_LOCATIONS],
-        "detail_truncated": len(missing_lines) > MAX_GAP_LOCATIONS or len(missing_branches) > MAX_GAP_LOCATIONS,
+        "detail_truncated": len(missing_lines) > MAX_GAP_LOCATIONS
+        or len(missing_branches) > MAX_GAP_LOCATIONS,
     }
 
 
@@ -267,17 +275,29 @@ def _report_datetime(value: object) -> datetime:
     return parsed
 
 
-def _validated_report(root: Path, payload: object) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _validated_report(
+    root: Path, payload: object
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     if not isinstance(payload, dict):
         raise ValueError("coverage report must be a JSON object.")
     meta = payload.get("meta")
     totals = payload.get("totals")
     raw_files = payload.get("files")
-    if not isinstance(meta, dict) or not isinstance(totals, dict) or not isinstance(raw_files, dict):
+    if (
+        not isinstance(meta, dict)
+        or not isinstance(totals, dict)
+        or not isinstance(raw_files, dict)
+    ):
         raise ValueError("coverage report is missing meta, totals, or files.")
     version = meta.get("version")
-    if not isinstance(version, str) or not version.startswith("7.") or meta.get("branch_coverage") is not True:
-        raise ValueError("coverage report must be Coverage.py version 7 with branch coverage enabled.")
+    if (
+        not isinstance(version, str)
+        or not version.startswith("7.")
+        or meta.get("branch_coverage") is not True
+    ):
+        raise ValueError(
+            "coverage report must be Coverage.py version 7 with branch coverage enabled."
+        )
     if not 0 < len(raw_files) <= MAX_FILES:
         raise ValueError("coverage report must contain between 1 and 5,000 files.")
     total_statements = _count_set(totals)
@@ -330,16 +350,28 @@ def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def _git_identity(root: Path) -> tuple[str, bool]:
     try:
         head = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=root, check=True,
-            capture_output=True, text=True, timeout=5,
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
         ).stdout.strip()
         status = subprocess.run(
-            ["git", "status", "--porcelain"], cwd=root, check=True,
-            capture_output=True, text=True, timeout=5,
+            ["git", "status", "--porcelain"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
         ).stdout
     except (OSError, subprocess.SubprocessError) as exc:
-        raise ValueError("current Git commit and worktree state could not be verified.") from exc
-    if len(head) != 40 or any(character not in "0123456789abcdef" for character in head.lower()):
+        raise ValueError(
+            "current Git commit and worktree state could not be verified."
+        ) from exc
+    if len(head) != 40 or any(
+        character not in "0123456789abcdef" for character in head.lower()
+    ):
         raise ValueError("current Git HEAD is not a full commit SHA.")
     return head, bool(status.strip())
 
@@ -354,22 +386,35 @@ def _receipt_status(
     try:
         path = _contained_file(root, RECEIPT_PATH)
         if not path.exists():
-            return {"candidate_binding": "UNBOUND", "receipt_status": "MISSING", "receipt_reason": "No local run receipt is available."}
+            return {
+                "candidate_binding": "UNBOUND",
+                "receipt_status": "MISSING",
+                "receipt_reason": "No local run receipt is available.",
+            }
         raw = path.read_bytes()
         if len(raw) > MAX_RECEIPT_BYTES:
             raise ValueError("coverage run receipt exceeds 256 KiB.")
-        receipt = json.loads(
-            raw.decode("utf-8"), object_pairs_hook=_unique_json_object
-        )
+        receipt = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_json_object)
         _validate_receipt(
-            root, receipt, report_hash, current_code_hash, current_test_hash,
+            root,
+            receipt,
+            report_hash,
+            current_code_hash,
+            current_test_hash,
             report_time,
         )
     except (OSError, ValueError, TypeError, KeyError, RecursionError) as exc:
-        return {"candidate_binding": "UNBOUND", "receipt_status": "MISMATCHED", "receipt_sha256": None, "receipt_reason": str(exc)[:240]}
+        return {
+            "candidate_binding": "UNBOUND",
+            "receipt_status": "MISMATCHED",
+            "receipt_sha256": None,
+            "receipt_reason": str(exc)[:240],
+        }
     runner = receipt.get("runner")
     return {
-        "candidate_binding": "CI_SOURCE_HASH_MATCH" if runner == CI_RUNNER else "LOCAL_SOURCE_HASH_MATCH",
+        "candidate_binding": "CI_SOURCE_HASH_MATCH"
+        if runner == CI_RUNNER
+        else "LOCAL_SOURCE_HASH_MATCH",
         "receipt_status": "MATCHED_UNAUTHENTICATED",
         "receipt_sha256": sha256(raw).hexdigest(),
         "receipt_reason": f"Report and current Python source hashes match; the {runner} receipt is unsigned and not provider-authenticated.",
@@ -399,11 +444,17 @@ def _validate_receipt_header(receipt: dict[str, Any]) -> tuple[str, str]:
     if receipt.get("schema") != "factory.runtime-coverage-run.v1":
         raise ValueError("coverage run receipt has an unsupported schema.")
     if receipt.get("authentication") != "UNAUTHENTICATED":
-        raise ValueError("coverage run receipt must disclose unauthenticated provenance.")
+        raise ValueError(
+            "coverage run receipt must disclose unauthenticated provenance."
+        )
     commit = receipt.get("commit")
     runner = receipt.get("runner")
     environment = receipt.get("environment")
-    if not isinstance(commit, str) or len(commit) != 40 or not isinstance(environment, dict):
+    if (
+        not isinstance(commit, str)
+        or len(commit) != 40
+        or not isinstance(environment, dict)
+    ):
         raise ValueError("coverage run receipt lacks commit or environment identity.")
     _validate_runner_environment(environment)
     if not isinstance(runner, str):
@@ -418,12 +469,12 @@ def _validate_runner_environment(environment: dict[str, Any]) -> None:
         or not isinstance(pytest_cov, str)
         or not pytest_cov.startswith("7.")
     ):
-        raise ValueError("coverage run receipt lacks the pinned test-runner environment.")
+        raise ValueError(
+            "coverage run receipt lacks the pinned test-runner environment."
+        )
 
 
-def _validate_runner_command(
-    receipt: dict[str, Any], runner: str, commit: str
-) -> None:
+def _validate_runner_command(receipt: dict[str, Any], runner: str, commit: str) -> None:
     supported = {
         LOCAL_RUNNER: LOCAL_COVERAGE_COMMAND,
         CI_RUNNER: CI_COVERAGE_COMMAND,
@@ -432,20 +483,31 @@ def _validate_runner_command(
         raise ValueError("coverage run receipt has an unsupported runner identity.")
     if receipt.get("command") != supported[runner]:
         if runner == LOCAL_RUNNER:
-            raise ValueError("local coverage receipt command does not exactly match the supported full-suite command.")
-        raise ValueError("CI coverage receipt command does not exactly match the supported full-suite command.")
+            raise ValueError(
+                "local coverage receipt command does not exactly match the supported full-suite command."
+            )
+        raise ValueError(
+            "CI coverage receipt command does not exactly match the supported full-suite command."
+        )
     if runner != CI_RUNNER:
         return
     github = receipt.get("github_actions")
     required_fields = ("repository", "workflow", "run_id", "run_attempt", "ref")
     if (
         not isinstance(github, dict)
-        or any(not isinstance(github.get(field), str) or not github[field] for field in required_fields)
+        or any(
+            not isinstance(github.get(field), str) or not github[field]
+            for field in required_fields
+        )
         or github.get("commit") != commit
     ):
-        raise ValueError("GitHub Actions coverage receipt lacks run identity or matching commit.")
+        raise ValueError(
+            "GitHub Actions coverage receipt lacks run identity or matching commit."
+        )
     if receipt.get("dirty_tree") is not False:
-        raise ValueError("GitHub Actions coverage receipt was not produced from a clean worktree.")
+        raise ValueError(
+            "GitHub Actions coverage receipt was not produced from a clean worktree."
+        )
 
 
 def _validate_source_hashes(
@@ -453,10 +515,21 @@ def _validate_source_hashes(
 ) -> None:
     if not isinstance(receipt.get("dirty_tree"), bool):
         raise ValueError("coverage run receipt lacks worktree state.")
-    if receipt.get("exit_code") != 0 or receipt.get("source_code_sha256_before") != code_hash or receipt.get("source_code_sha256_after") != code_hash:
-        raise ValueError("coverage run receipt does not match the current Python source or a passing run.")
-    if receipt.get("test_code_sha256_before") != test_hash or receipt.get("test_code_sha256_after") != test_hash:
-        raise ValueError("coverage run receipt does not match current Python test sources.")
+    if (
+        receipt.get("exit_code") != 0
+        or receipt.get("source_code_sha256_before") != code_hash
+        or receipt.get("source_code_sha256_after") != code_hash
+    ):
+        raise ValueError(
+            "coverage run receipt does not match the current Python source or a passing run."
+        )
+    if (
+        receipt.get("test_code_sha256_before") != test_hash
+        or receipt.get("test_code_sha256_after") != test_hash
+    ):
+        raise ValueError(
+            "coverage run receipt does not match current Python test sources."
+        )
 
 
 def _validate_checkout_binding(
@@ -464,7 +537,9 @@ def _validate_checkout_binding(
 ) -> None:
     current_commit, current_dirty = _git_identity(root)
     if commit != current_commit or receipt["dirty_tree"] != current_dirty:
-        raise ValueError("coverage run receipt commit or worktree state differs from the current checkout.")
+        raise ValueError(
+            "coverage run receipt commit or worktree state differs from the current checkout."
+        )
 
 
 def _receipt_timestamps(receipt: dict[str, Any]) -> tuple[datetime, datetime]:
@@ -485,8 +560,12 @@ def _validate_receipt_time_window(
     age = datetime.now(timezone.utc) - finished.astimezone(timezone.utc)
     if age < timedelta(0) or age > timedelta(hours=24):
         raise ValueError("coverage run receipt is older than 24 hours or future-dated.")
-    if report_time < started - timedelta(seconds=5) or report_time > finished + timedelta(seconds=5):
-        raise ValueError("coverage report timestamp falls outside the recorded test run.")
+    if report_time < started - timedelta(
+        seconds=5
+    ) or report_time > finished + timedelta(seconds=5):
+        raise ValueError(
+            "coverage report timestamp falls outside the recorded test run."
+        )
 
 
 def _validate_receipt_artifacts(
@@ -505,8 +584,12 @@ def _validate_receipt_artifacts(
         if not isinstance(item, dict) or item.get("path") != expected_path:
             raise ValueError(f"coverage run receipt has an invalid {name} path.")
         artifact_path = _contained_file(root, Path(expected_path))
-        if not artifact_path.is_file() or _file_sha256(artifact_path) != item.get("sha256"):
-            raise ValueError(f"coverage run receipt {name} digest does not match the artifact.")
+        if not artifact_path.is_file() or _file_sha256(artifact_path) != item.get(
+            "sha256"
+        ):
+            raise ValueError(
+                f"coverage run receipt {name} digest does not match the artifact."
+            )
     if artifacts["coverage_json"]["sha256"] != report_hash:
         raise ValueError("coverage run receipt digest does not match the JSON report.")
 
@@ -526,7 +609,9 @@ def _read_payload(path: Path) -> object:
     )
 
 
-def read_runtime_coverage_report(root: Path, *, include_files: bool = False) -> dict[str, Any]:
+def read_runtime_coverage_report(
+    root: Path, *, include_files: bool = False
+) -> dict[str, Any]:
     """Read and validate bounded local coverage evidence without executing tests."""
     snapshot = _snapshot()
     try:

@@ -41,8 +41,12 @@ def test_cross_tenant_role_operation_matrix_is_denied_and_traced(
     tenant_a = Principal("owner-a", "tenant-a", ("operator",))
     tenant_b_operator = Principal("owner-b", "tenant-b", ("operator",))
     evidence_a = store.put(tenant_a, _evidence("tenant-a"), evidence_id="a-record")
-    evidence_b = store.put(tenant_b_operator, _evidence("tenant-b"), evidence_id="b-record")
-    request = store.request_approval(tenant_a, "tenant-a", evidence_a["evidence_id"], "boundary matrix")
+    evidence_b = store.put(
+        tenant_b_operator, _evidence("tenant-b"), evidence_id="b-record"
+    )
+    request = store.request_approval(
+        tenant_a, "tenant-a", evidence_a["evidence_id"], "boundary matrix"
+    )
     rows: list[tuple[str, str, str]] = []
 
     for role in ("viewer", "operator", "approver"):
@@ -54,7 +58,11 @@ def test_cross_tenant_role_operation_matrix_is_denied_and_traced(
                 principal, _evidence("tenant-a"), evidence_id=f"cross-{role}"
             ),
             "approval_decide": lambda: store.decide_approval(
-                principal, "tenant-a", request["approval_id"], "approved", "cross-tenant attempt"
+                principal,
+                "tenant-a",
+                request["approval_id"],
+                "approved",
+                "cross-tenant attempt",
             ),
         }
         for operation, attempt in attempts.items():
@@ -67,14 +75,17 @@ def test_cross_tenant_role_operation_matrix_is_denied_and_traced(
     assert [item["evidence_id"] for item in store.list(tenant_a, "tenant-a")] == [
         evidence_a["evidence_id"]
     ]
-    assert [item["evidence_id"] for item in store.list(tenant_b_operator, "tenant-b")] == [
-        evidence_b["evidence_id"]
-    ]
-    assert store.get_approval(
-        Principal("approver-a", "tenant-a", ("approver",)),
-        "tenant-a",
-        request["approval_id"],
-    )["status"] == "pending"
+    assert [
+        item["evidence_id"] for item in store.list(tenant_b_operator, "tenant-b")
+    ] == [evidence_b["evidence_id"]]
+    assert (
+        store.get_approval(
+            Principal("approver-a", "tenant-a", ("approver",)),
+            "tenant-a",
+            request["approval_id"],
+        )["status"]
+        == "pending"
+    )
 
     trace = build_audit_trace(
         _REPO,

@@ -100,10 +100,10 @@ def test_file_size_guard_reports_measurements_and_blocks_file_growth(
         "required": True,
         "required_paths": ["factoryline/large_module.py"],
         "files": {
-                "factoryline/large_module.py": {
-                    "max_lines": 2,
-                    "max_bytes": 100,
-                    "rationale": "Freeze this module until responsibilities are split.",
+            "factoryline/large_module.py": {
+                "max_lines": 2,
+                "max_bytes": 100,
+                "rationale": "Freeze this module until responsibilities are split.",
             }
         },
     }
@@ -215,7 +215,9 @@ def test_self_guard_blocks_when_path_and_budget_are_both_removed(
     tmp_path: Path,
 ) -> None:
     root = Path(architecture_health.__file__).resolve().parents[1]
-    payload = json.loads((root / "architecture-policy.json").read_text(encoding="utf-8"))
+    payload = json.loads(
+        (root / "architecture-policy.json").read_text(encoding="utf-8")
+    )
     missing = "factoryline/graph_ops.py"
     payload["file_size_guard"]["required_paths"].remove(missing)
     payload["file_size_guard"]["files"].pop(missing)
@@ -232,7 +234,9 @@ def test_self_guard_blocks_when_path_and_budget_are_both_removed(
 
 def test_self_guard_blocks_when_file_size_ceiling_is_raised(tmp_path: Path) -> None:
     root = Path(architecture_health.__file__).resolve().parents[1]
-    payload = json.loads((root / "architecture-policy.json").read_text(encoding="utf-8"))
+    payload = json.loads(
+        (root / "architecture-policy.json").read_text(encoding="utf-8")
+    )
     payload["file_size_guard"]["files"]["factoryline/cli.py"]["max_lines"] += 1
     altered_policy = tmp_path / "architecture-policy.json"
     altered_policy.write_text(json.dumps(payload), encoding="utf-8")
@@ -254,7 +258,9 @@ def test_self_guard_applies_to_installed_cli_targeting_checkout(
         "__file__",
         str(tmp_path / "site-packages" / "factoryline" / "architecture_health.py"),
     )
-    payload = json.loads((root / "architecture-policy.json").read_text(encoding="utf-8"))
+    payload = json.loads(
+        (root / "architecture-policy.json").read_text(encoding="utf-8")
+    )
     payload["file_size_guard"]["files"]["factoryline/graph_ops.py"]["max_bytes"] += 1
     altered_policy = tmp_path / "architecture-policy.json"
     altered_policy.write_text(json.dumps(payload), encoding="utf-8")
@@ -276,8 +282,12 @@ def test_self_guard_detects_checkout_with_single_quoted_toml_identity(
     (root / "pyproject.toml").write_text(
         "[project]\nname = 'factoryline-code-factory'\n", encoding="utf-8"
     )
-    payload = json.loads((source_root / "architecture-policy.json").read_text(encoding="utf-8"))
-    (root / "architecture-policy.json").write_text(json.dumps(payload), encoding="utf-8")
+    payload = json.loads(
+        (source_root / "architecture-policy.json").read_text(encoding="utf-8")
+    )
+    (root / "architecture-policy.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
     payload["file_size_guard"] = {
         "required": True,
         "required_paths": ["factoryline/cli.py"],
@@ -333,7 +343,9 @@ def test_self_guard_detects_pinned_default_policy_after_identity_files_change(
         (source_root / "architecture-policy.json").read_bytes()
     )
     alternate = tmp_path / "alternate-policy.json"
-    payload = json.loads((source_root / "architecture-policy.json").read_text(encoding="utf-8"))
+    payload = json.loads(
+        (source_root / "architecture-policy.json").read_text(encoding="utf-8")
+    )
     payload["file_size_guard"]["files"]["factoryline/cli.py"]["max_lines"] += 1
     alternate.write_text(json.dumps(payload), encoding="utf-8")
 

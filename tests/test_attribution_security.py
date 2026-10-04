@@ -15,9 +15,15 @@ from factoryline.appforge_mobile_evidence import verify_mobile_evidence_receipt
 from factoryline.appforge_quality_audit import quality_audit_projection
 from factoryline.assurance import policy_mutations
 from factoryline.capability_packs import pack_payload, sign_pack
-from factoryline.counterexample import CounterexampleError, validate_counterexample_source
+from factoryline.counterexample import (
+    CounterexampleError,
+    validate_counterexample_source,
+)
 from factoryline.e2e_proof import run_supervised_command
-from factoryline.first_lap import verify_activation_receipt, verify_promoted_incident_gates
+from factoryline.first_lap import (
+    verify_activation_receipt,
+    verify_promoted_incident_gates,
+)
 from factoryline.github_proof_review import (
     GitHubProofReviewError,
     validate_github_proof_review_payload,
@@ -32,7 +38,10 @@ from factoryline.plan_proof_review import (
     PlanProofReviewError,
     validate_plan_proof_review,
 )
-from factoryline.repair_sandbox import RepairSandboxError, validate_repair_scope_envelope
+from factoryline.repair_sandbox import (
+    RepairSandboxError,
+    validate_repair_scope_envelope,
+)
 from factoryline.runtime_audit_common import RuntimeAuditError
 from factoryline.runtime_audit_integrity import validate_receipt_decision
 from factoryline.runtime_audit_policy import validate_lane_policy
@@ -89,7 +98,9 @@ def test_plan_proof_review_requires_canonical_schema() -> None:
     assert error.value.code == "PLAN_TO_PROOF_REVIEW_INVALID"
 
 
-def test_oracle_incident_projection_is_empty_for_unmatched_identity(tmp_path: Path) -> None:
+def test_oracle_incident_projection_is_empty_for_unmatched_identity(
+    tmp_path: Path,
+) -> None:
     result = oracle_incidents_for_agent(
         tmp_path,
         {"subject": "agent:reviewer", "identity_sha256": "a" * 64},
@@ -153,12 +164,15 @@ def test_capability_pack_payload_hashes_pack_files(tmp_path: Path) -> None:
     assert payload["schema"] == "factory.capability_pack.payload.v1"
     assert payload["pack_id"] == "sample"
     assert payload["version"] == "1.2.3"
-    assert payload["files"]["pack.yaml"] == hashlib.sha256(
-        manifest_path.read_bytes()
-    ).hexdigest()
+    assert (
+        payload["files"]["pack.yaml"]
+        == hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    )
 
 
-def test_capability_pack_signing_writes_dsse_for_canonical_payload(tmp_path: Path) -> None:
+def test_capability_pack_signing_writes_dsse_for_canonical_payload(
+    tmp_path: Path,
+) -> None:
     pack_root = tmp_path / "pack"
     pack_root.mkdir()
     (pack_root / "pack.yaml").write_text(
@@ -184,14 +198,21 @@ def test_capability_pack_signing_writes_dsse_for_canonical_payload(tmp_path: Pat
     envelope_path = pack_root / "pack.signature.json"
     envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
     assert Path(result["path"]) == envelope_path.resolve()
-    assert result["payload_sha256"] == hashlib.sha256(
-        json.dumps(pack_payload(pack_root), sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    assert (
+        result["payload_sha256"]
+        == hashlib.sha256(
+            json.dumps(
+                pack_payload(pack_root), sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+    )
     assert envelope["payloadType"] == "application/vnd.factory.capability-pack.v1+json"
     assert envelope["signatures"][0]["keyid"] == "test-key"
 
 
-def test_mobile_evidence_verifier_reports_missing_receipt_for_review(tmp_path: Path) -> None:
+def test_mobile_evidence_verifier_reports_missing_receipt_for_review(
+    tmp_path: Path,
+) -> None:
     result = verify_mobile_evidence_receipt(tmp_path, tmp_path / "missing.json")
 
     assert result["ok"] is False

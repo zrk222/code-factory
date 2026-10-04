@@ -19,7 +19,11 @@ from factoryline.fix_workflow import FixWorkflowError, load_fix_json
 from factoryline.integrations import SCMEvent, event_json, roles_from_groups
 from factoryline.journey_proof import JourneyProofError, validate_failure_capsule
 from factoryline.live_activity import LiveActivity, activity_snapshot, request_stop
-from factoryline.live_feedback import LiveFeedbackError, load_live_json, validate_live_manifest
+from factoryline.live_feedback import (
+    LiveFeedbackError,
+    load_live_json,
+    validate_live_manifest,
+)
 from factoryline.ops_telemetry import record_lifecycle
 from factoryline.receipt_index import indexed_receipt_paths
 from factoryline.refinement import pareto_win
@@ -137,7 +141,10 @@ def test_scm_event_json_is_canonical_and_preserves_normalized_identity() -> None
     encoded = event_json(event)
 
     assert json.loads(encoded) == event.to_dict()
-    assert encoded == json.dumps(event.to_dict(), sort_keys=True, separators=(",", ":")).encode()
+    assert (
+        encoded
+        == json.dumps(event.to_dict(), sort_keys=True, separators=(",", ":")).encode()
+    )
 
 
 def test_failure_capsule_validator_rejects_unbound_input(tmp_path: Path) -> None:
@@ -162,7 +169,9 @@ def test_live_json_loader_rejects_non_object_manifest(tmp_path: Path) -> None:
     assert error.value.code == "E_LIVE_JSON"
 
 
-def test_lifecycle_writer_excludes_raw_arguments_and_workspace_paths(tmp_path: Path) -> None:
+def test_lifecycle_writer_excludes_raw_arguments_and_workspace_paths(
+    tmp_path: Path,
+) -> None:
     destination = record_lifecycle(
         tmp_path,
         ["create", "private prompt text", "--root", str(tmp_path)],
@@ -231,7 +240,9 @@ def test_run_metrics_load_and_export_remain_aggregate_safe(tmp_path: Path) -> No
     assert "private-feature-name" not in written.read_text(encoding="utf-8")
 
 
-def test_savings_pair_loader_ignores_malformed_and_foreign_files(tmp_path: Path) -> None:
+def test_savings_pair_loader_ignores_malformed_and_foreign_files(
+    tmp_path: Path,
+) -> None:
     pair_dir = tmp_path / ".factory" / "savings"
     pair_dir.mkdir(parents=True)
     (pair_dir / "broken.json").write_text("{", encoding="utf-8")
@@ -240,7 +251,9 @@ def test_savings_pair_loader_ignores_malformed_and_foreign_files(tmp_path: Path)
     assert load_savings_pairs(tmp_path) == []
 
 
-def test_live_activity_stage_completion_updates_only_observed_counts(tmp_path: Path) -> None:
+def test_live_activity_stage_completion_updates_only_observed_counts(
+    tmp_path: Path,
+) -> None:
     activity = LiveActivity(tmp_path, "run-attribution", "feature", 2)
     activity.start()
     activity.stage_started("forgeline", "verify-tests")

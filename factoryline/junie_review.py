@@ -22,26 +22,80 @@ from .runtime_coverage import read_runtime_coverage_report
 MAX_CHANGED_PATHS = 20
 MAX_RESPONSE_BYTES = 64 * 1024
 MAX_COVERAGE_LOCATIONS = 20
-_SECURITY_LANGUAGES = frozenset({
-    "python", "javascript", "typescript", "java", "kotlin", "go", "rust",
-    "csharp", "c", "c_header", "cpp", "objc", "swift", "ruby", "php", "shell",
-})
-_SOURCE_LANGUAGES = _SECURITY_LANGUAGES | frozenset({
-    "sql", "terraform", "hcl", "gradle", "gradle_kotlin", "scala", "dart",
-    "vue", "svelte",
-})
-_DEPENDENCY_FILES = frozenset({
-    "cargo.lock", "composer.lock", "go.mod", "go.sum", "package-lock.json",
-    "pnpm-lock.yaml", "poetry.lock", "pyproject.toml", "requirements.txt",
-    "uv.lock", "yarn.lock", "pom.xml", "build.gradle", "build.gradle.kts",
-})
-_API_CONTRACT_NAMES = frozenset({
-    "openapi.json", "openapi.yaml", "openapi.yml", "swagger.json", "swagger.yaml",
-    "asyncapi.json", "asyncapi.yaml", "asyncapi.yml",
-})
-_CONFIG_LANGUAGES = frozenset({
-    "terraform", "hcl", "dockerfile", "yaml", "toml", "ini", "properties",
-})
+_SECURITY_LANGUAGES = frozenset(
+    {
+        "python",
+        "javascript",
+        "typescript",
+        "java",
+        "kotlin",
+        "go",
+        "rust",
+        "csharp",
+        "c",
+        "c_header",
+        "cpp",
+        "objc",
+        "swift",
+        "ruby",
+        "php",
+        "shell",
+    }
+)
+_SOURCE_LANGUAGES = _SECURITY_LANGUAGES | frozenset(
+    {
+        "sql",
+        "terraform",
+        "hcl",
+        "gradle",
+        "gradle_kotlin",
+        "scala",
+        "dart",
+        "vue",
+        "svelte",
+    }
+)
+_DEPENDENCY_FILES = frozenset(
+    {
+        "cargo.lock",
+        "composer.lock",
+        "go.mod",
+        "go.sum",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "poetry.lock",
+        "pyproject.toml",
+        "requirements.txt",
+        "uv.lock",
+        "yarn.lock",
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+    }
+)
+_API_CONTRACT_NAMES = frozenset(
+    {
+        "openapi.json",
+        "openapi.yaml",
+        "openapi.yml",
+        "swagger.json",
+        "swagger.yaml",
+        "asyncapi.json",
+        "asyncapi.yaml",
+        "asyncapi.yml",
+    }
+)
+_CONFIG_LANGUAGES = frozenset(
+    {
+        "terraform",
+        "hcl",
+        "dockerfile",
+        "yaml",
+        "toml",
+        "ini",
+        "properties",
+    }
+)
 _GAP_MEASUREMENT_LINKS = {
     "pattern_and_guard_path_audit": "pattern_and_guard_path_audit",
     "security_language_coverage": "security_language_coverage",
@@ -103,7 +157,11 @@ class JunieReviewError(ValueError):
 
 def _canonical(value: object) -> bytes:
     return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
     ).encode("utf-8")
 
 
@@ -136,14 +194,18 @@ def _changed_paths(root: Path, arguments: object) -> list[str]:
             or ":" in relative.parts[0]
             or any(part in {"", ".", ".."} for part in relative.parts)
         ):
-            raise JunieReviewError("changelist paths must be normalized and workspace-relative")
+            raise JunieReviewError(
+                "changelist paths must be normalized and workspace-relative"
+            )
         target = (workspace / Path(*relative.parts)).resolve()
         try:
             target.relative_to(workspace)
         except ValueError as exc:
             raise JunieReviewError("a changelist path escapes the workspace") from exc
         if not target.is_file():
-            raise JunieReviewError("every changelist path must name an existing regular file")
+            raise JunieReviewError(
+                "every changelist path must name an existing regular file"
+            )
         result.append(relative.as_posix())
     if len(result) != len(set(result)):
         raise JunieReviewError("changelist paths must be unique")
@@ -154,8 +216,20 @@ def _steps(
     trace_inputs: dict[str, str], paths: list[str], gaps: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     references = [
-        ("changed-paths", trace_inputs["candidate"], "CHANGELIST_PATH_VALIDATION", "SCOPE_HASHED", "PASS"),
-        ("runtime-receipt", trace_inputs["runtime"], "RUNTIME_RECEIPT_VALIDATION", "RUNTIME_EVIDENCE_BOUND", trace_inputs["runtime_state"]),
+        (
+            "changed-paths",
+            trace_inputs["candidate"],
+            "CHANGELIST_PATH_VALIDATION",
+            "SCOPE_HASHED",
+            "PASS",
+        ),
+        (
+            "runtime-receipt",
+            trace_inputs["runtime"],
+            "RUNTIME_RECEIPT_VALIDATION",
+            "RUNTIME_EVIDENCE_BOUND",
+            trace_inputs["runtime_state"],
+        ),
     ]
     result = [
         {
@@ -171,14 +245,16 @@ def _steps(
     source_paths = paths[:10]
     for gap in gaps:
         gap_state = gap["trace_state"]
-        result.append({
-            "step_id": f"gap-{gap['id']}",
-            "input": f"sha256:{_hash({key: value for key, value in gap.items() if key != 'trace_state'})}",
-            "guard": f"GAP_{gap['id'].upper()}",
-            "decision": f"REPORT_{gap_state}",
-            "state": gap_state,
-            "source_paths": source_paths,
-        })
+        result.append(
+            {
+                "step_id": f"gap-{gap['id']}",
+                "input": f"sha256:{_hash({key: value for key, value in gap.items() if key != 'trace_state'})}",
+                "guard": f"GAP_{gap['id'].upper()}",
+                "decision": f"REPORT_{gap_state}",
+                "state": gap_state,
+                "source_paths": source_paths,
+            }
+        )
     return result
 
 
@@ -205,7 +281,8 @@ def _known_gaps(
         manifest_present = False
         manifest_status = "UNREADABLE"
     non_python = [
-        path for path in paths
+        path
+        for path in paths
         if _language(path) in _SECURITY_LANGUAGES and _language(path) != "python"
     ]
     python_paths = [path for path in paths if _language(path) == "python"]
@@ -222,40 +299,69 @@ def _known_gaps(
         path for path in paths if PurePosixPath(path).name.lower() in _DEPENDENCY_FILES
     ]
     configuration_paths = [
-        path for path in paths
+        path
+        for path in paths
         if _language(path) in _CONFIG_LANGUAGES
-        or any(part.lower() in {"config", "configuration", "infra", "infrastructure", "deploy", "k8s", "helm"}
-               for part in PurePosixPath(path).parts)
+        or any(
+            part.lower()
+            in {
+                "config",
+                "configuration",
+                "infra",
+                "infrastructure",
+                "deploy",
+                "k8s",
+                "helm",
+            }
+            for part in PurePosixPath(path).parts
+        )
     ]
     migration_paths = [
-        path for path in paths
-        if any(part.lower() in {"migration", "migrations", "alembic", "versions"}
-               for part in PurePosixPath(path).parts)
-        or (PurePosixPath(path).suffix.lower() == ".sql"
-            and any(token in PurePosixPath(path).name.lower()
-                    for token in ("migration", "schema", "ddl")))
+        path
+        for path in paths
+        if any(
+            part.lower() in {"migration", "migrations", "alembic", "versions"}
+            for part in PurePosixPath(path).parts
+        )
+        or (
+            PurePosixPath(path).suffix.lower() == ".sql"
+            and any(
+                token in PurePosixPath(path).name.lower()
+                for token in ("migration", "schema", "ddl")
+            )
+        )
     ]
     api_paths = [
-        path for path in paths
+        path
+        for path in paths
         if PurePosixPath(path).name.lower() in _API_CONTRACT_NAMES
         or PurePosixPath(path).suffix.lower() in {".proto", ".graphql", ".gql"}
     ]
     ui_paths = [
-        path for path in paths
-        if _language(path) in {"javascript", "typescript", "vue", "svelte", "html", "css"}
-        or any(part.lower() in {"ui", "web", "frontend", "mobile", "views", "components"}
-               for part in PurePosixPath(path).parts)
+        path
+        for path in paths
+        if _language(path)
+        in {"javascript", "typescript", "vue", "svelte", "html", "css"}
+        or any(
+            part.lower() in {"ui", "web", "frontend", "mobile", "views", "components"}
+            for part in PurePosixPath(path).parts
+        )
     ]
     workflow_paths = [
-        path for path in paths
+        path
+        for path in paths
         if "/.github/workflows/" in f"/{path.lower()}"
-        or PurePosixPath(path).name.lower() in {"gitlab-ci.yml", "jenkinsfile", "azure-pipelines.yml"}
+        or PurePosixPath(path).name.lower()
+        in {"gitlab-ci.yml", "jenkinsfile", "azure-pipelines.yml"}
     ]
     source_paths = [path for path in paths if _language(path) in _SOURCE_LANGUAGES]
     prompt_paths = [
-        path for path in paths
-        if any(token in PurePosixPath(path).name.lower()
-               for token in ("prompt", "instruction", "agent", "skill", "policy"))
+        path
+        for path in paths
+        if any(
+            token in PurePosixPath(path).name.lower()
+            for token in ("prompt", "instruction", "agent", "skill", "policy")
+        )
     ]
     benchmark = _public_benchmark_measurement()
     manifest_gap_status = {
@@ -266,7 +372,9 @@ def _known_gaps(
     gaps = [
         {
             "id": "pattern_and_guard_path_audit",
-            "status": "MANIFEST_PRESENT_UNVERIFIED" if manifest_present else manifest_gap_status,
+            "status": "MANIFEST_PRESENT_UNVERIFIED"
+            if manifest_present
+            else manifest_gap_status,
             "trace_state": "NOT_RUN" if manifest_present else "UNBOUND",
             "manifest_sha256": manifest_digest,
             "candidate_path_denominator": len(paths),
@@ -276,11 +384,16 @@ def _known_gaps(
         },
         {
             "id": "security_language_coverage",
-            "status": "NON_PYTHON_NOT_COVERED" if non_python else "PYTHON_AST_ONLY_NOT_RUN" if python_paths else "NO_CODE_PATHS",
+            "status": "NON_PYTHON_NOT_COVERED"
+            if non_python
+            else "PYTHON_AST_ONLY_NOT_RUN"
+            if python_paths
+            else "NO_CODE_PATHS",
             "trace_state": "UNBOUND" if non_python else "NOT_RUN",
             "python_candidate_denominator": len(python_paths),
             "non_python_candidate_denominator": len(non_python),
-            "recognized_source_candidate_denominator": len(python_paths) + len(non_python),
+            "recognized_source_candidate_denominator": len(python_paths)
+            + len(non_python),
             "unclassified_candidate_denominator": len(unclassified_paths),
             "candidate_paths_measured": 0,
             "affected_paths": non_python or python_paths,
@@ -309,7 +422,9 @@ def _known_gaps(
         {
             "id": "receipt_authenticity",
             "status": "UNAUTHENTICATED",
-            "trace_state": "UNBOUND" if runtime_state != "BOUND_UNAUTHENTICATED" else "INCOMPLETE",
+            "trace_state": "UNBOUND"
+            if runtime_state != "BOUND_UNAUTHENTICATED"
+            else "INCOMPLETE",
             "receipt_sha256": coverage.get("receipt_sha256"),
             "denominator_requirement": "A risk-tiered execution-profile inventory listing every required receipt for this candidate.",
             "affected_paths": paths,
@@ -363,7 +478,9 @@ def _known_gaps(
         },
         {
             "id": "configuration_and_infrastructure_policy",
-            "status": "NOT_RUN" if configuration_paths else "NOT_TRIGGERED_BY_CHANGELIST",
+            "status": "NOT_RUN"
+            if configuration_paths
+            else "NOT_TRIGGERED_BY_CHANGELIST",
             "trace_state": "NOT_RUN" if configuration_paths else "UNBOUND",
             "candidate_path_denominator": len(configuration_paths),
             "candidate_paths_measured": 0,
@@ -432,7 +549,9 @@ def _known_gaps(
         },
         {
             "id": "ci_architecture_and_artifact_provenance",
-            "status": "NOT_RUN" if workflow_paths or source_paths else "NOT_TRIGGERED_BY_CHANGELIST",
+            "status": "NOT_RUN"
+            if workflow_paths or source_paths
+            else "NOT_TRIGGERED_BY_CHANGELIST",
             "trace_state": "NOT_RUN" if workflow_paths or source_paths else "UNBOUND",
             "candidate_path_denominator": len(workflow_paths) + len(source_paths),
             "candidate_paths_executed": 0,
@@ -487,10 +606,15 @@ def _public_benchmark_measurement() -> dict[str, Any]:
         if name == "overall":
             continue
         categories[name] = {
-            "state": "MEASURED" if row["n_positive"] or row["n_negative"] else "NO_CASES",
+            "state": "MEASURED"
+            if row["n_positive"] or row["n_negative"]
+            else "NO_CASES",
             "positive_cases": row["n_positive"],
             "negative_cases": row["n_negative"],
-            "tp": row["tp"], "fp": row["fp"], "tn": row["tn"], "fn": row["fn"],
+            "tp": row["tp"],
+            "fp": row["fp"],
+            "tn": row["tn"],
+            "fn": row["fn"],
             "precision": row["precision"],
             "precision_ci95_wilson": row["precision_ci95_wilson"],
             "recall": row["recall"],
@@ -507,8 +631,16 @@ def _public_benchmark_measurement() -> dict[str, Any]:
         "overall": {
             key: receipt["metrics"]["overall"][key]
             for key in (
-                "tp", "fp", "tn", "fn", "n_positive", "n_negative", "precision",
-                "precision_ci95_wilson", "recall", "recall_ci95_wilson",
+                "tp",
+                "fp",
+                "tn",
+                "fn",
+                "n_positive",
+                "n_negative",
+                "precision",
+                "precision_ci95_wilson",
+                "recall",
+                "recall_ci95_wilson",
             )
         },
         "agent_actions": receipt.get("agent_actions", []),
@@ -529,8 +661,14 @@ def _coverage_details(
     ):
         status = snapshot.get("state")
         return {
-            "state": status if status in {"NOT_RUN", "INCOMPLETE", "FAIL"} else "UNBOUND",
-            "reason": str(snapshot.get("receipt_reason") or snapshot.get("reason") or "Coverage receipt does not bind to the traced candidate.")[:240],
+            "state": status
+            if status in {"NOT_RUN", "INCOMPLETE", "FAIL"}
+            else "UNBOUND",
+            "reason": str(
+                snapshot.get("receipt_reason")
+                or snapshot.get("reason")
+                or "Coverage receipt does not bind to the traced candidate."
+            )[:240],
             "report_sha256": snapshot.get("source_sha256"),
             "receipt_sha256": snapshot.get("receipt_sha256"),
             "receipt_status": snapshot.get("receipt_status"),
@@ -541,8 +679,16 @@ def _coverage_details(
             "modules": [],
             "limitation": snapshot["RUNTIME_COVERAGE_LIMITATION"],
         }
-    changed = {path for path in paths if path.startswith("factoryline/") and path.endswith(".py")}
-    rows = [item for item in snapshot.get("files", []) if isinstance(item, dict) and item.get("path") in changed]
+    changed = {
+        path
+        for path in paths
+        if path.startswith("factoryline/") and path.endswith(".py")
+    }
+    rows = [
+        item
+        for item in snapshot.get("files", [])
+        if isinstance(item, dict) and item.get("path") in changed
+    ]
     modules: list[dict[str, Any]] = []
     remaining = MAX_COVERAGE_LOCATIONS
     for item in rows:
@@ -550,16 +696,21 @@ def _coverage_details(
         missing_branches = item.get("missing_branches", [])
         line_rows = missing_lines[:remaining] if isinstance(missing_lines, list) else []
         remaining -= len(line_rows)
-        branch_rows = missing_branches[:remaining] if isinstance(missing_branches, list) else []
+        branch_rows = (
+            missing_branches[:remaining] if isinstance(missing_branches, list) else []
+        )
         remaining -= len(branch_rows)
-        modules.append({
-            "path": item["path"],
-            "statements": item["statements"],
-            "branches": item["branches"],
-            "missing_lines": line_rows,
-            "missing_branches": branch_rows,
-            "detail_truncated": item.get("detail_truncated") is True or remaining == 0,
-        })
+        modules.append(
+            {
+                "path": item["path"],
+                "statements": item["statements"],
+                "branches": item["branches"],
+                "missing_lines": line_rows,
+                "missing_branches": branch_rows,
+                "detail_truncated": item.get("detail_truncated") is True
+                or remaining == 0,
+            }
+        )
         if remaining == 0:
             break
     return {
@@ -642,7 +793,10 @@ def _language(path: str) -> str:
 
 
 def _measurements(
-    paths: list[str], coverage: dict[str, Any], gaps: list[dict[str, Any]], trace: dict[str, Any]
+    paths: list[str],
+    coverage: dict[str, Any],
+    gaps: list[dict[str, Any]],
+    trace: dict[str, Any],
 ) -> dict[str, Any]:
     language_counts: dict[str, int] = {}
     for path in paths:
@@ -652,39 +806,68 @@ def _measurements(
     modules = coverage.get("modules", [])
     modules = modules if isinstance(modules, list) else []
     runtime_supported = [
-        path for path in paths
+        path
+        for path in paths
         if path.startswith("factoryline/") and _language(path) == "python"
     ]
     runtime_bound = coverage.get("state") == "BOUND_UNAUTHENTICATED"
-    matched_modules = [
-        item for item in modules
-        if isinstance(item, dict) and item.get("path") in runtime_supported
-    ] if runtime_bound else []
+    matched_modules = (
+        [
+            item
+            for item in modules
+            if isinstance(item, dict) and item.get("path") in runtime_supported
+        ]
+        if runtime_bound
+        else []
+    )
     statement = _aggregate_runtime_measure(matched_modules, "statements")
     branch = _aggregate_runtime_measure(matched_modules, "branches")
     test_paths = [path for path in paths if _is_test_path(path)]
     source_paths = [path for path in paths if _language(path) in _SOURCE_LANGUAGES]
     unsupported_languages = sorted(
-        language for language in language_counts
+        language
+        for language in language_counts
         if language in _SOURCE_LANGUAGES and language != "python"
     )
     unclassified_path_count = language_counts.get("other", 0)
-    dependency_paths = [path for path in paths if PurePosixPath(path).name.lower() in _DEPENDENCY_FILES]
+    dependency_paths = [
+        path for path in paths if PurePosixPath(path).name.lower() in _DEPENDENCY_FILES
+    ]
     configuration_paths = [
-        path for path in paths
+        path
+        for path in paths
         if _language(path) in _CONFIG_LANGUAGES
-        or any(part.lower() in {"config", "configuration", "infra", "infrastructure", "deploy", "k8s", "helm"}
-               for part in PurePosixPath(path).parts)
+        or any(
+            part.lower()
+            in {
+                "config",
+                "configuration",
+                "infra",
+                "infrastructure",
+                "deploy",
+                "k8s",
+                "helm",
+            }
+            for part in PurePosixPath(path).parts
+        )
     ]
     gap_counts: dict[str, int] = {}
     for gap in gaps:
         status = str(gap["status"])
         gap_counts[status] = gap_counts.get(status, 0) + 1
     gap_by_id = {gap["id"]: gap for gap in gaps}
-    api_count = gap_by_id["api_and_external_service_contracts"]["candidate_path_denominator"]
-    migration_count = gap_by_id["migration_and_data_integrity"]["candidate_path_denominator"]
-    ui_count = gap_by_id["accessibility_and_platform_compatibility"]["candidate_path_denominator"]
-    benchmark = gap_by_id["test_oracle_strength"].get("seeded_scanner_benchmark", {"state": "NOT_RUN"})
+    api_count = gap_by_id["api_and_external_service_contracts"][
+        "candidate_path_denominator"
+    ]
+    migration_count = gap_by_id["migration_and_data_integrity"][
+        "candidate_path_denominator"
+    ]
+    ui_count = gap_by_id["accessibility_and_platform_compatibility"][
+        "candidate_path_denominator"
+    ]
+    benchmark = gap_by_id["test_oracle_strength"].get(
+        "seeded_scanner_benchmark", {"state": "NOT_RUN"}
+    )
     result = {
         "schema": "factory.audit-measurements.v1",
         "candidate": {
@@ -697,69 +880,98 @@ def _measurements(
             "unclassified_path_count": unclassified_path_count,
             "python_path_count": python_count,
             "non_python_path_count": len(paths) - python_count,
-            "candidate_source_scope_sha256": _hash({"changed_files": trace.get("changed_files", {})}),
+            "candidate_source_scope_sha256": _hash(
+                {"changed_files": trace.get("changed_files", {})}
+            ),
         },
         "audit_lane_coverage": {
             "measurement_definition": "evidence paths divided by eligible changed paths; zero evidence is not a passing audit",
             "candidate_inventory": _evidence_measure(
-                "MEASURED", len(paths), len(paths),
+                "MEASURED",
+                len(paths),
+                len(paths),
                 "Exact scope is the changed path list supplied to this interface; it is not an assertion that the IDE supplied every changed path.",
                 "Compare the supplied path inventory with the authoritative IDE/SCM changelist and resolve any omitted or unknown files.",
             ),
             "pattern_and_guard_path_audit": _evidence_measure(
-                "NOT_RUN" if gap_by_id["pattern_and_guard_path_audit"]["status"] == "MANIFEST_PRESENT_UNVERIFIED" else "BLOCKED",
-                0, len(paths),
+                "NOT_RUN"
+                if gap_by_id["pattern_and_guard_path_audit"]["status"]
+                == "MANIFEST_PRESENT_UNVERIFIED"
+                else "BLOCKED",
+                0,
+                len(paths),
                 "Denominator is every supplied changed path. Manifest presence is tracked separately and does not count as pattern or guard-path evidence.",
                 gap_by_id["pattern_and_guard_path_audit"]["action"],
             ),
             "security_language_coverage": _evidence_measure(
-                "UNSUPPORTED" if unsupported_languages else "NOT_RUN" if python_count else "APPLICABILITY_REQUIRED",
-                0, len(source_paths),
+                "UNSUPPORTED"
+                if unsupported_languages
+                else "NOT_RUN"
+                if python_count
+                else "APPLICABILITY_REQUIRED",
+                0,
+                len(source_paths),
                 "Denominator is recognized changed source paths only; unclassified paths are reported separately and may require additional scanners.",
                 "Run Python AST and language-appropriate security analyzers for every source language represented in the candidate; bind each result to path hashes.",
             ),
             "python_ast_security": _evidence_measure(
-                "NOT_RUN" if python_count else "APPLICABILITY_REQUIRED", 0, python_count,
+                "NOT_RUN" if python_count else "APPLICABILITY_REQUIRED",
+                0,
+                python_count,
                 "Eligible scope is changed Python source paths only. This read-only report did not execute the scanner.",
                 "Run the Python AST security lane on the exact changed Python source hashes and attach its result receipt.",
             ),
             "non_python_security": _evidence_measure(
                 "UNSUPPORTED" if unsupported_languages else "APPLICABILITY_REQUIRED",
-                0, sum(language_counts.get(language, 0) for language in unsupported_languages),
+                0,
+                sum(
+                    language_counts.get(language, 0)
+                    for language in unsupported_languages
+                ),
                 "The built-in scanner contributes no evidence for changed non-Python source paths.",
                 "Run language-appropriate security analyzers for each changed non-Python source language and bind their receipts.",
             ),
             "secrets": _evidence_measure(
-                "NOT_RUN" if paths else "APPLICABILITY_REQUIRED", 0, len(paths),
+                "NOT_RUN" if paths else "APPLICABILITY_REQUIRED",
+                0,
+                len(paths),
                 "Changed paths are the denominator; the Junie changelist projection does not execute a secret scanner.",
                 "Run secret scanning on changed content and repository history where policy requires it.",
             ),
             "dependencies_and_configuration": _evidence_measure(
                 "NOT_RUN" if dependency_paths else "NOT_TRIGGERED",
-                0, len(dependency_paths),
+                0,
+                len(dependency_paths),
                 "Denominator is only changed, recognized package manifests and lockfiles; this does not inventory unchanged transitive dependencies.",
                 "Run SBOM generation and advisory analysis against the full resolved dependency graph when applicable.",
             ),
             "configuration_and_infrastructure_policy": _evidence_measure(
                 "NOT_RUN" if configuration_paths else "NOT_TRIGGERED",
-                0, len(configuration_paths),
+                0,
+                len(configuration_paths),
                 "Denominator is configuration and IaC paths identified by known extensions or deployment directory names.",
                 "Run declared configuration/IaC policy checks and bind the effective-environment result to these paths.",
             ),
             "unclassified_file_scope": _evidence_measure(
-                "CLASSIFICATION_REQUIRED" if unclassified_path_count else "COMPLETE_BY_EXTENSION",
+                "CLASSIFICATION_REQUIRED"
+                if unclassified_path_count
+                else "COMPLETE_BY_EXTENSION",
                 0 if unclassified_path_count else len(paths),
                 len(paths),
                 "Files with unrecognized extensions are counted as unclassified; no binary/content sniffing is performed.",
                 "Classify each unrecognized path as source, generated, binary, data, or documentation and assign applicable audit lanes.",
             ),
             "runtime_statement_coverage": _evidence_measure(
-                "UNSUPPORTED", 0, 0,
+                "UNSUPPORTED",
+                0,
+                0,
                 "Target-project statement totals are not available from the internal Coverage.py report. Internal module receipt binding is reported separately under runtime_coverage.",
                 "Run the target project's native statement instrumentation and attach discovered/covered statement counts with a candidate-bound receipt.",
             ),
             "runtime_branch_coverage": _evidence_measure(
-                "UNSUPPORTED", 0, 0,
+                "UNSUPPORTED",
+                0,
+                0,
                 "Target-project branch totals are not available from the internal Coverage.py report. Internal module receipt binding is reported separately under runtime_coverage.",
                 "Run target-native branch instrumentation and attach discovered/covered branch counts with a candidate-bound receipt.",
             ),
@@ -774,54 +986,81 @@ def _measurements(
                 "next_action": "Run mutation or seeded-defect checks against changed behavior and bind surviving-mutant results to this candidate.",
             },
             "dynamic_runtime_and_fuzz": _evidence_measure(
-                "NOT_RUN" if source_paths else "APPLICABILITY_REQUIRED", 0, len(source_paths),
+                "NOT_RUN" if source_paths else "APPLICABILITY_REQUIRED",
+                0,
+                len(source_paths),
                 "Changed source paths are a scope signal only; runtime scenarios, reachable states, and fuzz/property input domains were not inventoried.",
                 "Declare runtime scenarios and invariants, then run bounded property/fuzz and dynamic checks in an isolated runner.",
             ),
             "seeded_scanner_benchmark": {
                 "state": benchmark.get("state", "NOT_MEASURED"),
-                "measurement_state": _measurement_state(str(benchmark.get("state", "NOT_MEASURED"))),
+                "measurement_state": _measurement_state(
+                    str(benchmark.get("state", "NOT_MEASURED"))
+                ),
                 "eligible_cases": benchmark.get("case_count"),
                 "measured_cases": benchmark.get("case_count"),
-                "observation_completion_percent": 100.0 if benchmark.get("case_count") else None,
-                "denominator_state": "KNOWN_PUBLIC_CORPUS_CASES" if benchmark.get("case_count") else "UNKNOWN",
+                "observation_completion_percent": 100.0
+                if benchmark.get("case_count")
+                else None,
+                "denominator_state": "KNOWN_PUBLIC_CORPUS_CASES"
+                if benchmark.get("case_count")
+                else "UNKNOWN",
                 "basis": "This measures the public, hand-labeled FactoryLine scanner corpus; it is not the target candidate or independent holdout.",
                 "next_action": "Resolve every case-level benchmark action, add independent representative holdout cases, and publish category confusion counts with confidence intervals.",
                 "agent_actions": benchmark.get("agent_actions", []),
             },
             "api_contracts": _evidence_measure(
-                "NOT_RUN" if api_count else "NOT_TRIGGERED", 0, api_count,
+                "NOT_RUN" if api_count else "NOT_TRIGGERED",
+                0,
+                api_count,
                 "Changed schema filenames are a partial path heuristic and miss routes or provider clients implemented only in source.",
                 "Inventory affected routes, clients and providers, then validate schemas and execute controlled consumer/provider contract checks.",
             ),
             "migration_integrity": _evidence_measure(
-                "NOT_RUN" if migration_count else "NOT_TRIGGERED", 0, migration_count,
+                "NOT_RUN" if migration_count else "NOT_TRIGGERED",
+                0,
+                migration_count,
                 "Migration filenames/directories are a partial heuristic and miss ORM-only model changes, backfills, and application schema changes.",
                 "Inventory changed stores, ORM models, schemas and backfills, then run forward/rollback/data-invariant checks on disposable representative data.",
             ),
             "performance_and_concurrency": _evidence_measure(
-                "NOT_RUN" if source_paths else "APPLICABILITY_REQUIRED", 0, len(source_paths),
+                "NOT_RUN" if source_paths else "APPLICABILITY_REQUIRED",
+                0,
+                len(source_paths),
                 "Changed source files provide a scope denominator only; no workload oracle or concurrent execution was supplied.",
                 "Define workload and race invariants, then run bounded performance and concurrency checks.",
             ),
             "accessibility_and_platform": _evidence_measure(
-                "NOT_RUN" if ui_count else "NOT_TRIGGERED", 0, ui_count,
+                "NOT_RUN" if ui_count else "NOT_TRIGGERED",
+                0,
+                ui_count,
                 "UI paths are a partial language/directory heuristic; non-obvious surfaces and platform variants require an explicit surface inventory.",
                 "Inventory affected web/IDE/mobile interactions, then run accessibility-tree and supported-platform checks.",
             ),
             "architecture_and_ci": _evidence_measure(
-                "NOT_RUN" if source_paths else "APPLICABILITY_REQUIRED", 0, len(source_paths),
+                "NOT_RUN" if source_paths else "APPLICABILITY_REQUIRED",
+                0,
+                len(source_paths),
                 "Changed source count is scope only; this read-only MCP operation did not run architecture gates or CI.",
                 "Run ForgeLine architecture checks and required CI on the exact candidate SHA.",
             ),
             "repository_instruction_injection": _evidence_measure(
-                "NOT_RUN" if gap_by_id["repository_instruction_and_injection_resistance"]["candidate_path_denominator"] else "NOT_TRIGGERED",
-                0, gap_by_id["repository_instruction_and_injection_resistance"]["candidate_path_denominator"],
+                "NOT_RUN"
+                if gap_by_id["repository_instruction_and_injection_resistance"][
+                    "candidate_path_denominator"
+                ]
+                else "NOT_TRIGGERED",
+                0,
+                gap_by_id["repository_instruction_and_injection_resistance"][
+                    "candidate_path_denominator"
+                ],
                 "Denominator is changed paths whose file names indicate agent, prompt, instruction, skill, or policy content.",
                 "Run adversarial repository-instruction fixtures through candidate review and tool-output routes.",
             ),
             "authenticated_runner_provenance": {
-                "state": "UNAUTHENTICATED" if coverage.get("receipt_status") == "MATCHED_UNAUTHENTICATED" else "NOT_AVAILABLE",
+                "state": "UNAUTHENTICATED"
+                if coverage.get("receipt_status") == "MATCHED_UNAUTHENTICATED"
+                else "NOT_AVAILABLE",
                 "eligible_receipts": 1 if coverage.get("receipt_sha256") else 0,
                 "authenticated_receipts": 0,
                 "evidence_percent": None,
@@ -913,7 +1152,11 @@ def _measurements(
             "source_bound_changed_modules": len(matched_modules),
             "authenticated_changed_modules": 0,
             "changed_python_modules_measured": len(matched_modules),
-            "changed_python_module_evidence_percent": _percent(len(matched_modules), len(runtime_supported)) if runtime_supported else None,
+            "changed_python_module_evidence_percent": _percent(
+                len(matched_modules), len(runtime_supported)
+            )
+            if runtime_supported
+            else None,
             "statement_counts": statement,
             "branch_counts": branch,
             "report_file_count": coverage.get("file_count"),
@@ -1014,15 +1257,19 @@ def _gap_measurement(gap: dict[str, Any]) -> dict[str, Any]:
         }
         denominator_state = (
             "PARTIAL_LANGUAGE_CLASSIFICATION"
-            if components["unclassified"] else "KNOWN_RECOGNIZED_SOURCE_SCOPE"
+            if components["unclassified"]
+            else "KNOWN_RECOGNIZED_SOURCE_SCOPE"
         )
     else:
         components = None
         denominator_state = (
             gap.get("denominator_quality", "KNOWN_CHANGED_PATH_SCOPE")
-            if denominator is not None else "UNKNOWN_APPLICABILITY"
+            if denominator is not None
+            else "UNKNOWN_APPLICABILITY"
         )
-    evidence = gap.get("candidate_paths_measured", gap.get("candidate_paths_executed", 0))
+    evidence = gap.get(
+        "candidate_paths_measured", gap.get("candidate_paths_executed", 0)
+    )
     if type(evidence) is not int:
         evidence = 0
     affected = gap.get("affected_paths", [])
@@ -1036,7 +1283,9 @@ def _gap_measurement(gap: dict[str, Any]) -> dict[str, Any]:
         "candidate_scope_paths": len(affected) if isinstance(affected, list) else None,
         "denominator_state": denominator_state,
         "evidence_paths": evidence,
-        "evidence_percent": _percent(evidence, denominator) if denominator is not None else None,
+        "evidence_percent": _percent(evidence, denominator)
+        if denominator is not None
+        else None,
         "action": gap["action"],
         "denominator_requirement": gap.get("denominator_requirement"),
     }
@@ -1052,11 +1301,15 @@ def _is_test_path(path: str) -> bool:
     return (
         any(part in {"test", "tests", "spec", "specs", "__tests__"} for part in lowered)
         or filename.startswith(("test_", "spec_"))
-        or filename.endswith(("_test.py", ".test.js", ".test.ts", ".spec.js", ".spec.ts"))
+        or filename.endswith(
+            ("_test.py", ".test.js", ".test.ts", ".spec.js", ".spec.ts")
+        )
     )
 
 
-def _review_workspace_paths(root: Path | str, arguments: object) -> tuple[Path, list[str]]:
+def _review_workspace_paths(
+    root: Path | str, arguments: object
+) -> tuple[Path, list[str]]:
     workspace = Path(root).resolve()
     if not workspace.is_dir():
         raise JunieReviewError("workspace root must be an existing directory")
@@ -1073,8 +1326,10 @@ def _assert_trace_snapshot(
         or (
             runtime_state == "PASS"
             and (
-                trace["runtime_coverage"].get("report_sha256") != runtime_snapshot.get("source_sha256")
-                or trace["runtime_coverage"].get("receipt_sha256") != runtime_snapshot.get("receipt_sha256")
+                trace["runtime_coverage"].get("report_sha256")
+                != runtime_snapshot.get("source_sha256")
+                or trace["runtime_coverage"].get("receipt_sha256")
+                != runtime_snapshot.get("receipt_sha256")
             )
         )
     ):
@@ -1123,7 +1378,9 @@ def _build_review_trace(
     except (OSError, TypeError, ValueError) as exc:
         if isinstance(exc, JunieReviewError):
             raise
-        raise JunieReviewError(str(exc)[:240], "JUNIE_REVIEW_EVIDENCE_UNAVAILABLE") from exc
+        raise JunieReviewError(
+            str(exc)[:240], "JUNIE_REVIEW_EVIDENCE_UNAVAILABLE"
+        ) from exc
 
 
 def _action_execution_contract() -> dict[str, Any]:
@@ -1135,7 +1392,12 @@ def _action_execution_contract() -> dict[str, Any]:
 def _review_measurements(
     workspace: Path, paths: list[str], trace: dict[str, Any], gaps: list[dict[str, Any]]
 ) -> tuple[
-    dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any], str, dict[str, Any]
+    dict[str, Any],
+    dict[str, Any],
+    list[dict[str, Any]],
+    dict[str, Any],
+    str,
+    dict[str, Any],
 ]:
     coverage = _coverage_details(workspace, paths, trace)
     graph = trace["graph_impact"]
@@ -1144,11 +1406,13 @@ def _review_measurements(
         if graph["state"] == "BOUND" and coverage["state"] == "BOUND_UNAUTHENTICATED"
         else "INCOMPLETE"
     )
-    candidate_sha256 = _hash({
-        "candidate": trace["candidate"],
-        "changed_files": trace["changed_files"],
-        "trace_sha256": trace["trace_sha256"],
-    })
+    candidate_sha256 = _hash(
+        {
+            "candidate": trace["candidate"],
+            "changed_files": trace["changed_files"],
+            "trace_sha256": trace["trace_sha256"],
+        }
+    )
     taxonomy_sha256 = audit_taxonomy()["taxonomy_sha256"]
     measurements = _measurements(paths, coverage, gaps, trace)
     measurements["candidate_sha256"] = candidate_sha256
@@ -1156,16 +1420,19 @@ def _review_measurements(
     candidate = {**trace["candidate"], "candidate_sha256": candidate_sha256}
     agent_actions = _agent_actions(measurements)
     contract = _action_execution_contract()
-    measurements["measurement_sha256"] = _hash({
-        "candidate_sha256": candidate_sha256,
-        "changed_files": trace["changed_files"],
-        "trace_contract": (trace["trace_sha256"], contract),
-        "measurements": {
-            key: value for key, value in measurements.items()
-            if key not in {"measurement_sha256", "completeness"}
-        },
-        "agent_actions": agent_actions,
-    })
+    measurements["measurement_sha256"] = _hash(
+        {
+            "candidate_sha256": candidate_sha256,
+            "changed_files": trace["changed_files"],
+            "trace_contract": (trace["trace_sha256"], contract),
+            "measurements": {
+                key: value
+                for key, value in measurements.items()
+                if key not in {"measurement_sha256", "completeness"}
+            },
+            "agent_actions": agent_actions,
+        }
+    )
     measurements["completeness"] = _measurement_completeness(
         measurements, agent_actions, candidate, contract, trace
     )
@@ -1173,10 +1440,15 @@ def _review_measurements(
 
 
 def _review_result(
-    paths: list[str], trace: dict[str, Any], gaps: list[dict[str, Any]],
-    coverage: dict[str, Any], candidate: dict[str, Any],
-    agent_actions: list[dict[str, Any]], contract: dict[str, Any],
-    evidence_state: str, measurements: dict[str, Any],
+    paths: list[str],
+    trace: dict[str, Any],
+    gaps: list[dict[str, Any]],
+    coverage: dict[str, Any],
+    candidate: dict[str, Any],
+    agent_actions: list[dict[str, Any]],
+    contract: dict[str, Any],
+    evidence_state: str,
+    measurements: dict[str, Any],
 ) -> dict[str, Any]:
     path_indexes = {path: index for index, path in enumerate(paths)}
     return {
@@ -1196,11 +1468,15 @@ def _review_result(
                 "status": gap["status"],
                 "trace_state": gap["trace_state"],
                 "affected_path_indices": [
-                    path_indexes[path] for path in gap.get("affected_paths", [])
+                    path_indexes[path]
+                    for path in gap.get("affected_paths", [])
                     if path in path_indexes
                 ],
-                **({"manifest_sha256": gap["manifest_sha256"]}
-                   if gap.get("manifest_sha256") else {}),
+                **(
+                    {"manifest_sha256": gap["manifest_sha256"]}
+                    if gap.get("manifest_sha256")
+                    else {}
+                ),
             }
             for gap in gaps
         },
@@ -1224,27 +1500,41 @@ def build_junie_review(root: Path | str, arguments: object) -> dict[str, Any]:
         paths, trace, gaps, coverage, candidate, actions, contract, state, measurements
     )
     if len(_canonical(result)) > MAX_RESPONSE_BYTES:
-        raise JunieReviewError("review response exceeds the 64 KiB response limit", "JUNIE_REVIEW_TOO_LARGE")
+        raise JunieReviewError(
+            "review response exceeds the 64 KiB response limit",
+            "JUNIE_REVIEW_TOO_LARGE",
+        )
     return result
 
-def _unresolved_measurements(rows: dict[str, Any], measurement_ids: set[str]) -> list[dict[str, Any]]:
+
+def _unresolved_measurements(
+    rows: dict[str, Any], measurement_ids: set[str]
+) -> list[dict[str, Any]]:
     unresolved = []
     for measurement_id in sorted(measurement_ids):
         item = rows.get(measurement_id)
         if not isinstance(item, dict):
-            unresolved.append({
-                "measurement_id": measurement_id, "state": "NOT_MEASURED",
-                "denominator_state": "MISSING_LEDGER_ENTRY",
-                "action_ref": f"agent_actions[{measurement_id}]",
-            })
+            unresolved.append(
+                {
+                    "measurement_id": measurement_id,
+                    "state": "NOT_MEASURED",
+                    "denominator_state": "MISSING_LEDGER_ENTRY",
+                    "action_ref": f"agent_actions[{measurement_id}]",
+                }
+            )
             continue
-        state = item.get("measurement_state") or _measurement_state(str(item.get("state", "NOT_RUN")))
+        state = item.get("measurement_state") or _measurement_state(
+            str(item.get("state", "NOT_RUN"))
+        )
         if state not in {"MEASURED", "NOT_APPLICABLE"}:
-            unresolved.append({
-                "measurement_id": measurement_id, "state": state,
-                "denominator_state": item.get("denominator_state"),
-                "action_ref": f"agent_actions[{measurement_id}]",
-            })
+            unresolved.append(
+                {
+                    "measurement_id": measurement_id,
+                    "state": state,
+                    "denominator_state": item.get("denominator_state"),
+                    "action_ref": f"agent_actions[{measurement_id}]",
+                }
+            )
     return unresolved
 
 
@@ -1252,7 +1542,8 @@ def _action_id_error(action: dict[str, Any], action_ids: set[str]) -> str | None
     measurement_id = action.get("measurement_id")
     fallback = (
         f"benchmark-{action.get('benchmark_action_index')}"
-        if action.get("benchmark_action_index") is not None else measurement_id
+        if action.get("benchmark_action_index") is not None
+        else measurement_id
     )
     action_id = action.get("id", fallback)
     if not isinstance(action_id, str) or action_id in action_ids:
@@ -1262,10 +1553,20 @@ def _action_id_error(action: dict[str, Any], action_ids: set[str]) -> str | None
 
 
 def _action_structure_error(action: dict[str, Any]) -> str | None:
-    required = ("priority", "specialist_role", "measurement_state", "execution_profile", "runner_state")
+    required = (
+        "priority",
+        "specialist_role",
+        "measurement_state",
+        "execution_profile",
+        "runner_state",
+    )
     if not all(action.get(key) for key in required):
         return "agent action is incomplete or lacks a candidate-bound work item"
-    if action.get("applicability_state") not in {"APPLICABLE", "NOT_APPLICABLE", "UNDETERMINED"}:
+    if action.get("applicability_state") not in {
+        "APPLICABLE",
+        "NOT_APPLICABLE",
+        "UNDETERMINED",
+    }:
         return "agent action is incomplete or lacks a candidate-bound work item"
     if not isinstance(action.get("dependencies"), list):
         return "agent action is incomplete or lacks a candidate-bound work item"
@@ -1283,17 +1584,26 @@ def _action_role_error(
     role = action.get("specialist_role")
     if role not in roles:
         return "agent action references an unknown specialist role"
-    if action.get("benchmark_action_index") is None and measurement_id not in roles[role]:
+    if (
+        action.get("benchmark_action_index") is None
+        and measurement_id not in roles[role]
+    ):
         return "agent action role does not own its measurement domain"
-    if action.get("benchmark_action_index") is not None and measurement_id != "seeded_scanner_benchmark":
+    if (
+        action.get("benchmark_action_index") is not None
+        and measurement_id != "seeded_scanner_benchmark"
+    ):
         return "benchmark action references a non-benchmark measurement"
     return None
 
 
 def _resolved_action_types_valid(resolved: dict[str, Any]) -> bool:
     expected = {
-        "action": str, "evidence": str, "denominator": (dict, int, float),
-        "completion": str, "stop": str,
+        "action": str,
+        "evidence": str,
+        "denominator": (dict, int, float),
+        "completion": str,
+        "stop": str,
     }
     return all(isinstance(resolved.get(key), kind) for key, kind in expected.items())
 
@@ -1314,8 +1624,10 @@ def _action_reference_error(
 
 
 def _validate_agent_actions(
-    actions: list[dict[str, Any]], context: dict[str, Any],
-    taxonomy: dict[str, Any], measurement_ids: set[str],
+    actions: list[dict[str, Any]],
+    context: dict[str, Any],
+    taxonomy: dict[str, Any],
+    measurement_ids: set[str],
 ) -> list[str]:
     action_ids: set[str] = set()
     roles = {
@@ -1344,30 +1656,40 @@ def _measurement_completeness(
         {key: rows.get(key) for key in measurement_ids}
     )
     taxonomy = audit_taxonomy()
-    if not isinstance(measurements.get("candidate_sha256"), str) or len(measurements["candidate_sha256"]) != 64:
+    if (
+        not isinstance(measurements.get("candidate_sha256"), str)
+        or len(measurements["candidate_sha256"]) != 64
+    ):
         structural_errors.append("candidate digest is missing or malformed")
     if measurements.get("taxonomy_sha256") != taxonomy["taxonomy_sha256"]:
         structural_errors.append("report taxonomy digest is missing or stale")
     context = {
-        "candidate": candidate, "measurements": measurements,
+        "candidate": candidate,
+        "measurements": measurements,
         "action_execution_contract": action_execution_contract,
-        "agent_actions": agent_actions, "trace": trace,
+        "agent_actions": agent_actions,
+        "trace": trace,
     }
     unresolved = _unresolved_measurements(rows, measurement_ids)
     structural_errors.extend(
         _validate_agent_actions(agent_actions, context, taxonomy, measurement_ids)
     )
     action_measurements = {action.get("measurement_id") for action in agent_actions}
-    missing_actions = {item["measurement_id"] for item in unresolved} - action_measurements
+    missing_actions = {
+        item["measurement_id"] for item in unresolved
+    } - action_measurements
     if missing_actions:
         structural_errors.append(
-            "unresolved measurements lack agent actions: " + ", ".join(sorted(missing_actions))
+            "unresolved measurements lack agent actions: "
+            + ", ".join(sorted(missing_actions))
         )
     benchmark = measurements.get("seeded_scanner_benchmark", {})
     if benchmark.get("state") != "MEASURED" or not benchmark.get("case_count"):
         structural_errors.append("seeded scanner benchmark lacks measured cases")
     return {
-        "state": "COMPLETE" if not unresolved and not structural_errors else "INCOMPLETE",
+        "state": "COMPLETE"
+        if not unresolved and not structural_errors
+        else "INCOMPLETE",
         "required_measurement_count": len(audit_domain_ids()),
         "unresolved_count": len(unresolved),
         "unresolved": unresolved,
@@ -1396,35 +1718,58 @@ def _agent_actions(measurements: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             benchmark_actions = measurement.get("agent_actions", [])
             for index, row in enumerate(benchmark_actions):
-                role = row.get("agent_role", domain.get("specialist_role", "specialty_ai_evaluation_agent"))
-                actions.append({
-                    "measurement_id": measurement_id,
-                    "benchmark_action_index": index,
-                    "specialist_role": role,
-                    "priority": row.get("priority", "P2"),
-                    "measurement_state": "BLOCKED",
-                    "applicability_state": "APPLICABLE",
-                    "dependencies": [],
-                    "execution_profile": "factoryline_public_seeded_corpus",
-                    "runner_state": "HOST_AGENT_EXECUTION",
-                })
+                role = row.get(
+                    "agent_role",
+                    domain.get("specialist_role", "specialty_ai_evaluation_agent"),
+                )
+                actions.append(
+                    {
+                        "measurement_id": measurement_id,
+                        "benchmark_action_index": index,
+                        "specialist_role": role,
+                        "priority": row.get("priority", "P2"),
+                        "measurement_state": "BLOCKED",
+                        "applicability_state": "APPLICABLE",
+                        "dependencies": [],
+                        "execution_profile": "factoryline_public_seeded_corpus",
+                        "runner_state": "HOST_AGENT_EXECUTION",
+                    }
+                )
             continue
         role = domain.get("specialist_role", "audit_orchestrator_agent")
-        priority = "P1" if domain.get("category") in {
-            "security", "security_privacy", "security_operations", "test_oracle",
-            "evidence_trust", "supply_chain", "data_safety", "agent_security",
-            "delivery_integrity", "runtime_behavior",
-        } else "P2"
-        actions.append({
-            "measurement_id": measurement_id,
-            "priority": priority,
-            "measurement_state": state,
-            "specialist_role": role,
-            "applicability_state": measurement.get("applicability_state", "UNDETERMINED"),
-            "execution_profile": "isolated_clean_ci" if state != "UNMEASURABLE" else "applicability_or_denominator_inventory",
-            "runner_state": "HOST_AGENT_EXECUTION",
-            "dependencies": [],
-        })
+        priority = (
+            "P1"
+            if domain.get("category")
+            in {
+                "security",
+                "security_privacy",
+                "security_operations",
+                "test_oracle",
+                "evidence_trust",
+                "supply_chain",
+                "data_safety",
+                "agent_security",
+                "delivery_integrity",
+                "runtime_behavior",
+            }
+            else "P2"
+        )
+        actions.append(
+            {
+                "measurement_id": measurement_id,
+                "priority": priority,
+                "measurement_state": state,
+                "specialist_role": role,
+                "applicability_state": measurement.get(
+                    "applicability_state", "UNDETERMINED"
+                ),
+                "execution_profile": "isolated_clean_ci"
+                if state != "UNMEASURABLE"
+                else "applicability_or_denominator_inventory",
+                "runner_state": "HOST_AGENT_EXECUTION",
+                "dependencies": [],
+            }
+        )
     return actions
 
 

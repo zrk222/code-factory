@@ -7,7 +7,11 @@ import subprocess
 
 import pytest
 
-from factoryline.audit_trace import AuditTraceError, build_audit_trace, verify_audit_trace
+from factoryline.audit_trace import (
+    AuditTraceError,
+    build_audit_trace,
+    verify_audit_trace,
+)
 
 
 def _git(root: Path, *args: str) -> str:
@@ -20,7 +24,9 @@ def _repo(root: Path) -> None:
     (root / "factoryline").mkdir(parents=True)
     (root / "tests").mkdir()
     (root / "factoryline" / "sample.py").write_text("VALUE = 1\n", encoding="utf-8")
-    (root / "tests" / "sample_test.py").write_text("def test_sample(): pass\n", encoding="utf-8")
+    (root / "tests" / "sample_test.py").write_text(
+        "def test_sample(): pass\n", encoding="utf-8"
+    )
     _git(root, "init", "--quiet")
     _git(root, "config", "user.name", "Audit Trace Test")
     _git(root, "config", "user.email", "trace@example.invalid")
@@ -56,7 +62,9 @@ def _trace(root: Path) -> dict:
     )
 
 
-def test_audit_trace_binds_candidate_sources_lanes_and_hash_chain(tmp_path: Path) -> None:
+def test_audit_trace_binds_candidate_sources_lanes_and_hash_chain(
+    tmp_path: Path,
+) -> None:
     _repo(tmp_path)
 
     first = _trace(tmp_path)
@@ -128,12 +136,21 @@ def test_trace_verifier_rejects_resealed_invalid_lanes_and_source_hashes(
     trace = _trace(tmp_path)
 
     def reseal(candidate: dict) -> None:
-        core = {key: value for key, value in candidate.items() if key not in {"trace_id", "trace_sha256"}}
-        encoded = json.dumps(core, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        core = {
+            key: value
+            for key, value in candidate.items()
+            if key not in {"trace_id", "trace_sha256"}
+        }
+        encoded = json.dumps(
+            core, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()
         trace_id = "audit:" + hashlib.sha256(encoded).hexdigest()
         candidate["trace_id"] = trace_id
         envelope = json.dumps(
-            {**core, "trace_id": trace_id}, sort_keys=True, separators=(",", ":"), allow_nan=False
+            {**core, "trace_id": trace_id},
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
         ).encode()
         candidate["trace_sha256"] = hashlib.sha256(envelope).hexdigest()
 

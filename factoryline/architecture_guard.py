@@ -5,12 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+
 try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
-_SELF_SIZE_GUARD_SHA256 = "542d8500ec436852c2d0862a7b8827fd1783a3f3407ca1a916ac8b2efb9b4084"
+_SELF_SIZE_GUARD_SHA256 = (
+    "542d8500ec436852c2d0862a7b8827fd1783a3f3407ca1a916ac8b2efb9b4084"
+)
 
 
 def is_code_factory_root(root: Path) -> bool:
@@ -64,7 +67,9 @@ def file_size_guard_is_pinned(guard: object) -> bool:
 def default_policy_guard_is_pinned(root: Path) -> bool:
     """Require the checkout's canonical policy even when an override is used."""
     try:
-        policy = json.loads((root / "architecture-policy.json").read_text(encoding="utf-8"))
+        policy = json.loads(
+            (root / "architecture-policy.json").read_text(encoding="utf-8")
+        )
     except (OSError, UnicodeError, json.JSONDecodeError):
         return False
     return isinstance(policy, dict) and file_size_guard_is_pinned(

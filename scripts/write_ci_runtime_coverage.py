@@ -131,11 +131,15 @@ def _finish(root: Path = ROOT) -> int:
         "github_actions": github,
         "artifacts": artifacts,
         "failure_reason": artifact_error
-        or (None if passed else "test, clean-checkout, commit, or source binding failed"),
+        or (
+            None if passed else "test, clean-checkout, commit, or source binding failed"
+        ),
     }
     _write(receipt_path, receipt)
     if not passed:
-        print(f"CI_COVERAGE_RECEIPT_FAILED: {receipt['failure_reason']}", file=sys.stderr)
+        print(
+            f"CI_COVERAGE_RECEIPT_FAILED: {receipt['failure_reason']}", file=sys.stderr
+        )
         return 1
     print("CI_COVERAGE_RECEIPT_WRITTEN_UNAUTHENTICATED")
     return 0

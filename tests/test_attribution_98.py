@@ -109,7 +109,9 @@ def test_combine_projection_reports_empty_read_only_state(tmp_path: Path) -> Non
     assert all(value is False for value in result["authority"].values())
 
 
-def test_create_app_exposes_health_and_requires_verified_identity(tmp_path: Path) -> None:
+def test_create_app_exposes_health_and_requires_verified_identity(
+    tmp_path: Path,
+) -> None:
     app = create_app(tmp_path / "control.sqlite3")
     assert isinstance(app, ControlPlaneAPI)
 
@@ -203,9 +205,10 @@ def test_write_output_map_binds_digest_and_lists_expected_paths(tmp_path: Path) 
     rendered = (tmp_path / result["path"]).read_text(encoding="utf-8")
 
     assert result["marker"] == OUTPUT_MAP_MARKER
-    assert result["sha256"] == hashlib.sha256(
-        (tmp_path / result["path"]).read_bytes()
-    ).hexdigest()
+    assert (
+        result["sha256"]
+        == hashlib.sha256((tmp_path / result["path"]).read_bytes()).hexdigest()
+    )
     assert result["file_count"] >= 2
     assert "src/app.py" in rendered
     assert "output inventory, not a completion certificate" in rendered
@@ -242,7 +245,7 @@ def test_execute_replay_stops_after_failed_command(tmp_path: Path) -> None:
     assert result["executed"] is True
     assert result["ok"] is False
     assert [row["status"] for row in result["results"]] == ["ok", "failed"]
-    assert "\"ok\": true" in result["results"][0]["log_tail"]
+    assert '"ok": true' in result["results"][0]["log_tail"]
 
 
 def test_ci_receipt_main_rejects_missing_or_unknown_route() -> None:
@@ -296,9 +299,7 @@ def test_release_train_write_complete_emits_every_declared_stage(
         for path in (tmp_path / "receipts").glob("*.json")
     ]
     observed_stages = {(row["module"], row["stage"]) for row in receipts}
-    expected_stages = {
-        tuple(item.split(":", maxsplit=1)) for item in module["STAGES"]
-    }
+    expected_stages = {tuple(item.split(":", maxsplit=1)) for item in module["STAGES"]}
     assert observed_stages == expected_stages
     assert all(row["feature"] == "release-train" and row["ok"] for row in receipts)
 

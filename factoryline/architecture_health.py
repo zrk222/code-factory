@@ -1065,10 +1065,13 @@ def _file_size_report(
         or any(not isinstance(path, str) for path in required_paths)
         or len(set(required_paths)) != len(required_paths)
         or set(required_paths) != set(budgets)
-        or (factory_root and (
-            not file_size_guard_is_pinned(guard)
-            or not default_policy_guard_is_pinned(root)
-        ))
+        or (
+            factory_root
+            and (
+                not file_size_guard_is_pinned(guard)
+                or not default_policy_guard_is_pinned(root)
+            )
+        )
     ):
         return {"enforced": False, "files": {}}, [
             _finding(

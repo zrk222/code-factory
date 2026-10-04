@@ -1047,7 +1047,12 @@ def _tool_definitions() -> list[dict[str, object]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100,
+                        "default": 30,
+                    }
                 },
                 "additionalProperties": False,
             },
@@ -1147,7 +1152,10 @@ def _tool_definitions() -> list[dict[str, object]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "source": {"type": "string", "const": "jetbrains_active_changelist"},
+                    "source": {
+                        "type": "string",
+                        "const": "jetbrains_active_changelist",
+                    },
                     "changed_paths": {
                         "type": "array",
                         "minItems": 1,
@@ -3065,7 +3073,9 @@ def _audit_agent_context(arguments: object) -> dict[str, object]:
         raise McpError("factory.audit_agent_context accepts only specialist_role")
     role = arguments.get("specialist_role")
     if role is not None and (not isinstance(role, str) or not 1 <= len(role) <= 80):
-        raise McpError("specialist_role must be a non-empty string of at most 80 characters")
+        raise McpError(
+            "specialist_role must be a non-empty string of at most 80 characters"
+        )
     try:
         context = agent_taxonomy_context(role)
     except ValueError as exc:
@@ -3128,10 +3138,25 @@ def _runtime_coverage_status(root: Path, arguments: object) -> dict[str, object]
             )
     snapshot = read_runtime_coverage_report(root, include_files=module is not None)
     summary_fields = (
-        "schema", "state", "source", "source_sha256", "tool_version", "report_time",
-        "source_mtime_utc", "statements", "branches", "file_count", "candidate_binding",
-        "receipt_status", "receipt_sha256", "receipt_reason", "reason_code", "reason",
-        "truncated", "limits", "RUNTIME_COVERAGE_LIMITATION",
+        "schema",
+        "state",
+        "source",
+        "source_sha256",
+        "tool_version",
+        "report_time",
+        "source_mtime_utc",
+        "statements",
+        "branches",
+        "file_count",
+        "candidate_binding",
+        "receipt_status",
+        "receipt_sha256",
+        "receipt_reason",
+        "reason_code",
+        "reason",
+        "truncated",
+        "limits",
+        "RUNTIME_COVERAGE_LIMITATION",
     )
     result: dict[str, object] = {
         "marker": "MCP_RUNTIME_COVERAGE_STATUS_READ_ONLY",
@@ -3141,15 +3166,28 @@ def _runtime_coverage_status(root: Path, arguments: object) -> dict[str, object]
     if module is None:
         return result
     rows = snapshot.get("files")
-    matching = next(
-        (item for item in rows if isinstance(item, dict) and item.get("path") == module),
-        None,
-    ) if isinstance(rows, list) else None
+    matching = (
+        next(
+            (
+                item
+                for item in rows
+                if isinstance(item, dict) and item.get("path") == module
+            ),
+            None,
+        )
+        if isinstance(rows, list)
+        else None
+    )
     if matching is None:
         result["module"] = {
             "path": module,
-            "state": "UNAVAILABLE" if snapshot.get("state") != "OBSERVED" else "NOT_IN_REPORT",
-            "reason": str(snapshot.get("reason") or "Selected module is absent from the validated report.")[:240],
+            "state": "UNAVAILABLE"
+            if snapshot.get("state") != "OBSERVED"
+            else "NOT_IN_REPORT",
+            "reason": str(
+                snapshot.get("reason")
+                or "Selected module is absent from the validated report."
+            )[:240],
         }
         return result
     details = dict(matching)

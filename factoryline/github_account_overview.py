@@ -156,10 +156,19 @@ def _api_read(
 ) -> Any:
     """Issue one explicit GET and return parsed JSON, never provider errors."""
     if endpoint.startswith("/") or ".." in endpoint.split("/"):
-        raise GitHubOverviewError("GITHUB_OVERVIEW_INVALID_REQUEST", "API path is invalid")
+        raise GitHubOverviewError(
+            "GITHUB_OVERVIEW_INVALID_REQUEST", "API path is invalid"
+        )
     command = [
-        gh, "api", "--hostname", host, "--method", "GET",
-        "--jq", jq_filter, endpoint,
+        gh,
+        "api",
+        "--hostname",
+        host,
+        "--method",
+        "GET",
+        "--jq",
+        jq_filter,
+        endpoint,
     ]
     try:
         result = runner(command, root, REQUEST_TIMEOUT_SECONDS)
@@ -266,12 +275,10 @@ def _issue_summary(row: dict[str, Any]) -> dict[str, Any]:
         "state": row.get("state"),
         "updated_at": row.get("updated_at"),
         "labels": [
-            item.get("name") if isinstance(item, dict) else item
-            for item in labels
+            item.get("name") if isinstance(item, dict) else item for item in labels
         ],
         "assignees": [
-            item.get("login") if isinstance(item, dict) else item
-            for item in assignees
+            item.get("login") if isinstance(item, dict) else item for item in assignees
         ],
         "external_text_trust": "UNTRUSTED",
     }
@@ -307,12 +314,12 @@ def _release_summary(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _ruleset_summary(row: dict[str, Any]) -> dict[str, Any]:
-    rule_types = row.get("rule_types") if isinstance(row.get("rule_types"), list) else []
+    rule_types = (
+        row.get("rule_types") if isinstance(row.get("rule_types"), list) else []
+    )
     rules = row.get("rules") if isinstance(row.get("rules"), list) else []
     if not rule_types:
-        rule_types = [
-            item.get("type") for item in rules if isinstance(item, dict)
-        ]
+        rule_types = [item.get("type") for item in rules if isinstance(item, dict)]
     return {
         "id": row.get("id"),
         "name": row.get("name"),
@@ -327,13 +334,16 @@ def _ruleset_summary(row: dict[str, Any]) -> dict[str, Any]:
 def _policy_summary(row: dict[str, Any], branch: str) -> dict[str, Any]:
     protection = row.get("required_status_checks")
     protection = protection if isinstance(protection, dict) else {}
-    checks = protection.get("checks") if isinstance(protection.get("checks"), list) else []
+    checks = (
+        protection.get("checks") if isinstance(protection.get("checks"), list) else []
+    )
     pull_request = row.get("required_pull_request_reviews")
     pull_request = pull_request if isinstance(pull_request, dict) else None
     return {
         "branch": branch,
         "enforce_admins": row.get("enforce_admins", {}).get("enabled")
-        if isinstance(row.get("enforce_admins"), dict) else None,
+        if isinstance(row.get("enforce_admins"), dict)
+        else None,
         "required_status_checks": [
             item.get("context") for item in checks if isinstance(item, dict)
         ],
@@ -343,11 +353,14 @@ def _policy_summary(row: dict[str, Any], branch: str) -> dict[str, Any]:
             else None
         ),
         "required_linear_history": row.get("required_linear_history", {}).get("enabled")
-        if isinstance(row.get("required_linear_history"), dict) else None,
+        if isinstance(row.get("required_linear_history"), dict)
+        else None,
         "allow_force_pushes": row.get("allow_force_pushes", {}).get("enabled")
-        if isinstance(row.get("allow_force_pushes"), dict) else None,
+        if isinstance(row.get("allow_force_pushes"), dict)
+        else None,
         "allow_deletions": row.get("allow_deletions", {}).get("enabled")
-        if isinstance(row.get("allow_deletions"), dict) else None,
+        if isinstance(row.get("allow_deletions"), dict)
+        else None,
     }
 
 
@@ -357,9 +370,14 @@ def _parse_auth_login(text: str) -> str | None:
 
 
 def _api_section(
-    gh: str, host: str, root: Path, endpoint: str, jq_filter: str,
+    gh: str,
+    host: str,
+    root: Path,
+    endpoint: str,
+    jq_filter: str,
     runner: CommandRunner,
-    *, policy: bool = False,
+    *,
+    policy: bool = False,
 ) -> Any | dict[str, Any]:
     try:
         return _api_read(gh, host, root, endpoint, jq_filter, runner)
@@ -370,11 +388,14 @@ def _api_section(
 def _validate_overview_request(root: Path | str, limit: int) -> Path:
     if type(limit) is not int or not 1 <= limit <= MAX_LIMIT:
         raise GitHubOverviewError(
-            "GITHUB_OVERVIEW_INVALID_REQUEST", f"limit must be between 1 and {MAX_LIMIT}"
+            "GITHUB_OVERVIEW_INVALID_REQUEST",
+            f"limit must be between 1 and {MAX_LIMIT}",
         )
     workspace = Path(root).resolve()
     if not workspace.is_dir():
-        raise GitHubOverviewError("GITHUB_OVERVIEW_INVALID_REQUEST", "root must be a directory")
+        raise GitHubOverviewError(
+            "GITHUB_OVERVIEW_INVALID_REQUEST", "root must be a directory"
+        )
     return workspace
 
 
@@ -399,9 +420,16 @@ def _base_overview(
             "response_persisted": False,
         },
         "authority": {
-            "read_repository_context": True, "execution": False, "approval": False,
-            "review": False, "source_write": False, "messaging": False, "merge": False,
-            "release": False, "deployment": False, "credential_access": False,
+            "read_repository_context": True,
+            "execution": False,
+            "approval": False,
+            "review": False,
+            "source_write": False,
+            "messaging": False,
+            "merge": False,
+            "release": False,
+            "deployment": False,
+            "credential_access": False,
         },
     }
     if base["local_checkout"]["changed_paths_truncated"]:
@@ -410,46 +438,69 @@ def _base_overview(
 
 
 def _set_connection_state(
-    base: dict[str, Any], parsed: tuple[str, str, str] | None, gh: str | None,
-    workspace: Path, run: CommandRunner,
+    base: dict[str, Any],
+    parsed: tuple[str, str, str] | None,
+    gh: str | None,
+    workspace: Path,
+    run: CommandRunner,
 ) -> bool:
     if parsed is None:
-        base.update({
-            "state": "UNAVAILABLE", "cli_state": "NOT_CHECKED",
-            "authentication_state": "NOT_CHECKED", "origin_state": "UNRESOLVED",
-            "repository": None, "connected_account": None,
-            "next_action": "Set origin to the intended GitHub repository URL, then retry.",
-        })
+        base.update(
+            {
+                "state": "UNAVAILABLE",
+                "cli_state": "NOT_CHECKED",
+                "authentication_state": "NOT_CHECKED",
+                "origin_state": "UNRESOLVED",
+                "repository": None,
+                "connected_account": None,
+                "next_action": "Set origin to the intended GitHub repository URL, then retry.",
+            }
+        )
         return False
     host, owner, name = parsed
     if not gh:
-        base.update({
-            "state": "UNAVAILABLE", "cli_state": "MISSING",
-            "authentication_state": "NOT_CHECKED", "origin_state": "RESOLVED",
-            "repository": {"hostname": host, "owner": owner, "name": name},
-            "connected_account": None,
-            "next_action": "Install GitHub CLI and connect it with gh auth login.",
-        })
+        base.update(
+            {
+                "state": "UNAVAILABLE",
+                "cli_state": "MISSING",
+                "authentication_state": "NOT_CHECKED",
+                "origin_state": "RESOLVED",
+                "repository": {"hostname": host, "owner": owner, "name": name},
+                "connected_account": None,
+                "next_action": "Install GitHub CLI and connect it with gh auth login.",
+            }
+        )
         return False
     try:
-        auth = run([gh, "auth", "status", "--hostname", host], workspace, REQUEST_TIMEOUT_SECONDS)
+        auth = run(
+            [gh, "auth", "status", "--hostname", host],
+            workspace,
+            REQUEST_TIMEOUT_SECONDS,
+        )
     except (OSError, subprocess.TimeoutExpired):
         auth = None
     text = "" if auth is None else f"{auth.stdout or ''}\n{auth.stderr or ''}"
-    login = _parse_auth_login(text) if auth is not None and auth.returncode == 0 else None
-    base.update({
-        "cli_state": "AVAILABLE",
-        "authentication_state": "CONNECTED" if login else "DISCONNECTED",
-        "origin_state": "RESOLVED",
-        "repository": {"hostname": host, "owner": owner, "name": name},
-        "connected_account": {"login": login} if login else None,
-    })
+    login = (
+        _parse_auth_login(text) if auth is not None and auth.returncode == 0 else None
+    )
+    base.update(
+        {
+            "cli_state": "AVAILABLE",
+            "authentication_state": "CONNECTED" if login else "DISCONNECTED",
+            "origin_state": "RESOLVED",
+            "repository": {"hostname": host, "owner": owner, "name": name},
+            "connected_account": {"login": login} if login else None,
+        }
+    )
     if login:
         return True
-    base.update({
-        "state": "UNAVAILABLE", "required_api_state": "NOT_RUN",
-        "next_action": f"Connect GitHub CLI for {host} with gh auth login, then retry.",
-    })
+    base.update(
+        {
+            "state": "UNAVAILABLE",
+            "required_api_state": "NOT_RUN",
+            "next_action": f"Connect GitHub CLI for {host} with gh auth login, then retry.",
+        }
+    )
     return False
 
 
@@ -460,52 +511,76 @@ def _endpoint_specs(owner: str, name: str, limit: int) -> dict[str, tuple[Any, .
         "account_repositories": (
             f"user/repos?visibility=all&affiliation=owner%2Ccollaborator%2Corganization_member"
             f"&sort=updated&direction=desc&per_page={page}",
-            f"map({_REPOSITORY_FILTER})", None, _repo_summary, True,
+            f"map({_REPOSITORY_FILTER})",
+            None,
+            _repo_summary,
+            True,
         ),
         "pull_requests": (
-            "search/issues?q=" + quote("is:open is:pr", safe="")
+            "search/issues?q="
+            + quote("is:open is:pr", safe="")
             + f"&sort=updated&order=desc&per_page={page}",
-            "{total_count,items:[.items[] | {number,title,html_url,repository_url,state,draft,pull_request:has(\"pull_request\"),updated_at}]}",
-            "items", _pull_summary, True,
+            '{total_count,items:[.items[] | {number,title,html_url,repository_url,state,draft,pull_request:has("pull_request"),updated_at}]}',
+            "items",
+            _pull_summary,
+            True,
         ),
         "issues": (
-            "search/issues?q=" + quote("is:open is:issue", safe="")
+            "search/issues?q="
+            + quote("is:open is:issue", safe="")
             + f"&sort=updated&order=desc&per_page={page}",
             "{total_count,items:[.items[] | {number,title,html_url,repository_url,state,updated_at,labels:[.labels[]?.name],assignees:[.assignees[]?.login]}]}",
-            "items", _issue_summary, True,
+            "items",
+            _issue_summary,
+            True,
         ),
         "actions": (
             f"{repo}/actions/runs?per_page={page}",
             "{workflow_runs:[.workflow_runs[]? | {id,name,workflow_name,status,conclusion,head_branch,head_sha,event,created_at,updated_at,html_url}]}",
-            "workflow_runs", _run_summary, True,
+            "workflow_runs",
+            _run_summary,
+            True,
         ),
         "releases": (
             f"{repo}/releases?per_page={page}",
             "map({tag_name,name,html_url,draft,prerelease,published_at})",
-            None, _release_summary, True,
+            None,
+            _release_summary,
+            True,
         ),
         "rulesets": (
             f"{repo}/rulesets?includes_parents=true&per_page={page}",
             "map({id,name,source,enforcement,target,rule_types:[.rules[]?.type]})",
-            None, _ruleset_summary, False,
+            None,
+            _ruleset_summary,
+            False,
         ),
     }
 
 
 def _fetch_api_responses(
-    endpoints: dict[str, tuple[Any, ...]], gh: str, host: str,
-    workspace: Path, run: CommandRunner,
+    endpoints: dict[str, tuple[Any, ...]],
+    gh: str,
+    host: str,
+    workspace: Path,
+    run: CommandRunner,
 ) -> dict[str, Any]:
     with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_READS) as executor:
         futures = {
-            key: executor.submit(_api_section, gh, host, workspace, spec[0], spec[1], run)
+            key: executor.submit(
+                _api_section, gh, host, workspace, spec[0], spec[1], run
+            )
             for key, spec in endpoints.items()
         }
         return {key: future.result() for key, future in futures.items()}
 
 
 def _section_from_response(
-    key: str, spec: tuple[Any, ...], value: Any, limit: int, origin_full_name: str,
+    key: str,
+    spec: tuple[Any, ...],
+    value: Any,
+    limit: int,
+    origin_full_name: str,
 ) -> tuple[dict[str, Any], bool]:
     endpoint, _query, list_key, summarize, required = spec
     if isinstance(value, dict) and "state" in value and "reason" in value:
@@ -513,27 +588,40 @@ def _section_from_response(
     rows = _items(value, list_key)
     count = value.get("total_count") if isinstance(value, dict) else None
     exact_count = key in {"issues", "pull_requests"}
-    request_count = count if exact_count and type(count) is int and count >= 0 else len(rows)
+    request_count = (
+        count if exact_count and type(count) is int and count >= 0 else len(rows)
+    )
     section = _limited_section(
-        rows, limit=limit, source=endpoint, summarize=summarize,
-        request_count=request_count, exact_total_count=exact_count,
+        rows,
+        limit=limit,
+        source=endpoint,
+        summarize=summarize,
+        request_count=request_count,
+        exact_total_count=exact_count,
     )
     if key == "account_repositories":
         for repo in section.get("items", []):
-            repo["is_workspace_origin"] = repo.get("full_name", "").casefold() == origin_full_name
+            repo["is_workspace_origin"] = (
+                repo.get("full_name", "").casefold() == origin_full_name
+            )
     return section, False
 
 
 def _collect_sections(
-    endpoints: dict[str, tuple[Any, ...]], raw: dict[str, Any],
-    limit: int, owner: str, name: str,
+    endpoints: dict[str, tuple[Any, ...]],
+    raw: dict[str, Any],
+    limit: int,
+    owner: str,
+    name: str,
 ) -> tuple[dict[str, Any], list[str], bool]:
     sections: dict[str, Any] = {}
     failures: list[str] = []
     truncated = False
     origin = f"{owner}/{name}".casefold()
     for key, spec in endpoints.items():
-        sections[key], failed = _section_from_response(key, spec, raw[key], limit, origin)
+        sections[key], failed = _section_from_response(
+            key, spec, raw[key], limit, origin
+        )
         if failed:
             failures.append(key)
         truncated = truncated or sections[key].get("state") == "TRUNCATED"
@@ -541,22 +629,36 @@ def _collect_sections(
 
 
 def _repository_section(
-    sections: dict[str, Any], inventory: Any, gh: str, host: str,
-    workspace: Path, run: CommandRunner, owner: str, name: str,
+    sections: dict[str, Any],
+    inventory: Any,
+    gh: str,
+    host: str,
+    workspace: Path,
+    run: CommandRunner,
+    owner: str,
+    name: str,
     failures: list[str],
 ) -> None:
     repo_path = f"repos/{owner}/{name}"
     origin = f"{owner}/{name}".casefold()
     rows = _items(inventory)
-    match = next((row for row in rows if (
-        isinstance(row.get("full_name"), str)
-        and row["full_name"].casefold() == origin
-        and isinstance(row.get("default_branch"), str)
-        and row["default_branch"]
-    )), None)
+    match = next(
+        (
+            row
+            for row in rows
+            if (
+                isinstance(row.get("full_name"), str)
+                and row["full_name"].casefold() == origin
+                and isinstance(row.get("default_branch"), str)
+                and row["default_branch"]
+            )
+        ),
+        None,
+    )
     if match is not None:
         sections["repository"] = {
-            "state": "AVAILABLE", "source": "account_repositories",
+            "state": "AVAILABLE",
+            "source": "account_repositories",
             "data": _repo_summary(match),
         }
         return
@@ -566,23 +668,33 @@ def _repository_section(
         failures.append("repository")
     elif isinstance(value, dict) and value.get("default_branch"):
         sections["repository"] = {
-            "state": "AVAILABLE", "source": repo_path, "data": _repo_summary(value),
+            "state": "AVAILABLE",
+            "source": repo_path,
+            "data": _repo_summary(value),
         }
     else:
         sections["repository"] = {
-            "state": "UNAVAILABLE", "reason": "INVALID_REPOSITORY_RESPONSE",
+            "state": "UNAVAILABLE",
+            "reason": "INVALID_REPOSITORY_RESPONSE",
         }
         failures.append("repository")
 
 
 def _branch_protection(
-    sections: dict[str, Any], base: dict[str, Any], gh: str, host: str,
-    workspace: Path, run: CommandRunner, owner: str, name: str,
+    sections: dict[str, Any],
+    base: dict[str, Any],
+    gh: str,
+    host: str,
+    workspace: Path,
+    run: CommandRunner,
+    owner: str,
+    name: str,
 ) -> None:
     branch = sections.get("repository", {}).get("data", {}).get("default_branch")
     if not isinstance(branch, str) or not branch:
         sections["branch_protection"] = {
-            "state": "UNAVAILABLE", "reason": "DEFAULT_BRANCH_UNKNOWN",
+            "state": "UNAVAILABLE",
+            "reason": "DEFAULT_BRANCH_UNKNOWN",
         }
         base["policy_visibility"] = "UNAVAILABLE"
         return
@@ -594,19 +706,23 @@ def _branch_protection(
         base["policy_visibility"] = value["state"]
     elif isinstance(value, dict):
         sections["branch_protection"] = {
-            "state": "AVAILABLE", "source": endpoint,
+            "state": "AVAILABLE",
+            "source": endpoint,
             "data": _policy_summary(value, branch),
         }
         base["policy_visibility"] = "AVAILABLE"
     else:
         sections["branch_protection"] = {
-            "state": "UNAVAILABLE", "reason": "INVALID_POLICY_RESPONSE",
+            "state": "UNAVAILABLE",
+            "reason": "INVALID_POLICY_RESPONSE",
         }
         base["policy_visibility"] = "UNAVAILABLE"
 
 
 def _finish_overview(
-    base: dict[str, Any], sections: dict[str, Any], failures: list[str],
+    base: dict[str, Any],
+    sections: dict[str, Any],
+    failures: list[str],
 ) -> dict[str, Any]:
     base["sections"] = sections
     base["required_api_state"] = "FAILED" if failures else "AVAILABLE"
@@ -619,10 +735,10 @@ def _finish_overview(
     base["state"] = "INCOMPLETE" if failures else "PARTIAL" if partial else "COMPLETE"
     base["next_action"] = (
         "Resolve the unavailable required repository sections, then rerun this overview."
-        if failures else
-        "Review unavailable policy sections or truncation before relying on this bounded overview."
-        if base["state"] == "PARTIAL" else
-        "Use the current repository and checkout context to plan the next task."
+        if failures
+        else "Review unavailable policy sections or truncation before relying on this bounded overview."
+        if base["state"] == "PARTIAL"
+        else "Use the current repository and checkout context to plan the next task."
     )
     return base
 
@@ -645,12 +761,21 @@ def build_github_account_overview(
     host, owner, name = parsed
     endpoints = _endpoint_specs(owner, name, limit)
     raw = _fetch_api_responses(endpoints, gh, host, workspace, run)
-    sections, failures, truncated = _collect_sections(endpoints, raw, limit, owner, name)
+    sections, failures, truncated = _collect_sections(
+        endpoints, raw, limit, owner, name
+    )
     if truncated:
         base["collection_state"] = "TRUNCATED"
     _repository_section(
-        sections, raw.get("account_repositories"), gh, host, workspace,
-        run, owner, name, failures,
+        sections,
+        raw.get("account_repositories"),
+        gh,
+        host,
+        workspace,
+        run,
+        owner,
+        name,
+        failures,
     )
     _branch_protection(sections, base, gh, host, workspace, run, owner, name)
     return _finish_overview(base, sections, failures)

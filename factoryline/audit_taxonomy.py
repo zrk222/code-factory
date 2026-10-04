@@ -473,7 +473,13 @@ _DOMAINS: tuple[dict[str, str], ...] = (
 
 
 def _canonical(value: Any) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
 
 
 def audit_taxonomy() -> dict[str, Any]:
@@ -492,7 +498,9 @@ def audit_taxonomy() -> dict[str, Any]:
         "schema": AUDIT_TAXONOMY_SCHEMA,
         "measurement_states": list(MEASUREMENT_STATES),
         "domains": [dict(row) for row in _DOMAINS],
-        "specialist_roles": sorted(role_index.values(), key=lambda row: row["specialist_role"]),
+        "specialist_roles": sorted(
+            role_index.values(), key=lambda row: row["specialist_role"]
+        ),
         "agent_usage_contract": deepcopy(_AGENT_USAGE_CONTRACT),
     }
     return {**core, "taxonomy_sha256": sha256(_canonical(core)).hexdigest()}
@@ -510,7 +518,8 @@ def agent_taxonomy_context(specialist_role: str | None = None) -> dict[str, Any]
     if specialist_role is not None and specialist_role not in role_index:
         raise ValueError(f"unknown CF/ForgeLine specialist role: {specialist_role}")
     selected_roles = (
-        [role_index[specialist_role]] if specialist_role is not None
+        [role_index[specialist_role]]
+        if specialist_role is not None
         else taxonomy["specialist_roles"]
     )
     selected_ids = {
@@ -526,8 +535,7 @@ def agent_taxonomy_context(specialist_role: str | None = None) -> dict[str, Any]
         "identity_scope": "The selected role is a routing label, not an authentication claim about the calling agent.",
         "specialist_roles": selected_roles,
         "domains": [
-            row for row in taxonomy["domains"]
-            if row["measurement_id"] in selected_ids
+            row for row in taxonomy["domains"] if row["measurement_id"] in selected_ids
         ],
         "measurement_states": taxonomy["measurement_states"],
         "agent_usage_contract": taxonomy["agent_usage_contract"],
@@ -574,7 +582,9 @@ _BENCHMARK_REFERENCE_TEMPLATES = {
 
 
 def resolve_agent_action_reference(
-    report: dict[str, Any], action: dict[str, Any], field: str,
+    report: dict[str, Any],
+    action: dict[str, Any],
+    field: str,
     taxonomy: dict[str, Any] | None = None,
 ) -> Any:
     """Resolve only code-owned instructions or sanitized report measurements."""
@@ -604,8 +614,10 @@ def normalize_measurement_state(state: str) -> str:
     if normalized == "NOT_APPLICABLE":
         return "NOT_APPLICABLE"
     if normalized in {
-        "NOT_APPLICABLE_TO_CHANGELIST", "NOT_TRIGGERED",
-        "NOT_TRIGGERED_BY_CHANGELIST", "NO_CODE_PATHS",
+        "NOT_APPLICABLE_TO_CHANGELIST",
+        "NOT_TRIGGERED",
+        "NOT_TRIGGERED_BY_CHANGELIST",
+        "NO_CODE_PATHS",
     }:
         return "UNMEASURABLE"
     if normalized in {"MEASURED", "COMPLETE_BY_EXTENSION", "BOUND_AUTHENTICATED"}:
@@ -630,29 +642,45 @@ def _ledger_applicability_errors(measurement_id: str, row: dict[str, Any]) -> li
     allowed = {"APPLICABLE", "NOT_APPLICABLE", "UNDETERMINED"}
     if applicability_state not in allowed:
         errors.append(f"{measurement_id}: missing or invalid applicability_state")
-    elif (applicability_state == "NOT_APPLICABLE") != (measurement_state == "NOT_APPLICABLE"):
-        errors.append(f"{measurement_id}: NOT_APPLICABLE measurement and applicability states must agree")
+    elif (applicability_state == "NOT_APPLICABLE") != (
+        measurement_state == "NOT_APPLICABLE"
+    ):
+        errors.append(
+            f"{measurement_id}: NOT_APPLICABLE measurement and applicability states must agree"
+        )
     if measurement_state == "NOT_APPLICABLE":
         applicability = row.get("applicability")
-        valid = isinstance(applicability, dict) and all(
-            applicability.get(field) for field in ("state", "basis", "source")
-        ) and applicability.get("state") == "NOT_APPLICABLE"
+        valid = (
+            isinstance(applicability, dict)
+            and all(applicability.get(field) for field in ("state", "basis", "source"))
+            and applicability.get("state") == "NOT_APPLICABLE"
+        )
         if not valid:
-            errors.append(f"{measurement_id}: NOT_APPLICABLE requires explicit applicability state, basis, and source")
+            errors.append(
+                f"{measurement_id}: NOT_APPLICABLE requires explicit applicability state, basis, and source"
+            )
     return errors
 
 
 def _ledger_denominator_errors(measurement_id: str, row: dict[str, Any]) -> list[str]:
     denominator_fields = {
-        "eligible_changed_paths", "eligible_cases", "eligible_receipts",
-        "eligible_candidate_reviews", "eligible_completed_tasks",
-        "eligible_review_passes", "eligible_deployed_services",
+        "eligible_changed_paths",
+        "eligible_cases",
+        "eligible_receipts",
+        "eligible_candidate_reviews",
+        "eligible_completed_tasks",
+        "eligible_review_passes",
+        "eligible_deployed_services",
     }
     errors = []
     if not denominator_fields.intersection(row):
         errors.append(f"{measurement_id}: missing denominator field")
-    if row.get("denominator_state") == "UNKNOWN" and not row.get("denominator_requirement"):
-        errors.append(f"{measurement_id}: unknown denominator requires a resolution source")
+    if row.get("denominator_state") == "UNKNOWN" and not row.get(
+        "denominator_requirement"
+    ):
+        errors.append(
+            f"{measurement_id}: unknown denominator requires a resolution source"
+        )
     return errors
 
 

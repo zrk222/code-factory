@@ -187,20 +187,41 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path, monkeypatch):
     assert shared_taxonomy["marker"] == "MCP_AUDIT_TAXONOMY_READ_ONLY"
     registry = shared_taxonomy["taxonomy"]
     assert registry["schema"] == "factory.audit-domain-taxonomy.v1"
-    assert registry["agent_usage_contract"]["primary_mcp_tool"] == "factory.audit_taxonomy"
-    assert registry["agent_usage_contract"]["cli_fallback"] == "factory audit taxonomy --json"
+    assert (
+        registry["agent_usage_contract"]["primary_mcp_tool"] == "factory.audit_taxonomy"
+    )
+    assert (
+        registry["agent_usage_contract"]["cli_fallback"]
+        == "factory audit taxonomy --json"
+    )
     assert any(
         route["route"] == "factory.github_overview"
         for route in registry["agent_usage_contract"]["agent_routes"]
     )
-    assert registry["agent_usage_contract"]["connected_repository_context"]["mcp_tool"] == "factory.github_overview"
-    assert "Before scoping" in registry["agent_usage_contract"]["connected_repository_context"]["use_when"]
-    assert "account-wide open pull requests and issues" in registry["agent_usage_contract"]["connected_repository_context"]["scope"]
+    assert (
+        registry["agent_usage_contract"]["connected_repository_context"]["mcp_tool"]
+        == "factory.github_overview"
+    )
+    assert (
+        "Before scoping"
+        in registry["agent_usage_contract"]["connected_repository_context"]["use_when"]
+    )
+    assert (
+        "account-wide open pull requests and issues"
+        in registry["agent_usage_contract"]["connected_repository_context"]["scope"]
+    )
     assert {
-        route["capability"] for route in registry["agent_usage_contract"]["agent_routes"]
+        route["capability"]
+        for route in registry["agent_usage_contract"]["agent_routes"]
     } == {"mcp", "local_cli", "platform_adapter"}
-    assert "candidate.candidate_sha256" in registry["agent_usage_contract"]["required_report_fields"]
-    assert "specialist_role" in registry["agent_usage_contract"]["required_agent_action_fields"]
+    assert (
+        "candidate.candidate_sha256"
+        in registry["agent_usage_contract"]["required_report_fields"]
+    )
+    assert (
+        "specialist_role"
+        in registry["agent_usage_contract"]["required_agent_action_fields"]
+    )
     assert registry["taxonomy_sha256"]
     assert {
         domain_id
@@ -229,9 +250,14 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path, monkeypatch):
     )
     assert agent_context["marker"] == "MCP_AUDIT_AGENT_CONTEXT_READ_ONLY"
     assert agent_context["context"]["taxonomy_sha256"] == registry["taxonomy_sha256"]
-    assert agent_context["context"]["role_resolution_state"] == "RESOLVED_FROM_CANONICAL_REGISTRY"
+    assert (
+        agent_context["context"]["role_resolution_state"]
+        == "RESOLVED_FROM_CANONICAL_REGISTRY"
+    )
     assert "not an authentication claim" in agent_context["context"]["identity_scope"]
-    assert all(value is False for value in agent_context["context"]["authority"].values())
+    assert all(
+        value is False for value in agent_context["context"]["authority"].values()
+    )
     assert all(
         row["specialist_role"] == "specialty_ai_security_reviewer"
         for row in agent_context["context"]["domains"]
@@ -307,7 +333,10 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path, monkeypatch):
         },
         tmp_path,
     )
-    assert invalid_coverage["error"]["data"]["marker"] == "RUNTIME_COVERAGE_MODULE_REJECTED"
+    assert (
+        invalid_coverage["error"]["data"]["marker"]
+        == "RUNTIME_COVERAGE_MODULE_REJECTED"
+    )
 
     agentic = _content(
         dispatch(

@@ -479,9 +479,15 @@ def test_vscode_marketplace_workflow_seals_the_candidate_and_requires_a_scoped_s
     assert "secrets.VSCE_PAT" in workflow
     assert "VSCE_PAT is required in the vscode-marketplace environment." in workflow
     assert "sha256sum --check SHA256SUMS.txt" in workflow
-    assert "mapfile -t packages < <(find . -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print)" in workflow
+    assert (
+        "mapfile -t packages < <(find . -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print)"
+        in workflow
+    )
     assert 'test "${#packages[@]}" -eq 1' in workflow
-    assert 'package.get("publisher"), package.get("name"), package.get("version")' in workflow
+    assert (
+        'package.get("publisher"), package.get("name"), package.get("version")'
+        in workflow
+    )
     assert '--packagePath "$VSCODE_VSIX_PATH"' in workflow
     assert "--oidc" not in workflow
     package = json.loads(

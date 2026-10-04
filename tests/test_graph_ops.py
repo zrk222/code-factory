@@ -1351,7 +1351,9 @@ def test_graph_ops_junit_reader_reports_every_case_and_rejects_missing_cases(
     assert "unrecognized status" in unknown["reason"]
 
 
-def test_graph_ops_runtime_coverage_projection_omits_module_details(tmp_path: Path) -> None:
+def test_graph_ops_runtime_coverage_projection_omits_module_details(
+    tmp_path: Path,
+) -> None:
     from test_runtime_coverage import _fixture, _write_report
 
     _write_report(tmp_path, _fixture(tmp_path))

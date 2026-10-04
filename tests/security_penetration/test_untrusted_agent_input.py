@@ -50,7 +50,8 @@ def test_repository_instructions_stay_untrusted_data_and_are_traced(
         steps=[
             {
                 "step_id": "poisoned-receipt-projection",
-                "input": "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+                "input": "sha256:"
+                + hashlib.sha256(payload.encode("utf-8")).hexdigest(),
                 "guard": "UNTRUSTED_CONTENT_WARNING",
                 "decision": "RENDER_AS_DATA",
                 "state": "PASS",

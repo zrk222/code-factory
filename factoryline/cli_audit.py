@@ -45,8 +45,12 @@ def add_parser(sub: Any) -> None:
         "--out", help="optional workspace-contained fingerprint receipt path"
     )
     code_audit.add_argument("--json", action="store_true")
-    code_audit.add_argument("--contract", default=".factory/workflow-audit-contract.json")
-    code_audit.add_argument("--observations", default=".factory/workflow-audit-observations.json")
+    code_audit.add_argument(
+        "--contract", default=".factory/workflow-audit-contract.json"
+    )
+    code_audit.add_argument(
+        "--observations", default=".factory/workflow-audit-observations.json"
+    )
     code_audit.add_argument(
         "--role",
         help="specialist role for the host-neutral agent context projection",
@@ -60,7 +64,11 @@ def _run_workflows(args: Any) -> int:
     try:
         result = audit_workflows(Path(args.root), args.contract, args.observations)
     except (JourneyProofError, OSError) as error:
-        result = {"state": "INVALID", "message": str(error), "execution_authority": False}
+        result = {
+            "state": "INVALID",
+            "message": str(error),
+            "execution_authority": False,
+        }
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["state"] == "PASS" else 2
 

@@ -1031,20 +1031,34 @@ def _agent_actions(candidate_sha256: str, repair_queue: list[dict]) -> list[dict
     rows = []
     for index, item in enumerate(repair_queue, start=1):
         severity = str(item.get("severity", "high")).lower()
-        security = any(token in str(item.get("obligation_id", "")).lower()
-                       for token in ("security", "privacy", "tenant"))
-        rows.append({
-            "id": f"deep-audit-action-{index}",
-            "measurement_id": item.get("rule_id") or item.get("code") or "deep_audit_finding",
-            "priority": "P1" if severity in {"critical", "high"} else "P2",
-            "agent_role": "specialty_ai_security_reviewer" if security else "specialty_ai_remediation_agent",
-            "candidate_sha256": candidate_sha256,
-            "action": item.get("remediation", "Investigate the finding and propose a minimal repair."),
-            "evidence_to_attach": "Candidate-bound patch diff, exact validation command, observed before/after behavior, and current hash-bound analyzer receipt.",
-            "affected_paths": [item["path"]] if item.get("path") else [],
-            "finding_id": item.get("finding_id"),
-            "stop_condition": item.get("consequence", "Keep the deep audit BLOCKED until evidence proves the issue resolved."),
-        })
+        security = any(
+            token in str(item.get("obligation_id", "")).lower()
+            for token in ("security", "privacy", "tenant")
+        )
+        rows.append(
+            {
+                "id": f"deep-audit-action-{index}",
+                "measurement_id": item.get("rule_id")
+                or item.get("code")
+                or "deep_audit_finding",
+                "priority": "P1" if severity in {"critical", "high"} else "P2",
+                "agent_role": "specialty_ai_security_reviewer"
+                if security
+                else "specialty_ai_remediation_agent",
+                "candidate_sha256": candidate_sha256,
+                "action": item.get(
+                    "remediation",
+                    "Investigate the finding and propose a minimal repair.",
+                ),
+                "evidence_to_attach": "Candidate-bound patch diff, exact validation command, observed before/after behavior, and current hash-bound analyzer receipt.",
+                "affected_paths": [item["path"]] if item.get("path") else [],
+                "finding_id": item.get("finding_id"),
+                "stop_condition": item.get(
+                    "consequence",
+                    "Keep the deep audit BLOCKED until evidence proves the issue resolved.",
+                ),
+            }
+        )
     return rows
 
 
@@ -1170,7 +1184,12 @@ def deep_audit_status(root: Path) -> dict:
             "receipt_sha256": claimed,
             "finding_count": len(receipt["findings"]),
             "repair_queue": receipt["repair_queue"],
-            "agent_actions": receipt.get("agent_actions", _agent_actions(receipt.get("candidate_sha256", ""), receipt["repair_queue"])),
+            "agent_actions": receipt.get(
+                "agent_actions",
+                _agent_actions(
+                    receipt.get("candidate_sha256", ""), receipt["repair_queue"]
+                ),
+            ),
             "verification": "self_hash_only_not_signature_or_freshness",
         }
     except (OSError, ValueError, KeyError, TypeError):

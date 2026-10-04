@@ -121,7 +121,9 @@ def test_public_seeded_corpus_executes_real_scanner_and_reports_unsupported_fns(
 
 
 def test_public_benchmark_hashes_and_parses_one_corpus_snapshot(tmp_path, monkeypatch):
-    source = Path(__file__).parents[1] / "factoryline" / "data" / "public_defect_corpus.json"
+    source = (
+        Path(__file__).parents[1] / "factoryline" / "data" / "public_defect_corpus.json"
+    )
     corpus = tmp_path / "corpus.json"
     snapshot = source.read_bytes()
     corpus.write_bytes(snapshot)

@@ -38,22 +38,38 @@ ACTION_EXECUTION_CONTRACT = {
 }
 
 _CODE_RULES = {
-    "code://factory.audit-action/completion": ACTION_EXECUTION_CONTRACT["completion_rule"],
+    "code://factory.audit-action/completion": ACTION_EXECUTION_CONTRACT[
+        "completion_rule"
+    ],
     "code://factory.audit-action/stop": ACTION_EXECUTION_CONTRACT["stop_rule"],
 }
 _NUMBER_FIELDS = {
-    "eligible_changed_paths", "eligible_cases", "eligible_paths", "evidence_paths",
-    "evidence_percent", "measured_cases", "observation_completion_percent",
-    "candidate_scope_paths", "case_count", "covered", "total", "coverage_percent",
+    "eligible_changed_paths",
+    "eligible_cases",
+    "eligible_paths",
+    "evidence_paths",
+    "evidence_percent",
+    "measured_cases",
+    "observation_completion_percent",
+    "candidate_scope_paths",
+    "case_count",
+    "covered",
+    "total",
+    "coverage_percent",
 }
 _DENOMINATOR_STATES = {
-    "KNOWN_CHANGED_PATH_SCOPE", "KNOWN_PUBLIC_CORPUS_CASES",
-    "KNOWN_RECOGNIZED_SOURCE_SCOPE", "PARTIAL_LANGUAGE_CLASSIFICATION",
-    "UNKNOWN", "UNKNOWN_APPLICABILITY",
+    "KNOWN_CHANGED_PATH_SCOPE",
+    "KNOWN_PUBLIC_CORPUS_CASES",
+    "KNOWN_RECOGNIZED_SOURCE_SCOPE",
+    "PARTIAL_LANGUAGE_CLASSIFICATION",
+    "UNKNOWN",
+    "UNKNOWN_APPLICABILITY",
 }
 
 
-def _expected_reference(report: dict[str, Any], action: dict[str, Any], field: str) -> str:
+def _expected_reference(
+    report: dict[str, Any], action: dict[str, Any], field: str
+) -> str:
     ref_key = _ACTION_REFERENCE_FIELDS.get(field)
     if ref_key is None:
         raise ValueError(f"unsupported agent action reference field: {field}")
@@ -63,28 +79,44 @@ def _expected_reference(report: dict[str, Any], action: dict[str, Any], field: s
     measurements = report.get("measurements")
     contract = report.get("action_execution_contract")
     taxonomy = audit_taxonomy()
-    if not isinstance(measurements, dict) or measurements.get("taxonomy_sha256") != taxonomy["taxonomy_sha256"]:
+    if (
+        not isinstance(measurements, dict)
+        or measurements.get("taxonomy_sha256") != taxonomy["taxonomy_sha256"]
+    ):
         raise ValueError("report taxonomy digest does not match the canonical source")
     if contract != ACTION_EXECUTION_CONTRACT:
         raise ValueError("report action contract digest is not canonical")
     index = action.get("benchmark_action_index")
-    if index is not None and (type(index) is not int or index < 0 or measurement_id != "seeded_scanner_benchmark"):
+    if index is not None and (
+        type(index) is not int
+        or index < 0
+        or measurement_id != "seeded_scanner_benchmark"
+    ):
         raise ValueError("benchmark action index or measurement ID is invalid")
     if field in {"action", "evidence"}:
         template = _ACTION_REFERENCE_TEMPLATES[field]
-        return template.format(taxonomy_sha256=taxonomy["taxonomy_sha256"], measurement_id=measurement_id)
+        return template.format(
+            taxonomy_sha256=taxonomy["taxonomy_sha256"], measurement_id=measurement_id
+        )
     if field in {"completion", "stop"}:
         return _ACTION_REFERENCE_TEMPLATES[field]
     if index is not None:
         return _BENCHMARK_REFERENCE_TEMPLATES["denominator"]
-    return _ACTION_REFERENCE_TEMPLATES["denominator"].format(measurement_id=measurement_id)
+    return _ACTION_REFERENCE_TEMPLATES["denominator"].format(
+        measurement_id=measurement_id
+    )
 
 
-def derive_agent_action_references(report: dict[str, Any], action: dict[str, Any]) -> dict[str, str]:
+def derive_agent_action_references(
+    report: dict[str, Any], action: dict[str, Any]
+) -> dict[str, str]:
     """Derive canonical references, rejecting caller-selected report pointers."""
     if not isinstance(report, dict) or not isinstance(action, dict):
         raise ValueError("report and agent action must be objects")
-    return {field: _expected_reference(report, action, field) for field in _ACTION_REFERENCE_FIELDS}
+    return {
+        field: _expected_reference(report, action, field)
+        for field in _ACTION_REFERENCE_FIELDS
+    }
 
 
 def _bound_report(report: dict[str, Any], action: dict[str, Any]) -> None:
@@ -109,7 +141,9 @@ def _validate_report_shape(report: dict[str, Any], action: dict[str, Any]) -> No
     if not isinstance(trace.get("changed_files"), dict):
         raise ValueError("report trace inventory is malformed")
     if any(not isinstance(row, dict) for row in actions) or action not in actions:
-        raise ValueError("agent action is not exactly present in the report or its reference is not canonical")
+        raise ValueError(
+            "agent action is not exactly present in the report or its reference is not canonical"
+        )
 
 
 def _validate_report_contract(report: dict[str, Any], action: dict[str, Any]) -> None:
@@ -143,27 +177,40 @@ def _validate_report_digest(report: dict[str, Any]) -> None:
     payload = {
         "candidate_sha256": candidate_sha,
         "changed_files": trace["changed_files"],
-        "trace_contract": (trace.get("trace_sha256"), report["action_execution_contract"]),
-        "measurements": {key: value for key, value in measurements.items() if key not in {"measurement_sha256", "completeness"}},
+        "trace_contract": (
+            trace.get("trace_sha256"),
+            report["action_execution_contract"],
+        ),
+        "measurements": {
+            key: value
+            for key, value in measurements.items()
+            if key not in {"measurement_sha256", "completeness"}
+        },
         "agent_actions": actions,
     }
     if sha256(_canonical(payload)).hexdigest() != digest:
         raise ValueError("report measurement/action digest does not match its contents")
 
 
-def _taxonomy_value(reference: str, action: dict[str, Any], taxonomy: dict[str, Any] | None) -> Any:
+def _taxonomy_value(
+    reference: str, action: dict[str, Any], taxonomy: dict[str, Any] | None
+) -> Any:
     canonical = audit_taxonomy()
     if taxonomy is not None and taxonomy != canonical:
         raise ValueError("supplied taxonomy differs from the canonical source")
     prefix = f"taxonomy://{canonical['taxonomy_sha256']}/domains/"
     if not reference.startswith(prefix):
-        raise ValueError("taxonomy reference digest does not match the canonical source")
-    domain_id, separator, field = reference[len(prefix):].partition("/")
+        raise ValueError(
+            "taxonomy reference digest does not match the canonical source"
+        )
+    domain_id, separator, field = reference[len(prefix) :].partition("/")
     if not separator or field not in {"next_action", "required_evidence"}:
         raise ValueError("taxonomy reference is outside supported canonical fields")
     if domain_id != action.get("measurement_id"):
         raise ValueError("taxonomy reference measurement ID does not match the action")
-    domain = next(row for row in canonical["domains"] if row["measurement_id"] == domain_id)
+    domain = next(
+        row for row in canonical["domains"] if row["measurement_id"] == domain_id
+    )
     return domain[field]
 
 
@@ -174,32 +221,46 @@ def _denominator(report: dict[str, Any], action: dict[str, Any]) -> dict[str, An
         count = benchmark.get("case_count") if isinstance(benchmark, dict) else None
         if type(count) is not int or count < 0:
             raise ValueError("benchmark denominator is not a non-negative integer")
-        return {"trust_state": "UNAUTHENTICATED_DATA", "measurement_id": "seeded_scanner_benchmark", "case_index": index, "case_count": count}
+        return {
+            "trust_state": "UNAUTHENTICATED_DATA",
+            "measurement_id": "seeded_scanner_benchmark",
+            "case_index": index,
+            "case_count": count,
+        }
     rows = report["measurements"].get("audit_lane_coverage")
     row = rows.get(action["measurement_id"]) if isinstance(rows, dict) else None
     if not isinstance(row, dict):
         raise ValueError("measurement denominator row is missing")
     values = {
-        key: value for key, value in row.items()
-        if key in _NUMBER_FIELDS and (type(value) is int or type(value) is float and math.isfinite(value))
+        key: value
+        for key, value in row.items()
+        if key in _NUMBER_FIELDS
+        and (type(value) is int or type(value) is float and math.isfinite(value))
     }
     state = row.get("denominator_state")
     return {
         "trust_state": "UNAUTHENTICATED_DATA",
         "measurement_id": action["measurement_id"],
-        "measurement_state": row.get("measurement_state") if row.get("measurement_state") in audit_taxonomy()["measurement_states"] else "UNMEASURABLE",
+        "measurement_state": row.get("measurement_state")
+        if row.get("measurement_state") in audit_taxonomy()["measurement_states"]
+        else "UNMEASURABLE",
         "denominator_state": state if state in _DENOMINATOR_STATES else "UNKNOWN",
         "values": values,
     }
 
 
 def resolve_agent_action_reference(
-    report: dict[str, Any], action: dict[str, Any], field: str,
+    report: dict[str, Any],
+    action: dict[str, Any],
+    field: str,
     taxonomy: dict[str, Any] | None = None,
 ) -> Any:
     """Resolve canonical instructions or return a sanitized unauthenticated count."""
     _bound_report(report, action)
-    reference = action.get(_ACTION_REFERENCE_FIELDS.get(field, ""), _expected_reference(report, action, field))
+    reference = action.get(
+        _ACTION_REFERENCE_FIELDS.get(field, ""),
+        _expected_reference(report, action, field),
+    )
     if reference != _expected_reference(report, action, field):
         raise ValueError("agent action reference is not canonical")
     if field in {"action", "evidence"}:

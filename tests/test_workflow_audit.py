@@ -21,13 +21,64 @@ def _write(root, name, value):
 def _fixture(root, project="cli-library", profile="python-3.11"):
     source = root / "source.txt"
     source.write_text("unit fixture candidate", encoding="utf-8")
-    artifact = {"path": "source.txt", "sha256": sha256(source.read_bytes()).hexdigest(), "kind": "fixture"}
+    artifact = {
+        "path": "source.txt",
+        "sha256": sha256(source.read_bytes()).hexdigest(),
+        "kind": "fixture",
+    }
     review = root / "applicability-review.txt"
-    review.write_text("Independent review evidence for an inapplicable test category.", encoding="utf-8")
-    review_artifact = {"path": "applicability-review.txt", "sha256": sha256(review.read_bytes()).hexdigest(), "kind": "review"}
-    contract = {"schema": "factory.workflow-audit.contract.v1", "project_id": project, "candidate": [artifact], "applicability": [{"category": category, "applicable": category == "happy_path", "reason": "Reviewed unit fixture scope", **({} if category == "happy_path" else {"review_evidence": review_artifact})} for category in sorted(CATEGORIES)], "checks": [{"id": "REQ-1", "requirement": "Return expected fixture value", "category": "happy_path", "profiles": [profile]}]}
+    review.write_text(
+        "Independent review evidence for an inapplicable test category.",
+        encoding="utf-8",
+    )
+    review_artifact = {
+        "path": "applicability-review.txt",
+        "sha256": sha256(review.read_bytes()).hexdigest(),
+        "kind": "review",
+    }
+    contract = {
+        "schema": "factory.workflow-audit.contract.v1",
+        "project_id": project,
+        "candidate": [artifact],
+        "applicability": [
+            {
+                "category": category,
+                "applicable": category == "happy_path",
+                "reason": "Reviewed unit fixture scope",
+                **(
+                    {}
+                    if category == "happy_path"
+                    else {"review_evidence": review_artifact}
+                ),
+            }
+            for category in sorted(CATEGORIES)
+        ],
+        "checks": [
+            {
+                "id": "REQ-1",
+                "requirement": "Return expected fixture value",
+                "category": "happy_path",
+                "profiles": [profile],
+            }
+        ],
+    }
     contract_hash = _write(root, "contract.json", contract)
-    observations = {"schema": "factory.workflow-audit.observations.v1", "contract_sha256": contract_hash, "candidate_sha256": _digest(contract["candidate"]), "observations": [{"id": "REQ-1", "profile": profile, "status": "PASS", "reason": "Unit test recorded fixture", "execution_identity": "unit-test-only", "observed_at": "2026-10-02T04:00:00Z", "artifacts": [artifact]}]}
+    observations = {
+        "schema": "factory.workflow-audit.observations.v1",
+        "contract_sha256": contract_hash,
+        "candidate_sha256": _digest(contract["candidate"]),
+        "observations": [
+            {
+                "id": "REQ-1",
+                "profile": profile,
+                "status": "PASS",
+                "reason": "Unit test recorded fixture",
+                "execution_identity": "unit-test-only",
+                "observed_at": "2026-10-02T04:00:00Z",
+                "artifacts": [artifact],
+            }
+        ],
+    }
     _write(root, "observations.json", observations)
     return contract, observations
 
@@ -36,8 +87,17 @@ def _audit(root):
     return audit_workflows(root, "contract.json", "observations.json")
 
 
-@pytest.mark.parametrize("project,profile", [("cli-library", "python-3.11"), ("http-api", "http-client"), ("mobile-ui", "ios-device")])
-def test_generic_profiles_pass_only_completeness_and_keep_authority_false(tmp_path, project, profile):
+@pytest.mark.parametrize(
+    "project,profile",
+    [
+        ("cli-library", "python-3.11"),
+        ("http-api", "http-client"),
+        ("mobile-ui", "ios-device"),
+    ],
+)
+def test_generic_profiles_pass_only_completeness_and_keep_authority_false(
+    tmp_path, project, profile
+):
     _fixture(tmp_path, project, profile)
     receipt = _audit(tmp_path)
     assert receipt["state"] == "PASS"
@@ -47,7 +107,9 @@ def test_generic_profiles_pass_only_completeness_and_keep_authority_false(tmp_pa
     assert receipt["resource_usage"]["artifact_references"] > 0
     assert receipt["resource_usage"]["bytes_hashed"] > 0
     assert receipt["agent_actions"] == []
-    assert receipt["receipt_sha256"] == _digest({key: value for key, value in receipt.items() if key != "receipt_sha256"})
+    assert receipt["receipt_sha256"] == _digest(
+        {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    )
 
 
 @pytest.mark.parametrize("status", ["FAIL", "BLOCKED", "N/A"])
@@ -69,7 +131,9 @@ def test_empty_observations_do_not_pass(tmp_path):
     assert action["profile"] == "python-3.11"
     assert action["agent_role"] == "specialty_ai_test_reviewer"
     assert action["candidate_sha256"] == receipt["candidate_sha256"]
-    assert action["action"] and action["evidence_to_attach"] and action["stop_condition"]
+    assert (
+        action["action"] and action["evidence_to_attach"] and action["stop_condition"]
+    )
 
 
 def test_agent_work_item_keeps_contract_requirement_as_untrusted_data(tmp_path):
@@ -88,7 +152,9 @@ def test_agent_work_item_keeps_contract_requirement_as_untrusted_data(tmp_path):
     assert "untrusted data" in action["action"]
 
 
-@pytest.mark.parametrize("mutation", ["duplicate", "unknown", "empty-reason", "no-timezone", "bad-status"])
+@pytest.mark.parametrize(
+    "mutation", ["duplicate", "unknown", "empty-reason", "no-timezone", "bad-status"]
+)
 def test_malformed_or_unreviewed_observations_rejected(tmp_path, mutation):
     _, observations = _fixture(tmp_path)
     row = observations["observations"][0]
@@ -212,7 +278,9 @@ def test_inapplicability_review_evidence_must_be_current_and_kind_review(tmp_pat
     review = tmp_path / "applicability-review.txt"
     review.write_text("changed after review", encoding="utf-8")
     _write(tmp_path, "contract.json", contract)
-    assert "inapplicability review evidence is stale" in " ".join(_audit(tmp_path)["errors"])
+    assert "inapplicability review evidence is stale" in " ".join(
+        _audit(tmp_path)["errors"]
+    )
 
 
 def test_performance_limits_bound_evidence_and_profile_work(tmp_path, monkeypatch):
@@ -245,7 +313,17 @@ def test_cli_returns_nonzero_for_missing_or_blocked_evidence(tmp_path, capsys):
     assert main(["audit", "workflows", "--root", str(tmp_path), "--json"]) == 2
     assert json.loads(capsys.readouterr().out)["state"] == "INVALID"
     _, observations = _fixture(tmp_path)
-    args = ["audit", "workflows", "--root", str(tmp_path), "--contract", "contract.json", "--observations", "observations.json", "--json"]
+    args = [
+        "audit",
+        "workflows",
+        "--root",
+        str(tmp_path),
+        "--contract",
+        "contract.json",
+        "--observations",
+        "observations.json",
+        "--json",
+    ]
     assert main(args) == 0
     capsys.readouterr()
     observations["observations"][0]["status"] = "BLOCKED"

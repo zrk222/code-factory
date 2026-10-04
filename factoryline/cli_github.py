@@ -254,21 +254,38 @@ def _print_success(a, payload: dict) -> None:
         print("factory github overview (read-only, connected account context)")
         print("=" * 58)
         print(f"state        : {payload['state']}")
-        print(f"repository   : {repository.get('hostname', 'unknown')}/{repository.get('owner', '')}/{repository.get('name', '')}")
+        print(
+            f"repository   : {repository.get('hostname', 'unknown')}/{repository.get('owner', '')}/{repository.get('name', '')}"
+        )
         print(f"account      : {account.get('login') or 'not connected'}")
         print(f"branch       : {payload['local_checkout'].get('branch') or 'unknown'}")
         inventory = sections.get("account_repositories") or {}
         repository_detail = inventory.get("state", "UNAVAILABLE")
         if "returned_count" in inventory:
-            repository_detail = f"{inventory['returned_count']} rows ({repository_detail})"
+            repository_detail = (
+                f"{inventory['returned_count']} rows ({repository_detail})"
+            )
         print(f"repositories : {repository_detail}")
-        for name in ("pull_requests", "issues", "actions", "releases", "rulesets", "branch_protection"):
+        for name in (
+            "pull_requests",
+            "issues",
+            "actions",
+            "releases",
+            "rulesets",
+            "branch_protection",
+        ):
             section = sections.get(name) or {}
             count = section.get("returned_count")
-            detail = f"{count} rows" if count is not None else section.get("state", "UNAVAILABLE")
+            detail = (
+                f"{count} rows"
+                if count is not None
+                else section.get("state", "UNAVAILABLE")
+            )
             print(f"{name:15}: {detail}")
         print(f"next action  : {payload['next_action']}")
-        print("authority    : read-only repository context; no token access or persistence")
+        print(
+            "authority    : read-only repository context; no token access or persistence"
+        )
         return
     print(f"factory github {a.github_cmd} (local, advisory only)")
     print("=" * 54)

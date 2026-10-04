@@ -28,7 +28,7 @@ def test_normalize_and_findings_as_dict_preserve_text_and_emit_stable_diagnostic
         {
             "code": "INTENT_NO_ACTION",
             "message": "acceptance does not state an observable action or state transition",
-        }
+        },
     ]
     assert IntentFinding("INTENT_NO_ACTION", "missing action").as_dict() == {
         "code": "INTENT_NO_ACTION",
