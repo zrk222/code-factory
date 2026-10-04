@@ -50,7 +50,7 @@ self-hosted runners. Local checks are development evidence and cannot replace
 this receipt. Attestation establishes provenance, not software correctness.
 
 The public seeded Python AST benchmark runs in `audit-benchmark.yml`. Its eight
-hand-labeled cases currently yield 2 true positives, 2 true negatives, 0 false
+hand-labeled cases previously yielded 2 true positives, 2 true negatives, 0 false
 positives and 4 false negatives: precision 100%, recall 33.3%. The receipt now
 reports test-oracle strength separately: 0/3 hollow-test cases detected
 (recall 0%, 95% Wilson interval 0–56.1%); tenant-isolation remains 0/1
@@ -58,7 +58,12 @@ reports test-oracle strength separately: 0/3 hollow-test cases detected
 public corpus is not independent holdout or production evidence; the workflow
 preserves measurements rather than approving a release. Mutation testing has
 a separate manual workflow; configuring it is not a measured mutation-survival
-result.
+result. The candidate detection fixes now yield 6 true positives, 2 true
+negatives, and no false positives or false negatives in local replay of the
+unchanged corpus. The same explicit `db.get` tenant-read contract is applied
+to every defective, repaired, and clean input. This is development regression
+evidence; independent held-out accuracy, runtime tenant isolation, and current
+CI provenance remain separate requirements.
 
 Provider read-back on 2026-10-04:
 

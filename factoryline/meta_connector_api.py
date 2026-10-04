@@ -773,6 +773,15 @@ class MetaConnectorAPI:
     def _route(
         self, method: str, path: str, environ: Mapping[str, Any]
     ) -> tuple[str, Any]:
+        response = self._metadata_route(method, path)
+        if response is not None:
+            return response
+        response = self._api_route(method, path, environ)
+        if response is not None:
+            return response
+        raise ConnectorError("404 Not Found", "NOT_FOUND", "route not found")
+
+    def _metadata_route(self, method: str, path: str) -> tuple[str, Any] | None:
         if method == "GET" and path == "/health":
             return "200 OK", {"schema": "factory.meta.health.v1", "ok": True}
         if method == "GET" and path == "/ready":
@@ -815,6 +824,11 @@ class MetaConnectorAPI:
                 ],
                 "limits": limits,
             }
+        return None
+
+    def _api_route(
+        self, method: str, path: str, environ: Mapping[str, Any]
+    ) -> tuple[str, Any] | None:
         if path == "/v1/account":
             return self._account_route(method, environ)
         if path == "/v1/account/relink":
@@ -824,7 +838,7 @@ class MetaConnectorAPI:
         parts = path.strip("/").split("/")
         if len(parts) in (3, 4) and parts[:2] == ["v1", "audits"]:
             return self._item_route(method, parts, environ)
-        raise ConnectorError("404 Not Found", "NOT_FOUND", "route not found")
+        return None
 
     def _mcp_result(
         self,
@@ -900,6 +914,12 @@ class MetaConnectorAPI:
         self, environ: Mapping[str, Any]
     ) -> tuple[str, Any, list[tuple[str, str]]]:
         """Stateless, read-only Streamable HTTP over account-scoped summaries."""
+        self._validate_mcp_transport(environ)
+        tenant, subject = self._mcp_identity(environ)
+        request = self._mcp_request(environ)
+        return self._dispatch_mcp_request(request, environ, tenant, subject)
+
+    def _validate_mcp_transport(self, environ: Mapping[str, Any]) -> None:
         origin = environ.get("HTTP_ORIGIN")
         public = urlsplit(self.public_base_url or "")
         allowed_origin = f"{public.scheme}://{public.netloc}" if public.netloc else ""
@@ -934,6 +954,8 @@ class MetaConnectorAPI:
                 "INVALID_PROTOCOL",
                 "unsupported MCP protocol version",
             )
+
+    def _mcp_identity(self, environ: Mapping[str, Any]) -> tuple[str, str]:
         tenant, subject, claims = self._verified_identity(
             environ,
             "cf.audit.read",
@@ -952,6 +974,9 @@ class MetaConnectorAPI:
                     "TOKEN_AUDIENCE",
                     "token is not issued for this MCP resource",
                 )
+        return tenant, subject
+
+    def _mcp_request(self, environ: Mapping[str, Any]) -> dict[str, Any]:
         request = self._body(environ)
         if (
             not isinstance(request, dict)
@@ -961,91 +986,24 @@ class MetaConnectorAPI:
             raise ConnectorError(
                 "400 Bad Request", "INVALID_RPC", "one JSON-RPC message required"
             )
+        return request
+
+    def _dispatch_mcp_request(
+        self,
+        request: dict[str, Any],
+        environ: Mapping[str, Any],
+        tenant: str,
+        subject: str,
+    ) -> tuple[str, Any, list[tuple[str, str]]]:
         rpc_method, request_id = request["method"], request.get("id")
         params = request.get("params", {})
-        if isinstance(params, dict) and rpc_method == "tools/call":
-            self._require_paid_access(tenant, subject)
-        with self._db() as db:
-            row = self._account_row(db, tenant, subject)
-            if row and row[0] is not None:
-                raise ConnectorError(
-                    "401 Unauthorized", "ACCOUNT_REVOKED", "linked account is revoked"
-                )
-        if request_id is None:
-            if rpc_method == "notifications/initialized":
-                return "202 Accepted", None, []
-            raise ConnectorError(
-                "400 Bad Request", "INVALID_RPC", "unsupported notification"
-            )
-        if isinstance(request_id, bool) or not isinstance(request_id, (int, str)):
-            raise ConnectorError(
-                "400 Bad Request", "INVALID_RPC", "request id is invalid"
-            )
-        if not isinstance(params, dict):
-            raise ConnectorError(
-                "400 Bad Request", "INVALID_RPC", "request params must be an object"
-            )
+        self._check_mcp_account(rpc_method, params, tenant, subject)
+        notification = self._mcp_notification_response(rpc_method, request_id)
+        if notification is not None:
+            return notification
+        self._validate_mcp_rpc_params(request_id, params)
         try:
-            if rpc_method == "initialize":
-                requested = params.get("protocolVersion")
-                result = {
-                    "protocolVersion": (
-                        requested
-                        if isinstance(requested, str)
-                        and requested in MCP_SUPPORTED_PROTOCOLS
-                        else MCP_PROTOCOL
-                    ),
-                    "capabilities": {"tools": {"listChanged": False}},
-                    "serverInfo": {
-                        "name": "code-factory-audit-evidence",
-                        "version": "0.47.0",
-                    },
-                }
-            elif rpc_method == "ping":
-                result = {}
-            elif rpc_method == "tools/list":
-                result = {
-                    "tools": [
-                        {
-                            "name": name,
-                            "description": description
-                            + ". Submitted evidence is not independent certification.",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": properties,
-                                "required": ["audit_id"]
-                                if "audit_id" in properties
-                                else [],
-                                "additionalProperties": False,
-                            },
-                            "annotations": {
-                                "readOnlyHint": True,
-                                "destructiveHint": False,
-                                "idempotentHint": True,
-                                "openWorldHint": False,
-                            },
-                        }
-                        for name, description, properties in MCP_TOOLS
-                    ]
-                }
-            elif rpc_method == "tools/call":
-                result = self._mcp_result(
-                    params.get("name"),
-                    params.get("arguments", {}),
-                    environ,
-                    tenant,
-                    subject,
-                )
-            else:
-                return (
-                    "200 OK",
-                    {
-                        "jsonrpc": "2.0",
-                        "id": request_id,
-                        "error": {"code": -32601, "message": "method not found"},
-                    },
-                    [],
-                )
+            result = self._mcp_rpc_result(rpc_method, params, environ, tenant, subject)
         except ConnectorError as exc:
             return (
                 "200 OK",
@@ -1059,7 +1017,110 @@ class MetaConnectorAPI:
                 },
                 [],
             )
+        if result is None:
+            return (
+                "200 OK",
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {"code": -32601, "message": "method not found"},
+                },
+                [],
+            )
         return "200 OK", {"jsonrpc": "2.0", "id": request_id, "result": result}, []
+
+    def _check_mcp_account(
+        self, rpc_method: str, params: Any, tenant: str, subject: str
+    ) -> None:
+        if isinstance(params, dict) and rpc_method == "tools/call":
+            self._require_paid_access(tenant, subject)
+        with self._db() as db:
+            row = self._account_row(db, tenant, subject)
+            if row and row[0] is not None:
+                raise ConnectorError(
+                    "401 Unauthorized", "ACCOUNT_REVOKED", "linked account is revoked"
+                )
+
+    def _mcp_notification_response(
+        self, rpc_method: str, request_id: Any
+    ) -> tuple[str, Any, list[tuple[str, str]]] | None:
+        if request_id is None:
+            if rpc_method == "notifications/initialized":
+                return "202 Accepted", None, []
+            raise ConnectorError(
+                "400 Bad Request", "INVALID_RPC", "unsupported notification"
+            )
+
+    def _validate_mcp_rpc_params(self, request_id: Any, params: Any) -> None:
+        if isinstance(request_id, bool) or not isinstance(request_id, (int, str)):
+            raise ConnectorError(
+                "400 Bad Request", "INVALID_RPC", "request id is invalid"
+            )
+        if not isinstance(params, dict):
+            raise ConnectorError(
+                "400 Bad Request", "INVALID_RPC", "request params must be an object"
+            )
+
+    def _mcp_rpc_result(
+        self,
+        rpc_method: str,
+        params: dict[str, Any],
+        environ: Mapping[str, Any],
+        tenant: str,
+        subject: str,
+    ) -> Any | None:
+        if rpc_method == "initialize":
+            requested = params.get("protocolVersion")
+            return {
+                "protocolVersion": (
+                    requested
+                    if isinstance(requested, str)
+                    and requested in MCP_SUPPORTED_PROTOCOLS
+                    else MCP_PROTOCOL
+                ),
+                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": {
+                    "name": "code-factory-audit-evidence",
+                    "version": "0.47.0",
+                },
+            }
+        if rpc_method == "ping":
+            return {}
+        if rpc_method == "tools/list":
+            return self._mcp_tool_list()
+        if rpc_method == "tools/call":
+            return self._mcp_result(
+                params.get("name"),
+                params.get("arguments", {}),
+                environ,
+                tenant,
+                subject,
+            )
+        return None
+
+    def _mcp_tool_list(self) -> dict[str, Any]:
+        return {
+            "tools": [
+                {
+                    "name": name,
+                    "description": description
+                    + ". Submitted evidence is not independent certification.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": properties,
+                        "required": ["audit_id"] if "audit_id" in properties else [],
+                        "additionalProperties": False,
+                    },
+                    "annotations": {
+                        "readOnlyHint": True,
+                        "destructiveHint": False,
+                        "idempotentHint": True,
+                        "openWorldHint": False,
+                    },
+                }
+                for name, description, properties in MCP_TOOLS
+            ]
+        }
 
     def _account_route(
         self, method: str, environ: Mapping[str, Any]

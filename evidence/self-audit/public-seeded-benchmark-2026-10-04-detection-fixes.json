@@ -1,0 +1,377 @@
+{
+  "agent_actions": [],
+  "authority": "none",
+  "benchmark_id": "factory-review-audits-public-seeded",
+  "cases": [
+    {
+      "buggy_correct": true,
+      "buggy_findings": [
+        "SECURITY_DYNAMIC_EXECUTION"
+      ],
+      "buggy_sha256": "71a92beefef5f6dd1219a2688d6edb83277154db478b1422e5f46c8c1ccafaa2",
+      "category": "stateful_invariant",
+      "expected_finding": "SECURITY_DYNAMIC_EXECUTION",
+      "fixed_clean": true,
+      "fixed_findings": [],
+      "fixed_sha256": "3f5bca25ddb7d0166f5f146530a5669bd92f83b401e6921161cb69430b722a43",
+      "id": "dynamic-execution"
+    },
+    {
+      "buggy_correct": true,
+      "buggy_findings": [
+        "SECURITY_SHELL_COMMAND"
+      ],
+      "buggy_sha256": "f34115dac4460e19ec78460b08a6611e1644d292b11ea92b21d1a34652ad4b66",
+      "category": "failure_recovery",
+      "expected_finding": "SECURITY_SHELL_COMMAND",
+      "fixed_clean": true,
+      "fixed_findings": [],
+      "fixed_sha256": "2a3d10f625ff361621491fd0f234d488c6c04e517fc400d62fd1f59e8ea737c7",
+      "id": "shell-command"
+    },
+    {
+      "buggy_correct": true,
+      "buggy_findings": [],
+      "buggy_sha256": "ba1a531f581d2e6094e978ed6f7aca7a8d92eeb62c6e7ad73ee692f7f18bc772",
+      "category": "stateful_invariant",
+      "expected_finding": "NO_FINDING",
+      "fixed_clean": true,
+      "fixed_findings": [],
+      "fixed_sha256": "ba1a531f581d2e6094e978ed6f7aca7a8d92eeb62c6e7ad73ee692f7f18bc772",
+      "id": "safe-control"
+    },
+    {
+      "buggy_correct": true,
+      "buggy_findings": [
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "buggy_sha256": "abf5acd9446b9a19afd9f8b4c1ffe4c42be8237302f94d59c09dce11fd3483cb",
+      "category": "test_oracle_strength",
+      "expected_finding": "QUALITY_HOLLOW_TEST",
+      "fixed_clean": true,
+      "fixed_findings": [],
+      "fixed_sha256": "f4d58e76eb054818a4f8dcfa6a0b4c38899968375f7600e1d813e714521958e5",
+      "id": "hollow-test-assert-true"
+    },
+    {
+      "buggy_correct": true,
+      "buggy_findings": [
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "buggy_sha256": "d409f6b32fb231f9b163dd1864082a68d93b5488ad07910beb430efc22e1d1f7",
+      "category": "test_oracle_strength",
+      "expected_finding": "QUALITY_HOLLOW_TEST",
+      "fixed_clean": true,
+      "fixed_findings": [],
+      "fixed_sha256": "f4d58e76eb054818a4f8dcfa6a0b4c38899968375f7600e1d813e714521958e5",
+      "id": "hollow-test-no-assertion"
+    },
+    {
+      "buggy_correct": true,
+      "buggy_findings": [
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "buggy_sha256": "e532493304576602a3121a519970add2048dd51e3c8341c4a1850074cefff8ca",
+      "category": "test_oracle_strength",
+      "expected_finding": "QUALITY_HOLLOW_TEST",
+      "fixed_clean": true,
+      "fixed_findings": [],
+      "fixed_sha256": "f4d58e76eb054818a4f8dcfa6a0b4c38899968375f7600e1d813e714521958e5",
+      "id": "hollow-test-tautology"
+    },
+    {
+      "buggy_correct": true,
+      "buggy_findings": [
+        "SECURITY_MISSING_TENANT_ISOLATION"
+      ],
+      "buggy_sha256": "24b934ce734eaab2ad8cba52937fd4a9365931d6d18c21053f0f7df37953e086",
+      "category": "tenant_isolation",
+      "expected_finding": "SECURITY_MISSING_TENANT_ISOLATION",
+      "fixed_clean": true,
+      "fixed_findings": [],
+      "fixed_sha256": "62eed1cd9464a7c5da6b77b2753a77143945bdf5c880b2568bbaebe2ff240b86",
+      "id": "missing-tenant-scope"
+    },
+    {
+      "buggy_correct": true,
+      "buggy_findings": [],
+      "buggy_sha256": "d26574f14180949b9410d6d055b62ae4a55d9ee90c85fdcc05f8d7dd1229f85b",
+      "category": "tenant_isolation",
+      "expected_finding": "NO_FINDING",
+      "fixed_clean": true,
+      "fixed_findings": [],
+      "fixed_sha256": "d26574f14180949b9410d6d055b62ae4a55d9ee90c85fdcc05f8d7dd1229f85b",
+      "id": "clean-control-import"
+    }
+  ],
+  "claim_boundary": "Public hand-labeled seeded Python AST corpus with one declared db.get tenant-read contract applied uniformly to all inputs; not independently held out, AI-written, representative, runtime, or production evidence. Static keyword presence does not authenticate tenants; mutation and cross-tenant runtime checks remain separate. Tenant-isolation and test-oracle-strength cases have explicit per-category confusion counts; a measured miss is a false negative, not coverage.",
+  "corpus_sha256": "60208dde8277a60809c927a288146baddbc7a98ed74cb69653cf36f2518dde11",
+  "decision": "PASS",
+  "marker": "PUBLIC_SEEDED_BENCHMARK",
+  "measured_unsupported_behaviors": {
+    "tenant_isolation": {
+      "false_negatives": 0,
+      "positive_cases": 1,
+      "recall": 1.0,
+      "recall_ci95_wilson": [
+        0.206543,
+        1
+      ],
+      "state": "MEASURED",
+      "true_positives": 1
+    },
+    "test_oracle_strength": {
+      "false_negatives": 0,
+      "positive_cases": 3,
+      "recall": 1.0,
+      "recall_ci95_wilson": [
+        0.438494,
+        1
+      ],
+      "state": "MEASURED",
+      "true_positives": 3
+    }
+  },
+  "metrics": {
+    "consumer_compatibility": {
+      "fn": 0,
+      "fp": 0,
+      "n_negative": 0,
+      "n_positive": 0,
+      "n_predicted_positive": 0,
+      "precision": null,
+      "precision_ci95_wilson": null,
+      "recall": null,
+      "recall_ci95_wilson": null,
+      "tn": 0,
+      "tp": 0
+    },
+    "failure_recovery": {
+      "fn": 0,
+      "fp": 0,
+      "n_negative": 0,
+      "n_positive": 1,
+      "n_predicted_positive": 1,
+      "precision": 1.0,
+      "precision_ci95_wilson": [
+        0.206543,
+        1
+      ],
+      "recall": 1.0,
+      "recall_ci95_wilson": [
+        0.206543,
+        1
+      ],
+      "tn": 0,
+      "tp": 1
+    },
+    "migration_integrity": {
+      "fn": 0,
+      "fp": 0,
+      "n_negative": 0,
+      "n_positive": 0,
+      "n_predicted_positive": 0,
+      "precision": null,
+      "precision_ci95_wilson": null,
+      "recall": null,
+      "recall_ci95_wilson": null,
+      "tn": 0,
+      "tp": 0
+    },
+    "overall": {
+      "fn": 0,
+      "fp": 0,
+      "n_negative": 2,
+      "n_positive": 6,
+      "n_predicted_positive": 6,
+      "precision": 1.0,
+      "precision_ci95_wilson": [
+        0.609657,
+        1.0
+      ],
+      "recall": 1.0,
+      "recall_ci95_wilson": [
+        0.609657,
+        1.0
+      ],
+      "tn": 2,
+      "tp": 6
+    },
+    "performance_regression": {
+      "fn": 0,
+      "fp": 0,
+      "n_negative": 0,
+      "n_positive": 0,
+      "n_predicted_positive": 0,
+      "precision": null,
+      "precision_ci95_wilson": null,
+      "recall": null,
+      "recall_ci95_wilson": null,
+      "tn": 0,
+      "tp": 0
+    },
+    "stateful_invariant": {
+      "fn": 0,
+      "fp": 0,
+      "n_negative": 1,
+      "n_positive": 1,
+      "n_predicted_positive": 1,
+      "precision": 1.0,
+      "precision_ci95_wilson": [
+        0.206543,
+        1
+      ],
+      "recall": 1.0,
+      "recall_ci95_wilson": [
+        0.206543,
+        1
+      ],
+      "tn": 1,
+      "tp": 1
+    },
+    "tenant_isolation": {
+      "fn": 0,
+      "fp": 0,
+      "n_negative": 1,
+      "n_positive": 1,
+      "n_predicted_positive": 1,
+      "precision": 1.0,
+      "precision_ci95_wilson": [
+        0.206543,
+        1
+      ],
+      "recall": 1.0,
+      "recall_ci95_wilson": [
+        0.206543,
+        1
+      ],
+      "tn": 1,
+      "tp": 1
+    },
+    "test_oracle_strength": {
+      "fn": 0,
+      "fp": 0,
+      "n_negative": 0,
+      "n_positive": 3,
+      "n_predicted_positive": 3,
+      "precision": 1.0,
+      "precision_ci95_wilson": [
+        0.438494,
+        1
+      ],
+      "recall": 1.0,
+      "recall_ci95_wilson": [
+        0.438494,
+        1
+      ],
+      "tn": 0,
+      "tp": 3
+    }
+  },
+  "platform": "Windows-10-10.0.26200-SP0",
+  "python": "3.11.9",
+  "receipt_sha256": "945988c04e570b1027f929e47df3c3b62b664a9756995537ce8eed05f37b4304",
+  "release_approval": false,
+  "scanner": "factoryline.review_audits.security_scan",
+  "scanner_contract": {
+    "tenant_keyword": "tenant_id",
+    "tenant_read_calls": [
+      "db.get"
+    ]
+  },
+  "scanner_sources": [
+    {
+      "path": "review_audits.py",
+      "sha256": "c71deec28797156607409784071d1d91f0c0b7a88393a516452242caefca5e01"
+    },
+    {
+      "path": "benchmark_lab.py",
+      "sha256": "9f243872518feeb46682164ca7147e8a91fdb0dc57538f48d0bf5ac2460704c1"
+    }
+  ],
+  "scanner_version": "0.47.0",
+  "schema": "factory.public-seeded-benchmark.v1",
+  "source_bindings": [
+    {
+      "case": "dynamic-execution",
+      "sha256": "71a92beefef5f6dd1219a2688d6edb83277154db478b1422e5f46c8c1ccafaa2",
+      "side": "buggy"
+    },
+    {
+      "case": "dynamic-execution",
+      "sha256": "3f5bca25ddb7d0166f5f146530a5669bd92f83b401e6921161cb69430b722a43",
+      "side": "fixed"
+    },
+    {
+      "case": "shell-command",
+      "sha256": "f34115dac4460e19ec78460b08a6611e1644d292b11ea92b21d1a34652ad4b66",
+      "side": "buggy"
+    },
+    {
+      "case": "shell-command",
+      "sha256": "2a3d10f625ff361621491fd0f234d488c6c04e517fc400d62fd1f59e8ea737c7",
+      "side": "fixed"
+    },
+    {
+      "case": "safe-control",
+      "sha256": "ba1a531f581d2e6094e978ed6f7aca7a8d92eeb62c6e7ad73ee692f7f18bc772",
+      "side": "buggy"
+    },
+    {
+      "case": "safe-control",
+      "sha256": "ba1a531f581d2e6094e978ed6f7aca7a8d92eeb62c6e7ad73ee692f7f18bc772",
+      "side": "fixed"
+    },
+    {
+      "case": "hollow-test-assert-true",
+      "sha256": "abf5acd9446b9a19afd9f8b4c1ffe4c42be8237302f94d59c09dce11fd3483cb",
+      "side": "buggy"
+    },
+    {
+      "case": "hollow-test-assert-true",
+      "sha256": "f4d58e76eb054818a4f8dcfa6a0b4c38899968375f7600e1d813e714521958e5",
+      "side": "fixed"
+    },
+    {
+      "case": "hollow-test-no-assertion",
+      "sha256": "d409f6b32fb231f9b163dd1864082a68d93b5488ad07910beb430efc22e1d1f7",
+      "side": "buggy"
+    },
+    {
+      "case": "hollow-test-no-assertion",
+      "sha256": "f4d58e76eb054818a4f8dcfa6a0b4c38899968375f7600e1d813e714521958e5",
+      "side": "fixed"
+    },
+    {
+      "case": "hollow-test-tautology",
+      "sha256": "e532493304576602a3121a519970add2048dd51e3c8341c4a1850074cefff8ca",
+      "side": "buggy"
+    },
+    {
+      "case": "hollow-test-tautology",
+      "sha256": "f4d58e76eb054818a4f8dcfa6a0b4c38899968375f7600e1d813e714521958e5",
+      "side": "fixed"
+    },
+    {
+      "case": "missing-tenant-scope",
+      "sha256": "24b934ce734eaab2ad8cba52937fd4a9365931d6d18c21053f0f7df37953e086",
+      "side": "buggy"
+    },
+    {
+      "case": "missing-tenant-scope",
+      "sha256": "62eed1cd9464a7c5da6b77b2753a77143945bdf5c880b2568bbaebe2ff240b86",
+      "side": "fixed"
+    },
+    {
+      "case": "clean-control-import",
+      "sha256": "d26574f14180949b9410d6d055b62ae4a55d9ee90c85fdcc05f8d7dd1229f85b",
+      "side": "buggy"
+    },
+    {
+      "case": "clean-control-import",
+      "sha256": "d26574f14180949b9410d6d055b62ae4a55d9ee90c85fdcc05f8d7dd1229f85b",
+      "side": "fixed"
+    }
+  ],
+  "version": "1"
+}

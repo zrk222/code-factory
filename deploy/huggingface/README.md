@@ -36,14 +36,18 @@ short_description: Audit code, review evidence, and resolve defects.
   hash-bound candidate and execution evidence; VS Code/Open VSX 1.1.0 evidence
   tree; JetBrains 1.1.0 CF + ForgeLine tab; and native OpenCode 0.1.0 plugin
   with bounded session hooks.
-- **Improved:** the latest local strict ForgeLine report grades A (97.9/100)
-  and attributes 1,055/1,085 functions (97.24%) to test intent while keeping
-  the hard complexity limit at 10. This is static test-intent matching, not
-  runtime coverage or software certification.
+- **Candidate detection fixes:** flags tests without a local assertion,
+  constant-true assertions, and reflexive comparisons. Explicit tenant-read
+  contracts check the declared `tenant_id` parameter binding. The unchanged
+  eight-case public regression corpus now gives 6 true positives, 2 true
+  negatives, and no false positives or false negatives locally. One contract
+  is applied to defective, repaired, and clean inputs. This small development
+  result is not independent accuracy, runtime isolation, or release approval;
+  CI verification is still required.
 
 These are source preview targets until each provider confirms publication.
 
-Specialty AI audit evidence is available in [the reviewed change and findings](https://github.com/zrk222/code-factory/pull/131#issuecomment-5980528354). The agent inspected source, identified defects, and reviewed their corrections. Test and CI receipts are separate evidence linked in the same change.
+Specialty AI audit evidence is available in [the prior reviewed change and findings](https://github.com/zrk222/code-factory/pull/131#issuecomment-5980528354). That review applies to its exact source snapshot, not subsequent detection fixes. Test and CI receipts are separate evidence linked in the same change.
 
 The preview highlights audit progress, actionable repair tasks, source-bound evidence and specialty AI review. It is a static walkthrough, not a hosted repository scanner. CF pattern/guard-path audits need project policy; its security scan covers Python ASTs. ForgeLine repo-wide QA is static inventory. Agent review does not establish exhaustive native scanner coverage: Gitleaks per-file accounting remains incomplete.
 

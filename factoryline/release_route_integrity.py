@@ -160,7 +160,9 @@ def _jetbrains_jdk21_check(root: Path) -> dict[str, Any]:
     blocks = [
         block
         for workflow in workflows
-        for block in _action_blocks(workflow, "actions/setup-java@v5")
+        for block in _action_blocks(
+            workflow, "actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961"
+        )
     ]
     versions = [
         re.findall(r'(?m)^          java-version:\s*["\']?([^\s#"\']+)', block)
@@ -178,8 +180,8 @@ def _huggingface_space_authorization_check(root: Path) -> dict[str, Any]:
     workflow = _workflow(root, "huggingface-space.yml")
     token_check = 'test -n "$HF_TOKEN"'
     candidate_markers = (
-        "actions/checkout@v4",
-        "actions/setup-python@v5",
+        "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+        "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065",
         "Validate static Space metadata before remote upload",
         "Install Hugging Face CLI",
         "api.upload_folder(",

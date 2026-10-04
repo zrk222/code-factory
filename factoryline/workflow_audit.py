@@ -6,6 +6,9 @@ from datetime import datetime
 from hashlib import sha256
 import json
 from pathlib import Path
+import re
+
+import yaml
 
 from .journey_proof import (
     AUTHORITY,
@@ -25,6 +28,53 @@ MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
 MAX_TOTAL_EVIDENCE_BYTES = 128 * 1024 * 1024
 MAX_CHECK_PROFILES = 4096
 MAX_INPUT_JSON_BYTES = 16 * 1024 * 1024
+
+
+def _workflow_action_refs(document: dict) -> list[str]:
+    refs = []
+    for job in document.get("jobs", {}).values():
+        if not isinstance(job, dict):
+            raise ValueError("workflow job must be an object")
+        if "uses" in job:
+            refs.append(str(job["uses"]))
+        for step in job.get("steps", []):
+            if isinstance(step, dict) and "uses" in step:
+                refs.append(str(step["uses"]))
+    return refs
+
+
+def audit_action_pins(root: Path) -> dict:
+    """Check action and reusable-workflow refs; no execution or release authority."""
+    directory = Path(root) / ".github" / "workflows"
+    files = sorted(set(directory.glob("*.yml")) | set(directory.glob("*.yaml")))
+    findings, sources = [], []
+    for path in files:
+        payload = path.read_bytes()
+        relative = path.relative_to(root).as_posix()
+        sources.append({"path": relative, "sha256": sha256(payload).hexdigest()})
+        try:
+            document = yaml.load(payload, Loader=yaml.BaseLoader)
+            refs = _workflow_action_refs(document)
+            for ref in refs:
+                if not ref.startswith("./") and not re.fullmatch(
+                    r"[^@\s]+@[0-9a-fA-F]{40}|docker://[^\s]+@sha256:[0-9a-fA-F]{64}",
+                    ref,
+                ):
+                    findings.append(
+                        {"path": relative, "code": "UNPINNED_ACTION", "ref": ref}
+                    )
+        except (yaml.YAMLError, AttributeError, TypeError, ValueError) as error:
+            findings.append(
+                {"path": relative, "code": "INVALID_WORKFLOW", "error": str(error)}
+            )
+    return {
+        "schema": "factory.action-pins.v1",
+        "state": "BLOCKED" if findings or not files else "PASS",
+        "sources": sources,
+        "findings": findings,
+        "claim_boundary": "Reference pinning only; does not verify action content, local actions, trust, runtime behavior, or release approval.",
+    }
+
 
 CATEGORIES = frozenset(
     {

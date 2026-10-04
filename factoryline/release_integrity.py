@@ -86,7 +86,8 @@ def _checkout_uses_requested_tag(job: Any) -> bool:
         return False
     return any(
         isinstance(step, dict)
-        and step.get("uses") == "actions/checkout@v5"
+        and step.get("uses")
+        == "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
         and isinstance(step.get("with"), dict)
         and step["with"].get("ref") == "${{ needs.guard.outputs.candidate_commit }}"
         for step in steps
@@ -101,7 +102,8 @@ def _validator_has_tagged_artifact(job: Any, artifact_name: str) -> bool:
         return False
     return any(
         isinstance(step, dict)
-        and step.get("uses") == "actions/upload-artifact@v7.0.1"
+        and step.get("uses")
+        == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
         and isinstance(step.get("with"), dict)
         and step["with"].get("name") == artifact_name
         for step in steps
@@ -147,14 +149,16 @@ def _fan_in_context(workflow: str) -> dict[str, Any]:
         step.get("with", {}).get("name")
         for step in publish_steps
         if isinstance(step, dict)
-        and step.get("uses") == "actions/download-artifact@v8.0.1"
+        and step.get("uses")
+        == "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
         and isinstance(step.get("with"), dict)
     ]
     pypi_position = next(
         (
             index
             for index, content in enumerate(step_content)
-            if content == "pypa/gh-action-pypi-publish@release/v1"
+            if content
+            == "pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33"
         ),
         -1,
     )
@@ -465,8 +469,12 @@ def _jetbrains_check(workflow: str) -> dict[str, Any]:
     passed = (
         guard in workflow
         and "--require-upload-slot" in workflow
-        and workflow.index(guard) < workflow.index("actions/setup-java@v5")
-        and workflow.index(guard) < workflow.index("gradle/actions/setup-gradle@v6.2.0")
+        and workflow.index(guard)
+        < workflow.index("actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961")
+        and workflow.index(guard)
+        < workflow.index(
+            "gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92"
+        )
     )
     return _check(
         "JETBRAINS_APPROVAL_GUARD",
@@ -758,6 +766,13 @@ def _git_blob_sha256(
 
 
 def _fresh_reassessment_date(root: Path, relative: str) -> str | None:
+    reassessment_date = _reassessment_date_from_path(relative)
+    if reassessment_date is None:
+        return None
+    return _verify_fresh_reassessment(root, relative, reassessment_date)
+
+
+def _reassessment_date_from_path(relative: str) -> str | None:
     match = re.search(r"(\d{4}-\d{2}-\d{2})[^/]*\.json$", relative)
     if not match or not relative.startswith("evidence/self-audit/"):
         return None
@@ -768,6 +783,12 @@ def _fresh_reassessment_date(root: Path, relative: str) -> str | None:
             return None
     except ValueError:
         return None
+    return reassessment_date
+
+
+def _verify_fresh_reassessment(
+    root: Path, relative: str, reassessment_date: str
+) -> str | None:
     path = root / relative
     try:
         with path.open("rb") as stream:
@@ -899,26 +920,35 @@ def _valid_reassessment_metrics(metrics: Any) -> bool:
         or len(set(code_files)) != len(code_files)
     ):
         return False
-    if metrics.get("skipped_paths") != []:
-        return False
-    if metrics.get("complexity_policy") != "hard":
-        return False
-    if metrics.get("coverage_assessment") != "measured":
-        return False
-    if metrics.get("behavioral_proof_status") != "available":
+    if not _valid_reassessment_quality_flags(metrics):
         return False
     for key in ("coverage_intent", "doc_ratio"):
         value = metrics.get(key)
         if not _finite_number(value) or not 0 <= value <= 1:
             return False
-    for key in ("composite", "security_score"):
-        value = metrics.get(key)
-        if not _finite_number(value) or not 95 <= value <= 100:
-            return False
+    if not _valid_reassessment_scores(metrics):
+        return False
     complexity = metrics.get("max_complexity")
     if not isinstance(complexity, int) or isinstance(complexity, bool):
         return False
     return 0 <= complexity <= 10
+
+
+def _valid_reassessment_quality_flags(metrics: dict[str, Any]) -> bool:
+    return (
+        metrics.get("skipped_paths") == []
+        and metrics.get("complexity_policy") == "hard"
+        and metrics.get("coverage_assessment") == "measured"
+        and metrics.get("behavioral_proof_status") == "available"
+    )
+
+
+def _valid_reassessment_scores(metrics: dict[str, Any]) -> bool:
+    for key in ("composite", "security_score"):
+        value = metrics.get(key)
+        if not _finite_number(value) or not 95 <= value <= 100:
+            return False
+    return True
 
 
 def _valid_reassessment_units(units: Any, checked: int, passed: int) -> bool:
