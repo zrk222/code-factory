@@ -359,6 +359,7 @@ def test_ci_receipt_binds_clean_commit_exact_command_and_required_artifacts(
     commit = _git_fixture(tmp_path)
     writer = _writer(tmp_path, monkeypatch, commit, "success")
 
+    assert writer["ROOT"] == _WRITER_PATH.parents[1]
     assert writer["_start"](tmp_path) == 0
     _reports(tmp_path)
     assert writer["_finish"](tmp_path) == 0

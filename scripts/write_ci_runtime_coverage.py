@@ -17,7 +17,7 @@ from factoryline.runtime_coverage import (
 )
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = {
     "junit_xml": ".factory/test-reports/pytest.xml",
     "coverage_json": ".factory/test-reports/coverage.json",
