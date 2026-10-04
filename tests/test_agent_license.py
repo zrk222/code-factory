@@ -8,12 +8,15 @@ import pytest
 
 from factoryline.agent_license import (
     AgentLicenseError,
+    admission_license_decision,
     derive_license,
     issue_license,
     license_projection,
     load_governed_runs,
     normalize_agent_identity,
+    record_bound_governed_event,
     record_governed_run,
+    seal_license,
     verify_license,
 )
 from factoryline.loop_passport import build_loop_passport, init_loop, load_manifest
@@ -151,6 +154,63 @@ def test_clean_current_governed_runs_earn_scoped_autonomy_and_hash_verify(
     assert derived["evidence"]["current_governed_event_count"] == 20
     assert verify_license(Path(issued["path"]))["ok"] is True
     assert derived["identity_provenance"] == "declared_in_admission_packet"
+
+
+def test_record_bound_governed_event_is_idempotent_for_exact_admission_binding(
+    tmp_path: Path,
+):
+    passport = _passport(tmp_path)
+    recorded = _record(tmp_path, passport, AGENT, "bound-run")
+
+    replay = record_bound_governed_event(tmp_path, recorded["event"])
+
+    assert replay["marker"] == "AGENT_LICENSE_EVENT_ALREADY_RECORDED"
+    assert replay["event"]["event_sha256"] == recorded["event"]["event_sha256"]
+
+
+def test_admission_license_decision_returns_declared_cap_and_rejects_unknown_autonomy(
+    tmp_path: Path,
+):
+    request = {"agent": AGENT}
+
+    decision = admission_license_decision(
+        tmp_path, {"autonomy": "human_controlled"}, request
+    )
+
+    assert decision is not None and decision["tier"] == "human_controlled"
+    assert admission_license_decision(tmp_path, {}, {}) is None
+    with pytest.raises(AgentLicenseError) as error:
+        admission_license_decision(tmp_path, {"autonomy": "unbounded"}, request)
+    assert error.value.code == "E_LICENSE_EXCEEDED"
+
+
+def test_seal_license_requires_verified_license_and_binds_receipt_v2(tmp_path: Path):
+    passport = _passport(tmp_path)
+    for index in range(3):
+        _record(tmp_path, passport, AGENT, f"seal-run-{index}")
+    issued = issue_license(tmp_path, AGENT)
+    from factoryline.enterprise_receipts import generate_key_material
+
+    keys = generate_key_material(
+        out_dir=tmp_path / "seal-keys",
+        keyid="license-seal",
+        identity="https://example.test/license-workflow",
+        issuer="https://issuer.example.test",
+    )
+
+    sealed = seal_license(
+        Path(issued["path"]),
+        private_key_path=Path(keys["private_key"]),
+        keyid=keys["keyid"],
+        identity=keys["identity"],
+        issuer=keys["issuer"],
+        tenant_id="tenant-a",
+        out=tmp_path / "sealed-license.dsse.json",
+    )
+
+    assert sealed["marker"] == "AGENT_LICENSE_SEALED"
+    assert sealed["authority"]["signing"] is True
+    assert Path(sealed["path"]).is_file()
 
 
 def test_severe_failure_writes_incident_and_demotes_immediately(tmp_path: Path):

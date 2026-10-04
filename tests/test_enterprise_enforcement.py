@@ -13,7 +13,11 @@ from factoryline.enterprise_enforcement import (
     canonical_json,
     enterprise_enforcement_projection,
     record_enterprise_decision,
+    validate_enforcement_policy,
+    validate_workload_identity,
     verify_enterprise_decision,
+    verify_enforcement_policy,
+    verify_workload_identity,
     sign_enforcement_policy,
     sign_workload_identity,
     sign_workload_revocations,
@@ -310,6 +314,82 @@ def _materials(
         "oracle_contract_sha256": "a" * 64,
     }
     return keys, identity_path, policy_path, request
+
+
+def test_workload_identity_validation_enforces_lifetime_and_normalizes_identity():
+    issued_at = _now()
+    payload = {
+        "schema": "factory.workload-identity.v1",
+        "tenant_id": "tenant-a",
+        "workload_id": "proof-runner",
+        "subject": "repo:example/app",
+        "audience": "factoryline.enterprise",
+        "issued_at": issued_at.isoformat().replace("+00:00", "Z"),
+        "expires_at": (issued_at + timedelta(minutes=30))
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "agent": AGENT,
+        "allowed_action_classes": ["test"],
+    }
+
+    normalized = validate_workload_identity(payload)
+
+    assert normalized["allowed_action_classes"] == ["test"]
+    assert normalized["agent"]["subject"] == AGENT["subject"]
+    too_long_lived = {
+        **payload,
+        "expires_at": (issued_at + timedelta(hours=25))
+        .isoformat()
+        .replace("+00:00", "Z"),
+    }
+    with pytest.raises(EnterpriseEnforcementError, match="within 24 hours"):
+        validate_workload_identity(too_long_lived)
+
+
+def test_enforcement_policy_validation_requires_boolean_and_safe_scope():
+    payload = {
+        "schema": "factory.enforcement-policy.v1",
+        "policy_id": "repo-proof",
+        "version": "1",
+        "tenant_id": "tenant-a",
+        "audience": "factoryline.enterprise",
+        "allowed_action_classes": ["test"],
+        "allowed_scope_paths": ["tests"],
+        "require_semantic_lease": True,
+    }
+
+    normalized = validate_enforcement_policy(payload)
+
+    assert normalized["allowed_scope_paths"] == ["tests"]
+    assert normalized["require_semantic_lease"] is True
+    with pytest.raises(EnterpriseEnforcementError, match="must be boolean"):
+        validate_enforcement_policy({**payload, "require_semantic_lease": 1})
+    with pytest.raises(EnterpriseEnforcementError):
+        validate_enforcement_policy({**payload, "allowed_scope_paths": ["../outside"]})
+
+
+def test_signed_identity_and_policy_verifiers_check_trust_and_expiry(tmp_path: Path):
+    keys, identity, policy, _ = _materials(tmp_path)
+
+    checked_identity = verify_workload_identity(
+        identity, trust_root_path=Path(keys["trust_root"])
+    )
+    checked_policy = verify_enforcement_policy(
+        policy, trust_root_path=Path(keys["trust_root"])
+    )
+
+    assert checked_identity["identity"]["tenant_id"] == "tenant-a"
+    assert checked_identity["signature"]["keyid"] == keys["keyid"]
+    assert checked_identity["verification"] == "offline_dsse_ed25519"
+    assert checked_policy["policy"]["allowed_action_classes"] == ["test"]
+    assert checked_policy["signature"]["keyid"] == keys["keyid"]
+    assert checked_policy["verification"] == "offline_dsse_ed25519"
+    with pytest.raises(EnterpriseEnforcementError, match="expired"):
+        verify_workload_identity(
+            identity,
+            trust_root_path=Path(keys["trust_root"]),
+            now=_now() + timedelta(hours=1),
+        )
 
 
 def test_enterprise_reference_admits_only_exact_signed_identity_policy_and_lease(

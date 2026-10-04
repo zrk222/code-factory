@@ -1,0 +1,51 @@
+{
+  "agent_actions": [],
+  "authority": {
+    "approval": false,
+    "connector": false,
+    "credential": false,
+    "deployment": false,
+    "execution": false,
+    "merge": false,
+    "messaging": false,
+    "publication": false,
+    "repair": false,
+    "signing": false
+  },
+  "candidate_sha256": "b851a6d809e72ea3736c753264d272057333b1025d9cebac1a2304bfd10c31cc",
+  "checks": 11,
+  "contract_sha256": "2b0d0da4902b924efa61b4250a09af33e09a7c42065c714c00a5fe34f9d844c2",
+  "errors": [],
+  "inapplicability_evidence": {
+    "accessibility": {
+      "actual_sha256": "ee0ce5466172fcb729d00615fd73b7befbaa114104fac98e07fde823f0bad230",
+      "current": true,
+      "kind": "review",
+      "path": "evidence/complexity-grade-restoration/applicability-review.md",
+      "sha256": "ee0ce5466172fcb729d00615fd73b7befbaa114104fac98e07fde823f0bad230"
+    },
+    "external_effects": {
+      "actual_sha256": "ee0ce5466172fcb729d00615fd73b7befbaa114104fac98e07fde823f0bad230",
+      "current": true,
+      "kind": "review",
+      "path": "evidence/complexity-grade-restoration/applicability-review.md",
+      "sha256": "ee0ce5466172fcb729d00615fd73b7befbaa114104fac98e07fde823f0bad230"
+    }
+  },
+  "limits": [
+    "Recorded evidence completeness and hashes only; observations require review.",
+    "Inapplicability review evidence is hash-bound but its judgment and identity are not authenticated.",
+    "Each contract/observation JSON input and evidence artifact is limited to 16 MiB; total evidence hashing is limited to 128 MiB, 4096 artifact references, and 4096 required check/profile pairs.",
+    "No project command or provider is executed.",
+    "No approval, certification or deployment authority."
+  ],
+  "observations_sha256": "f25e70fcd23dfb4a1bcb682d7905d66869cc55093b052e7ef97914d1b3b88ca6",
+  "project_id": "code-factory-complexity-grade-restoration",
+  "receipt_sha256": "78ec5a875f54347c44b443b8b1db586bd53ca98fd3b998ae6d3f65b1fd01ce79",
+  "resource_usage": {
+    "artifact_references": 138,
+    "bytes_hashed": 2763921
+  },
+  "schema": "factory.workflow-audit.receipt.v1",
+  "state": "PASS"
+}

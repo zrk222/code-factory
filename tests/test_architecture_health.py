@@ -37,6 +37,17 @@ def _policy(path: Path, **budgets: int | float) -> Path:
             "exception_requires": "human-release-authority",
             "requires_changelog_entry": False,
         },
+        "file_size_guard": {
+            "required": True,
+            "required_paths": [path.name],
+            "files": {
+                path.name: {
+                    "max_lines": 10000,
+                    "max_bytes": 10_000_000,
+                    "rationale": "Keep the temporary test policy bounded.",
+                }
+            },
+        },
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
@@ -74,6 +85,298 @@ def test_health_blocks_budget_regression_but_keeps_debt_separate(
         item["code"] == "E_ARCH_CLI_LINES_GROWTH" for item in result["regressions"]
     )
     assert not any(item["blocking"] for item in result["baseline_debt"])
+
+
+def test_file_size_guard_reports_measurements_and_blocks_file_growth(
+    tmp_path: Path,
+) -> None:
+    source_dir = tmp_path / "factoryline"
+    source_dir.mkdir()
+    target = source_dir / "large_module.py"
+    target.write_text("pass\npass\npass\n", encoding="utf-8")
+    policy = _policy(tmp_path / "policy.json", cli=10)
+    payload = json.loads(policy.read_text(encoding="utf-8"))
+    payload["file_size_guard"] = {
+        "required": True,
+        "required_paths": ["factoryline/large_module.py"],
+        "files": {
+                "factoryline/large_module.py": {
+                    "max_lines": 2,
+                    "max_bytes": 100,
+                    "rationale": "Freeze this module until responsibilities are split.",
+            }
+        },
+    }
+    policy.write_text(json.dumps(payload), encoding="utf-8")
+
+    blocked = evaluate_architecture_health(tmp_path, policy)
+
+    measured = blocked["metrics"]["file_size_guard"]["files"][
+        "factoryline/large_module.py"
+    ]
+    assert blocked["metrics"]["file_size_guard"]["enforced"] is True
+    assert measured == {
+        "lines": 3,
+        "bytes": len(b"pass\npass\npass\n"),
+        "max_lines": 2,
+        "max_bytes": 100,
+    }
+    assert any(
+        finding["code"] == "E_ARCH_FILE_LINES_GROWTH"
+        for finding in blocked["regressions"]
+    )
+
+    target.write_text("pass\npass\n", encoding="utf-8")
+    within_budget = evaluate_architecture_health(tmp_path, policy)
+    assert not any(
+        finding["code"] == "E_ARCH_FILE_LINES_GROWTH"
+        for finding in within_budget["regressions"]
+    )
+
+    target.write_text("p" * 120 + "\npass\n", encoding="utf-8")
+    byte_growth = evaluate_architecture_health(tmp_path, policy)
+    assert not any(
+        finding["code"] == "E_ARCH_FILE_LINES_GROWTH"
+        for finding in byte_growth["regressions"]
+    )
+    assert any(
+        finding["code"] == "E_ARCH_FILE_BYTES_GROWTH"
+        for finding in byte_growth["regressions"]
+    )
+
+
+def test_file_size_guard_rejects_escaping_policy_paths(tmp_path: Path) -> None:
+    (tmp_path / "factoryline").mkdir()
+    policy = _policy(tmp_path / "policy.json", cli=10)
+    payload = json.loads(policy.read_text(encoding="utf-8"))
+    payload["file_size_guard"] = {
+        "required": True,
+        "required_paths": ["../outside.py"],
+        "files": {
+            "../outside.py": {
+                "max_lines": 10,
+                "max_bytes": 100,
+                "rationale": "This path must be rejected.",
+            }
+        },
+    }
+    policy.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = evaluate_architecture_health(tmp_path, policy)
+
+    assert any(
+        finding["code"] == "E_ARCH_FILE_SIZE_POLICY_INVALID"
+        for finding in result["regressions"]
+    )
+
+
+def test_file_size_guard_cannot_be_removed_from_policy(tmp_path: Path) -> None:
+    (tmp_path / "factoryline").mkdir()
+    policy = _policy(tmp_path / "policy.json", cli=10)
+    payload = json.loads(policy.read_text(encoding="utf-8"))
+    payload.pop("file_size_guard")
+    policy.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = evaluate_architecture_health(tmp_path, policy)
+
+    assert result["decision"] == "BLOCKED"
+    assert "E_ARCH_FILE_SIZE_POLICY_INVALID" in {
+        finding["code"] for finding in result["regressions"]
+    }
+
+
+def test_file_size_guard_blocks_when_required_path_budget_is_removed(
+    tmp_path: Path,
+) -> None:
+    policy = _policy(tmp_path / "policy.json", cli=10)
+    payload = json.loads(policy.read_text(encoding="utf-8"))
+    payload["file_size_guard"] = {
+        "required": True,
+        "required_paths": ["factoryline/one.py", "factoryline/two.py"],
+        "files": {
+            "factoryline/one.py": {
+                "max_lines": 1,
+                "max_bytes": 5,
+                "rationale": "Keep this temporary module bounded.",
+            }
+        },
+    }
+    policy.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = evaluate_architecture_health(tmp_path, policy)
+
+    assert result["decision"] == "BLOCKED"
+    assert "E_ARCH_FILE_SIZE_POLICY_INVALID" in {
+        finding["code"] for finding in result["regressions"]
+    }
+
+
+def test_self_guard_blocks_when_path_and_budget_are_both_removed(
+    tmp_path: Path,
+) -> None:
+    root = Path(architecture_health.__file__).resolve().parents[1]
+    payload = json.loads((root / "architecture-policy.json").read_text(encoding="utf-8"))
+    missing = "factoryline/graph_ops.py"
+    payload["file_size_guard"]["required_paths"].remove(missing)
+    payload["file_size_guard"]["files"].pop(missing)
+    altered_policy = tmp_path / "architecture-policy.json"
+    altered_policy.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = evaluate_architecture_health(root, altered_policy)
+
+    assert result["decision"] == "BLOCKED"
+    assert "E_ARCH_FILE_SIZE_POLICY_INVALID" in {
+        finding["code"] for finding in result["regressions"]
+    }
+
+
+def test_self_guard_blocks_when_file_size_ceiling_is_raised(tmp_path: Path) -> None:
+    root = Path(architecture_health.__file__).resolve().parents[1]
+    payload = json.loads((root / "architecture-policy.json").read_text(encoding="utf-8"))
+    payload["file_size_guard"]["files"]["factoryline/cli.py"]["max_lines"] += 1
+    altered_policy = tmp_path / "architecture-policy.json"
+    altered_policy.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = evaluate_architecture_health(root, altered_policy)
+
+    assert result["decision"] == "BLOCKED"
+    assert "E_ARCH_FILE_SIZE_POLICY_INVALID" in {
+        finding["code"] for finding in result["regressions"]
+    }
+
+
+def test_self_guard_applies_to_installed_cli_targeting_checkout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = Path(architecture_health.__file__).resolve().parents[1]
+    monkeypatch.setattr(
+        architecture_health,
+        "__file__",
+        str(tmp_path / "site-packages" / "factoryline" / "architecture_health.py"),
+    )
+    payload = json.loads((root / "architecture-policy.json").read_text(encoding="utf-8"))
+    payload["file_size_guard"]["files"]["factoryline/graph_ops.py"]["max_bytes"] += 1
+    altered_policy = tmp_path / "architecture-policy.json"
+    altered_policy.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = evaluate_architecture_health(root, altered_policy)
+
+    assert result["decision"] == "BLOCKED"
+    assert "E_ARCH_FILE_SIZE_POLICY_INVALID" in {
+        finding["code"] for finding in result["regressions"]
+    }
+
+
+def test_self_guard_detects_checkout_with_single_quoted_toml_identity(
+    tmp_path: Path,
+) -> None:
+    source_root = Path(architecture_health.__file__).resolve().parents[1]
+    root = tmp_path / "checkout"
+    root.mkdir()
+    (root / "pyproject.toml").write_text(
+        "[project]\nname = 'factoryline-code-factory'\n", encoding="utf-8"
+    )
+    payload = json.loads((source_root / "architecture-policy.json").read_text(encoding="utf-8"))
+    (root / "architecture-policy.json").write_text(json.dumps(payload), encoding="utf-8")
+    payload["file_size_guard"] = {
+        "required": True,
+        "required_paths": ["factoryline/cli.py"],
+        "files": {
+            "factoryline/cli.py": {
+                "max_lines": 999999,
+                "max_bytes": 999999999,
+            }
+        },
+    }
+    altered = tmp_path / "alternate-policy.json"
+    altered.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = evaluate_architecture_health(root, altered)
+
+    assert result["decision"] == "BLOCKED"
+    assert "E_ARCH_FILE_SIZE_POLICY_INVALID" in {
+        finding["code"] for finding in result["regressions"]
+    }
+
+
+def test_self_guard_requires_pinned_default_policy_when_override_is_used(
+    tmp_path: Path,
+) -> None:
+    source_root = Path(architecture_health.__file__).resolve().parents[1]
+    root = tmp_path / "checkout"
+    (root / "factoryline").mkdir(parents=True)
+    (root / "factoryline/architecture_health.py").write_text("", encoding="utf-8")
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "factoryline-code-factory"\n', encoding="utf-8"
+    )
+    alternate = tmp_path / "alternate-policy.json"
+    alternate.write_bytes((source_root / "architecture-policy.json").read_bytes())
+
+    result = evaluate_architecture_health(root, alternate)
+
+    assert result["decision"] == "BLOCKED"
+    assert "E_ARCH_FILE_SIZE_POLICY_INVALID" in {
+        finding["code"] for finding in result["regressions"]
+    }
+
+
+def test_self_guard_detects_pinned_default_policy_after_identity_files_change(
+    tmp_path: Path,
+) -> None:
+    source_root = Path(architecture_health.__file__).resolve().parents[1]
+    root = tmp_path / "checkout"
+    root.mkdir()
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "renamed-project"\n', encoding="utf-8"
+    )
+    (root / "architecture-policy.json").write_bytes(
+        (source_root / "architecture-policy.json").read_bytes()
+    )
+    alternate = tmp_path / "alternate-policy.json"
+    payload = json.loads((source_root / "architecture-policy.json").read_text(encoding="utf-8"))
+    payload["file_size_guard"]["files"]["factoryline/cli.py"]["max_lines"] += 1
+    alternate.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = evaluate_architecture_health(root, alternate)
+
+    assert result["decision"] == "BLOCKED"
+    assert "E_ARCH_FILE_SIZE_POLICY_INVALID" in {
+        finding["code"] for finding in result["regressions"]
+    }
+
+
+def test_file_size_guard_normalizes_crlf_before_counting_bytes(
+    tmp_path: Path,
+) -> None:
+    source_dir = tmp_path / "factoryline"
+    source_dir.mkdir()
+    target = source_dir / "large_module.py"
+    target.write_bytes(b"pass\r\npass\r\n")
+    policy = _policy(tmp_path / "policy.json", cli=10)
+    payload = json.loads(policy.read_text(encoding="utf-8"))
+    payload["file_size_guard"] = {
+        "required": True,
+        "required_paths": ["factoryline/large_module.py"],
+        "files": {
+            "factoryline/large_module.py": {
+                "max_lines": 2,
+                "max_bytes": len(b"pass\npass\n"),
+                "rationale": "Line-ending conversion must not count as source growth.",
+            }
+        },
+    }
+    policy.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = evaluate_architecture_health(tmp_path, policy)
+
+    measured = result["metrics"]["file_size_guard"]["files"][
+        "factoryline/large_module.py"
+    ]
+    assert measured["lines"] == 2
+    assert measured["bytes"] == len(b"pass\npass\n")
+    assert "E_ARCH_FILE_BYTES_GROWTH" not in {
+        finding["code"] for finding in result["regressions"]
+    }
 
 
 def test_health_exposes_core_and_specialist_module_domains(tmp_path: Path) -> None:
@@ -255,6 +558,17 @@ def test_architecture_health_cli_emits_machine_readable_receipt(
                     "core_modules": 150,
                 },
                 "release": {"max_releases_30d": 4},
+                "file_size_guard": {
+                    "required": True,
+                    "required_paths": ["architecture-policy.json"],
+                    "files": {
+                        "architecture-policy.json": {
+                            "max_lines": 10000,
+                            "max_bytes": 10_000_000,
+                            "rationale": "Keep the temporary test policy bounded.",
+                        }
+                    },
+                },
             }
         ),
         encoding="utf-8",

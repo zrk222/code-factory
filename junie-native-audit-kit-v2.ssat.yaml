@@ -1,0 +1,141 @@
+name: junie-native-audit-kit-v2
+language: python
+modules:
+  - name: runtime_coverage
+    path: factoryline/runtime_coverage.py
+    language: python
+    functions:
+      - name: read_runtime_coverage_report
+        args: ["root: Path", "include_files: bool = False"]
+        returns: "dict[str, Any]"
+  - name: junie_review
+    path: factoryline/junie_review.py
+    language: python
+    functions:
+      - name: build_junie_review
+        args: ["root: Path", "arguments: object"]
+        returns: "dict[str, object]"
+  - name: mcp
+    path: factoryline/mcp.py
+    language: python
+    functions:
+      - name: _runtime_coverage_status
+        args: ["root: Path", "arguments: object"]
+        returns: "dict[str, object]"
+      - name: _junie_review
+        args: ["root: Path", "arguments: object"]
+        returns: "dict[str, object]"
+  - name: audit_trace
+    path: factoryline/audit_trace.py
+    language: python
+    functions:
+      - name: build_audit_trace
+        args: ["root: Path", "changed_paths: list[str]", "steps: list[dict[str, Any]]", "lane_states: dict[str, str]"]
+        returns: "dict[str, Any]"
+      - name: verify_audit_trace
+        args: ["value: object"]
+        returns: "dict[str, Any]"
+  - name: graph_ops
+    path: factoryline/graph_ops.py
+    language: python
+    functions:
+      - name: graph_ops_impact
+        args: ["root: Path", "changed_paths: list[str]"]
+        returns: "dict[str, Any]"
+  - name: control_plane
+    path: factoryline/control_plane.py
+    language: python
+    functions:
+      - name: authorize
+        args: ["principal: Principal", "action: str", "tenant_id: str"]
+        returns: "None"
+  - name: tenant_isolation_penetration
+    path: tests/security_penetration/test_tenant_isolation.py
+    language: python
+    functions:
+      - name: test_cross_tenant_role_operation_matrix_is_denied_and_traced
+        args: ["tmp_path: Path", "record_property"]
+        returns: "None"
+  - name: untrusted_input_penetration
+    path: tests/security_penetration/test_untrusted_agent_input.py
+    language: python
+    functions:
+      - name: test_repository_instructions_stay_untrusted_data_and_are_traced
+        args: ["tmp_path: Path", "record_property"]
+        returns: "None"
+  - name: junie_taxonomy
+    path: factoryline/junie_taxonomy.py
+    language: python
+    functions:
+      - name: junie_taxonomy
+        args: ["root: Path | str"]
+        returns: "dict[str, object]"
+      - name: junie_manifest
+        args: ["root: Path | str"]
+        returns: "dict[str, object]"
+      - name: install_junie_factoryline_pack
+        args: ["root: Path | str", "confirmation: str"]
+        returns: "dict[str, object]"
+dependencies:
+  - from: mcp
+    to: runtime_coverage
+  - from: junie_review
+    to: runtime_coverage
+  - from: junie_review
+    to: graph_ops
+  - from: mcp
+    to: junie_review
+  - from: junie_taxonomy
+    to: mcp
+  - from: junie_review
+    to: audit_trace
+  - from: mcp
+    to: audit_trace
+  - from: tenant_isolation_penetration
+    to: audit_trace
+  - from: tenant_isolation_penetration
+    to: control_plane
+  - from: tenant_isolation_penetration
+    to: graph_ops
+  - from: untrusted_input_penetration
+    to: audit_trace
+  - from: untrusted_input_penetration
+    to: junie_taxonomy
+  - from: untrusted_input_penetration
+    to: mcp
+  - from: untrusted_input_penetration
+    to: graph_ops
+invariants:
+  - name: coverage_projection_has_no_external_authority
+    forbid_pattern: "(?i)\\b(requests|httpx|urlopen|os\\.environ|os\\.getenv|subprocess|approve|merge|publish|deploy|sign)\\b"
+    scopes:
+      - module: mcp
+        symbol: _runtime_coverage_status
+        max_lines: 100
+  - name: junie_review_never_executes_candidate_code_or_uses_network
+    forbid_pattern: "(?i)\\b(requests|httpx|urlopen|socket|os\\.environ|os\\.getenv|eval\\(|exec\\(|approve|merge|publish|deploy|sign|test_candidate|run_tests)\\b"
+    scopes:
+      - module: junie_review
+        symbol: build_junie_review
+        max_lines: 220
+  - name: taxonomy_and_manifest_keep_authority_false
+    forbid_pattern: "(?i)\\b(requests|httpx|urlopen|os\\.environ|os\\.getenv|subprocess|approve|merge|publish|deploy|sign)\\b"
+    scopes:
+      - module: junie_taxonomy
+        symbol: junie_taxonomy
+        max_lines: 120
+      - module: junie_taxonomy
+        symbol: junie_manifest
+        max_lines: 140
+  - name: pack_install_requires_exact_confirmation
+    forbid_pattern: "(?i)\\b(requests|httpx|urlopen|os\\.environ|os\\.getenv|subprocess|approve|merge|publish|deploy|sign)\\b"
+    scopes:
+      - module: junie_taxonomy
+        symbol: install_junie_factoryline_pack
+        max_lines: 180
+  - name: audit_trace_hashes_untrusted_input_without_echoing_it
+    forbid_pattern: "(?i)\\b(requests|httpx|urlopen|socket|eval\\(|exec\\(|approve|merge|publish|deploy|sign)\\b"
+    scopes:
+      - module: audit_trace
+        symbol: build_audit_trace
+        max_lines: 260

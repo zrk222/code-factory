@@ -31,6 +31,7 @@ CATEGORIES = (
     "consumer_compatibility",
     "migration_integrity",
     "performance_regression",
+    "test_oracle_strength",
 )
 CLEAN_FINDING = "NO_FINDING"
 
@@ -307,9 +308,10 @@ def _wilson(successes: int, trials: int) -> list[float] | None:
     return [round(max(0, center - radius), 6), round(min(1, center + radius), 6)]
 
 
-def _public_cases(corpus: Path) -> tuple[dict, list]:
+def _public_cases(corpus: Path, payload: bytes | None = None) -> tuple[dict, list]:
     try:
-        data = json.loads(corpus.read_text(encoding="utf-8"))
+        raw = payload if payload is not None else corpus.read_bytes()
+        data = json.loads(raw.decode("utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise BenchmarkError("E_BENCHMARK_CORPUS", str(exc)) from exc
     cases = data.get("cases") if isinstance(data, dict) else None
@@ -394,6 +396,29 @@ def _public_observations(cases: list, totals: dict) -> tuple[list, list]:
     return rows, sources
 
 
+def _public_agent_actions(rows: list[dict[str, Any]], corpus_sha256: str) -> list[dict[str, Any]]:
+    actions = []
+    for row in rows:
+        if row["buggy_correct"] and row["fixed_clean"]:
+            continue
+        miss_kind = "false negative" if not row["buggy_correct"] else "fixed-case false positive"
+        high_risk = row["category"] in {"tenant_isolation", "test_oracle_strength"}
+        actions.append({
+            "id": f"benchmark-{row['id']}",
+            "priority": "P1" if high_risk else "P2",
+            "agent_role": "specialty_ai_security_reviewer"
+            if row["category"] in {"tenant_isolation", "stateful_invariant"}
+            else "specialty_ai_test_reviewer",
+            "category": row["category"],
+            "action": f"Investigate the measured {miss_kind} for seeded case {row['id']}; improve detection or reduce the false alarm without changing the public case labels.",
+            "evidence_to_attach": "Candidate scanner rule/source hash, case and corpus hashes, observed finding codes, and a rerun receipt showing buggy/fixed discrimination.",
+            "case_sha256": row["buggy_sha256"],
+            "corpus_sha256": corpus_sha256,
+            "stop_condition": "Keep the benchmark BLOCKED while a required seeded case is missed or a fixed control is falsely flagged.",
+        })
+    return actions
+
+
 def run_public_benchmark(corpus: Path | None = None) -> dict[str, Any]:
     """Run the seeded public corpus through review_audits.security_scan.
 
@@ -401,7 +426,9 @@ def run_public_benchmark(corpus: Path | None = None) -> dict[str, Any]:
     temporary inputs; the production scanner is the only observation engine.
     """
     corpus = corpus or Path(__file__).parent / "data" / "public_defect_corpus.json"
-    data, cases = _public_cases(Path(corpus))
+    corpus_bytes = Path(corpus).read_bytes()
+    corpus_sha256 = hashlib.sha256(corpus_bytes).hexdigest()
+    data, cases = _public_cases(Path(corpus), corpus_bytes)
     totals = {c: {"tp": 0, "fp": 0, "tn": 0, "fn": 0} for c in CATEGORIES}
     rows, sources = _public_observations(cases, totals)
     metrics = {cat: _public_metrics(counts) for cat, counts in totals.items()}
@@ -409,6 +436,18 @@ def run_public_benchmark(corpus: Path | None = None) -> dict[str, Any]:
         key: sum(m[key] for m in totals.values()) for key in ("tp", "fp", "tn", "fn")
     }
     metrics["overall"] = _public_metrics(overall)
+    measured_unsupported_behaviors = {
+        category: {
+            "state": "MEASURED",
+            "positive_cases": metrics[category]["n_positive"],
+            "true_positives": metrics[category]["tp"],
+            "false_negatives": metrics[category]["fn"],
+            "recall": metrics[category]["recall"],
+            "recall_ci95_wilson": metrics[category]["recall_ci95_wilson"],
+        }
+        for category in ("tenant_isolation", "test_oracle_strength")
+    }
+    agent_actions = _public_agent_actions(rows, corpus_sha256)
     try:
         package_version = version("factoryline-code-factory")
     except PackageNotFoundError:
@@ -422,16 +461,18 @@ def run_public_benchmark(corpus: Path | None = None) -> dict[str, Any]:
         "scanner_version": package_version,
         "python": platform.python_version(),
         "platform": platform.platform(),
-        "corpus_sha256": hashlib.sha256(Path(corpus).read_bytes()).hexdigest(),
+        "corpus_sha256": corpus_sha256,
         "source_bindings": sources,
         "cases": rows,
         "metrics": metrics,
+        "measured_unsupported_behaviors": measured_unsupported_behaviors,
+        "agent_actions": agent_actions,
         "decision": "PASS"
         if all(r["buggy_correct"] and r["fixed_clean"] for r in rows)
         else "BLOCKED",
         "authority": "none",
         "release_approval": False,
-        "claim_boundary": "Public hand-labeled seeded Python AST corpus; not independently held out, AI-written, representative, runtime, or production evidence. Tenant isolation and hollow-test semantics are unsupported scanner behaviors and are scored as false negatives.",
+        "claim_boundary": "Public hand-labeled seeded Python AST corpus; not independently held out, AI-written, representative, runtime, or production evidence. Tenant-isolation and test-oracle-strength cases have explicit per-category confusion counts; a measured miss is a false negative, not coverage.",
     }
     core["receipt_sha256"] = hashlib.sha256(canonical_bytes(core)).hexdigest()
     return core

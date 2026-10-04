@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.0 - 2026-10-04 (release candidate; publication gated)
+
+- Fixed release metadata and installation guidance to use the requested 1.1.0
+  Marketplace version alongside Code Factory 0.47.0.
+- Changed the release preview to document the current local CF + ForgeLine
+  audit lanes and their evidence limits without implying test execution,
+  candidate binding, or release approval.
+- Added version-aligned package metadata and documented the exact limits of
+  the five existing editor audit lanes; no new lane or test execution is
+  implied by this packaging update.
+
 ## 1.0.2 - 2026-09-28 (release candidate; publication gated)
 
 - Fix opaque audit status by showing NOT_RUN, INCOMPLETE, UNAVAILABLE, FAILED,

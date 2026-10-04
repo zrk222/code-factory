@@ -31,7 +31,7 @@ def _manifest(root: Path, test_body: str = "assert True\n") -> Path:
                         "tests": ["test_claim.py"],
                         "verify": {
                             "argv": ["python", "-m", "pytest", "-q", "test_claim.py"],
-                            "timeout_seconds": 10,
+                            "timeout_seconds": 30,
                         },
                     }
                 ],

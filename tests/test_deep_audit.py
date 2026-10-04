@@ -80,8 +80,15 @@ def test_signed_execution_threshold_and_idempotent_receipt(tmp_path):
     assert receipt["decision"] == "BLOCKED"
     assert codes(receipt) == {"DEEP_RULE_THRESHOLD"}
     assert receipt["repair_queue"][0]["remediation"] == "Close owned resources"
+    action = receipt["agent_actions"][0]
+    assert action["measurement_id"] == receipt["repair_queue"][0]["rule_id"]
+    assert action["candidate_sha256"] == receipt["candidate_sha256"]
+    assert action["action"] == receipt["repair_queue"][0]["remediation"]
+    assert action["evidence_to_attach"] and action["stop_condition"]
     assert execute_deep_audit(*args) == result
-    assert deep_audit_status(tmp_path)["state"] == "BLOCKED"
+    status = deep_audit_status(tmp_path)
+    assert status["state"] == "BLOCKED"
+    assert status["agent_actions"] == receipt["agent_actions"]
     assert evaluate_deep_audit(plan, targets, canaries)["authority"] == "none"
 
 
@@ -90,6 +97,7 @@ def test_clean_with_detected_canary_requires_human_review(tmp_path):
     receipt = execute_deep_audit(*args)["receipt"]
     assert receipt["decision"] == "READY_FOR_HUMAN_REVIEW"
     assert receipt["repair_queue"] == []
+    assert receipt["agent_actions"] == []
     assert receipt["authority"] == "none"
     assert (
         deep_audit_status(tmp_path)["verification"]

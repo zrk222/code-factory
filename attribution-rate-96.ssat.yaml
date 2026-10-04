@@ -1,0 +1,43 @@
+feature: attribution-rate-96
+version: "1.0"
+intent: "Increase truthful repo-wide function-level test-intent attribution using behavior assertions, with no production-code or metric-policy changes."
+requirements:
+  - id: REQ_ATTRIBUTION_BEHAVIOR_TESTS
+    description: "New attribution evidence executes relevant functions and asserts observable behavior rather than relying on symbol mentions."
+    invariant: "REQ_ATTRIBUTION_BEHAVIOR_TESTS"
+    checks:
+      - "REQ_ATTRIBUTION_BEHAVIOR_TESTS"
+      - "assert"
+      - "pytest"
+      - "positive"
+      - "negative"
+  - id: REQ_ATTRIBUTION_UNCHANGED_INVENTORY
+    description: "ForgeLine audits the unchanged repo-wide function inventory and retains version and source provenance."
+    invariant: "REQ_ATTRIBUTION_UNCHANGED_INVENTORY"
+    checks:
+      - "REQ_ATTRIBUTION_UNCHANGED_INVENTORY"
+      - "repo_wide"
+      - "source_commit"
+      - "attribution"
+      - "1066"
+  - id: REQ_ATTRIBUTION_TARGET
+    description: "The final ForgeLine report attributes at least 1,046 of the fixed 1,067 functions (at least 98%) without excluding candidates."
+    invariant: "REQ_ATTRIBUTION_TARGET"
+    checks:
+      - "REQ_ATTRIBUTION_TARGET"
+      - "1046"
+      - "1067"
+      - "0.98"
+  - id: REQ_ATTRIBUTION_EVIDENCE
+    description: "Fresh full-suite and focused-test logs and exact report bytes are hash-bound by the workflow audit."
+    invariant: "REQ_ATTRIBUTION_EVIDENCE"
+    checks:
+      - "REQ_ATTRIBUTION_EVIDENCE"
+      - "workflow-audit"
+      - "sha256"
+      - "full-suite"
+gates:
+  - type: test
+    command: "rtk proxy powershell -NoProfile -ExecutionPolicy Bypass -File tools/workflow-audit/run-attribution-tests.ps1 -Mode focused"
+  - type: smoke
+    command: "rtk proxy forge qa --repo-wide --root ."

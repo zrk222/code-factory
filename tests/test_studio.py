@@ -434,6 +434,9 @@ def test_studio_route_contract_golden_preserves_public_and_token_bound_surfaces(
     tmp_path: Path,
 ):
     """Keep the externally visible Studio route, token, and error contract stable."""
+    from test_runtime_coverage import _fixture, _write_report
+
+    _write_report(tmp_path, _fixture(tmp_path))
     server, token = create_server(tmp_path)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -482,6 +485,7 @@ def test_studio_route_contract_golden_preserves_public_and_token_bound_surfaces(
             "/api/savings": "factory.savings-report.public.v1",
             "/api/developer-memory": "factory.studio.developer-memory.v1",
             "/api/graph-ops": "factory.graph-ops.v1",
+            "/api/coverage-report": "factory.runtime-coverage.v1",
         }
         for path, schema in protected_schemas.items():
             rejected_status, rejected_body, _content_type = get(path)
@@ -496,6 +500,16 @@ def test_studio_route_contract_golden_preserves_public_and_token_bound_surfaces(
                 200,
                 schema,
             )
+        coverage_status, coverage_body, _coverage_type = get(
+            "/api/coverage-report", {"X-Factory-Studio-Token": token}
+        )
+        coverage = json.loads(coverage_body)
+        assert (coverage_status, coverage["state"], coverage["file_count"]) == (
+            200,
+            "OBSERVED",
+            1,
+        )
+        assert coverage["files"][0]["path"] == "factoryline/demo.py"
 
         unknown_status, unknown_body, unknown_connection = post(
             "/api/unknown", {}, {"X-Factory-Studio-Token": token}

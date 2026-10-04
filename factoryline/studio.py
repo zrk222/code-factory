@@ -29,6 +29,7 @@ from .run_metrics import public_metrics
 from .savings import SavingsError, public_savings_report, record_savings_pair
 from .graph_ops import graph_ops_html, graph_ops_snapshot
 from .deep_audit_loop import read_junit_report
+from .runtime_coverage import read_runtime_coverage_report
 from .graph_authorization import (
     GraphAuthorizationError,
     create_graph_authorization,
@@ -963,6 +964,9 @@ class _StudioHandler(BaseHTTPRequestHandler):
             ),
             "/api/graph-ops": lambda: self._serve_token_json(self._graph_ops_payload),
             "/api/test-report": lambda: self._serve_token_json(read_junit_report),
+            "/api/coverage-report": lambda: self._serve_token_json(
+                lambda root: read_runtime_coverage_report(root, include_files=True)
+            ),
         }
         return api_routes.get(self.path)
 

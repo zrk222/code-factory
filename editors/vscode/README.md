@@ -2,8 +2,9 @@
 
 ## Native CF and ForgeLine evidence
 
-Version 1.0.2 adds **FactoryLine Evidence** in Explorer for VS Code and
-Open VSX compatible editors. Select **Run CF + ForgeLine Audits**, choose a
+Version 1.1.0 aligns the editor package with Code Factory 0.47.0 and provides
+**FactoryLine Evidence** in Explorer for VS Code and Open VSX compatible
+editors. Select **Run CF + ForgeLine Audits**, choose a
 workspace, then confirm local execution. The panel shows CF change review,
 architecture health, security patterns, runtime readiness, and ForgeLine
 repository inventory as separate lanes. Open a lane to inspect the report or
@@ -179,7 +180,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-1.0.2.vsix
+code --install-extension factoryline-vscode-1.1.0.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

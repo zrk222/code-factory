@@ -284,6 +284,24 @@ def _run_execution(args: Any) -> int:
 
 
 def _emit(result: dict[str, Any], code: int) -> int:
+    if "agent_actions" not in result:
+        receipt = result.get("receipt")
+        if isinstance(receipt, dict) and isinstance(receipt.get("agent_actions"), list):
+            result["agent_actions"] = receipt["agent_actions"]
+        elif isinstance(result.get("repair_queue"), list):
+            result["agent_actions"] = result["repair_queue"]
+        elif result.get("state") in {"INCOMPLETE", "FAIL", "NOT_RUN"} or code != 0:
+            result["agent_actions"] = [{
+                "id": "deep-audit-report-incomplete",
+                "measurement_id": result.get("code", "deep_audit_execution"),
+                "priority": "P1",
+                "agent_role": "audit_orchestrator_agent",
+                "action": "Resolve the reported deep-audit execution or evidence issue, then rerun the same command against the candidate.",
+                "evidence_to_attach": "Exact command, candidate SHA, runner/tool versions, complete stdout/stderr, and hash-bound output receipt.",
+                "stop_condition": "Keep the audit INCOMPLETE until the command succeeds and its result is bound to the intended candidate.",
+            }]
+        else:
+            result["agent_actions"] = []
     print(
         json.dumps(result, indent=2, sort_keys=True),
         file=sys.stderr if code == 2 else sys.stdout,

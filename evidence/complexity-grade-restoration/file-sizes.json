@@ -1,0 +1,144 @@
+{
+  "schema": "factory.file-sizes.snapshot.v1",
+  "observed_at": "2026-10-04T11:38:52.985093+00:00",
+  "source": "UTF-8 source with CRLF and CR normalized to LF before byte counting; cross-checked with strict architecture-health receipt",
+  "architecture_health": {
+    "decision": "HEALTHY",
+    "file_size_guard": {
+      "enforced": true,
+      "files": {
+        "factoryline/architecture_health.py": {
+          "bytes": 50621,
+          "lines": 1408,
+          "max_bytes": 50993,
+          "max_lines": 1414
+        },
+        "factoryline/audit_taxonomy.py": {
+          "bytes": 42194,
+          "lines": 684,
+          "max_bytes": 49071,
+          "max_lines": 814
+        },
+        "factoryline/audit_trace.py": {
+          "bytes": 22238,
+          "lines": 506,
+          "max_bytes": 22238,
+          "max_lines": 506
+        },
+        "factoryline/benchmark_lab.py": {
+          "bytes": 19012,
+          "lines": 488,
+          "max_bytes": 19012,
+          "max_lines": 488
+        },
+        "factoryline/cli.py": {
+          "bytes": 182806,
+          "lines": 4932,
+          "max_bytes": 182806,
+          "max_lines": 4932
+        },
+        "factoryline/github_account_overview.py": {
+          "bytes": 25122,
+          "lines": 656,
+          "max_bytes": 25122,
+          "max_lines": 656
+        },
+        "factoryline/graph_ops.py": {
+          "bytes": 220566,
+          "lines": 5842,
+          "max_bytes": 220566,
+          "max_lines": 5842
+        },
+        "factoryline/junie_review.py": {
+          "bytes": 73627,
+          "lines": 1444,
+          "max_bytes": 75340,
+          "max_lines": 1460
+        },
+        "factoryline/junie_taxonomy.py": {
+          "bytes": 38638,
+          "lines": 910,
+          "max_bytes": 38638,
+          "max_lines": 910
+        },
+        "factoryline/mcp.py": {
+          "bytes": 186748,
+          "lines": 4301,
+          "max_bytes": 186748,
+          "max_lines": 4301
+        }
+      }
+    },
+    "measured": 10,
+    "unchanged_budgets": true
+  },
+  "files": {
+    "factoryline/architecture_health.py": {
+      "bytes": 50621,
+      "lines": 1408,
+      "max_bytes": 50993,
+      "max_lines": 1414
+    },
+    "factoryline/audit_taxonomy.py": {
+      "bytes": 42194,
+      "lines": 684,
+      "max_bytes": 49071,
+      "max_lines": 814
+    },
+    "factoryline/audit_trace.py": {
+      "bytes": 22238,
+      "lines": 506,
+      "max_bytes": 22238,
+      "max_lines": 506
+    },
+    "factoryline/benchmark_lab.py": {
+      "bytes": 19012,
+      "lines": 488,
+      "max_bytes": 19012,
+      "max_lines": 488
+    },
+    "factoryline/cli.py": {
+      "bytes": 182806,
+      "lines": 4932,
+      "max_bytes": 182806,
+      "max_lines": 4932
+    },
+    "factoryline/github_account_overview.py": {
+      "bytes": 25122,
+      "lines": 656,
+      "max_bytes": 25122,
+      "max_lines": 656
+    },
+    "factoryline/graph_ops.py": {
+      "bytes": 220566,
+      "lines": 5842,
+      "max_bytes": 220566,
+      "max_lines": 5842
+    },
+    "factoryline/junie_review.py": {
+      "bytes": 73627,
+      "lines": 1444,
+      "max_bytes": 75340,
+      "max_lines": 1460
+    },
+    "factoryline/junie_taxonomy.py": {
+      "bytes": 38638,
+      "lines": 910,
+      "max_bytes": 38638,
+      "max_lines": 910
+    },
+    "factoryline/mcp.py": {
+      "bytes": 186748,
+      "lines": 4301,
+      "max_bytes": 186748,
+      "max_lines": 4301
+    }
+  },
+  "forge_qa": {
+    "grade": "A",
+    "composite": 97.9,
+    "max_complexity": 10,
+    "passed": true,
+    "attribution_rate": 0.9724517906336089
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "command": "git grep over tracked working-tree files for stale product identifiers",
+  "exit_code": 1,
+  "matched_lines": 0,
+  "matches": [],
+  "products_directory_empty": true,
+  "schema": "factory.scope-boundary-scan.v1",
+  "stale_adoption_contract_absent": true,
+  "stale_local_inventory_absent": true,
+  "stale_test_cache_absent": true,
+  "tracked_products_files": []
+}

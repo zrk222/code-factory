@@ -87,6 +87,62 @@ agent is allowed to inspect. For example:
 
 The `--root` directory must already exist. The server will not create it.
 
+Every MCP-enabled coding assistant can discover the shared audit contract with
+`factory.audit_taxonomy`. This tool returns the same canonical measurement IDs,
+specialist roles, applicability rules, evidence fields, and status semantics
+used by the CLI and Junie. An assistant without MCP can request the same
+machine-readable catalog with `factory audit taxonomy --json`. Agents should
+consult it before choosing lanes, report unknown applicability as
+`UNDETERMINED`, and route unresolved findings to the declared specialist role.
+The catalog is guidance; it does not run a check or turn missing evidence into
+a pass.
+
+When the current workspace's `origin` points to GitHub and the local GitHub
+CLI is already connected, any MCP client can request
+`factory.github_overview`. It lists up to the requested number of repositories
+visible to that session, searches open pull requests and issues across GitHub
+repositories visible to the connected identity, and shows operational detail
+for the workspace's origin.
+The matching command is
+`factory github overview --root C:\work\my-mvp --json`. Both routes use the
+existing `gh` session, issue read-only GET requests, and return a bounded
+snapshot of repository inventory and global open pull requests/issues, plus
+recent workflow runs, releases, and visible branch rules for the workspace
+origin. Six independent reads run concurrently; default lists
+contain at most 30 items and can be raised to 100. One extra row is requested
+where possible to distinguish a list exactly at the display limit from a
+truncated list without another round trip.
+Open work uses separate GitHub searches with `is:open is:pr` and
+`is:open is:issue`, so each result type has its own bound. Results carry their
+repository URL. GitHub search only includes repositories visible to the
+connected identity. Exact search `total_count` and one-row look-ahead for
+ordinary lists mark truncation without fetching unneeded pages; an exact search
+count at the display limit is complete for that bounded result.
+The default-branch protection read follows repository metadata because it
+depends on the repository's reported default branch. There is no background
+refresh or result cache. Missing authentication, limited visibility, and
+truncation remain explicit in the response state. Credentials, emails, bodies,
+comments, and source contents are excluded. Titles and other repository text
+are marked untrusted; neither route executes their contents, approves work, or
+performs writes.
+
+Any MCP client can request a host-neutral, role-specific work context with
+`factory.audit_agent_context`, optionally passing `specialist_role`. The
+response carries the canonical taxonomy digest, only the domains assigned to
+that role, shared evidence/status rules, and explicit handoff guidance. The
+matching CLI fallback is
+`factory audit agent-context --role specialty_ai_security_reviewer --json`;
+omit `--role` to get every specialist route. A requested role is not
+authenticated identity, and neither route dispatches work or grants execution
+authority. Agent-action references in reports are JSON Pointers into the
+candidate-bound report or `taxonomy://<digest>/domains/<id>/<field>` references
+into the matching taxonomy. Consumers must verify both digests before acting.
+
+This makes the contract available to any host that can call this MCP server or
+run the local CLI. A host with neither capability still needs a thin adapter;
+the catalog does not claim that every third-party IDE or agent has such an
+adapter installed.
+
 ## One-shot stateless request
 
 Use the stateless path when a caller needs exactly one bounded request and

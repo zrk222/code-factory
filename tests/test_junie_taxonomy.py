@@ -29,10 +29,15 @@ def test_taxonomy_is_complete_progressive_and_has_no_external_effect_authority(
     assert set(declared) == set(inventory)
     assert len(declared) == len(set(declared))
     assert taxonomy["tool_count"] == len(inventory)
+    assert "factory.github_overview" in taxonomy["stages"][0]["tools"]
     assert taxonomy["ide_workflow"]["schema"] == "factory.junie-ide-workflow.v1"
     assert "UNBOUND" in taxonomy["ide_workflow"]["candidate_binding"]
     assert "Python AST" in taxonomy["ide_workflow"]["audit_limits"]["security"]
     assert any("specialty AI" in step for step in taxonomy["ide_workflow"]["verify"])
+    assert any(
+        "factory.github_overview" in step
+        for step in taxonomy["ide_workflow"]["verify"]
+    )
     assert [stage["id"] for stage in taxonomy["stages"]] == [
         "orient",
         "intent",

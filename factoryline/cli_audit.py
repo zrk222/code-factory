@@ -27,6 +27,9 @@ def add_parser(sub: Any) -> None:
             "security",
             "evals",
             "governance",
+            "workflows",
+            "taxonomy",
+            "agent-context",
         ],
     )
     code_audit.add_argument("--policy", default=".factory/review-audits.json")
@@ -42,6 +45,44 @@ def add_parser(sub: Any) -> None:
         "--out", help="optional workspace-contained fingerprint receipt path"
     )
     code_audit.add_argument("--json", action="store_true")
+    code_audit.add_argument("--contract", default=".factory/workflow-audit-contract.json")
+    code_audit.add_argument("--observations", default=".factory/workflow-audit-observations.json")
+    code_audit.add_argument(
+        "--role",
+        help="specialist role for the host-neutral agent context projection",
+    )
+
+
+def _run_workflows(args: Any) -> int:
+    from .journey_proof import JourneyProofError
+    from .workflow_audit import audit_workflows
+
+    try:
+        result = audit_workflows(Path(args.root), args.contract, args.observations)
+    except (JourneyProofError, OSError) as error:
+        result = {"state": "INVALID", "message": str(error), "execution_authority": False}
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0 if result["state"] == "PASS" else 2
+
+
+def _run_taxonomy(args: Any) -> int:
+    from .audit_taxonomy import audit_taxonomy
+
+    result = audit_taxonomy()
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def _run_agent_context(args: Any) -> int:
+    from .audit_taxonomy import agent_taxonomy_context
+
+    try:
+        result = agent_taxonomy_context(args.role)
+    except ValueError as error:
+        print(json.dumps({"state": "INVALID", "message": str(error)}), file=sys.stderr)
+        return 2
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
 
 
 def _run_evals(args: Any) -> int:
@@ -144,6 +185,9 @@ def run(args: Any) -> int:
         "security": _run_security,
         "governance": _run_governance,
         "fingerprint": _run_fingerprint,
+        "workflows": _run_workflows,
+        "taxonomy": _run_taxonomy,
+        "agent-context": _run_agent_context,
     }
     try:
         return handlers.get(args.tool, _run_code)(args)

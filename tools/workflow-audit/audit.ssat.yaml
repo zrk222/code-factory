@@ -1,0 +1,18 @@
+name: universal-workflow-audit
+language: python
+modules:
+  - name: workflow_audit
+    path: factoryline/workflow_audit.py
+    language: python
+    functions:
+      - name: audit_workflows
+        args: [root, contract_path, observations_path]
+        returns: dict
+dependencies: []
+invariants:
+  - name: evaluator_does_not_execute
+    forbid_pattern: 'subprocess|run_supervised_command|requests\.|urlopen|exec\('
+    scope:
+      module: workflow_audit
+      symbol: audit_workflows
+      max_lines: 60

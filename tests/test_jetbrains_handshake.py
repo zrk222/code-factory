@@ -12,6 +12,9 @@ from factoryline.jetbrains_handshake import (
     JetBrainsHandshakeError,
     build_agent_proof_mission,
     evaluate_jetbrains_handshake,
+    jetbrains_handshake_projection,
+    validate_jetbrains_handshake,
+    write_jetbrains_handshake,
 )
 from factoryline.repair_sandbox import create_repair_scope
 
@@ -173,6 +176,19 @@ def test_handshake_ready_requires_intent_analysis_execution_and_non_hollow_e2e(
     assert result["next_action"] == "human_review"
     assert result["blockers"] == [] and result["unknowns"] == []
     assert result["analysis"]["provider"] == "qodana"
+
+    assert validate_jetbrains_handshake(result) == result
+    written = write_jetbrains_handshake(
+        tmp_path, result, Path(".factory/jetbrains-handshake/latest.json")
+    )
+    assert written["marker"] == "JETBRAINS_PROOF_HANDSHAKE_WRITTEN"
+    projection = jetbrains_handshake_projection(tmp_path)
+    assert projection["state"] == "hash_valid_unassessed"
+    assert projection["receipt"]["handshake_sha256"] == result["handshake_sha256"]
+
+    tampered = {**result, "next_action": "publish"}
+    with pytest.raises(JetBrainsHandshakeError, match="does not match"):
+        validate_jetbrains_handshake(tampered)
 
 
 def test_handshake_accepts_sonarqube_as_a_verified_analysis_source(

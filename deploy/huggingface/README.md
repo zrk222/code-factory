@@ -25,15 +25,21 @@ short_description: Audit code, review evidence, and resolve defects.
 
 # Code Factory
 
-## 0.47.0 audit and editor preview
+## 0.47.0 audit workflow preview
 
 - **Fixed:** local editor evidence now distinguishes missing, incomplete,
   unavailable, failed, and stale lanes instead of presenting inventory as a
   complete audit.
 - **Changed:** Junie taxonomy now maps a diff to bounded checks, repair steps,
   reruns, and independent specialty AI review.
-- **Added:** VS Code/Open VSX 1.0.2 evidence tree, JetBrains 1.0.2 CF +
-  ForgeLine tab, and native OpenCode 0.1.0 plugin with bounded session hooks.
+- **Added:** project-neutral `factory audit workflows` contracts with
+  hash-bound candidate and execution evidence; VS Code/Open VSX 1.0.2 evidence
+  tree; JetBrains 1.0.2 CF + ForgeLine tab; and native OpenCode 0.1.0 plugin
+  with bounded session hooks.
+- **Improved:** the latest local strict ForgeLine report grades A (98.2/100)
+  and attributes 1,046/1,067 functions (98.03%) to test intent while keeping
+  the hard complexity limit at 10. This is static test-intent matching, not
+  runtime coverage or software certification.
 
 These are source preview targets until each provider confirms publication.
 
@@ -51,7 +57,11 @@ passing run. The panel can search every recorded case in a bounded report of
 up to 10,000 tests, starting with eight cases and loading 20 more per action.
 
 
-Code Factory is a local-first code audit system spanning requirements, architecture, security checks, behavioral evidence, workflow integrity, specialty AI review, and actionable repairs.
+Code Factory + ForgeLine (CF/FL) is now a robust, local-first code-audit
+factory spanning requirements, architecture checks, Python AST security
+analysis, behavioral test evidence, workflow integrity, specialty AI review,
+and actionable repairs. Unsupported or missing evidence remains visible and
+does not become certification.
 
 The current source preview connects the original request, agent handoffs,
 verification routes, current receipts, and human review. It also makes stale

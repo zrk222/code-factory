@@ -1,0 +1,107 @@
+{
+  "candidate_sha256": "5a1c341fbe9e93b09c9f14993a69e8493fd2f2e0542af7eca9684123be8b44a9",
+  "contract_sha256": "d07a0fac157ca6fc67483f6a456795771627e5e74fcbd740ae0231485cebfa09",
+  "observations": [
+    {
+      "artifacts": [
+        {
+          "kind": "terminal-log",
+          "path": "evidence/scope-boundary-cleanup/pytest.log",
+          "sha256": "d961c68daf9c140fa698266f25eea2be6d0bbd17895d74456854fb7f2659d80e"
+        },
+        {
+          "kind": "acceptance-test-source",
+          "path": "tests/test_change_review.py",
+          "sha256": "02a0b17db3c1eff65fb8900e530f8ab83af9dbb3462479e064187282adcea810"
+        }
+      ],
+      "execution_identity": "local source checkout; CPython 3.11.9; Windows",
+      "id": "SCOPE_REGRESSION_SUITE",
+      "observed_at": "2026-10-04T07:09:35Z",
+      "profile": "windows-cpython-3.11",
+      "reason": "37 focused scope-review tests passed; Ruff also passed.",
+      "status": "PASS"
+    },
+    {
+      "artifacts": [
+        {
+          "kind": "json-receipt",
+          "path": "evidence/scope-boundary-cleanup/boundary-scan.json",
+          "sha256": "e147755fadba417f2b9398faa5a2987250231ffa2e73fbcc6e640dd33e8e2f84"
+        },
+        {
+          "kind": "candidate-config",
+          "path": ".factory/repository-scope.json",
+          "sha256": "c094170e941b4b99d1ae2a5417160e26f4aa74f869d635de064eaafebf5b5698"
+        }
+      ],
+      "execution_identity": "local source checkout; CPython 3.11.9; Windows",
+      "id": "POLICY_JSON",
+      "observed_at": "2026-10-04T07:09:35Z",
+      "profile": "windows-cpython-3.11",
+      "reason": "Policy JSON parsed and the reserved products root remained configured.",
+      "status": "PASS"
+    },
+    {
+      "artifacts": [
+        {
+          "kind": "terminal-log",
+          "path": "evidence/scope-boundary-cleanup/pytest.log",
+          "sha256": "d961c68daf9c140fa698266f25eea2be6d0bbd17895d74456854fb7f2659d80e"
+        },
+        {
+          "kind": "acceptance-test-source",
+          "path": "tests/test_change_review.py",
+          "sha256": "02a0b17db3c1eff65fb8900e530f8ab83af9dbb3462479e064187282adcea810"
+        }
+      ],
+      "execution_identity": "local source checkout; CPython 3.11.9; Windows",
+      "id": "BLOCKED_PRODUCT_ROOT",
+      "observed_at": "2026-10-04T07:09:35Z",
+      "profile": "windows-cpython-3.11",
+      "reason": "Regression tests confirmed the reserved product root stays blocked.",
+      "status": "PASS"
+    },
+    {
+      "artifacts": [
+        {
+          "kind": "terminal-log",
+          "path": "evidence/scope-boundary-cleanup/pytest.log",
+          "sha256": "d961c68daf9c140fa698266f25eea2be6d0bbd17895d74456854fb7f2659d80e"
+        },
+        {
+          "kind": "json-receipt",
+          "path": "evidence/scope-boundary-cleanup/boundary-scan.json",
+          "sha256": "e147755fadba417f2b9398faa5a2987250231ffa2e73fbcc6e640dd33e8e2f84"
+        }
+      ],
+      "execution_identity": "local source checkout; CPython 3.11.9; Windows",
+      "id": "POLICY_FIXTURE_PARITY",
+      "observed_at": "2026-10-04T07:09:35Z",
+      "profile": "windows-cpython-3.11",
+      "reason": "Generic policy and fixture checks passed; no stale product references or payloads remained.",
+      "status": "PASS"
+    },
+    {
+      "artifacts": [
+        {
+          "kind": "terminal-log",
+          "path": "evidence/scope-boundary-cleanup/pytest.log",
+          "sha256": "d961c68daf9c140fa698266f25eea2be6d0bbd17895d74456854fb7f2659d80e"
+        },
+        {
+          "kind": "candidate-config",
+          "path": ".factory/repository-scope.json",
+          "sha256": "c094170e941b4b99d1ae2a5417160e26f4aa74f869d635de064eaafebf5b5698"
+        }
+      ],
+      "execution_identity": "local source checkout; CPython 3.11.9; Windows",
+      "id": "OUT_OF_SCOPE_REJECTION",
+      "observed_at": "2026-10-04T07:09:35Z",
+      "profile": "windows-cpython-3.11",
+      "reason": "Scope rejection regression tests passed for generic external boundaries.",
+      "status": "PASS"
+    }
+  ],
+  "schema": "factory.workflow-audit.observations.v1"
+}

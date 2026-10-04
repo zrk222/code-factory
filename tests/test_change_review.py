@@ -24,11 +24,6 @@ from factoryline.proof_reuse import record_proof
 @pytest.mark.parametrize(
     "path",
     [
-        "AgentOvenServer.ts",
-        "agentovenserver.ts",
-        "AGENTOVENserver.ts",
-        "AgentCloudBackend.kt",
-        "agentcloudbackend.kt",
         "ConfidentialProductServer.ts",
         "confidentialproductserver.ts",
         "CONFIDENTIALPRODUCTserver.ts",
@@ -38,10 +33,6 @@ from factoryline.proof_reuse import record_proof
 )
 def test_scope_guard_blocks_compound_product_filenames(path: str) -> None:
     blocked = {
-        "agent-oven",
-        "agentoven",
-        "agent-cloud",
-        "agentcloud",
         "confidential-product",
         "confidentialproduct",
         "external-product",
@@ -66,10 +57,10 @@ def test_current_scope_policy_keeps_external_product_names_reserved() -> None:
     )
     blocked = set(policy["blocked_path_segments"])
     for path in (
-        "src/AgentOvenServer.ts",
-        "src/AgentCloudBackend.kt",
-        "examples/factory-memory-core/client.py",
-        "examples/factory-trust-core/client.py",
+        "products/new-service/main.ts",
+        "src/ConfidentialProductServer.ts",
+        "examples/external-memory-core/client.py",
+        "examples/external-trust-core/client.py",
     ):
         assert _matches_scope_segment(path, blocked) in blocked
 
@@ -346,16 +337,12 @@ SCOPE_POLICY = {
     ],
     "blocked_path_segments": [
         "products",
-        "agent-cloud",
-        "agentcloud",
-        "agent-oven",
-        "agentoven",
-        "factory-memory-core",
-        "factory-trust-core",
         "external-product",
         "externalproduct",
         "confidential-product",
         "confidentialproduct",
+        "external-memory-core",
+        "external-trust-core",
         "external-data-core",
         "external-policy-core",
     ],

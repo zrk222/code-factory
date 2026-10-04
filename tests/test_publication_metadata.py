@@ -338,18 +338,10 @@ def test_vscode_supply_chain_is_patched_and_audited_before_tests():
     assert "verifyBinary(bytes, asset[1])" in auditor
     assert "requireSuccessfulScan(spawnSync" in auditor
     assert "--omit" not in auditor
-    assert package["overrides"] == {
-        "brace-expansion": "5.0.12",
-        "fast-uri": "3.1.8",
-        "js-yaml": "^4.3.2",
-        "markdown-it": "14.3.1",
-        "undici": "7.29.1",
-    }
+    assert package["overrides"] == {"brace-expansion": "5.0.12"}
     assert lock["packages"]["node_modules/brace-expansion"]["version"] == "5.0.12"
-    assert lock["packages"]["node_modules/fast-uri"]["version"] == "3.1.8"
-    assert lock["packages"]["node_modules/markdown-it"]["version"] == "14.3.1"
-    assert lock["packages"]["node_modules/undici"]["version"] == "7.29.1"
-    assert lock["packages"]["node_modules/js-yaml"]["version"] == "4.3.2"
+    assert lock["packages"]["node_modules/@vscode/vsce"]["version"] == "4.0.0"
+    assert "node_modules/braces" not in lock["packages"]
     assert "dependencies" not in package
 
     for relative in (
@@ -487,11 +479,16 @@ def test_vscode_marketplace_workflow_seals_the_candidate_and_requires_a_scoped_s
     assert "secrets.VSCE_PAT" in workflow
     assert "VSCE_PAT is required in the vscode-marketplace environment." in workflow
     assert "sha256sum --check SHA256SUMS.txt" in workflow
-    assert (
-        "--packagePath \"$(find vscode-marketplace-candidate -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print -quit)\""
-        in workflow
-    )
+    assert "mapfile -t packages < <(find . -maxdepth 1 -type f -name 'factoryline-vscode-*.vsix' -print)" in workflow
+    assert 'test "${#packages[@]}" -eq 1' in workflow
+    assert 'package.get("publisher"), package.get("name"), package.get("version")' in workflow
+    assert '--packagePath "$VSCODE_VSIX_PATH"' in workflow
     assert "--oidc" not in workflow
+    package = json.loads(
+        (ROOT / "editors" / "vscode" / "package.json").read_text(encoding="utf-8")
+    )
+    assert package["devDependencies"]["@vscode/vsce"] == "^4.0.0"
+    assert "@vscode/vsce@4.0.0 publish" in workflow
 
 
 def test_vscode_release_workflows_pin_the_audited_npm_client():
@@ -523,8 +520,8 @@ def test_hosted_release_and_editor_versions_are_declared():
 
     assert project["version"] == "0.47.0"
     assert "hosted" in project["optional-dependencies"]
-    assert vscode["version"] == "1.0.2"
-    assert 'version = "1.0.2"' in gradle
+    assert vscode["version"] == "1.1.0"
+    assert 'version = "1.1.0"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 

@@ -2,7 +2,38 @@ from __future__ import annotations
 
 import pytest
 
-from factoryline.intent_quality import IntentQualityError, assess, require_clear
+from factoryline.intent_quality import (
+    IntentFinding,
+    IntentQualityError,
+    assess,
+    findings_as_dict,
+    normalize,
+    require_clear,
+)
+
+
+def test_normalize_and_findings_as_dict_preserve_text_and_emit_stable_diagnostics():
+    assert normalize("  A reviewer\n checks   the receipt. ") == (
+        "A reviewer checks the receipt."
+    )
+    assert normalize(None) == ""
+
+    findings = findings_as_dict("Make it better", field="acceptance")
+
+    assert findings == [
+        {
+            "code": "INTENT_VAGUE_LANGUAGE",
+            "message": "acceptance contains vague phrase: make_it_better",
+        },
+        {
+            "code": "INTENT_NO_ACTION",
+            "message": "acceptance does not state an observable action or state transition",
+        }
+    ]
+    assert IntentFinding("INTENT_NO_ACTION", "missing action").as_dict() == {
+        "code": "INTENT_NO_ACTION",
+        "message": "missing action",
+    }
 
 
 def test_intent_quality_accepts_concrete_action_and_observation() -> None:

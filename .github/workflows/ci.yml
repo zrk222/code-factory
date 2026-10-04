@@ -50,14 +50,49 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev,enterprise]"
-      - name: Test
+      - name: Enforce architecture and per-file growth budgets
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
+        run: python -m factoryline.cli architecture health --strict --json
+      - name: Test without runtime coverage
+        if: matrix.os != 'ubuntu-latest' || matrix.python != '3.11'
         run: python -m pytest -n 2 -q --junitxml=pytest-results.xml --durations=20
+      - name: Start runtime coverage receipt
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
+        run: python tools/workflow-audit/write-ci-runtime-coverage.py start
+      - name: Test with runtime statement and branch coverage
+        id: runtime-tests
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: >-
+          python -m pytest -p pytest_asyncio.plugin -p xdist.plugin -q -n 2 -p pytest_cov.plugin
+          --junitxml=.factory/test-reports/pytest.xml --durations=20
+          --cov=factoryline --cov-branch
+          --cov-report=json:.factory/test-reports/coverage.json
+          --cov-report=xml:.factory/test-reports/coverage.xml
+      - name: Finish runtime coverage receipt
+        if: always() && matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
+        env:
+          TEST_OUTCOME: ${{ steps.runtime-tests.outcome }}
+        run: python tools/workflow-audit/write-ci-runtime-coverage.py finish
       - name: Upload test results and timing evidence
-        if: always()
+        if: always() && (matrix.os != 'ubuntu-latest' || matrix.python != '3.11')
         uses: actions/upload-artifact@v7.0.1
         with:
           name: pytest-${{ matrix.os }}-${{ matrix.python }}
           path: pytest-results.xml
+          if-no-files-found: error
+      - name: Upload runtime coverage reports
+        if: always() && matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: pytest-${{ matrix.os }}-${{ matrix.python }}
+          path: |
+            .factory/test-reports/pytest.xml
+            .factory/test-reports/coverage.json
+            .factory/test-reports/coverage.xml
+            .factory/test-reports/coverage.run.json
+          include-hidden-files: true
           if-no-files-found: error
 
   native-process-parity:

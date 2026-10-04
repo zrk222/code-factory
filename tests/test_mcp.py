@@ -108,8 +108,13 @@ def test_mcp_status_declares_default_stdio_and_zero_authority_boundary(tmp_path:
         "factory.appforge_submission_integrity_status",
         "factory.proof_continuity_status",
         "factory.saas_status",
+        "factory.github_overview",
+        "factory.audit_taxonomy",
+        "factory.audit_agent_context",
         "factory.junie_taxonomy",
         "factory.junie_contribution",
+        "factory.junie_review",
+        "factory.runtime_coverage_status",
         "factory.agent_proof_mission",
         "factory.jetbrains_handshake",
         "factory.jetbrains_handshake_status",
@@ -118,7 +123,7 @@ def test_mcp_status_declares_default_stdio_and_zero_authority_boundary(tmp_path:
     assert all(value is False for value in status["authority"].values())
 
 
-def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
+def test_mcp_protocol_parity_is_read_only(tmp_path: Path, monkeypatch):
     initialized = dispatch(
         {
             "jsonrpc": "2.0",
@@ -144,16 +149,14 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
     assert [tool["name"] for tool in inventory["result"]["tools"]] == mcp_status(
         tmp_path
     )["tools"]
-    assert all(
-        tool["annotations"]
-        == {
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": False,
-        }
-        for tool in inventory["result"]["tools"]
-    )
+    for tool in inventory["result"]["tools"]:
+        annotations = tool["annotations"]
+        assert annotations["readOnlyHint"] is True
+        assert annotations["destructiveHint"] is False
+        assert annotations["idempotentHint"] is True
+        assert annotations["openWorldHint"] is (
+            tool["name"] == "factory.github_overview"
+        )
 
     junie = _content(
         dispatch(
@@ -169,6 +172,142 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path):
     assert junie["marker"] == "MCP_JUNIE_TAXONOMY_READ_ONLY"
     assert junie["taxonomy"]["tool_count"] == len(mcp_status(tmp_path)["tools"])
     assert all(value is False for value in junie["taxonomy"]["authority"].values())
+
+    shared_taxonomy = _content(
+        dispatch(
+            {
+                "jsonrpc": "2.0",
+                "id": 2900,
+                "method": "tools/call",
+                "params": {"name": "factory.audit_taxonomy"},
+            },
+            tmp_path,
+        )
+    )
+    assert shared_taxonomy["marker"] == "MCP_AUDIT_TAXONOMY_READ_ONLY"
+    registry = shared_taxonomy["taxonomy"]
+    assert registry["schema"] == "factory.audit-domain-taxonomy.v1"
+    assert registry["agent_usage_contract"]["primary_mcp_tool"] == "factory.audit_taxonomy"
+    assert registry["agent_usage_contract"]["cli_fallback"] == "factory audit taxonomy --json"
+    assert any(
+        route["route"] == "factory.github_overview"
+        for route in registry["agent_usage_contract"]["agent_routes"]
+    )
+    assert registry["agent_usage_contract"]["connected_repository_context"]["mcp_tool"] == "factory.github_overview"
+    assert "Before scoping" in registry["agent_usage_contract"]["connected_repository_context"]["use_when"]
+    assert "account-wide open pull requests and issues" in registry["agent_usage_contract"]["connected_repository_context"]["scope"]
+    assert {
+        route["capability"] for route in registry["agent_usage_contract"]["agent_routes"]
+    } == {"mcp", "local_cli", "platform_adapter"}
+    assert "candidate.candidate_sha256" in registry["agent_usage_contract"]["required_report_fields"]
+    assert "specialist_role" in registry["agent_usage_contract"]["required_agent_action_fields"]
+    assert registry["taxonomy_sha256"]
+    assert {
+        domain_id
+        for role in registry["specialist_roles"]
+        for domain_id in role["measurement_ids"]
+    } == {row["measurement_id"] for row in registry["domains"]}
+    assert any(
+        row["measurement_id"] == "agent_workflow_effectiveness"
+        for row in registry["domains"]
+    )
+    assert junie["taxonomy"]["audit_taxonomy"] == registry
+
+    agent_context = _content(
+        dispatch(
+            {
+                "jsonrpc": "2.0",
+                "id": 2903,
+                "method": "tools/call",
+                "params": {
+                    "name": "factory.audit_agent_context",
+                    "arguments": {"specialist_role": "specialty_ai_security_reviewer"},
+                },
+            },
+            tmp_path,
+        )
+    )
+    assert agent_context["marker"] == "MCP_AUDIT_AGENT_CONTEXT_READ_ONLY"
+    assert agent_context["context"]["taxonomy_sha256"] == registry["taxonomy_sha256"]
+    assert agent_context["context"]["role_resolution_state"] == "RESOLVED_FROM_CANONICAL_REGISTRY"
+    assert "not an authentication claim" in agent_context["context"]["identity_scope"]
+    assert all(value is False for value in agent_context["context"]["authority"].values())
+    assert all(
+        row["specialist_role"] == "specialty_ai_security_reviewer"
+        for row in agent_context["context"]["domains"]
+    )
+
+    from factoryline import github_account_overview
+
+    monkeypatch.setattr(
+        github_account_overview,
+        "build_github_account_overview",
+        lambda root, *, limit: {
+            "schema": "factory.github-account-overview.v1",
+            "state": "COMPLETE",
+            "limit": limit,
+            "repository": {"hostname": "github.com", "owner": "owner", "name": "repo"},
+            "sections": {},
+            "authority": {"merge": False},
+        },
+    )
+    github = _content(
+        dispatch(
+            {
+                "jsonrpc": "2.0",
+                "id": 2904,
+                "method": "tools/call",
+                "params": {
+                    "name": "factory.github_overview",
+                    "arguments": {"limit": 12},
+                },
+            },
+            tmp_path,
+        )
+    )
+    assert github["marker"] == "MCP_GITHUB_OVERVIEW_READ_ONLY"
+    assert github["overview"]["limit"] == 12
+    assert "current workspace origin" in github["scope"].lower()
+    assert "pull requests/issues visible" in github["scope"]
+    invalid_github = dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 2905,
+            "method": "tools/call",
+            "params": {"name": "factory.github_overview", "arguments": {"limit": 0}},
+        },
+        tmp_path,
+    )
+    assert invalid_github["error"]["data"]["marker"] == "MCP_INVALID_PARAMS_REJECTED"
+
+    coverage = _content(
+        dispatch(
+            {
+                "jsonrpc": "2.0",
+                "id": 2901,
+                "method": "tools/call",
+                "params": {"name": "factory.runtime_coverage_status"},
+            },
+            tmp_path,
+        )
+    )
+    assert coverage["marker"] == "MCP_RUNTIME_COVERAGE_STATUS_READ_ONLY"
+    assert coverage["summary"]["state"] == "NOT_RUN"
+    assert "files" not in coverage["summary"]
+    assert "do not establish assertion strength" in coverage["scope"]
+    invalid_coverage = dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 2902,
+            "method": "tools/call",
+            "params": {
+                "name": "factory.runtime_coverage_status",
+                "arguments": {"module": "../outside.py"},
+            },
+        },
+        tmp_path,
+    )
+    assert invalid_coverage["error"]["data"]["marker"] == "RUNTIME_COVERAGE_MODULE_REJECTED"
 
     agentic = _content(
         dispatch(

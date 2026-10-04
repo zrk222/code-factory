@@ -1,0 +1,59 @@
+feature: runtime-coverage-panel
+version: "1.0"
+intent: "Report measured local Python runtime statement and branch coverage in Code Factory without conflating it with static test-intent attribution or claiming correctness."
+requirements:
+  - id: REQ_RUNTIME_COVERAGE_MEASURED
+    description: "Coverage.py JSON with branch collection covers the exact current factoryline Python source inventory and provides separately validated runtime statement and branch counts and rates."
+    invariant: "REQ_RUNTIME_COVERAGE_MEASURED"
+    checks:
+      - "REQ_RUNTIME_COVERAGE_MEASURED"
+      - "covered_lines"
+      - "num_statements"
+      - "covered_branches"
+      - "num_branches"
+      - "percent_statements_covered"
+      - "percent_branches_covered"
+      - "factoryline"
+      - "inventory"
+  - id: REQ_RUNTIME_COVERAGE_FAIL_CLOSED
+    description: "Missing reports remain NOT_RUN and invalid or unsafe reports are INCOMPLETE without file detail."
+    invariant: "REQ_RUNTIME_COVERAGE_FAIL_CLOSED"
+    checks:
+      - "REQ_RUNTIME_COVERAGE_FAIL_CLOSED"
+      - "NOT_RUN"
+      - "INCOMPLETE"
+      - "max_bytes"
+      - "max_files"
+      - "workspace"
+  - id: REQ_RUNTIME_COVERAGE_HASH_BOUND
+    description: "Observed coverage exposes its digest and only claims local source hash matching when the report and current Python source hashes match the recorded run receipt."
+    invariant: "REQ_RUNTIME_COVERAGE_HASH_BOUND"
+    checks:
+      - "REQ_RUNTIME_COVERAGE_HASH_BOUND"
+      - "source_sha256"
+      - "UNBOUND"
+      - "coverage.run.json"
+      - "authenticate"
+  - id: REQ_RUNTIME_COVERAGE_UI
+    description: "Graph Ops separates runtime statement and branch coverage from JUnit case results and ForgeLine static test-intent attribution, and protects full details with the Studio token."
+    invariant: "REQ_RUNTIME_COVERAGE_UI"
+    checks:
+      - "REQ_RUNTIME_COVERAGE_UI"
+      - "runtime_coverage"
+      - "api/coverage-report"
+      - "ForgeLine static test-intent"
+      - "Candidate binding"
+  - id: REQ_RUNTIME_COVERAGE_CI
+    description: "Existing Ubuntu Python 3.11 full-suite CI execution emits JSON and Cobertura reports without adding a matrix leg."
+    invariant: "REQ_RUNTIME_COVERAGE_CI"
+    checks:
+      - "REQ_RUNTIME_COVERAGE_CI"
+      - "coverage.json"
+      - "coverage.xml"
+      - "ubuntu-latest"
+      - "3.11"
+gates:
+  - type: test
+    command: "rtk proxy python -m pytest -p pytest_asyncio.plugin -q tests/test_runtime_coverage.py tests/test_graph_ops.py tests/test_studio.py"
+  - type: smoke
+    command: "rtk proxy python -c \"from pathlib import Path; p=Path('factoryline/graph_ops.html').read_text(encoding='utf-8'); assert all(x in p for x in ['runtime statement coverage','runtime branch coverage','UNBOUND']); print('runtime coverage UI contract PASS')\""

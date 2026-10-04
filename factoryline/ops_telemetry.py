@@ -96,6 +96,7 @@ def is_read_only_command(argv: Iterable[str]) -> bool:
             break
     return tuple(prefix) in {
         ("memory", "brief"),
+        ("github", "overview"),
         ("graph", "ops"),
         ("graph", "portfolio"),
         ("intent", "inspect"),

@@ -27,8 +27,8 @@ not turn a source merge into release approval.
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Manually dispatch the `huggingface` environment workflow | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
-| VS Code / Open VSX | `factoryline-vscode-1.0.2.vsix` | Upload VS Code through the Microsoft Marketplace website; use the protected publisher workflow for Open VSX | Installable VSIX and public marketplace version |
-| JetBrains | `factoryline-intellij-1.0.2.zip` | Use the separate protected JetBrains publisher workflow after its live binary-slot and metadata gates permit the update | Compatible ZIP plus an accepted Marketplace upload receipt; public availability still requires moderation |
+| VS Code / Open VSX | `factoryline-vscode-1.1.0.vsix` | Upload VS Code through the Microsoft Marketplace website; use the protected publisher workflow for Open VSX | Installable VSIX and public marketplace version |
+| JetBrains | `factoryline-intellij-1.1.0.zip` | Use the separate protected JetBrains publisher workflow after its live binary-slot and metadata gates permit the update | Compatible ZIP plus an accepted Marketplace upload receipt; public availability still requires moderation |
 | OpenCode | Native `code-factory-opencode` plugin 0.1.0 | Build a self-contained module and install under `.opencode/plugins/`; publish a registry package only after registry authentication and independent receipt | Project plugin loads and CF/ForgeLine lanes run or report exact limits |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
@@ -49,25 +49,28 @@ attestation against that exact commit, workflow and main ref, rejecting
 self-hosted runners. Local checks are development evidence and cannot replace
 this receipt. Attestation establishes provenance, not software correctness.
 
-The public seeded Python AST benchmark runs in `audit-benchmark.yml`. Its six
+The public seeded Python AST benchmark runs in `audit-benchmark.yml`. Its eight
 hand-labeled cases currently yield 2 true positives, 2 true negatives, 0 false
-positives and 2 false negatives: precision 100%, recall 50%. Hollow-test
-semantics and tenant-isolation defects remain unsupported by this scanner.
-This small, public corpus is not independent holdout or production evidence;
-the workflow preserves measurements rather than approving a release. Mutation
-testing has a separate manual workflow; configuring it is not a measured
-mutation-survival result.
+positives and 4 false negatives: precision 100%, recall 33.3%. The receipt now
+reports test-oracle strength separately: 0/3 hollow-test cases detected
+(recall 0%, 95% Wilson interval 0–56.1%); tenant-isolation remains 0/1
+(recall 0%). These are measured misses, not implied coverage. This small,
+public corpus is not independent holdout or production evidence; the workflow
+preserves measurements rather than approving a release. Mutation testing has
+a separate manual workflow; configuring it is not a measured mutation-survival
+result.
 
-Queried the public provider APIs on 2026-09-30 at 16:29 UTC:
+Provider read-back on 2026-10-04:
 
 | Listing | Published version | Provider-reported downloads | Other provider metric |
 | --- | --- | ---: | ---: |
-| [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=zrk222.factoryline-vscode) | 1.0.1 | 380 | 3 installs |
-| [Open VSX](https://open-vsx.org/extension/zrk222/factoryline-vscode) | 0.9.9 | 4,682 | 0 reviews |
+| [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=zrk222.factoryline-vscode) | 1.0.2 | 395 downloads | 3 installs |
+| [Open VSX](https://open-vsx.org/extension/zrk222/factoryline-vscode) | 0.9.9 | 4,720 downloads | 0 reviews |
 
-These are channel counters, not unique users. The VS Code Marketplace API
-returned 378–380 across three consecutive reads, so treat its counter as an
-eventually consistent snapshot. Neither listing has published 1.0.2 yet.
+These are channel counters, not unique users. VS Code 1.0.2 was published on
+2026-10-01; the publisher page read on Oct 4 showed it updated three days ago.
+Open VSX still reports 0.9.9. The 1.1.0 artifacts in this candidate are not yet
+published.
 
 The release pipeline never treats a queued review, draft listing, uploaded
 artifact, or workflow dispatch as a completed publication. Each channel is
