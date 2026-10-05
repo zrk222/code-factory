@@ -38,7 +38,17 @@ def add_parser(sub: Any) -> None:
         "--tenant-read-call",
         action="append",
         default=[],
-        help="qualified read call requiring an explicit tenant_id parameter (repeatable; security audit only)",
+        help="qualified read call requiring a tenant-scope argument check (repeatable; security audit only)",
+    )
+    code_audit.add_argument(
+        "--tenant-read-binding",
+        action="append",
+        default=[],
+        help=(
+            "bind a read call argument to its required enclosing function parameter: "
+            "CALL=position:INDEX:PARAMETER or CALL=keyword:NAME:PARAMETER "
+            "(repeatable across calls; exactly one per call; position is zero-based)"
+        ),
     )
     code_audit.add_argument(
         "--base", default="origin/main", help="Git base for dated-evidence review"
@@ -120,6 +130,7 @@ def _run_security(args: Any) -> int:
         result = security_scan(
             Path(args.root),
             tenant_read_calls=tuple(getattr(args, "tenant_read_call", [])),
+            tenant_read_bindings=tuple(getattr(args, "tenant_read_binding", [])),
         )
     except ReviewAuditError as error:
         print(json.dumps({"state": "INVALID", "message": str(error)}), file=sys.stderr)
@@ -128,6 +139,20 @@ def _run_security(args: Any) -> int:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
         print(f"Security audit: {result['state']} ({len(result['findings'])} findings)")
+        coverage = result.get("audit_coverage", {})
+        rate = coverage.get("audit_rate")
+        state = coverage.get("measurement_state", "unknown")
+        if isinstance(rate, (int, float)) and not isinstance(rate, bool):
+            coverage_text = (
+                f"{rate:.1%} ({coverage.get('files_audited', 0)}/"
+                f"{coverage.get('files_discovered', 0)} Python sources; {state})"
+            )
+        else:
+            coverage_text = (
+                f"N/A ({coverage.get('files_discovered', 0)} eligible Python "
+                f"sources; {state})"
+            )
+        print(f"Coverage: {coverage_text}")
         for item in result["findings"]:
             print(
                 f"{item['severity']} {item['code']}: {item['path']}:{item['line']} — {item['message']}"

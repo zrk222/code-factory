@@ -373,7 +373,11 @@ def _public_observations(cases: list, totals: dict) -> tuple[list, list]:
     # A tenant boundary is a declared requirement, not something inferred from
     # a method name. Apply one fixed contract to every buggy and clean input;
     # the scanner never receives a case label or its expected finding.
-    scanner = partial(security_scan, tenant_read_calls=("db.get",))
+    scanner = partial(
+        security_scan,
+        tenant_read_calls=("db.get",),
+        tenant_read_bindings=("db.get=keyword:tenant_id:tenant_id",),
+    )
     with tempfile.TemporaryDirectory(prefix="factory-public-benchmark-") as tmp:
         for index, case in enumerate(cases):
             cid, cat = _public_case(case, index)
@@ -473,7 +477,7 @@ def run_public_benchmark(corpus: Path | None = None) -> dict[str, Any]:
         "scanner": "factoryline.review_audits.security_scan",
         "scanner_contract": {
             "tenant_read_calls": ["db.get"],
-            "tenant_keyword": "tenant_id",
+            "tenant_read_bindings": ["db.get=keyword:tenant_id:tenant_id"],
         },
         "scanner_version": package_version,
         "scanner_sources": [
@@ -498,7 +502,7 @@ def run_public_benchmark(corpus: Path | None = None) -> dict[str, Any]:
         else "BLOCKED",
         "authority": "none",
         "release_approval": False,
-        "claim_boundary": "Public hand-labeled seeded Python AST corpus with one declared db.get tenant-read contract applied uniformly to all inputs; not independently held out, AI-written, representative, runtime, or production evidence. Static keyword presence does not authenticate tenants; mutation and cross-tenant runtime checks remain separate. Tenant-isolation and test-oracle-strength cases have explicit per-category confusion counts; a measured miss is a false negative, not coverage.",
+        "claim_boundary": "Public hand-labeled seeded Python AST cases; not independently held out, runtime, or production validation. The configured db.get binding is syntax-only and cannot establish tenant identity or isolation. Results are per-category counts for these cases only.",
     }
     core["receipt_sha256"] = hashlib.sha256(canonical_bytes(core)).hexdigest()
     return core

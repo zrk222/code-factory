@@ -7,5 +7,12 @@
   {"name":"tls-disabled","source":"import requests\nrequests.get(url, verify=False)","expected":["SECURITY_TLS_VERIFY_DISABLED"]},
   {"name":"literal-secret","source":"api_key = 'live-secret-material'","expected":["SECURITY_HARDCODED_SECRET"]},
   {"name":"bare-except","source":"try:\n    work()\nexcept:\n    pass","expected":["QUALITY_BARE_EXCEPT"]},
-  {"name":"safe-controls","source":"import subprocess\nimport yaml\nyaml.load(value, Loader=yaml.SafeLoader)\nsubprocess.run(['tool', value], shell=False, check=True)","expected":[]}
+  {"name":"safe-controls","source":"import subprocess\nimport yaml\nyaml.load(value, Loader=yaml.SafeLoader)\nsubprocess.run(['tool', value], shell=False, check=True)","expected":[]},
+  {"name":"tenant-positional-bound","source":"def fetch(record_id, workspace_key):\n    return store.fetch(record_id, workspace_key)","expected":[],"tenant_read_calls":["store.fetch"],"tenant_read_bindings":["store.fetch=position:1:workspace_key"]},
+  {"name":"tenant-keyword-renamed-parameter","source":"def fetch(record_id, org_scope):\n    return store.fetch(record_id, tenant_id=org_scope)","expected":[],"tenant_read_calls":["store.fetch"],"tenant_read_bindings":["store.fetch=keyword:tenant_id:org_scope"]},
+  {"name":"tenant-positional-wrong-parameter","source":"def fetch(record_id, workspace_key):\n    return store.fetch(record_id, record_id)","expected":["SECURITY_MISSING_TENANT_ISOLATION"],"tenant_read_calls":["store.fetch"],"tenant_read_bindings":["store.fetch=position:1:workspace_key"]},
+  {"name":"tenant-position-after-starred-args","source":"def fetch(workspace_key, prefix):\n    return store.fetch(*prefix, workspace_key)","expected":["SECURITY_MISSING_TENANT_ISOLATION"],"tenant_read_calls":["store.fetch"],"tenant_read_bindings":["store.fetch=position:1:workspace_key"]},
+  {"name":"tenant-optional-parameter","source":"def fetch(record_id, workspace_key=None):\n    return store.fetch(record_id, workspace_key)","expected":["SECURITY_MISSING_TENANT_ISOLATION"],"tenant_read_calls":["store.fetch"],"tenant_read_bindings":["store.fetch=position:1:workspace_key"]},
+  {"name":"tenant-comprehension-shadowing-safe","source":"def fetch(scope, ids):\n    cached = [scope for scope in ids]\n    return store.fetch(id, tenant_id=scope)","expected":[],"tenant_read_calls":["store.fetch"],"tenant_read_bindings":["store.fetch=keyword:tenant_id:scope"]},
+  {"name":"tenant-comprehension-walrus-rebind","source":"def fetch(scope, ids):\n    cached = [scope := value for value in ids]\n    return store.fetch(id, tenant_id=scope)","expected":["SECURITY_MISSING_TENANT_ISOLATION"],"tenant_read_calls":["store.fetch"],"tenant_read_bindings":["store.fetch=keyword:tenant_id:scope"]}
 ]

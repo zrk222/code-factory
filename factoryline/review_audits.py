@@ -17,6 +17,7 @@ from typing import Any
 SCHEMA = "factory.review-audit-policy.v1"
 FINGERPRINT_SCHEMA = "factory.code-review-fingerprint.v1"
 SECURITY_SCHEMA = "factory.security-audit.v1"
+MAX_SECURITY_SOURCE_FILES = 512
 MAX_BYTES = 1_000_000
 MAX_RULES = 128
 MAX_PATHS = 64
@@ -948,7 +949,7 @@ def _security_source_files(root: Path) -> list[Path]:
         if ignored.intersection(relative_parts):
             continue
         files.append(path)
-    return sorted(files, key=lambda path: path.relative_to(root).as_posix())[:512]
+    return sorted(files, key=lambda path: path.relative_to(root).as_posix())
 
 
 def _vacuous_assertion(node: ast.expr) -> bool:
@@ -1018,6 +1019,47 @@ def _tenant_contract_calls(value: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(sorted(set(value)))
 
 
+def _tenant_contract_bindings(
+    values: tuple[str, ...], calls: tuple[str, ...]
+) -> dict[str, tuple[str, ...]]:
+    """Validate declared call-argument to enclosing-parameter tenant bindings."""
+    if not isinstance(values, tuple) or len(values) > MAX_RULES:
+        raise ReviewAuditError("Tenant read bindings must be a bounded tuple.")
+    result: dict[str, list[str]] = {}
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str) or value in seen:
+            raise ReviewAuditError("Tenant read bindings must be unique strings.")
+        seen.add(value)
+        call, separator, binding = value.partition("=")
+        parts = binding.split(":")
+        if not separator or call not in calls or not NAME.fullmatch(call):
+            raise ReviewAuditError(
+                "Each tenant binding must name a declared qualified read call."
+            )
+        if len(parts) != 3 or not parts[2].isidentifier():
+            raise ReviewAuditError(
+                "Tenant bindings use call=position:INDEX:PARAMETER or "
+                "call=keyword:NAME:PARAMETER."
+            )
+        kind, selector, parameter = parts
+        if kind == "position":
+            if not selector.isdecimal() or int(selector) > 255:
+                raise ReviewAuditError("Tenant positional binding index must be 0-255.")
+            selector = str(int(selector))
+        elif kind == "keyword":
+            if not selector.isidentifier():
+                raise ReviewAuditError("Tenant keyword binding must name an identifier.")
+        else:
+            raise ReviewAuditError("Tenant binding kind must be position or keyword.")
+        if call in result:
+            raise ReviewAuditError(
+                "Each read call may have only one tenant argument binding."
+            )
+        result.setdefault(call, []).append(f"{kind}:{selector}:{parameter}")
+    return {call: tuple(bindings) for call, bindings in sorted(result.items())}
+
+
 def _tenant_keyword_bound(node: ast.Call, parameters: set[str]) -> bool:
     value = next((k.value for k in node.keywords if k.arg == "tenant_id"), None)
     return (
@@ -1027,30 +1069,101 @@ def _tenant_keyword_bound(node: ast.Call, parameters: set[str]) -> bool:
     )
 
 
+def _tenant_parameter_unchanged(
+    function: ast.AST, parameter: str, use: ast.Call
+) -> bool:
+    statements = function.body
+    comprehension_targets = {
+        id(target)
+        for statement in statements
+        for expression in _body_nodes(statement)
+        if isinstance(
+            expression,
+            (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp),
+        )
+        for generator in expression.generators
+        for target in _body_nodes(generator.target)
+        if isinstance(target, ast.Name) and isinstance(target.ctx, ast.Store)
+    }
+    return not any(
+        isinstance(candidate, ast.Name)
+        and candidate.id == parameter
+        and id(candidate) not in comprehension_targets
+        and isinstance(candidate.ctx, (ast.Store, ast.Del))
+        and (candidate.lineno, candidate.col_offset) < (use.lineno, use.col_offset)
+        for statement in statements
+        for candidate in _body_nodes(statement)
+    )
+
+
+def _tenant_argument_bound(
+    node: ast.Call,
+    function: ast.AST,
+    parameters: set[str],
+    bindings: tuple[str, ...],
+) -> bool:
+    if not bindings:
+        return _tenant_keyword_bound(node, parameters) and _tenant_parameter_unchanged(
+            function, "tenant_id", node
+        )
+    for binding in bindings:
+        kind, selector, parameter = binding.split(":", 2)
+        value = (
+            next((item.value for item in node.keywords if item.arg == selector), None)
+            if kind == "keyword"
+            else node.args[int(selector)]
+            if int(selector) < len(node.args)
+            and not any(isinstance(item, ast.Starred) for item in node.args[: int(selector)])
+            else None
+        )
+        if (
+            isinstance(value, ast.Name)
+            and value.id == parameter
+            and parameter in parameters
+            and _tenant_parameter_unchanged(function, parameter, node)
+        ):
+            return True
+    return False
+
+
 def _tenant_function_findings(
-    relative: str, function: ast.AST, calls: tuple[str, ...], aliases: dict
+    relative: str,
+    function: ast.AST,
+    calls: tuple[str, ...],
+    aliases: dict,
+    bindings: dict[str, tuple[str, ...]],
 ) -> list[dict]:
     findings = []
-    parameters = {
-        a.arg
-        for a in (
-            *function.args.posonlyargs,
-            *function.args.args,
-            *function.args.kwonlyargs,
+    positional = [*function.args.posonlyargs, *function.args.args]
+    required_positional = positional[: len(positional) - len(function.args.defaults)]
+    parameters = {argument.arg for argument in required_positional}
+    parameters.update(
+        argument.arg
+        for argument, default in zip(
+            function.args.kwonlyargs, function.args.kw_defaults
         )
-    }
+        if default is None
+    )
     nodes = (n for statement in function.body for n in _body_nodes(statement))
     for node in nodes:
         if not isinstance(node, ast.Call):
             continue
         call = _normalized_call_name(node, aliases)
-        if call in calls and not _tenant_keyword_bound(node, parameters):
+        if call in calls and not _tenant_argument_bound(
+            node, function, parameters, bindings.get(call, ())
+        ):
             findings.append(
                 _security_finding(
                     "SECURITY_MISSING_TENANT_ISOLATION",
                     relative,
                     node,
-                    "Declared tenant read lacks an explicit tenant_id keyword bound to a function parameter. Scope the read and independently challenge cross-tenant access; this static check does not authenticate identity.",
+                    (
+                        f"Declared tenant read {call} lacks its configured argument "
+                        "bound to the declared function parameter. Configure "
+                        f"--tenant-read-binding {call}=position:INDEX:PARAMETER or "
+                        f"{call}=keyword:NAME:PARAMETER, then independently challenge "
+                        "cross-tenant access; this static check does not authenticate identity."
+                    ),
                     "HIGH",
                     call=call,
                     symbol=function.name,
@@ -1060,7 +1173,10 @@ def _tenant_function_findings(
 
 
 def _tenant_read_findings(
-    relative: str, tree: ast.AST, calls: tuple[str, ...]
+    relative: str,
+    tree: ast.AST,
+    calls: tuple[str, ...],
+    bindings: dict[str, tuple[str, ...]],
 ) -> list[dict]:
     if not calls:
         return []
@@ -1069,16 +1185,22 @@ def _tenant_read_findings(
         finding
         for function in ast.walk(tree)
         if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
-        for finding in _tenant_function_findings(relative, function, calls, aliases)
+        for finding in _tenant_function_findings(
+            relative, function, calls, aliases, bindings
+        )
     ]
 
 
 def _security_scan_tree(
-    root: Path, path: Path, tree: ast.AST, tenant_read_calls: tuple[str, ...] = ()
+    root: Path,
+    path: Path,
+    tree: ast.AST,
+    tenant_read_calls: tuple[str, ...] = (),
+    tenant_read_bindings: dict[str, tuple[str, ...]] | None = None,
 ) -> list[dict[str, Any]]:
     relative = path.relative_to(root).as_posix()
     findings: list[dict[str, Any]] = _tenant_read_findings(
-        relative, tree, tenant_read_calls
+        relative, tree, tenant_read_calls, tenant_read_bindings or {}
     )
     aliases = _security_aliases(tree)
     for node in ast.walk(tree):
@@ -1100,14 +1222,17 @@ def _security_scan_tree(
 
 
 def _security_scan_file(
-    workspace: Path, path: Path, tenant_read_calls: tuple[str, ...] = ()
-) -> tuple[dict[str, Any] | None, list[dict[str, Any]], bool]:
+    workspace: Path,
+    path: Path,
+    tenant_read_calls: tuple[str, ...] = (),
+    tenant_read_bindings: dict[str, tuple[str, ...]] | None = None,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]], str]:
     """Scan one bounded Python source and return its byte binding and findings."""
     relative = path.relative_to(workspace).as_posix()
     binding: dict[str, Any] | None = None
     try:
-        data = path.read_bytes()
-        if len(data) > MAX_BYTES:
+        initial_size = path.stat().st_size
+        if initial_size > MAX_BYTES:
             return (
                 None,
                 [
@@ -1117,10 +1242,28 @@ def _security_scan_file(
                         ast.Module(body=[], type_ignores=[]),
                         f"Source exceeds the {MAX_BYTES}-byte scan limit.",
                         "HIGH",
-                        bytes=len(data),
+                        bytes=initial_size,
                     )
                 ],
-                False,
+                "too_large",
+            )
+        with path.open("rb") as stream:
+            data = stream.read(MAX_BYTES + 1)
+        final_size = path.stat().st_size
+        if len(data) > MAX_BYTES or final_size > MAX_BYTES:
+            return (
+                None,
+                [
+                    _security_finding(
+                        "SECURITY_SOURCE_TOO_LARGE",
+                        relative,
+                        ast.Module(body=[], type_ignores=[]),
+                        f"Source exceeds the {MAX_BYTES}-byte scan limit.",
+                        "HIGH",
+                        bytes=max(len(data), final_size),
+                    )
+                ],
+                "too_large",
             )
         binding = {
             "path": relative,
@@ -1141,7 +1284,7 @@ def _security_scan_file(
                     detail=str(exc),
                 )
             ],
-            True,
+            "syntax_error",
         )
     except (OSError, UnicodeError) as exc:
         return (
@@ -1156,9 +1299,15 @@ def _security_scan_file(
                     detail=type(exc).__name__,
                 )
             ],
-            True,
+            "unreadable",
         )
-    return binding, _security_scan_tree(workspace, path, tree, tenant_read_calls), False
+    return (
+        binding,
+        _security_scan_tree(
+            workspace, path, tree, tenant_read_calls, tenant_read_bindings
+        ),
+        "audited",
+    )
 
 
 def _verify_security_bindings(workspace: Path, bindings: list[dict[str, Any]]) -> None:
@@ -1166,7 +1315,16 @@ def _verify_security_bindings(workspace: Path, bindings: list[dict[str, Any]]) -
     for binding in bindings:
         current = workspace / binding["path"]
         try:
-            data = current.read_bytes()
+            if current.stat().st_size > MAX_BYTES:
+                raise ReviewAuditError(
+                    f"Evidence changed during security scan: {binding['path']}"
+                )
+            with current.open("rb") as stream:
+                data = stream.read(MAX_BYTES + 1)
+            if len(data) > MAX_BYTES or current.stat().st_size > MAX_BYTES:
+                raise ReviewAuditError(
+                    f"Evidence changed during security scan: {binding['path']}"
+                )
         except (OSError, UnicodeError) as exc:
             raise ReviewAuditError(
                 f"Evidence changed during security scan: {binding['path']}"
@@ -1181,23 +1339,108 @@ def _verify_security_bindings(workspace: Path, bindings: list[dict[str, Any]]) -
 
 
 def security_scan(
-    root: Path, *, tenant_read_calls: tuple[str, ...] = ()
+    root: Path,
+    *,
+    tenant_read_calls: tuple[str, ...] = (),
+    tenant_read_bindings: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Run a bounded AST security and code-quality scan without importing or executing source."""
     workspace = Path(root).resolve()
     tenant_read_calls = _tenant_contract_calls(tenant_read_calls)
+    tenant_read_bindings = _tenant_contract_bindings(
+        tenant_read_bindings, tenant_read_calls
+    )
     files = _security_source_files(workspace)
+    if len(files) > MAX_SECURITY_SOURCE_FILES:
+        relative_paths = [path.relative_to(workspace).as_posix() for path in files]
+        finding = _security_finding(
+            "SECURITY_AUDIT_INCOMPLETE",
+            ".",
+            ast.Module(body=[], type_ignores=[]),
+            (
+                f"Eligible Python source inventory contains {len(files)} files, above "
+                f"the {MAX_SECURITY_SOURCE_FILES}-file scan limit. No files were "
+                "scanned; partition the workspace or use a reviewed larger limit."
+            ),
+            "HIGH",
+            files_discovered=len(files),
+            files_scanned=0,
+        )
+        core = {
+            "schema": SECURITY_SCHEMA,
+            "marker": "SECURITY_AUDIT_COMPLETE",
+            "state": "BLOCKED",
+            "files_scanned": 0,
+            "parse_errors": 0,
+            "unreadable_sources": 0,
+            "oversized_sources": 0,
+            "audit_coverage": {
+                "language": "Python",
+                "files_discovered": len(files),
+                "files_attempted": 0,
+                "files_audited": 0,
+                "audit_rate": 0.0,
+                "rate_defined": True,
+                "measurement_state": "blocked",
+                "inventory_complete": True,
+                "complete": False,
+                "limit": MAX_SECURITY_SOURCE_FILES,
+                "inventory_sha256": sha256(
+                    "\n".join(relative_paths).encode("utf-8")
+                ).hexdigest(),
+            },
+            "tenant_read_contract": {
+                "calls": list(tenant_read_calls),
+                "keyword": "tenant_id",
+                "legacy_binding": "keyword:tenant_id:tenant_id",
+                "argument_bindings": {
+                    call: list(items)
+                    for call, items in tenant_read_bindings.items()
+                },
+                "identity_authentication_proven": False,
+            },
+            "sources": [],
+            "findings": [finding],
+            "finding_counts": {finding["code"]: 1},
+            "governance": "human_controlled",
+            "authority": {
+                "execution": False,
+                "approval": False,
+                "publication": False,
+                "deployment": False,
+            },
+            "claim_boundary": (
+                "No security analysis completed because the eligible Python source "
+                "inventory exceeded the configured scan limit. Other languages, "
+                "runtime behavior, dependency advisories, and release approval are "
+                "outside this scanner's scope."
+            ),
+            "action_summary": finding["message"],
+        }
+        core["audit_sha256"] = sha256(
+            json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            .encode("utf-8")
+        ).hexdigest()
+        return core
     findings: list[dict[str, Any]] = []
     bindings: list[dict[str, Any]] = []
     parse_errors = 0
+    unreadable_sources = 0
+    oversized_sources = 0
+    files_audited = 0
+    files_attempted = 0
     for path in files:
-        binding, file_findings, parse_error = _security_scan_file(
-            workspace, path, tenant_read_calls
+        files_attempted += 1
+        binding, file_findings, outcome = _security_scan_file(
+            workspace, path, tenant_read_calls, tenant_read_bindings
         )
         if binding is not None:
             bindings.append(binding)
         findings.extend(file_findings)
-        parse_errors += int(parse_error)
+        parse_errors += int(outcome == "syntax_error")
+        unreadable_sources += int(outcome == "unreadable")
+        oversized_sources += int(outcome == "too_large")
+        files_audited += int(outcome == "audited")
     _verify_security_bindings(workspace, bindings)
     findings.sort(
         key=lambda item: (item["path"], item["line"], item["code"], item["column"])
@@ -1206,7 +1449,9 @@ def security_scan(
     for finding in findings:
         counts[finding["code"]] = counts.get(finding["code"], 0) + 1
     state = (
-        "BLOCKED"
+        "NO_SOURCES"
+        if not files
+        else "BLOCKED"
         if any(item["severity"] in {"CRITICAL", "HIGH"} for item in findings)
         else "FINDINGS"
         if findings
@@ -1218,9 +1463,40 @@ def security_scan(
         "state": state,
         "files_scanned": len(bindings),
         "parse_errors": parse_errors,
+        "unreadable_sources": unreadable_sources,
+        "oversized_sources": oversized_sources,
+        "audit_coverage": {
+            "language": "Python",
+            "files_discovered": len(files),
+            "files_attempted": files_attempted,
+            "files_audited": files_audited,
+            "audit_rate": (
+                round(files_audited / len(files), 4)
+                if files
+                else None
+            ),
+            "rate_defined": bool(files),
+            "inventory_complete": True,
+            "measurement_state": (
+                "no_eligible_sources"
+                if not files
+                else "complete"
+                if files_attempted == len(files) and files_audited == len(files)
+                else "incomplete"
+            ),
+            "complete": bool(files)
+            and files_attempted == len(files)
+            and files_audited == len(files),
+            "limit": MAX_SECURITY_SOURCE_FILES,
+        },
         "tenant_read_contract": {
             "calls": list(tenant_read_calls),
             "keyword": "tenant_id",
+            "legacy_binding": "keyword:tenant_id:tenant_id",
+            "argument_bindings": {
+                call: list(bindings)
+                for call, bindings in tenant_read_bindings.items()
+            },
             "identity_authentication_proven": False,
         },
         "sources": bindings,
@@ -1233,7 +1509,7 @@ def security_scan(
             "publication": False,
             "deployment": False,
         },
-        "claim_boundary": "Bounded Python AST pattern scan only; not a penetration test, runtime exploit proof, dependency advisory, or release approval.",
+        "claim_boundary": "Bounded Python AST pattern scan only. Declared tenant argument bindings verify syntactic pass-through, not tenant identity, authorization, or access isolation; this is not a penetration test, runtime exploit proof, dependency advisory, or release approval.",
     }
     core["audit_sha256"] = sha256(
         json.dumps(
@@ -1241,7 +1517,9 @@ def security_scan(
         ).encode("utf-8")
     ).hexdigest()
     core["action_summary"] = (
-        "No high-risk static security or quality patterns found."
+        "No eligible Python sources were found; no security conclusions were drawn."
+        if state == "NO_SOURCES"
+        else "No high-risk static security or quality patterns found."
         if state == "CLEAN"
         else "Resolve each listed finding and rerun this deterministic scan before release review."
     )
@@ -1251,14 +1529,18 @@ def security_scan(
 def security_evals() -> dict[str, Any]:
     """Evaluate security rules against fixed adversarial and safe-control fixtures."""
     fixture_path = Path(__file__).parent / "data" / "security_evals.json"
-    fixtures = tuple(
-        (item["name"], item["source"], set(item["expected"]))
-        for item in json.loads(fixture_path.read_text(encoding="utf-8"))
-    )
+    fixtures = json.loads(fixture_path.read_text(encoding="utf-8"))
     rows: list[dict[str, Any]] = []
-    for name, source, expected in fixtures:
+    for item in fixtures:
+        name, source, expected = item["name"], item["source"], set(item["expected"])
         tree = ast.parse(source, filename=f"{name}.py")
-        findings = _security_scan_tree(Path("."), Path(f"{name}.py"), tree)
+        calls = _tenant_contract_calls(tuple(item.get("tenant_read_calls", ())))
+        bindings = _tenant_contract_bindings(
+            tuple(item.get("tenant_read_bindings", ())), calls
+        )
+        findings = _security_scan_tree(
+            Path("."), Path(f"{name}.py"), tree, calls, bindings
+        )
         actual = {item["code"] for item in findings}
         passed = actual == expected
         rows.append(
@@ -1269,13 +1551,14 @@ def security_evals() -> dict[str, Any]:
                 "passed": passed,
             }
         )
-    attempted = sum(bool(expected) for _, _, expected in fixtures)
+    fixture_expectations = [set(item["expected"]) for item in fixtures]
+    attempted = sum(bool(expected) for expected in fixture_expectations)
     caught = sum(
-        row["passed"] for row, (_, _, expected) in zip(rows, fixtures) if expected
+        row["passed"] for row, expected in zip(rows, fixture_expectations) if expected
     )
-    controls = sum(not expected for _, _, expected in fixtures)
+    controls = sum(not expected for expected in fixture_expectations)
     controls_passed = sum(
-        row["passed"] for row, (_, _, expected) in zip(rows, fixtures) if not expected
+        row["passed"] for row, expected in zip(rows, fixture_expectations) if not expected
     )
     state = "PASS" if all(row["passed"] for row in rows) else "BLOCKED"
     result: dict[str, Any] = {

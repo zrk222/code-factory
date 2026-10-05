@@ -106,6 +106,9 @@ def test_public_seeded_corpus_executes_real_scanner_and_declared_tenant_contract
     assert receipt["metrics"]["overall"]["fn"] == 0
     assert receipt["metrics"]["overall"]["recall"] == 1.0
     assert receipt["scanner_contract"]["tenant_read_calls"] == ["db.get"]
+    assert receipt["scanner_contract"]["tenant_read_bindings"] == [
+        "db.get=keyword:tenant_id:tenant_id"
+    ]
     assert all(row["fixed_clean"] for row in receipt["cases"])
     assert receipt["metrics"]["tenant_isolation"]["fp"] == 0
     assert receipt["metrics"]["tenant_isolation"]["recall_ci95_wilson"] is not None
