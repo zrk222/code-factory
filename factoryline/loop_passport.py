@@ -538,6 +538,22 @@ def verify_loop_passport(path: Path) -> dict[str, Any]:
     }
 
 
+def _usage_measurements(usage: dict[str, Any]) -> tuple[dict[str, float], list[str]]:
+    actual: dict[str, float] = {}
+    missing = []
+    errors: list[str] = []
+    for field in ("iterations", "wall_seconds", "tokens", "cost_usd"):
+        if field not in usage:
+            missing.append(field)
+            continue
+        value = _nonnegative_number(usage[field], f"usage.{field}", errors)
+        if value is not None:
+            actual[field] = value
+    if errors:
+        raise ValueError("; ".join(errors))
+    return actual, missing
+
+
 def evaluate_budget(
     root: Path, manifest_path: Path, usage_path: Path
 ) -> dict[str, Any]:
@@ -547,14 +563,7 @@ def evaluate_budget(
     usage = json.loads(Path(usage_path).read_text(encoding="utf-8-sig"))
     if not isinstance(usage, dict):
         raise ValueError("usage must be a JSON object")
-    errors: list[str] = []
-    actual = {}
-    for field in ("iterations", "wall_seconds", "tokens", "cost_usd"):
-        value = _nonnegative_number(usage.get(field), f"usage.{field}", errors)
-        if value is not None:
-            actual[field] = value
-    if errors:
-        raise ValueError("; ".join(errors))
+    actual, missing_measurements = _usage_measurements(usage)
     budgets = (
         manifest.get("budgets") if isinstance(manifest.get("budgets"), dict) else {}
     )
@@ -571,6 +580,8 @@ def evaluate_budget(
     }
     if not validation["valid"]:
         verdict = "MANIFEST_INVALID"
+    elif missing_measurements:
+        verdict = "INCOMPLETE"
     elif exceeded:
         verdict = "BUDGET_EXCEEDED"
     else:
@@ -587,12 +598,14 @@ def evaluate_budget(
         "actual": actual,
         "limits": limits,
         "exceeded": exceeded,
+        "missing_measurements": missing_measurements,
         "validation_errors": validation["errors"],
         "verdict": verdict,
         "ok": verdict == "WITHIN_BUDGET",
         "scope_limits": [
             "Usage values are supplied by the caller or runtime adapter.",
-            "This receipt enforces declared bounds over supplied values; it does not independently query a provider billing system.",
+            "Missing usage measurements result in INCOMPLETE rather than a budget pass.",
+            "This receipt compares supplied usage with declared bounds; it does not independently query a provider billing system.",
         ],
     }
     out_dir = Path(root) / ".factory" / "loop-receipts"
