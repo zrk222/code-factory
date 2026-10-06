@@ -1321,10 +1321,8 @@ def _normalize_tenant_selector(kind: str, selector: str) -> str:
     raise ReviewAuditError("Tenant binding kind must be position or keyword.")
 
 
-def _tenant_bound_names(function: ast.AST, parameter: str, use: ast.Call) -> set[str]:
-    """Track simple, unconditional tenant aliases and invalidate later writes."""
-    names = {parameter}
-    comprehension_targets = {
+def _tenant_comprehension_targets(function: ast.AST) -> set[int]:
+    return {
         id(target)
         for statement in function.body
         for expression in _body_nodes(statement)
@@ -1336,62 +1334,65 @@ def _tenant_bound_names(function: ast.AST, parameter: str, use: ast.Call) -> set
         for target in _body_nodes(generator.target)
         if isinstance(target, ast.Name) and isinstance(target.ctx, ast.Store)
     }
+
+
+def _tenant_discard_captures(statement: ast.stmt, names: set[str]) -> None:
+    for child in _body_nodes(statement):
+        if isinstance(child, (ast.MatchAs, ast.MatchStar)) and child.name:
+            names.discard(child.name)
+        elif isinstance(child, ast.MatchMapping) and child.rest:
+            names.discard(child.rest)
+        elif isinstance(child, ast.ExceptHandler) and child.name:
+            names.discard(child.name)
+
+
+def _tenant_discard_written_names(
+    statement: ast.AST, names: set[str], comprehension_targets: set[int]
+) -> None:
+    for child in _body_nodes(statement):
+        if (
+            isinstance(child, ast.Name)
+            and id(child) not in comprehension_targets
+            and isinstance(child.ctx, (ast.Store, ast.Del))
+        ):
+            names.discard(child.id)
+
+
+def _tenant_track_assignment(
+    statement: ast.stmt, names: set[str], comprehension_targets: set[int]
+) -> bool:
+    target: ast.Name | None = None
+    value: ast.expr | None = None
+    if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
+        candidate = statement.targets[0]
+        if isinstance(candidate, ast.Name):
+            target, value = candidate, statement.value
+    elif isinstance(statement, ast.AnnAssign) and isinstance(
+        statement.target, ast.Name
+    ):
+        target, value = statement.target, statement.value
+    if target is None:
+        return False
+    if isinstance(value, ast.Name) and value.id in names:
+        names.add(target.id)
+    else:
+        names.discard(target.id)
+        if value is not None:
+            _tenant_discard_written_names(value, names, comprehension_targets)
+    return True
+
+
+def _tenant_bound_names(function: ast.AST, parameter: str, use: ast.Call) -> set[str]:
+    """Track simple, unconditional tenant aliases and invalidate later writes."""
+    names = {parameter}
+    comprehension_targets = _tenant_comprehension_targets(function)
     for statement in function.body:
         if (statement.lineno, statement.col_offset) >= (use.lineno, use.col_offset):
             break
-        for child in _body_nodes(statement):
-            if isinstance(child, ast.MatchAs) and child.name:
-                names.discard(child.name)
-            elif isinstance(child, ast.MatchStar) and child.name:
-                names.discard(child.name)
-            elif isinstance(child, ast.MatchMapping) and child.rest:
-                names.discard(child.rest)
-            elif isinstance(child, ast.ExceptHandler) and child.name:
-                names.discard(child.name)
-        if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
-            target = statement.targets[0]
-            if isinstance(target, ast.Name):
-                if (
-                    isinstance(statement.value, ast.Name)
-                    and statement.value.id in names
-                ):
-                    names.add(target.id)
-                    continue
-                else:
-                    names.discard(target.id)
-                for child in _body_nodes(statement.value):
-                    if (
-                        isinstance(child, ast.Name)
-                        and id(child) not in comprehension_targets
-                        and isinstance(child.ctx, (ast.Store, ast.Del))
-                    ):
-                        names.discard(child.id)
-                continue
-        if isinstance(statement, ast.AnnAssign) and isinstance(
-            statement.target, ast.Name
-        ):
-            target = statement.target.id
-            if isinstance(statement.value, ast.Name) and statement.value.id in names:
-                names.add(target)
-                continue
-            else:
-                names.discard(target)
-            if statement.value is not None:
-                for child in _body_nodes(statement.value):
-                    if (
-                        isinstance(child, ast.Name)
-                        and id(child) not in comprehension_targets
-                        and isinstance(child.ctx, (ast.Store, ast.Del))
-                    ):
-                        names.discard(child.id)
+        _tenant_discard_captures(statement, names)
+        if _tenant_track_assignment(statement, names, comprehension_targets):
             continue
-        for child in _body_nodes(statement):
-            if (
-                isinstance(child, ast.Name)
-                and id(child) not in comprehension_targets
-                and isinstance(child.ctx, (ast.Store, ast.Del))
-            ):
-                names.discard(child.id)
+        _tenant_discard_written_names(statement, names, comprehension_targets)
     return names
 
 
@@ -1597,22 +1598,13 @@ def _tenant_read_findings(
     ]
 
 
-def _security_scan_tree(
-    root: Path,
-    path: Path,
-    tree: ast.AST,
-    tenant_read_calls: tuple[str, ...] = (),
-    tenant_read_bindings: dict[str, tuple[str, ...]] | None = None,
+def _undeclared_tenant_read_findings(
+    relative: str,
+    nodes: list[ast.AST],
+    aliases: dict[str, str],
+    declared_reads: set[str],
 ) -> list[dict[str, Any]]:
-    relative = path.relative_to(root).as_posix()
-    nodes = list(ast.walk(tree))
-    aliases = _security_aliases(nodes)
-    helper_names = _local_assertion_helpers(tree, aliases)
-    unittest_methods = _unittest_test_methods(tree, aliases)
-    findings: list[dict[str, Any]] = _tenant_read_findings(
-        relative, nodes, tenant_read_calls, aliases, tenant_read_bindings or {}
-    )
-    declared_reads = set(tenant_read_calls)
+    findings: list[dict[str, Any]] = []
     for call_name, call in _orm_read_candidates(nodes, aliases):
         if call_name not in declared_reads:
             findings.append(
@@ -1628,6 +1620,17 @@ def _security_scan_tree(
                     call=call_name,
                 )
             )
+    return findings
+
+
+def _test_oracle_findings(
+    relative: str,
+    nodes: list[ast.AST],
+    aliases: dict[str, str],
+    helper_names: set[str],
+    unittest_methods: set[int],
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
     for node in nodes:
         is_unittest_method = id(node) in unittest_methods
         hollow = _hollow_test_finding(
@@ -1648,17 +1651,49 @@ def _security_scan_tree(
         )
         if weak is not None:
             findings.append(weak)
-        if isinstance(node, ast.Call):
-            call = _normalized_call_name(node, aliases)
-            finding = _security_call_finding(call, relative, node)
-            if finding is not None:
-                findings.append(finding)
-        elif isinstance(node, ast.ExceptHandler):
-            finding = _bare_except_finding(relative, node)
-            if finding is not None:
-                findings.append(finding)
-        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-            findings.extend(_literal_assignment_diagnostics(relative, node))
+    return findings
+
+
+def _security_node_findings(
+    relative: str, node: ast.AST, aliases: dict[str, str]
+) -> list[dict[str, Any]]:
+    if isinstance(node, ast.Call):
+        call = _normalized_call_name(node, aliases)
+        finding = _security_call_finding(call, relative, node)
+        return [finding] if finding is not None else []
+    if isinstance(node, ast.ExceptHandler):
+        finding = _bare_except_finding(relative, node)
+        return [finding] if finding is not None else []
+    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+        return _literal_assignment_diagnostics(relative, node)
+    return []
+
+
+def _security_scan_tree(
+    root: Path,
+    path: Path,
+    tree: ast.AST,
+    tenant_read_calls: tuple[str, ...] = (),
+    tenant_read_bindings: dict[str, tuple[str, ...]] | None = None,
+) -> list[dict[str, Any]]:
+    relative = path.relative_to(root).as_posix()
+    nodes = list(ast.walk(tree))
+    aliases = _security_aliases(nodes)
+    helper_names = _local_assertion_helpers(tree, aliases)
+    unittest_methods = _unittest_test_methods(tree, aliases)
+    findings = _tenant_read_findings(
+        relative, nodes, tenant_read_calls, aliases, tenant_read_bindings or {}
+    )
+    findings.extend(
+        _undeclared_tenant_read_findings(
+            relative, nodes, aliases, set(tenant_read_calls)
+        )
+    )
+    findings.extend(
+        _test_oracle_findings(relative, nodes, aliases, helper_names, unittest_methods)
+    )
+    for node in nodes:
+        findings.extend(_security_node_findings(relative, node, aliases))
     return findings
 
 
