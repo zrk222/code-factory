@@ -81,6 +81,40 @@ def test_audit_cli_private_handlers_stay_bounded():
         assert count <= 10, (name, count)
 
 
+def test_security_scan_orchestration_stays_within_complexity_budget():
+    import ast
+    import inspect
+
+    import factoryline.review_audits as module
+
+    for name in (
+        "security_scan",
+        "_tenant_contract_bindings",
+        "_tenant_binding_entry",
+        "_tenant_binding_parts",
+        "_normalize_tenant_selector",
+    ):
+        count = 1
+        tree = ast.parse(inspect.getsource(getattr(module, name)))
+        for node in ast.walk(tree):
+            if isinstance(
+                node,
+                (
+                    ast.If,
+                    ast.For,
+                    ast.While,
+                    ast.ExceptHandler,
+                    ast.With,
+                    ast.Assert,
+                    ast.IfExp,
+                ),
+            ):
+                count += 1
+            elif isinstance(node, ast.BoolOp):
+                count += len(node.values) - 1
+        assert count <= 10, (name, count)
+
+
 def workspace(root: Path, body: str = "require_auth()\nstore.delete()") -> Path:
     source = (
         "def safe():\n    require_auth()\n    store.delete()\n\ndef candidate():\n"
@@ -401,7 +435,7 @@ def test_security_scan_receipt_measures_complete_supported_source_coverage(tmp_p
         "inventory_complete": True,
         "measurement_state": "complete",
         "complete": True,
-        "limit": 512,
+        "limit": 460,
     }
 
 
@@ -443,6 +477,7 @@ def test_security_scan_blocks_instead_of_truncating_over_limit_inventory(
 ):
     import factoryline.review_audits as module
 
+    assert module.MAX_SECURITY_SOURCE_FILES == 460
     monkeypatch.setattr(module, "MAX_SECURITY_SOURCE_FILES", 2)
     for index in range(3):
         (tmp_path / f"module_{index}.py").write_text("value = 1\n", encoding="utf-8")
@@ -550,7 +585,7 @@ def test_security_scan_separates_unreadable_sources_from_parse_errors(
         "inventory_complete": True,
         "measurement_state": "incomplete",
         "complete": False,
-        "limit": 512,
+        "limit": 460,
     }
     assert result["finding_counts"] == {"SECURITY_SOURCE_UNREADABLE": 1}
 

@@ -1,6 +1,6 @@
 {
   "schema": "factory.performance-benchmark.v1",
-  "observed_at": "2026-10-05T22:01:25-04:00",
+  "observed_at": "2026-10-06T02:24:23.830013+00:00",
   "scope": [
     "AppForge",
     "RevenueForge",
@@ -11,7 +11,7 @@
     "python": "3.11.9",
     "architecture": "AMD64"
   },
-  "benchmark_command": "python benchmarks/benchmark_appforge_revenueforge_prestige.py --prestige-root <local Prestige checkout>",
+  "benchmark_command": "python tests/test_benchmark_lab.py --prestige-root <local Prestige checkout> --runs 11",
   "limitations": [
     "Local single-machine measurements on repository examples, not production traffic.",
     "Eleven runs per variant; medians and ranges are sensitive to Windows scheduling and filesystem cache.",
@@ -32,7 +32,7 @@
     "factoryline/revenue_evidence.py": "5270a2fe4daa54590e57318c5bc1706b2f844197d1f4834ca14eeda8d371f03e",
     "factoryline/revenueforge.py": "e983278c24583b24389cde86b949fb3defa250067cdbfb0dc5eafea1112b107e",
     "prestige_design/purpose.py": "2f3aa20a7abac90fe8d93e70eee6ee061eee18feea568467c1ef63cbea523348",
-    "benchmark_script": "4e2653ac571eab3828042faf233cdde84ee4069a186fec20a2485c69d3b8a50c"
+    "benchmark_script": "3f2a3b0edc1c4e3c04b7fb6a099a3ba0b65805df690f7be346afaf391d41fbab"
   },
   "results": {
     "runtime": "3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]",
@@ -41,29 +41,30 @@
     "input": {
       "appforge": "examples/revenueforge/appforge-design-brief.json",
       "revenueforge": "examples/revenueforge/products.yaml",
-      "prestige_html": "factoryline/graph_ops.html"
+      "prestige_html": "factoryline/graph_ops.html",
+      "prestige_checkout": "C:\\Users\\rkatz\\Documents\\Codex\\2026-07-24\\wh\\work\\prestige-emotional-design"
     },
     "baseline": {
       "appforge": {
-        "median_ms": 8.604,
-        "min_ms": 7.949,
-        "max_ms": 11.516,
+        "median_ms": 9.668,
+        "min_ms": 7.571,
+        "max_ms": 10.439,
         "runs": 11,
         "output_parity": true,
         "output_sha256": "66fdc0df406620ded122fd2852a24e21128323b781b27b030df1121ac91811f7"
       },
       "revenueforge": {
-        "median_ms": 13.652,
-        "min_ms": 12.153,
-        "max_ms": 16.269,
+        "median_ms": 16.896,
+        "min_ms": 14.247,
+        "max_ms": 19.014,
         "runs": 11,
         "output_parity": true,
         "output_sha256": "fdcae4655f71390b9c2085202a4ea99e63c249dd2dde4590a39d1a46a132ddea"
       },
       "prestige_score": {
-        "median_ms": 180.038,
-        "min_ms": 170.255,
-        "max_ms": 202.303,
+        "median_ms": 186.279,
+        "min_ms": 167.516,
+        "max_ms": 203.116,
         "runs": 11,
         "output_parity": true,
         "output_sha256": "98629a254dae90f749463ce7d38cccd86bb176d20d33d0ad893e2aac46dd7aae"
@@ -71,34 +72,34 @@
     },
     "candidate": {
       "appforge": {
-        "median_ms": 3.773,
-        "min_ms": 3.511,
-        "max_ms": 3.985,
+        "median_ms": 4.425,
+        "min_ms": 4.18,
+        "max_ms": 5.412,
         "runs": 11,
         "output_parity": true,
         "output_sha256": "66fdc0df406620ded122fd2852a24e21128323b781b27b030df1121ac91811f7"
       },
       "revenueforge": {
-        "median_ms": 7.109,
-        "min_ms": 5.243,
-        "max_ms": 7.606,
+        "median_ms": 7.936,
+        "min_ms": 7.331,
+        "max_ms": 10.343,
         "runs": 11,
         "output_parity": true,
         "output_sha256": "fdcae4655f71390b9c2085202a4ea99e63c249dd2dde4590a39d1a46a132ddea"
       },
       "prestige_score": {
-        "median_ms": 102.986,
-        "min_ms": 92.693,
-        "max_ms": 113.01,
+        "median_ms": 117.784,
+        "min_ms": 103.639,
+        "max_ms": 135.602,
         "runs": 11,
         "output_parity": true,
         "output_sha256": "98629a254dae90f749463ce7d38cccd86bb176d20d33d0ad893e2aac46dd7aae"
       }
     },
     "median_change_percent": {
-      "appforge": -56.1,
-      "revenueforge": -47.9,
-      "prestige_score": -42.8
+      "appforge": -54.2,
+      "revenueforge": -53.0,
+      "prestige_score": -36.8
     }
   }
 }

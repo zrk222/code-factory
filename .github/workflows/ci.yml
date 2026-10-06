@@ -12,6 +12,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  candidate-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22"
+      - name: Install fixed audit and TypeScript parser versions
+        run: |
+          python -m pip install code-factory-2-forge==0.10.8
+          npm install --no-save --no-package-lock typescript@5.9.3
+      - name: Require A grade at 97.9 and the strict 460 Python file ceiling
+        run: |
+          forge qa --repo-wide --root . --strict > candidate-quality.json
+          python - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          report = json.loads(Path('candidate-quality.json').read_text())
+          assert report['grade'] == 'A' and report['passed'] is True
+          assert report['metrics']['composite'] >= 97.9
+          assert report['metrics']['max_complexity'] <= 10
+          assert not report.get('findings'), 'quality findings remain'
+          assert not report['metrics'].get('skipped_paths'), 'source was unreadable'
+          paths = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
+          assert sum(path.endswith('.py') for path in paths if path) <= 460
+          policy = json.loads(Path('architecture-policy.json').read_text())
+          assert policy['budgets']['max_python_files'] == 460
+          print('CANDIDATE_QUALITY_A_97_9_AND_460_CEILING_OK')
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: candidate-quality
+          path: candidate-quality.json
+          if-no-files-found: error
+
   editor-security:
     runs-on: ubuntu-latest
     timeout-minutes: 10

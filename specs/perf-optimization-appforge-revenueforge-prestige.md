@@ -22,6 +22,11 @@ bytes, safety gates, scores, and recommendation ordering.
   word-boundary matcher for all supported purpose profiles.
 - The system shall return identical receipt fields, output hashes, and score
   values while optimizing the selected repeated-generation and scoring paths.
+- The system shall keep the security scanner's eligible-source limit at 460 and
+  keep its orchestration complexity within 10 without changing receipt behavior.
+- The strict repository-wide ForgeLine assessment shall report grade A with a
+  composite score of at least 97.9; scoring thresholds and weights shall not be
+  weakened to reach the target.
 
 ### Acceptance criteria (Gherkin)
 ```gherkin
@@ -39,6 +44,11 @@ Scenario: Prestige purpose score parity
   Given a page and purpose vocabulary containing overlaps and Unicode text
   When the optimized term matcher runs
   Then every term-presence count and complete score result match the reference matcher
+
+Scenario: audit grade and bounded source inventory
+  Given the repository has no more than 460 tracked Python files
+  When the strict repository-wide quality assessment runs
+  Then the scanner retains its 460-file hard limit and the grade is at least 97.9
 ```
 
 ## SHOULD — Technical/structural
