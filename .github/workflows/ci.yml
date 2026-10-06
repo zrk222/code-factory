@@ -38,6 +38,7 @@ jobs:
           report = json.loads(Path('candidate-quality.json').read_text())
           assert report['grade'] == 'A' and report['passed'] is True
           assert report['metrics']['composite'] >= 97.9
+          assert report['attribution']['rate'] >= 0.98, 'test-intent attribution fell below 98%'
           assert report['metrics']['max_complexity'] <= 10
           assert not report.get('findings'), 'quality findings remain'
           assert not report['metrics'].get('skipped_paths'), 'source was unreadable'

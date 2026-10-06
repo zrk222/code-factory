@@ -5,6 +5,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import factoryline.architecture_health as architecture_health
+from factoryline.architecture_guard import (
+    default_policy_guard_is_pinned,
+    file_size_guard_is_pinned,
+    is_code_factory_root,
+)
 from factoryline.architecture_health import (
     _cadence_projection,
     collect_architecture_health,
@@ -1096,3 +1101,18 @@ def test_cadence_selects_exact_channel_tags_and_keeps_version_suffixes(
     assert core["next_eligible_at"] == "2026-10-03T05:53:51Z"
     assert vscode["latest_tag"] == "vscode-v1.0.2"
     assert jetbrains["latest_tag"] == "jetbrains-v1.0.2"
+
+
+def test_architecture_guard_recognizes_repo_and_rejects_policy_drift():
+    root = Path(__file__).resolve().parents[1]
+    policy = json.loads((root / "architecture-policy.json").read_text())
+    guard = policy["file_size_guard"]
+
+    assert is_code_factory_root(root)
+    assert file_size_guard_is_pinned(guard)
+    assert default_policy_guard_is_pinned(root)
+
+    changed = json.loads(json.dumps(guard))
+    first_file = next(iter(changed["files"].values()))
+    first_file["max_lines"] += 1
+    assert not file_size_guard_is_pinned(changed)

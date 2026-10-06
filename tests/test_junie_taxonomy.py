@@ -773,3 +773,60 @@ def test_junie_review_rejects_untrusted_or_unbounded_changelist_input(
             },
         )
     assert caught.value.code == "JUNIE_REVIEW_SOURCE_REQUIRED"
+
+
+def test_shared_taxonomy_helpers_and_references_are_canonical_and_fail_closed():
+    from factoryline.audit_action_refs import (
+        ACTION_EXECUTION_CONTRACT,
+        derive_agent_action_references as derive_action_references,
+    )
+    from factoryline.audit_taxonomy import (
+        agent_taxonomy_context,
+        audit_domain_ids,
+        audit_taxonomy,
+        derive_agent_action_references,
+        domain_definition,
+        validate_measurement_ledger,
+    )
+
+    taxonomy = audit_taxonomy()
+    ids = audit_domain_ids()
+    assert ids == tuple(row["measurement_id"] for row in taxonomy["domains"])
+    assert len(ids) == len(set(ids))
+
+    role = taxonomy["specialist_roles"][0]["specialist_role"]
+    context = agent_taxonomy_context(role)
+    assert context["requested_specialist_role"] == role
+    assert context["authority"]["may_approve_or_merge"] is False
+    with pytest.raises(ValueError, match="unknown CF/ForgeLine specialist role"):
+        agent_taxonomy_context("unregistered-role")
+
+    definition = domain_definition(ids[0])
+    assert definition is not None
+    definition["title"] = "mutated copy"
+    assert domain_definition(ids[0])["title"] != "mutated copy"
+    assert domain_definition("unknown-domain") is None
+
+    ledger = {
+        measurement_id: {
+            "state": "MEASURED",
+            "measurement_state": "MEASURED",
+            "basis": "candidate-bound test evidence",
+            "next_action": "retain the evidence",
+            "denominator_state": "KNOWN_CHANGED_PATH_SCOPE",
+            "eligible_changed_paths": 1,
+            "applicability_state": "APPLICABLE",
+        }
+        for measurement_id in ids
+    }
+    assert validate_measurement_ledger(ledger) == []
+    assert validate_measurement_ledger({"unknown-domain": {}})
+
+    action = {"measurement_id": ids[0]}
+    report = {
+        "measurements": {"taxonomy_sha256": taxonomy["taxonomy_sha256"]},
+        "action_execution_contract": ACTION_EXECUTION_CONTRACT,
+    }
+    references = derive_agent_action_references(report, action)
+    assert references == derive_action_references(report, action)
+    assert set(references) == {"action", "evidence", "denominator", "completion", "stop"}

@@ -1,4 +1,6 @@
 import * as assert from "node:assert/strict";
+import * as os from "node:os";
+import * as path from "node:path";
 import { escapeHtml, receiptHtml, summarizeReceipt } from "../receipt";
 import { factoryExecutable, factoryStudioUrl, isFeatureName } from "../runner";
 import { meterHtml, savingsHtml } from "../meter";
@@ -40,3 +42,89 @@ assert.equal(shouldOfferGitHubStar(undefined, "0.8.1"), true);
 assert.equal(shouldOfferGitHubStar("0.8.1", "0.8.1"), false);
 assert.equal(shouldOfferGitHubStar("0.8.0", "0.8.1"), true);
 assert.equal(GITHUB_REPOSITORY_URL, "https://github.com/zrk222/code-factory");
+
+const moduleLoader = require("node:module") as {
+  _load: (request: string, parent: unknown, isMain: boolean) => unknown;
+};
+const fsPromises = require("node:fs/promises") as {
+  realpath: (target: string) => Promise<string>;
+};
+const originalLoad = moduleLoader._load;
+const originalRealpath = fsPromises.realpath;
+const registeredCommands = new Map<string, (...args: unknown[]) => unknown>();
+const warningMessages: string[] = [];
+let openedDocuments = 0;
+const disposable = { dispose() {} };
+class FakeEventEmitter {
+  event = () => disposable;
+  fire() {}
+  dispose() {}
+}
+const fakeWatcher = {
+  onDidChange: () => disposable,
+  onDidCreate: () => disposable,
+  onDidDelete: () => disposable,
+};
+const fakeVscode = {
+  EventEmitter: FakeEventEmitter,
+  workspace: {
+    createFileSystemWatcher: () => fakeWatcher,
+    onDidChangeTextDocument: () => disposable,
+    onDidChangeWorkspaceFolders: () => disposable,
+  },
+  window: {
+    registerTreeDataProvider: () => disposable,
+    showWarningMessage: (message: string) => warningMessages.push(message),
+    showTextDocument: async () => { openedDocuments += 1; },
+  },
+  commands: {
+    registerCommand: (name: string, callback: (...args: unknown[]) => unknown) => {
+      registeredCommands.set(name, callback);
+      return disposable;
+    },
+  },
+};
+void (async () => {
+  moduleLoader._load = function (request, parent, isMain) {
+    return request === "vscode" ? fakeVscode : originalLoad.call(this, request, parent, isMain);
+  };
+  const root = path.resolve(os.tmpdir(), "cf-evidence");
+  const inRootFinding = path.join(root, "src", "finding.ts");
+  const outsideFinding = path.resolve(os.tmpdir(), "cf-outside", "secret.ts");
+  fsPromises.realpath = async target => {
+    const resolved = path.resolve(target);
+    if (resolved === root) return root;
+    if (resolved === inRootFinding) return outsideFinding;
+    return originalRealpath(target);
+  };
+  try {
+    const { registerEvidence } = require("../evidence") as {
+      registerEvidence: (context: { subscriptions: unknown[] }) => void;
+    };
+    const subscriptions: unknown[] = [];
+    registerEvidence({ subscriptions });
+    assert.ok(subscriptions.length >= 7);
+    assert.deepEqual([...registeredCommands.keys()], [
+      "factoryline.auditWorkspace",
+      "factoryline.copyAuditSummary",
+      "factoryline.inspectAudit",
+      "factoryline.openAuditFinding",
+    ]);
+    const openAuditFinding = registeredCommands.get("factoryline.openAuditFinding") as
+      | ((location: { root: string; path: string }) => Promise<unknown>)
+      | undefined;
+    assert.ok(openAuditFinding);
+
+    await openAuditFinding({ root, path: path.join("..", "secret.txt") });
+    assert.match(warningMessages.at(-1) || "", /outside the audited workspace/);
+    await openAuditFinding({ root, path: path.join("src", "finding.ts") });
+    assert.match(warningMessages.at(-1) || "", /resolves outside the audited workspace/);
+    assert.equal(openedDocuments, 0);
+  } catch (error) {
+    console.error(error);
+    process.exitCode = 1;
+  } finally {
+    moduleLoader._load = originalLoad;
+    fsPromises.realpath = originalRealpath;
+  }
+})();

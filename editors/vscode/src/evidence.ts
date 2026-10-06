@@ -113,42 +113,58 @@ class EvidenceView implements vscode.TreeDataProvider<Row>, vscode.Disposable {
   }
 }
 
+/** Register the candidate-bound audit view and its local commands. */
 export function registerEvidence(context: vscode.ExtensionContext): void {
   const view = new EvidenceView();
   const watcher = vscode.workspace.createFileSystemWatcher("**/*");
-  const invalidate = (uri: vscode.Uri) => {
-    // Audit-generated receipts must not invalidate their own observation run.
-    const folder = vscode.workspace.getWorkspaceFolder(uri);
-    const rel = folder ? path.relative(folder.uri.fsPath, uri.fsPath).replace(/\\/g, "/") : "";
-    if (!/^(?:\.factory|\.forge|node_modules|\.git\/objects)(?:\/|$)/.test(rel)) view.invalidate(uri);
-  };
-  context.subscriptions.push(view, watcher,
-    vscode.window.registerTreeDataProvider("factorylineEvidence", view),
-    vscode.commands.registerCommand("factoryline.auditWorkspace", () => view.run()),
-    vscode.commands.registerCommand("factoryline.copyAuditSummary", () => view.copySummary()),
-    vscode.commands.registerCommand("factoryline.inspectAudit", async (result: Result) => {
-      if (!result?.lane || !Object.prototype.hasOwnProperty.call(LANES, result.lane)) return;
-      const document = await vscode.workspace.openTextDocument({ language: "json", content: redact(JSON.stringify(result, null, 2)) });
-      await vscode.window.showTextDocument(document, { preview: true });
-    }),
-    vscode.commands.registerCommand("factoryline.openAuditFinding", async (location: { root: string; path: string; line?: number }) => {
-      if (!location || typeof location.root !== "string" || typeof location.path !== "string") return;
-      const root = path.resolve(location.root);
-      const target = path.resolve(root, location.path);
-      if (target === root || !target.startsWith(root + path.sep)) {
-        void vscode.window.showWarningMessage("Finding path is outside the audited workspace.");
-        return;
-      }
-      const [actualRoot, actualTarget] = await Promise.all([realpath(root), realpath(target)]);
-      if (!actualTarget.startsWith(actualRoot + path.sep)) {
-        void vscode.window.showWarningMessage("Finding resolves outside the audited workspace.");
-        return;
-      }
-      const line = Math.max(0, (location.line || 1) - 1);
-      await vscode.window.showTextDocument(vscode.Uri.file(target), { preview: true, selection: new vscode.Range(line, 0, line, 0) });
-    }),
-    watcher.onDidChange(invalidate), watcher.onDidCreate(invalidate), watcher.onDidDelete(invalidate),
+  const invalidate = (uri: vscode.Uri) => invalidateEvidence(view, uri);
+  context.subscriptions.push(view, watcher);
+  registerEvidenceCommands(context, view);
+  context.subscriptions.push(
+    watcher.onDidChange(invalidate),
+    watcher.onDidCreate(invalidate),
+    watcher.onDidDelete(invalidate),
     vscode.workspace.onDidChangeTextDocument(event => invalidate(event.document.uri)),
     vscode.workspace.onDidChangeWorkspaceFolders(() => view.forgetRemoved()),
   );
+}
+
+function invalidateEvidence(view: EvidenceView, uri: vscode.Uri): void {
+  // Audit-generated receipts must not invalidate their own observation run.
+  const folder = vscode.workspace.getWorkspaceFolder(uri);
+  const rel = folder ? path.relative(folder.uri.fsPath, uri.fsPath).replace(/\\/g, "/") : "";
+  if (!/^(?:\.factory|\.forge|node_modules|\.git\/objects)(?:\/|$)/.test(rel)) view.invalidate(uri);
+}
+
+function registerEvidenceCommands(context: vscode.ExtensionContext, view: EvidenceView): void {
+  context.subscriptions.push(
+    vscode.window.registerTreeDataProvider("factorylineEvidence", view),
+    vscode.commands.registerCommand("factoryline.auditWorkspace", () => view.run()),
+    vscode.commands.registerCommand("factoryline.copyAuditSummary", () => view.copySummary()),
+    vscode.commands.registerCommand("factoryline.inspectAudit", inspectAudit),
+    vscode.commands.registerCommand("factoryline.openAuditFinding", openAuditFinding),
+  );
+}
+
+async function inspectAudit(result: Result): Promise<void> {
+  if (!result?.lane || !Object.prototype.hasOwnProperty.call(LANES, result.lane)) return;
+  const document = await vscode.workspace.openTextDocument({ language: "json", content: redact(JSON.stringify(result, null, 2)) });
+  await vscode.window.showTextDocument(document, { preview: true });
+}
+
+async function openAuditFinding(location: { root: string; path: string; line?: number }): Promise<void> {
+  if (!location || typeof location.root !== "string" || typeof location.path !== "string") return;
+  const root = path.resolve(location.root);
+  const target = path.resolve(root, location.path);
+  if (target === root || !target.startsWith(root + path.sep)) {
+    void vscode.window.showWarningMessage("Finding path is outside the audited workspace.");
+    return;
+  }
+  const [actualRoot, actualTarget] = await Promise.all([realpath(root), realpath(target)]);
+  if (!actualTarget.startsWith(actualRoot + path.sep)) {
+    void vscode.window.showWarningMessage("Finding resolves outside the audited workspace.");
+    return;
+  }
+  const line = Math.max(0, (location.line || 1) - 1);
+  await vscode.window.showTextDocument(vscode.Uri.file(target), { preview: true, selection: new vscode.Range(line, 0, line, 0) });
 }

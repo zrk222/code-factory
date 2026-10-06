@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.47.0 - 2026-09-28 (release candidate; publication gated)
+## Unreleased (next core release; publication gated)
 
 - Add Loop runtime budget admission, durable per-run SQLite reservations,
   measured settlement, replay-safe status and a local advisory HSF classifier.
@@ -8,6 +8,15 @@
   inconsistent overrun markers fail closed. Only adapters enrolled in the
   runtime API are covered; provider billing and hostile local writers remain
   outside its guarantees.
+- Refactor the VS Code evidence registration path to keep the public function
+  within the complexity limit, with a command-registration and unsafe-finding-
+  path regression check.
+- Add direct behavior tests for architecture guard and audit taxonomy accessors;
+  enforce at least 98% test-intent attribution in the clean-runner quality gate.
+- Keep the 460 tracked Python-file ceiling and 7-day release cooldown unchanged.
+
+## 0.47.0 - 2026-09-28 (GitHub release published 2026-10-04)
+
 - Add native CF and ForgeLine evidence views to the VS Code/Open VSX and
   JetBrains 1.1.0 adapters, with explicit execution, missing-lane states,
   per-lane limits, source locations where supplied, and unbound-candidate labels.
@@ -21,8 +30,6 @@
   a repository inventory is a full audit.
 - Fix editor release admission to use the VS Code or JetBrains tag history
   and version, so a recent core release does not masquerade as an editor release.
-- Core 0.47.0 and editor 1.1.0 publication are separate provider-gated steps;
-  this source entry does not claim PyPI or Marketplace availability.
 
 ## 0.46.9 - 2026-09-25 (release candidate; publication gated)
 
