@@ -691,10 +691,10 @@ def _call_name(node: ast.Call) -> str:
     return _name(node.func)
 
 
-def _security_aliases(tree: ast.AST) -> dict[str, str]:
+def _security_aliases(nodes: list[ast.AST]) -> dict[str, str]:
     """Resolve common import aliases before applying security rules."""
     aliases: dict[str, str] = {}
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, ast.Import):
             for item in node.names:
                 aliases[item.asname or item.name.split(".")[0]] = item.name
@@ -1174,16 +1174,16 @@ def _tenant_function_findings(
 
 def _tenant_read_findings(
     relative: str,
-    tree: ast.AST,
+    nodes: list[ast.AST],
     calls: tuple[str, ...],
+    aliases: dict[str, str],
     bindings: dict[str, tuple[str, ...]],
 ) -> list[dict]:
     if not calls:
         return []
-    aliases = _security_aliases(tree)
     return [
         finding
-        for function in ast.walk(tree)
+        for function in nodes
         if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
         for finding in _tenant_function_findings(
             relative, function, calls, aliases, bindings
@@ -1199,11 +1199,12 @@ def _security_scan_tree(
     tenant_read_bindings: dict[str, tuple[str, ...]] | None = None,
 ) -> list[dict[str, Any]]:
     relative = path.relative_to(root).as_posix()
+    nodes = list(ast.walk(tree))
+    aliases = _security_aliases(nodes)
     findings: list[dict[str, Any]] = _tenant_read_findings(
-        relative, tree, tenant_read_calls, tenant_read_bindings or {}
+        relative, nodes, tenant_read_calls, aliases, tenant_read_bindings or {}
     )
-    aliases = _security_aliases(tree)
-    for node in ast.walk(tree):
+    for node in nodes:
         hollow = _hollow_test_finding(relative, node, aliases)
         if hollow is not None:
             findings.append(hollow)

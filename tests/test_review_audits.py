@@ -472,6 +472,38 @@ def test_security_scan_tracks_import_aliases_and_unsafe_yaml_loaders(tmp_path):
     }
 
 
+def test_security_tree_scan_reuses_one_ast_inventory_for_alias_and_tenant_checks(
+    tmp_path, monkeypatch
+):
+    import ast
+
+    import factoryline.review_audits as module
+
+    source = (
+        "import subprocess as sp\n"
+        "def fetch(tenant_id):\n    return store.fetch(tenant_id=tenant_id)\n"
+        "def run():\n    sp.run('cmd', shell=True)\n"
+    )
+    tree = ast.parse(source)
+    path = tmp_path / "service.py"
+    path.write_text(source, encoding="utf-8")
+    original_walk = ast.walk
+    calls = 0
+
+    def counted_walk(node):
+        nonlocal calls
+        calls += 1
+        return original_walk(node)
+
+    monkeypatch.setattr(module.ast, "walk", counted_walk)
+    findings = module._security_scan_tree(
+        tmp_path, path, tree, ("store.fetch",), {}
+    )
+
+    assert calls == 1
+    assert [finding["code"] for finding in findings] == ["SECURITY_SHELL_COMMAND"]
+
+
 def test_security_scan_reports_parse_errors_fail_closed(tmp_path):
     (tmp_path / "broken.py").write_text("def broken(:\n", encoding="utf-8")
     result = security_scan(tmp_path)
