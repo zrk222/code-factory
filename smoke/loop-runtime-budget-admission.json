@@ -1,0 +1,19 @@
+{
+    "checks":  [
+                   {
+                       "name":  "loop_runtime_budget_admission_and_settlement",
+                       "kind":  "python",
+                       "run":  "import json, secrets, tempfile\nfrom pathlib import Path\nfrom factoryline.loop_passport import init_loop, build_loop_passport, start_budget_session, admit_budget_action, settle_budget_action, budget_session_status\nwith tempfile.TemporaryDirectory() as raw:\n    root = Path(raw)\n    manifest_path = Path(init_loop(root, \u0027smoke-runtime\u0027, \u0027smoke-owner\u0027)[\u0027path\u0027])\n    manifest = json.loads(manifest_path.read_text(encoding=\u0027utf-8\u0027))\n    manifest[\u0027budgets\u0027].update({\u0027max_iterations\u0027: 2, \u0027max_wall_seconds\u0027: 20, \u0027max_tokens\u0027: 200, \u0027max_cost_usd\u0027: 2})\n    manifest_path.write_text(json.dumps(manifest), encoding=\u0027utf-8\u0027)\n    passport = Path(build_loop_passport(root, manifest_path)[\u0027paths\u0027][\u0027json\u0027])\n    run_id, action_id = secrets.token_hex(16), secrets.token_hex(16)\n    assert start_budget_session(root, passport, run_id)[\u0027status\u0027] == \u0027ACTIVE\u0027\n    estimate = {\u0027iterations\u0027: 1, \u0027wall_seconds\u0027: 5, \u0027tokens\u0027: 50, \u0027cost_usd\u0027: 0.5}\n    assert admit_budget_action(root, passport, run_id, action_id, estimate)[\u0027status\u0027] == \u0027ADMITTED\u0027\n    actual = {\u0027iterations\u0027: 1, \u0027wall_seconds\u0027: 6, \u0027tokens\u0027: 55, \u0027cost_usd\u0027: 0.6}\n    assert settle_budget_action(root, passport, run_id, action_id, actual)[\u0027status\u0027] == \u0027SETTLED\u0027\n    status = budget_session_status(root, passport, run_id)\n    assert status[\u0027usage\u0027][\u0027iterations\u0027] == actual[\u0027iterations\u0027] and status[\u0027usage\u0027][\u0027wall_seconds\u0027] == actual[\u0027wall_seconds\u0027] and status[\u0027usage\u0027][\u0027tokens\u0027] == actual[\u0027tokens\u0027] and status[\u0027usage\u0027][\u0027cost_usd\u0027] == \u00270.6\u0027 and status[\u0027pending_action\u0027] is False\nprint(\u0027LOOP_RUNTIME_ADMISSION_PASS\u0027)\n",
+                       "expect_exit":  0,
+                       "expect_stdout":  "LOOP_RUNTIME_ADMISSION_PASS",
+                       "timeout_s":  30,
+                       "covers":  [
+                                      "LOOP_RUNTIME_SESSION",
+                                      "LOOP_RUNTIME_ADMISSION",
+                                      "LOOP_RUNTIME_SETTLEMENT",
+                                      "LOOP_RUNTIME_STATUS"
+                                  ],
+                       "must_fail_on_stub":  true
+                   }
+               ]
+}

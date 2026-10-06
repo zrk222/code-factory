@@ -38,6 +38,7 @@ jobs:
           report = json.loads(Path('candidate-quality.json').read_text())
           assert report['grade'] == 'A' and report['passed'] is True
           assert report['metrics']['composite'] >= 97.9
+          assert report['attribution']['rate'] >= 0.98, 'test-intent attribution fell below 98%'
           assert report['metrics']['max_complexity'] <= 10
           assert not report.get('findings'), 'quality findings remain'
           assert not report['metrics'].get('skipped_paths'), 'source was unreadable'
@@ -219,11 +220,15 @@ jobs:
           git init ../code-factory-4-design && git -C ../code-factory-4-design fetch --depth 1 https://github.com/zrk222/code-factory-4-design.git 3190b17d4c242fd18c13306309d33ccb2b24ba04 && git -C ../code-factory-4-design checkout --detach FETCH_HEAD
       - name: Install source train
         run: >-
-          python -m pip install -e .
+          python -m pip install -e ".[dev]"
           -e ../code-factory-1-spec
           -e ../code-factory-2-forge
           -e ../code-factory-3-compile
           -e ../code-factory-4-design
+      - name: Run HSF admission extraction-failure integration test
+        run: >-
+          python -m pytest -q
+          tests/test_loop_passport.py::test_hsf_admission_advice_routes_extraction_failure_to_human_review
       - run: factory doctor --strict
       - name: Build and verify five-brick Factory Passport
         run: python scripts/prooflab_e2e.py

@@ -661,6 +661,7 @@ def test_security_evals_kill_all_adversarial_fixtures_and_keep_safe_control_clea
         "assert True",
         "compute_value()",
         "actual = compute_value()\n    assert actual == actual",
+        "assert len(result) >= 0",
     ],
 )
 def test_security_scan_detects_local_hollow_test_oracles(tmp_path, body):
@@ -680,7 +681,131 @@ def test_security_scan_detects_local_hollow_test_oracles(tmp_path, body):
     ],
 )
 def test_security_scan_preserves_real_assertions_and_exception_controls(tmp_path, body):
+    if body.startswith("self.assert"):
+        source = (
+            "import unittest\n"
+            "class Checks(unittest.TestCase):\n"
+            "    def test_behavior(self):\n"
+            f"        {body}\n"
+        )
+    else:
+        source = "def test_behavior():\n    " + body + "\n"
+    (tmp_path / "case.py").write_text(source)
+    assert security_scan(tmp_path)["findings"] == []
+
+
+@pytest.mark.parametrize(
+    ("body", "reason"),
+    [
+        (
+            "assert value is not None",
+            "non-null assertion does not verify the expected behavior",
+        ),
+        (
+            "operation()\n    assert operation_mock.called",
+            "mock invocation state does not verify its result or arguments",
+        ),
+    ],
+)
+def test_security_scan_reports_weak_only_test_oracles(tmp_path, body, reason):
     (tmp_path / "case.py").write_text("def test_behavior():\n    " + body + "\n")
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_WEAK_TEST_ORACLE": 1}
+    assert reason in result["findings"][0]["message"]
+
+
+def test_security_scan_accepts_local_helper_with_independent_assertion(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "def assert_expected(actual, expected):\n"
+        "    assert actual == expected\n\n"
+        "def test_behavior():\n"
+        "    assert_expected(compute_value(), 4)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_rejects_noop_assertion_named_helper(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "def assert_nothing():\n"
+        "    pass\n\n"
+        "def test_behavior():\n"
+        "    assert_nothing()\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_does_not_trust_local_noop_unittest_named_method(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "class NoOp:\n"
+        "    def assertEqual(self, actual, expected):\n"
+        "        pass\n\n"
+        "def test_behavior():\n"
+        "    NoOp().assertEqual(load_value(), 4)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_reports_unittest_non_null_only_oracle(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "import unittest\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertIsNotNone(load_value())\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_WEAK_TEST_ORACLE": 1}
+
+
+def test_security_scan_accepts_unittest_isinstance_assertion(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "import unittest\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertIsInstance(load_value(), Result)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_accepts_inherited_unittest_case_assertions(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "import unittest\n"
+        "class ProjectTestCase(unittest.TestCase):\n"
+        "    pass\n\n"
+        "class Checks(ProjectTestCase):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertEqual(load_value(), 4)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_ignores_explicitly_skipped_hollow_test(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "import pytest\n"
+        "@pytest.mark.skip(reason='requires external service')\n"
+        "def test_behavior():\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_keeps_strong_oracle_when_weak_assertion_is_also_present(
+    tmp_path,
+):
+    (tmp_path / "case.py").write_text(
+        "def test_behavior():\n"
+        "    assert result is not None\n"
+        "    assert result == expected\n",
+        encoding="utf-8",
+    )
     assert security_scan(tmp_path)["findings"] == []
 
 
@@ -741,6 +866,93 @@ def test_security_scan_accepts_declared_tenant_argument_bindings(
     assert result["tenant_read_contract"]["argument_bindings"] == {
         "store.fetch": [binding.split("=", 1)[1]]
     }
+
+
+def test_security_scan_accepts_tenant_parameter_copied_to_local_alias(tmp_path):
+    (tmp_path / "service.py").write_text(
+        "def fetch(record_id, tenant_id):\n"
+        "    scope = tenant_id\n"
+        "    return store.fetch(record_id, tenant_id=scope)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path, tenant_read_calls=("store.fetch",))
+    assert result["state"] == "CLEAN"
+
+
+def test_security_scan_rejects_tenant_alias_rebound_before_read(tmp_path):
+    (tmp_path / "service.py").write_text(
+        "def fetch(record_id, tenant_id):\n"
+        "    scope = tenant_id\n"
+        "    scope = request.args['tenant']\n"
+        "    return store.fetch(record_id, tenant_id=scope)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path, tenant_read_calls=("store.fetch",))
+    assert result["finding_counts"] == {"SECURITY_MISSING_TENANT_ISOLATION": 1}
+
+
+def test_security_scan_rejects_tenant_alias_shadowed_by_match_capture(tmp_path):
+    (tmp_path / "service.py").write_text(
+        "def fetch(record_id, tenant_id, event):\n"
+        "    scope = tenant_id\n"
+        "    match event:\n"
+        "        case {'scope': scope}:\n"
+        "            pass\n"
+        "    return store.fetch(record_id, tenant_id=scope)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path, tenant_read_calls=("store.fetch",))
+    assert result["finding_counts"] == {"SECURITY_MISSING_TENANT_ISOLATION": 1}
+
+
+def test_security_scan_rejects_tenant_alias_shadowed_by_exception_capture(tmp_path):
+    (tmp_path / "service.py").write_text(
+        "def fetch(record_id, tenant_id):\n"
+        "    scope = tenant_id\n"
+        "    try:\n"
+        "        risky_operation()\n"
+        "    except ValueError as scope:\n"
+        "        return store.fetch(record_id, tenant_id=scope)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path, tenant_read_calls=("store.fetch",))
+    assert result["finding_counts"] == {"SECURITY_MISSING_TENANT_ISOLATION": 1}
+
+
+def test_security_scan_blocks_uncontracted_sqlalchemy_reads(tmp_path):
+    (tmp_path / "service.py").write_text(
+        "from sqlalchemy.orm import Session\n"
+        "def fetch_user(user_id):\n"
+        "    return session.query(User).filter_by(id=user_id).first()\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["state"] == "BLOCKED"
+    assert result["finding_counts"]["SECURITY_TENANT_READ_UNDECLARED"] >= 1
+
+
+def test_security_scan_blocks_uncontracted_django_exclude_read(tmp_path):
+    (tmp_path / "service.py").write_text(
+        "from django.db import models\n"
+        "def list_users():\n"
+        "    return User.objects.exclude(is_active=False)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["state"] == "BLOCKED"
+    assert result["finding_counts"]["SECURITY_TENANT_READ_UNDECLARED"] >= 1
+
+
+def test_security_scan_blocks_uncontracted_sqlmodel_exec_read(tmp_path):
+    (tmp_path / "service.py").write_text(
+        "from sqlmodel import Session, select\n"
+        "def list_users(session: Session):\n"
+        "    return session.exec(select(User))\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["state"] == "BLOCKED"
+    assert result["finding_counts"]["SECURITY_TENANT_READ_UNDECLARED"] >= 1
 
 
 def test_security_scan_rejects_declared_binding_to_wrong_function_parameter(tmp_path):

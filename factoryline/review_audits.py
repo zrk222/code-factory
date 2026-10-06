@@ -957,6 +957,16 @@ def _vacuous_assertion(node: ast.expr) -> bool:
         return bool(node.value)
     if not isinstance(node, ast.Compare) or len(node.ops) != 1:
         return False
+    if (
+        isinstance(node.ops[0], ast.GtE)
+        and isinstance(node.left, ast.Call)
+        and _name(node.left.func) == "len"
+        and len(node.left.args) == 1
+        and not node.left.keywords
+        and isinstance(node.comparators[0], ast.Constant)
+        and node.comparators[0].value == 0
+    ):
+        return True
     if not isinstance(node.ops[0], (ast.Eq, ast.Is, ast.LtE, ast.GtE)):
         return False
     operands = [node.left, *node.comparators]
@@ -966,12 +976,96 @@ def _vacuous_assertion(node: ast.expr) -> bool:
     return ast.dump(operands[0]) == ast.dump(operands[1])
 
 
-def _assertion_call(node: ast.AST, aliases: dict[str, str]) -> bool:
+_UNITTEST_ASSERTIONS = {
+    "assertAlmostEqual",
+    "assertCountEqual",
+    "assertDictEqual",
+    "assertEqual",
+    "assertFalse",
+    "assertGreater",
+    "assertGreaterEqual",
+    "assertIn",
+    "assertIs",
+    "assertIsInstance",
+    "assertIsNotNone",
+    "assertIsNone",
+    "assertLess",
+    "assertLessEqual",
+    "assertListEqual",
+    "assertLogs",
+    "assertNoLogs",
+    "assertNotAlmostEqual",
+    "assertNotEqual",
+    "assertNotIn",
+    "assertNotIsInstance",
+    "assertNotIsNone",
+    "assertNotRegex",
+    "assertRaises",
+    "assertRaisesRegex",
+    "assertRegex",
+    "assertSetEqual",
+    "assertSequenceEqual",
+    "assertTrue",
+    "assertTupleEqual",
+    "assertWarns",
+    "assertWarnsRegex",
+}
+
+
+def _assertion_call(
+    node: ast.AST,
+    aliases: dict[str, str],
+    helper_names: set[str] | None = None,
+    *,
+    unittest_context: bool = False,
+) -> bool:
     if not isinstance(node, ast.Call):
         return False
     name = _normalized_call_name(node, aliases)
     leaf = name.rsplit(".", 1)[-1]
-    return leaf.startswith("assert") or name in {"pytest.raises", "pytest.warns"}
+    return (
+        name in {"pytest.raises", "pytest.warns"}
+        or (
+            unittest_context
+            and leaf in _UNITTEST_ASSERTIONS
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in {"self", "cls"}
+        )
+        or name in (helper_names or set())
+    )
+
+
+def _unittest_test_methods(tree: ast.Module, aliases: dict[str, str]) -> set[int]:
+    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+    base_names: dict[str, tuple[str, ...]] = {}
+    for name, node in classes.items():
+        normalized = []
+        for base in node.bases:
+            base_name = _name(base)
+            head, *tail = base_name.split(".")
+            normalized.append(".".join([aliases.get(head, head), *tail]))
+        base_names[name] = tuple(normalized)
+
+    def derives_from_testcase(name: str, seen: set[str] | None = None) -> bool:
+        seen = set() if seen is None else seen
+        if name in seen:
+            return False
+        seen.add(name)
+        for base in base_names.get(name, ()):
+            if base in {"unittest.TestCase", "unittest.case.TestCase"}:
+                return True
+            if base in classes and derives_from_testcase(base, seen):
+                return True
+        return False
+
+    return {
+        id(method)
+        for name, class_node in classes.items()
+        if derives_from_testcase(name)
+        for method in class_node.body
+        if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
 
 
 def _explicit_failure_oracle(node: ast.AST) -> bool:
@@ -984,17 +1078,168 @@ def _explicit_failure_oracle(node: ast.AST) -> bool:
     return False
 
 
-def _hollow_test_finding(
-    relative: str, node: ast.AST, aliases: dict[str, str]
+def _unconditionally_skipped_test(node: ast.AST) -> bool:
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    for decorator in node.decorator_list:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        name = _name(target)
+        if name in {"skip", "pytest.mark.skip", "unittest.skip"} or name.endswith(
+            ".mark.skip"
+        ):
+            return True
+    return False
+
+
+def _meaningful_local_assertion(
+    node: ast.AST, aliases: dict[str, str], helper_names: set[str] | None = None
+) -> bool:
+    nodes = [child for statement in node.body for child in _body_nodes(statement)]
+    return any(_assertion_call(child, aliases, helper_names) for child in nodes) or any(
+        isinstance(child, ast.Assert) and not _vacuous_assertion(child.test)
+        for child in nodes
+    )
+
+
+def _local_assertion_helpers(tree: ast.Module, aliases: dict[str, str]) -> set[str]:
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and not node.name.startswith("test_")
+    }
+    helpers: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for name, node in functions.items():
+            if name not in helpers and _meaningful_local_assertion(
+                node, aliases, helpers
+            ):
+                helpers.add(name)
+                changed = True
+    return helpers
+
+
+def _weak_assertion_reason(
+    node: ast.AST, aliases: dict[str, str] | None = None
+) -> str | None:
+    if isinstance(node, ast.Call):
+        leaf = _normalized_call_name(node, aliases or {}).rsplit(".", 1)[-1]
+        if leaf == "assertIsNotNone" or (
+            leaf == "assertIs"
+            and len(node.args) == 2
+            and any(
+                isinstance(argument, ast.Constant) and argument.value is None
+                for argument in node.args
+            )
+        ):
+            return "non-null assertion does not verify the expected behavior"
+        if leaf in {"assert_called", "assert_called_once", "assert_called_once_with"}:
+            return "mock invocation state does not verify its result or arguments"
+    if isinstance(node, ast.Compare) and len(node.ops) == 1:
+        if isinstance(node.ops[0], ast.IsNot) and any(
+            isinstance(value, ast.Constant) and value.value is None
+            for value in (node.left, *node.comparators)
+        ):
+            return "non-null assertion does not verify the expected behavior"
+        operands = (node.left, *node.comparators)
+        if any(
+            isinstance(value, ast.Attribute) and value.attr in {"called", "call_count"}
+            for operand in operands
+            for value in ast.walk(operand)
+        ):
+            return "mock invocation state does not verify its result or arguments"
+    if isinstance(node, ast.Attribute) and node.attr in {"called", "call_count"}:
+        return "mock invocation state does not verify its result or arguments"
+    return None
+
+
+def _weak_test_oracle_finding(
+    relative: str,
+    node: ast.AST,
+    aliases: dict[str, str],
+    helper_names: set[str] | None = None,
+    *,
+    unittest_context: bool = False,
 ) -> dict[str, Any] | None:
     if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return None
     if not node.name.startswith("test_"):
         return None
+    if _unconditionally_skipped_test(node):
+        return None
+    nodes = [child for statement in node.body for child in _body_nodes(statement)]
+    weak = [
+        (child, _weak_assertion_reason(child.test, aliases))
+        for child in nodes
+        if isinstance(child, ast.Assert)
+    ]
+    weak.extend(
+        (child, _weak_assertion_reason(child, aliases))
+        for child in nodes
+        if isinstance(child, ast.Call)
+        and _assertion_call(
+            child, aliases, helper_names, unittest_context=unittest_context
+        )
+    )
+    weak = [(child, reason) for child, reason in weak if reason]
+    strong_assertions = [
+        child
+        for child in nodes
+        if isinstance(child, ast.Assert)
+        and not _vacuous_assertion(child.test)
+        and _weak_assertion_reason(child.test, aliases) is None
+    ]
+    strong_assertion_calls = [
+        child
+        for child in nodes
+        if isinstance(child, ast.Call)
+        and _assertion_call(
+            child, aliases, helper_names, unittest_context=unittest_context
+        )
+        and _weak_assertion_reason(child, aliases) is None
+    ]
+    if not weak or strong_assertions or strong_assertion_calls:
+        return None
+    reasons = sorted({reason for _, reason in weak})
+    return _security_finding(
+        "QUALITY_WEAK_TEST_ORACLE",
+        relative,
+        weak[0][0],
+        "; ".join(reasons) + ". Assert the independently expected value or state.",
+        "MEDIUM",
+        symbol=node.name,
+        reasons=reasons,
+    )
+
+
+def _hollow_test_finding(
+    relative: str,
+    node: ast.AST,
+    aliases: dict[str, str],
+    helper_names: set[str] | None = None,
+    *,
+    unittest_context: bool = False,
+) -> dict[str, Any] | None:
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    if not node.name.startswith("test_"):
+        return None
+    if _unconditionally_skipped_test(node):
+        return None
     nodes = [n for statement in node.body for n in _body_nodes(statement)]
     assertions = [n for n in nodes if isinstance(n, ast.Assert)]
-    if any(_assertion_call(n, aliases) for n in nodes) or _explicit_failure_oracle(
-        node
+    if any(
+        _assertion_call(n, aliases, helper_names, unittest_context=unittest_context)
+        for n in nodes
+    ) or _explicit_failure_oracle(node):
+        return None
+    if any(
+        isinstance(child, ast.Call)
+        and isinstance(child.func, ast.Name)
+        and child.func.id in (helper_names or set())
+        for child in nodes
     ):
         return None
     if assertions and any(not _vacuous_assertion(n.test) for n in assertions):
@@ -1076,22 +1321,10 @@ def _normalize_tenant_selector(kind: str, selector: str) -> str:
     raise ReviewAuditError("Tenant binding kind must be position or keyword.")
 
 
-def _tenant_keyword_bound(node: ast.Call, parameters: set[str]) -> bool:
-    value = next((k.value for k in node.keywords if k.arg == "tenant_id"), None)
-    return (
-        isinstance(value, ast.Name)
-        and value.id == "tenant_id"
-        and value.id in parameters
-    )
-
-
-def _tenant_parameter_unchanged(
-    function: ast.AST, parameter: str, use: ast.Call
-) -> bool:
-    statements = function.body
-    comprehension_targets = {
+def _tenant_comprehension_targets(function: ast.AST) -> set[int]:
+    return {
         id(target)
-        for statement in statements
+        for statement in function.body
         for expression in _body_nodes(statement)
         if isinstance(
             expression,
@@ -1101,15 +1334,66 @@ def _tenant_parameter_unchanged(
         for target in _body_nodes(generator.target)
         if isinstance(target, ast.Name) and isinstance(target.ctx, ast.Store)
     }
-    return not any(
-        isinstance(candidate, ast.Name)
-        and candidate.id == parameter
-        and id(candidate) not in comprehension_targets
-        and isinstance(candidate.ctx, (ast.Store, ast.Del))
-        and (candidate.lineno, candidate.col_offset) < (use.lineno, use.col_offset)
-        for statement in statements
-        for candidate in _body_nodes(statement)
-    )
+
+
+def _tenant_discard_captures(statement: ast.stmt, names: set[str]) -> None:
+    for child in _body_nodes(statement):
+        if isinstance(child, (ast.MatchAs, ast.MatchStar)) and child.name:
+            names.discard(child.name)
+        elif isinstance(child, ast.MatchMapping) and child.rest:
+            names.discard(child.rest)
+        elif isinstance(child, ast.ExceptHandler) and child.name:
+            names.discard(child.name)
+
+
+def _tenant_discard_written_names(
+    statement: ast.AST, names: set[str], comprehension_targets: set[int]
+) -> None:
+    for child in _body_nodes(statement):
+        if (
+            isinstance(child, ast.Name)
+            and id(child) not in comprehension_targets
+            and isinstance(child.ctx, (ast.Store, ast.Del))
+        ):
+            names.discard(child.id)
+
+
+def _tenant_track_assignment(
+    statement: ast.stmt, names: set[str], comprehension_targets: set[int]
+) -> bool:
+    target: ast.Name | None = None
+    value: ast.expr | None = None
+    if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
+        candidate = statement.targets[0]
+        if isinstance(candidate, ast.Name):
+            target, value = candidate, statement.value
+    elif isinstance(statement, ast.AnnAssign) and isinstance(
+        statement.target, ast.Name
+    ):
+        target, value = statement.target, statement.value
+    if target is None:
+        return False
+    if isinstance(value, ast.Name) and value.id in names:
+        names.add(target.id)
+    else:
+        names.discard(target.id)
+        if value is not None:
+            _tenant_discard_written_names(value, names, comprehension_targets)
+    return True
+
+
+def _tenant_bound_names(function: ast.AST, parameter: str, use: ast.Call) -> set[str]:
+    """Track simple, unconditional tenant aliases and invalidate later writes."""
+    names = {parameter}
+    comprehension_targets = _tenant_comprehension_targets(function)
+    for statement in function.body:
+        if (statement.lineno, statement.col_offset) >= (use.lineno, use.col_offset):
+            break
+        _tenant_discard_captures(statement, names)
+        if _tenant_track_assignment(statement, names, comprehension_targets):
+            continue
+        _tenant_discard_written_names(statement, names, comprehension_targets)
+    return names
 
 
 def _tenant_argument_bound(
@@ -1119,8 +1403,13 @@ def _tenant_argument_bound(
     bindings: tuple[str, ...],
 ) -> bool:
     if not bindings:
-        return _tenant_keyword_bound(node, parameters) and _tenant_parameter_unchanged(
-            function, "tenant_id", node
+        value = next(
+            (item.value for item in node.keywords if item.arg == "tenant_id"), None
+        )
+        return (
+            isinstance(value, ast.Name)
+            and "tenant_id" in parameters
+            and value.id in _tenant_bound_names(function, "tenant_id", node)
         )
     for binding in bindings:
         kind, selector, parameter = binding.split(":", 2)
@@ -1136,12 +1425,112 @@ def _tenant_argument_bound(
         )
         if (
             isinstance(value, ast.Name)
-            and value.id == parameter
+            and value.id in _tenant_bound_names(function, parameter, node)
             and parameter in parameters
-            and _tenant_parameter_unchanged(function, parameter, node)
         ):
             return True
     return False
+
+
+def _orm_read_candidates(
+    nodes: list[ast.AST], aliases: dict[str, str]
+) -> list[tuple[str, ast.Call]]:
+    modules = {
+        node.module
+        for node in nodes
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+    modules.update(
+        item.name
+        for node in nodes
+        if isinstance(node, ast.Import)
+        for item in node.names
+    )
+    sql_orm = any(module.startswith(("sqlalchemy", "sqlmodel")) for module in modules)
+    django_orm = any(module.startswith("django.db.models") for module in modules)
+    other_orm = any(module.startswith(("peewee", "tortoise")) for module in modules)
+    candidates = []
+    for node in nodes:
+        if not isinstance(node, ast.Call):
+            continue
+        name = _normalized_call_name(node, aliases)
+        leaf = name.rsplit(".", 1)[-1]
+        manager_read = ".objects." in f".{name}." and leaf in {
+            "all",
+            "aggregate",
+            "dates",
+            "datetimes",
+            "earliest",
+            "exclude",
+            "filter",
+            "filter_by",
+            "get",
+            "get_or_create",
+            "first",
+            "in_bulk",
+            "iterator",
+            "latest",
+            "one",
+            "order_by",
+            "raw",
+            "reverse",
+            "select_related",
+            "update_or_create",
+            "values",
+            "values_list",
+            "exists",
+            "count",
+        }
+        orm_query = (
+            (
+                sql_orm
+                and leaf
+                in {"query", "execute", "exec", "scalars", "scalar", "select", "get"}
+            )
+            or (
+                other_orm
+                and leaf
+                in {
+                    "select",
+                    "filter",
+                    "filter_by",
+                    "get",
+                    "get_or_none",
+                    "exclude",
+                    "first",
+                    "all",
+                    "exists",
+                    "count",
+                    "fetch",
+                }
+            )
+            or (
+                django_orm
+                and leaf
+                in {
+                    "get",
+                    "filter",
+                    "exclude",
+                    "all",
+                    "first",
+                    "last",
+                    "exists",
+                    "count",
+                    "values",
+                    "values_list",
+                    "iterator",
+                    "get_or_create",
+                    "update_or_create",
+                    "latest",
+                    "earliest",
+                    "in_bulk",
+                    "raw",
+                }
+            )
+        )
+        if manager_read or orm_query:
+            candidates.append((name, node))
+    return candidates
 
 
 def _tenant_function_findings(
@@ -1209,6 +1598,77 @@ def _tenant_read_findings(
     ]
 
 
+def _undeclared_tenant_read_findings(
+    relative: str,
+    nodes: list[ast.AST],
+    aliases: dict[str, str],
+    declared_reads: set[str],
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    for call_name, call in _orm_read_candidates(nodes, aliases):
+        if call_name not in declared_reads:
+            findings.append(
+                _security_finding(
+                    "SECURITY_TENANT_READ_UNDECLARED",
+                    relative,
+                    call,
+                    (
+                        f"Potential ORM read {call_name} is outside the declared tenant-read contract. "
+                        "Add the read to --tenant-read-call and bind its tenant scope, or document why tenant isolation does not apply."
+                    ),
+                    "HIGH",
+                    call=call_name,
+                )
+            )
+    return findings
+
+
+def _test_oracle_findings(
+    relative: str,
+    nodes: list[ast.AST],
+    aliases: dict[str, str],
+    helper_names: set[str],
+    unittest_methods: set[int],
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    for node in nodes:
+        is_unittest_method = id(node) in unittest_methods
+        hollow = _hollow_test_finding(
+            relative,
+            node,
+            aliases,
+            helper_names,
+            unittest_context=is_unittest_method,
+        )
+        if hollow is not None:
+            findings.append(hollow)
+        weak = _weak_test_oracle_finding(
+            relative,
+            node,
+            aliases,
+            helper_names,
+            unittest_context=is_unittest_method,
+        )
+        if weak is not None:
+            findings.append(weak)
+    return findings
+
+
+def _security_node_findings(
+    relative: str, node: ast.AST, aliases: dict[str, str]
+) -> list[dict[str, Any]]:
+    if isinstance(node, ast.Call):
+        call = _normalized_call_name(node, aliases)
+        finding = _security_call_finding(call, relative, node)
+        return [finding] if finding is not None else []
+    if isinstance(node, ast.ExceptHandler):
+        finding = _bare_except_finding(relative, node)
+        return [finding] if finding is not None else []
+    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+        return _literal_assignment_diagnostics(relative, node)
+    return []
+
+
 def _security_scan_tree(
     root: Path,
     path: Path,
@@ -1219,24 +1679,21 @@ def _security_scan_tree(
     relative = path.relative_to(root).as_posix()
     nodes = list(ast.walk(tree))
     aliases = _security_aliases(nodes)
-    findings: list[dict[str, Any]] = _tenant_read_findings(
+    helper_names = _local_assertion_helpers(tree, aliases)
+    unittest_methods = _unittest_test_methods(tree, aliases)
+    findings = _tenant_read_findings(
         relative, nodes, tenant_read_calls, aliases, tenant_read_bindings or {}
     )
+    findings.extend(
+        _undeclared_tenant_read_findings(
+            relative, nodes, aliases, set(tenant_read_calls)
+        )
+    )
+    findings.extend(
+        _test_oracle_findings(relative, nodes, aliases, helper_names, unittest_methods)
+    )
     for node in nodes:
-        hollow = _hollow_test_finding(relative, node, aliases)
-        if hollow is not None:
-            findings.append(hollow)
-        if isinstance(node, ast.Call):
-            call = _normalized_call_name(node, aliases)
-            finding = _security_call_finding(call, relative, node)
-            if finding is not None:
-                findings.append(finding)
-        elif isinstance(node, ast.ExceptHandler):
-            finding = _bare_except_finding(relative, node)
-            if finding is not None:
-                findings.append(finding)
-        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-            findings.extend(_literal_assignment_diagnostics(relative, node))
+        findings.extend(_security_node_findings(relative, node, aliases))
     return findings
 
 

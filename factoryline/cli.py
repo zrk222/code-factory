@@ -1257,41 +1257,9 @@ def _build_parser() -> argparse.ArgumentParser:
     privacy_merkle.add_argument("--disclose", required=True)
     privacy_merkle.add_argument("--out", required=True)
 
-    s = sub.add_parser(
-        "loop", help="create and verify portable governed-loop contracts"
-    )
-    loop_sub = s.add_subparsers(required=True, dest="loop_cmd")
-    loop_init = loop_sub.add_parser(
-        "init", help="write a conservative Loop Passport manifest"
-    )
-    loop_init.add_argument("loop_id")
-    loop_init.add_argument("--owner", required=True)
-    loop_init.add_argument("--root", default=".")
-    loop_init.add_argument("--force", action="store_true")
-    loop_init.add_argument("--json", action="store_true")
-    loop_validate = loop_sub.add_parser(
-        "validate", help="validate a Loop Passport manifest fail closed"
-    )
-    loop_validate.add_argument("manifest")
-    loop_validate.add_argument("--json", action="store_true")
-    loop_passport = loop_sub.add_parser(
-        "passport", help="write a hash-bound Loop Passport and Mermaid graph"
-    )
-    loop_passport.add_argument("manifest")
-    loop_passport.add_argument("--root", default=".")
-    loop_passport.add_argument("--json", action="store_true")
-    loop_verify = loop_sub.add_parser(
-        "verify", help="verify a Loop Passport and its manifest binding"
-    )
-    loop_verify.add_argument("passport")
-    loop_verify.add_argument("--json", action="store_true")
-    loop_budget = loop_sub.add_parser(
-        "budget", help="write a fail-closed receipt for supplied loop usage"
-    )
-    loop_budget.add_argument("manifest")
-    loop_budget.add_argument("usage")
-    loop_budget.add_argument("--root", default=".")
-    loop_budget.add_argument("--json", action="store_true")
+    from .cli_runtime_proof import add_loop_parser
+
+    add_loop_parser(sub)
 
     s = sub.add_parser("ci", help="write an opt-in GitHub PR-comment workflow")
     ci_sub = s.add_subparsers(required=True, dest="ci_cmd")
@@ -4744,6 +4712,10 @@ def _loop_output(a, result: dict, code: int) -> None:
 def _dispatch_route_group_41(a, capture_command, p):
     if a.cmd != "loop":
         return _UNHANDLED
+    if a.loop_cmd == "runtime":
+        from .cli_runtime_proof import run_loop_runtime
+
+        return run_loop_runtime(a)
     from .loop_passport import (
         build_loop_passport,
         evaluate_budget,

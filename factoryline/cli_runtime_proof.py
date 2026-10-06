@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -83,6 +84,130 @@ def add_parser(sub: Any) -> None:
     admission_verify.add_argument("packet")
     admission_verify.add_argument("--root", default=".")
     admission_verify.add_argument("--json", action="store_true")
+
+
+def add_loop_parser(sub: Any) -> None:
+    """Register the Loop Passport CLI in the runtime-proof command module."""
+    loop = sub.add_parser(
+        "loop", help="create and verify portable governed-loop contracts"
+    )
+    commands = loop.add_subparsers(required=True, dest="loop_cmd")
+    init = commands.add_parser(
+        "init", help="write a conservative Loop Passport manifest"
+    )
+    init.add_argument("loop_id")
+    init.add_argument("--owner", required=True)
+    init.add_argument("--root", default=".")
+    init.add_argument("--force", action="store_true")
+    init.add_argument("--json", action="store_true")
+    validate = commands.add_parser(
+        "validate", help="validate a Loop Passport manifest fail closed"
+    )
+    validate.add_argument("manifest")
+    validate.add_argument("--json", action="store_true")
+    passport = commands.add_parser(
+        "passport", help="write a hash-bound Loop Passport and Mermaid graph"
+    )
+    passport.add_argument("manifest")
+    passport.add_argument("--root", default=".")
+    passport.add_argument("--json", action="store_true")
+    verify = commands.add_parser(
+        "verify", help="verify a Loop Passport and its manifest binding"
+    )
+    verify.add_argument("passport")
+    verify.add_argument("--json", action="store_true")
+    budget = commands.add_parser(
+        "budget", help="write a fail-closed receipt for supplied loop usage"
+    )
+    budget.add_argument("manifest")
+    budget.add_argument("usage")
+    budget.add_argument("--root", default=".")
+    budget.add_argument("--json", action="store_true")
+    runtime = commands.add_parser(
+        "runtime", help="reserve, settle, and inspect runtime budget actions"
+    )
+    add_loop_runtime_parser(runtime)
+
+
+def add_loop_runtime_parser(parser: Any) -> None:
+    """Register one consolidated Loop runtime command family."""
+    commands = parser.add_subparsers(required=True, dest="loop_runtime_cmd")
+    for name, help_text in (
+        ("session", "create or resume a durable budget session"),
+        ("admit", "reserve one action before running it"),
+        ("settle", "reconcile an admitted action with measured usage"),
+        ("status", "show settled plus reserved runtime usage"),
+    ):
+        command = commands.add_parser(name, help=help_text)
+        command.add_argument("passport")
+        command.add_argument("--run-id", required=True)
+        command.add_argument("--root", default=".")
+        command.add_argument("--json", action="store_true")
+        if name in {"admit", "settle"}:
+            command.add_argument(
+                "--values", required=True, help="JSON file with all four usage values"
+            )
+            command.add_argument("--action-id", required=True)
+
+
+def run_loop_runtime(args: Any) -> int:
+    """Run one local Loop budget operation and print its actionable receipt."""
+    try:
+        result, code = _loop_runtime_action(args)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        result = {
+            "schema": "factory.loop.runtime.v1",
+            "status": "INCOMPLETE",
+            "next_action": "Correct the input and retry without changing the recorded budget.",
+            "error": str(exc),
+        }
+        code = 1
+    return _print_loop_runtime(args, result, code)
+
+
+def _loop_runtime_action(args: Any) -> tuple[dict[str, Any], int]:
+    from .loop_passport import (
+        admit_budget_action,
+        budget_session_status,
+        settle_budget_action,
+        start_budget_session,
+    )
+
+    if args.loop_runtime_cmd == "session":
+        result = start_budget_session(Path(args.root), Path(args.passport), args.run_id)
+        return result, 0 if result["status"] == "ACTIVE" else 1
+    if args.loop_runtime_cmd == "status":
+        result = budget_session_status(
+            Path(args.root), Path(args.passport), args.run_id
+        )
+        return result, 0 if result["status"] in {"ACTIVE", "BUDGET_EXCEEDED"} else 1
+    values = json.loads(
+        Path(args.values).read_text(encoding="utf-8-sig"), parse_float=Decimal
+    )
+    if args.loop_runtime_cmd == "admit":
+        result = admit_budget_action(
+            Path(args.root), Path(args.passport), args.run_id, args.action_id, values
+        )
+        return result, 0 if result["status"] == "ADMITTED" else 1
+    result = settle_budget_action(
+        Path(args.root), Path(args.passport), args.run_id, args.action_id, values
+    )
+    return result, 0 if result["status"] == "SETTLED" else 1
+
+
+def _print_loop_runtime(args: Any, result: dict[str, Any], code: int) -> int:
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(f"Loop runtime: {result.get('status', 'INCOMPLETE')}")
+        print(f"  next: {result.get('next_action', 'Inspect the receipt.')}")
+        if result.get("path"):
+            print(f"  ledger: {result['path']}")
+        if result.get("error"):
+            print(
+                f"  detail: {result['error']}", file=sys.stderr if code else sys.stdout
+            )
+    return code
 
 
 def _run_admission(args: Any) -> int:

@@ -7,7 +7,7 @@ behavioral test evidence, workflow integrity, specialty AI review, and
 actionable repair. Its receipts support review; the tool does not certify
 software, guarantee that defects are absent, or approve a release.
 
-## 0.47.0 audit workflow preview
+## Current update preview (next core release)
 
 **Fixed:** editor audit views now expose missing and incomplete checks.
 **Changed:** Junie's route connects a diff to bounded evidence and a concrete
@@ -31,6 +31,26 @@ The unchanged eight-case public regression corpus now gives 6 true positives,
 same tenant-read contract applied to defective, repaired, and clean inputs.
 This is a small development regression result, not independent accuracy,
 runtime coverage, or release approval. CI verification is still required.
+**Added runtime budget admission:** `factory loop runtime` now exposes
+`session`, `admit`, `settle`, and `status` operations backed by a local SQLite
+ledger. It reserves estimated usage before an enrolled adapter acts, reconciles
+measured usage afterward, and fails closed on malformed ledger state or
+inconsistent replay receipts. The HSF classifier remains advisory; its result
+never substitutes for the SQLite admission call.
+**Changed:** persisted usage and replay receipts are checked against exact
+fixed-point measurements, request digests, action states, and overrun markers.
+**Limits:** enforcement applies only to adapters that call the runtime API;
+provider billing is not queried, and a hostile process with workspace write
+access can still alter the local SQLite ledger. This does not certify software
+or grant release authority.
+
+**Candidate quality receipt:** on a clean Git-tracked snapshot, ForgeLine
+0.10.8 reports A (98.2/100), 1,073 of 1,093 function checks attributed to
+test intent (98.17%), maximum complexity 10, and 460 Python files. This is a
+static candidate measurement, not runtime coverage or certification. The
+source-hashed [candidate receipt](evidence/self-audit/quality-candidate-2026-10-06.json)
+records the measured scope. The published core release remains 0.47.0; this
+branch is not merged or published.
 The [autonomous ops plan](docs/AUTONOMOUS_OPS_EDITOR_PLAN.md) explains the
 proposed Observer Agent loop and its gates. These versions remain release
 candidates until each channel has a verified provider publication receipt.
@@ -117,8 +137,9 @@ not infer that those results still apply after source changes.
 
 The prior snapshot's [repository self-audit receipt](evidence/self-audit/quality-reassessment-2026-10-04.json)
 records **A (97.9/100)** and 1,055/1,085 functions attributed to test intent
-(97.24%). That static measurement applies to its recorded source digest;
-it is not a grade for later edits, runtime coverage, or certification.
+(97.24%). That static measurement applies to its recorded source digest and is
+superseded for this candidate by the clean tracked-snapshot result above; it is
+not runtime coverage or certification.
 
 ForgeLine 0.10.8 computes Python complexity for public module functions and
 public class methods in its recorded `metrics.scope.code_files`; names starting
@@ -141,10 +162,10 @@ separate outcomes. See [release channels](docs/RELEASE_CHANNELS.md).
 
 Architecture health checks growth budgets. ForgeLine's repository inventory
 and feature QA are separate checks. The [current gap review](docs/AUTONOMOUS_OPS_EDITOR_PLAN.md)
-records how the published ForgeLine 0.10.7 graded this source F/70.7 while
-parser-corrected ForgeLine 0.10.8 grades it A/95.1. CF 0.47.0 requires 0.10.8
-and checks real MJS, TS, and TSX feature QA during `factory doctor --strict`.
-Static signals are neither executed coverage nor a security certification.
+records historical parser behavior; the current candidate's pinned-parser result
+is listed above. CF requires ForgeLine 0.10.8 and checks real MJS, TS, and TSX
+feature QA during `factory doctor --strict`. Static signals are neither
+executed coverage nor a security certification.
 
 ## More detail
 

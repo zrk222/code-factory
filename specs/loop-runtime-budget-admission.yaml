@@ -1,0 +1,33 @@
+workflow_spec: loop_runtime_budget_admission
+version: 1
+metadata:
+  owner: code-factory
+  compliance: []
+inputs:
+  input_data:
+    text: string
+steps:
+  - id: extract_runtime_evidence
+    type: bounded_invocation
+    schema:
+      passport_verified: boolean
+      evidence_complete: boolean
+      pending_reservation: boolean
+      within_budget: boolean
+    on_out_of_bounds: reject
+  - id: classify_admission
+    type: branch
+    rules:
+      - if: "passport_verified == false"
+        then: {status: ADVISORY_INCOMPLETE, reason: "Passport evidence needs runtime verification"}
+      - if: "evidence_complete == false"
+        then: {status: ADVISORY_INCOMPLETE, reason: "Required evidence appears incomplete"}
+      - if: "pending_reservation == true"
+        then: {status: ADVISORY_ACTION_IN_PROGRESS, reason: "A prior reservation may be unresolved; check the runtime ledger"}
+      - if: "within_budget == false"
+        then: {status: ADVISORY_BUDGET_EXCEEDED, reason: "Projected usage may exceed the declared budget"}
+      - else: {status: ADVISORY_READY_FOR_RUNTIME_CHECK, reason: "Evidence appears complete; runtime ledger admission is still required"}
+outputs:
+  AdmissionAdvice:
+    status: "enum[ADVISORY_INCOMPLETE, ADVISORY_ACTION_IN_PROGRESS, ADVISORY_BUDGET_EXCEEDED, ADVISORY_READY_FOR_RUNTIME_CHECK, HUMAN_REVIEW]"
+    reason: string
