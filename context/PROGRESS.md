@@ -806,3 +806,24 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-10-04 06:54] GATE spec github-account-overview approver=human strict=True sha=b4a59a964456929a
 - [2026-10-04 06:54] GATE plan github-account-overview approver=human tasks=15 sha=b4a59a964456929a
 - [2026-10-04 06:54] GATE code github-account-overview approver=human reviewer=personas/reviewer.md auditor=personas/security_auditor.md
+- [2026-10-06 03:08] GATE spec loop-runtime-budget-admission approver=Rick Katz (authorized by user proceed) strict=True sha=475020af0a632cc1
+- [2026-10-06 03:11] GATE spec loop-runtime-budget-admission approver=Rick Katz (authorized by user proceed) strict=True sha=0042b6efe7c9eef7
+- [2026-10-06 03:17] GATE spec loop-runtime-budget-admission approver=candidate_quality_review (specialty AI reviewer; user authorized implementation) strict=True sha=1842fcde2a546338
+- [2026-10-06 03:17] GATE plan loop-runtime-budget-admission approver=candidate_quality_review (specialty AI reviewer; user authorized implementation) tasks=5 sha=1842fcde2a546338
+- [2026-10-06 03:34] GATE spec loop-runtime-budget-admission approver=human strict=True sha=3ac776e26aaa3b08
+- [2026-10-06 03:34] GATE plan loop-runtime-budget-admission approver=human tasks=5 sha=3ac776e26aaa3b08
+- [2026-10-06 03:34] GATE spec loop-runtime-budget-admission approver=candidate_quality_review strict=True sha=3ac776e26aaa3b08
+- [2026-10-06 03:34] GATE plan loop-runtime-budget-admission approver=candidate_quality_review tasks=5 sha=3ac776e26aaa3b08
+- [2026-10-06 03:40] GATE spec loop-runtime-budget-admission approver=candidate_quality_review strict=True sha=3ac776e26aaa3b08
+- [2026-10-06 03:40] GATE plan loop-runtime-budget-admission approver=candidate_quality_review tasks=5 sha=3ac776e26aaa3b08
+- [2026-10-06 03:40] GATE spec loop-runtime-budget-admission approver=candidate_quality_review strict=True sha=3ac776e26aaa3b08
+- [2026-10-06 03:40] GATE plan loop-runtime-budget-admission approver=candidate_quality_review tasks=5 sha=3ac776e26aaa3b08
+- [2026-10-06 03:45] GATE spec loop-runtime-budget-admission approver=human strict=True sha=3ac776e26aaa3b08
+- [2026-10-06 03:45] GATE plan loop-runtime-budget-admission approver=human tasks=5 sha=3ac776e26aaa3b08
+- [2026-10-06 04:08] GATE spec loop-runtime-budget-admission approver=human strict=True sha=afe2c2263b7ae21a
+- [2026-10-06 04:08] GATE plan loop-runtime-budget-admission approver=human tasks=5 sha=afe2c2263b7ae21a
+- [2026-10-06 04:08] GATE spec loop-runtime-budget-admission approver=human strict=True sha=f1c597537a293156
+- [2026-10-06 04:08] GATE plan loop-runtime-budget-admission approver=human tasks=5 sha=f1c597537a293156
+- [2026-10-06 04:19] GATE plan loop-runtime-budget-admission approver=human tasks=5 sha=5b29ee2936c93c86
+- [2026-10-06 04:20] GATE spec loop-runtime-budget-admission approver=human strict=True sha=5b29ee2936c93c86
+- [2026-10-06 04:20] GATE plan loop-runtime-budget-admission approver=human tasks=5 sha=5b29ee2936c93c86

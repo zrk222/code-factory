@@ -1,0 +1,175 @@
+name: loop-runtime-budget-admission
+language: python
+modules:
+  - name: loop_passport
+    path: factoryline/loop_passport.py
+    imports:
+      - json
+      - hashlib
+      - pathlib
+      - decimal
+      - sqlite3
+      - secrets
+    functions:
+      - name: start_budget_session
+        args: ["root: Path", "passport_path: Path", "run_id: str"]
+        returns: "dict[str, Any]"
+        doc: "Create or idempotently resume a ledger bound to one verified Loop Passport and run token."
+      - name: admit_budget_action
+        args: ["root: Path", "passport_path: Path", "run_id: str", "action_id: str", "estimate: dict[str, Any]"]
+        returns: "dict[str, Any]"
+        doc: "Atomically validate budget headroom and persist one action reservation before execution."
+      - name: settle_budget_action
+        args: ["root: Path", "passport_path: Path", "run_id: str", "action_id: str", "actual: dict[str, Any]"]
+        returns: "dict[str, Any]"
+        doc: "Idempotently reconcile a reservation with measured usage and preserve overruns."
+      - name: budget_session_status
+        args: ["root: Path", "passport_path: Path", "run_id: str"]
+        returns: "dict[str, Any]"
+        doc: "Read the manifest-bound session state and exact settled plus reserved usage."
+      - name: _runtime_connection
+        args: ["path: Path"]
+        returns: "sqlite3.Connection"
+        doc: "Open or migrate the local transactional budget ledger."
+      - name: _runtime_database_path
+        args: ["root: Path", "loop_id: str", "run_digest: str"]
+        returns: "Path"
+        doc: "Resolve a validated loop ledger path and fail closed on workspace escapes."
+      - name: _runtime_units
+        args: ["value: object", "field: str"]
+        returns: "int"
+        doc: "Convert a decimal input to exact bounded integer units without context rounding."
+      - name: _runtime_fraction_units
+        args: ["digits: tuple[int, ...]", "fractional_digits: int", "field: str", "scale_digits: int"]
+        returns: "int"
+        doc: "Validate exact decimal fractional precision and convert the remaining digits to base units."
+      - name: _runtime_decimal_units
+        args: ["amount: Decimal", "field: str", "scale_digits: int"]
+        returns: "int"
+        doc: "Convert a finite Decimal tuple to exact bounded integer units without ambient-context rounding."
+      - name: _read_passport_payload
+        args: ["path: Path"]
+        returns: "tuple[dict[str, Any] | None, str | None]"
+        doc: "Normalize malformed and non-object passport JSON into an explicit fail-closed result."
+      - name: _passport_manifest_errors
+        args: ["payload: dict[str, Any]"]
+        returns: "list[str]"
+        doc: "Verify passport-to-manifest existence, digest, schema, loop id and budget binding."
+      - name: _runtime_admission_replay
+        args: ["connection: sqlite3.Connection", "path: Path", "action_digest: str", "request_sha: str", "blocked: str | None"]
+        returns: "dict[str, Any] | None"
+        doc: "Return a state-aware replay that cannot reauthorize settled or blocked work."
+      - name: _runtime_payload
+        args: ["passport_path: Path"]
+        returns: "tuple[dict[str, Any], dict[str, int]]"
+        doc: "Bind passport claims to the exact verified manifest bytes and normalize integer-unit budgets."
+      - name: _runtime_reserve_action
+        args: ["connection: sqlite3.Connection", "path: Path", "action_digest: str", "request_sha: str", "reserved: dict[str, int]", "limits: dict[str, int]", "blocked: str | None"]
+        returns: "dict[str, Any]"
+        doc: "Check pending work and limits before reserving one action."
+      - name: _runtime_settle_existing
+        args: ["connection: sqlite3.Connection", "path: Path", "action_digest: str", "measured: dict[str, int]", "limits: dict[str, int]"]
+        returns: "dict[str, Any]"
+        doc: "Replace a reservation with measured usage and record any overrun."
+  - name: cli_runtime_proof
+    path: factoryline/cli_runtime_proof.py
+    imports:
+      - json
+      - decimal
+      - pathlib
+      - sys
+    functions:
+      - name: add_loop_parser
+        args: ["sub: Any"]
+        returns: "None"
+        doc: "Register the existing Loop Passport command group outside cli.py."
+      - name: add_loop_runtime_parser
+        args: ["parser: Any"]
+        returns: "None"
+        doc: "Register runtime session, admission, settlement, and status operations."
+      - name: run_loop_runtime
+        args: ["args: Any"]
+        returns: "int"
+        doc: "Execute and report a local Loop runtime budget operation."
+dependencies:
+  - from: cli_runtime_proof
+    to: loop_passport
+invariants:
+  - name: no_dynamic_execution
+    forbid_pattern: "\\b(eval|exec)\\s*\\("
+    scopes:
+      - module: loop_passport
+        symbol: start_budget_session
+        max_lines: 180
+      - module: loop_passport
+        symbol: admit_budget_action
+        max_lines: 180
+      - module: loop_passport
+        symbol: settle_budget_action
+        max_lines: 180
+      - module: loop_passport
+        symbol: budget_session_status
+        max_lines: 180
+      - module: loop_passport
+        symbol: _runtime_reserve_action
+        max_lines: 180
+      - module: loop_passport
+        symbol: _runtime_settle_existing
+        max_lines: 180
+      - module: loop_passport
+        symbol: _runtime_connection
+        max_lines: 180
+      - module: loop_passport
+        symbol: _runtime_payload
+        max_lines: 180
+  - name: no_network_clients
+    forbid_pattern: "\\b(requests|urllib3|httpx|socket)\\b"
+    scopes:
+      - module: loop_passport
+        symbol: start_budget_session
+        max_lines: 180
+      - module: loop_passport
+        symbol: admit_budget_action
+        max_lines: 180
+      - module: loop_passport
+        symbol: settle_budget_action
+        max_lines: 180
+      - module: loop_passport
+        symbol: budget_session_status
+        max_lines: 180
+      - module: loop_passport
+        symbol: _runtime_reserve_action
+        max_lines: 180
+      - module: loop_passport
+        symbol: _runtime_settle_existing
+        max_lines: 180
+      - module: loop_passport
+        symbol: _runtime_connection
+        max_lines: 180
+      - module: loop_passport
+        symbol: _runtime_payload
+        max_lines: 180
+  - name: no_private_key_persistence
+    forbid_pattern: "BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY"
+    scopes:
+      - module: loop_passport
+        symbol: start_budget_session
+        max_lines: 180
+      - module: loop_passport
+        symbol: admit_budget_action
+        max_lines: 180
+      - module: loop_passport
+        symbol: settle_budget_action
+        max_lines: 180
+      - module: loop_passport
+        symbol: budget_session_status
+        max_lines: 180
+      - module: loop_passport
+        symbol: _runtime_reserve_action
+        max_lines: 180
+      - module: loop_passport
+        symbol: _runtime_settle_existing
+        max_lines: 180
+      - module: loop_passport
+        symbol: _runtime_connection
+        max_lines: 180
