@@ -97,6 +97,22 @@ def test_loop_budget_receipt_is_fail_closed_and_receipted(tmp_path):
     assert result["exceeded"]["iterations"] == {"actual": 2.0, "limit": 1}
 
 
+def test_loop_budget_receipt_is_incomplete_when_any_measurement_is_missing(tmp_path):
+    manifest = _manifest(tmp_path)
+    usage = tmp_path / "partial-usage.json"
+    usage.write_text(
+        json.dumps({"iterations": 1, "wall_seconds": 10, "tokens": 0}),
+        encoding="utf-8",
+    )
+
+    result = evaluate_budget(tmp_path, manifest, usage)
+
+    assert result["ok"] is False
+    assert result["verdict"] == "INCOMPLETE"
+    assert result["missing_measurements"] == ["cost_usd"]
+    assert Path(result["path"]).exists()
+
+
 def test_loop_budget_receipt_reports_invalid_manifest_without_a_traceback(tmp_path):
     manifest_path = _manifest(tmp_path)
     manifest = load_manifest(manifest_path)
