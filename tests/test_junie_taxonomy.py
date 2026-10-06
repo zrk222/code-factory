@@ -829,4 +829,10 @@ def test_shared_taxonomy_helpers_and_references_are_canonical_and_fail_closed():
     }
     references = derive_agent_action_references(report, action)
     assert references == derive_action_references(report, action)
-    assert set(references) == {"action", "evidence", "denominator", "completion", "stop"}
+    assert set(references) == {
+        "action",
+        "evidence",
+        "denominator",
+        "completion",
+        "stop",
+    }

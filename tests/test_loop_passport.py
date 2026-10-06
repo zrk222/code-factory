@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from factoryline.cli import main
 from factoryline.loop_passport import (
     build_loop_passport,
@@ -460,6 +462,10 @@ def test_runtime_rejects_non_object_passport_without_traceback(tmp_path):
 
 
 def test_hsf_admission_advice_routes_extraction_failure_to_human_review(tmp_path):
+    pytest.importorskip(
+        "hsf",
+        reason="HSF integration is exercised in the dedicated five-brick CI job",
+    )
     from hsf.foundry.compiler import render_artifact
     from hsf.runtime import Orchestrator
     from hsf.runtime.extractor import FixtureExtractor
