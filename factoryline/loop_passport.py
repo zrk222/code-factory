@@ -158,7 +158,30 @@ def _runtime_units(value: object, field: str) -> int:
 
 
 def _runtime_values_to_units(values: dict[str, Any]) -> dict[str, int]:
+    if not isinstance(values, dict) or set(values) != set(_RUNTIME_FIELDS):
+        missing = (
+            sorted(set(_RUNTIME_FIELDS) - set(values))
+            if isinstance(values, dict)
+            else list(_RUNTIME_FIELDS)
+        )
+        raise ValueError(
+            "runtime values must contain exactly the required measurements; "
+            f"missing: {', '.join(missing) or 'none'}"
+        )
     return {field: _runtime_units(values[field], field) for field in _RUNTIME_FIELDS}
+
+
+def _runtime_receipt_values_to_units(values: object) -> dict[str, int]:
+    if not isinstance(values, dict) or set(values) != set(_RUNTIME_FIELDS):
+        return _runtime_values_to_units(values)
+    try:
+        normalized = {
+            field: Decimal(value) if isinstance(value, str) else value
+            for field, value in values.items()
+        }
+    except (InvalidOperation, TypeError, ValueError) as error:
+        raise ValueError("runtime receipt values are malformed") from error
+    return _runtime_values_to_units(normalized)
 
 
 def _runtime_wire_values(values: dict[str, int] | None) -> dict[str, Any] | None:
@@ -179,18 +202,14 @@ def _runtime_migrate_receipt(receipt_json: str | None) -> str | None:
     if receipt_json is None:
         return None
     receipt = _runtime_receipt_payload(receipt_json)
-    if isinstance(receipt.get("usage"), dict):
-        receipt["usage"] = _runtime_wire_values(
-            _runtime_values_to_units(receipt["usage"])
-        )
-    if isinstance(receipt.get("limits"), dict):
-        receipt["limits"] = _runtime_wire_values(
-            _runtime_values_to_units(receipt["limits"])
+    for field in ("usage", "limits"):
+        receipt[field] = _runtime_wire_values(
+            _runtime_receipt_values_to_units(receipt.get(field))
         )
     action = receipt.get("action")
     if isinstance(action, dict) and isinstance(action.get("usage"), dict):
         action["usage"] = _runtime_wire_values(
-            _runtime_values_to_units(action["usage"])
+            _runtime_receipt_values_to_units(action["usage"])
         )
     return json.dumps(receipt, sort_keys=True)
 
@@ -198,7 +217,7 @@ def _runtime_migrate_receipt(receipt_json: str | None) -> str | None:
 def _runtime_receipt_payload(receipt_json: str) -> dict[str, Any]:
     """Parse a persisted receipt and reject malformed ledger state safely."""
     try:
-        receipt = json.loads(receipt_json)
+        receipt = json.loads(receipt_json, parse_float=Decimal)
     except (TypeError, json.JSONDecodeError) as error:
         raise ValueError("runtime ledger receipt is malformed") from error
     if not isinstance(receipt, dict):
@@ -505,6 +524,13 @@ def _runtime_action_units(
 
 def _runtime_usage(connection: sqlite3.Connection) -> dict[str, int]:
     totals = dict.fromkeys(_RUNTIME_FIELDS, 0)
+    session = _runtime_session(connection)
+    if session is None:
+        has_actions = connection.execute("SELECT 1 FROM action LIMIT 1").fetchone()
+        if has_actions:
+            raise ValueError("runtime ledger actions have no session limits")
+        return totals
+    limits = session["limits"]
     rows = connection.execute(
         "SELECT action_digest, request_sha256, estimate_json, admission_json, actual_json, "
         "settlement_sha256, settlement_json, status, accounting_version "
@@ -512,11 +538,71 @@ def _runtime_usage(connection: sqlite3.Connection) -> dict[str, int]:
     ).fetchall()
     for row in rows:
         values = _runtime_action_units(connection, row)
+        if row[8] == 1:
+            migrated = connection.execute(
+                "SELECT estimate_json, admission_json, actual_json, settlement_json, status "
+                "FROM action WHERE action_digest = ?",
+                (row[0],),
+            ).fetchone()
+            if migrated is None:
+                raise ValueError("runtime ledger migrated action disappeared")
+            estimate_json, admission_json, actual_json, settlement_json, status = (
+                migrated
+            )
+        else:
+            estimate_json, admission_json, actual_json, settlement_json, status = (
+                row[2],
+                row[3],
+                row[4],
+                row[6],
+                row[7],
+            )
+        estimate = _runtime_stored_values(estimate_json, "estimate")
+        admission_totals = {
+            field: totals[field] + estimate[field] for field in _RUNTIME_FIELDS
+        }
+        _runtime_validate_aggregate_receipt(
+            admission_json, admission_totals, limits, "admission", "ADMITTED"
+        )
+        if status == "SETTLED":
+            actual = _runtime_stored_values(actual_json, "actual")
+            settlement_totals = {
+                field: totals[field] + actual[field] for field in _RUNTIME_FIELDS
+            }
+            _runtime_validate_aggregate_receipt(
+                settlement_json,
+                settlement_totals,
+                limits,
+                "settlement",
+                "BUDGET_EXCEEDED"
+                if _runtime_exceeded(settlement_totals, limits)
+                else "SETTLED",
+            )
         for field in _RUNTIME_FIELDS:
             totals[field] += values[field]
             if totals[field] > _RUNTIME_MAX_UNITS:
                 raise ValueError("runtime ledger usage exceeds supported bounds")
     return totals
+
+
+def _runtime_validate_aggregate_receipt(
+    receipt_json: str | None,
+    expected_usage: dict[str, int],
+    expected_limits: dict[str, int],
+    label: str,
+    expected_status: str,
+) -> None:
+    if receipt_json is None:
+        raise ValueError(f"runtime ledger {label} receipt is missing")
+    receipt = _runtime_receipt_payload(receipt_json)
+    if receipt.get("status") != expected_status:
+        raise ValueError(f"runtime ledger {label} receipt status conflicts with usage")
+    usage = _runtime_receipt_values_to_units(receipt.get("usage"))
+    limits = _runtime_receipt_values_to_units(receipt.get("limits"))
+    if usage != expected_usage or limits != expected_limits:
+        raise ValueError(
+            f"runtime ledger {label} aggregate receipt conflicts with ledger"
+        )
 
 
 def _runtime_next_action(status: str) -> str:

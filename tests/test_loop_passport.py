@@ -835,6 +835,103 @@ def test_runtime_corrupt_usage_row_returns_incomplete(tmp_path):
     assert "RUNTIME_SESSION_INCOMPLETE" in result["markers"]
 
 
+def test_runtime_malformed_legacy_session_limits_return_incomplete(tmp_path):
+    from factoryline.loop_passport import budget_session_status
+
+    sqlite3, passport_path, run_id, _, database = _seed_admitted_runtime_action(
+        tmp_path
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE session SET limits_json = ?, accounting_version = 1",
+            ('{"iterations": 10}',),
+        )
+
+    result = budget_session_status(tmp_path, passport_path, run_id)
+    assert result["status"] == "INCOMPLETE"
+    assert "RUNTIME_SESSION_INCOMPLETE" in result["markers"]
+    assert result["error"] == "runtime ledger unavailable: ValueError"
+
+
+def test_runtime_malformed_legacy_action_values_return_incomplete(tmp_path):
+    from factoryline.loop_passport import budget_session_status
+
+    sqlite3, passport_path, run_id, _, database = _seed_admitted_runtime_action(
+        tmp_path
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE action SET estimate_json = ?, accounting_version = 1",
+            ("{}",),
+        )
+
+    result = budget_session_status(tmp_path, passport_path, run_id)
+    assert result["status"] == "INCOMPLETE"
+    assert "RUNTIME_SESSION_INCOMPLETE" in result["markers"]
+    assert result["error"] == "runtime ledger unavailable: ValueError"
+
+
+@pytest.mark.parametrize("field", ["usage", "limits", "action_usage"])
+def test_runtime_malformed_legacy_receipt_returns_incomplete(tmp_path, field):
+    import json
+
+    from factoryline.loop_passport import budget_session_status
+
+    sqlite3, passport_path, run_id, _, database = _seed_admitted_runtime_action(
+        tmp_path
+    )
+    with sqlite3.connect(database) as connection:
+        row = connection.execute("SELECT admission_json FROM action").fetchone()
+        receipt = json.loads(row[0])
+        if field == "action_usage":
+            receipt["action"].pop("usage")
+        else:
+            receipt.pop(field)
+        connection.execute(
+            "UPDATE action SET admission_json = ?, accounting_version = 1",
+            (json.dumps(receipt),),
+        )
+
+    result = budget_session_status(tmp_path, passport_path, run_id)
+    assert result["status"] == "INCOMPLETE"
+    assert "RUNTIME_SESSION_INCOMPLETE" in result["markers"]
+
+
+@pytest.mark.parametrize("field", ["usage", "limits"])
+def test_runtime_settled_replay_rejects_tampered_aggregate_receipt(tmp_path, field):
+    import json
+
+    from factoryline.loop_passport import admit_budget_action, settle_budget_action
+
+    sqlite3, passport_path, run_id, action_id, database = _seed_admitted_runtime_action(
+        tmp_path
+    )
+    actual = {"iterations": 1, "wall_seconds": 2, "tokens": 3, "cost_usd": 0.2}
+    assert (
+        settle_budget_action(tmp_path, passport_path, run_id, action_id, actual)[
+            "status"
+        ]
+        == "SETTLED"
+    )
+    with sqlite3.connect(database) as connection:
+        row = connection.execute("SELECT settlement_json FROM action").fetchone()
+        receipt = json.loads(row[0])
+        receipt[field]["tokens"] = 999
+        connection.execute(
+            "UPDATE action SET settlement_json = ?", (json.dumps(receipt),)
+        )
+
+    replay = admit_budget_action(
+        tmp_path,
+        passport_path,
+        run_id,
+        action_id,
+        {"iterations": 1, "wall_seconds": 1, "tokens": 1, "cost_usd": 0.1},
+    )
+    assert replay["status"] == "INCOMPLETE"
+    assert "RUNTIME_SESSION_INCOMPLETE" in replay["markers"]
+
+
 def test_runtime_missing_replay_receipt_returns_incomplete(tmp_path):
     from factoryline.loop_passport import admit_budget_action
 
@@ -967,6 +1064,32 @@ def test_runtime_settlement_replay_rejects_spurious_overrun_marker(tmp_path):
         )
 
     result = admit_budget_action(tmp_path, passport_path, run_id, action_id, estimate)
+    assert result["status"] == "INCOMPLETE"
+    assert "RUNTIME_SESSION_INCOMPLETE" in result["markers"]
+
+
+def test_runtime_settlement_replay_rejects_forged_overrun_status_and_marker(tmp_path):
+    import json
+
+    from factoryline.loop_passport import admit_budget_action, settle_budget_action
+
+    sqlite3, passport_path, run_id, action_id, database = _seed_admitted_runtime_action(
+        tmp_path
+    )
+    within_budget = {"iterations": 1, "wall_seconds": 1, "tokens": 1, "cost_usd": 0.1}
+    settle_budget_action(tmp_path, passport_path, run_id, action_id, within_budget)
+    with sqlite3.connect(database) as connection:
+        row = connection.execute("SELECT settlement_json FROM action").fetchone()
+        receipt = json.loads(row[0])
+        receipt["status"] = "BUDGET_EXCEEDED"
+        receipt["markers"].append("RUNTIME_OVERRUN_RECORDED")
+        connection.execute(
+            "UPDATE action SET settlement_json = ?", (json.dumps(receipt),)
+        )
+
+    result = admit_budget_action(
+        tmp_path, passport_path, run_id, action_id, within_budget
+    )
     assert result["status"] == "INCOMPLETE"
     assert "RUNTIME_SESSION_INCOMPLETE" in result["markers"]
 

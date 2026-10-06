@@ -45,6 +45,9 @@ that test execute adapters, mutate a runtime ledger, or authorize real work.
 - When an already-settled action is replayed through admission, the system shall return marker `RUNTIME_ACTION_ALREADY_SETTLED` with its settlement state; a blocked session shall return marker `RUNTIME_ACTION_REPLAY_BLOCKED` and never authorize work. [R19]
 - The system shall include marker `RUNTIME_PASSPORT_CLAIMS_BOUND` only after passport loop id and budget claims match the exact manifest bytes bound by SHA256; mismatches return `INCOMPLETE`. [R20]
 - The system shall include marker `RUNTIME_LEDGER_PATH_CONFINED` only when its resolved SQLite path is within the configured workspace and is not a symlink alias; an escaping or linked path returns `INCOMPLETE` with marker `RUNTIME_LEDGER_PATH_BLOCKED`. [R21]
+- When a version-1 runtime ledger is migrated, every limits, estimate, actual and persisted receipt measurement shall contain exactly the four required dimensions; missing or malformed data shall return `INCOMPLETE` without an uncaught exception or partial migration. [R22]
+- When a persisted admission or settlement receipt is replayed, its aggregate usage and limits shall match the ordered ledger projection at that action's creation or settlement point; any mismatch shall return `INCOMPLETE` and shall not return the corrupted receipt. [R23]
+- When a persisted settlement receipt is replayed, its `SETTLED` or `BUDGET_EXCEEDED` status shall agree with aggregate usage compared with the stored limits, even if its marker list is also modified; contradictory status returns `INCOMPLETE`. [R24]
 
 ### Acceptance criteria (Gherkin)
 ```gherkin
@@ -84,6 +87,16 @@ Scenario: refuse stale or malformed state
   Given a session is bound to a manifest digest
   When the manifest changes or session data cannot be validated
   Then the system reports INCOMPLETE and performs no admission
+
+Scenario: reject malformed legacy migration
+  Given a version-1 session or action row is missing a required measurement
+  When the runtime migrates and reads the ledger
+  Then it returns INCOMPLETE without an uncaught exception or partial acceptance
+
+Scenario: reject a tampered replay aggregate
+  Given a settled action receipt has altered top-level usage or limits
+  When the action is replayed
+  Then the runtime returns INCOMPLETE and does not return the altered receipt
 
 Scenario: refuse structurally invalid passport JSON
   Given a passport file contains malformed JSON, an array, or null
