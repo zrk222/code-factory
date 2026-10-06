@@ -138,9 +138,13 @@ connector-specific privacy and terms pages now return 200 under
 `cf.wizeme.app/meta-connector/`. On 2026-09-27, the signed-in Muse Platform
 accepted the Code Factory Audit Evidence connector submission and displayed
 "Thank you for your submission! We'll review Code Factory Audit Evidence and
-get in touch." No submission ID was shown. This is a review submission,
-not a directory listing or approval. Meta's separate early-access application
-was also submitted; neither receipt proves live OAuth account linking.
+get in touch." The existing portal record currently shows all three
+requirements in review; this is not a directory listing or approval. The
+0.47.0 loop runtime budget admission update is a local CLI capability and does
+not change this hosted REST API, its connector tools, scopes, or data handling,
+so it does not require a duplicate Muse submission. Meta's separate
+early-access application was also submitted; neither receipt proves live OAuth
+account linking.
 
 The hosted `/api/mcp` route offers `list_audits`, `get_audit`, `get_findings`,
 `get_coverage`, and `get_repair_plan` over the caller's submitted summaries.

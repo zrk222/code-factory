@@ -1,6 +1,6 @@
 # Plan: loop-runtime-budget-admission
 Spec: specs/loop-runtime-budget-admission.md (strict PASS; authorized to proceed)
-Architect verdict: NEEDS REWORK (specialty AI review found two fail-closed evidence gaps; implementation fixes are in place and a fresh hash-bound review is pending)
+Architect verdict: PASS (independent candidate-quality and security agents reviewed the final implementation; all findings were fixed and re-reviewed with no remaining findings)
 
 ## Logical decomposition
 1. Add a durable SQLite session/action ledger bound to the Loop Passport
@@ -15,13 +15,28 @@ Architect verdict: NEEDS REWORK (specialty AI review found two fail-closed evide
    decision cases; it is an acceptance model only and never authorizes work.
 6. Complete an independent specialty-agent review, resolve every finding, then
    seal the workflow evidence against the final candidate hashes.
+7. Update the public preview/changelog, refresh the Meta Muse review status,
+   and state whether this local CLI feature changes the hosted connector.
 
 ## Tasks (atomic)
 - [x] T1 | slice=tests | files=tests/test_loop_passport.py | verify=`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -p pytest_asyncio.plugin tests/test_loop_passport.py -q` | add failing tests for session replay/conflict, atomic check-and-reserve, exact projected usage, one unresolved action, restart persistence, settlement replay/conflict, CSPRNG ID validation/privacy, stale manifests, overrun and legacy compatibility.
 - [x] T2 | slice=factoryline | files=factoryline/loop_passport.py | verify=`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -p pytest_asyncio.plugin tests/test_loop_passport.py -q` | implement the SQLite transaction ledger, hashed caller IDs and runtime admission/settlement API; preserve the existing post-run budget receipt.
 - [x] T3 | slice=tests | files=tests/test_loop_passport.py | verify=`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -p pytest_asyncio.plugin tests/test_loop_passport.py -q` | add CLI-level tests for session start, action admission, settlement replay/conflict, status, failure exits and unchanged legacy budget command.
 - [x] T4 | slice=factoryline | files=factoryline/cli_runtime_proof.py | verify=`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -p pytest_asyncio.plugin tests/test_loop_passport.py -q` | expose runtime session commands inside the existing `factory loop` group without a new top-level command.
-- [ ] T5 | slice=.factory | files=.factory/workflow-audit-loop-runtime-budget-admission-contract.json | verify=`python -m factoryline.cli audit workflows --root . --contract .factory/workflow-audit-loop-runtime-budget-admission-contract.json --observations .factory/workflow-audit-loop-runtime-budget-admission-observations.json --json` | refresh receipts only after final checks and specialty AI review; earlier evidence is stale after candidate edits and cannot be used as completion proof.
+- [x] T5 | slice=.factory | files=.factory/workflow-audit-loop-runtime-budget-admission-contract.json | verify=`python -m factoryline.cli audit workflows --root . --contract .factory/workflow-audit-loop-runtime-budget-admission-contract.json --observations .factory/workflow-audit-loop-runtime-budget-admission-observations.json --json` | final source/test/spec/preview hashes and executable observations refreshed after two specialty AI reviewers found no remaining findings; GitHub Actions run 37416772610 passed the public seeded benchmark. This branch has no PR, so full CI was not run.
+- [x] T6 | slice=docs | files=README.md, CHANGELOG.md | verify=`git diff --check` | 0.47.0 preview now states what was added and changed, runtime admission behavior, advisory-only HSF, enrolled-adapter scope, local-ledger limitations, and publication boundary.
+- [x] T7 | slice=docs | files=docs/MCP_REGISTRY.md | verify=`read existing Muse portal record` | portal confirms the existing connector submission has 3/3 requirements in review; this CLI-only feature does not alter the hosted API, scopes, or data handling, so a duplicate submission would be inaccurate.
+
+## Final review corrections
+- Corrupt JSON, incomplete fixed-point values, missing or contradictory receipts,
+  mismatched action/request/settlement hashes, and inconsistent overrun markers
+  all return `INCOMPLETE` instead of escaping as exceptions or replaying an
+  authorizing receipt.
+- The obsolete generated HSF artifact that returned `ADMITTED` was removed;
+  the current compiled classifier returns advisory states only. Extraction
+  fallback is covered by a focused test, not claimed as a golden case.
+- Specialty candidate-quality and security reviewers rechecked the final
+  source/test hashes and reported no remaining findings.
 
 ## Safety boundaries
 - This module governs only adapters that call it before operations; unintegrated

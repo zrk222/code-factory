@@ -2,6 +2,12 @@
 
 ## 0.47.0 - 2026-09-28 (release candidate; publication gated)
 
+- Add Loop runtime budget admission, durable per-run SQLite reservations,
+  measured settlement, replay-safe status and a local advisory HSF classifier.
+  Malformed ledger rows, receipt contradictions, digest mismatches and
+  inconsistent overrun markers fail closed. Only adapters enrolled in the
+  runtime API are covered; provider billing and hostile local writers remain
+  outside its guarantees.
 - Add native CF and ForgeLine evidence views to the VS Code/Open VSX and
   JetBrains 1.1.0 adapters, with explicit execution, missing-lane states,
   per-lane limits, source locations where supplied, and unbound-candidate labels.

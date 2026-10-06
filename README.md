@@ -31,6 +31,18 @@ The unchanged eight-case public regression corpus now gives 6 true positives,
 same tenant-read contract applied to defective, repaired, and clean inputs.
 This is a small development regression result, not independent accuracy,
 runtime coverage, or release approval. CI verification is still required.
+**Added runtime budget admission:** `factory loop runtime` now exposes
+`session`, `admit`, `settle`, and `status` operations backed by a local SQLite
+ledger. It reserves estimated usage before an enrolled adapter acts, reconciles
+measured usage afterward, and fails closed on malformed ledger state or
+inconsistent replay receipts. The HSF classifier remains advisory; its result
+never substitutes for the SQLite admission call.
+**Changed:** persisted usage and replay receipts are checked against exact
+fixed-point measurements, request digests, action states, and overrun markers.
+**Limits:** enforcement applies only to adapters that call the runtime API;
+provider billing is not queried, and a hostile process with workspace write
+access can still alter the local SQLite ledger. This does not certify software
+or grant release authority.
 The [autonomous ops plan](docs/AUTONOMOUS_OPS_EDITOR_PLAN.md) explains the
 proposed Observer Agent loop and its gates. These versions remain release
 candidates until each channel has a verified provider publication receipt.
