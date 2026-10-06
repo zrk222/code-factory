@@ -81,6 +81,40 @@ def test_audit_cli_private_handlers_stay_bounded():
         assert count <= 10, (name, count)
 
 
+def test_security_scan_orchestration_stays_within_complexity_budget():
+    import ast
+    import inspect
+
+    import factoryline.review_audits as module
+
+    for name in (
+        "security_scan",
+        "_tenant_contract_bindings",
+        "_tenant_binding_entry",
+        "_tenant_binding_parts",
+        "_normalize_tenant_selector",
+    ):
+        count = 1
+        tree = ast.parse(inspect.getsource(getattr(module, name)))
+        for node in ast.walk(tree):
+            if isinstance(
+                node,
+                (
+                    ast.If,
+                    ast.For,
+                    ast.While,
+                    ast.ExceptHandler,
+                    ast.With,
+                    ast.Assert,
+                    ast.IfExp,
+                ),
+            ):
+                count += 1
+            elif isinstance(node, ast.BoolOp):
+                count += len(node.values) - 1
+        assert count <= 10, (name, count)
+
+
 def workspace(root: Path, body: str = "require_auth()\nstore.delete()") -> Path:
     source = (
         "def safe():\n    require_auth()\n    store.delete()\n\ndef candidate():\n"
@@ -385,6 +419,80 @@ def test_security_scan_accepts_reviewed_loaders_and_argv_bound_processes(tmp_pat
     assert result["parse_errors"] == 0
 
 
+def test_security_scan_receipt_measures_complete_supported_source_coverage(tmp_path):
+    (tmp_path / "app.py").write_text("def ok():\n    return 1\n", encoding="utf-8")
+    generated = tmp_path / ".venv" / "ignored.py"
+    generated.parent.mkdir()
+    generated.write_text("not scanned", encoding="utf-8")
+    coverage = security_scan(tmp_path)["audit_coverage"]
+    assert coverage == {
+        "language": "Python",
+        "files_discovered": 1,
+        "files_attempted": 1,
+        "files_audited": 1,
+        "audit_rate": 1.0,
+        "rate_defined": True,
+        "inventory_complete": True,
+        "measurement_state": "complete",
+        "complete": True,
+        "limit": 460,
+    }
+
+
+def test_security_cli_displays_measured_source_audit_rate(tmp_path, capsys):
+    (tmp_path / "app.py").write_text("answer = 42\n", encoding="utf-8")
+
+    assert main(["audit", "security", "--root", str(tmp_path)]) == 0
+
+    output = capsys.readouterr().out
+    assert "Coverage: 100.0% (1/1 Python sources; complete)" in output
+
+
+def test_security_scan_does_not_report_vacuous_full_coverage(tmp_path):
+    result = security_scan(tmp_path)
+    coverage = result["audit_coverage"]
+
+    assert result["state"] == "NO_SOURCES"
+    assert coverage["files_discovered"] == 0
+    assert coverage["files_attempted"] == 0
+    assert coverage["files_audited"] == 0
+    assert coverage["audit_rate"] is None
+    assert coverage["rate_defined"] is False
+    assert coverage["measurement_state"] == "no_eligible_sources"
+    assert coverage["inventory_complete"] is True
+    assert coverage["complete"] is False
+
+
+def test_security_cli_returns_indeterminate_for_empty_inventory(tmp_path, capsys):
+    exit_code = main(["audit", "security", "--root", str(tmp_path), "--json"])
+
+    result = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert result["state"] == "NO_SOURCES"
+    assert result["audit_coverage"]["audit_rate"] is None
+
+
+def test_security_scan_blocks_instead_of_truncating_over_limit_inventory(
+    tmp_path, monkeypatch
+):
+    import factoryline.review_audits as module
+
+    assert module.MAX_SECURITY_SOURCE_FILES == 460
+    monkeypatch.setattr(module, "MAX_SECURITY_SOURCE_FILES", 2)
+    for index in range(3):
+        (tmp_path / f"module_{index}.py").write_text("value = 1\n", encoding="utf-8")
+    result = security_scan(tmp_path)
+    assert result["state"] == "BLOCKED"
+    assert result["audit_coverage"]["files_discovered"] == 3
+    assert result["audit_coverage"]["files_attempted"] == 0
+    assert result["audit_coverage"]["files_audited"] == 0
+    assert result["audit_coverage"]["audit_rate"] == 0.0
+    assert result["audit_coverage"]["inventory_complete"] is True
+    assert result["audit_coverage"]["complete"] is False
+    assert result["audit_coverage"]["measurement_state"] == "blocked"
+    assert result["finding_counts"] == {"SECURITY_AUDIT_INCOMPLETE": 1}
+
+
 def test_security_scan_tracks_import_aliases_and_unsafe_yaml_loaders(tmp_path):
     (tmp_path / "aliases.py").write_text(
         "from subprocess import run as launch\nimport yaml as y\n"
@@ -399,11 +507,126 @@ def test_security_scan_tracks_import_aliases_and_unsafe_yaml_loaders(tmp_path):
     }
 
 
+def test_security_tree_scan_reuses_one_ast_inventory_for_alias_and_tenant_checks(
+    tmp_path, monkeypatch
+):
+    import ast
+
+    import factoryline.review_audits as module
+
+    source = (
+        "import subprocess as sp\n"
+        "def fetch(tenant_id):\n    return store.fetch(tenant_id=tenant_id)\n"
+        "def run():\n    sp.run('cmd', shell=True)\n"
+    )
+    tree = ast.parse(source)
+    path = tmp_path / "service.py"
+    path.write_text(source, encoding="utf-8")
+    original_walk = ast.walk
+    calls = 0
+
+    def counted_walk(node):
+        nonlocal calls
+        calls += 1
+        return original_walk(node)
+
+    monkeypatch.setattr(module.ast, "walk", counted_walk)
+    findings = module._security_scan_tree(tmp_path, path, tree, ("store.fetch",), {})
+
+    assert calls == 1
+    assert [finding["code"] for finding in findings] == ["SECURITY_SHELL_COMMAND"]
+
+
 def test_security_scan_reports_parse_errors_fail_closed(tmp_path):
     (tmp_path / "broken.py").write_text("def broken(:\n", encoding="utf-8")
     result = security_scan(tmp_path)
     assert result["state"] == "BLOCKED"
     assert result["finding_counts"] == {"QUALITY_SYNTAX_ERROR": 1}
+    assert result["audit_coverage"]["audit_rate"] == 0.0
+    assert result["audit_coverage"]["complete"] is False
+    assert result["audit_coverage"]["measurement_state"] == "incomplete"
+
+
+def test_security_scan_separates_unreadable_sources_from_parse_errors(
+    tmp_path, monkeypatch
+):
+    from pathlib import Path
+
+    import factoryline.review_audits as module
+
+    readable = tmp_path / "readable.py"
+    unreadable = tmp_path / "unreadable.py"
+    readable.write_text("value = 1\n", encoding="utf-8")
+    unreadable.write_text("value = 2\n", encoding="utf-8")
+    original_open = Path.open
+
+    def open_path(path, *args, **kwargs):
+        if path.resolve() == unreadable.resolve():
+            raise PermissionError("denied")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", open_path)
+
+    result = module.security_scan(tmp_path)
+
+    assert result["state"] == "BLOCKED"
+    assert result["parse_errors"] == 0
+    assert result["unreadable_sources"] == 1
+    assert result["oversized_sources"] == 0
+    assert result["audit_coverage"] == {
+        "language": "Python",
+        "files_discovered": 2,
+        "files_attempted": 2,
+        "files_audited": 1,
+        "audit_rate": 0.5,
+        "rate_defined": True,
+        "inventory_complete": True,
+        "measurement_state": "incomplete",
+        "complete": False,
+        "limit": 460,
+    }
+    assert result["finding_counts"] == {"SECURITY_SOURCE_UNREADABLE": 1}
+
+
+def test_security_scan_counts_oversized_source_as_attempted_but_unaudited(
+    tmp_path, monkeypatch
+):
+    import factoryline.review_audits as module
+
+    monkeypatch.setattr(module, "MAX_BYTES", 4)
+    (tmp_path / "large.py").write_text("value = 123\n", encoding="utf-8")
+
+    result = security_scan(tmp_path)
+
+    assert result["state"] == "BLOCKED"
+    assert result["oversized_sources"] == 1
+    assert result["unreadable_sources"] == 0
+    assert result["parse_errors"] == 0
+    assert result["audit_coverage"]["files_discovered"] == 1
+    assert result["audit_coverage"]["files_attempted"] == 1
+    assert result["audit_coverage"]["files_audited"] == 0
+    assert result["audit_coverage"]["audit_rate"] == 0.0
+    assert result["audit_coverage"]["complete"] is False
+    assert result["finding_counts"] == {"SECURITY_SOURCE_TOO_LARGE": 1}
+
+
+def test_security_scan_rejects_large_file_without_unbounded_read(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    import factoryline.review_audits as module
+
+    monkeypatch.setattr(module, "MAX_BYTES", 4)
+    (tmp_path / "large.py").write_text("value = 123\n", encoding="utf-8")
+
+    def reject_unbounded_read(_path):
+        raise AssertionError("security scan must not call read_bytes")
+
+    monkeypatch.setattr(Path, "read_bytes", reject_unbounded_read)
+
+    result = module.security_scan(tmp_path)
+
+    assert result["finding_counts"] == {"SECURITY_SOURCE_TOO_LARGE": 1}
+    assert result["audit_coverage"]["files_audited"] == 0
 
 
 def test_security_scan_rejects_concurrent_source_mutation(tmp_path, monkeypatch):
@@ -427,8 +650,8 @@ def test_security_evals_kill_all_adversarial_fixtures_and_keep_safe_control_clea
     result = security_evals()
     assert result["marker"] == "SECURITY_EVALS_COMPLETE"
     assert result["state"] == "PASS"
-    assert result["mutation_coverage"] == {"attempted": 8, "caught": 8, "rate": 1.0}
-    assert result["safe_controls"] == {"attempted": 1, "passed": 1}
+    assert result["mutation_coverage"] == {"attempted": 12, "caught": 12, "rate": 1.0}
+    assert result["safe_controls"] == {"attempted": 4, "passed": 4}
     assert result["authority"]["approval"] is False
 
 
@@ -470,6 +693,7 @@ def test_security_scan_tenant_contract_is_explicit_and_hash_bound(tmp_path):
     missing = security_scan(tmp_path, tenant_read_calls=("store.fetch",))
     assert missing["finding_counts"] == {"SECURITY_MISSING_TENANT_ISOLATION": 1}
     assert missing["tenant_read_contract"]["calls"] == ["store.fetch"]
+    assert missing["tenant_read_contract"]["keyword"] == "tenant_id"
     assert missing["audit_sha256"] != security_scan(tmp_path)["audit_sha256"]
     path.write_text(
         "async def fetch(record_id, tenant_id):\n    return await store.fetch(record_id, tenant_id=tenant_id)\n"
@@ -487,6 +711,147 @@ def test_security_scan_tenant_contract_is_explicit_and_hash_bound(tmp_path):
 def test_security_scan_rejects_invalid_tenant_contract(tmp_path):
     with pytest.raises(ReviewAuditError, match="qualified"):
         security_scan(tmp_path, tenant_read_calls=("invalid.call()",))
+
+
+@pytest.mark.parametrize(
+    ("source", "binding"),
+    [
+        (
+            "async def fetch(record_id, org_scope):\n"
+            "    return await store.fetch(record_id, tenant_id=org_scope)\n",
+            "store.fetch=keyword:tenant_id:org_scope",
+        ),
+        (
+            "def fetch(record_id, workspace_key):\n"
+            "    return store.fetch(record_id, workspace_key)\n",
+            "store.fetch=position:1:workspace_key",
+        ),
+    ],
+)
+def test_security_scan_accepts_declared_tenant_argument_bindings(
+    tmp_path, source, binding
+):
+    (tmp_path / "service.py").write_text(source, encoding="utf-8")
+    result = security_scan(
+        tmp_path,
+        tenant_read_calls=("store.fetch",),
+        tenant_read_bindings=(binding,),
+    )
+    assert result["state"] == "CLEAN"
+    assert result["tenant_read_contract"]["argument_bindings"] == {
+        "store.fetch": [binding.split("=", 1)[1]]
+    }
+
+
+def test_security_scan_rejects_declared_binding_to_wrong_function_parameter(tmp_path):
+    (tmp_path / "service.py").write_text(
+        "def fetch(record_id, workspace_key):\n"
+        "    return store.fetch(record_id, record_id)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(
+        tmp_path,
+        tenant_read_calls=("store.fetch",),
+        tenant_read_bindings=("store.fetch=position:1:workspace_key",),
+    )
+    assert result["finding_counts"] == {"SECURITY_MISSING_TENANT_ISOLATION": 1}
+
+
+def test_security_scan_rejects_rebound_tenant_parameter(tmp_path):
+    (tmp_path / "service.py").write_text(
+        "def fetch(record_id, org_scope):\n"
+        "    org_scope = 'another-tenant'\n"
+        "    return store.fetch(record_id, tenant_id=org_scope)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(
+        tmp_path,
+        tenant_read_calls=("store.fetch",),
+        tenant_read_bindings=("store.fetch=keyword:tenant_id:org_scope",),
+    )
+    assert result["finding_counts"] == {"SECURITY_MISSING_TENANT_ISOLATION": 1}
+
+
+@pytest.mark.parametrize(
+    "comprehension",
+    [
+        "[scope for scope in ids]",
+        "{scope for scope in ids}",
+        "{scope: value for scope, value in pairs}",
+        "(scope for scope in ids)",
+    ],
+)
+def test_security_scan_allows_comprehension_target_shadowing(tmp_path, comprehension):
+    (tmp_path / "service.py").write_text(
+        "def fetch(scope, ids):\n"
+        f"    cached = {comprehension}\n"
+        "    return store.fetch(id, tenant_id=scope)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(
+        tmp_path,
+        tenant_read_calls=("store.fetch",),
+        tenant_read_bindings=("store.fetch=keyword:tenant_id:scope",),
+    )
+    assert result["state"] == "CLEAN"
+
+
+def test_security_scan_rejects_outer_parameter_rebound_by_comprehension_walrus(
+    tmp_path,
+):
+    (tmp_path / "service.py").write_text(
+        "def fetch(scope, ids):\n"
+        "    cached = [scope := value for value in ids]\n"
+        "    return store.fetch(id, tenant_id=scope)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(
+        tmp_path,
+        tenant_read_calls=("store.fetch",),
+        tenant_read_bindings=("store.fetch=keyword:tenant_id:scope",),
+    )
+    assert result["finding_counts"] == {"SECURITY_MISSING_TENANT_ISOLATION": 1}
+
+
+def test_security_scan_rejects_multiple_bindings_for_one_read_call(tmp_path):
+    with pytest.raises(ReviewAuditError, match="only one tenant argument binding"):
+        security_scan(
+            tmp_path,
+            tenant_read_calls=("store.fetch",),
+            tenant_read_bindings=(
+                "store.fetch=position:1:workspace_key",
+                "store.fetch=position:0:record_id",
+            ),
+        )
+
+
+def test_security_scan_rejects_optional_tenant_parameter(tmp_path):
+    (tmp_path / "service.py").write_text(
+        "def fetch(record_id, org_scope=None):\n"
+        "    return store.fetch(record_id, org_scope)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(
+        tmp_path,
+        tenant_read_calls=("store.fetch",),
+        tenant_read_bindings=("store.fetch=position:1:org_scope",),
+    )
+    assert result["finding_counts"] == {"SECURITY_MISSING_TENANT_ISOLATION": 1}
+
+
+def test_security_scan_rejects_unlisted_or_malformed_tenant_binding(tmp_path):
+    with pytest.raises(ReviewAuditError, match="declared qualified read call"):
+        security_scan(
+            tmp_path,
+            tenant_read_calls=("store.fetch",),
+            tenant_read_bindings=("db.get=position:1:tenant_id",),
+        )
+    with pytest.raises(ReviewAuditError, match="position:INDEX:PARAMETER"):
+        security_scan(
+            tmp_path,
+            tenant_read_calls=("store.fetch",),
+            tenant_read_bindings=("store.fetch=position:tenant_id",),
+        )
 
 
 def test_security_scan_keeps_negative_callback_and_import_alias_controls(tmp_path):
@@ -527,6 +892,28 @@ def test_security_cli_applies_explicit_tenant_contract(tmp_path, capsys):
     )
     result = json.loads(capsys.readouterr().out)
     assert result["finding_counts"] == {"SECURITY_MISSING_TENANT_ISOLATION": 1}
+    (tmp_path / "app.py").write_text(
+        "def fetch(record_id, organization_scope):\n"
+        "    return store.fetch(record_id, organization_scope)\n",
+        encoding="utf-8",
+    )
+    assert (
+        main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--tenant-read-call",
+                "store.fetch",
+                "--tenant-read-binding",
+                "store.fetch=position:1:organization_scope",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["state"] == "CLEAN"
 
 
 def test_security_evals_cli_reports_fail_closed_contract(tmp_path, capsys):

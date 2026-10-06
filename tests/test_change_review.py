@@ -13,6 +13,7 @@ from factoryline.change_review import (
     review_change,
     write_review_artifacts,
 )
+from factoryline.coverage import requirement_coverage
 from factoryline.proof import git_changed_paths
 from factoryline.cli import main
 from factoryline.proof_reuse import record_proof
@@ -110,6 +111,31 @@ def _files(root: Path) -> dict[str, bytes]:
         for path in root.rglob("*")
         if path.is_file()
     }
+
+
+def test_requirement_coverage_is_not_applicable_to_plain_repositories(
+    tmp_path: Path,
+) -> None:
+    coverage = requirement_coverage(tmp_path)
+
+    assert coverage["ok"] is True
+    assert coverage["applicable"] is False
+    assert coverage["status"] == "not_applicable"
+    assert coverage["uncovered"] == []
+    assert coverage["attribution"]["rate"] is None
+
+
+def test_app_starter_requirement_coverage_still_fails_closed_without_manifest(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app_blueprint.json").write_text("{}", encoding="utf-8")
+
+    coverage = requirement_coverage(tmp_path)
+
+    assert coverage["ok"] is False
+    assert coverage["applicable"] is True
+    assert coverage["status"] == "incomplete"
+    assert coverage["uncovered"] == ["coverage:manifest"]
 
 
 def test_change_review_preserves_exact_facts_without_default_writes(

@@ -8,6 +8,7 @@ from factoryline.appforge_design import (
     compile_appforge_design,
 )
 from factoryline.revenueforge import RevenueForgeError
+import factoryline.revenue_evidence as revenue_evidence
 
 
 def test_compiles_story_led_seven_discipline_workspace(tmp_path: Path) -> None:
@@ -90,3 +91,39 @@ def test_appforge_projection_rejects_a_tampered_receipt(tmp_path: Path) -> None:
     assert projection["current_count"] == 0
     assert projection["invalid_count"] == 1
     assert projection["latest"] is None
+
+
+def test_repeated_compile_skips_replacing_identical_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    brief = {
+        "app_name": "Calm Ledger",
+        "audience": "independent professionals",
+        "primary_job": "understand recurring income",
+        "desired_emotion": "calm control",
+        "screens": [{"id": "home", "user_goal": "see current position"}],
+    }
+    source = tmp_path / "brief.json"
+    source.write_text(json.dumps(brief), encoding="utf-8")
+    result = compile_appforge_design(tmp_path, source, Path(".factory/appforge/design"))
+    paths = [tmp_path / relative for relative in result["artifacts"].values()]
+    original = {path: path.read_bytes() for path in paths}
+    skill_path = tmp_path / result["artifacts"]["skill"]
+    original_write_text = Path.write_text
+
+    def reject_replace(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("an unchanged AppForge artifact was replaced")
+
+    def reject_skill_rewrite(path: Path, *args: object, **kwargs: object) -> int:
+        if path == skill_path:
+            pytest.fail("an unchanged AppForge skill was rewritten")
+        return original_write_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(revenue_evidence.os, "replace", reject_replace)
+    monkeypatch.setattr(Path, "write_text", reject_skill_rewrite)
+    repeated = compile_appforge_design(
+        tmp_path, source, Path(".factory/appforge/design")
+    )
+
+    assert repeated["receipt_sha256"] == result["receipt_sha256"]
+    assert {path: path.read_bytes() for path in paths} == original

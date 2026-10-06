@@ -30,6 +30,22 @@ def requirement_coverage(root: Path) -> dict:
     root = Path(root)
     manifest = root / "coverage" / "requirements.json"
     if not manifest.exists():
+        if not (root / "app_blueprint.json").is_file():
+            return {
+                "ok": True,
+                "applicable": False,
+                "status": "not_applicable",
+                "manifest": str(manifest),
+                "covered": [],
+                "uncovered": [],
+                "attribution": {
+                    "stage": "coverage",
+                    "n_checked": 0,
+                    "n_passed": 0,
+                    "rate": None,
+                    "units": [],
+                },
+            }
         unit = UnitResult(
             "coverage:manifest",
             "coverage",
@@ -40,6 +56,8 @@ def requirement_coverage(root: Path) -> dict:
         attr = Attribution("coverage", 1, 0, [unit])
         return {
             "ok": False,
+            "applicable": True,
+            "status": "incomplete",
             "manifest": str(manifest),
             "covered": [],
             "uncovered": ["coverage:manifest"],
@@ -74,6 +92,10 @@ def requirement_coverage(root: Path) -> dict:
     )
     return {
         "ok": attr.n_checked > 0 and attr.rate == 1.0,
+        "applicable": True,
+        "status": "complete"
+        if attr.n_checked > 0 and attr.rate == 1.0
+        else "incomplete",
         "manifest": str(manifest),
         "covered": sorted(covered_ids),
         "uncovered": uncovered,

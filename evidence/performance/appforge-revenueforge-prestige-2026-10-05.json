@@ -1,0 +1,105 @@
+{
+  "schema": "factory.performance-benchmark.v1",
+  "observed_at": "2026-10-06T02:34:15.696089+00:00",
+  "scope": [
+    "AppForge",
+    "RevenueForge",
+    "Prestige purpose scoring"
+  ],
+  "environment": {
+    "platform": "Windows",
+    "python": "3.11.9",
+    "architecture": "AMD64"
+  },
+  "benchmark_command": "python tests/test_benchmark_lab.py --prestige-root <local Prestige checkout> --runs 11",
+  "limitations": [
+    "Local single-machine measurements on repository examples, not production traffic.",
+    "Eleven runs per variant; medians and ranges are sensitive to Windows scheduling and filesystem cache.",
+    "Prestige's global pytest plugin autoload hit an unrelated installed AnchorPy/construct import error; the focused suite passed with global autoload disabled and pytest-asyncio explicitly loaded."
+  ],
+  "focused_verification": {
+    "code_factory": {
+      "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q -p pytest_asyncio.plugin tests/test_appforge_design.py tests/test_revenueforge.py tests/test_revenueforge_cli.py",
+      "passed": 27
+    },
+    "prestige": {
+      "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q -p pytest_asyncio.plugin tests/test_prestige.py",
+      "passed": 60
+    }
+  },
+  "source_hashes": {
+    "factoryline/appforge_design.py": "81bdc425d06360649b08a9a247ff7478f8a24f637114124c075ff0d5f61220b3",
+    "factoryline/revenue_evidence.py": "8267d7aee0f82b9edb1fe6db8b2a872df0ab04eea47fbdb1c42d5fe189c8d0f9",
+    "factoryline/revenueforge.py": "48fc08374f0243870d94665610265a2ff7053abbd0def4a8f288696bb8900941",
+    "prestige_design/purpose.py": "2f3aa20a7abac90fe8d93e70eee6ee061eee18feea568467c1ef63cbea523348",
+    "benchmark_script": "35065e999bef0de04184f0ae55ea21043f834c92b4206a2d297f288c9903ed3d"
+  },
+  "results": {
+    "runtime": "3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]",
+    "method": "paired same-process 11-run medians; exact serialized output parity",
+    "baseline_definition": "Legacy unconditional atomic replacements for AppForge and RevenueForge, and the prior Python regex word-boundary matcher for Prestige.",
+    "input": {
+      "appforge": "examples/revenueforge/appforge-design-brief.json",
+      "revenueforge": "examples/revenueforge/products.yaml",
+      "prestige_html": "factoryline/graph_ops.html",
+      "prestige_checkout": "C:\\Users\\rkatz\\Documents\\Codex\\2026-07-24\\wh\\work\\prestige-emotional-design"
+    },
+    "baseline": {
+      "appforge": {
+        "median_ms": 8.653,
+        "min_ms": 7.136,
+        "max_ms": 10.761,
+        "runs": 11,
+        "output_parity": true,
+        "output_sha256": "66fdc0df406620ded122fd2852a24e21128323b781b27b030df1121ac91811f7"
+      },
+      "revenueforge": {
+        "median_ms": 18.811,
+        "min_ms": 15.599,
+        "max_ms": 22.087,
+        "runs": 11,
+        "output_parity": true,
+        "output_sha256": "fdcae4655f71390b9c2085202a4ea99e63c249dd2dde4590a39d1a46a132ddea"
+      },
+      "prestige_score": {
+        "median_ms": 179.305,
+        "min_ms": 153.511,
+        "max_ms": 240.21,
+        "runs": 11,
+        "output_parity": true,
+        "output_sha256": "98629a254dae90f749463ce7d38cccd86bb176d20d33d0ad893e2aac46dd7aae"
+      }
+    },
+    "candidate": {
+      "appforge": {
+        "median_ms": 5.497,
+        "min_ms": 5.048,
+        "max_ms": 8.12,
+        "runs": 11,
+        "output_parity": true,
+        "output_sha256": "66fdc0df406620ded122fd2852a24e21128323b781b27b030df1121ac91811f7"
+      },
+      "revenueforge": {
+        "median_ms": 8.485,
+        "min_ms": 7.518,
+        "max_ms": 10.627,
+        "runs": 11,
+        "output_parity": true,
+        "output_sha256": "fdcae4655f71390b9c2085202a4ea99e63c249dd2dde4590a39d1a46a132ddea"
+      },
+      "prestige_score": {
+        "median_ms": 102.599,
+        "min_ms": 93.126,
+        "max_ms": 109.047,
+        "runs": 11,
+        "output_parity": true,
+        "output_sha256": "98629a254dae90f749463ce7d38cccd86bb176d20d33d0ad893e2aac46dd7aae"
+      }
+    },
+    "median_change_percent": {
+      "appforge": -36.5,
+      "revenueforge": -54.9,
+      "prestige_score": -42.8
+    }
+  }
+}

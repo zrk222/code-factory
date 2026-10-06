@@ -17,8 +17,15 @@ evidence tree, JetBrains 1.1.0 CF + ForgeLine tab, and a native
 [OpenCode plugin](plugins/code-factory-opencode/README.md).
 **Candidate detection fixes:** the Python scanner flags tests without a local
 assertion, constant-true assertions, and reflexive comparisons. Declared tenant
-reads can be checked with `factory audit security --tenant-read-call db.get`;
-this checks the declared `tenant_id` parameter binding, not tenant authentication.
+reads can be checked with `factory audit security --tenant-read-call db.get`.
+That legacy form requires `tenant_id=tenant_id`. For positional or renamed
+arguments, declare the mapping, for example
+`--tenant-read-binding db.get=position:1:tenant_scope`; keyword mappings use
+`db.get=keyword:tenant_id:tenant_scope`. Positional indexes start at zero. The
+scanner requires the named, required function parameter to reach the declared
+argument without reassignment; configure exactly one binding per read call. This
+does not prove that the value is the authenticated tenant or that runtime access
+is isolated.
 The unchanged eight-case public regression corpus now gives 6 true positives,
 2 true negatives, and no false positives or false negatives locally, with the
 same tenant-read contract applied to defective, repaired, and clean inputs.

@@ -307,6 +307,19 @@ def validate_products(root: Path, products_path: Path) -> dict[str, Any]:
 
 def _atomic(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    expected = content.encode("utf-8")
+    try:
+        if (
+            path.is_file()
+            and not path.is_symlink()
+            and path.stat().st_nlink == 1
+            and path.read_bytes() == expected
+        ):
+            return
+    except OSError:
+        # Retain the existing atomic-write behavior when the probe cannot read
+        # the destination; the write/replace path remains authoritative.
+        pass
     fd, temporary = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
     )

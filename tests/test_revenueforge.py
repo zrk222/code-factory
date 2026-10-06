@@ -7,6 +7,7 @@ import json
 
 import pytest
 import yaml
+import factoryline.revenueforge as revenueforge_module
 
 from factoryline.revenueforge import (
     RevenueForgeError,
@@ -91,6 +92,32 @@ def test_validate_and_build_full_bundle(tmp_path: Path) -> None:
     )
     assert "Restore Purchases" in paywall
     assert "Privacy Policy" in paywall and "Terms of Use" in paywall
+
+
+def test_repeated_bundle_skips_identical_replacements_and_repairs_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = write_yaml(tmp_path / "products.yaml", manifest())
+    output = Path(".factory/revenueforge/example")
+    first = build_revenue_bundle(tmp_path, source, output)
+    artifact_paths = [tmp_path / path for path in first["artifacts"].values()]
+    original = {path: path.read_bytes() for path in artifact_paths}
+
+    def reject_replace(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("an unchanged RevenueForge artifact was replaced")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(revenueforge_module.os, "replace", reject_replace)
+        repeated = build_revenue_bundle(tmp_path, source, output)
+
+    assert repeated["receipt_sha256"] == first["receipt_sha256"]
+    assert {path: path.read_bytes() for path in artifact_paths} == original
+
+    changed_path = artifact_paths[0]
+    changed_path.write_bytes(b"tampered")
+    repaired = build_revenue_bundle(tmp_path, source, output)
+    assert repaired["receipt_sha256"] == first["receipt_sha256"]
+    assert {path: path.read_bytes() for path in artifact_paths} == original
 
 
 @pytest.mark.parametrize(

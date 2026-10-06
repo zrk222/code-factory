@@ -114,6 +114,19 @@ def _read_json(root: Path, value: Path) -> tuple[dict[str, Any], Path]:
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    expected = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    try:
+        if (
+            path.is_file()
+            and not path.is_symlink()
+            and path.stat().st_nlink == 1
+            and path.read_bytes() == expected
+        ):
+            return
+    except OSError:
+        # Preserve the existing atomic-write behavior if the equality probe is
+        # unavailable; the write/replace path will surface any real I/O error.
+        pass
     fd, temporary = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
     )
