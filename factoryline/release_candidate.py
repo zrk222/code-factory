@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -402,6 +404,197 @@ def _cadence_preflight(
     if cadence.get("next_eligible_at"):
         detail += f" Next eligible at {cadence['next_eligible_at']}."
     return False, check, {"code": "E_RELEASE_CADENCE_BLOCKED", "detail": detail}
+
+
+def _exception_run_identity(value: dict[str, Any]) -> tuple[str, str]:
+    run_id = value.get("workflow_run_id")
+    run_attempt = value.get("workflow_run_attempt")
+    if not isinstance(run_id, str) or not re.fullmatch(r"[1-9][0-9]{0,19}", run_id):
+        raise ValueError("cadence exception workflow run identity is invalid")
+    if (
+        not isinstance(run_attempt, str)
+        or not re.fullmatch(r"[1-9][0-9]{0,5}", run_attempt)
+        or run_id != os.environ.get("GITHUB_RUN_ID")
+        or run_attempt != os.environ.get("GITHUB_RUN_ATTEMPT")
+        or os.environ.get("GITHUB_ACTIONS") != "true"
+    ):
+        raise ValueError(
+            "cadence exception is not bound to this GitHub Actions run attempt"
+        )
+    return run_id, run_attempt
+
+
+def _cadence_exception_payload(
+    root: Path,
+    path: Path | None,
+    source: dict[str, Any],
+    channel: str,
+    candidate_tag: str | None,
+    contract: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Load one exact, expiring Open VSX exception without granting authority."""
+    if path is None:
+        return None
+    candidate = _inside(Path(root).resolve(), Path(path), "cadence exception")
+    value = json.loads(candidate.read_text(encoding="utf-8-sig"))
+    if (
+        not isinstance(value, dict)
+        or value.get("schema") != "factory.release-cadence-exception.v1"
+    ):
+        raise ValueError("cadence exception schema is invalid")
+    versions = source.get("platform_versions", {})
+    identity = {
+        "channel": channel,
+        "version": versions.get("vscode") if channel == "vscode" else None,
+        "candidate_tag": candidate_tag,
+        "source_commit": source.get("commit"),
+        "requesting_actor": (contract or {}).get("approved_by"),
+    }
+    if (
+        channel != "vscode"
+        or identity["version"] != "1.1.1"
+        or candidate_tag != "vscode-v1.1.1"
+    ):
+        raise ValueError(
+            "this one-time cadence exception is restricted to vscode-v1.1.1"
+        )
+    if channel != "vscode" or any(
+        value.get(key) != expected for key, expected in identity.items()
+    ):
+        raise ValueError(
+            "cadence exception does not match the Open VSX candidate identity"
+        )
+    if (
+        value.get("environment") != "openvsx"
+        or value.get("environment_authorized") is not True
+        or value.get("publish_enabled") is not True
+    ):
+        raise ValueError(
+            "cadence exception requires successful protected Open VSX authorization"
+        )
+    reason = value.get("reason")
+    if not isinstance(reason, str) or len(reason.strip()) < 12 or len(reason) > 500:
+        raise ValueError("cadence exception reason must contain 12 to 500 characters")
+    run_id, run_attempt = _exception_run_identity(value)
+    issued = _exception_timestamp(value.get("issued_at"), "issued_at")
+    expires = _exception_timestamp(value.get("expires_at"), "expires_at")
+    now = datetime.now(timezone.utc)
+    if issued > now + timedelta(minutes=1) or expires <= now or expires <= issued:
+        raise ValueError("cadence exception is not currently valid")
+    if expires - issued > timedelta(hours=1):
+        raise ValueError("cadence exception validity may not exceed one hour")
+    return {
+        "path": candidate.relative_to(Path(root).resolve()).as_posix(),
+        "sha256": hashlib.sha256(_canonical(value)).hexdigest(),
+        "channel": channel,
+        "version": identity["version"],
+        "candidate_tag": candidate_tag,
+        "source_commit": source.get("commit"),
+        "requesting_actor": identity["requesting_actor"],
+        "workflow_run_id": run_id,
+        "workflow_run_attempt": run_attempt,
+        "issued_at": issued.isoformat().replace("+00:00", "Z"),
+        "expires_at": expires.isoformat().replace("+00:00", "Z"),
+        "reason": reason.strip(),
+    }
+
+
+def _exception_timestamp(value: Any, field: str) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError(f"cadence exception {field} must be an ISO-8601 timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"cadence exception {field} is invalid") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"cadence exception {field} must include a timezone")
+    return parsed.astimezone(timezone.utc)
+
+
+def _cadence_admission(
+    cadence: dict[str, Any], exception: dict[str, Any] | None
+) -> tuple[bool, dict[str, Any], dict[str, str] | None]:
+    admitted, check, blocker = _cadence_preflight(cadence)
+    if admitted or exception is None:
+        return admitted, check, blocker
+    return (
+        True,
+        {
+            "id": "RELEASE_CADENCE_ADMISSION",
+            "passed": True,
+            "evidence": (
+                f"normal cadence blocked ({cadence.get('reason')}); a source-bound "
+                f"one-time exception applies to {exception['candidate_tag']}"
+            ),
+        },
+        None,
+    )
+
+
+def _cadence_candidate_preflight(
+    workspace: Path,
+    release_cadence: dict[str, Any],
+    cadence_exception: Path | None,
+    source: dict[str, Any],
+    channel: str,
+    candidate_tag: str | None,
+    contract_value: dict[str, Any],
+) -> tuple[
+    dict[str, Any] | None,
+    str | None,
+    bool,
+    dict[str, Any],
+    list[dict[str, Any]],
+    list[dict[str, str]],
+]:
+    exception = None
+    exception_error = None
+    cadence_admitted, cadence_check, cadence_blocker = _cadence_preflight(
+        release_cadence
+    )
+    if cadence_exception is not None:
+        try:
+            exception = _cadence_exception_payload(
+                workspace,
+                cadence_exception,
+                source,
+                channel,
+                candidate_tag,
+                contract_value,
+            )
+            cadence_admitted, cadence_check, cadence_blocker = _cadence_admission(
+                release_cadence, exception
+            )
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            exception_error = str(exc)[:240]
+            cadence_admitted, cadence_check, cadence_blocker = _cadence_preflight(
+                release_cadence
+            )
+    checks = [cadence_check]
+    blockers = [cadence_blocker] if cadence_blocker else []
+    if cadence_exception is not None:
+        checks.append(
+            {
+                "id": "RELEASE_CADENCE_EXCEPTION",
+                "passed": exception is not None and exception_error is None,
+                "evidence": exception_error or "candidate-bound exception verified",
+            }
+        )
+        if exception_error:
+            blockers.append(
+                {
+                    "code": "E_RELEASE_CADENCE_EXCEPTION_INVALID",
+                    "detail": exception_error,
+                }
+            )
+    return (
+        exception,
+        exception_error,
+        cadence_admitted,
+        cadence_blocker,
+        checks,
+        blockers,
+    )
 
 
 def _contract_preflight(
@@ -819,6 +1012,8 @@ def _final_preflight_receipt(
         if not flags["intake_requested"]
         else bool(intake_result.get("ok")),
         "release_cadence_admissible": flags["cadence_admitted"],
+        "release_cadence_exception_valid": flags["cadence_exception_valid"],
+        "release_gate_admissible": flags["cadence_gate_admitted"],
         "architecture_health_admissible": flags["architecture_admitted"],
     }
     ok = bool(source.get("ok")) and flags["binding_ok"] and not blockers
@@ -840,6 +1035,7 @@ def _final_preflight_receipt(
         "metadata": evidence["metadata"],
         "supply_chain": supply_chain,
         "release_cadence": evidence["release_cadence"],
+        "release_cadence_exception": evidence["cadence_exception"],
         "architecture_health": evidence["architecture_health"],
         "intake_parameters": intake_result,
         "facts": facts,
@@ -849,7 +1045,7 @@ def _final_preflight_receipt(
         if ok
         else "repair_release_candidate",
         "authority": dict(AUTHORITY),
-        "claim_boundary": "Read-only local candidate identity and artifact-version proof; no execution, credentials, signing, provider call, publication, deployment, approval, or merge authority.",
+        "claim_boundary": "Read-only local candidate identity and artifact-version proof. A supplied cadence exception is not authenticated by this receipt; protected workflow authorization remains separate. No execution, credentials, signing, provider call, publication, deployment, approval, or merge authority.",
     }
     body["receipt_sha256"] = _sha(body)
     return body
@@ -905,6 +1101,7 @@ def release_candidate_preflight(
     require_intake: bool = False,
     candidate_tag: str | None = None,
     channel: str = "core",
+    cadence_exception: Path | None = None,
 ) -> dict[str, Any]:
     """Evaluate contract/source/artifact identity without external authority."""
     workspace = Path(root).resolve()
@@ -931,18 +1128,30 @@ def release_candidate_preflight(
             architecture_blocker,
             exc,
         )
-    cadence_admitted, cadence_check, cadence_blocker = _cadence_preflight(
-        release_cadence
-    )
-    checks.append(cadence_check)
-    if cadence_blocker:
-        blockers.append(cadence_blocker)
     contract_value, contract_result, contract_check, contract_blocker = (
         _contract_preflight(workspace, contract_path)
     )
     checks.append(contract_check)
     if contract_blocker:
         blockers.append(contract_blocker)
+    (
+        exception,
+        exception_error,
+        cadence_admitted,
+        cadence_blocker,
+        cadence_checks,
+        cadence_blockers,
+    ) = _cadence_candidate_preflight(
+        workspace,
+        release_cadence,
+        cadence_exception,
+        source,
+        channel,
+        candidate_tag,
+        contract_value,
+    )
+    checks.extend(cadence_checks)
+    blockers.extend(cadence_blockers)
 
     binding, binding_ok, binding_check, binding_blockers = _source_binding_preflight(
         source, contract_value
@@ -985,6 +1194,7 @@ def release_candidate_preflight(
         "metadata": metadata,
         "supply_chain": supply_chain,
         "release_cadence": release_cadence,
+        "cadence_exception": exception,
         "architecture_health": architecture_health,
         "intake_result": intake_result,
     }
@@ -993,7 +1203,9 @@ def release_candidate_preflight(
         "ledger_drift": ledger_drift,
         "supply_chain_requested": supply_chain_manifest is not None,
         "intake_requested": intake_parameters is not None or require_intake,
-        "cadence_admitted": cadence_admitted,
+        "cadence_admitted": release_cadence.get("admission") is True,
+        "cadence_exception_valid": exception is not None and exception_error is None,
+        "cadence_gate_admitted": cadence_admitted and cadence_blocker is None,
         "architecture_admitted": architecture_admitted,
         "binding_ok": binding_ok,
     }
@@ -1012,6 +1224,7 @@ def write_release_candidate_preflight(
     require_intake: bool = False,
     candidate_tag: str | None = None,
     channel: str = "core",
+    cadence_exception: Path | None = None,
 ) -> dict[str, Any]:
     """Write a candidate receipt atomically after running the pure preflight."""
     workspace = Path(root).resolve()
@@ -1025,6 +1238,7 @@ def write_release_candidate_preflight(
         require_intake=require_intake,
         candidate_tag=candidate_tag,
         channel=channel,
+        cadence_exception=cadence_exception,
     )
     destination = _inside(workspace, Path(out), "release preflight output")
     destination.parent.mkdir(parents=True, exist_ok=True)

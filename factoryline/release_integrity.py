@@ -423,8 +423,26 @@ def _openvsx_dependency_passes(validate: str, publish: str) -> bool:
 
 
 def _openvsx_preflight_passes(workflow: str, validate: str, publish: str) -> bool:
+    exception_guard = validate.find("Validate one-time cadence exception request")
+    preflight_step = validate.find("Require the sealed candidate preflight")
+    exception_gate = validate[exception_guard:preflight_step]
+    preflight_gate = validate[preflight_step:]
     return (
         "release_contract:" in workflow
+        and "cadence_exception_reason:" in workflow
+        and 0 <= exception_guard < preflight_step
+        and 'test "$PUBLISH" = true' in exception_gate
+        and 'test "$RELEASE_REF" = vscode-v1.1.1' in exception_gate
+        and "require('./package.json').version\")\" = 1.1.1" in exception_gate
+        and 'test "${#EXCEPTION_REASON}" -ge 12 && test "${#EXCEPTION_REASON}" -le 500'
+        in exception_gate
+        and 'if [[ -n "$EXCEPTION_REASON" ]]; then' in preflight_gate
+        and "GITHUB_RUN_ID: ${{ github.run_id }}" in preflight_gate
+        and "GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}" in preflight_gate
+        and "exception_args=(--cadence-exception .factory/release-cadence-exception.json)"
+        in preflight_gate
+        and '"${exception_args[@]}"' in preflight_gate
+        and '"workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"]' in preflight_gate
         and "python -m factoryline.cli release preflight" in validate
         and "--metadata-path context/PROGRESS.md" in validate
         and "scripts/verify_release_preflight.py" in validate

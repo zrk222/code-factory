@@ -16,6 +16,11 @@ on:
         description: "Workspace-contained, source-bound release contract (for example release-contracts/openvsx.json)"
         required: true
         type: string
+      cadence_exception_reason:
+        description: "One-time cadence exception reason; only the explicitly approved vscode-v1.1.1 release may use this"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   actions: read
@@ -122,6 +127,19 @@ jobs:
             echo "$RELEASE_REF is not an immutable tag pointing at HEAD." >&2
             exit 1
           }
+      - name: Validate one-time cadence exception request
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          RELEASE_REF: ${{ inputs.release_ref }}
+          EXCEPTION_REASON: ${{ inputs.cadence_exception_reason }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$EXCEPTION_REASON" ]]; then
+            test "$PUBLISH" = true || { echo "A cadence exception is valid only for an explicitly publishing run." >&2; exit 1; }
+            test "$RELEASE_REF" = vscode-v1.1.1 || { echo "The one-time exception is restricted to vscode-v1.1.1." >&2; exit 1; }
+            test "$(node -p "require('./package.json').version")" = 1.1.1 || { echo "The packaged VS Code version must be 1.1.1." >&2; exit 1; }
+            test "${#EXCEPTION_REASON}" -ge 12 && test "${#EXCEPTION_REASON}" -le 500 || { echo "The exception reason must contain 12 to 500 characters." >&2; exit 1; }
+          fi
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "22"
@@ -150,7 +168,7 @@ jobs:
         env:
           RELEASE_REF: ${{ inputs.release_ref }}
           RELEASE_CONTRACT_PATH: ${{ inputs.release_contract }}
-          APPROVED_BY: ${{ github.actor }} (protected openvsx deployment approval)
+          APPROVED_BY: ${{ github.actor }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -177,10 +195,47 @@ jobs:
         env:
           RELEASE_CONTRACT_PATH: ${{ inputs.release_contract }}
           RELEASE_REF: ${{ inputs.release_ref }}
+          PUBLISH: ${{ inputs.publish }}
+          EXCEPTION_REASON: ${{ inputs.cadence_exception_reason }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
           [[ "$RELEASE_CONTRACT_PATH" != /* && "$RELEASE_CONTRACT_PATH" != *..* ]] || { echo "release_contract must be a workspace-relative path" >&2; exit 1; }
           test -f "$RELEASE_CONTRACT_PATH" || { echo "release contract is not present in the immutable checkout" >&2; exit 1; }
+          exception_args=()
+          if [[ -n "$EXCEPTION_REASON" ]]; then
+            test "$PUBLISH" = true
+            mkdir -p .factory
+            python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timedelta, timezone
+          from pathlib import Path
+          now = datetime.now(timezone.utc)
+          payload = {
+              "schema": "factory.release-cadence-exception.v1",
+              "channel": "vscode",
+              "version": "1.1.1",
+              "candidate_tag": os.environ["RELEASE_REF"],
+              "source_commit": os.popen("git rev-parse HEAD").read().strip(),
+              "requesting_actor": os.environ["GITHUB_ACTOR"],
+              "reason": os.environ["EXCEPTION_REASON"],
+              "issued_at": now.isoformat().replace("+00:00", "Z"),
+              "expires_at": (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+              "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+              "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "environment": "openvsx",
+              "environment_authorized": True,
+              "publish_enabled": True,
+          }
+          Path(".factory/release-cadence-exception.json").write_text(
+              json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+            exception_args=(--cadence-exception .factory/release-cadence-exception.json)
+          fi
           python -m factoryline.cli release preflight \
             --root . \
             --channel vscode \
@@ -189,6 +244,7 @@ jobs:
             --artifact-dir editors/vscode \
             --metadata-path context/PROGRESS.md \
             --out editors/vscode/openvsx-preflight.json \
+            "${exception_args[@]}" \
             --json
       - name: Seal the verified Open VSX candidate
         shell: bash

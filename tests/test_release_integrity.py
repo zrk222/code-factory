@@ -539,6 +539,39 @@ def test_release_integrity_rejects_late_openvsx_authorization(tmp_path: Path) ->
     assert result["failed_check_ids"] == ["OPENVSX_AUTHORIZATION_EARLY"]
 
 
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        (
+            'test "$RELEASE_REF" = vscode-v1.1.1 || { echo "The one-time exception is restricted to vscode-v1.1.1." >&2; exit 1; }',
+            "true",
+        ),
+        (
+            'test "$PUBLISH" = true || { echo "A cadence exception is valid only for an explicitly publishing run." >&2; exit 1; }',
+            "true",
+        ),
+        (
+            "exception_args=(--cadence-exception .factory/release-cadence-exception.json)",
+            "exception_args=()",
+        ),
+        ("GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}", "GITHUB_RUN_ATTEMPT: 1"),
+    ],
+)
+def test_release_integrity_rejects_weakened_openvsx_cadence_exception(
+    tmp_path: Path, old: str, new: str
+) -> None:
+    root = _workflow_copy(tmp_path)
+    workflow = root / ".github" / "workflows" / "openvsx.yml"
+    original = workflow.read_text(encoding="utf-8")
+    assert old in original
+    workflow.write_text(original.replace(old, new, 1), encoding="utf-8")
+
+    result = release_integrity(root)
+
+    assert result["ok"] is False
+    assert result["failed_check_ids"] == ["OPENVSX_AUTHORIZATION_EARLY"]
+
+
 def test_release_integrity_rejects_vscode_candidate_validation_without_authorization(
     tmp_path: Path,
 ) -> None:

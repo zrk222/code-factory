@@ -1,0 +1,173 @@
+{
+  "applicability": [
+    {
+      "applicable": true,
+      "category": "happy_path",
+      "reason": "Release candidate admission behavior is in scope."
+    },
+    {
+      "applicable": true,
+      "category": "validation",
+      "reason": "Workflow and contract input validation changed."
+    },
+    {
+      "applicable": true,
+      "category": "failure_recovery",
+      "reason": "Exception misuse and stale-run failures must remain closed."
+    },
+    {
+      "applicable": true,
+      "category": "state_consistency",
+      "reason": "Receipt distinguishes ordinary cadence state and exception admission."
+    },
+    {
+      "applicable": true,
+      "category": "security_privacy",
+      "reason": "Authorization topology and credential boundaries are release-critical."
+    },
+    {
+      "applicable": false,
+      "category": "performance",
+      "reason": "No runtime audit or build performance behavior is changed.",
+      "review_evidence": {
+        "kind": "review",
+        "path": ".factory/openvsx-release-evidence/scope-review.md",
+        "sha256": "87fa0cdc8388483e8eef9c77e46aaf3c864470d90738d7c7af51714d60285ef6"
+      }
+    },
+    {
+      "applicable": false,
+      "category": "accessibility",
+      "reason": "No UI or accessibility surface is changed.",
+      "review_evidence": {
+        "kind": "review",
+        "path": ".factory/openvsx-release-evidence/scope-review.md",
+        "sha256": "87fa0cdc8388483e8eef9c77e46aaf3c864470d90738d7c7af51714d60285ef6"
+      }
+    },
+    {
+      "applicable": true,
+      "category": "external_effects",
+      "reason": "The changed workflow can publish an extension and must enforce protected gates."
+    }
+  ],
+  "candidate": [
+    {
+      "kind": "source",
+      "path": ".github/workflows/openvsx.yml",
+      "sha256": "003054432af137b2a4b7bfe878d2c9e5358392592de8a7d1819ff830b877fb35"
+    },
+    {
+      "kind": "source",
+      "path": "editors/vscode/CHANGELOG.md",
+      "sha256": "baef4f058fc09ae9c27e929cec2fb4b303fa68c258f7454727b5f191731702bf"
+    },
+    {
+      "kind": "source",
+      "path": "editors/vscode/package-lock.json",
+      "sha256": "eebbdd545cbbb763a8f258bb5cdfde60199032cfedb9413e970695df369bb18c"
+    },
+    {
+      "kind": "source",
+      "path": "editors/vscode/package.json",
+      "sha256": "640371546065635aff1462ab826a9f2741917477df029eb4dc8e7e4d790873cf"
+    },
+    {
+      "kind": "source",
+      "path": "factoryline/cli_release.py",
+      "sha256": "cf7d38a6f24bb8dfc4da5641eb1dfac00cdd73ab75f3e983edb346afd9ab25f3"
+    },
+    {
+      "kind": "source",
+      "path": "factoryline/release_candidate.py",
+      "sha256": "ecb3fda02b7bc03f1e9613c202f4e6ec2f8a28f8de660d7ee499f61a5dc1dd73"
+    },
+    {
+      "kind": "source",
+      "path": "factoryline/release_integrity.py",
+      "sha256": "e679b0e06a96c5109bb9c1e0e3b4d832cb1544a6bd2718f6d4514507b6a95ec5"
+    },
+    {
+      "kind": "source",
+      "path": "tests/test_release_candidate.py",
+      "sha256": "6e8c4eb2cb3eddc87287cda97c7a76ff4b1e62075255fa42d8182de476ed7cd4"
+    },
+    {
+      "kind": "source",
+      "path": "tests/test_release_integrity.py",
+      "sha256": "fe68617d4ca9db608ea6a664c680e109236a4fac6e324233b0a37f353ffbcf3b"
+    },
+    {
+      "kind": "source",
+      "path": "specs/openvsx-cadence-exception.md",
+      "sha256": "d7df0b8af2794ed8de316f0a1c753fd470c8f6241b55eac6eb0d5fe084ec0b1a"
+    },
+    {
+      "kind": "source",
+      "path": "plans/openvsx-cadence-exception.md",
+      "sha256": "7812d806db0b1982cb65b9405a79867af7bfe3328efd4ccfd71a7840df05c48f"
+    },
+    {
+      "kind": "source",
+      "path": "context/PROGRESS.md",
+      "sha256": "b2016a0a485bb907f2337090cb31f2ff734bf7cb5efa3c98f140a8f003a126d1"
+    },
+    {
+      "kind": "source",
+      "path": "tests/test_publication_metadata.py",
+      "sha256": "e774c801808993edddcf44223d8f48cd43ab3dcc11dff9ee0185051caeb506f2"
+    }
+  ],
+  "checks": [
+    {
+      "category": "happy_path",
+      "id": "OVSX-EXCEPTION-PREFLIGHT",
+      "profiles": [
+        "windows-cpython-3.11"
+      ],
+      "requirement": "Exact v1.1.1 exception admits cadence only while preserving the normal cadence observation and all other preflight gates."
+    },
+    {
+      "category": "validation",
+      "id": "OVSX-WORKFLOW-BOUNDS",
+      "profiles": [
+        "windows-cpython-3.11"
+      ],
+      "requirement": "Static release-integrity audit enforces authorization dependency, explicit publish mode, exact candidate version, and run-attempt binding."
+    },
+    {
+      "category": "failure_recovery",
+      "id": "OVSX-FAIL-CLOSED",
+      "profiles": [
+        "windows-cpython-3.11"
+      ],
+      "requirement": "Negative candidate, run-attempt, and workflow-mutation cases block the cadence exception."
+    },
+    {
+      "category": "state_consistency",
+      "id": "OVSX-RECEIPT-STATE",
+      "profiles": [
+        "windows-cpython-3.11"
+      ],
+      "requirement": "Preflight receipts keep normal cadence admissibility separate from exception validity and final candidate admissibility."
+    },
+    {
+      "category": "security_privacy",
+      "id": "OVSX-AUTH-BOUNDARY",
+      "profiles": [
+        "windows-cpython-3.11"
+      ],
+      "requirement": "Only protected publish runs reach exception generation; publisher credentials remain absent from candidate validation."
+    },
+    {
+      "category": "external_effects",
+      "id": "OVSX-PUBLICATION-GATE",
+      "profiles": [
+        "windows-cpython-3.11"
+      ],
+      "requirement": "Publication remains gated by protected authorization, candidate validation, and attested immutable source."
+    }
+  ],
+  "project_id": "openvsx-v1.1.1-cadence-exception",
+  "schema": "factory.workflow-audit.contract.v1"
+}
