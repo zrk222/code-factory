@@ -12,6 +12,8 @@ from typing import Any, Callable
 
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from factoryline.benchmark_lab import (
     BenchmarkError,
     CLEAN_FINDING,
@@ -159,6 +161,7 @@ def test_public_benchmark_hashes_and_parses_one_corpus_snapshot(tmp_path, monkey
     assert receipt["corpus_sha256"] == hashlib.sha256(snapshot).hexdigest()
     assert receipt["metrics"]["overall"]["tp"] == 6
 
+
 # Optional reproducible paired performance runner.
 # Invoke: python tests/test_benchmark_lab.py --prestige-root <checkout>
 
@@ -299,9 +302,7 @@ def main() -> int:
 
     def regex_reference(text: str, terms: tuple[str, ...]) -> int:
         return sum(
-            1
-            for term in terms
-            if re.search(rf"\b{re.escape(term.lower())}\b", text)
+            1 for term in terms if re.search(rf"\b{re.escape(term.lower())}\b", text)
         )
 
     def score_with(counter: Callable[..., int]) -> dict[str, Any]:
@@ -347,10 +348,7 @@ def main() -> int:
         },
         "median_change_percent": {
             key: round(
-                (
-                    candidate["median_ms"] / baseline["median_ms"] - 1
-                )
-                * 100,
+                (candidate["median_ms"] / baseline["median_ms"] - 1) * 100,
                 1,
             )
             for key, baseline, candidate in (

@@ -268,6 +268,7 @@ def compile_appforge_design(
         unchanged_skill = (
             skill_path.is_file()
             and not skill_path.is_symlink()
+            and skill_path.stat().st_nlink == 1
             and skill_path.read_bytes() == skill_bytes
         )
     except OSError:

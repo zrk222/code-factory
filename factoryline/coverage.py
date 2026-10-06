@@ -93,7 +93,9 @@ def requirement_coverage(root: Path) -> dict:
     return {
         "ok": attr.n_checked > 0 and attr.rate == 1.0,
         "applicable": True,
-        "status": "complete" if attr.n_checked > 0 and attr.rate == 1.0 else "incomplete",
+        "status": "complete"
+        if attr.n_checked > 0 and attr.rate == 1.0
+        else "incomplete",
         "manifest": str(manifest),
         "covered": sorted(covered_ids),
         "uncovered": uncovered,

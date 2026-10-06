@@ -531,9 +531,7 @@ def test_security_tree_scan_reuses_one_ast_inventory_for_alias_and_tenant_checks
         return original_walk(node)
 
     monkeypatch.setattr(module.ast, "walk", counted_walk)
-    findings = module._security_scan_tree(
-        tmp_path, path, tree, ("store.fetch",), {}
-    )
+    findings = module._security_scan_tree(tmp_path, path, tree, ("store.fetch",), {})
 
     assert calls == 1
     assert [finding["code"] for finding in findings] == ["SECURITY_SHELL_COMMAND"]
