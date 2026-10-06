@@ -13,8 +13,9 @@ the declared budget is exhausted or evidence is incomplete.
 The HSF workflow at `specs/loop-runtime-budget-admission.yaml` is a
 non-authorizing advisory classifier. Every positive result still requires the
 SQLite runtime API to verify the passport and create the durable reservation.
-Its synthetic golden cases validate advice ordering and extraction fallback;
-they do not execute adapters, mutate the ledger, or authorize real work.
+Its synthetic golden cases validate advice ordering. A focused test separately
+checks extraction-failure fallback to `HUMAN_REVIEW`. Neither the goldens nor
+that test execute adapters, mutate a runtime ledger, or authorize real work.
 
 ### User roles
 - Loop owner: supplies a validated Loop Passport and run/action identifiers.

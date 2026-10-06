@@ -178,7 +178,7 @@ def _runtime_wire_values(values: dict[str, int] | None) -> dict[str, Any] | None
 def _runtime_migrate_receipt(receipt_json: str | None) -> str | None:
     if receipt_json is None:
         return None
-    receipt = json.loads(receipt_json)
+    receipt = _runtime_receipt_payload(receipt_json)
     if isinstance(receipt.get("usage"), dict):
         receipt["usage"] = _runtime_wire_values(
             _runtime_values_to_units(receipt["usage"])
@@ -193,6 +193,80 @@ def _runtime_migrate_receipt(receipt_json: str | None) -> str | None:
             _runtime_values_to_units(action["usage"])
         )
     return json.dumps(receipt, sort_keys=True)
+
+
+def _runtime_receipt_payload(receipt_json: str) -> dict[str, Any]:
+    """Parse a persisted receipt and reject malformed ledger state safely."""
+    try:
+        receipt = json.loads(receipt_json)
+    except (TypeError, json.JSONDecodeError) as error:
+        raise ValueError("runtime ledger receipt is malformed") from error
+    if not isinstance(receipt, dict):
+        raise ValueError("runtime ledger receipt must be an object")
+    markers = receipt.get("markers")
+    if not isinstance(markers, list) or any(
+        not isinstance(item, str) for item in markers
+    ):
+        raise ValueError("runtime ledger receipt markers are malformed")
+    if receipt.get("schema") != "factory.loop.runtime.v1":
+        raise ValueError("runtime ledger receipt schema is invalid")
+    return receipt
+
+
+def _runtime_stored_values(value_json: str, field: str) -> dict[str, int]:
+    """Validate the complete fixed-point usage object stored in SQLite."""
+    try:
+        value = json.loads(value_json)
+    except (TypeError, json.JSONDecodeError) as error:
+        raise ValueError(f"runtime ledger {field} is malformed") from error
+    if not isinstance(value, dict) or set(value) != set(_RUNTIME_FIELDS):
+        raise ValueError(f"runtime ledger {field} is incomplete")
+    if any(
+        isinstance(value[name], bool)
+        or not isinstance(value[name], int)
+        or value[name] < 0
+        or value[name] > _RUNTIME_MAX_UNITS
+        for name in _RUNTIME_FIELDS
+    ):
+        raise ValueError(f"runtime ledger {field} contains invalid units")
+    return value
+
+
+def _runtime_validate_action_receipts(
+    status: str,
+    estimate: dict[str, int],
+    actual: dict[str, int] | None,
+    admission_json: str | None,
+    settlement_json: str | None,
+) -> None:
+    if admission_json is None:
+        raise ValueError("runtime ledger admission receipt is missing")
+    admission = _runtime_receipt_payload(admission_json)
+    admission_action = admission.get("action")
+    if (
+        admission.get("status") != "ADMITTED"
+        or not isinstance(admission_action, dict)
+        or admission_action.get("status") != "ADMITTED"
+        or admission_action.get("usage") != _runtime_wire_values(estimate)
+        or "RUNTIME_ACTION_RESERVED" not in admission["markers"]
+    ):
+        raise ValueError("runtime ledger admission receipt conflicts with action")
+    if status == "ADMITTED":
+        if actual is not None or settlement_json is not None:
+            raise ValueError("runtime ledger admitted action has settled receipts")
+        return
+    if actual is None or settlement_json is None:
+        raise ValueError("runtime ledger settlement receipt is missing")
+    settlement = _runtime_receipt_payload(settlement_json)
+    settlement_action = settlement.get("action")
+    if (
+        settlement.get("status") not in {"SETTLED", "BUDGET_EXCEEDED"}
+        or not isinstance(settlement_action, dict)
+        or settlement_action.get("status") != "SETTLED"
+        or settlement_action.get("usage") != _runtime_wire_values(actual)
+        or "RUNTIME_USAGE_SETTLED" not in settlement["markers"]
+    ):
+        raise ValueError("runtime ledger settlement receipt conflicts with action")
 
 
 def _runtime_connection(path: Path, *, root: Path | None = None) -> sqlite3.Connection:
@@ -319,13 +393,30 @@ def _runtime_session(connection: sqlite3.Connection) -> dict[str, Any] | None:
     ).fetchone()
     if row is None:
         return None
-    limits = json.loads(row[3])
+    try:
+        limits = json.loads(row[3])
+    except (TypeError, json.JSONDecodeError) as error:
+        raise ValueError("runtime ledger session limits are malformed") from error
+    if not isinstance(limits, dict):
+        raise ValueError("runtime ledger session limits must be an object")
     if row[5] == 1:
         limits = _runtime_values_to_units(limits)
         connection.execute(
             "UPDATE session SET limits_json = ?, accounting_version = 2 WHERE id = 1",
             (json.dumps(limits, sort_keys=True),),
         )
+    elif row[5] != 2:
+        raise ValueError("runtime ledger session accounting version is invalid")
+    if set(limits) != set(_RUNTIME_FIELDS) or any(
+        isinstance(limits[field], bool)
+        or not isinstance(limits[field], int)
+        or limits[field] < 0
+        or limits[field] > _RUNTIME_MAX_UNITS
+        for field in _RUNTIME_FIELDS
+    ):
+        raise ValueError("runtime ledger session limits are invalid")
+    if row[4] not in {"ACTIVE", "BUDGET_EXCEEDED", "INCOMPLETE"}:
+        raise ValueError("runtime ledger session status is invalid")
     return {
         "loop_id": row[0],
         "manifest_sha256": row[1],
@@ -335,14 +426,10 @@ def _runtime_session(connection: sqlite3.Connection) -> dict[str, Any] | None:
     }
 
 
-def _runtime_usage(connection: sqlite3.Connection) -> dict[str, int]:
-    totals = dict.fromkeys(_RUNTIME_FIELDS, 0)
-    rows = connection.execute(
-        "SELECT action_digest, request_sha256, estimate_json, admission_json, actual_json, "
-        "settlement_sha256, settlement_json, status, accounting_version "
-        "FROM action ORDER BY created_at, action_digest"
-    ).fetchall()
-    for (
+def _runtime_action_units(
+    connection: sqlite3.Connection, row: tuple[Any, ...]
+) -> dict[str, int]:
+    (
         digest,
         request_sha,
         estimate_json,
@@ -352,47 +439,80 @@ def _runtime_usage(connection: sqlite3.Connection) -> dict[str, int]:
         settlement_json,
         status,
         version,
-    ) in rows:
-        if version == 1:
-            estimate = _runtime_values_to_units(json.loads(estimate_json))
-            actual = (
-                _runtime_values_to_units(json.loads(actual_json))
-                if actual_json
-                else None
-            )
-            request_sha = hashlib.sha256(_canonical(estimate)).hexdigest()
-            settlement_sha = (
-                hashlib.sha256(_canonical(actual)).hexdigest()
-                if actual is not None
-                else None
-            )
-            admission_json = _runtime_migrate_receipt(admission_json)
-            settlement_json = _runtime_migrate_receipt(settlement_json)
-            estimate_json = json.dumps(estimate, sort_keys=True)
-            actual_json = (
-                json.dumps(actual, sort_keys=True) if actual is not None else None
-            )
-            connection.execute(
-                "UPDATE action SET request_sha256 = ?, estimate_json = ?, admission_json = ?, "
-                "actual_json = ?, settlement_sha256 = ?, settlement_json = ?, accounting_version = 2 "
-                "WHERE action_digest = ?",
-                (
-                    request_sha,
-                    estimate_json,
-                    admission_json,
-                    actual_json,
-                    settlement_sha,
-                    settlement_json,
-                    digest,
-                ),
-            )
-        values = (
-            json.loads(actual_json)
-            if status == "SETTLED"
-            else json.loads(estimate_json)
+    ) = row
+    if version not in {1, 2} or status not in {"ADMITTED", "SETTLED"}:
+        raise ValueError("runtime ledger action state is invalid")
+    if version == 1:
+        estimate = _runtime_values_to_units(
+            json.loads(estimate_json) if estimate_json else {}
         )
+        actual = (
+            _runtime_values_to_units(json.loads(actual_json)) if actual_json else None
+        )
+        request_sha = hashlib.sha256(_canonical(estimate)).hexdigest()
+        settlement_sha = (
+            hashlib.sha256(_canonical(actual)).hexdigest()
+            if actual is not None
+            else None
+        )
+        admission_json = _runtime_migrate_receipt(admission_json)
+        settlement_json = _runtime_migrate_receipt(settlement_json)
+        estimate_json = json.dumps(estimate, sort_keys=True)
+        actual_json = json.dumps(actual, sort_keys=True) if actual is not None else None
+        connection.execute(
+            "UPDATE action SET request_sha256 = ?, estimate_json = ?, admission_json = ?, "
+            "actual_json = ?, settlement_sha256 = ?, settlement_json = ?, accounting_version = 2 "
+            "WHERE action_digest = ?",
+            (
+                request_sha,
+                estimate_json,
+                admission_json,
+                actual_json,
+                settlement_sha,
+                settlement_json,
+                digest,
+            ),
+        )
+    else:
+        estimate = _runtime_stored_values(estimate_json, "estimate")
+        actual = (
+            _runtime_stored_values(actual_json, "actual")
+            if status == "SETTLED" and actual_json is not None
+            else None
+        )
+        if status == "SETTLED" and actual is None:
+            raise ValueError("runtime ledger settlement measurements are missing")
+        if status == "ADMITTED" and actual_json is not None:
+            raise ValueError("runtime ledger admitted action has settled values")
+    _runtime_validate_action_receipts(
+        status, estimate, actual, admission_json, settlement_json
+    )
+    if request_sha != hashlib.sha256(_canonical(estimate)).hexdigest():
+        raise ValueError("runtime ledger admission hash conflicts with estimate")
+    expected_settlement_sha = (
+        hashlib.sha256(_canonical(actual)).hexdigest() if actual is not None else None
+    )
+    if settlement_sha != expected_settlement_sha:
+        raise ValueError("runtime ledger settlement hash conflicts with measurements")
+    values = actual if status == "SETTLED" else estimate
+    if values is None:
+        raise ValueError("runtime ledger action measurements are missing")
+    return values
+
+
+def _runtime_usage(connection: sqlite3.Connection) -> dict[str, int]:
+    totals = dict.fromkeys(_RUNTIME_FIELDS, 0)
+    rows = connection.execute(
+        "SELECT action_digest, request_sha256, estimate_json, admission_json, actual_json, "
+        "settlement_sha256, settlement_json, status, accounting_version "
+        "FROM action ORDER BY created_at, action_digest"
+    ).fetchall()
+    for row in rows:
+        values = _runtime_action_units(connection, row)
         for field in _RUNTIME_FIELDS:
-            totals[field] += int(values[field])
+            totals[field] += values[field]
+            if totals[field] > _RUNTIME_MAX_UNITS:
+                raise ValueError("runtime ledger usage exceeds supported bounds")
     return totals
 
 
@@ -432,6 +552,7 @@ def _runtime_result(
     action: dict[str, Any] | None = None,
     error: str | None = None,
     markers: list[str] | None = None,
+    usage: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     session = _runtime_session(connection)
     payload = {
@@ -450,7 +571,9 @@ def _runtime_result(
         ],
         "loop_id": session["loop_id"] if session else None,
         "manifest_sha256": session["manifest_sha256"] if session else None,
-        "usage": _runtime_wire_values(_runtime_usage(connection)),
+        "usage": _runtime_wire_values(
+            usage if usage is not None else _runtime_usage(connection)
+        ),
         "limits": _runtime_wire_values(session["limits"]) if session else None,
         "path": str(path.resolve()),
         "scope_limits": list(_RUNTIME_SCOPE_LIMITS),
@@ -1117,10 +1240,12 @@ def _runtime_input_failure(error: Exception) -> dict[str, Any]:
 
 def _runtime_connection_failure(error: Exception, path: Path) -> dict[str, Any]:
     message = f"runtime ledger unavailable: {type(error).__name__}"
+    lowered = str(error).casefold()
+    path_failure = isinstance(error, ValueError) and (
+        "path escapes" in lowered or "uses a link" in lowered
+    )
     marker = (
-        "RUNTIME_LEDGER_PATH_BLOCKED"
-        if isinstance(error, ValueError) and "runtime ledger" in str(error)
-        else None
+        "RUNTIME_LEDGER_PATH_BLOCKED" if path_failure else "RUNTIME_SESSION_INCOMPLETE"
     )
     return _runtime_failure("INCOMPLETE", path, message, marker=marker)
 
@@ -1183,6 +1308,7 @@ def _runtime_action_result(
     status: str,
     action_status: str,
     values: dict[str, int] | None = None,
+    usage: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     action = {"status": action_status}
     if values is not None:
@@ -1194,7 +1320,9 @@ def _runtime_action_result(
         markers.append("RUNTIME_USAGE_SETTLED")
     if status == "BUDGET_EXCEEDED":
         markers.append("RUNTIME_OVERRUN_RECORDED")
-    return _runtime_result(connection, path, status, action=action, markers=markers)
+    return _runtime_result(
+        connection, path, status, action=action, markers=markers, usage=usage
+    )
 
 
 def _runtime_admission_replay(
@@ -1204,6 +1332,7 @@ def _runtime_admission_replay(
     request_sha: str,
     blocked: str | None,
 ) -> dict[str, Any] | None:
+    _runtime_usage(connection)
     existing = connection.execute(
         "SELECT request_sha256, admission_json, status, settlement_json "
         "FROM action WHERE action_digest = ?",
@@ -1223,11 +1352,13 @@ def _runtime_admission_replay(
             marker="RUNTIME_ACTION_REPLAY_BLOCKED",
         )
     if existing[2] == "SETTLED":
-        result = json.loads(existing[3])
+        result = _runtime_receipt_payload(existing[3])
         result["markers"].append("RUNTIME_ACTION_IDEMPOTENT")
         result["markers"].append("RUNTIME_ACTION_ALREADY_SETTLED")
         return result
-    result = json.loads(existing[1])
+    if existing[1] is None:
+        raise ValueError("runtime ledger admission receipt is missing")
+    result = _runtime_receipt_payload(existing[1])
     result["markers"].append("RUNTIME_ACTION_IDEMPOTENT")
     return result
 
@@ -1262,7 +1393,9 @@ def _runtime_reserve_action(
         "VALUES (?, ?, ?, 'ADMITTED', ?, 2)",
         (action_digest, request_sha, json.dumps(reserved, sort_keys=True), _now()),
     )
-    result = _runtime_action_result(connection, path, "ADMITTED", "ADMITTED", reserved)
+    result = _runtime_action_result(
+        connection, path, "ADMITTED", "ADMITTED", reserved, projected
+    )
     connection.execute(
         "UPDATE action SET admission_json = ? WHERE action_digest = ?",
         (json.dumps(result, sort_keys=True), action_digest),
@@ -1276,6 +1409,7 @@ def _runtime_settlement_replay(
     action_digest: str,
     settlement_sha: str,
 ) -> dict[str, Any] | None:
+    _runtime_usage(connection)
     existing = connection.execute(
         "SELECT settlement_sha256, settlement_json, status "
         "FROM action WHERE action_digest = ?",
@@ -1284,7 +1418,9 @@ def _runtime_settlement_replay(
     if existing is None or existing[2] != "SETTLED":
         return None
     if existing[0] == settlement_sha:
-        result = json.loads(existing[1])
+        if existing[1] is None:
+            raise ValueError("runtime ledger settlement receipt is missing")
+        result = _runtime_receipt_payload(existing[1])
         result["markers"].append("RUNTIME_SETTLEMENT_IDEMPOTENT")
         return result
     return _runtime_failure(
@@ -1299,6 +1435,20 @@ def _runtime_settle_existing(
     measured: dict[str, int],
     limits: dict[str, int],
 ) -> dict[str, Any]:
+    usage = _runtime_usage(connection)
+    row = connection.execute(
+        "SELECT estimate_json FROM action WHERE action_digest = ? AND status = 'ADMITTED'",
+        (action_digest,),
+    ).fetchone()
+    if row is None:
+        raise ValueError("runtime ledger admitted action is missing")
+    reserved = _runtime_stored_values(row[0], "estimate")
+    projected = {
+        field: usage[field] - reserved[field] + measured[field]
+        for field in _RUNTIME_FIELDS
+    }
+    if any(value < 0 or value > _RUNTIME_MAX_UNITS for value in projected.values()):
+        raise ValueError("runtime ledger settlement projection is invalid")
     connection.execute(
         "UPDATE action SET actual_json = ?, settlement_sha256 = ?, status = 'SETTLED', settled_at = ? "
         "WHERE action_digest = ?",
@@ -1309,11 +1459,12 @@ def _runtime_settle_existing(
             action_digest,
         ),
     )
-    usage = _runtime_usage(connection)
-    status = "BUDGET_EXCEEDED" if _runtime_exceeded(usage, limits) else "SETTLED"
+    status = "BUDGET_EXCEEDED" if _runtime_exceeded(projected, limits) else "SETTLED"
     if status == "BUDGET_EXCEEDED":
         connection.execute("UPDATE session SET status = ? WHERE id = 1", (status,))
-    result = _runtime_action_result(connection, path, status, "SETTLED", measured)
+    result = _runtime_action_result(
+        connection, path, status, "SETTLED", measured, projected
+    )
     connection.execute(
         "UPDATE action SET settlement_json = ? WHERE action_digest = ?",
         (json.dumps(result, sort_keys=True), action_digest),

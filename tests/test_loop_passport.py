@@ -797,6 +797,126 @@ def test_runtime_ledger_migrates_older_action_table(tmp_path):
     assert "accounting_version" in columns
 
 
+def _seed_admitted_runtime_action(tmp_path):
+    import secrets
+    import sqlite3
+
+    from factoryline.loop_passport import admit_budget_action, start_budget_session
+
+    _, passport_path = _runtime_passport(tmp_path)
+    run_id, action_id = secrets.token_hex(16), secrets.token_hex(16)
+    session = start_budget_session(tmp_path, passport_path, run_id)
+    assert session["status"] == "ACTIVE"
+    estimate = {"iterations": 1, "wall_seconds": 1, "tokens": 1, "cost_usd": 0.1}
+    admission = admit_budget_action(
+        tmp_path, passport_path, run_id, action_id, estimate
+    )
+    assert admission["status"] == "ADMITTED"
+    return sqlite3, passport_path, run_id, action_id, Path(session["path"])
+
+
+def test_runtime_corrupt_usage_row_returns_incomplete(tmp_path):
+    from factoryline.loop_passport import budget_session_status
+
+    sqlite3, passport_path, run_id, _, database = _seed_admitted_runtime_action(
+        tmp_path
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute("UPDATE action SET estimate_json = '{}' ")
+
+    result = budget_session_status(tmp_path, passport_path, run_id)
+    assert result["status"] == "INCOMPLETE"
+    assert "RUNTIME_SESSION_INCOMPLETE" in result["markers"]
+
+
+def test_runtime_missing_replay_receipt_returns_incomplete(tmp_path):
+    from factoryline.loop_passport import admit_budget_action
+
+    sqlite3, passport_path, run_id, action_id, database = _seed_admitted_runtime_action(
+        tmp_path
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute("UPDATE action SET admission_json = NULL")
+
+    result = admit_budget_action(
+        tmp_path,
+        passport_path,
+        run_id,
+        action_id,
+        {"iterations": 1, "wall_seconds": 1, "tokens": 1, "cost_usd": 0.1},
+    )
+    assert result["status"] == "INCOMPLETE"
+    assert "RUNTIME_SESSION_INCOMPLETE" in result["markers"]
+
+
+def test_runtime_settled_replay_rejects_receipt_that_claims_admitted(tmp_path):
+    import json
+
+    from factoryline.loop_passport import admit_budget_action, settle_budget_action
+
+    sqlite3, passport_path, run_id, action_id, database = _seed_admitted_runtime_action(
+        tmp_path
+    )
+    estimate = {"iterations": 1, "wall_seconds": 1, "tokens": 1, "cost_usd": 0.1}
+    settled = settle_budget_action(tmp_path, passport_path, run_id, action_id, estimate)
+    assert settled["status"] == "SETTLED"
+    with sqlite3.connect(database) as connection:
+        row = connection.execute("SELECT settlement_json FROM action").fetchone()
+        receipt = json.loads(row[0])
+        receipt["status"] = "ADMITTED"
+        receipt["action"]["status"] = "ADMITTED"
+        connection.execute(
+            "UPDATE action SET settlement_json = ?",
+            (json.dumps(receipt),),
+        )
+
+    result = admit_budget_action(tmp_path, passport_path, run_id, action_id, estimate)
+    assert result["status"] == "INCOMPLETE"
+    assert "RUNTIME_SESSION_INCOMPLETE" in result["markers"]
+    assert "RUNTIME_ACTION_RESERVED" not in result["markers"]
+
+
+def test_runtime_admission_replay_rejects_corrupt_request_digest(tmp_path):
+    from factoryline.loop_passport import admit_budget_action
+
+    sqlite3, passport_path, run_id, action_id, database = _seed_admitted_runtime_action(
+        tmp_path
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute("UPDATE action SET request_sha256 = ?", ("0" * 64,))
+
+    result = admit_budget_action(
+        tmp_path,
+        passport_path,
+        run_id,
+        action_id,
+        {"iterations": 1, "wall_seconds": 1, "tokens": 1, "cost_usd": 0.1},
+    )
+    assert result["status"] == "INCOMPLETE"
+    assert "RUNTIME_SESSION_INCOMPLETE" in result["markers"]
+
+
+def test_runtime_settlement_replay_rejects_corrupt_measurement_digest(tmp_path):
+    from factoryline.loop_passport import settle_budget_action
+
+    sqlite3, passport_path, run_id, action_id, database = _seed_admitted_runtime_action(
+        tmp_path
+    )
+    actual = {"iterations": 1, "wall_seconds": 1, "tokens": 1, "cost_usd": 0.1}
+    assert (
+        settle_budget_action(tmp_path, passport_path, run_id, action_id, actual)[
+            "status"
+        ]
+        == "SETTLED"
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute("UPDATE action SET settlement_sha256 = ?", ("0" * 64,))
+
+    result = settle_budget_action(tmp_path, passport_path, run_id, action_id, actual)
+    assert result["status"] == "INCOMPLETE"
+    assert "RUNTIME_SESSION_INCOMPLETE" in result["markers"]
+
+
 def test_loop_runtime_cli_session_admit_settle_and_status(tmp_path, capsys):
     import argparse
     import secrets
