@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.1 - 2026-10-06 (Open VSX candidate; publication gated)
+
+- Refactor evidence refresh and finding navigation into focused helpers while
+  preserving the workspace path and real-path boundary checks.
+- Add extension-host tests for safe in-workspace findings and rejected
+  out-of-workspace paths.
+- Update the VS Code package to 1.1.1; the package still makes no claim that a
+  local receipt authorizes merge or release.
+
 ## 1.1.0 - 2026-10-04 (release candidate; publication gated)
 
 - Fixed release metadata and installation guidance to use the requested 1.1.0

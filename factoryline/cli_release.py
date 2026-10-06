@@ -64,6 +64,10 @@ def add_parser(sub: Any) -> None:
         help="require an authoritative intake-parameter envelope for this release",
     )
     preflight.add_argument(
+        "--cadence-exception",
+        help="workspace-contained one-time cadence exception bound to the protected candidate",
+    )
+    preflight.add_argument(
         "--out", help="optional workspace-contained JSON receipt path"
     )
     preflight.add_argument("--json", action="store_true")
@@ -108,6 +112,7 @@ def _preflight_payload(args: Any, root: Path, candidate: Any) -> dict[str, Any]:
         Path(args.supply_chain_manifest) if args.supply_chain_manifest else None
     )
     intake_parameters = Path(args.intake_parameters) if args.intake_parameters else None
+    cadence_exception = Path(args.cadence_exception) if args.cadence_exception else None
     preflight = (
         candidate.write_release_candidate_preflight
         if args.out
@@ -121,6 +126,7 @@ def _preflight_payload(args: Any, root: Path, candidate: Any) -> dict[str, Any]:
         "require_intake": args.require_intake,
         "candidate_tag": args.candidate_tag,
         "channel": args.channel,
+        "cadence_exception": cadence_exception,
     }
     if args.out:
         return preflight(*call_args, Path(args.out), **options)

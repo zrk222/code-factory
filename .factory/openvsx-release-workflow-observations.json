@@ -1,0 +1,97 @@
+{
+  "candidate_sha256": "fb68ff5c1604b7abcf2aa68bd7d9ec9adc893c28bb96642ebf10b98189c989ea",
+  "contract_sha256": "3ea0deb60f64c42c037f8e09eb6ed1125f3ece1792d9d2ffc332722a0b82a447",
+  "observations": [
+    {
+      "artifacts": [
+        {
+          "kind": "log",
+          "path": ".factory/openvsx-release-evidence/verification.md",
+          "sha256": "b2a54c1417ac8d64b8311498cb7b6a3d1c54c13aa4d7412cb41e2472011b899b"
+        }
+      ],
+      "execution_identity": "Codex local Windows PowerShell; CPython 3.11.9; authenticated provider release not executed.",
+      "id": "OVSX-EXCEPTION-PREFLIGHT",
+      "observed_at": "2026-10-06T07:45:39.208430Z",
+      "profile": "windows-cpython-3.11",
+      "reason": "Recorded local execution and its scoped evidence; CI remains authoritative for the pushed candidate.",
+      "status": "PASS"
+    },
+    {
+      "artifacts": [
+        {
+          "kind": "log",
+          "path": ".factory/openvsx-release-evidence/verification.md",
+          "sha256": "b2a54c1417ac8d64b8311498cb7b6a3d1c54c13aa4d7412cb41e2472011b899b"
+        }
+      ],
+      "execution_identity": "Codex local Windows PowerShell; CPython 3.11.9; authenticated provider release not executed.",
+      "id": "OVSX-WORKFLOW-BOUNDS",
+      "observed_at": "2026-10-06T07:45:39.208430Z",
+      "profile": "windows-cpython-3.11",
+      "reason": "Recorded local execution and its scoped evidence; CI remains authoritative for the pushed candidate.",
+      "status": "PASS"
+    },
+    {
+      "artifacts": [
+        {
+          "kind": "log",
+          "path": ".factory/openvsx-release-evidence/verification.md",
+          "sha256": "b2a54c1417ac8d64b8311498cb7b6a3d1c54c13aa4d7412cb41e2472011b899b"
+        }
+      ],
+      "execution_identity": "Codex local Windows PowerShell; CPython 3.11.9; authenticated provider release not executed.",
+      "id": "OVSX-FAIL-CLOSED",
+      "observed_at": "2026-10-06T07:45:39.208430Z",
+      "profile": "windows-cpython-3.11",
+      "reason": "Recorded local execution and its scoped evidence; CI remains authoritative for the pushed candidate.",
+      "status": "PASS"
+    },
+    {
+      "artifacts": [
+        {
+          "kind": "log",
+          "path": ".factory/openvsx-release-evidence/verification.md",
+          "sha256": "b2a54c1417ac8d64b8311498cb7b6a3d1c54c13aa4d7412cb41e2472011b899b"
+        }
+      ],
+      "execution_identity": "Codex local Windows PowerShell; CPython 3.11.9; authenticated provider release not executed.",
+      "id": "OVSX-RECEIPT-STATE",
+      "observed_at": "2026-10-06T07:45:39.208430Z",
+      "profile": "windows-cpython-3.11",
+      "reason": "Recorded local execution and its scoped evidence; CI remains authoritative for the pushed candidate.",
+      "status": "PASS"
+    },
+    {
+      "artifacts": [
+        {
+          "kind": "log",
+          "path": ".factory/openvsx-release-evidence/verification.md",
+          "sha256": "b2a54c1417ac8d64b8311498cb7b6a3d1c54c13aa4d7412cb41e2472011b899b"
+        }
+      ],
+      "execution_identity": "Codex local Windows PowerShell; CPython 3.11.9; authenticated provider release not executed.",
+      "id": "OVSX-AUTH-BOUNDARY",
+      "observed_at": "2026-10-06T07:45:39.208430Z",
+      "profile": "windows-cpython-3.11",
+      "reason": "Recorded local execution and its scoped evidence; CI remains authoritative for the pushed candidate.",
+      "status": "PASS"
+    },
+    {
+      "artifacts": [
+        {
+          "kind": "log",
+          "path": ".factory/openvsx-release-evidence/verification.md",
+          "sha256": "b2a54c1417ac8d64b8311498cb7b6a3d1c54c13aa4d7412cb41e2472011b899b"
+        }
+      ],
+      "execution_identity": "Codex local Windows PowerShell; CPython 3.11.9; authenticated provider release not executed.",
+      "id": "OVSX-PUBLICATION-GATE",
+      "observed_at": "2026-10-06T07:45:39.208430Z",
+      "profile": "windows-cpython-3.11",
+      "reason": "Recorded local execution and its scoped evidence; CI remains authoritative for the pushed candidate.",
+      "status": "PASS"
+    }
+  ],
+  "schema": "factory.workflow-audit.observations.v1"
+}
