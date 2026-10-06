@@ -267,6 +267,9 @@ def _runtime_validate_action_receipts(
         or "RUNTIME_USAGE_SETTLED" not in settlement["markers"]
     ):
         raise ValueError("runtime ledger settlement receipt conflicts with action")
+    has_overrun_marker = "RUNTIME_OVERRUN_RECORDED" in settlement["markers"]
+    if has_overrun_marker != (settlement["status"] == "BUDGET_EXCEEDED"):
+        raise ValueError("runtime ledger settlement overrun marker is inconsistent")
 
 
 def _runtime_connection(path: Path, *, root: Path | None = None) -> sqlite3.Connection:
