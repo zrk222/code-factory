@@ -677,7 +677,6 @@ def test_security_scan_detects_local_hollow_test_oracles(tmp_path, body):
         "assert compute_value() == 1",
         "self.assertEqual(compute_value(), 1)",
         "with pytest.raises(ValueError):\n        compute_value()",
-        "assert next_value() == next_value()",
     ],
 )
 def test_security_scan_preserves_real_assertions_and_exception_controls(tmp_path, body):
@@ -704,6 +703,10 @@ def test_security_scan_preserves_real_assertions_and_exception_controls(tmp_path
         (
             "operation()\n    assert operation_mock.called",
             "mock invocation state does not verify its result or arguments",
+        ),
+        (
+            "assert next_value() == next_value()",
+            "repeated invocation compares a result to itself",
         ),
     ],
 )
@@ -1079,7 +1082,196 @@ def test_security_scan_keeps_negative_callback_and_import_alias_controls(tmp_pat
         "    monkeypatch.setattr(store, 'fetch', fail_on_read)\n"
         "    compute()\n"
     )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert result["findings"][0]["facts"]["symbol"] == "test_no_read"
+
+
+def test_security_scan_accepts_test_scoped_pytest_raises_import(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "def test_expected_error():\n"
+        "    from pytest import raises as expect_error\n"
+        "    with expect_error(ValueError):\n"
+        "        compute()\n",
+        encoding="utf-8",
+    )
     assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_restores_module_alias_after_later_pytest_import(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "import contextlib\n"
+        "raises = contextlib.nullcontext\n"
+        "from pytest import raises\n"
+        "def test_expected_error():\n"
+        "    with raises(ValueError):\n"
+        "        compute()\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_restores_local_alias_after_later_pytest_import(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "from contextlib import nullcontext as expect_error\n"
+        "def test_expected_error():\n"
+        "    expect_error = nullcontext\n"
+        "    from pytest import raises as expect_error\n"
+        "    with expect_error(ValueError):\n"
+        "        compute()\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_does_not_trust_helper_with_rebound_assertion_alias(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "from pytest import raises as expect_error\n"
+        "import contextlib\n"
+        "def assert_expected():\n"
+        "    expect_error = contextlib.nullcontext\n"
+        "    with expect_error(ValueError):\n"
+        "        pass\n"
+        "def test_behavior():\n"
+        "    assert_expected()\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_keeps_pytest_alias_across_nested_local_bindings(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "from pytest import raises\n"
+        "def test_expected_error():\n"
+        "    def helper():\n"
+        "        raises = None\n"
+        "    values = [raises() for raises in callables]\n"
+        "    with raises(ValueError):\n"
+        "        compute()\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_does_not_trust_assertion_alias_call_inside_comprehension(
+    tmp_path,
+):
+    (tmp_path / "case.py").write_text(
+        "from pytest import raises\n"
+        "def test_behavior():\n"
+        "    results = [raises(ValueError) for raises in factories]\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_does_not_trust_rebound_pytest_raises_alias(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "from pytest import raises as expect_error\n"
+        "import contextlib\n"
+        "def test_behavior():\n"
+        "    expect_error = contextlib.nullcontext\n"
+        "    with expect_error(ValueError):\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_does_not_trust_module_rebound_pytest_alias(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "from pytest import raises as expect_error\n"
+        "import contextlib\n"
+        "expect_error = contextlib.nullcontext\n"
+        "def test_behavior():\n"
+        "    with expect_error(ValueError):\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_does_not_trust_imports_from_other_scopes(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "from contextlib import nullcontext as expect_error\n"
+        "def unrelated():\n"
+        "    from pytest import raises as expect_error\n"
+        "def test_behavior():\n"
+        "    with expect_error(ValueError):\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_invalidates_oracle_alias_after_module_star_import(tmp_path):
+    (tmp_path / "helpers.py").write_text(
+        "from contextlib import nullcontext as raises\n", encoding="utf-8"
+    )
+    (tmp_path / "case.py").write_text(
+        "from pytest import raises\n"
+        "from helpers import *\n"
+        "def test_behavior():\n"
+        "    with raises(ValueError):\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_invalidates_oracle_alias_after_branch_star_import(tmp_path):
+    (tmp_path / "helpers.py").write_text(
+        "from contextlib import nullcontext as raises\n", encoding="utf-8"
+    )
+    (tmp_path / "case.py").write_text(
+        "from pytest import raises\n"
+        "if USE_HELPERS:\n"
+        "    from helpers import *\n"
+        "def test_behavior():\n"
+        "    with raises(ValueError):\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "try:\n    compute_value()\nexcept Exception as expect_error:\n    pass",
+        "match event:\n    case {'error': expect_error}:\n        pass",
+    ],
+)
+def test_security_scan_does_not_trust_captured_pytest_raises_alias(tmp_path, binding):
+    (tmp_path / "case.py").write_text(
+        "from pytest import raises as expect_error\n"
+        "def test_behavior(event):\n"
+        f"    {binding.replace(chr(10), chr(10) + '    ')}\n"
+        "    with expect_error(ValueError):\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_does_not_trust_unused_assertion_callback(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "def test_behavior():\n"
+        "    def fail_on_read(*args):\n"
+        "        raise AssertionError('unexpected read')\n"
+        "    compute_value()\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
 
 
 def test_security_cli_applies_explicit_tenant_contract(tmp_path, capsys):
