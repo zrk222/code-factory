@@ -10,6 +10,7 @@ import ast
 from dataclasses import dataclass
 from hashlib import sha256
 import json
+import operator
 from pathlib import Path, PureWindowsPath
 import re
 from typing import Any
@@ -1118,7 +1119,131 @@ def _security_source_files(root: Path) -> list[Path]:
     return sorted(files, key=lambda path: path.relative_to(root).as_posix())
 
 
-def _vacuous_assertion(node: ast.expr) -> bool:
+_UNKNOWN_CONSTANT = object()
+
+
+def _boolean_operation_value(node: ast.BoolOp, known: dict[str, Any]) -> Any:
+    if isinstance(node.op, ast.Or):
+        for expression in node.values:
+            value = _constant_value(expression, known)
+            if value is _UNKNOWN_CONSTANT:
+                return _UNKNOWN_CONSTANT
+            if bool(value):
+                return value
+        return value
+    for expression in node.values:
+        value = _constant_value(expression, known)
+        if value is _UNKNOWN_CONSTANT:
+            return _UNKNOWN_CONSTANT
+        if not bool(value):
+            return value
+    return value
+
+
+def _comparison_value(node: ast.Compare, known: dict[str, Any]) -> Any:
+    if len(node.ops) != 1:
+        return _UNKNOWN_CONSTANT
+    left = _constant_value(node.left, known)
+    right = _constant_value(node.comparators[0], known)
+    if left is _UNKNOWN_CONSTANT or right is _UNKNOWN_CONSTANT:
+        return _UNKNOWN_CONSTANT
+    operations = {
+        ast.Eq: operator.eq,
+        ast.NotEq: operator.ne,
+        ast.Is: operator.is_,
+        ast.IsNot: operator.is_not,
+        ast.Lt: operator.lt,
+        ast.LtE: operator.le,
+        ast.Gt: operator.gt,
+        ast.GtE: operator.ge,
+        ast.In: lambda value, container: operator.contains(container, value),
+        ast.NotIn: lambda value, container: not operator.contains(container, value),
+    }
+    function = operations.get(type(node.ops[0]))
+    if function is None:
+        return _UNKNOWN_CONSTANT
+    try:
+        return function(left, right)
+    except (TypeError, ValueError):
+        return _UNKNOWN_CONSTANT
+
+
+def _constant_truth_value(node: ast.expr, known: dict[str, Any]) -> bool | None:
+    value = _constant_value(node, known)
+    if value is not _UNKNOWN_CONSTANT:
+        return bool(value)
+    if isinstance(node, ast.BoolOp):
+        values = [_constant_truth_value(child, known) for child in node.values]
+        if isinstance(node.op, ast.Or):
+            if True in values:
+                return True
+            return False if all(value is False for value in values) else None
+        if False in values:
+            return False
+        return True if all(value is True for value in values) else None
+    return None
+
+
+def _constant_value(node: ast.expr, known: dict[str, Any] | None = None) -> Any:
+    known = known or {}
+    if isinstance(node, ast.Name):
+        return known.get(node.id, _UNKNOWN_CONSTANT)
+    if isinstance(node, ast.BoolOp):
+        return _boolean_operation_value(node, known)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        truth = _constant_truth_value(node.operand, known)
+        return _UNKNOWN_CONSTANT if truth is None else not truth
+    if isinstance(node, ast.Compare):
+        return _comparison_value(node, known)
+    try:
+        return ast.literal_eval(node)
+    except (ValueError, TypeError, SyntaxError, RecursionError):
+        return _UNKNOWN_CONSTANT
+
+
+def _direct_test_vacuous_assertions(node: ast.AST) -> set[int]:
+    """Track immutable direct assignments in source order, failing closed in branches."""
+    body = _scope_body(node)
+    if body is None:
+        return set()
+    known: dict[str, Any] = {}
+    vacuous: set[int] = set()
+    for statement in body:
+        if isinstance(statement, ast.Assert):
+            if _vacuous_assertion(statement.test, known):
+                vacuous.add(id(statement))
+            continue
+        bound = _bound_names(statement)
+        for name in bound:
+            known.pop(name, None)
+        _remember_direct_constant_assignment(statement, known)
+    return vacuous
+
+
+def _remember_direct_constant_assignment(
+    statement: ast.stmt, known: dict[str, Any]
+) -> None:
+    if isinstance(statement, ast.Assign):
+        value = _constant_value(statement.value, known)
+        targets = statement.targets
+    elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
+        value = _constant_value(statement.value, known)
+        targets = [statement.target]
+    else:
+        return
+    if value is _UNKNOWN_CONSTANT:
+        return
+    for target in targets:
+        if isinstance(target, ast.Name):
+            known[target.id] = value
+
+
+def _vacuous_assertion(node: ast.expr, known: dict[str, Any] | None = None) -> bool:
+    if _constant_truth_value(node, known or {}) is True:
+        return True
+    value = _constant_value(node, known)
+    if value is not _UNKNOWN_CONSTANT:
+        return bool(value)
     if isinstance(node, ast.Constant):
         return bool(node.value)
     if not isinstance(node, ast.Compare) or len(node.ops) != 1:
@@ -1251,8 +1376,11 @@ def _meaningful_local_assertion(
     node: ast.AST, aliases: dict[str, str], helper_names: set[str] | None = None
 ) -> bool:
     nodes = _test_oracle_body_nodes(node, aliases)
+    vacuous = _direct_test_vacuous_assertions(node)
     return any(_assertion_call(child, aliases, helper_names) for child in nodes) or any(
-        isinstance(child, ast.Assert) and not _vacuous_assertion(child.test)
+        isinstance(child, ast.Assert)
+        and id(child) not in vacuous
+        and not _vacuous_assertion(child.test)
         for child in nodes
     )
 
@@ -1335,6 +1463,7 @@ def _weak_test_oracle_finding(
     if _unconditionally_skipped_test(node):
         return None
     nodes = _test_oracle_body_nodes(node, aliases)
+    vacuous = _direct_test_vacuous_assertions(node)
     weak = [
         (child, _weak_assertion_reason(child.test, aliases))
         for child in nodes
@@ -1353,6 +1482,7 @@ def _weak_test_oracle_finding(
         child
         for child in nodes
         if isinstance(child, ast.Assert)
+        and id(child) not in vacuous
         and not _vacuous_assertion(child.test)
         and _weak_assertion_reason(child.test, aliases) is None
     ]
@@ -1394,6 +1524,7 @@ def _hollow_test_finding(
     if _unconditionally_skipped_test(node):
         return None
     nodes = _test_oracle_body_nodes(node, aliases)
+    vacuous = _direct_test_vacuous_assertions(node)
     assertions = [n for n in nodes if isinstance(n, ast.Assert)]
     if any(
         _assertion_call(n, aliases, helper_names, unittest_context=unittest_context)
@@ -1407,7 +1538,10 @@ def _hollow_test_finding(
         for child in nodes
     ):
         return None
-    if assertions and any(not _vacuous_assertion(n.test) for n in assertions):
+    if assertions and any(
+        id(assertion) not in vacuous and not _vacuous_assertion(assertion.test)
+        for assertion in assertions
+    ):
         return None
     return _security_finding(
         "QUALITY_HOLLOW_TEST",
