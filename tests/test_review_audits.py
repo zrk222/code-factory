@@ -674,6 +674,21 @@ def test_security_scan_detects_local_hollow_test_oracles(tmp_path, body):
 @pytest.mark.parametrize(
     "body",
     [
+        "expected = 3\n    alias = expected\n    assert alias == expected",
+        "value = value\n    assert value == value",
+        "result = 3\n    assert result == 3",
+        "assert result or True",
+    ],
+)
+def test_security_scan_detects_constant_and_boolean_tautologies(tmp_path, body):
+    (tmp_path / "case.py").write_text("def test_behavior():\n    " + body + "\n")
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
         "assert compute_value() == 1",
         "self.assertEqual(compute_value(), 1)",
         "with pytest.raises(ValueError):\n        compute_value()",
@@ -691,6 +706,38 @@ def test_security_scan_preserves_real_assertions_and_exception_controls(tmp_path
         source = "def test_behavior():\n    " + body + "\n"
     (tmp_path / "case.py").write_text(source)
     assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_does_not_use_a_constant_reassigned_after_assertion(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "def test_behavior():\n"
+        "    result = 3\n"
+        "    assert result == 3\n"
+        "    result = compute_value()\n"
+        "    assert result == 3\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+@pytest.mark.parametrize(
+    ("body", "finding"),
+    [
+        ("result = compute_value()\n    assert (result or 1) == 1", False),
+        ("value = compute_value() or 1\n    assert value == 1", False),
+        ("value = True or compute_value()\n    assert value", True),
+        ("value = False and compute_value()\n    assert not value", True),
+        ("result = 2\n    assert (result or 1) == 1", False),
+        ("result = 0\n    assert (result or 1) == 1", True),
+        ("result = 3\n    assert (result or 1) == 1", False),
+    ],
+)
+def test_security_scan_preserves_python_boolean_operand_semantics(
+    tmp_path, body, finding
+):
+    (tmp_path / "case.py").write_text("def test_behavior():\n    " + body + "\n")
+    result = security_scan(tmp_path)
+    assert bool(result["findings"]) is finding
 
 
 @pytest.mark.parametrize(
