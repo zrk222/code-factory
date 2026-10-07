@@ -6,7 +6,7 @@
   "ruleset_sha256": "36ef7d92e174230b8c7c26b952562be23837472c2239b6752de64d5d683a800e",
   "commands": [
     {
-      "argv": ["/opt/factory/bin/osv-offline", "scan", "source", "-r", "{source}", "--offline", "--offline-vulnerabilities", "--allow-no-lockfiles", "--format", "json", "--output", "{report}"],
+      "argv": ["/opt/factory/bin/osv-offline", "scan", "source", "-r", "{source}", "--offline", "--offline-vulnerabilities", "--allow-no-lockfiles", "--all-packages", "--format", "json", "--output", "{report}"],
       "accepted_exit_codes": [0, 1]
     }
   ],
