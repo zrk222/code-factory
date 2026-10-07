@@ -17,6 +17,61 @@ from factoryline.deep_audit_io import digest
 from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
 
 
+@pytest.mark.parametrize("local_id", [False, True])
+def test_docker_preflight_verifies_exact_immutable_pin(monkeypatch, local_id):
+    import factoryline.deep_audit as module
+
+    pin = ("" if local_id else "example/adapter@") + "sha256:" + "a" * 64
+    calls = []
+
+    def control(base, args):
+        calls.append(args)
+        value = "linux" if args[0] == "info" else (pin if local_id else [pin])
+        return {"exit_code": 0}, json.dumps(value).encode()
+
+    monkeypatch.setattr(module, "_docker_control", control)
+    module._docker_preflight(["docker"], {"image": pin})
+    field = ".Id" if local_id else ".RepoDigests"
+    assert calls[-1] == ["image", "inspect", pin, "--format", "{{json " + field + "}}"]
+
+
+@pytest.mark.parametrize("local_id", [False, True])
+@pytest.mark.parametrize("actual", [None, {}, [], "sha256:" + "b" * 64])
+def test_docker_preflight_rejects_wrong_pin_shape_or_digest(
+    monkeypatch, local_id, actual
+):
+    import factoryline.deep_audit as module
+
+    pin = ("" if local_id else "example/adapter@") + "sha256:" + "a" * 64
+
+    def control(base, args):
+        value = "linux" if args[0] == "info" else actual
+        return {"exit_code": 0}, json.dumps(value).encode()
+
+    monkeypatch.setattr(module, "_docker_control", control)
+    with pytest.raises(RuntimeAuditError, match="E_IMAGE_PIN"):
+        module._docker_preflight(["docker"], {"image": pin})
+
+
+def test_docker_preflight_missing_local_image_never_pulls(monkeypatch):
+    import factoryline.deep_audit as module
+
+    calls = []
+
+    def control(base, args):
+        calls.append(args)
+        return (
+            ({"exit_code": 0}, b'"linux"')
+            if args[0] == "info"
+            else ({"exit_code": 1}, b"")
+        )
+
+    monkeypatch.setattr(module, "_docker_control", control)
+    with pytest.raises(RuntimeAuditError, match="E_IMAGE_UNAVAILABLE"):
+        module._docker_preflight(["docker"], {"image": "sha256:" + "a" * 64})
+    assert [args[0] for args in calls] == ["info", "image"]
+
+
 def test_missing_nested_source_has_typed_error(tmp_path: Path) -> None:
     from factoryline.deep_audit_io import local_file
 

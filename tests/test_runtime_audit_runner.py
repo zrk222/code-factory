@@ -70,6 +70,22 @@ def test_runner_supports_bounded_parallel_lanes_with_isolated_scratch(tmp_path):
     assert all(item["target"]["artifact"] for item in result["executions"])
 
 
+def test_missing_artifact_error_does_not_disclose_absolute_path(tmp_path):
+    lane = {
+        "id": "lane",
+        "kind": "stateful_invariant",
+        "timeout_seconds": 5,
+        "target_argv": [sys.executable, "-c", "pass", "{artifact}"],
+        "known_bad_argv": [sys.executable, "-c", "pass", "{artifact}"],
+    }
+    result = run_runtime_audit_plan({"lanes": [lane]}, tmp_path, tmp_path / "out")
+
+    assert str(tmp_path) not in json.dumps(result)
+    assert result["executions"][0]["target"]["artifact_error"] == {
+        "code": "E_ARTIFACT_MISSING"
+    }
+
+
 def test_supervisor_times_out_and_hashes_output_without_retaining_it(tmp_path):
     scratch = tmp_path / "scratch"
     scratch.mkdir()
@@ -81,7 +97,67 @@ def test_supervisor_times_out_and_hashes_output_without_retaining_it(tmp_path):
     )
     assert result["timed_out"] is True
     assert result["cleanup_confirmed"] is True
+    assert result["timeout_seconds"] == 1
+    assert result["duration_ms"] >= 1
+    assert result["termination_reason"] == "timeout"
     assert "safe" not in json.dumps(result)
+
+
+def test_supervisor_times_out_before_a_late_child_exit_is_polled(monkeypatch):
+    from factoryline.runtime_audit_process import _wait_for_exit_or_limit
+
+    class Child:
+        def __init__(self):
+            self.wait_calls = 0
+            self.exit_code = None
+
+        def wait(self, timeout):
+            self.wait_calls += 1
+            if self.wait_calls == 2:
+                # Exit races the deadline: the bounded wait reports timeout,
+                # then the supervisor observes the child's exit.
+                self.exit_code = 0
+            raise __import__("subprocess").TimeoutExpired("late", timeout)
+
+    clock = iter((10.0, 10.5, 10.99, 11.01))
+    monkeypatch.setattr(
+        "factoryline.runtime_audit_process.time.monotonic", lambda: next(clock)
+    )
+    child = Child()
+
+    assert _wait_for_exit_or_limit(child, 1, threading.Event()) is True
+    assert child.wait_calls == 2
+    assert child.exit_code == 0
+
+
+def test_supervisor_deadline_includes_launch_and_stream_setup(monkeypatch, tmp_path):
+    class Child:
+        returncode = 0
+
+    monkeypatch.setattr("factoryline.runtime_audit_process._launch", lambda *a: Child())
+    monkeypatch.setattr(
+        "factoryline.runtime_audit_process._start_stream_readers",
+        lambda *a: [],
+    )
+    monkeypatch.setattr(
+        "factoryline.runtime_audit_process._await_cleanup", lambda *a: (True, True)
+    )
+    monkeypatch.setattr(
+        "factoryline.runtime_audit_process._cleanup_is_confirmed",
+        lambda *a: True,
+    )
+    clock = iter((10.0, 10.0, 11.01, 11.02))
+    monkeypatch.setattr(
+        "factoryline.runtime_audit_process.time.monotonic", lambda: next(clock)
+    )
+
+    result = run_bounded_command(
+        [sys.executable, "-c", "pass"], tmp_path, 1, tmp_path / "scratch"
+    )
+
+    assert result["timed_out"] is True
+    assert result["duration_ms"] == 1020
+    assert result["exit_code"] == 0
 
 
 def test_windows_cleanup_timeout_is_contained(monkeypatch):

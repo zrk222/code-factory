@@ -13,14 +13,15 @@ Code Factory shall coordinate six runtime assurance lanes against a specific can
 - When `REQ_CONTRACT` accepts a plan, it shall verify an Ed25519 DSSE envelope of type `application/vnd.factory.runtime-audit-plan.v1+json` against an explicit local trust root, require schema `factory.runtime-audit-plan.v1`, bind one 64-hex candidate digest and 1 to 128 workspace files by relative path, SHA-256 and byte size, require exactly the six closed lane enums, and reject expiry after 24 hours, duplicate identifiers, unknown fields, path escape, missing files, source drift, or a future issue time. [R10]
 - When `REQ_COUNTERFACTUAL_MESH` accepts a plan, it shall require one authoritative shared scenario digest and 2 to 5 closed transformation relations across the six lanes; agent-proposed scenario authority or a target/known-bad artifact with a different scenario digest shall block the composite result. [R15]
 - When `REQ_RUNNER` executes a lane, it shall run only its signed argv without a shell through the existing supervised runner, enforce a signed timeout from 1 to 300 seconds for each command and exactly 2 commands per lane, create one unique workspace-contained evidence directory per command, bind command exit status plus stdout, stderr and declared artifact hashes, and label the boundary `supervised_subprocess_not_sandboxed`. [R20]
+- When `REQ_COMMAND_TRACE` records either command, it shall bind the lane and leg, signed timeout of 1 through 300 seconds, monotonic command-execution milliseconds measured from immediately before starting the signed command through observed exit/limit (excluding cleanup), and the `termination_reason` enum (`process_exit`, `timeout`, `output_limit`, `cancelled`, `launch_error`), exit status, cleanup confirmation, and stdout/stderr byte counts and SHA-256 digests; it shall not retain raw output in the receipt. Starting the signed command and initializing its stream readers consume the signed timeout. A child observed exited after its deadline is `INCOMPLETE` with `RUNTIME_AUDIT_TIMEOUT`, even if its exit code is zero. A `process_exit` whose recorded duration exceeds the signed timeout is `INCOMPLETE` with `RUNTIME_AUDIT_TRACE_INCONSISTENT`. Terminal-reason precedence is cancellation, timeout, output limit, launch error, then normal exit; simultaneous secondary limit flags remain recorded. Cancellation returns `INCOMPLETE` with `RUNTIME_AUDIT_CANCELLED`; timeout returns `INCOMPLETE` with `RUNTIME_AUDIT_TIMEOUT`. Missing or contradictory trace fields shall return `INCOMPLETE` with `RUNTIME_AUDIT_TRACE_INCONSISTENT`. [R25]
 - If `REQ_NEGATIVE_CONTROL` validates a lane, it shall require exactly 1 target command to exit zero and exactly 1 separate known-bad command to exit nonzero within their signed 1-to-300-second timeouts; a known-bad exit zero shall return `HOLLOW_RUNTIME_AUDIT`. [R30]
 - While `REQ_AUTHORITY` returns a result, it shall grant no source modification, merge, approval, publication, deployment, signing, credential, provider, connector or messaging authority. [R40]
 
 ## MUST — Six evidence adapters
 
-- When `REQ_STATEFUL` evaluates the `stateful_invariant` lane, it shall return `PASS` only for an artifact from the signed engine identifier containing 2 to 1000 generated examples, 2 to 200 actions per example, 1 to 128 approved invariant identifiers, one integer seed from 0 to 4294967295 and zero invariant violations; for 1 or more violations it shall return `FAIL` with 1 to 200 action identifiers and exactly 1 failing invariant identifier. [R50]
-- When `REQ_TENANT` evaluates the `tenant_isolation` lane, it shall require 2 to 256 runtime observations including allowed owner plus denied cross-tenant, anonymous and revoked-session cases for every signed API, cache, session, export, storage, queue or background-job surface in cold, warm and post-revocation phases; it shall reject any denied case returning a signed-plan forbidden field, a status outside the approved set, a nonempty tenant-data digest or a mutation effect. [R60]
-- When `REQ_RECOVERY` evaluates the `failure_recovery` lane, it shall require 2 to 64 concurrent or duplicate operations, at least one declared network/dependency fault, pre-fault, during-fault and recovered observations, exact approved post-recovery invariants, and successful cleanup evidence; it shall reject duplicated side effects, lost updates, incomplete cleanup, or a recovery state mismatch. [R70]
+- When `REQ_STATEFUL` evaluates the `stateful_invariant` lane, it shall return `PASS` only for an artifact from the signed engine identifier containing 2 to 1000 generated examples, 2 to 200 actions per example, 1 to 128 approved invariant identifiers, one integer seed from 0 to 4294967295 and zero invariant violations; each invariant shall have at least one check per reported example and no more checks than the example/action bounds permit; for 1 or more violations it shall return `FAIL` with 1 to 200 action identifiers and exactly 1 failing invariant identifier. [R50]
+- When `REQ_TENANT` evaluates the `tenant_isolation` lane, it shall require 2 to 256 runtime observations including allowed owner plus denied cross-tenant, anonymous and revoked-session cases for every signed API, cache, session, export, storage, queue or background-job surface in cold, warm and post-revocation phases; each signed surface shall bind an expected owner-data digest and required owner fields, and owner observations must match both; an absent owner record or mismatched owner digest shall return `OWNER_RESPONSE_MISMATCH`; it shall reject any denied case returning a signed-plan forbidden field, a status outside the approved set, a nonempty tenant-data digest or a mutation effect. [R60]
+- When `REQ_RECOVERY` evaluates the `failure_recovery` lane, it shall require schema `factory.runtime.recovery.v2`, 2 to 64 concurrent or duplicate operations, and a distinct observed record for every signed fault mode, each bound to a valid phase, one or more operation IDs, and a canonical SHA-256 digest over those exact fields; overlap schedules shall be similarly hash-bound. It shall also require pre-fault, during-fault and recovered observations, exact approved post-recovery invariants, and successful cleanup evidence; it shall reject duplicated side effects, lost updates, incomplete cleanup, or a recovery state mismatch. [R70]
 - When `REQ_COMPATIBILITY` evaluates the `consumer_compatibility` lane, it shall accept only a native Pact verifier or approved schema validator artifact bound to 1 to 256 consumer interactions, require provider version, consumer version, branch/environment and any signed can-I-deploy-style matrix decision, reject any mismatch, missing interaction, incompatible/missing matrix pair or pending/WIP failure, and never infer compatibility from schema file validity alone. [R80]
 - When `REQ_MIGRATION` evaluates the `migration_integrity` lane, it shall require exactly 1 isolated database rehearsal with 1 before-schema digest, 1 after-schema digest, 1 to 256 invariant query identifiers, 1 to 256 record-count checks, 1 integrity-violation count, exactly 1 old-reader decision, exactly 1 new-reader decision, exactly 1 tested rollback or explicit forward-fix rehearsal, signed required catalog objects and a lock-wait budget; it shall reject drift, loss, an integrity count above zero, a false reader decision, missing or invalid catalog state, excess lock wait or a missing recovery strategy. [R90]
 - When `REQ_PERFORMANCE` evaluates the `performance_regression` lane, it shall require equivalent baseline and candidate workload digests, tool and environment fingerprints, 10 to 1000000 observations, bounded soak and cooldown series, load-generator capacity evidence, one selected memory/resource profiler and at least one latency, error-rate or resource threshold whose provenance is human-confirmed, trusted-source or observed-production; it shall fail when any approved threshold or profiler finding is exceeded, report post-cooldown growth as a retention signal rather than proof of a leak, and keep agent-proposed thresholds advisory. [R100]
@@ -28,6 +29,7 @@ Code Factory shall coordinate six runtime assurance lanes against a specific can
 ## MUST — Independent evaluation and composite decision
 
 - When `REQ_ARTIFACTS` reads a tool artifact, it shall parse one JSON object of at most 1048576 bytes with a recognized schema and adapter-specific field bounds, calculate the decision from numeric and categorical observations, reject NaN, infinity, negative counts, unknown enum values, duplicate IDs, any field named `body`, `headers`, `token`, `password` or `secret`, and an artifact hash that changes across two reads, and ignore any input `passed`, `ok`, `verdict` or `decision` field. [R110]
+- When `REQ_ARTIFACT_EVALUATION` encounters malformed nested artifact data or a deterministic evaluation error, it shall return a redacted `INCOMPLETE` lane result with stable error code `E_ARTIFACT_INVALID` when no validated domain-specific code exists; it shall never crash the composite evaluation or reinterpret an invalid artifact as a pass. [R115]
 - When `REQ_DECISION` joins the six lanes, it shall return `BLOCKED` if any lane fails, is incomplete, lacks its negative control, uses stale evidence, or lacks runtime-environment attestation; only six fresh passing lanes may return `READY_FOR_HUMAN_REVIEW`, which is not release approval. [R120]
 - When `REQ_MISSION` projects a run, it shall return exactly 6 lane records through the shared Mission and machine-readable MCP surfaces; every record shall contain 1 question, 1 state, 1 exact finding, 1 consequence, 1 evidence digest, 1 signed replay or remediation action, and 1 scope limitation, including failed and incomplete lanes. [R130]
 - When `REQ_ACTIONS` projects a run, it shall emit exactly 1 repair record per failed or incomplete lane with a maximum of 6 records, sort those records by the closed lane priority, label native engines separately from approved adapters, and emit a maximum of 4 recognized cross-lane co-occurrence signals as review routing rather than causal proof. [R140]
@@ -40,6 +42,26 @@ Scenario: All six independent observations satisfy approved contracts
   Given a signed unexpired plan bound to unchanged candidate sources and six target plus known-bad commands
   When REQ_RUNNER executes the plan and REQ_ARTIFACTS computes every lane result
   Then REQ_NEGATIVE_CONTROL rejects each known-bad case and REQ_DECISION returns READY_FOR_HUMAN_REVIEW
+
+Scenario: Reject a normal-exit trace beyond its signed timeout
+  Given a signed command timeout is 1 second and its normal-completion trace reports 1001 milliseconds
+  When REQ_COMMAND_TRACE validates that command
+  Then the lane returns `RUNTIME_AUDIT_TRACE_INCONSISTENT` and the composite is blocked
+
+Scenario: Count process launch and stream setup against the signed timeout
+  Given a signed command timeout is 1 second and launch plus stream setup consumes more than 1 second
+  When REQ_RUNNER begins waiting for the child process
+  Then the command is marked timed out and cannot pass even if the child has exited
+
+Scenario: Cancellation wins over a simultaneous timeout flag
+  Given a command trace records both cancellation and timeout
+  When REQ_COMMAND_TRACE derives the terminal finding
+  Then the lane reports `RUNTIME_AUDIT_CANCELLED` and preserves the secondary timeout flag
+
+Scenario: Convert unexpected lane evaluation errors into incomplete evidence
+  Given a lane evaluator raises an unexpected error containing private diagnostic text
+  When REQ_ARTIFACT_EVALUATION evaluates the command artifact
+  Then the lane returns redacted `INCOMPLETE` with `E_ARTIFACT_INVALID` and the composite is blocked
   And REQ_AUTHORITY grants no release action
 
 Scenario: An agent weakens its own threshold
@@ -51,6 +73,21 @@ Scenario: A green report omits a denied tenant case
   Given a tenant tool artifact says passed but lacks the revoked-session pair
   When REQ_TENANT and REQ_ARTIFACTS evaluate it
   Then the input passed field is ignored and the lane is incomplete
+
+Scenario: Owner access returns an empty or wrong tenant record
+  Given a tenant matrix contains all denied controls but an owner request returns no record or a digest different from its signed expected data
+  When REQ_TENANT evaluates the owner positive control
+  Then the lane fails with `OWNER_RESPONSE_MISMATCH`
+
+Scenario: Stateful invariants are only checked once
+  Given a run reports multiple generated examples but an invariant has fewer checks than examples
+  When REQ_STATEFUL evaluates the invariant
+  Then the lane is incomplete and cannot pass on a sparse check count
+
+Scenario: A fault is listed but not independently evidenced
+  Given a recovery artifact lists each required fault but one fault has no observed operation-bound evidence digest
+  When REQ_RECOVERY evaluates the artifact
+  Then the lane is incomplete for that specific fault
 
 Scenario: A recovery command hides duplicate effects
   Given concurrent retries produce two durable effects for one idempotency key

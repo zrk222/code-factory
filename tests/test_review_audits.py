@@ -10,6 +10,7 @@ from factoryline.review_audits import (
     ReviewAuditError,
     audit_code,
     audit_fingerprint,
+    load_tenant_read_contract,
     security_evals,
     security_scan,
 )
@@ -441,6 +442,12 @@ def test_security_scan_receipt_measures_complete_supported_source_coverage(tmp_p
 
 def test_security_cli_displays_measured_source_audit_rate(tmp_path, capsys):
     (tmp_path / "app.py").write_text("answer = 42\n", encoding="utf-8")
+    factory_dir = tmp_path / ".factory"
+    factory_dir.mkdir()
+    (factory_dir / "tenant-read-contract.json").write_text(
+        json.dumps({"schema": "factory.tenant-read-contract.v1", "reads": []}),
+        encoding="utf-8",
+    )
 
     assert main(["audit", "security", "--root", str(tmp_path)]) == 0
 
@@ -650,7 +657,7 @@ def test_security_evals_kill_all_adversarial_fixtures_and_keep_safe_control_clea
     result = security_evals()
     assert result["marker"] == "SECURITY_EVALS_COMPLETE"
     assert result["state"] == "PASS"
-    assert result["mutation_coverage"] == {"attempted": 12, "caught": 12, "rate": 1.0}
+    assert result["mutation_coverage"] == {"attempted": 14, "caught": 14, "rate": 1.0}
     assert result["safe_controls"] == {"attempted": 4, "passed": 4}
     assert result["authority"]["approval"] is False
 
@@ -677,6 +684,7 @@ def test_security_scan_detects_local_hollow_test_oracles(tmp_path, body):
         "expected = 3\n    alias = expected\n    assert alias == expected",
         "value = value\n    assert value == value",
         "result = 3\n    assert result == 3",
+        "x = 5\n    x = x + 1\n    assert x == 6",
         "assert result or True",
     ],
 )
@@ -705,6 +713,22 @@ def test_security_scan_preserves_real_assertions_and_exception_controls(tmp_path
     else:
         source = "def test_behavior():\n    " + body + "\n"
     (tmp_path / "case.py").write_text(source)
+    assert security_scan(tmp_path)["findings"] == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "argument = 5\n    result = compute(argument)\n    assert result == 6",
+        "cases = [(2, 4)]\n    for value, expected in cases:\n        assert compute(value) == expected",
+        "result = compute_value()\n    assert result == 6",
+        "result = 0\n    if condition:\n        result = compute_value()\n    assert result == 6",
+        "result = 0\n    try:\n        result = compute_value()\n    except ValueError:\n        result = fallback()\n    assert result == 6",
+        "result = 0\n    with resource() as result:\n        pass\n    assert result == 6",
+    ],
+)
+def test_security_scan_preserves_runtime_and_branch_rebound_oracles(tmp_path, body):
+    (tmp_path / "case.py").write_text("def test_behavior():\n    " + body + "\n")
     assert security_scan(tmp_path)["findings"] == []
 
 
@@ -1325,8 +1349,13 @@ def test_security_cli_applies_explicit_tenant_contract(tmp_path, capsys):
     (tmp_path / "app.py").write_text(
         "def fetch(record_id):\n    return store.fetch(record_id)\n"
     )
-    assert main(["audit", "security", "--root", str(tmp_path), "--json"]) == 0
-    capsys.readouterr()
+    assert main(["audit", "security", "--root", str(tmp_path), "--json"]) == 1
+    missing_contract = json.loads(capsys.readouterr().out)
+    assert missing_contract["state"] == "INCOMPLETE"
+    assert missing_contract["tenant_read_contract"]["configuration"]["state"] == (
+        "missing"
+    )
+    assert "Tenant isolation remains unassessed" in missing_contract["action_summary"]
     assert (
         main(
             [
@@ -1343,6 +1372,10 @@ def test_security_cli_applies_explicit_tenant_contract(tmp_path, capsys):
     )
     result = json.loads(capsys.readouterr().out)
     assert result["finding_counts"] == {"SECURITY_MISSING_TENANT_ISOLATION": 1}
+    (tmp_path / ".factory" / "tenant-read-contract.json").write_text(
+        json.dumps({"schema": "factory.tenant-read-contract.v1", "reads": []}),
+        encoding="utf-8",
+    )
     (tmp_path / "app.py").write_text(
         "def fetch(record_id, organization_scope):\n"
         "    return store.fetch(record_id, organization_scope)\n",
@@ -1365,6 +1398,88 @@ def test_security_cli_applies_explicit_tenant_contract(tmp_path, capsys):
         == 0
     )
     assert json.loads(capsys.readouterr().out)["state"] == "CLEAN"
+
+
+def test_security_cli_loads_project_contract_for_original_tenant_cases(
+    tmp_path, capsys
+):
+    factory_dir = tmp_path / ".factory"
+    factory_dir.mkdir()
+    contract_path = factory_dir / "tenant-read-contract.json"
+    contract_path.write_text(
+        json.dumps(
+            {
+                "schema": "factory.tenant-read-contract.v1",
+                "reads": [
+                    {
+                        "call": "store.fetch",
+                        "binding": "keyword:tenant_id:org_scope",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    source_path = tmp_path / "app.py"
+    source_path.write_text(
+        "def unscoped(record_id, org_scope):\n"
+        "    return store.fetch(record_id, tenant_id=record_id)\n\n"
+        "def scoped(record_id, org_scope):\n"
+        "    return store.fetch(record_id, tenant_id=org_scope)\n",
+        encoding="utf-8",
+    )
+
+    assert main(["audit", "security", "--root", str(tmp_path), "--json"]) == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["finding_counts"] == {"SECURITY_MISSING_TENANT_ISOLATION": 1}
+    assert result["tenant_read_contract"]["configuration"]["state"] == "loaded"
+    assert result["tenant_read_contract"]["configuration"]["sha256"]
+
+    source_path.write_text(
+        "def unscoped(record_id, org_scope):\n"
+        "    return store.fetch(record_id, tenant_id=org_scope)\n\n"
+        "def scoped(record_id, org_scope):\n"
+        "    return store.fetch(record_id, tenant_id=org_scope)\n",
+        encoding="utf-8",
+    )
+    assert main(["audit", "security", "--root", str(tmp_path), "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["state"] == "CLEAN"
+    assert result["tenant_read_contract"]["configuration"]["path"] == (
+        ".factory/tenant-read-contract.json"
+    )
+
+
+def test_tenant_read_contract_rejects_unknown_fields_and_duplicate_calls(tmp_path):
+    folder = tmp_path / ".factory"
+    folder.mkdir()
+    path = folder / "tenant-read-contract.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "factory.tenant-read-contract.v1",
+                "reads": [{"call": "store.fetch", "extra": True}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ReviewAuditError, match="Each tenant read requires"):
+        load_tenant_read_contract(tmp_path)
+
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "factory.tenant-read-contract.v1",
+                "reads": [
+                    {"call": "store.fetch"},
+                    {"call": "store.fetch"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ReviewAuditError, match="calls must be unique"):
+        load_tenant_read_contract(tmp_path)
 
 
 def test_security_evals_cli_reports_fail_closed_contract(tmp_path, capsys):

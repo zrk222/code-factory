@@ -1,6 +1,11 @@
 import pytest
 from factoryline.runtime_audit_stateful import evaluate_stateful
 from factoryline.runtime_audit_recovery import evaluate_recovery
+from factoryline.runtime_audit_common import canonical_bytes, sha256_bytes
+
+
+def evidence_digest(observation, fields):
+    return sha256_bytes(canonical_bytes({key: observation[key] for key in fields}))
 
 
 def stateful():
@@ -63,6 +68,7 @@ def test_equal_bounds_remain_valid_and_real_failures_are_preserved():
 def test_concurrency_requires_enough_observed_operations(concurrency, expected):
     config = {
         "fault_modes": ["timeout"],
+        "min_interleavings": 2,
         "postconditions": [
             {"id": "balance", "metric": "balance", "operator": "eq", "value": 1}
         ],
@@ -70,20 +76,49 @@ def test_concurrency_requires_enough_observed_operations(concurrency, expected):
         "max_attempts_per_key": 3,
     }
     artifact = {
-        "schema": "factory.runtime.recovery.v1",
+        "schema": "factory.runtime.recovery.v2",
         "engine": "approved_fault_runner",
         "engine_version": "1",
         "operations": [
             {"id": "a", "idempotency_key": "k", "effects": 1},
             {"id": "b", "idempotency_key": "k", "effects": 0},
         ],
-        "fault_modes": ["timeout"],
+        "overlap_observations": [
+            {
+                "schedule_id": "schedule-1",
+                "operation_ids": ["a", "b"],
+                "overlap_confirmed": True,
+                "evidence_sha256": "",
+            },
+            {
+                "schedule_id": "schedule-2",
+                "operation_ids": ["a", "b"],
+                "overlap_confirmed": True,
+                "evidence_sha256": "",
+            },
+        ],
+        "fault_observations": [
+            {
+                "mode": "timeout",
+                "observed": True,
+                "phase": "during_fault",
+                "operation_ids": ["a", "b"],
+                "evidence_sha256": "",
+            }
+        ],
         "phases": {"pre_fault": {}, "during_fault": {}, "recovered": {"balance": 1}},
         "cleanup": {"attempted": True, "succeeded": True},
         "max_concurrency": concurrency,
-        "fault_observed": True,
         "lost_updates": 0,
     }
+    for observation in artifact["overlap_observations"]:
+        observation["evidence_sha256"] = evidence_digest(
+            observation, ("schedule_id", "operation_ids", "overlap_confirmed")
+        )
+    for observation in artifact["fault_observations"]:
+        observation["evidence_sha256"] = evidence_digest(
+            observation, ("mode", "observed", "phase", "operation_ids")
+        )
     result = evaluate_recovery(
         artifact, config, engine="approved_fault_runner", engine_version="1"
     )

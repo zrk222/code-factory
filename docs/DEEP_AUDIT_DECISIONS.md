@@ -527,6 +527,13 @@ coordinator. It must not be cited as a penetration-test receipt.
    `/opt/factory/bin/audit-adapter <engine> --mode <mode>` and contain the approved
    toolchain/rules/offline vulnerability databases. Engine registration does not
    mean an adapter image is supplied or validated by this release.
+   Local builds can use their full `sha256:<64 lowercase hex>` image ID from
+   `docker image inspect --format '{{.Id}}' <built-image>`, without publishing to
+   a registry. Distributed images use `<repository>@sha256:<manifest-digest>`.
+   Preflight verifies the exact local image ID or repository digest respectively;
+   tags, shortened IDs and mismatched pins are rejected. The signed manifest and
+   authorization bind the same image string. An immutable image pin proves image
+   identity, not adapter correctness or scanner coverage.
 5. Run the explicit command (replace all placeholders with operator pins):
 
    ```text

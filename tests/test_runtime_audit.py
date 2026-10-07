@@ -71,6 +71,7 @@ def _plan():
 def _command(kind, bad=False):
     artifact = {"kind": kind, "bad": bad, "scenario_sha256": "d" * 64}
     return {
+        "timeout_seconds": 3,
         "artifact": artifact,
         "artifact_sha256": sha256_bytes(canonical_bytes(artifact)),
         "normalized_artifact_sha256": sha256_bytes(canonical_bytes(artifact)),
@@ -80,9 +81,14 @@ def _command(kind, bad=False):
             "launch_error": False,
             "output_limit_exceeded": False,
             "cleanup_confirmed": True,
+            "timeout_seconds": 3,
+            "duration_ms": 25,
+            "termination_reason": "process_exit",
             "exit_code": 1 if bad else 0,
             "stdout_sha256": "0" * 64,
+            "stdout_bytes": 0,
             "stderr_sha256": "0" * 64,
+            "stderr_bytes": 0,
         },
     }
 
@@ -115,6 +121,10 @@ def test_six_lane_join_requires_real_negative_controls(monkeypatch, tmp_path):
     assert receipt["decision"] == "READY_FOR_HUMAN_REVIEW"
     assert len(receipt["lanes"]) == 6 and receipt["release_approval"] is False
     assert receipt["cross_lane_assurance"]["scenario_id"] == "shared"
+    trace = receipt["lanes"][0]["evidence"]["command_trace"]
+    assert trace["target"]["duration_ms"] == 25
+    assert trace["known_bad"]["termination_reason"] == "process_exit"
+    assert receipt["lanes"][0]["evidence"]["known_bad_stdout_sha256"] == "0" * 64
     assert receipt["repair_queue"] == []
     assert receipt["fact_index"]["mutable"] is False
     keys = [item["key"] for item in receipt["fact_index"]["values"]]
@@ -214,6 +224,227 @@ def test_runtime_boundary_is_joined_without_promoting_supervision(
     blocked = evaluate_runtime_audit(plan, executions, tmp_path)
     assert blocked["decision"] == "BLOCKED"
     assert blocked["runtime_boundary"]["finding"] == "E_ISOLATION_UNPROVEN"
+
+
+def test_command_timeout_is_incomplete_and_keeps_safe_trace(monkeypatch, tmp_path):
+    for kind in LANES:
+        monkeypatch.setitem(
+            EVALUATORS,
+            kind,
+            lambda artifact, config, engine, engine_version, k=kind: {
+                "lane": k,
+                "state": "FAIL" if artifact["bad"] else "PASS",
+                "finding": f"NEG_{k}" if artifact["bad"] else "HELD",
+                "consequence": "observed",
+                "details": {},
+            },
+        )
+    executions = {
+        "executions": [
+            {
+                "id": kind,
+                "kind": kind,
+                "target": _command(kind),
+                "known_bad": _command(kind, True),
+            }
+            for kind in LANES
+        ]
+    }
+    executions["executions"][0]["target"]["execution"].update(
+        timed_out=True,
+        output_limit_exceeded=True,
+        duration_ms=3000,
+        termination_reason="timeout",
+    )
+    receipt = evaluate_runtime_audit(_plan(), executions, tmp_path)
+    assert receipt["decision"] == "BLOCKED"
+    lane = receipt["lanes"][0]
+    assert lane["finding"] == "RUNTIME_AUDIT_TIMEOUT"
+    assert lane["details"] == {
+        "duration_ms": 3000,
+        "timeout_seconds": 3,
+        "termination_reason": "timeout",
+    }
+    assert lane["evidence"]["command_trace"]["target"]["stdout_sha256"] == "0" * 64
+
+
+def test_cancellation_precedes_simultaneous_timeout(monkeypatch, tmp_path):
+    for kind in LANES:
+        monkeypatch.setitem(
+            EVALUATORS,
+            kind,
+            lambda artifact, config, engine, engine_version, k=kind: {
+                "lane": k,
+                "state": "FAIL" if artifact["bad"] else "PASS",
+                "finding": f"NEG_{k}" if artifact["bad"] else "HELD",
+                "consequence": "observed",
+                "details": {},
+            },
+        )
+    executions = {
+        "executions": [
+            {
+                "id": kind,
+                "kind": kind,
+                "target": _command(kind),
+                "known_bad": _command(kind, True),
+            }
+            for kind in LANES
+        ]
+    }
+    executions["executions"][0]["target"]["execution"].update(
+        cancelled=True,
+        timed_out=True,
+        termination_reason="cancelled",
+    )
+
+    receipt = evaluate_runtime_audit(_plan(), executions, tmp_path)
+
+    assert receipt["decision"] == "BLOCKED"
+    assert receipt["lanes"][0]["finding"] == "RUNTIME_AUDIT_CANCELLED"
+
+
+def test_artifact_error_message_is_rejected_without_receipt_disclosure(
+    monkeypatch, tmp_path
+):
+    for kind in LANES:
+        monkeypatch.setitem(
+            EVALUATORS,
+            kind,
+            lambda artifact, config, engine, engine_version, k=kind: {
+                "lane": k,
+                "state": "FAIL" if artifact["bad"] else "PASS",
+                "finding": f"NEG_{k}" if artifact["bad"] else "HELD",
+                "consequence": "observed",
+                "details": {},
+            },
+        )
+    executions = {
+        "executions": [
+            {
+                "id": kind,
+                "kind": kind,
+                "target": _command(kind),
+                "known_bad": _command(kind, True),
+            }
+            for kind in LANES
+        ]
+    }
+    secret_path = str(tmp_path / "private-user-path")
+    executions["executions"][0]["target"]["artifact_error"] = {
+        "code": "E_ARTIFACT_MISSING",
+        "message": secret_path,
+    }
+
+    receipt = evaluate_runtime_audit(_plan(), executions, tmp_path)
+
+    assert receipt["decision"] == "BLOCKED"
+    assert secret_path not in json.dumps(receipt)
+
+
+def test_process_exit_after_signed_timeout_is_incomplete(monkeypatch, tmp_path):
+    for kind in LANES:
+        monkeypatch.setitem(
+            EVALUATORS,
+            kind,
+            lambda artifact, config, engine, engine_version, k=kind: {
+                "lane": k,
+                "state": "FAIL" if artifact["bad"] else "PASS",
+                "finding": f"NEG_{k}" if artifact["bad"] else "HELD",
+                "consequence": "observed",
+                "details": {},
+            },
+        )
+    executions = {
+        "executions": [
+            {
+                "id": kind,
+                "kind": kind,
+                "target": _command(kind),
+                "known_bad": _command(kind, True),
+            }
+            for kind in LANES
+        ]
+    }
+    executions["executions"][0]["target"]["execution"]["duration_ms"] = 3001
+
+    receipt = evaluate_runtime_audit(_plan(), executions, tmp_path)
+
+    assert receipt["decision"] == "BLOCKED"
+    assert receipt["lanes"][0]["finding"] == "RUNTIME_AUDIT_TRACE_INCONSISTENT"
+
+
+def test_unexpected_lane_evaluator_error_is_redacted_and_incomplete(
+    monkeypatch, tmp_path
+):
+    for kind in LANES:
+        monkeypatch.setitem(
+            EVALUATORS,
+            kind,
+            lambda artifact, config, engine, engine_version, k=kind: {
+                "lane": k,
+                "state": "FAIL" if artifact["bad"] else "PASS",
+                "finding": f"NEG_{k}" if artifact["bad"] else "HELD",
+                "consequence": "observed",
+                "details": {},
+            },
+        )
+
+    def fail_evaluation(*args, **kwargs):
+        raise RuntimeError("do not disclose this fixture detail")
+
+    monkeypatch.setitem(EVALUATORS, "stateful_invariant", fail_evaluation)
+    executions = {
+        "executions": [
+            {
+                "id": kind,
+                "kind": kind,
+                "target": _command(kind),
+                "known_bad": _command(kind, True),
+            }
+            for kind in LANES
+        ]
+    }
+
+    receipt = evaluate_runtime_audit(_plan(), executions, tmp_path)
+
+    assert receipt["decision"] == "BLOCKED"
+    assert receipt["lanes"][0]["state"] == "INCOMPLETE"
+    assert receipt["lanes"][0]["finding"] == "E_ARTIFACT_INVALID"
+    assert "disclose this fixture detail" not in json.dumps(receipt)
+
+
+def test_missing_nested_execution_leg_is_incomplete_not_an_exception(
+    monkeypatch, tmp_path
+):
+    for kind in LANES:
+        monkeypatch.setitem(
+            EVALUATORS,
+            kind,
+            lambda artifact, config, engine, engine_version, k=kind: {
+                "lane": k,
+                "state": "FAIL" if artifact["bad"] else "PASS",
+                "finding": f"NEG_{k}" if artifact["bad"] else "HELD",
+                "consequence": "observed",
+                "details": {},
+            },
+        )
+    executions = {
+        "executions": [
+            {
+                "id": kind,
+                "kind": kind,
+                "target": _command(kind),
+                "known_bad": _command(kind, True),
+            }
+            for kind in LANES
+        ]
+    }
+    del executions["executions"][0]["target"]
+    receipt = evaluate_runtime_audit(_plan(), executions, tmp_path)
+    assert receipt["decision"] == "BLOCKED"
+    assert receipt["lanes"][0]["state"] == "INCOMPLETE"
+    assert receipt["lanes"][0]["finding"] == "RUNTIME_AUDIT_COMMAND_EVIDENCE_MISSING"
 
 
 def test_execute_runtime_audit_binds_verified_plan_digest(monkeypatch, tmp_path):

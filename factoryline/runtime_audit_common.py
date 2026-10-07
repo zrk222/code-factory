@@ -6,8 +6,9 @@ import hashlib
 import json
 import math
 import re
+from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 MAX_ARTIFACT_BYTES = 1_048_576
 IGNORED_VERDICT_FIELDS = {"passed", "ok", "verdict", "decision"}
@@ -239,3 +240,31 @@ def lane_result(
         "consequence": consequence,
         "details": details or {},
     }
+
+
+def guarded_lane_evaluator(lane: str):
+    """Turn malformed lane evidence into a bounded INCOMPLETE result, never a crash or pass."""
+
+    def decorate(evaluator: Callable[..., dict[str, Any]]):
+        @wraps(evaluator)
+        def guarded(*args, **kwargs):
+            try:
+                return evaluator(*args, **kwargs)
+            except Exception as exc:
+                code = getattr(exc, "code", "E_ARTIFACT_INVALID")
+                if (
+                    not isinstance(code, str)
+                    or re.fullmatch(r"[A-Z0-9_]{1,64}", code) is None
+                ):
+                    code = "E_ARTIFACT_INVALID"
+                return lane_result(
+                    lane,
+                    "INCOMPLETE",
+                    code,
+                    "The lane evidence could not be evaluated safely; provide a corrected, complete artifact.",
+                    details={"error_code": code},
+                )
+
+        return guarded
+
+    return decorate

@@ -6,6 +6,7 @@ from typing import Any
 
 from .runtime_audit_common import (
     exact_keys,
+    guarded_lane_evaluator,
     lane_result,
     require_int,
     require_str,
@@ -147,18 +148,31 @@ def _invariant_identity(
 
 
 def _invariant_counts(
-    item_id: str, item: dict[str, Any]
+    item_id: str, item: dict[str, Any], examples: int, actions: int
 ) -> tuple[int, int] | dict[str, Any]:
     violations = require_int(
         item["violations"], "invariant.violations", minimum=0, maximum=1_000_000
     )
     checks = require_int(item["checks"], "invariant.checks", minimum=0, maximum=1000000)
-    if checks == 0:
+    if checks < examples:
         return lane_result(
             "stateful_invariant",
             "INCOMPLETE",
             "STATEFUL_INVARIANT_UNEXERCISED",
-            "An invariant was suppressed or never checked.",
+            "Every generated example must evaluate each approved invariant at least once.",
+            details={"invariant": item_id, "checks": checks, "minimum": examples},
+        )
+    if checks > examples * actions:
+        return lane_result(
+            "stateful_invariant",
+            "INCOMPLETE",
+            "STATEFUL_OBSERVATION_CONTRADICTION",
+            "Invariant checks exceed the declared example and action bounds.",
+            details={
+                "invariant": item_id,
+                "checks": checks,
+                "maximum": examples * actions,
+            },
         )
     if violations > checks:
         return lane_result(
@@ -213,13 +227,14 @@ def _invariant_trace(
 def _invariant_record_result(
     item: object,
     observed: dict[str, dict[str, Any]],
+    examples: int,
     actions: int,
 ) -> tuple[str, dict[str, Any]] | dict[str, Any]:
     identity = _invariant_identity(item, observed)
     if not isinstance(identity, tuple):
         return identity
     item_id, normalized = identity
-    counts = _invariant_counts(item_id, normalized)
+    counts = _invariant_counts(item_id, normalized, examples, actions)
     if not isinstance(counts, tuple):
         return counts
     violations, _checks = counts
@@ -230,7 +245,7 @@ def _invariant_record_result(
 
 
 def _invariants_result(
-    artifact: dict[str, Any], expected: list[str], actions: int
+    artifact: dict[str, Any], expected: list[str], examples: int, actions: int
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any] | None]:
     invariants = artifact["invariants"]
     if not isinstance(invariants, list) or not 1 <= len(invariants) <= 128:
@@ -242,7 +257,7 @@ def _invariants_result(
         )
     observed: dict[str, dict[str, Any]] = {}
     for item in invariants:
-        result = _invariant_record_result(item, observed, actions)
+        result = _invariant_record_result(item, observed, examples, actions)
         if not isinstance(result, tuple):
             return {}, result
         item_id, observation = result
@@ -298,6 +313,7 @@ def _terminal_result(
     )
 
 
+@guarded_lane_evaluator("stateful_invariant")
 def evaluate_stateful(
     artifact: dict[str, Any],
     config: dict[str, Any],
@@ -318,7 +334,9 @@ def evaluate_stateful(
     action_error = _action_result(artifact, config, examples, actions)
     if action_error is not None:
         return action_error
-    observed, invariant_error = _invariants_result(artifact, expected, actions)
+    observed, invariant_error = _invariants_result(
+        artifact, expected, examples, actions
+    )
     if invariant_error is not None:
         return invariant_error
     return _terminal_result(observed, expected, examples, actions, seed)

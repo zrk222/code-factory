@@ -18,6 +18,7 @@ from typing import Any
 SCHEMA = "factory.review-audit-policy.v1"
 FINGERPRINT_SCHEMA = "factory.code-review-fingerprint.v1"
 SECURITY_SCHEMA = "factory.security-audit.v1"
+TENANT_CONTRACT_SCHEMA = "factory.tenant-read-contract.v1"
 MAX_SECURITY_SOURCE_FILES = 460
 MAX_BYTES = 1_000_000
 MAX_RULES = 128
@@ -1188,6 +1189,8 @@ def _constant_value(node: ast.expr, known: dict[str, Any] | None = None) -> Any:
     known = known or {}
     if isinstance(node, ast.Name):
         return known.get(node.id, _UNKNOWN_CONSTANT)
+    if isinstance(node, ast.BinOp):
+        return _constant_binary_value(node, known)
     if isinstance(node, ast.BoolOp):
         return _boolean_operation_value(node, known)
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
@@ -1199,6 +1202,40 @@ def _constant_value(node: ast.expr, known: dict[str, Any] | None = None) -> Any:
         return ast.literal_eval(node)
     except (ValueError, TypeError, SyntaxError, RecursionError):
         return _UNKNOWN_CONSTANT
+
+
+def _constant_binary_value(node: ast.BinOp, known: dict[str, Any]) -> Any:
+    """Fold small numeric expressions without evaluating arbitrary Python."""
+    left = _constant_value(node.left, known)
+    right = _constant_value(node.right, known)
+    if (
+        left is _UNKNOWN_CONSTANT
+        or right is _UNKNOWN_CONSTANT
+        or type(left) not in {int, float}
+        or type(right) not in {int, float}
+        or abs(left) > 1_000_000_000_000
+        or abs(right) > 1_000_000_000_000
+    ):
+        return _UNKNOWN_CONSTANT
+    operations = {
+        ast.Add: operator.add,
+        ast.Sub: operator.sub,
+        ast.Mult: operator.mul,
+        ast.Div: operator.truediv,
+        ast.FloorDiv: operator.floordiv,
+        ast.Mod: operator.mod,
+        ast.Pow: operator.pow,
+    }
+    function = operations.get(type(node.op))
+    if function is None or (isinstance(node.op, ast.Pow) and abs(right) > 12):
+        return _UNKNOWN_CONSTANT
+    try:
+        value = function(left, right)
+    except (ArithmeticError, OverflowError, TypeError, ValueError):
+        return _UNKNOWN_CONSTANT
+    if type(value) not in {int, float} or abs(value) > 1_000_000_000_000:
+        return _UNKNOWN_CONSTANT
+    return value
 
 
 def _direct_test_vacuous_assertions(node: ast.AST) -> set[int]:
@@ -1213,9 +1250,6 @@ def _direct_test_vacuous_assertions(node: ast.AST) -> set[int]:
             if _vacuous_assertion(statement.test, known):
                 vacuous.add(id(statement))
             continue
-        bound = _bound_names(statement)
-        for name in bound:
-            known.pop(name, None)
         _remember_direct_constant_assignment(statement, known)
     return vacuous
 
@@ -1223,14 +1257,16 @@ def _direct_test_vacuous_assertions(node: ast.AST) -> set[int]:
 def _remember_direct_constant_assignment(
     statement: ast.stmt, known: dict[str, Any]
 ) -> None:
+    targets: list[ast.expr] = []
+    value: Any = _UNKNOWN_CONSTANT
     if isinstance(statement, ast.Assign):
         value = _constant_value(statement.value, known)
         targets = statement.targets
     elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
         value = _constant_value(statement.value, known)
         targets = [statement.target]
-    else:
-        return
+    for name in _bound_names(statement):
+        known.pop(name, None)
     if value is _UNKNOWN_CONSTANT:
         return
     for target in targets:
@@ -1579,6 +1615,65 @@ def _tenant_contract_bindings(
             )
         result.setdefault(call, []).append(binding)
     return {call: tuple(bindings) for call, bindings in sorted(result.items())}
+
+
+def load_tenant_read_contract(
+    root: Path, path: str = ".factory/tenant-read-contract.json"
+) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, Any]]:
+    """Load a bounded, workspace-contained tenant-read declaration for CLI audits."""
+    workspace = Path(root).resolve()
+    relative = _relative_path(path).as_posix()
+    contract_path = (workspace / relative).resolve()
+    if not contract_path.is_relative_to(workspace):
+        raise ReviewAuditError("Tenant-read contract must remain inside the workspace.")
+    if not contract_path.exists():
+        return (), (), {"path": relative, "state": "missing"}
+    try:
+        data, evidence = _read(workspace, relative)
+        contract = json.loads(data, object_pairs_hook=_unique_fields)
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ReviewAuditError(f"Invalid tenant-read contract: {exc}") from exc
+    if not isinstance(contract, dict) or set(contract) != {"schema", "reads"}:
+        raise ReviewAuditError("Invalid tenant-read contract schema or fields.")
+    if contract.get("schema") != TENANT_CONTRACT_SCHEMA:
+        raise ReviewAuditError("Invalid tenant-read contract schema or fields.")
+    calls, bindings = _tenant_contract_entries(contract["reads"])
+    normalized_calls = _tenant_contract_calls(calls)
+    normalized_bindings = _tenant_contract_bindings(bindings, normalized_calls)
+    flattened = tuple(
+        f"{call}={binding}"
+        for call, values in normalized_bindings.items()
+        for binding in values
+    )
+    evidence["state"] = "loaded"
+    return normalized_calls, flattened, evidence
+
+
+def _tenant_contract_entries(value: Any) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Validate declared read rows before normalizing names and bindings."""
+    if not isinstance(value, list) or len(value) > MAX_RULES:
+        raise ReviewAuditError("Tenant-read contract requires a bounded reads list.")
+    calls: list[str] = []
+    bindings: list[str] = []
+    for entry in value:
+        if not isinstance(entry, dict) or set(entry) not in (
+            {"call"},
+            {"call", "binding"},
+        ):
+            raise ReviewAuditError(
+                "Each tenant read requires call and optional binding."
+            )
+        call = entry["call"]
+        if not isinstance(call, str):
+            raise ReviewAuditError("Tenant read call must be a qualified Python name.")
+        if call in calls:
+            raise ReviewAuditError("Tenant-read contract calls must be unique.")
+        calls.append(call)
+        if "binding" in entry:
+            if not isinstance(entry["binding"], str):
+                raise ReviewAuditError("Tenant read binding must be a string.")
+            bindings.append(f"{call}={entry['binding']}")
+    return tuple(calls), tuple(bindings)
 
 
 def _tenant_binding_entry(

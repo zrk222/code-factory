@@ -42,14 +42,16 @@ Each lane must emit bounded JSON to its single `{artifact}` path. CF rejects dup
 
 ## Engine adapters and evidence boundaries
 
-- `hypothesis` or an explicitly approved state-machine runner supplies transition traces; CF checks declared coverage, invariant execution, replay stability and the known-bad counterexample.
-- `runtime_http_matrix` covers the signed API, cache, session, export, storage, queue and background-job surfaces in cold, warm and post-revocation phases.
-- `toxiproxy` or an approved fault runner supplies fault observations; CF checks duplicate effects, lost updates, retry bounds, recovery postconditions and cleanup.
+- `hypothesis` or an explicitly approved state-machine runner supplies transition traces; CF checks declared coverage, at least one invariant check per example, bounded check-count consistency, replay stability and the known-bad counterexample.
+- `runtime_http_matrix` covers the signed API, cache, session, export, storage, queue and background-job surfaces in cold, warm and post-revocation phases. Each surface pins an expected owner-data digest and required fields; HTTP success without the expected positive-control data is a failure.
+- `toxiproxy` or an approved fault runner supplies one observation per required fault (`factory.runtime.recovery.v2`). Its canonical digest binds the exact mode, observed flag, phase and operation IDs; each race schedule similarly binds its schedule ID, operation IDs and overlap flag. These hashes detect inconsistent edits to the declared fields; they do not independently authenticate that a fault truly occurred. CF also binds the complete artifact to the executed command and checks duplicate effects, lost updates, retry bounds, recovery postconditions and cleanup.
 - `pact_verifier` or an approved schema runner supplies exercised interactions; CF also requires the signed deployment-matrix decision when configured. Pending/WIP does not turn a mismatch into a pass.
 - `database_rehearsal` or `flyway` supplies an isolated rehearsal; CF checks schema/history, representative record counts, invariant digests, old/new readers, recovery, catalog validity and lock-wait budget.
 - `k6` or an approved load runner supplies an equivalent baseline/candidate comparison. CF checks authoritative thresholds, correctness under load, load-generator saturation, soak/cooldown resource series, and the selected profiler result.
 
 If the selected native engine is unavailable or does not emit the required evidence, the lane is `INCOMPLETE_TOOLING`; it does not silently fall back. An approved adapter is truthfully labelled as that adapter, not as Hypothesis, Pact, Flyway, Toxiproxy or k6.
+
+For deeper API/security coverage, see [RUNTIME_ASSURANCE_RESEARCH.md](RUNTIME_ASSURANCE_RESEARCH.md). The recommended extensions are pinned ZAP Automation Framework DAST, RESTler or Schemathesis contract-driven stateful API exploration, CodeQL source-to-sink analysis, and explicitly enabled Trivy supply-chain/IaC scans. All commands remain signed-plan-bound; active scans and deep fuzzing require a disposable isolated target. These integrations are recommended architecture, not evidence that those external scanners are installed or have run in this checkout.
 
 ## Memory and regression claims
 
@@ -57,7 +59,9 @@ RSS, heap, handle or connection growth after cooldown is reported as a **resourc
 
 ## Security and authority limits
 
-The runner uses exact argv, `shell=False`, bounded time/output, fresh temporary home directories, a minimal inherited environment, separate artifact directories, and post-run source/plan re-verification. It is supervised execution, **not** a container, VM, kernel policy, network sandbox, or protection from a malicious operator-approved command. Use disposable isolated infrastructure for untrusted programs. Local mode permits only declared loopback origins; CF does not itself enforce egress.
+The runner uses exact argv, `shell=False`, bounded time/output, fresh temporary home directories, a minimal inherited environment, separate artifact directories, and post-run source/plan re-verification. Each command trace records the signed timeout, elapsed milliseconds, terminal reason, process exit, cleanup result and hashed/count-only stdout and stderr. Cancellation, timeout, output overflow, launch failure or unconfirmed cleanup is never a pass. Malformed nested lane evidence becomes a redacted `INCOMPLETE` result with a stable error code.
+
+This remains supervised execution, **not** a container, VM, kernel policy, network sandbox, or protection from a malicious operator-approved command. Use disposable isolated infrastructure for untrusted programs. Local mode permits only declared loopback origins; CF does not itself enforce egress.
 
 Every blocking threshold must originate from `human_confirmed`, `trusted_source`, or `observed_production`. `agent_proposed` thresholds remain advisory. The agent under test cannot rewrite the signed plan, source manifest, expected negative finding, or trust-root pin.
 

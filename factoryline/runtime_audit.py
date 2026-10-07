@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -123,16 +124,135 @@ def _fact_index(
     return projection
 
 
+def _expected_termination_reason(facts: dict[str, Any]) -> str:
+    for field, reason in (
+        ("cancelled", "cancelled"),
+        ("timed_out", "timeout"),
+        ("output_limit_exceeded", "output_limit"),
+        ("launch_error", "launch_error"),
+    ):
+        if facts.get(field) is True:
+            return reason
+    return "process_exit"
+
+
 def _command_terminal(
-    kind: str, execution: dict[str, Any], negative: bool
+    kind: str,
+    execution: Any,
+    negative: bool,
+    expected_timeout_seconds: int,
 ) -> dict[str, Any] | None:
-    facts = execution["execution"]
+    if not isinstance(execution, dict):
+        return lane_result(
+            kind,
+            "INCOMPLETE",
+            "RUNTIME_AUDIT_COMMAND_EVIDENCE_MISSING",
+            "A bounded command execution record is missing.",
+        )
+    facts = execution.get("execution")
+    if not isinstance(facts, dict):
+        return lane_result(
+            kind,
+            "INCOMPLETE",
+            "RUNTIME_AUDIT_COMMAND_EVIDENCE_MISSING",
+            "The command execution facts are missing or malformed.",
+        )
+    required_facts = {
+        "timed_out",
+        "launch_error",
+        "output_limit_exceeded",
+        "cleanup_confirmed",
+        "exit_code",
+        "timeout_seconds",
+        "duration_ms",
+        "termination_reason",
+        "stdout_sha256",
+        "stdout_bytes",
+        "stderr_sha256",
+        "stderr_bytes",
+    }
+    if (
+        not required_facts.issubset(facts)
+        or execution.get("timeout_seconds") != expected_timeout_seconds
+        or facts.get("timeout_seconds") != expected_timeout_seconds
+        or isinstance(facts.get("duration_ms"), bool)
+        or not isinstance(facts.get("duration_ms"), int)
+        or facts["duration_ms"] < 0
+        or (
+            facts.get("termination_reason") == "process_exit"
+            and facts["duration_ms"] > expected_timeout_seconds * 1000
+        )
+        or facts.get("termination_reason")
+        not in {"process_exit", "timeout", "output_limit", "cancelled", "launch_error"}
+        or facts.get("termination_reason") != _expected_termination_reason(facts)
+        or (
+            facts.get("exit_code") is not None
+            and (
+                isinstance(facts.get("exit_code"), bool)
+                or not isinstance(facts.get("exit_code"), int)
+            )
+        )
+        or (
+            facts.get("termination_reason") == "process_exit"
+            and facts.get("exit_code") is None
+        )
+        or ("cancelled" in facts and type(facts["cancelled"]) is not bool)
+        or any(
+            type(facts.get(key)) is not bool
+            for key in (
+                "timed_out",
+                "launch_error",
+                "output_limit_exceeded",
+                "cleanup_confirmed",
+            )
+        )
+        or any(
+            isinstance(facts.get(key), bool)
+            or not isinstance(facts.get(key), int)
+            or facts[key] < 0
+            for key in ("stdout_bytes", "stderr_bytes")
+        )
+        or any(
+            not isinstance(facts.get(key), str)
+            or re.fullmatch(r"[0-9a-f]{64}", facts[key]) is None
+            for key in ("stdout_sha256", "stderr_sha256")
+        )
+        or not isinstance(execution.get("artifact_error"), (dict, type(None)))
+        or (
+            isinstance(execution.get("artifact_error"), dict)
+            and (
+                set(execution["artifact_error"]) != {"code"}
+                or not isinstance(execution["artifact_error"].get("code"), str)
+                or re.fullmatch(r"[A-Z0-9_]{1,64}", execution["artifact_error"]["code"])
+                is None
+            )
+        )
+    ):
+        return lane_result(
+            kind,
+            "INCOMPLETE",
+            "RUNTIME_AUDIT_TRACE_INCONSISTENT",
+            "The command trace is incomplete or contradicts its signed timeout and terminal state.",
+        )
+    if facts.get("cancelled") or facts.get("termination_reason") == "cancelled":
+        return lane_result(
+            kind,
+            "INCOMPLETE",
+            "RUNTIME_AUDIT_CANCELLED",
+            "The signed audit command was cancelled before a complete observation.",
+            details={"duration_ms": facts.get("duration_ms")},
+        )
     if facts["timed_out"]:
         return lane_result(
             kind,
             "INCOMPLETE",
             "RUNTIME_AUDIT_TIMEOUT",
             "The signed audit command did not complete within its approved bound.",
+            details={
+                "duration_ms": facts.get("duration_ms"),
+                "timeout_seconds": facts.get("timeout_seconds"),
+                "termination_reason": facts.get("termination_reason"),
+            },
         )
     if facts["launch_error"]:
         return lane_result(
@@ -148,23 +268,29 @@ def _command_terminal(
             "RUNTIME_AUDIT_PROCESS_UNBOUNDED",
             "The command exceeded bounded output or its process streams did not close.",
         )
-    if execution["artifact_error"]:
+    if execution.get("artifact_error"):
         return lane_result(
             kind,
             "INCOMPLETE",
             execution["artifact_error"]["code"],
             "The command did not produce stable bounded JSON evidence.",
-            details=execution["artifact_error"],
+            details={"code": execution["artifact_error"]["code"]},
         )
-    if not negative and facts["exit_code"] != 0:
+    return _command_exit_result(kind, facts.get("exit_code"), negative)
+
+
+def _command_exit_result(
+    kind: str, exit_code: int | None, negative: bool
+) -> dict[str, Any] | None:
+    if not negative and exit_code != 0:
         return lane_result(
             kind,
             "FAIL",
             "RUNTIME_AUDIT_TARGET_FAILED",
             "The candidate audit command failed before producing a passing observation.",
-            details={"exit_code": facts["exit_code"]},
+            details={"exit_code": exit_code},
         )
-    if negative and facts["exit_code"] == 0:
+    if negative and exit_code == 0:
         return lane_result(
             kind,
             "FAIL",
@@ -179,7 +305,14 @@ def _evaluate_artifact(
 ) -> dict[str, Any]:
     """Evaluate one candidate or known-bad artifact against the shared mesh."""
     kind = lane["kind"]
-    artifact = execution["artifact"]
+    artifact = execution.get("artifact") if isinstance(execution, dict) else None
+    if not isinstance(artifact, dict):
+        return lane_result(
+            kind,
+            "INCOMPLETE",
+            "RUNTIME_AUDIT_ARTIFACT_MISSING",
+            "The completed command did not provide a valid observation artifact.",
+        )
     scenario_sha256 = plan["counterfactual_mesh"]["scenario_sha256"]
     if artifact.get("scenario_sha256") != scenario_sha256:
         return lane_result(
@@ -197,13 +330,14 @@ def _evaluate_artifact(
             engine=lane["engine"],
             engine_version=lane["engine_version"],
         )
-    except (RuntimeAuditError, KeyError, TypeError, ValueError) as exc:
+    except Exception as exc:
+        error_code = getattr(exc, "code", "E_ARTIFACT_INVALID")
         return lane_result(
             kind,
             "INCOMPLETE",
-            getattr(exc, "code", "E_ARTIFACT_INVALID"),
+            error_code,
             "The audit artifact could not be evaluated deterministically.",
-            details={"message": str(exc)},
+            details={"error_code": error_code},
         )
 
 
@@ -217,18 +351,23 @@ def _evaluate_target(
             "RUNTIME_AUDIT_EXECUTION_MISSING",
             "This signed lane has no matching execution evidence.",
         )
-    target = execution["target"]
-    terminal = _command_terminal(lane["kind"], target, False)
+    target = execution.get("target")
+    terminal = _command_terminal(lane["kind"], target, False, lane["timeout_seconds"])
+    if terminal is not None:
+        return terminal
     return terminal or _evaluate_artifact(lane, target, plan)
 
 
 def _evaluate_known_bad(
     lane: dict[str, Any], execution: dict[str, Any], plan: dict[str, Any]
 ) -> dict[str, Any] | None:
-    terminal = _command_terminal(lane["kind"], execution["known_bad"], True)
+    known_bad = execution.get("known_bad")
+    terminal = _command_terminal(lane["kind"], known_bad, True, lane["timeout_seconds"])
     if terminal is not None:
         return terminal
-    negative = _evaluate_artifact(lane, execution["known_bad"], plan)
+    negative = _evaluate_artifact(lane, known_bad, plan)
+    if negative["state"] == "INCOMPLETE":
+        return negative
     if (
         negative["state"] != "FAIL"
         or negative["finding"] != lane["expected_negative_code"]
@@ -250,7 +389,38 @@ def _evaluate_known_bad(
 def _decorate_lane(
     lane: dict[str, Any], execution: dict[str, Any] | None, result: dict[str, Any]
 ) -> dict[str, Any]:
-    target = execution.get("target", {}) if execution else {}
+    target = execution.get("target") if execution else None
+    if not isinstance(target, dict):
+        target = {}
+    known_bad = execution.get("known_bad") if execution else None
+    if not isinstance(known_bad, dict):
+        known_bad = {}
+    target_facts = target.get("execution")
+    if not isinstance(target_facts, dict):
+        target_facts = {}
+    known_bad_facts = known_bad.get("execution")
+    if not isinstance(known_bad_facts, dict):
+        known_bad_facts = {}
+
+    def trace(command_facts: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: command_facts.get(key)
+            for key in (
+                "timeout_seconds",
+                "duration_ms",
+                "termination_reason",
+                "exit_code",
+                "timed_out",
+                "cancelled",
+                "output_limit_exceeded",
+                "cleanup_confirmed",
+                "stdout_sha256",
+                "stdout_bytes",
+                "stderr_sha256",
+                "stderr_bytes",
+            )
+        }
+
     result.update(
         {
             "id": lane["id"],
@@ -259,17 +429,15 @@ def _decorate_lane(
             "evidence": {
                 "target_artifact_sha256": target.get("artifact_sha256"),
                 "target_normalized_sha256": target.get("normalized_artifact_sha256"),
-                "known_bad_artifact_sha256": execution.get("known_bad", {}).get(
-                    "artifact_sha256"
-                )
-                if execution
-                else None,
-                "target_stdout_sha256": target.get("execution", {}).get(
-                    "stdout_sha256"
-                ),
-                "target_stderr_sha256": target.get("execution", {}).get(
-                    "stderr_sha256"
-                ),
+                "known_bad_artifact_sha256": known_bad.get("artifact_sha256"),
+                "target_stdout_sha256": target_facts.get("stdout_sha256"),
+                "target_stderr_sha256": target_facts.get("stderr_sha256"),
+                "known_bad_stdout_sha256": known_bad_facts.get("stdout_sha256"),
+                "known_bad_stderr_sha256": known_bad_facts.get("stderr_sha256"),
+                "command_trace": {
+                    "target": trace(target_facts),
+                    "known_bad": trace(known_bad_facts),
+                },
             },
             "replay": {
                 "argv": list(lane["target_argv"]),

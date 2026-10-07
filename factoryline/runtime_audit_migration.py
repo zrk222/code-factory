@@ -6,6 +6,7 @@ from typing import Any
 
 from .runtime_audit_common import (
     exact_keys,
+    guarded_lane_evaluator,
     lane_result,
     require_int,
     require_number,
@@ -259,6 +260,7 @@ def _migration_result(
     )
 
 
+@guarded_lane_evaluator("migration_integrity")
 def evaluate_migration(
     artifact: dict[str, Any],
     config: dict[str, Any],

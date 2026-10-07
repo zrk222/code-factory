@@ -182,8 +182,10 @@ def _docker_preflight(base: list, lane: dict) -> None:
         raise RuntimeAuditError(
             "E_DOCKER_UNAVAILABLE", "A running local Linux Docker engine is required"
         )
+    local_id = lane["image"].startswith("sha256:")
+    field = ".Id" if local_id else ".RepoDigests"
     facts, raw = _docker_control(
-        base, ["image", "inspect", lane["image"], "--format", "{{json .RepoDigests}}"]
+        base, ["image", "inspect", lane["image"], "--format", "{{json " + field + "}}"]
     )
     if facts["exit_code"] != 0:
         raise RuntimeAuditError(
@@ -196,10 +198,15 @@ def _docker_preflight(base: list, lane: dict) -> None:
         raise RuntimeAuditError(
             "E_IMAGE_PIN", "cannot verify the locally installed image"
         ) from exc
-    if not isinstance(pins, list) or lane["image"] not in pins:
+    matches = (
+        isinstance(pins, str) and pins == lane["image"]
+        if local_id
+        else isinstance(pins, list) and lane["image"] in pins
+    )
+    if not matches:
         raise RuntimeAuditError(
             "E_IMAGE_PIN",
-            "installed image does not match the declared repository digest",
+            "installed image does not match the declared immutable digest",
         )
 
 

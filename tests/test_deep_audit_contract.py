@@ -18,6 +18,33 @@ from factoryline.enterprise_receipts import (
 from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
 
 
+@pytest.mark.parametrize("prefix", ["", "example/adapter@"])
+def test_full_local_image_id_and_repository_digest_are_immutable_pins(prefix):
+    from factoryline.deep_audit_contract import _validate_lane_image
+
+    _validate_lane_image({"image": prefix + "sha256:" + "a" * 64})
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "example/adapter:latest",
+        "example/adapter:v1",
+        "sha256:" + "a" * 63,
+        "sha256:" + "A" * 64,
+        "sha256:" + "a" * 64 + ":tag",
+        "sha256:" + "a" * 64 + "\n",
+        "a" * 64,
+    ],
+)
+def test_mutable_or_ambiguous_image_references_are_rejected(image):
+    from factoryline.deep_audit_contract import _validate_lane_image
+
+    code = "E_FIELD" if "\n" in image else "E_IMAGE_PIN"
+    with pytest.raises(RuntimeAuditError, match=code):
+        _validate_lane_image({"image": image})
+
+
 def fixture(tmp_path, mutate=lambda p: None):
     bindings = {}
     for name, raw in (

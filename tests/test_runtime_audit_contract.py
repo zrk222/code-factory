@@ -36,11 +36,19 @@ def _configs():
             "forbidden_fields": ["tenant_id"],
             "denial_statuses": [403],
             "surfaces": [
-                {"id": "api", "category": "api", "operation": "GET", "resource": "/x"}
+                {
+                    "id": "api",
+                    "category": "api",
+                    "operation": "GET",
+                    "resource": "/x",
+                    "owner_data_sha256": D,
+                    "owner_required_fields": ["id"],
+                }
             ],
         },
         "failure_recovery": {
             "fault_modes": ["timeout"],
+            "min_interleavings": 2,
             "postconditions": [
                 {"id": "p", "metric": "count", "operator": "eq", "value": 1}
             ],

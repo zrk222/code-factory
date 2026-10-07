@@ -8,6 +8,7 @@ from typing import Any
 
 from .runtime_audit_common import (
     exact_keys,
+    guarded_lane_evaluator,
     lane_result,
     require_int,
     require_number,
@@ -596,6 +597,7 @@ def _performance_outcome(
     )
 
 
+@guarded_lane_evaluator("performance_regression")
 def evaluate_performance(
     artifact: dict[str, Any],
     config: dict[str, Any],

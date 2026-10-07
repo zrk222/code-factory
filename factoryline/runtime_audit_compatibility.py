@@ -6,6 +6,7 @@ from typing import Any
 
 from .runtime_audit_common import (
     exact_keys,
+    guarded_lane_evaluator,
     lane_result,
     require_bool,
     require_digest,
@@ -178,6 +179,7 @@ def _matrix_failure(matrix: Any, config: dict[str, Any]):
     return matrix if matrix["compatible"] is not True or missing_pairs else None, None
 
 
+@guarded_lane_evaluator(LANE)
 def evaluate_compatibility(
     artifact: dict[str, Any],
     config: dict[str, Any],
