@@ -45,3 +45,12 @@ restricted container; isolated imports are not a claim of tamper-proof harnesses
 The CodeQL target precompiles the same full Python security-extended query suite
 during image construction. This moves query compilation out of each audit run;
 the runtime profile retains its two-thread and 1,400 MB analysis limits.
+
+CodeQL's SARIF uses `%SRCROOT%` without exporting a URI base. The fixed image
+profile supplies the source root from its `/src` database-create invocation,
+without overriding an existing base. Its derived SARIF retains the original
+report hash in `properties.factory_native_raw_sha256` and records that basis.
+The SDK still rejects paths outside the exact candidate inventory.
+Descriptor-only CodeQL pack extensions are retained as run properties for
+strict importer compatibility. Extensions containing rules or taxa are rejected;
+external property files and unresolved rule references remain unsupported.

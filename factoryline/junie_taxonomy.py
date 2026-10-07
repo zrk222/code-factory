@@ -1,8 +1,6 @@
 """Project-scoped Junie guidance and a complete read-only FactoryLine taxonomy.
 
-The module uses only documented local project artifacts.  It does not contact,
-enable, start, observe, or control Junie.  JetBrains controls remain the only
-place where a user can enable a custom MCP server.
+Read-only local artifacts; enabling Junie/MCP remains a JetBrains user action.
 """
 
 from __future__ import annotations
@@ -131,7 +129,7 @@ _STAGES: tuple[dict[str, object], ...] = (
             "factory.repair_loop_status",
             "factory.combine_status",
         ),
-        "outcome": "Independent challenge state, runtime-risk evidence, and known gaps rather than a green-looking assertion.",
+        "outcome": "Source-bound native findings, runtime/fuzz observations, independent challenges and explicit accounting gaps.",
     },
     {
         "id": "agent_handoff",
@@ -526,7 +524,7 @@ def junie_taxonomy(root: Path | str) -> dict[str, object]:
             "entry": "Open the JetBrains FactoryLine Junie tab, inspect this taxonomy, then open CF + ForgeLine evidence for the current project.",
             "verify": [
                 "Inspect the changed diff and sealed intent in JetBrains before choosing a lane.",
-                "When connected, call factory.github_overview before repository-specific scoping, planning, or review; then use the CF + ForgeLine tab to run local review, architecture, security patterns, and runtime readiness.",
+                "When connected, call factory.github_overview before scoping, then inspect CF + ForgeLine review, architecture, security and runtime evidence.",
                 "Treat UNAVAILABLE, INCOMPLETE, NOT_RUN, and stale results as gaps; no lane grants approval.",
                 "For each finding, return a path, why it matters, a concrete repair, and the exact check to rerun.",
                 "Use JetBrains inspections or Qodana as additional evidence when configured; do not claim they ran from a FactoryLine receipt.",
@@ -534,16 +532,16 @@ def junie_taxonomy(root: Path | str) -> dict[str, object]:
             ],
             "audit_limits": {
                 "change_review": "Pattern and guard-path audits require the project's .factory/review-audits.json; the review lane does not execute tests.",
-                "security": "The built-in security pattern scan is Python AST focused; use language-specific security tooling for other code.",
+                "security": "Built-in Python AST checks cover Python only. Discover CodeQL, Semgrep, OSV, Syft, Gitleaks and Trivy in audit_taxonomy.native_workers; preserve each scope and admission gap.",
                 "forgeline": "Repository-wide inventory is static and does not substitute for a feature-scoped release gate.",
-                "runtime_evidence": "Coverage.py statement and branch counts are evidence about executed lines, not assertion strength, correctness, signed runner identity, or production behavior.",
+                "runtime_evidence": "Native coverage+JUnit and Atheris report executed behavior; statement/branch counts and fuzz lower bounds do not prove oracle strength, full exploration or runner identity.",
                 "agent_review": "An independent specialty AI review, multi-pass consensus, and reviewer's identity are not authenticated by local MCP receipts.",
                 "adversarial_evidence": "The built-in tenant-isolation and poisoned-input penetration suites test FactoryLine controls; they do not establish that a consuming project's own boundaries are covered.",
                 "production": "Local graph and runtime reports do not observe deployed behavior, external dependencies, logs, alerts, or rollback readiness.",
             },
             "candidate_binding": "UNBOUND until a source-bound release gate ties findings, tests, and reviewer receipt to the same candidate.",
         },
-        "claim_boundary": "Taxonomy describes local FactoryLine tools. It does not install, enable, start, observe, or control Junie, and does not prove any external JetBrains state.",
+        "claim_boundary": "Local taxonomy does not install, enable, start, observe, or control Junie; no proof of external IDE state.",
         "authority": dict(_AUTHORITY),
         "project_pack": junie_manifest(workspace),
     }
@@ -628,6 +626,7 @@ lane as INCOMPLETE/BLOCKED when required evidence is absent. Use
 locations. Neither call executes target tests or authenticates the supplied
 IDE context.
 
+Use the shared native worker catalog for authorized CLI runs; status tools never execute scanners. Preserve source accounting/challenge gaps, report hashes, runtime failures and actionable reruns.
 The route is: orient -> bind intent -> map impact -> select rules -> challenge
 the implementation -> return a contribution card. If the intent is unclear,
 the scope changes, an oracle is weakened, evidence is stale, or a provider /
@@ -642,10 +641,7 @@ tool names you actually called, cited local evidence and changed paths, a plain
 language contribution, and explicit unknowns. Include its returned
 `credit_line` verbatim in your handoff.
 
-Do not claim FactoryLine was used if it was not. This validates only a
-self-declared vocabulary and supplied local file hashes; it is not telemetry,
-an internal Junie score, proof of Junie's private reasoning, test execution,
-or approval.
+Claim credit only for actual use. Contribution validation checks supplied vocabulary and hashes, not telemetry, reasoning, execution or approval.
 
 ## Boundary
 
@@ -654,10 +650,7 @@ Junie, edit source, run tests, approve, merge, publish, deploy, sign, use
 credentials, contact a provider, or grant connector authority. Junie must be
 enabled separately in JetBrains under the user’s own controls.
 
-The optional `.junie/agents/factoryline-proof.md` subagent is a read-only
-reviewer. Its allowlist permits file inspection and the `code-factory` MCP
-server only; it excludes editing, shell execution, web access, and user
-prompts.
+The optional proof subagent permits file inspection and Code Factory MCP only.
 """
     return text.encode("utf-8")
 
@@ -766,6 +759,8 @@ def junie_manifest(root: Path | str) -> dict[str, object]:
             "mcp": ".junie/mcp/mcp.json",
             "subagents": ".junie/agents/",
         },
+        "native_workers": audit_taxonomy()["native_workers"],
+        "native_worker_contract": audit_taxonomy()["native_worker_contract"],
         "operating_profile": {
             "version": "2",
             "mode": "supervised",
@@ -799,7 +794,7 @@ def junie_manifest(root: Path | str) -> dict[str, object]:
             ],
         },
         "authority": dict(_AUTHORITY),
-        "claim_boundary": "This is a local, copy-only Junie project manifest. It does not enable, start, observe, or control Junie and does not grant edit, execution, approval, merge, publication, deployment, signing, credential, network, or connector authority.",
+        "claim_boundary": "Copy-only local Junie manifest; no execution or release authority. All authority flags are false; enabling Junie remains a JetBrains user action.",
     }
     return {**core, "manifest_sha256": _sha(core)}
 

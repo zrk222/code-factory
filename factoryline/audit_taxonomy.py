@@ -18,6 +18,67 @@ MEASUREMENT_STATES = (
     "BLOCKED",
 )
 
+_NATIVE_WORKERS = {
+    "codeql": {
+        "target": "codeql-python-worker",
+        "profile": "codeql-python-full.json",
+        "version": "2.27.1",
+        "scope": "Full Python security-extended query suite; Python only; precompiled in image.",
+    },
+    "semgrep": {
+        "target": "semgrep-worker",
+        "profile": "semgrep-pattern-limited.json",
+        "version": "1.141.0",
+        "scope": "One local Python rule; pattern-limited; candidate ignore rules can reduce inspection.",
+    },
+    "osv": {
+        "target": "osv-worker",
+        "profile": "osv.json",
+        "version": "2.2.0",
+        "scope": "Offline immutable PyPI advisory snapshot; other ecosystems unsupported; snapshot ages.",
+    },
+    "syft": {
+        "target": "syft-worker",
+        "profile": "syft.json",
+        "version": "1.33.0",
+        "scope": "Dependency inventory and SBOM only; no vulnerability decision.",
+    },
+    "gitleaks": {
+        "target": "gitleaks-worker",
+        "profile": "gitleaks.json",
+        "version": "8.28.0",
+        "scope": "Pinned vendored secret rules; redacted output; native source accounting required.",
+    },
+    "trivy": {
+        "target": "trivy-worker",
+        "profile": "trivy-config.json",
+        "version": "0.68.1",
+        "scope": "Configuration scanning only; no vulnerability database scan.",
+    },
+    "runtime": {
+        "target": "runtime-worker",
+        "profile": "runtime-coverage.json",
+        "version": "coverage.py 7.16.1; pytest 9.1.1",
+        "scope": "Candidate tests/test_runtime_harness.py; actual branch/statement counts and JUnit failures; coverage config disabled.",
+    },
+    "atheris": {
+        "target": "fuzz-worker",
+        "profile": "atheris.json",
+        "version": "3.0.0",
+        "scope": "Candidate .factory/fuzz_harness.py TestOneInput(bytes); callback/input lower bounds and Python arcs, not native edge/corpus coverage.",
+    },
+}
+_NATIVE_WORKER_CONTRACT = {
+    "discovery": "deploy/deep-adapters/README.md and profiles; build final targets on Linux/amd64.",
+    "execution": "Explicit authorized CLI execution; MCP status tools are read-only and never launch workers.",
+    "isolation": "Image-owned Python -I startup; network none, read-only source, non-root, bounded memory/time/output and cleanup.",
+    "evidence": "Candidate and source hashes, exact image digest, tool/rules versions, invocation facts, native report digest, source-bound normalized findings and runtime counts.",
+    "admission": "Successful native execution is INCOMPLETE until source accounting, applicable obligations and independent challenges are validated; never infer complete=true.",
+    "agent_action": "Return path, rule, severity, evidence digest, concrete repair and exact rerun; route missing accounting/challenge evidence as an actionable gap.",
+    "tracing": "Preserve native and normalized digests separately, source binding, deadlines, output exhaustion and cleanup failures.",
+}
+
+
 _AGENT_USAGE_CONTRACT = {
     "schema": "factory.audit-agent-use.v1",
     "primary_mcp_tool": "factory.audit_taxonomy",
@@ -502,6 +563,8 @@ def audit_taxonomy() -> dict[str, Any]:
             role_index.values(), key=lambda row: row["specialist_role"]
         ),
         "agent_usage_contract": deepcopy(_AGENT_USAGE_CONTRACT),
+        "native_workers": deepcopy(_NATIVE_WORKERS),
+        "native_worker_contract": deepcopy(_NATIVE_WORKER_CONTRACT),
     }
     return {**core, "taxonomy_sha256": sha256(_canonical(core)).hexdigest()}
 

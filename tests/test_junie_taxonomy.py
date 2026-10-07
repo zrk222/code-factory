@@ -836,3 +836,76 @@ def test_shared_taxonomy_helpers_and_references_are_canonical_and_fail_closed():
         "completion",
         "stop",
     }
+
+
+def test_native_worker_catalog_and_junie_manifest_bind_profiles(tmp_path):
+    catalog = audit_taxonomy()
+    workers = catalog["native_workers"]
+    assert set(workers) == {
+        "codeql",
+        "semgrep",
+        "osv",
+        "syft",
+        "gitleaks",
+        "trivy",
+        "runtime",
+        "atheris",
+    }
+    repository = Path(__file__).resolve().parents[1]
+    for engine, worker in workers.items():
+        profile = json.loads(
+            (
+                repository / "deploy/deep-adapters/profiles" / worker["profile"]
+            ).read_text()
+        )
+        assert profile["engine"] == engine
+        assert profile["tool_version"] == worker["version"]
+        assert worker["scope"]
+    manifest = junie_manifest(tmp_path)
+    assert manifest["native_workers"] == workers
+    assert manifest["native_worker_contract"] == catalog["native_worker_contract"]
+    assert "INCOMPLETE" in manifest["native_worker_contract"]["admission"]
+    assert not any(manifest["authority"].values())
+
+
+def test_codeql_profile_preserves_raw_hash_and_rejects_rule_extensions(tmp_path):
+    import sys
+
+    repository = Path(__file__).resolve().parents[1]
+    profile = json.loads(
+        (
+            repository / "deploy/deep-adapters/profiles/codeql-python-full.json"
+        ).read_text()
+    )
+    code = profile["commands"][-1]["argv"][3]
+    report = tmp_path / "native.json"
+    native = {
+        "runs": [
+            {"tool": {"extensions": [{"name": "codeql/python-queries"}]}, "results": []}
+        ]
+    }
+    original = json.dumps(native).encode()
+    report.write_bytes(original)
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", code, str(report)], capture_output=True
+    )
+    assert result.returncode == 0
+    derived = json.loads(report.read_text())
+    assert (
+        derived["properties"]["factory_native_raw_sha256"]
+        == sha256(original).hexdigest()
+    )
+    assert (
+        derived["runs"][0]["originalUriBaseIds"]["%SRCROOT%"]["uri"] == "file:///src/"
+    )
+    assert (
+        derived["runs"][0]["properties"]["factory_native_pack_metadata"]
+        == native["runs"][0]["tool"]["extensions"]
+    )
+    assert "extensions" not in derived["runs"][0]["tool"]
+    native["runs"][0]["tool"]["extensions"][0]["rules"] = [{"id": "external-rule"}]
+    report.write_text(json.dumps(native))
+    rejected = subprocess.run(
+        [sys.executable, "-I", "-c", code, str(report)], capture_output=True
+    )
+    assert rejected.returncode != 0
