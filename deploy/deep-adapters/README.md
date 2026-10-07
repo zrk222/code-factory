@@ -32,3 +32,16 @@ it does not include other ecosystems. Trivy config scanning does not
 update the vulnerability database. The source-bound runtime and fuzz harnesses
 are candidate inputs, never copied into these images. No image should set deep
 coverage complete merely because the native process exited successfully.
+
+## Isolated startup and bounded execution
+
+Final worker targets start the installed SDK with Python isolated mode (`-I`).
+Candidate packages and `sitecustomize.py` cannot replace the SDK at startup.
+The runtime profile imports the image's coverage and pytest packages before
+adding the candidate source path, and disables candidate coverage configuration.
+Candidate tests and fuzz callbacks still execute untrusted code inside the
+restricted container; isolated imports are not a claim of tamper-proof harnesses.
+
+The CodeQL target precompiles the same full Python security-extended query suite
+during image construction. This moves query compilation out of each audit run;
+the runtime profile retains its two-thread and 1,400 MB analysis limits.

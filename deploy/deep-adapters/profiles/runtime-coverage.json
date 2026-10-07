@@ -6,14 +6,27 @@
   "ruleset_sha256": "1aeb597d08ede54bfd0f010d82f77d925b0088fb6564078789caa066f58645c9",
   "commands": [
     {
-      "argv": ["/usr/local/bin/python", "-m", "coverage", "run", "--branch", "--data-file={scratch}/.coverage", "-m", "pytest", "--junitxml={output}/runtime.xml", "-o", "junit_family=xunit1", "-p", "no:cacheprovider", "{source}/tests/test_runtime_harness.py"],
-      "accepted_exit_codes": [0, 1]
-    },
-    {
-      "argv": ["/usr/local/bin/python", "-m", "coverage", "json", "--data-file={scratch}/.coverage", "-o", "{report}", "--pretty-print"],
-      "accepted_exit_codes": [0]
+      "argv": [
+        "/usr/local/bin/python",
+        "-I",
+        "-c",
+        "exec('import sys,coverage,pytest\\ncov=coverage.Coverage(branch=True,data_file=sys.argv[2],config_file=False)\\nsys.path.insert(0,sys.argv[1])\\ncov.start()\\ntry:\\n    code=pytest.main([sys.argv[1]+\"/tests/test_runtime_harness.py\",\"--junitxml=\"+sys.argv[4],\"-o\",\"junit_family=xunit1\",\"-p\",\"no:cacheprovider\"])\\nfinally:\\n    cov.stop()\\n    cov.save()\\n    cov.json_report(outfile=sys.argv[3])\\nsys.exit(code)\\n')",
+        "{source}",
+        "{scratch}/.coverage",
+        "{report}",
+        "{output}/runtime.xml"
+      ],
+      "accepted_exit_codes": [
+        0,
+        1
+      ]
     }
   ],
-  "version_argv": ["/usr/local/bin/python", "-c", "import coverage,pytest;print(f'coverage.py {coverage.__version__}; pytest {pytest.__version__}')"],
+  "version_argv": [
+    "/usr/local/bin/python",
+    "-I",
+    "-c",
+    "import coverage,pytest;print(f'coverage.py {coverage.__version__}; pytest {pytest.__version__}')"
+  ],
   "report_format": "coverage-json"
 }

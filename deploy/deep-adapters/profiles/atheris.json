@@ -8,6 +8,7 @@
     {
       "argv": [
         "/usr/local/bin/python",
+        "-I",
         "-m",
         "factoryline.deep_audit_io",
         "native-fuzz",
@@ -25,6 +26,7 @@
   ],
   "version_argv": [
     "/usr/local/bin/python",
+    "-I",
     "-m",
     "pip",
     "show",
