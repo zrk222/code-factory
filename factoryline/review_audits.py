@@ -1259,6 +1259,12 @@ def _remember_direct_constant_assignment(
 ) -> None:
     targets: list[ast.expr] = []
     value: Any = _UNKNOWN_CONSTANT
+    if any(
+        isinstance(item, (ast.Call, ast.Subscript)) for item in _body_nodes(statement)
+    ):
+        for name, prior in list(known.items()):
+            if isinstance(prior, (list, dict, set, tuple)):
+                known.pop(name, None)
     if isinstance(statement, ast.Assign):
         value = _constant_value(statement.value, known)
         targets = statement.targets

@@ -22,7 +22,7 @@ from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
 def test_full_local_image_id_and_repository_digest_are_immutable_pins(prefix):
     from factoryline.deep_audit_contract import _validate_lane_image
 
-    _validate_lane_image({"image": prefix + "sha256:" + "a" * 64})
+    assert _validate_lane_image({"image": prefix + "sha256:" + "a" * 64}) is None
 
 
 @pytest.mark.parametrize(

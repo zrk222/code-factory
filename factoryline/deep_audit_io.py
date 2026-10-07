@@ -639,12 +639,14 @@ def _adapter_commands(
     return invocations
 
 
-def execute_adapter_profile(
-    profile: dict, contract: dict, source: Path, output: Path
-) -> dict:
-    """Join actual native artifacts; never synthesize coverage or challenge success."""
+def _adapter_contract_parts(contract: dict) -> tuple[dict, dict]:
+    """Validate shared input identity before executing either worker format."""
     keys = {"schema", "run_id", "manifest_sha256", "inventory", "lane", "obligations"}
-    if set(contract) != keys or contract["schema"] != "factory.deep-adapter-input.v1":
+    if (
+        not isinstance(contract, dict)
+        or set(contract) != keys
+        or contract["schema"] != "factory.deep-adapter-input.v1"
+    ):
         raise RuntimeAuditError("E_ADAPTER_INPUT", "invalid adapter contract")
     require_str(contract["run_id"], "run_id", maximum=64)
     require_digest(contract["manifest_sha256"], "manifest_sha256")
@@ -654,15 +656,35 @@ def execute_adapter_profile(
             "E_ADAPTER_INPUT", "inventory and lane objects required"
         )
     require_digest(inventory.get("candidate_sha256"), "candidate_sha256")
-    commands = _adapter_profile(profile, lane)
-    _adapter_sources(source, inventory)
-    report_paths = {lane[key] for key in ("report", "coverage", "challenge_report")}
-    if len(report_paths) != 3:
+    return inventory, lane
+
+
+def _adapter_output_paths(
+    lane: dict, output: Path, *, create_parents: bool = False
+) -> list[str]:
+    """Reject stale or aliased artifacts before any native tool is started."""
+    paths = [
+        relative_path(lane[key]) for key in ("report", "coverage", "challenge_report")
+    ]
+    if len(set(paths)) != 3:
         raise RuntimeAuditError("E_ADAPTER_INPUT", "distinct artifact paths required")
-    for path in report_paths:
-        target = Path(output) / relative_path(path)
+    for path in paths:
+        target = output / path
         if target.exists() or target.is_symlink():
             raise RuntimeAuditError("E_ADAPTER_STALE", "preexisting output rejected")
+        if create_parents:
+            target.parent.mkdir(parents=True, exist_ok=True)
+    return paths
+
+
+def execute_adapter_profile(
+    profile: dict, contract: dict, source: Path, output: Path
+) -> dict:
+    """Join actual native artifacts; never synthesize coverage or challenge success."""
+    inventory, lane = _adapter_contract_parts(contract)
+    commands = _adapter_profile(profile, lane)
+    _adapter_sources(source, inventory)
+    report_paths = _adapter_output_paths(lane, Path(output))
     with tempfile.TemporaryDirectory(prefix="factory-adapter-") as temporary:
         invocations = _adapter_commands(commands, lane, Path(source), Path(temporary))
     artifacts = {}
@@ -1051,25 +1073,10 @@ def execute_native_profile(
     profile: dict, contract: dict, source: Path, output: Path
 ) -> dict:
     """Run native tools; incomplete coverage/challenges remain explicit, never inferred."""
-    keys = {"schema", "run_id", "manifest_sha256", "inventory", "lane", "obligations"}
-    if set(contract) != keys or contract["schema"] != "factory.deep-adapter-input.v1":
-        raise RuntimeAuditError("E_ADAPTER_INPUT", "invalid native contract")
-    lane, inventory = contract["lane"], contract["inventory"]
+    inventory, lane = _adapter_contract_parts(contract)
     _native_profile(profile, lane)
-    require_str(contract["run_id"], "run_id", maximum=64)
-    require_digest(contract["manifest_sha256"], "manifest_sha256")
-    require_digest(inventory.get("candidate_sha256"), "candidate_sha256")
     _adapter_sources(source, inventory)
-    paths = [
-        relative_path(lane[key]) for key in ("report", "coverage", "challenge_report")
-    ]
-    if len(set(paths)) != 3:
-        raise RuntimeAuditError("E_ADAPTER_INPUT", "distinct artifact paths required")
-    for path in paths:
-        target = output / path
-        if target.exists() or target.is_symlink():
-            raise RuntimeAuditError("E_ADAPTER_STALE", "preexisting output rejected")
-        target.parent.mkdir(parents=True, exist_ok=True)
+    paths = _adapter_output_paths(lane, output, create_parents=True)
     timeout = require_int(
         lane.get("timeout_seconds"), "timeout", minimum=1, maximum=3600
     )

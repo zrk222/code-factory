@@ -1629,3 +1629,24 @@ def test_rebinds_identity_distinguishes_local_data_from_guard_alias_changes(tmp_
     assert engine.rebinds_identity(ast.parse("store.delete = noop").body[0])
     assert not engine.rebinds_identity(ast.parse("count = 4").body[0])
     assert not engine.rebinds_identity(ast.parse("require_auth()").body[0])
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "errors = []; errors.append(compute()); assert errors == []",
+        "errors = []; alias = errors; alias.append(compute()); assert errors == []",
+        "errors = []\n    for item in inputs:\n        errors.append(item)\n    assert errors == []",
+        "errors = []; mutate(errors); assert errors == []",
+    ],
+)
+def test_mutable_test_state_is_not_folded_across_calls(tmp_path, body):
+    (tmp_path / "case.py").write_text("def test_behavior():\n    " + body + "\n")
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_unmodified_container_constant_assertion_remains_hollow(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "def test_behavior():\n    errors = []\n    assert errors == []\n"
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}

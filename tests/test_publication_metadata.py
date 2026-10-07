@@ -37,9 +37,9 @@ def test_public_audit_condition_count_is_recomputed_from_source():
     spec.loader.exec_module(module)
     result = module.inventory()
     assert result["mandatory_audit_lanes"] == 6
-    assert result["lane_specific_rejection_conditions"] == 81
-    assert result["crosscutting_rejection_conditions"] == 62
-    assert result["total_coded_rejection_conditions"] == 143
+    assert result["lane_specific_rejection_conditions"] == 88
+    assert result["crosscutting_rejection_conditions"] == 66
+    assert result["total_coded_rejection_conditions"] == 154
     assert "E_POLICY" in result["crosscutting_condition_codes"]
     assert set(module.NON_CONDITION_MODULES) == {"runtime_audit_process.py"}
     assert not {

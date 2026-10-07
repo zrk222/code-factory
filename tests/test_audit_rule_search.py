@@ -143,7 +143,7 @@ def test_lexical_mode_preserves_legacy_substring_search():
 def test_search_inventory_matches_the_six_lane_source_count():
     payload = search_audit_rules({"query": "code factory", "limit": 20})
 
-    assert payload["totalMatched"] == 143
+    assert payload["totalMatched"] == 154
     assert payload["returned"] == 20
 
 

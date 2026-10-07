@@ -82,9 +82,10 @@ def test_explicit_empty_observation_does_not_trigger_a_second_read(
 
     for name in READERS:
         monkeypatch.setattr(graph_ops, name, forbidden)
-    getattr(graph_ops, helper)(
-        {"nodes": {}, "edges": [], "edge_keys": set()}, tmp_path, {}
-    )
+    state = {"nodes": {}, "edges": [], "edge_keys": set()}
+    result = getattr(graph_ops, helper)(state, tmp_path, {})
+    assert result["invalid_count"] == 0
+    assert state == {"nodes": {}, "edges": [], "edge_keys": set()}
 
 
 def test_profile_has_stable_fingerprints_and_no_raw_evidence(tmp_path, monkeypatch):
