@@ -1641,6 +1641,10 @@ def load_tenant_read_contract(
         raise ReviewAuditError(f"Invalid tenant-read contract: {exc}") from exc
     if not isinstance(contract, dict) or set(contract) != {"schema", "reads"}:
         raise ReviewAuditError("Invalid tenant-read contract schema or fields.")
+    if contract.get("schema") == "factory.tenant-read-contract.v2":
+        evidence["scoped_reads"] = _tenant_scoped_entries(workspace, contract["reads"])
+        evidence["state"] = "loaded"
+        return (), (), evidence
     if contract.get("schema") != TENANT_CONTRACT_SCHEMA:
         raise ReviewAuditError("Invalid tenant-read contract schema or fields.")
     calls, bindings = _tenant_contract_entries(contract["reads"])
@@ -1653,6 +1657,50 @@ def load_tenant_read_contract(
     )
     evidence["state"] = "loaded"
     return normalized_calls, flattened, evidence
+
+
+def _tenant_scoped_entries(workspace: Path, value: Any) -> dict:
+    """Validate exact file scopes without excluding any source from static scanning."""
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_PATHS:
+        raise ReviewAuditError("Scoped tenant contracts require nonempty read scopes.")
+    result = {}
+    for scope in value:
+        if not isinstance(scope, dict) or set(scope) != {"path", "reads"}:
+            raise ReviewAuditError("Tenant scope requires exactly path and reads.")
+        path = _relative_path(scope["path"]).as_posix()
+        if path in result or not (workspace / path).is_file():
+            raise ReviewAuditError(
+                "Tenant scopes must name unique existing source files."
+            )
+        calls, bindings = _tenant_contract_entries(scope["reads"])
+        calls = _tenant_contract_calls(calls)
+        if not calls:
+            raise ReviewAuditError("Scoped tenant read lists must be nonempty.")
+        _tenant_scope_source(workspace, path, calls)
+        result[path] = {
+            "calls": calls,
+            "bindings": _tenant_contract_bindings(bindings, calls),
+        }
+    return result
+
+
+def _tenant_scope_source(workspace: Path, path: str, calls: tuple[str, ...]) -> None:
+    """Reject stale or mistyped read declarations before producing a clean scan."""
+    data, _evidence = _read(workspace, path)
+    try:
+        tree = ast.parse(data)
+    except SyntaxError as exc:
+        raise ReviewAuditError(
+            "Tenant scope must name parseable Python source."
+        ) from exc
+    aliases = _module_security_aliases(tree)
+    observed = {
+        _normalized_call_name(node, aliases)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+    }
+    if not set(calls).issubset(observed):
+        raise ReviewAuditError("Tenant scope declares a read absent from its source.")
 
 
 def _tenant_contract_entries(value: Any) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -1701,7 +1749,7 @@ def _tenant_binding_entry(
 
 def _tenant_binding_parts(binding: str) -> tuple[str, str, str]:
     parts = binding.split(":")
-    if len(parts) != 3 or not parts[2].isidentifier():
+    if len(parts) != 3 or not NAME.fullmatch(parts[2]):
         raise ReviewAuditError(
             "Tenant bindings use call=position:INDEX:PARAMETER or "
             "call=keyword:NAME:PARAMETER."
@@ -1739,11 +1787,15 @@ def _tenant_comprehension_targets(function: ast.AST) -> set[int]:
 def _tenant_discard_captures(statement: ast.stmt, names: set[str]) -> None:
     for child in _body_nodes(statement):
         if isinstance(child, (ast.MatchAs, ast.MatchStar)) and child.name:
-            names.discard(child.name)
+            names.difference_update(
+                name for name in tuple(names) if name.split(".")[0] == child.name
+            )
         elif isinstance(child, ast.MatchMapping) and child.rest:
             names.discard(child.rest)
         elif isinstance(child, ast.ExceptHandler) and child.name:
-            names.discard(child.name)
+            names.difference_update(
+                name for name in tuple(names) if name.split(".")[0] == child.name
+            )
 
 
 def _tenant_discard_written_names(
@@ -1755,7 +1807,21 @@ def _tenant_discard_written_names(
             and id(child) not in comprehension_targets
             and isinstance(child.ctx, (ast.Store, ast.Del))
         ):
-            names.discard(child.id)
+            names.difference_update(
+                name for name in tuple(names) if name.split(".")[0] == child.id
+            )
+        elif isinstance(child, (ast.Attribute, ast.Subscript)) and isinstance(
+            child.ctx, (ast.Store, ast.Del)
+        ):
+            reference = (
+                _tenant_reference(child.value)
+                if isinstance(child, ast.Subscript)
+                else _tenant_reference(child)
+            )
+            if any(
+                name == reference or name.startswith(reference + ".") for name in names
+            ):
+                names.clear()
 
 
 def _tenant_track_assignment(
@@ -1773,13 +1839,56 @@ def _tenant_track_assignment(
         target, value = statement.target, statement.value
     if target is None:
         return False
-    if isinstance(value, ast.Name) and value.id in names:
-        names.add(target.id)
+    reference = _tenant_reference(value)
+    replacement = {
+        target.id + name[len(reference) :]
+        for name in names
+        if reference and (name == reference or name.startswith(reference + "."))
+    }
+    names.difference_update(
+        name
+        for name in tuple(names)
+        if name == target.id or name.startswith(target.id + ".")
+    )
+    if replacement:
+        names.update(replacement)
     else:
-        names.discard(target.id)
         if value is not None:
             _tenant_discard_written_names(value, names, comprehension_targets)
     return True
+
+
+def _tenant_reference(value: ast.AST | None) -> str:
+    """Return only an explicit name/attribute chain; calls and indexing are unbound."""
+    if isinstance(value, ast.Name):
+        return value.id
+    if isinstance(value, ast.Attribute):
+        head = _tenant_reference(value.value)
+        return f"{head}.{value.attr}" if head else ""
+    return ""
+
+
+def _tenant_discard_mutations(statement: ast.stmt, names: set[str]) -> None:
+    """Invalidate explicit setattr/delattr writes to declared attribute scopes."""
+    for node in _body_nodes(statement):
+        if not isinstance(node, ast.Call) or _call_name(node) not in {
+            "setattr",
+            "delattr",
+            "builtins.setattr",
+            "builtins.delattr",
+        }:
+            continue
+        if len(node.args) < 2 or not isinstance(node.args[1], ast.Constant):
+            names.clear()
+            continue
+        reference = _tenant_reference(node.args[0])
+        attribute = node.args[1].value
+        if (
+            isinstance(attribute, str)
+            and reference
+            and f"{reference}.{attribute}" in names
+        ):
+            names.clear()
 
 
 def _tenant_bound_names(function: ast.AST, parameter: str, use: ast.Call) -> set[str]:
@@ -1790,6 +1899,7 @@ def _tenant_bound_names(function: ast.AST, parameter: str, use: ast.Call) -> set
         if (statement.lineno, statement.col_offset) >= (use.lineno, use.col_offset):
             break
         _tenant_discard_captures(statement, names)
+        _tenant_discard_mutations(statement, names)
         if _tenant_track_assignment(statement, names, comprehension_targets):
             continue
         _tenant_discard_written_names(statement, names, comprehension_targets)
@@ -1824,9 +1934,8 @@ def _tenant_argument_bound(
             else None
         )
         if (
-            isinstance(value, ast.Name)
-            and value.id in _tenant_bound_names(function, parameter, node)
-            and parameter in parameters
+            _tenant_reference(value) in _tenant_bound_names(function, parameter, node)
+            and parameter.split(".")[0] in parameters
         ):
             return True
     return False
@@ -2311,13 +2420,17 @@ def _scan_security_sources(
     files: list[Path],
     tenant_read_calls: tuple[str, ...],
     tenant_read_bindings: dict[str, tuple[str, ...]],
+    scoped_reads: dict | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int], dict[str, int]]:
     findings: list[dict[str, Any]] = []
     bindings: list[dict[str, Any]] = []
     outcomes = {"syntax_error": 0, "unreadable": 0, "too_large": 0, "audited": 0}
     for path in files:
+        scope = (scoped_reads or {}).get(path.relative_to(workspace).as_posix(), {})
+        calls = tuple(sorted(set(tenant_read_calls) | set(scope.get("calls", ()))))
+        scoped_bindings = {**scope.get("bindings", {}), **tenant_read_bindings}
         binding, file_findings, outcome = _security_scan_file(
-            workspace, path, tenant_read_calls, tenant_read_bindings
+            workspace, path, calls, scoped_bindings
         )
         if binding is not None:
             bindings.append(binding)
@@ -2425,11 +2538,40 @@ def _security_scan_report(
     return _seal_security_scan(core)
 
 
+def _validate_tenant_scopes(workspace: Path, scopes: dict | None) -> dict:
+    """Revalidate programmatic declarations through the same contract boundary."""
+    if scopes is None:
+        return {}
+    if not isinstance(scopes, dict) or len(scopes) > MAX_PATHS:
+        raise ReviewAuditError("Invalid tenant read scope map.")
+    rows = []
+    for path, scope in scopes.items():
+        if not isinstance(scope, dict) or set(scope) != {"calls", "bindings"}:
+            raise ReviewAuditError("Invalid scoped tenant calls and bindings.")
+        if not isinstance(scope["calls"], (tuple, list)):
+            raise ReviewAuditError("Scoped calls must be a bounded sequence.")
+        calls = _tenant_contract_calls(tuple(scope["calls"]))
+        bindings = scope["bindings"]
+        if not isinstance(bindings, dict) or set(bindings) - set(calls):
+            raise ReviewAuditError("Scoped bindings must name declared calls.")
+        reads = [_tenant_scope_read(call, bindings) for call in calls]
+        rows.append({"path": path, "reads": reads})
+    return _tenant_scoped_entries(workspace, rows) if rows else {}
+
+
+def _tenant_scope_read(call: str, bindings: dict) -> dict:
+    values = bindings.get(call, ())
+    if not isinstance(values, (tuple, list)) or len(values) > 1:
+        raise ReviewAuditError("Each scoped call requires at most one binding.")
+    return {"call": call, "binding": values[0]} if values else {"call": call}
+
+
 def security_scan(
     root: Path,
     *,
     tenant_read_calls: tuple[str, ...] = (),
     tenant_read_bindings: tuple[str, ...] = (),
+    tenant_read_scopes: dict | None = None,
 ) -> dict[str, Any]:
     """Run a bounded AST security and code-quality scan without importing or executing source."""
     workspace = Path(root).resolve()
@@ -2437,13 +2579,14 @@ def security_scan(
     tenant_read_bindings = _tenant_contract_bindings(
         tenant_read_bindings, tenant_read_calls
     )
+    tenant_read_scopes = _validate_tenant_scopes(workspace, tenant_read_scopes)
     files = _security_source_files(workspace)
     if len(files) > MAX_SECURITY_SOURCE_FILES:
         return _blocked_security_scan_report(
             workspace, files, tenant_read_calls, tenant_read_bindings
         )
     bindings, findings, counts, outcomes = _scan_security_sources(
-        workspace, files, tenant_read_calls, tenant_read_bindings
+        workspace, files, tenant_read_calls, tenant_read_bindings, tenant_read_scopes
     )
     return _security_scan_report(
         files,

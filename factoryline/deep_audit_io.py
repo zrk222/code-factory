@@ -876,11 +876,20 @@ def _native_coverage_report(
 
 def _native_source_counts(raw: dict, sources: dict) -> dict:
     coverage = {}
-    for name, measured in raw.get("files", {}).items():
+    files = raw.get("files")
+    if not isinstance(files, dict) or not all(isinstance(name, str) for name in files):
+        raise RuntimeAuditError(
+            "E_RUNTIME_COVERAGE", "native coverage files object required"
+        )
+    for name, measured in files.items():
         path = relative_path(name.removeprefix("/src/"))
         if path not in sources:
             raise RuntimeAuditError("E_RUNTIME_COVERAGE", "coverage source is unbound")
-        counts = measured["summary"]
+        if path in coverage:
+            raise RuntimeAuditError(
+                "E_RUNTIME_COVERAGE", "duplicate native coverage source"
+            )
+        counts = _native_coverage_counts(measured)
         coverage[path] = {
             "sha256": sources[path],
             "lines_total": counts["num_statements"],
@@ -889,6 +898,63 @@ def _native_source_counts(raw: dict, sources: dict) -> dict:
             "branches_covered": counts["covered_branches"],
         }
     return coverage
+
+
+def _native_coverage_counts(measured: dict) -> dict:
+    """Validate measured totals before exposing them as runtime facts."""
+    if not isinstance(measured, dict) or not isinstance(measured.get("summary"), dict):
+        raise RuntimeAuditError(
+            "E_RUNTIME_COVERAGE", "native coverage summary required"
+        )
+    counts = measured["summary"]
+    for field in (
+        "num_statements",
+        "covered_lines",
+        "num_branches",
+        "covered_branches",
+    ):
+        require_int(counts.get(field), field, minimum=0, maximum=10_000_000)
+    if (
+        counts["covered_lines"] > counts["num_statements"]
+        or counts["covered_branches"] > counts["num_branches"]
+    ):
+        raise RuntimeAuditError(
+            "E_RUNTIME_COVERAGE", "covered counts exceed measured totals"
+        )
+    return counts
+
+
+def _native_runtime_accounting(report: dict, inventory: dict, lane: dict) -> dict:
+    """Expose actual observed source accounting separately from requested inventory."""
+    required = {
+        item["path"]: item["sha256"]
+        for item in inventory["files"]
+        if item["language"] in lane["languages"]
+    }
+    measured = report.get("source_coverage")
+    if not isinstance(measured, dict):
+        return {
+            "state": "UNAVAILABLE",
+            "required_paths": sorted(required),
+            "measured_paths": [],
+            "missing_paths": sorted(required),
+        }
+    if set(measured) - set(required):
+        raise RuntimeAuditError(
+            "E_RUNTIME_COVERAGE", "measured source is outside declared lane"
+        )
+    if any(
+        not isinstance(item, dict) or item.get("sha256") != required[path]
+        for path, item in measured.items()
+    ):
+        raise RuntimeAuditError("E_RUNTIME_COVERAGE", "measured source hash differs")
+    missing = sorted(set(required) - set(measured))
+    return {
+        "state": "PARTIAL" if missing else "COMPLETE",
+        "required_paths": sorted(required),
+        "measured_paths": sorted(measured),
+        "missing_paths": missing,
+    }
 
 
 def _fuzz_snapshot(
@@ -1121,6 +1187,7 @@ def execute_native_profile(
         "ruleset_sha256": profile["ruleset_sha256"],
         "report_sha256": digest(report),
         "native_report_sha256": digest(raw_report),
+        "source_accounting": _native_runtime_accounting(report, inventory, lane),
         "native_invocations": invocations,
         "invocation_sha256": digest(invocations),
         "version_probe": version,

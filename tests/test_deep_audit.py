@@ -676,3 +676,70 @@ def test_osv_empty_native_results_remain_valid_not_complete():
 
 def test_status_without_history_is_not_run(tmp_path):
     assert deep_audit_status(tmp_path)["state"] == "NOT_RUN"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("num_statements", -1),
+        ("covered_lines", True),
+        ("covered_lines", 3),
+        ("num_branches", 1.5),
+        ("covered_branches", 4),
+    ],
+)
+def test_native_coverage_rejects_invalid_or_impossible_measurements(field, value):
+    from factoryline.deep_audit_io import _native_source_counts
+
+    summary = {
+        "num_statements": 2,
+        "covered_lines": 1,
+        "num_branches": 2,
+        "covered_branches": 1,
+    }
+    summary[field] = value
+    with pytest.raises(RuntimeAuditError):
+        _native_source_counts(
+            {"files": {"app.py": {"summary": summary}}}, {"app.py": "a" * 64}
+        )
+
+
+def test_native_coverage_rejects_duplicate_normalized_paths():
+    from factoryline.deep_audit_io import _native_source_counts
+
+    measured = {
+        "summary": {
+            "num_statements": 2,
+            "covered_lines": 1,
+            "num_branches": 2,
+            "covered_branches": 1,
+        }
+    }
+    with pytest.raises(RuntimeAuditError, match="duplicate native"):
+        _native_source_counts(
+            {"files": {"app.py": measured, "/src/app.py": measured}},
+            {"app.py": "a" * 64},
+        )
+
+
+def test_native_runtime_accounting_distinguishes_measured_and_missing_sources():
+    from factoryline.deep_audit_io import _native_runtime_accounting
+
+    inventory = {
+        "files": [
+            {"path": "app.py", "sha256": "a" * 64, "language": "python"},
+            {"path": "untouched.py", "sha256": "b" * 64, "language": "python"},
+        ]
+    }
+    lane = {"languages": ["python"]}
+    report = {"source_coverage": {"app.py": {"sha256": "a" * 64}}}
+    partial = _native_runtime_accounting(report, inventory, lane)
+    assert partial["state"] == "PARTIAL"
+    assert partial["missing_paths"] == ["untouched.py"]
+    report["source_coverage"]["untouched.py"] = {"sha256": "b" * 64}
+    complete = _native_runtime_accounting(report, inventory, lane)
+    assert complete["state"] == "COMPLETE"
+    assert complete["missing_paths"] == []
+    report["source_coverage"]["app.py"]["sha256"] = "c" * 64
+    with pytest.raises(RuntimeAuditError, match="hash differs"):
+        _native_runtime_accounting(report, inventory, lane)

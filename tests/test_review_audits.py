@@ -1650,3 +1650,119 @@ def test_unmodified_container_constant_assertion_remains_hollow(tmp_path):
         "def test_behavior():\n    errors = []\n    assert errors == []\n"
     )
     assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "before,argument,expected",
+    [
+        ("", "principal.tenant_id", False),
+        ("scope = principal.tenant_id", "scope", False),
+        ("alias = principal", "alias.tenant_id", False),
+        ("principal = other", "principal.tenant_id", True),
+        ("principal.tenant_id = other", "principal.tenant_id", True),
+        ("alias = principal\nalias.tenant_id = other", "principal.tenant_id", True),
+        ("if ready:\n    principal = other", "principal.tenant_id", True),
+        ("if ready:\n    principal.tenant_id = other", "principal.tenant_id", True),
+        ("setattr(principal, 'tenant_id', other)", "principal.tenant_id", True),
+        ("principal.tenant_id[0] = other", "principal.tenant_id", True),
+        (
+            "alias = principal\nsetattr(alias, 'tenant_id', other)",
+            "principal.tenant_id",
+            True,
+        ),
+        ("", "other.tenant_id", True),
+        ("", "principal.organization_id", True),
+        ("", "principal.tenant_id()", True),
+        ("", "principal[tenant_id]", True),
+    ],
+)
+def test_tenant_attribute_binding_rejects_rebinding_and_wrong_scope(
+    tmp_path, before, argument, expected
+):
+    body = "\n".join("    " + line for line in before.splitlines())
+    (tmp_path / "app.py").write_text(
+        f"def read(principal, other, ready):\n{body}\n    return store.fetch({argument})\n",
+        encoding="utf-8",
+    )
+    result = security_scan(
+        tmp_path,
+        tenant_read_calls=("store.fetch",),
+        tenant_read_bindings=("store.fetch=position:0:principal.tenant_id",),
+    )
+    assert bool(result["findings"]) is expected
+    assert all(
+        item["code"] == "SECURITY_MISSING_TENANT_ISOLATION"
+        for item in result["findings"]
+    )
+
+
+def test_scoped_tenant_contract_keeps_other_files_in_security_scan(tmp_path):
+    from factoryline.review_audits import load_tenant_read_contract
+
+    (tmp_path / "app.py").write_text(
+        "def read(principal):\n    return store.fetch(principal.tenant_id)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "other.py").write_text(
+        "def test_hollow():\n    assert True\n", encoding="utf-8"
+    )
+    path = tmp_path / ".factory"
+    path.mkdir()
+    (path / "tenant-read-contract.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.tenant-read-contract.v2",
+                "reads": [
+                    {
+                        "path": "app.py",
+                        "reads": [
+                            {
+                                "call": "store.fetch",
+                                "binding": "position:0:principal.tenant_id",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls, bindings, evidence = load_tenant_read_contract(tmp_path)
+    result = security_scan(
+        tmp_path,
+        tenant_read_calls=calls,
+        tenant_read_bindings=bindings,
+        tenant_read_scopes=evidence["scoped_reads"],
+    )
+    assert result["files_scanned"] == 2
+    assert [item["code"] for item in result["findings"]] == ["QUALITY_HOLLOW_TEST"]
+    assert evidence["state"] == "loaded"
+
+
+@pytest.mark.parametrize(
+    "path,call", [("missing.py", "store.fetch"), ("app.py", "store.typo")]
+)
+def test_scoped_tenant_contract_rejects_missing_source_or_read(tmp_path, path, call):
+    from factoryline.review_audits import load_tenant_read_contract
+
+    (tmp_path / "app.py").write_text(
+        "def read(tenant_id):\n    return store.fetch(tenant_id)\n", encoding="utf-8"
+    )
+    folder = tmp_path / ".factory"
+    folder.mkdir()
+    (folder / "tenant-read-contract.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.tenant-read-contract.v2",
+                "reads": [
+                    {
+                        "path": path,
+                        "reads": [{"call": call, "binding": "position:0:tenant_id"}],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ReviewAuditError, match="unique existing|absent from"):
+        load_tenant_read_contract(tmp_path)

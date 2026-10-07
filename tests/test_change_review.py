@@ -1142,3 +1142,197 @@ def test_cancel_deep_run_does_not_rewrite_a_terminal_run(
         "state": "ALREADY_STOPPED",
         "authority": "none",
     }
+
+
+@pytest.mark.parametrize("commit", [None, "a" * 40, "quote'\nvalue"])
+def test_write_provenance_round_trips_source_identity(tmp_path, monkeypatch, commit):
+    import runpy
+    import setuptools
+    import ast
+
+    monkeypatch.setattr(setuptools, "setup", lambda **kwargs: None)
+    setup_module = runpy.run_path(str(Path(__file__).resolve().parents[1] / "setup.py"))
+    destination = tmp_path / "provenance.py"
+    setup_module["write_provenance"](destination, commit)
+    tree = ast.parse(destination.read_text())
+    assert ast.literal_eval(tree.body[-1].value) == commit
+
+
+def test_make_release_tree_stamps_distribution_not_checkout(tmp_path, monkeypatch):
+    import runpy
+    import setuptools
+    from setuptools import Distribution
+    from setuptools.command.sdist import sdist as base_sdist
+
+    monkeypatch.setattr(setuptools, "setup", lambda **kwargs: None)
+    setup_module = runpy.run_path(str(Path(__file__).resolve().parents[1] / "setup.py"))
+
+    def prepare(self, base_dir, files):
+        (Path(base_dir) / "factoryline").mkdir()
+
+    monkeypatch.setattr(base_sdist, "make_release_tree", prepare)
+    command = setup_module["sdist"](Distribution())
+    destination = tmp_path / "distribution"
+    destination.mkdir()
+    command.make_release_tree(str(destination), [])
+    provenance = destination / "factoryline" / "_build_provenance.py"
+    assert provenance.is_file() and "SOURCE_COMMIT = " in provenance.read_text()
+
+
+def test_run_evidence_missing_manifest_is_structured_failure(tmp_path, capsys):
+    from types import SimpleNamespace
+    from factoryline.cli_quality import run_evidence
+
+    args = SimpleNamespace(
+        root=str(tmp_path), manifest="absent.json", execute=False, json=True
+    )
+    assert run_evidence(args) == 2
+    error = json.loads(capsys.readouterr().err)
+    assert error["marker"] == "CAPABILITY_EVIDENCE_BLOCKED"
+    assert error["code"].startswith("E_")
+
+
+def test_run_quality_creates_unverified_template(tmp_path, capsys):
+    from types import SimpleNamespace
+    from factoryline.cli_quality import run_quality
+
+    args = SimpleNamespace(
+        root=str(tmp_path),
+        quality_cmd="template",
+        out="quality.json",
+        ui=False,
+        json=True,
+    )
+    assert run_quality(args) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert (tmp_path / "quality.json").is_file()
+    assert result.get("marker") or result.get("schema")
+    manifest = json.loads((tmp_path / "quality.json").read_text())
+    assert manifest["schema"].startswith("factory.")
+
+
+def test_run_workflow_family_normalizes_os_failure(tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace
+    import factoryline.cli_domain as module
+
+    def unavailable(args):
+        raise OSError("fixture unavailable")
+
+    monkeypatch.setattr(module, "_workflow_result", unavailable)
+    assert module.run_workflow_family(SimpleNamespace(root=str(tmp_path))) == 1
+    result = json.loads(capsys.readouterr().err)
+    assert result["code"] == "E_INPUT"
+
+
+def test_seal_combine_scoreboard_rejects_invalid_candidate_before_key_access(
+    tmp_path, monkeypatch
+):
+    import factoryline.combine as module
+
+    monkeypatch.setattr(module, "verify_combine_scoreboard", lambda path: {"ok": False})
+    with pytest.raises(module.CombineError, match="scoreboard must verify") as failure:
+        module.seal_combine_scoreboard(
+            tmp_path / "scoreboard.json",
+            private_key_path=tmp_path / "missing.key",
+            keyid="fixture",
+            identity="fixture",
+            issuer="fixture",
+            tenant_id="t",
+            out=tmp_path / "sealed.json",
+        )
+    assert failure.value.code == "COMBINE_SIGNING_FAILED"
+    assert not (tmp_path / "sealed.json").exists()
+
+
+def test_adapter_main_missing_profile_returns_code_without_exception_text(
+    monkeypatch, capsys
+):
+    import factoryline.deep_audit_io as module
+
+    real_path = Path
+
+    def absent(path):
+        if str(path).startswith("/opt/factory/"):
+            raise OSError("secret-fixture")
+        return real_path(path)
+
+    monkeypatch.setattr(module, "Path", absent)
+    assert module.adapter_main(["runtime", "--mode", "coverage"]) == 2
+    captured = capsys.readouterr()
+    assert captured.err.strip() == "E_ADAPTER_INPUT" and captured.out == ""
+
+
+def test_native_fuzz_main_rejects_unbound_harness_before_instrumentation(
+    tmp_path, monkeypatch
+):
+    import sys
+    from types import SimpleNamespace
+    import factoryline.deep_audit_io as module
+
+    contract = tmp_path / "contract.json"
+    contract.write_text(json.dumps({"inventory": {"files": []}}))
+    real_path = Path
+
+    def paths(value):
+        return contract if str(value) == "/factory-contract.json" else real_path(value)
+
+    monkeypatch.setattr(module, "Path", paths)
+    monkeypatch.setitem(sys.modules, "atheris", SimpleNamespace())
+    with pytest.raises(KeyError):
+        module.native_fuzz_main(["/src/unknown.py", str(tmp_path / "out.json")])
+    assert not (tmp_path / "out.json").exists()
+
+
+def test_write_release_candidate_preflight_binds_atomic_output(tmp_path, monkeypatch):
+    import factoryline.release_candidate as module
+
+    monkeypatch.setattr(
+        module,
+        "release_candidate_preflight",
+        lambda *args, **kwargs: {"state": "BLOCKED", "reasons": ["fixture"]},
+    )
+    result = module.write_release_candidate_preflight(
+        tmp_path, Path("contract.json"), [], Path("receipt.json")
+    )
+    stored = json.loads((tmp_path / "receipt.json").read_text())
+    assert stored == result and stored["state"] == "BLOCKED"
+    assert stored["marker"] == "RELEASE_CANDIDATE_PREFLIGHT_WRITTEN"
+    assert len(stored["receipt_sha256"]) == 64
+    assert not (tmp_path / "receipt.json.tmp").exists()
+    with pytest.raises(ValueError, match="inside the workspace"):
+        module.write_release_candidate_preflight(
+            tmp_path, Path("contract.json"), [], tmp_path.parent / "escape.json"
+        )
+
+
+def test_compare_deep_audit_repairs_forwards_exact_bound_inputs(tmp_path, monkeypatch):
+    from factoryline.repair_loop import compare_deep_audit_repairs
+    import factoryline.deep_audit_loop as module
+
+    calls = []
+
+    def compare(root, before, after, **kwargs):
+        calls.append((root, before, after, kwargs))
+        return {"state": "INCOMPLETE", "authority": "none"}
+
+    monkeypatch.setattr(module, "compare_deep_audits", compare)
+    result = compare_deep_audit_repairs(
+        tmp_path, "before.json", "after.json", require_attestation=True
+    )
+    assert result == {"state": "INCOMPLETE", "authority": "none"}
+    assert calls == [
+        (tmp_path, "before.json", "after.json", {"require_attestation": True})
+    ]
+
+
+def test_guarded_lane_evaluator_sanitizes_unknown_failure_codes():
+    from factoryline.runtime_audit_common import guarded_lane_evaluator
+
+    @guarded_lane_evaluator("runtime")
+    def evaluate():
+        raise ValueError("secret-fixture")
+
+    result = evaluate()
+    assert result["state"] == "INCOMPLETE"
+    assert result["details"]["error_code"] == "E_ARTIFACT_INVALID"
+    assert "secret-fixture" not in json.dumps(result)

@@ -37,3 +37,44 @@ are absent, verifies production behavior, or authorizes a deployment.
 See [contract format](DEEP_AUDIT_INGESTION.md), [decisions and commands](DEEP_AUDIT_DECISIONS.md),
 [engine considerations](DEEP_DEFECT_RESEARCH.md), and
 [graph/comparison verification](DEEP_AUDIT_LOOP_VERIFICATION.md).
+
+
+## Failure playback, pause and resume
+
+Authorized `factory deep-audit scan` runs retain their event chain under
+`.factory/deep-runs/<run-id>/`. Every observed lane failure and run gap is recorded
+as `failure_recorded`, with its error code, candidate/manifest binding, lane,
+resolution guidance and available bounded execution facts. Findings retain their
+own `finding_observed` events. Captured raw stdout/stderr and credentials are not
+copied into playback; process hashes and validated worker bundles remain evidence.
+
+```text
+factory deep-audit playback --root . --run-id <id> --after 0 --limit 100 --json
+factory deep-audit pause --root . --run-id <id> --json
+factory deep-audit scan --root . --manifest <manifest> --manifest-sha256 <sha> --authorization <fresh-authorization> --trust-root <trust> --trust-root-sha256 <sha> --resume <id> --json
+```
+
+Playback verifies the stored event chain and pages up to 500 events. It never
+executes recorded commands. Pause requests cooperative termination of the active
+worker; the runner confirms container cleanup before recording `PAUSED`. A
+request alone is not proof of a stopped process. Resume creates a linked new run,
+rechecks the old event chain, candidate and manifest, validates authorization,
+and reruns lanes rather than trusting old successes. A running parent cannot be
+resumed. Source changes require a new plan, not resumption of stale evidence.
+
+This lifecycle covers CF-owned isolated deep-audit executions. Legacy receipt
+imports, other applications' failures and abrupt power loss are not observed by
+this runner. Local self-hashes detect inconsistent records; they are not signatures
+or release approval. Disk failure can prevent recording and remains an operator
+error, not a successful audit.
+
+
+### Detection accuracy acceptance target
+
+Detection precision and recall must each reach at least 99.5% on independent,
+held-out evaluations for the applicable audit categories before making that
+accuracy claim. Report TP, FP, FN, TN, sample counts and confidence intervals
+separately by category. A name-based test-intent attribution score or source
+quality grade is not detection accuracy. Missing external evaluation is NOT_RUN;
+public development cases passing are regression evidence, not proof of
+99.5% generalization. Preserve the verifier-only holdout boundary in HOLDOUT.md.

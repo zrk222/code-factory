@@ -16,6 +16,7 @@ venv/
 !.factory/
 .factory/*
 !.factory/repository-scope-decisions.json
+!.factory/tenant-read-contract.json
 .forge/
 receipts/
 *.adoption.ssat.yaml

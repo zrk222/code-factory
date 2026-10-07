@@ -435,3 +435,32 @@ def test_enterprise_workflow_uses_optional_extra_and_no_network_service():
     assert ".[dev,enterprise]" in workflow
     assert "offline-foundation" in workflow
     assert "tests/test_enterprise_receipts.py" in workflow
+
+
+def test_verify_signed_document_binds_payload_and_rejects_tampering(tmp_path):
+    from factoryline.enterprise_receipts import (
+        verify_signed_document,
+        RECEIPT_PAYLOAD_TYPE,
+        RECEIPT_V2_SCHEMA,
+    )
+
+    path, keys = _seal(tmp_path)
+    result = verify_signed_document(
+        path,
+        payload_type=RECEIPT_PAYLOAD_TYPE,
+        schema=RECEIPT_V2_SCHEMA,
+        trust_root_path=Path(keys["trust_root"]),
+    )
+    assert result["payload"] == _receipt()
+    assert result["verification"] == "offline_dsse_ed25519"
+    assert len(result["payload_sha256"]) == 64
+    envelope = json.loads(path.read_text())
+    envelope["payload"] = base64.urlsafe_b64encode(b"{} ").decode().rstrip("=")
+    path.write_text(json.dumps(envelope))
+    with pytest.raises(EnterpriseReceiptError):
+        verify_signed_document(
+            path,
+            payload_type=RECEIPT_PAYLOAD_TYPE,
+            schema=RECEIPT_V2_SCHEMA,
+            trust_root_path=Path(keys["trust_root"]),
+        )

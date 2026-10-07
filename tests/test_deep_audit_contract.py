@@ -1056,3 +1056,105 @@ def test_secrets_sidecar_cannot_claim_native_scan_coverage(tmp_path):
     )
     assert result["state"] == "INCOMPLETE"
     assert "SECRETS_NATIVE_ACCOUNTING_UNAVAILABLE" in result["gaps"]
+
+
+def test_failure_playback_is_paged_and_tamper_checked(tmp_path, monkeypatch):
+    import factoryline.deep_audit as module
+    from factoryline.deep_audit_io import read_run_json, run_directory, write_run_json
+
+    root, manifest, pin, authorization, trust, plan, _, _ = execution_fixture(tmp_path)
+
+    def unavailable():
+        raise RuntimeAuditError("E_DOCKER_UNAVAILABLE", "private diagnostic")
+
+    monkeypatch.setattr(module, "_docker_base", unavailable)
+    result = module.scan_deep_audit(
+        root,
+        manifest,
+        pin,
+        authorization=authorization,
+        trust_root=trust,
+        trust_root_sha256=plan["trust_root_sha256"],
+    )
+    page = module.playback_deep_run(root, result["run_id"], limit=3)
+    assert len(page["events"]) == 3 and page["has_more"]
+    events = module.playback_deep_run(root, result["run_id"], limit=500)["events"]
+    failures = [
+        event["details"] for event in events if event["kind"] == "failure_recorded"
+    ]
+    assert len(failures) == 7
+    assert all(item["code"] == "E_DOCKER_UNAVAILABLE" for item in failures)
+    assert all(
+        item["candidate_sha256"] == plan["candidate_sha256"] for item in failures
+    )
+    assert "private diagnostic" not in json.dumps(events)
+    directory = run_directory(root, result["run_id"])
+    event = read_run_json(directory, "event-00001.json")
+    event["details"] = {}
+    write_run_json(directory, "event-00001.json", event)
+    with pytest.raises(RuntimeAuditError, match="E_EVENT_INTEGRITY"):
+        module.playback_deep_run(root, result["run_id"])
+
+
+def test_pause_stops_between_lanes_and_resume_revalidates(tmp_path, monkeypatch):
+    import factoryline.deep_audit as module
+
+    root, manifest, pin, authorization, trust, plan, _, _ = execution_fixture(tmp_path)
+    calls = []
+
+    def lane(*args):
+        state, definition = args[2], args[4]
+        calls.append(definition["id"])
+        request = module.pause_deep_run(root, state["run_id"])
+        assert request["state"] == "PAUSE_REQUESTED"
+        return {
+            "lane_id": definition["id"],
+            "state": "INCOMPLETE",
+            "findings": [],
+            "gaps": ["WORKER_FAILED"],
+            "execution": {"cancelled": True},
+        }
+
+    monkeypatch.setattr(module, "_execute_lane", lane)
+    result = module.scan_deep_audit(
+        root,
+        manifest,
+        pin,
+        authorization=authorization,
+        trust_root=trust,
+        trust_root_sha256=plan["trust_root_sha256"],
+    )
+    assert result["state"] == "PAUSED" and not result["analysis_complete"]
+    assert len(calls) == 1
+    assert (
+        module.playback_deep_run(root, result["run_id"])["events"][-1]["kind"]
+        == "run_paused"
+    )
+    assert module.pause_deep_run(root, result["run_id"])["state"] == "ALREADY_STOPPED"
+    retried = module.scan_deep_audit(
+        root,
+        manifest,
+        pin,
+        authorization=authorization,
+        trust_root=trust,
+        trust_root_sha256=plan["trust_root_sha256"],
+        resume=result["run_id"],
+    )
+    assert retried["parent_run"] == result["run_id"]
+    assert retried["run_id"] != result["run_id"] and len(calls) == 2
+    with pytest.raises(RuntimeAuditError, match="E_RESUME_DRIFT"):
+        module._check_resume(root, result["run_id"], "0" * 64, plan, None, None)
+
+
+@pytest.mark.parametrize("after,limit", [(-1, 100), (True, 100), (0, 0), (0, 501)])
+def test_playback_rejects_invalid_bounds(tmp_path, after, limit):
+    import factoryline.deep_audit as module
+    from factoryline.deep_audit_io import run_directory
+
+    run_id = "a" * 32
+    state = {"schema": "factory.deep-run.v1", "run_id": run_id, "state": "PAUSED"}
+    module._event(
+        run_directory(tmp_path, run_id, create=True), state, "run_started", {}
+    )
+    with pytest.raises(RuntimeAuditError, match="E_PLAYBACK_RANGE"):
+        module.playback_deep_run(tmp_path, run_id, after=after, limit=limit)

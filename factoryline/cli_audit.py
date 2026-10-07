@@ -152,6 +152,7 @@ def _run_security(args: Any) -> int:
             Path(args.root),
             tenant_read_calls=calls,
             tenant_read_bindings=bindings,
+            tenant_read_scopes=contract_evidence.get("scoped_reads"),
         )
         result["tenant_read_contract"]["configuration"] = contract_evidence
         if contract_evidence["state"] == "missing":

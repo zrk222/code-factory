@@ -120,7 +120,18 @@ def _scope_gaps(plan: dict, inventory: dict) -> list:
     return gaps
 
 
+_EVENT_LOCK = threading.RLock()
+
+
 def _event(directory: Path, state: dict, kind: str, details: dict, emit=None) -> None:
+    # Heartbeat and coordinator writes must not race the durable sequence/head.
+    with _EVENT_LOCK:
+        _write_event(directory, state, kind, details, emit)
+
+
+def _write_event(
+    directory: Path, state: dict, kind: str, details: dict, emit=None
+) -> None:
     from .deep_audit_io import write_run_json
 
     sequence = state.get("sequence", 0) + 1
@@ -300,7 +311,7 @@ def _monitor_lane(
 ) -> None:
     last = time.monotonic()
     while not stop.wait(0.25):
-        if (directory / "cancel.json").exists():
+        if any((directory / name).exists() for name in ("cancel.json", "pause.json")):
             cancelled.set()
         if time.monotonic() - last >= 15:
             _event(
@@ -423,6 +434,9 @@ def _run_lanes(
                 )
             )
             break
+        if (directory / "pause.json").exists():
+            state["pause_requested"] = True
+            break
         state["active_lane"] = lane["id"]
         _event(
             directory,
@@ -445,6 +459,14 @@ def _run_lanes(
                 "gaps": [code],
             }
         state["lanes"].append(result)
+        _record_failures(
+            directory,
+            state,
+            lane["id"],
+            result["gaps"],
+            emit,
+            execution=result.get("execution", {}),
+        )
         for finding in result["findings"]:
             finding["rerun"] = [
                 "factory",
@@ -479,6 +501,9 @@ def _run_lanes(
                 )
             )
             break
+        if (directory / "pause.json").exists():
+            state["pause_requested"] = True
+            break
 
 
 def _check_resume(
@@ -491,7 +516,11 @@ def _check_resume(
 ) -> None:
     if not resume:
         return
-    previous = read_run_json(run_directory(root, resume), "state.json")
+    previous = deep_run_status(root, resume)
+    if previous["observed_state"] == "RUNNING":
+        raise RuntimeAuditError(
+            "E_RESUME_ACTIVE", "Pause or stop the previous run before retrying"
+        )
     if (
         previous["manifest_sha256"] != manifest_sha256
         or previous["candidate_sha256"] != plan["candidate_sha256"]
@@ -612,9 +641,16 @@ def _finish_scan(
     write_run_json,
 ) -> dict:
     state.pop("active_lane", None)
-    state["state"] = "INCOMPLETE"
+    paused = (
+        state.get("pause_requested", False) and not (directory / "cancel.json").exists()
+    )
+    state["state"] = "PAUSED" if paused else "INCOMPLETE"
+    _record_failures(
+        directory, state, None, [gap["code"] for gap in state["gaps"]], emit
+    )
     state["analysis_complete"] = (
-        not state["gaps"]
+        not paused
+        and not state["gaps"]
         and len(state["lanes"]) == len(plan["lanes"])
         and all(lane["state"] == "OBSERVED" for lane in state["lanes"])
     )
@@ -622,7 +658,7 @@ def _finish_scan(
     _event(
         directory,
         state,
-        "run_completed",
+        "run_paused" if paused else "run_completed",
         {"analysis_complete": state["analysis_complete"], "review": "REQUIRED"},
         emit,
     )
@@ -727,6 +763,83 @@ def deep_run_status(root: Path, run_id: str) -> dict:
         "authority": "none",
         "release_approval": False,
         "status_limit": "Unreviewed local observations; use review with explicitly pinned trust to verify readiness.",
+    }
+
+
+def _record_failures(
+    directory: Path,
+    state: dict,
+    lane_id,
+    codes: list,
+    emit,
+    *,
+    execution: dict | None = None,
+) -> None:
+    """Persist failure identities and bounded process facts without raw secrets."""
+    for code in codes:
+        _event(
+            directory,
+            state,
+            "failure_recorded",
+            {
+                "code": code,
+                "lane_id": lane_id,
+                "candidate_sha256": state["candidate_sha256"],
+                "manifest_sha256": state["manifest_sha256"],
+                "execution": execution or {},
+                "resolution": "Inspect the lane evidence, repair prerequisites or code, and retry with fresh authorization.",
+            },
+            emit,
+        )
+
+
+def pause_deep_run(root: Path, run_id: str) -> dict:
+    """Request worker termination; PAUSED is recorded only by the stopped runner."""
+    from .deep_audit_io import run_directory, write_run_json
+
+    state = deep_run_status(root, run_id)
+    if state["observed_state"] != "RUNNING":
+        return {"run_id": run_id, "state": "ALREADY_STOPPED", "authority": "none"}
+    write_run_json(
+        run_directory(root, run_id),
+        "pause.json",
+        {
+            "run_id": run_id,
+            "requested_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    return {"run_id": run_id, "state": "PAUSE_REQUESTED", "authority": "none"}
+
+
+def playback_deep_run(
+    root: Path, run_id: str, *, after: int = 0, limit: int = 100
+) -> dict:
+    """Read a verified, bounded event page; playback never re-executes commands."""
+    from .deep_audit_io import read_run_json, run_directory
+
+    state = deep_run_status(root, run_id)
+    if type(after) is not int or not 0 <= after <= state["sequence"]:
+        raise RuntimeAuditError(
+            "E_PLAYBACK_RANGE", "after must be an existing event cursor"
+        )
+    if type(limit) is not int or not 1 <= limit <= 500:
+        raise RuntimeAuditError("E_PLAYBACK_RANGE", "limit must be between 1 and 500")
+    end = min(state["sequence"], after + limit)
+    directory = run_directory(root, run_id)
+    events = [
+        read_run_json(directory, f"event-{index:05d}.json")
+        for index in range(after + 1, end + 1)
+    ]
+    return {
+        "schema": "factory.deep-playback.v1",
+        "run_id": run_id,
+        "state": "OBSERVED",
+        "observed_state": state["observed_state"],
+        "events": events,
+        "next_cursor": end,
+        "has_more": end < state["sequence"],
+        "authority": "none",
+        "release_approval": False,
     }
 
 
