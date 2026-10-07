@@ -546,3 +546,166 @@ def read_run_json(directory: Path, name: str) -> dict:
     if expected != digest(value):
         raise RuntimeAuditError("E_RUN_INTEGRITY", "run state digest mismatch")
     return value
+
+
+def _adapter_profile(profile: dict, lane: dict) -> list[dict]:
+    """Commands come from the immutable image, never from scanned repository text."""
+    expected = {
+        "schema",
+        "engine",
+        "mode",
+        "tool_version",
+        "ruleset_sha256",
+        "commands",
+    }
+    if set(profile) != expected or profile["schema"] != "factory.adapter-profile.v1":
+        raise RuntimeAuditError("E_ADAPTER_PROFILE", "invalid image-bundled profile")
+    for key in ("engine", "mode", "tool_version", "ruleset_sha256"):
+        if profile[key] != lane.get(key):
+            raise RuntimeAuditError(
+                "E_ADAPTER_PROFILE", "profile differs from signed lane"
+            )
+    commands = profile["commands"]
+    if not isinstance(commands, list) or not 1 <= len(commands) <= 64:
+        raise RuntimeAuditError("E_ADAPTER_PROFILE", "bounded command list required")
+    for command in commands:
+        _adapter_command_shape(command)
+    return commands
+
+
+def _adapter_command_shape(command: dict) -> None:
+    if not isinstance(command, dict) or set(command) != {"argv", "accepted_exit_codes"}:
+        raise RuntimeAuditError("E_ADAPTER_PROFILE", "invalid command fields")
+    argv, exits = command["argv"], command["accepted_exit_codes"]
+    if not isinstance(argv, list) or not 1 <= len(argv) <= 128:
+        raise RuntimeAuditError("E_ADAPTER_PROFILE", "bounded argv required")
+    for arg in argv:
+        require_str(arg, "adapter argument", maximum=2048)
+    if not Path(argv[0]).is_absolute():
+        raise RuntimeAuditError(
+            "E_ADAPTER_PROFILE", "absolute executable path required"
+        )
+    if not isinstance(exits, list) or not 1 <= len(exits) <= 16:
+        raise RuntimeAuditError("E_ADAPTER_PROFILE", "bounded exit codes required")
+    if any(type(code) is not int or not 0 <= code <= 255 for code in exits):
+        raise RuntimeAuditError("E_ADAPTER_PROFILE", "invalid exit code")
+
+
+def _adapter_sources(source: Path, inventory: dict) -> None:
+    files = inventory.get("files")
+    if not isinstance(files, list) or not 1 <= len(files) <= 50_000:
+        raise RuntimeAuditError("E_ADAPTER_INPUT", "bounded inventory required")
+    names = set()
+    for item in files:
+        if not isinstance(item, dict) or item.get("path") in names:
+            raise RuntimeAuditError(
+                "E_ADAPTER_INPUT", "unique source bindings required"
+            )
+        path = relative_path(item.get("path"))
+        names.add(path)
+        bound_bytes(source, {"path": path, "sha256": item.get("sha256")})
+
+
+def _adapter_commands(
+    commands: list[dict], lane: dict, source: Path, scratch: Path
+) -> list[dict]:
+    from .runtime_audit_process import run_bounded_command
+
+    timeout = lane.get("timeout_seconds")
+    if type(timeout) is not int or not 1 <= timeout <= 3600:
+        raise RuntimeAuditError("E_ADAPTER_INPUT", "bounded signed timeout required")
+    deadline = time.monotonic() + timeout
+    invocations = []
+    for index, command in enumerate(commands):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeAuditError("E_ADAPTER_TIMEOUT", "adapter deadline exhausted")
+        directory = scratch / str(index)
+        directory.mkdir()
+        facts = run_bounded_command(command["argv"], source, remaining, directory)
+        if (
+            facts["timed_out"]
+            or facts["launch_error"]
+            or facts["output_limit_exceeded"]
+            or not facts["cleanup_confirmed"]
+            or facts["exit_code"] not in command["accepted_exit_codes"]
+            or time.monotonic() > deadline
+        ):
+            raise RuntimeAuditError(
+                "E_ADAPTER_COMMAND", "native command did not complete"
+            )
+        invocations.append({"argv_sha256": digest(command["argv"]), "execution": facts})
+    return invocations
+
+
+def execute_adapter_profile(
+    profile: dict, contract: dict, source: Path, output: Path
+) -> dict:
+    """Join actual native artifacts; never synthesize coverage or challenge success."""
+    keys = {"schema", "run_id", "manifest_sha256", "inventory", "lane", "obligations"}
+    if set(contract) != keys or contract["schema"] != "factory.deep-adapter-input.v1":
+        raise RuntimeAuditError("E_ADAPTER_INPUT", "invalid adapter contract")
+    require_str(contract["run_id"], "run_id", maximum=64)
+    require_digest(contract["manifest_sha256"], "manifest_sha256")
+    inventory, lane = contract["inventory"], contract["lane"]
+    if not isinstance(inventory, dict) or not isinstance(lane, dict):
+        raise RuntimeAuditError(
+            "E_ADAPTER_INPUT", "inventory and lane objects required"
+        )
+    require_digest(inventory.get("candidate_sha256"), "candidate_sha256")
+    commands = _adapter_profile(profile, lane)
+    _adapter_sources(source, inventory)
+    report_paths = {lane[key] for key in ("report", "coverage", "challenge_report")}
+    if len(report_paths) != 3:
+        raise RuntimeAuditError("E_ADAPTER_INPUT", "distinct artifact paths required")
+    for path in report_paths:
+        target = Path(output) / relative_path(path)
+        if target.exists() or target.is_symlink():
+            raise RuntimeAuditError("E_ADAPTER_STALE", "preexisting output rejected")
+    with tempfile.TemporaryDirectory(prefix="factory-adapter-") as temporary:
+        invocations = _adapter_commands(commands, lane, Path(source), Path(temporary))
+    artifacts = {}
+    for path in sorted(report_paths):
+        artifact = local_file(output, path)
+        with artifact.open("rb") as stream:
+            artifacts[path] = strict_json(stream.read(LIMIT + 1))
+    coverage = artifacts[lane["coverage"]]
+    coverage["native_coverage_sha256"] = digest(coverage)
+    coverage["native_invocations"] = invocations
+    coverage["invocation_sha256"] = digest(invocations)
+    _adapter_sources(source, inventory)
+    return {
+        "schema": "factory.deep-worker.v1",
+        "run_id": contract["run_id"],
+        "candidate_sha256": inventory["candidate_sha256"],
+        "artifacts": artifacts,
+    }
+
+
+def adapter_main(argv: list[str] | None = None) -> int:
+    """Fixed in-image endpoint; Docker isolation and host validation remain mandatory."""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("engine")
+    parser.add_argument("--mode", required=True)
+    args = parser.parse_args(argv)
+    try:
+        with Path("/opt/factory/adapter-profile.json").open("rb") as stream:
+            profile = strict_json(stream.read(LIMIT + 1))
+        with Path("/factory-contract.json").open("rb") as stream:
+            contract = strict_json(stream.read(LIMIT + 1))
+        if (profile.get("engine"), profile.get("mode")) != (args.engine, args.mode):
+            raise RuntimeAuditError("E_ADAPTER_PROFILE", "entrypoint arguments differ")
+        bundle = execute_adapter_profile(profile, contract, Path("/src"), Path("/out"))
+        print(canonical_bytes(bundle).decode("utf-8"))
+        return 0
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        import sys
+
+        print(getattr(exc, "code", "E_ADAPTER_INPUT"), file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(adapter_main())

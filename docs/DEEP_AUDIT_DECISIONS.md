@@ -565,6 +565,28 @@ coordinator. It must not be cited as a penetration-test receipt.
 
 ### Adapter evidence contract
 
+The worker endpoint is implemented in `factoryline.deep_audit_io.adapter_main`.
+`deploy/deep-adapters/Dockerfile` builds its pinned, nonroot Linux amd64 SDK image;
+the `gitleaks-worker` target also includes the pinned native binary. Build from
+the repository root with `docker build --network=none --target gitleaks-worker
+-t factory-gitleaks-worker:8.28.0 -f deploy/deep-adapters/Dockerfile .`.
+The base remains explicitly unconfigured. A reviewed final image must copy its
+native toolchain/profile to `/opt/factory/adapter-profile.json` and must use its
+own immutable image pin in the approved manifest. The scanned repository cannot
+provide or override this execution profile.
+
+The `factory.adapter-profile.v1` object requires `engine`, `mode`, `tool_version`,
+`ruleset_sha256` and a bounded `commands` array. Each command supplies an absolute
+executable `argv` and `accepted_exit_codes`. Identity must match the signed lane.
+The worker uses bounded, no-shell execution with one shared deadline and hashes
+source bytes before and after commands. Native commands must write the exact
+declared report, coverage and challenge artifact paths under `/out`. Missing,
+preexisting, oversized, linked or malformed artifacts and command/source drift
+fail closed. The worker joins actual artifacts into `factory.deep-worker.v1`;
+it never invents coverage counters or challenge success. Host normalization and
+signed specialty review remain required. Framework transport tests across six
+engine names are synthetic; they are not native-tool execution proof.
+
 The native Gitleaks foundation has a reproducible, digest-pinned recipe at
 `deploy/native-scanners/gitleaks/Dockerfile`. Build it with
 `docker build --pull=false --network=none -t factory-native-gitleaks:8.28.0 deploy/native-scanners/gitleaks`.

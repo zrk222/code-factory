@@ -17,6 +17,117 @@ from factoryline.deep_audit_io import digest
 from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
 
 
+def adapter_inputs(tmp_path):
+    import sys
+
+    source, output = tmp_path / "source", tmp_path / "output"
+    source.mkdir()
+    output.mkdir()
+    (source / "app.txt").write_bytes(b"candidate")
+    lane = {
+        "engine": "runtime",
+        "mode": "native",
+        "tool_version": "test-harness-1",
+        "ruleset_sha256": "a" * 64,
+        "timeout_seconds": 5,
+        "report": "report.json",
+        "coverage": "coverage.json",
+        "challenge_report": "challenges.json",
+    }
+    script = (
+        "import json; from pathlib import Path; "
+        f"root=Path({str(output)!r}); "
+        "[(root/name).write_text(json.dumps({'observed': name})) "
+        "for name in ('report.json','coverage.json','challenges.json')]"
+    )
+    profile = {
+        "schema": "factory.adapter-profile.v1",
+        **{
+            key: lane[key]
+            for key in ("engine", "mode", "tool_version", "ruleset_sha256")
+        },
+        "commands": [
+            {"argv": [sys.executable, "-c", script], "accepted_exit_codes": [0]}
+        ],
+    }
+    contract = {
+        "schema": "factory.deep-adapter-input.v1",
+        "run_id": "test",
+        "manifest_sha256": "b" * 64,
+        "inventory": {
+            "candidate_sha256": "c" * 64,
+            "files": [{"path": "app.txt", "sha256": sha256_bytes(b"candidate")}],
+        },
+        "lane": lane,
+        "obligations": [],
+    }
+    return profile, contract, source, output
+
+
+@pytest.mark.parametrize(
+    "engine", ["codeql", "osv", "gitleaks", "trivy", "runtime", "atheris"]
+)
+def test_adapter_joins_actual_artifacts_without_inventing_coverage(tmp_path, engine):
+    from factoryline.deep_audit_io import execute_adapter_profile
+
+    profile, contract, source, output = adapter_inputs(tmp_path)
+    profile["engine"] = contract["lane"]["engine"] = engine
+    # This is a synthetic artifact transport test, not execution of these tools.
+    result = execute_adapter_profile(profile, contract, source, output)
+    assert result["schema"] == "factory.deep-worker.v1"
+    assert result["run_id"] == "test"
+    assert result["candidate_sha256"] == "c" * 64
+    coverage = result["artifacts"]["coverage.json"]
+    assert coverage["observed"] == "coverage.json"
+    assert "complete" not in coverage
+    assert coverage["native_invocations"][0]["execution"]["exit_code"] == 0
+    assert coverage["invocation_sha256"] == digest(coverage["native_invocations"])
+
+
+@pytest.mark.parametrize(
+    "failure", ["profile", "source", "stale", "missing", "exit", "drift"]
+)
+def test_adapter_rejects_drift_stale_missing_and_failed_execution(tmp_path, failure):
+    from factoryline.deep_audit_io import execute_adapter_profile
+
+    profile, contract, source, output = adapter_inputs(tmp_path)
+    code = {
+        "profile": "E_ADAPTER_PROFILE",
+        "source": "E_REPORT_DRIFT",
+        "stale": "E_ADAPTER_STALE",
+        "missing": "E_SOURCE_MISSING",
+        "exit": "E_ADAPTER_COMMAND",
+        "drift": "E_REPORT_DRIFT",
+    }[failure]
+    if failure == "profile":
+        profile["tool_version"] = "wrong-version"
+    elif failure == "source":
+        (source / "app.txt").write_bytes(b"changed")
+    elif failure == "stale":
+        (output / "report.json").write_text("{}")
+    elif failure == "missing":
+        profile["commands"][0]["argv"][-1] = "pass"
+    elif failure == "exit":
+        profile["commands"][0]["argv"][-1] = "raise SystemExit(7)"
+    elif failure == "drift":
+        profile["commands"][0]["argv"][-1] += "; Path('app.txt').write_text('changed')"
+    with pytest.raises(RuntimeAuditError, match=code):
+        execute_adapter_profile(profile, contract, source, output)
+
+
+def test_adapter_rejects_relative_executable_and_boolean_exit_code(tmp_path):
+    from factoryline.deep_audit_io import execute_adapter_profile
+
+    profile, contract, source, output = adapter_inputs(tmp_path)
+    profile["commands"][0]["accepted_exit_codes"] = [True]
+    with pytest.raises(RuntimeAuditError, match="E_ADAPTER_PROFILE"):
+        execute_adapter_profile(profile, contract, source, output)
+    profile["commands"][0]["accepted_exit_codes"] = [0]
+    profile["commands"][0]["argv"][0] = "python"
+    with pytest.raises(RuntimeAuditError, match="E_ADAPTER_PROFILE"):
+        execute_adapter_profile(profile, contract, source, output)
+
+
 @pytest.mark.parametrize("local_id", [False, True])
 def test_docker_preflight_verifies_exact_immutable_pin(monkeypatch, local_id):
     import factoryline.deep_audit as module
