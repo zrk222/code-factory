@@ -31,6 +31,7 @@ Architect verdict: REOPENED — specialty review of PR head `862f252` found two 
 - [ ] T10 | slice=proof | files=.factory/attribution-workflow-contract.json,.factory/attribution-workflow-observations.json | verify=`python -m factoryline.cli audit workflows --root . --contract .factory/attribution-workflow-contract.json --observations .factory/attribution-workflow-observations.json --json` | bind exact final changed-source/spec hashes and observations, then rerun architecture, candidate quality, full CI and specialty AI review on the final SHA.
 
 ## Final review corrections
+- The 2026-10-07 specialty review found and the T9 follow-up fixed false negatives for locally/module-rebound `pytest.raises` aliases, including source-order restoration after a later valid import; wildcard imports directly and inside branches; helper functions that rebound that alias; unused failure callbacks; and identical repeated-call comparisons. Nested helper/comprehension bindings remain scoped and do not invalidate an outer test alias. Regressions are covered in `tests/test_review_audits.py`; the current focused audit suite passes 125 tests. The prior combined audit/architecture/taxonomy run passed 177 tests before these final regression cases were added.
 - Corrupt JSON, incomplete fixed-point values, missing or contradictory receipts,
   mismatched action/request/settlement hashes, and inconsistent overrun markers
   or settlement status versus actual aggregate totals all return `INCOMPLETE`

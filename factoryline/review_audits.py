@@ -85,6 +85,15 @@ def _body_nodes(node: ast.AST):
         yield from _body_nodes(child)
 
 
+def _iter_ast_nodes(node: ast.AST):
+    """Walk one AST without allocating or repeating ``ast.walk`` inventories."""
+    pending = [node]
+    while pending:
+        child = pending.pop()
+        yield child
+        pending.extend(ast.iter_child_nodes(child))
+
+
 def _calls(body: list[ast.stmt]) -> set[str]:
     return {
         _name(node.func)
@@ -706,12 +715,169 @@ def _security_aliases(nodes: list[ast.AST]) -> dict[str, str]:
     return aliases
 
 
+def _module_security_aliases(tree: ast.Module) -> dict[str, str]:
+    """Resolve only imports in module scope for test-oracle attribution."""
+    return _security_aliases(
+        [node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))]
+    )
+
+
+def _scope_body(node: ast.AST) -> list[ast.stmt] | None:
+    if isinstance(node, ast.Module):
+        return node.body
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return node.body
+    return None
+
+
+def _scope_parameters(node: ast.AST) -> set[str]:
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return set()
+    arguments = node.args
+    names = {
+        argument.arg
+        for argument in (
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+        )
+    }
+    if arguments.vararg:
+        names.add(arguments.vararg.arg)
+    if arguments.kwarg:
+        names.add(arguments.kwarg.arg)
+    return names
+
+
+def _binding_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        return node.id
+    if isinstance(node, ast.arg):
+        return node.arg
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return node.name
+    if isinstance(node, ast.ExceptHandler):
+        return node.name
+    if isinstance(node, (ast.MatchAs, ast.MatchStar)):
+        return node.name
+    if isinstance(node, ast.MatchMapping):
+        return node.rest
+    return None
+
+
+def _bound_names(statement: ast.AST) -> set[str]:
+    comprehension_targets = {
+        id(target)
+        for child in _iter_ast_nodes(statement)
+        if isinstance(
+            child, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        )
+        for generator in child.generators
+        for target in _iter_ast_nodes(generator.target)
+        if isinstance(target, ast.Name)
+    }
+    names: set[str] = set()
+    pending = [statement]
+    while pending:
+        child = pending.pop()
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if child is statement:
+                names.add(child.name)
+            continue
+        if isinstance(child, ast.Lambda):
+            continue
+        pending.extend(ast.iter_child_nodes(child))
+        if isinstance(child, (ast.Import, ast.ImportFrom)):
+            if any(item.name == "*" for item in child.names):
+                names.add("*")
+            names.update(
+                item.asname
+                or (
+                    item.name.split(".")[0]
+                    if isinstance(child, ast.Import)
+                    else item.name
+                )
+                for item in child.names
+                if item.name != "*"
+            )
+            continue
+        if id(child) in comprehension_targets:
+            continue
+        name = _binding_name(child)
+        if name:
+            names.add(name)
+    return names
+
+
 def _normalized_call_name(node: ast.Call, aliases: dict[str, str]) -> str:
     name = _call_name(node)
     if not name:
         return name
     head, *tail = name.split(".")
     return ".".join([aliases.get(head, head), *tail])
+
+
+def _scope_security_aliases(aliases: dict[str, str], node: ast.AST) -> dict[str, str]:
+    """Resolve import aliases in source order within one lexical scope."""
+    resolved = dict(aliases)
+    body = _scope_body(node)
+    if body is None:
+        return resolved
+    for name in _scope_parameters(node):
+        resolved.pop(name, None)
+
+    for statement in body:
+        if isinstance(statement, (ast.Import, ast.ImportFrom)):
+            if any(item.name == "*" for item in statement.names):
+                resolved.clear()
+                continue
+            imported = _security_aliases([statement])
+            for name in _bound_names(statement):
+                resolved.pop(name, None)
+                if name in imported:
+                    resolved[name] = imported[name]
+            continue
+        # Bindings in branches, exception handlers, and pattern matches are
+        # conservatively invalidated; only unconditional direct imports restore
+        # a recognized alias later in the scope.
+        bound = _bound_names(statement)
+        if "*" in bound:
+            resolved.clear()
+            continue
+        for name in bound:
+            resolved.pop(name, None)
+    return resolved
+
+
+def _test_oracle_body_nodes(node: ast.AST, aliases: dict[str, str]) -> list[ast.AST]:
+    """Return test-body nodes without calls shadowed by comprehension targets."""
+    nodes = [child for statement in node.body for child in _body_nodes(statement)]
+    shadowed_calls: set[int] = set()
+    for child in nodes:
+        if not isinstance(
+            child, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        ):
+            continue
+        targets = {
+            target.id
+            for generator in child.generators
+            for target in _iter_ast_nodes(generator.target)
+            if isinstance(target, ast.Name)
+            and isinstance(target.ctx, (ast.Store, ast.Del))
+        }.intersection(aliases)
+        if not targets:
+            continue
+        shadowed_calls.update(
+            id(call)
+            for call in _iter_ast_nodes(child)
+            if isinstance(call, ast.Call)
+            and _call_name(call).split(".", 1)[0] in targets
+        )
+    return [
+        child
+        for child in nodes
+        if not isinstance(child, ast.Call) or id(child) not in shadowed_calls
+    ]
 
 
 def _security_finding(
@@ -1068,16 +1234,6 @@ def _unittest_test_methods(tree: ast.Module, aliases: dict[str, str]) -> set[int
     }
 
 
-def _explicit_failure_oracle(node: ast.AST) -> bool:
-    # A fail-on-use callback is a legitimate negative oracle. Its invocation
-    # requires runtime evidence, so do not mislabel it a proven hollow test.
-    for child in ast.walk(node):
-        if isinstance(child, ast.Raise) and isinstance(child.exc, ast.Call):
-            if _name(child.exc.func) == "AssertionError":
-                return True
-    return False
-
-
 def _unconditionally_skipped_test(node: ast.AST) -> bool:
     if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return False
@@ -1094,7 +1250,7 @@ def _unconditionally_skipped_test(node: ast.AST) -> bool:
 def _meaningful_local_assertion(
     node: ast.AST, aliases: dict[str, str], helper_names: set[str] | None = None
 ) -> bool:
-    nodes = [child for statement in node.body for child in _body_nodes(statement)]
+    nodes = _test_oracle_body_nodes(node, aliases)
     return any(_assertion_call(child, aliases, helper_names) for child in nodes) or any(
         isinstance(child, ast.Assert) and not _vacuous_assertion(child.test)
         for child in nodes
@@ -1114,7 +1270,7 @@ def _local_assertion_helpers(tree: ast.Module, aliases: dict[str, str]) -> set[s
         changed = False
         for name, node in functions.items():
             if name not in helpers and _meaningful_local_assertion(
-                node, aliases, helpers
+                node, _scope_security_aliases(aliases, node), helpers
             ):
                 helpers.add(name)
                 changed = True
@@ -1138,6 +1294,15 @@ def _weak_assertion_reason(
         if leaf in {"assert_called", "assert_called_once", "assert_called_once_with"}:
             return "mock invocation state does not verify its result or arguments"
     if isinstance(node, ast.Compare) and len(node.ops) == 1:
+        if isinstance(node.ops[0], (ast.Eq, ast.Is)) and len(node.comparators) == 1:
+            left = node.left
+            right = node.comparators[0]
+            if (
+                any(isinstance(value, ast.Call) for value in ast.walk(left))
+                and any(isinstance(value, ast.Call) for value in ast.walk(right))
+                and ast.dump(left) == ast.dump(right)
+            ):
+                return "repeated invocation compares a result to itself instead of an independent expected value"
         if isinstance(node.ops[0], ast.IsNot) and any(
             isinstance(value, ast.Constant) and value.value is None
             for value in (node.left, *node.comparators)
@@ -1169,7 +1334,7 @@ def _weak_test_oracle_finding(
         return None
     if _unconditionally_skipped_test(node):
         return None
-    nodes = [child for statement in node.body for child in _body_nodes(statement)]
+    nodes = _test_oracle_body_nodes(node, aliases)
     weak = [
         (child, _weak_assertion_reason(child.test, aliases))
         for child in nodes
@@ -1228,12 +1393,12 @@ def _hollow_test_finding(
         return None
     if _unconditionally_skipped_test(node):
         return None
-    nodes = [n for statement in node.body for n in _body_nodes(statement)]
+    nodes = _test_oracle_body_nodes(node, aliases)
     assertions = [n for n in nodes if isinstance(n, ast.Assert)]
     if any(
         _assertion_call(n, aliases, helper_names, unittest_context=unittest_context)
         for n in nodes
-    ) or _explicit_failure_oracle(node):
+    ):
         return None
     if any(
         isinstance(child, ast.Call)
@@ -1633,10 +1798,16 @@ def _test_oracle_findings(
     findings: list[dict[str, Any]] = []
     for node in nodes:
         is_unittest_method = id(node) in unittest_methods
+        scoped_aliases = (
+            _scope_security_aliases(aliases, node)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name.startswith("test_")
+            else aliases
+        )
         hollow = _hollow_test_finding(
             relative,
             node,
-            aliases,
+            scoped_aliases,
             helper_names,
             unittest_context=is_unittest_method,
         )
@@ -1645,7 +1816,7 @@ def _test_oracle_findings(
         weak = _weak_test_oracle_finding(
             relative,
             node,
-            aliases,
+            scoped_aliases,
             helper_names,
             unittest_context=is_unittest_method,
         )
@@ -1679,8 +1850,9 @@ def _security_scan_tree(
     relative = path.relative_to(root).as_posix()
     nodes = list(ast.walk(tree))
     aliases = _security_aliases(nodes)
-    helper_names = _local_assertion_helpers(tree, aliases)
-    unittest_methods = _unittest_test_methods(tree, aliases)
+    oracle_aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
+    helper_names = _local_assertion_helpers(tree, oracle_aliases)
+    unittest_methods = _unittest_test_methods(tree, oracle_aliases)
     findings = _tenant_read_findings(
         relative, nodes, tenant_read_calls, aliases, tenant_read_bindings or {}
     )
@@ -1690,7 +1862,9 @@ def _security_scan_tree(
         )
     )
     findings.extend(
-        _test_oracle_findings(relative, nodes, aliases, helper_names, unittest_methods)
+        _test_oracle_findings(
+            relative, nodes, oracle_aliases, helper_names, unittest_methods
+        )
     )
     for node in nodes:
         findings.extend(_security_node_findings(relative, node, aliases))
