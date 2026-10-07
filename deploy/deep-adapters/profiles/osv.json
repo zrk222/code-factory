@@ -1,0 +1,15 @@
+{
+  "schema": "factory.native-profile.v1",
+  "engine": "osv",
+  "mode": "offline-pypi-snapshot",
+  "tool_version": "2.2.0",
+  "ruleset_sha256": "36ef7d92e174230b8c7c26b952562be23837472c2239b6752de64d5d683a800e",
+  "commands": [
+    {
+      "argv": ["/opt/factory/bin/osv-offline", "scan", "source", "-r", "{source}", "--offline", "--offline-vulnerabilities", "--allow-no-lockfiles", "--format", "json", "--output", "{report}"],
+      "accepted_exit_codes": [0, 1]
+    }
+  ],
+  "version_argv": ["/usr/local/bin/osv-scanner", "--version"],
+  "report_format": "osv-json"
+}

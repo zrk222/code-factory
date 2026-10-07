@@ -1,0 +1,34 @@
+# Native deep-audit worker image recipes
+
+These are bounded worker SDK templates, not scanner-readiness claims. Build on
+Linux/amd64 from the repository root and use the final target named below. The
+host must still validate signed lanes, image digests, candidate bindings,
+timeouts, memory limits, challenge outcomes, and report completeness.
+
+| Family / target | Bundled tool | Evidence format | Scope limit |
+| --- | --- | --- | --- |
+| `codeql-python-worker` | CodeQL 2.27.1 Python bundle | SARIF | Full interprocedural Python query suite; this target covers Python only. |
+| `semgrep-worker` | Semgrep 1.141.0, one local Python rule | SARIF | Pattern-limited only. It cannot satisfy the repository's `interprocedural-full` static gate. The pinned CLI still honors candidate `.semgrepignore`; native source accounting remains necessary. |
+| `osv-worker` | OSV-Scanner 2.2.0 + immutable PyPI database snapshot | OSV JSON | Offline PyPI dependency scanning only; the pinned database snapshot ages and does not cover other ecosystems. |
+| `syft-worker` | Syft 1.33.0 | Syft JSON | Inventory only; this is not a vulnerability scan. |
+| `gitleaks-worker` | Gitleaks 8.28.0 | SARIF | Built-in rules are pinned with the image; native accounting limitations remain. |
+| `trivy-worker` | Trivy 0.68.1 | SARIF | Configuration checks only; no vulnerability database scan is requested. |
+| `runtime-worker` | coverage.py 7.16.1 + pytest 9.1.1 | coverage JSON plus JUnit XML | Requires candidate `tests/test_runtime_harness.py`; its actual execution and source coverage must be validated. |
+| `fuzz-worker` | Atheris 3.0.0 + coverage.py 7.16.1 | runtime JSON | Requires candidate `.factory/fuzz_harness.py` exporting `TestOneInput(bytes)`; the image runner owns Atheris setup. Run counts and distinct-input counts are snapshot lower bounds; Python arcs are coverage.py observations, not native fuzzer edge coverage. Native source accounting and independent challenge evidence remain required. |
+
+All profile argv is fixed in the image and uses only the documented source,
+output, report, and scratch placeholders. Profiles carry exact version probes.
+The Semgrep rules file is content-hashed. The other profile fingerprints refer
+to their pinned tool bundle, not to a claim that a remote advisory database or
+all tool-internal checks are separately content-addressed. Runtime package
+versions are exact pins; their transitive wheel bytes are not hash-locked.
+The vendored Gitleaks rules come from the official [v8.28.0 configuration](https://github.com/gitleaks/gitleaks/blob/v8.28.0/config/gitleaks.toml). The full upstream MIT license and Copyright 2019 Zachary Rice notice are included in the repository and image at [GITLEAKS-LICENSE.txt](rules/GITLEAKS-LICENSE.txt).
+
+CodeQL's immutable official 2.27.1 bundle digest pins the CLI and its Python
+query pack. This target does not claim compiled-language coverage. OSV uses
+offline mode because the signed host run uses `--network=none`. This
+image bundles the verified PyPI snapshot at GCS generation 1791370055357324;
+it does not include other ecosystems. Trivy config scanning does not
+update the vulnerability database. The source-bound runtime and fuzz harnesses
+are candidate inputs, never copied into these images. No image should set deep
+coverage complete merely because the native process exited successfully.

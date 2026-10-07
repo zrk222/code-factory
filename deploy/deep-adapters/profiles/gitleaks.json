@@ -1,0 +1,15 @@
+{
+  "schema": "factory.native-profile.v1",
+  "engine": "gitleaks",
+  "mode": "secrets-full",
+  "tool_version": "8.28.0",
+  "ruleset_sha256": "45f8a4285fbd567e1f7181cb39690312efd2f02bf6a97ce46af74091d8a385d8",
+  "commands": [
+    {
+      "argv": ["/usr/bin/gitleaks", "dir", "{source}", "--config", "/opt/factory/rules/gitleaks.toml", "--gitleaks-ignore-path", "/opt/factory/rules/empty-gitleaksignore", "--ignore-gitleaks-allow", "--redact=100", "--report-format", "sarif", "--report-path", "{report}", "--exit-code", "10"],
+      "accepted_exit_codes": [0, 10]
+    }
+  ],
+  "version_argv": ["/usr/bin/gitleaks", "version"],
+  "report_format": "sarif"
+}

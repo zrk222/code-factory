@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+export OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY=/opt/factory/osv-db
+exec /usr/local/bin/osv-scanner "$@"

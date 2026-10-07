@@ -1,0 +1,19 @@
+{
+  "schema": "factory.native-profile.v1",
+  "engine": "runtime",
+  "mode": "coverage.py+pytest",
+  "tool_version": "coverage.py 7.16.1; pytest 9.1.1",
+  "ruleset_sha256": "1aeb597d08ede54bfd0f010d82f77d925b0088fb6564078789caa066f58645c9",
+  "commands": [
+    {
+      "argv": ["/usr/local/bin/python", "-m", "coverage", "run", "--branch", "--data-file={scratch}/.coverage", "-m", "pytest", "--junitxml={output}/runtime.xml", "-o", "junit_family=xunit1", "-p", "no:cacheprovider", "{source}/tests/test_runtime_harness.py"],
+      "accepted_exit_codes": [0, 1]
+    },
+    {
+      "argv": ["/usr/local/bin/python", "-m", "coverage", "json", "--data-file={scratch}/.coverage", "-o", "{report}", "--pretty-print"],
+      "accepted_exit_codes": [0]
+    }
+  ],
+  "version_argv": ["/usr/local/bin/python", "-c", "import coverage,pytest;print(f'coverage.py {coverage.__version__}; pytest {pytest.__version__}')"],
+  "report_format": "coverage-json"
+}

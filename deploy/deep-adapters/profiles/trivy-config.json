@@ -1,0 +1,15 @@
+{
+  "schema": "factory.native-profile.v1",
+  "engine": "trivy",
+  "mode": "config-native",
+  "tool_version": "0.68.1",
+  "ruleset_sha256": "52e6fb1ff6a8232d6ec480ca9dd0b8db6728e252d092cb7712df7103ba09502e",
+  "commands": [
+    {
+      "argv": ["/usr/local/bin/trivy", "config", "--config", "/opt/factory/rules/trivy.yaml", "--skip-check-update", "--skip-version-check", "--disable-telemetry", "--ignorefile", "/opt/factory/rules/empty-trivyignore", "--format", "sarif", "--output", "{report}", "{source}"],
+      "accepted_exit_codes": [0]
+    }
+  ],
+  "version_argv": ["/usr/local/bin/trivy", "--version"],
+  "report_format": "sarif"
+}

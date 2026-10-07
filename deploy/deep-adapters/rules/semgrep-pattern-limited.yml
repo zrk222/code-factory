@@ -1,0 +1,15 @@
+rules:
+  - id: python.subprocess-shell-true
+    message: subprocess invocation enables shell parsing
+    severity: WARNING
+    languages: [python]
+    patterns:
+      - pattern: subprocess.$FUNC(..., shell=True, ...)
+      - metavariable-regex:
+          metavariable: $FUNC
+          regex: ^(run|Popen|call|check_call|check_output)$
+    metadata:
+      category: security
+      confidence: MEDIUM
+      technology: [python]
+      cwe: ["CWE-78"]

@@ -1,0 +1,34 @@
+{
+  "schema": "factory.native-profile.v1",
+  "engine": "atheris",
+  "mode": "native-fuzzer-owned-harness",
+  "tool_version": "3.0.0",
+  "ruleset_sha256": "6bd3421ec2be7054fd7aeb4a48b9bd4c4c3aa1cd3b44f6129dda0205ed1d00a5",
+  "commands": [
+    {
+      "argv": [
+        "/usr/local/bin/python",
+        "-m",
+        "factoryline.deep_audit_io",
+        "native-fuzz",
+        "{source}/.factory/fuzz_harness.py",
+        "{report}",
+        "--",
+        "-runs=1000",
+        "-artifact_prefix={scratch}/"
+      ],
+      "accepted_exit_codes": [
+        0,
+        77
+      ]
+    }
+  ],
+  "version_argv": [
+    "/usr/local/bin/python",
+    "-m",
+    "pip",
+    "show",
+    "atheris"
+  ],
+  "report_format": "runtime-json"
+}

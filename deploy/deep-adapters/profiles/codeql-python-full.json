@@ -1,0 +1,19 @@
+{
+  "schema": "factory.native-profile.v1",
+  "engine": "codeql",
+  "mode": "interprocedural-full",
+  "tool_version": "2.27.1",
+  "ruleset_sha256": "1ec99cfa9420f04c2330784b4ddb8363a0dd67c3e4471cd93963c50e6c433717",
+  "commands": [
+    {
+      "argv": ["/opt/codeql/codeql/codeql", "database", "create", "{scratch}/codeql-db", "--language=python", "--source-root={source}", "--build-mode=none"],
+      "accepted_exit_codes": [0]
+    },
+    {
+      "argv": ["/opt/codeql/codeql/codeql", "database", "analyze", "{scratch}/codeql-db", "/opt/codeql/codeql/qlpacks/codeql/python-queries/1.8.11/codeql-suites/python-security-extended.qls", "--threads=2", "--ram=1400", "--format=sarif-latest", "--output={report}"],
+      "accepted_exit_codes": [0]
+    }
+  ],
+  "version_argv": ["/opt/codeql/codeql/codeql", "version", "--format=terse"],
+  "report_format": "sarif"
+}
