@@ -565,6 +565,20 @@ coordinator. It must not be cited as a penetration-test receipt.
 
 ### Adapter evidence contract
 
+The native Gitleaks foundation has a reproducible, digest-pinned recipe at
+`deploy/native-scanners/gitleaks/Dockerfile`. Build it with
+`docker build --pull=false --network=none -t factory-native-gitleaks:8.28.0 deploy/native-scanners/gitleaks`.
+Record its full local image ID before use. It runs as UID/GID 1000 and preserves
+upstream native SARIF output. Run it with `--network=none --read-only
+--cap-drop=ALL --security-opt=no-new-privileges=true`, a read-only source mount,
+bounded writable output and resource limits. Its label explicitly declares
+`native-sarif-only`; it is **not** a deep-worker adapter. Gitleaks native SARIF
+omits the invocation/version and complete per-source accounting required by the
+current worker protocol. Installing or building this image does not remove
+`SECRETS_NATIVE_ACCOUNTING_UNAVAILABLE`, satisfy challenge requirements, or
+establish all six audit families. The native-foundation build is separate from
+adapter acceptance and full-depth scan approval.
+
 The runner mounts `/factory-contract.json` read-only and sets `FACTORY_CONTRACT`,
 `FACTORY_RUN_ID` and `FACTORY_CANDIDATE_SHA256`. The contract includes the exact lane,
 manifest pin, captured inventory and approved obligations. stdout must contain a
