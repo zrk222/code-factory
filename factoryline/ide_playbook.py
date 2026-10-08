@@ -18,7 +18,7 @@ ADOPTION_JOURNEYS = (
         "label": "Individual developer",
         "question": "Can this test actually fail?",
         "problem": "AI-generated tests can stay green even when the behavior they claim to protect is missing.",
-        "first_command": "factory first-proof --root .",
+        "first_command": "factory scan --root .",
         "primary": True,
         "maturity": "locally_verified_core",
         "verification": [
@@ -26,9 +26,9 @@ ADOPTION_JOURNEYS = (
             "tests/test_e2e_proof.py",
             "tests/test_adoption_guide.py",
         ],
-        "expected_local_evidence": "A local hollow-test result, receipt, and privacy-safe Proof Card from a disposable demonstration.",
-        "next_safe_action": "Run the same positive-and-negative proof pattern against one human-approved behavior in your repository.",
-        "authority_boundary": "The demonstration does not assess or change your project and uploads nothing.",
+        "expected_local_evidence": "A bounded repository inventory, static scan state, and explicit next actions; the separate first-proof demo remains available for the proof harness.",
+        "next_safe_action": "Resolve any static finding, add project test and tenant-scope evidence, then run the disposable first-proof demonstration.",
+        "authority_boundary": "The scan reads bounded local metadata and Python syntax only; it does not execute, modify, certify, or upload the project.",
     },
     {
         "id": "team",

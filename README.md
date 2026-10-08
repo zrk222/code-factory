@@ -18,6 +18,11 @@ behavioral test evidence, workflow integrity, specialty AI review, and
 actionable repair. Its receipts support review; the tool does not certify
 software, guarantee that defects are absent, or approve a release.
 
+**Product naming:** Code Factory is the product and ForgeLine is its audit and
+architecture engine. SpecLine, HSF, and Prestige are advanced internal lanes
+that appear only when a project declares the corresponding scope; they are not
+separate products a new user must learn before running a scan.
+
 ## Current update preview (next core release)
 
 **Fixed:** editor audit views now expose missing and incomplete checks.
@@ -62,6 +67,9 @@ static candidate measurement, not runtime coverage or certification. The
 source-hashed [candidate receipt](evidence/self-audit/quality-candidate-2026-10-06.json)
 records the measured scope. The published core release remains 0.47.0; this
 branch is not merged or published.
+No public precision, recall, or attribution benchmark is claimed here: the
+attribution percentage is an internal static candidate metric, not measured
+defect-detection accuracy on independent AI-generated repositories.
 The [autonomous ops plan](docs/AUTONOMOUS_OPS_EDITOR_PLAN.md) explains the
 proposed Observer Agent loop and its gates. These versions remain release
 candidates until each channel has a verified provider publication receipt.
@@ -111,15 +119,24 @@ or that every check passed.
 python -m pip install factoryline-code-factory
 factory --help
 factory guide
+factory scan --root .
 ```
 
-In an interactive terminal, `factory` checks PyPI and caches the result for up
-to 24 hours, then prints a notice when a newer version is available. Two
-simultaneous first runs can both check. It never downloads or installs the
-update. The check is quiet in CI, JSON output, server/MCP, help, version, and
+`factory scan --root .` is the zero-config starting point for an existing
+repository. It records a relative file inventory and returns a first state in
+under a minute. Add `--deep` to run the bounded Python static scanner; on large
+repositories that lane may take longer. A clean static result is still
+`INCOMPLETE` until project test, dependency, tenant-scope, and runtime evidence
+is supplied; findings are actionable and block the scan.
+
+In an interactive terminal, `factory` optionally makes one plain PyPI version
+check and caches the result for up to 24 hours, then prints a notice when a
+newer version is available. It never downloads or installs the update. The
+check is quiet in CI, JSON output, server/MCP, help, version, and
 non-interactive runs; set `FACTORY_DISABLE_UPDATE_CHECK=1` to turn it off. The
-plain PyPI request does not include a project path, account identifier, or
-usage data.
+optional request does not include a project path, account identifier, or usage
+data. All audit and proof commands remain local unless an operator explicitly
+uses a separate provider integration.
 
 Run repository commands from the project being reviewed. `factory guide` is a
 read-only orientation; it does not run tests or agents.

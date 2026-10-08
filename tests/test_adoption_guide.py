@@ -16,7 +16,7 @@ def test_default_guide_has_exactly_three_journeys_and_one_primary_action():
     assert [item["id"] for item in result["journeys"]] == ["solo", "team", "enterprise"]
     assert [
         item["first_command"] for item in result["journeys"] if item["primary"]
-    ] == ["factory first-proof --root ."]
+    ] == ["factory scan --root ."]
     assert result["recommended"] == "solo"
     assert result["actions_executed"] is False
     assert result["action_count"] == 0

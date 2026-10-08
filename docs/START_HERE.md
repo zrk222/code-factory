@@ -7,14 +7,26 @@ an outcome instead of a framework, then add rigor only when the work needs it.
 
 ```powershell
 pip install factoryline-code-factory
+factory scan --root .
+```
+
+This is the zero-config starting point for an existing repository. It records
+only relative file metadata and returns a first state quickly. Add `--deep` to
+run the bounded Python static scanner. The result is `BLOCKED` when findings
+require action and otherwise remains `INCOMPLETE` until project test,
+dependency, tenant-scope, and runtime evidence is supplied. It does not modify
+or upload project source.
+
+To see the sealed demonstration in a disposable local sandbox, run:
+
+```powershell
 factory first-proof --root .
 ```
 
-This runs a sealed demonstration in a disposable local sandbox. The positive
-control must pass; the negative control is intentionally hollow and must be
-caught as `HOLLOW_E2E_TEST`. A successful demo writes verified JSON/Markdown
-evidence plus an optional, privacy-safe Proof Card under `.factory/`. It does
-not inspect, modify, or upload your project source.
+The positive control must pass; the negative control is intentionally hollow
+and must be caught as `HOLLOW_E2E_TEST`. A successful demo writes verified
+JSON/Markdown evidence plus an optional, privacy-safe Proof Card under
+`.factory/`. It does not execute or certify the repository.
 
 To share a card from another verified E2E receipt, opt in explicitly:
 

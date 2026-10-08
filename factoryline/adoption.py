@@ -1,9 +1,10 @@
 """Local, privacy-bounded activation evidence and shareable Proof Cards.
 
-The adoption surface deliberately avoids hosted analytics.  A first proof is
-an explicit sandbox demonstration, not an assessment of the caller's project.
-Proof Cards contain only verified receipt facts and never include commands,
-paths, repository names, prompts, logs, or user identifiers.
+The adoption surface deliberately avoids hosted analytics.  The first proof
+keeps its disposable sandbox demonstration, but also records a bounded local
+inventory of the selected workspace so a new user can see what was assessed.
+The inventory is not a certification and never includes source bodies,
+commands, prompts, logs, or user identifiers.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from html import escape
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -67,6 +69,47 @@ def _utc(value: datetime | None = None) -> datetime:
 
 def _iso(value: datetime | None = None) -> str:
     return _utc(value).isoformat().replace("+00:00", "Z")
+
+
+_INVENTORY_IGNORED_DIRS = frozenset(
+    {".git", ".hg", ".svn", ".factory", ".venv", "venv", "node_modules", "dist", "build", "__pycache__"}
+)
+
+
+def _workspace_inventory(workspace: Path, *, limit: int = 10_000) -> dict[str, Any]:
+    """Collect only relative file metadata for an immediate, safe assessment."""
+    rows: list[dict[str, Any]] = []
+    truncated = False
+    for directory, dirnames, filenames in os.walk(workspace, followlinks=False):
+        dirnames[:] = sorted(
+            name for name in dirnames if name not in _INVENTORY_IGNORED_DIRS
+        )
+        for name in sorted(filenames):
+            path = Path(directory) / name
+            try:
+                relative = path.relative_to(workspace).as_posix()
+                size = path.stat().st_size
+            except (OSError, ValueError):
+                continue
+            rows.append({"path": relative, "bytes": size})
+            if len(rows) >= limit:
+                truncated = True
+                break
+        if truncated:
+            break
+    suffixes = {"python": ".py", "javascript": ".js", "typescript": ".ts", "docs": ".md"}
+    counts = {
+        key: sum(row["path"].lower().endswith(suffix) for row in rows)
+        for key, suffix in suffixes.items()
+    }
+    return {
+        "state": "ASSESSED" if rows else "INCOMPLETE",
+        "files_discovered": len(rows),
+        "files_truncated": truncated,
+        "file_types": counts,
+        "inventory_sha256": _sha(rows),
+        "scope": "relative file names and byte sizes only; source contents were not read",
+    }
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> Path:
@@ -381,6 +424,71 @@ def export_adoption_status(root: Path, out: Path) -> dict[str, Any]:
     return {"status": payload, "path": path.relative_to(workspace).as_posix()}
 
 
+def run_repo_scan(root: Path, *, deep: bool = False) -> dict[str, Any]:
+    """Run a zero-config inventory and optionally the Python static scanner.
+
+    This is intentionally an honest first verdict: static evidence can block a
+    workspace, but a clean result remains incomplete until the project supplies
+    its tenant contract and runtime/test evidence.
+    """
+    workspace = Path(root).resolve()
+    workspace.mkdir(parents=True, exist_ok=True)
+    inventory = _workspace_inventory(workspace)
+    security_error = None
+    if deep:
+        try:
+            from .review_audits import ReviewAuditError, security_scan
+
+            static_security = security_scan(workspace)
+        except (ReviewAuditError, OSError, UnicodeError, ValueError) as exc:
+            static_security = {
+                "state": "INVALID",
+                "findings": [],
+                "audit_coverage": {"measurement_state": "invalid"},
+            }
+            security_error = str(exc)
+    else:
+        static_security = {
+            "state": "NOT_RUN",
+            "findings": [],
+            "audit_coverage": {"measurement_state": "not_run"},
+            "action_summary": "Use `factory scan --deep` to run the bounded Python AST scanner.",
+        }
+    contract_exists = (workspace / ".factory" / "tenant-read-contract.json").is_file()
+    findings = static_security.get("findings", [])
+    if static_security.get("state") in {"BLOCKED", "INVALID"} or findings:
+        state = "BLOCKED"
+        verdict = "BLOCKED"
+    elif not deep or not contract_exists or inventory["files_discovered"] == 0:
+        state = "INCOMPLETE"
+        verdict = "INCOMPLETE"
+    else:
+        state = "ASSESSED_STATIC_ONLY"
+        verdict = "INCOMPLETE"
+    result = {
+        "schema": "factory.repo-scan.v1",
+        "state": state,
+        "verdict": verdict,
+        "assessment": inventory,
+        "static_security": static_security,
+        "evidence_limits": [
+            "Inventory and Python AST findings are local observations, not runtime coverage or certification.",
+            "The default scan is intentionally fast and does not run the deeper AST lane; use --deep when the repository is ready for it.",
+            "A missing tenant-read contract keeps the result incomplete even when no static finding is raised.",
+            "Tests, dependency analysis, and deployment behavior require explicit project evidence and are not inferred.",
+        ],
+        "next_actions": [
+            "Add .factory/tenant-read-contract.json for every tenant-scoped read, or explicitly declare an empty set.",
+            "Run the project test suite with a JUnit report and bind it to the current candidate.",
+            "Review every static finding before treating the result as a merge or release decision.",
+        ],
+    }
+    if security_error:
+        result["static_security_error"] = security_error
+    result["scan_sha256"] = _sha(result)
+    return result
+
+
 def run_first_proof(
     root: Path, *, out_dir: Path | None = None, observed_at: datetime | None = None
 ) -> dict[str, Any]:
@@ -427,15 +535,18 @@ def run_first_proof(
         record_adoption_event(
             workspace, milestone, evidence_sha256=evidence, observed_at=instant
         )
+    assessment = _workspace_inventory(workspace)
     core = {
         "schema": FIRST_PROOF_SCHEMA,
         "observed_at": _iso(instant),
         "demo": True,
         "marker": "HOLLOW_TEST_DETECTED",
+        "assessment": assessment,
         "proof_receipt_sha256": proof["receipt_sha256"],
         "proof_card_sha256": card_artifacts["card"]["card_sha256"],
         "scope_limits": [
-            "This is a sandbox demonstration with an intentionally hollow negative command; it does not inspect or assess the caller's project.",
+            "The sandbox demonstration is separate from the bounded workspace inventory; it does not execute or certify the caller's project.",
+            "The inventory records only relative file names and byte sizes. It is not a source, runtime, dependency, or security assessment.",
             "The generated Proof Card omits commands, paths, repository name, prompts, logs, and user identity.",
             "No network, approval, merge, release, publication, deployment, signing, credential, connector, or message authority is granted.",
         ],

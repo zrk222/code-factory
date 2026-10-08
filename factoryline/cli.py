@@ -544,16 +544,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
     add_foundation_parsers(sub)
 
-    first_proof = sub.add_parser(
-        "first-proof",
-        help="run a local sandbox demonstration that catches an intentionally hollow check",
-    )
-    first_proof.add_argument("--root", default=".")
-    first_proof.add_argument(
-        "--out-dir", help="optional workspace-contained output directory"
-    )
-    first_proof.add_argument("--json", action="store_true")
-
     from .cli_first_lap import add_parser as add_first_lap_parser
 
     add_first_lap_parser(sub)
@@ -2568,7 +2558,7 @@ def _dispatch_route_group_08(a, capture_command, p):
                 "\nAdvanced modules stay hidden until their trigger applies. No action was executed."
             )
         return 0
-    if a.cmd == "first-lap":
+    if a.cmd in {"first-lap", "first-proof", "scan"}:
         from .cli_first_lap import run as run_first_lap
 
         return run_first_lap(a)
@@ -2614,46 +2604,6 @@ def _dispatch_route_group_09(a, capture_command, p):
         else:
             print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
         return code
-    if a.cmd == "first-proof":
-        workspace = Path(a.root).resolve()
-        out_dir = Path(a.out_dir) if a.out_dir else None
-        try:
-            result = _lazy_import("adoption", "run_first_proof")(
-                workspace, out_dir=out_dir
-            )
-        except (
-            _lazy_import("adoption", "AdoptionError"),
-            _lazy_import("e2e_proof", "E2EProofError"),
-            OSError,
-        ) as exc:
-            code = getattr(exc, "code", "E_FIRST_PROOF_FAILED")
-            error = {
-                "schema": "factory.first-proof.error.v1",
-                "code": code,
-                "message": str(exc),
-            }
-            print(
-                json.dumps(error, indent=2, sort_keys=True)
-                if a.json
-                else f"first proof failed: {code}: {exc}",
-                file=sys.stderr,
-            )
-            return 2
-        if a.json:
-            print(json.dumps(result, indent=2, sort_keys=True))
-        else:
-            print("factory first-proof")
-            print("=" * 44)
-            print("result   : HOLLOW_TEST_DETECTED")
-            print(
-                "meaning  : the sandbox negative check also passed, so the test could not say no"
-            )
-            print(f"receipt  : {result['activation_path']}")
-            print(f"share    : {result['proof_card']['paths']['svg']}")
-            print(
-                "boundary : demo only; your project was not assessed and nothing was uploaded"
-            )
-        return 0
     return _UNHANDLED
 
 

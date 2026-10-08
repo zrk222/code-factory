@@ -13,6 +13,7 @@ from factoryline.adoption import (
     proof_card_from_receipt,
     record_adoption_event,
     run_first_proof,
+    run_repo_scan,
     verify_proof_card,
     write_proof_card,
 )
@@ -107,6 +108,39 @@ def test_first_proof_cli_is_successful_because_detection_is_the_demo_outcome(
     assert code == 0
     assert output["activation"]["demo"] is True
     assert output["activation"]["marker"] == "HOLLOW_TEST_DETECTED"
+    assert output["activation"]["assessment"]["state"] == "INCOMPLETE"
+
+
+def test_repo_scan_is_zero_config_and_fails_closed_without_project_contract(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    result = run_repo_scan(tmp_path)
+
+    assert result["schema"] == "factory.repo-scan.v1"
+    assert result["assessment"]["files_discovered"] == 1
+    assert result["assessment"]["file_types"]["python"] == 1
+    assert result["state"] == "INCOMPLETE"
+    assert result["verdict"] == "INCOMPLETE"
+    assert result["static_security"]["state"] == "NOT_RUN"
+    assert any("tenant-read-contract" in action for action in result["next_actions"])
+
+
+def test_repo_scan_cli_reports_a_real_workspace_assessment(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "README.md").write_text("# sample\n", encoding="utf-8")
+    assert main(["scan", "--root", str(tmp_path), "--json"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["assessment"]["files_discovered"] == 1
+    assert output["verdict"] == "INCOMPLETE"
+
+
+def test_repo_scan_deep_runs_static_lane_on_small_workspace(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    result = run_repo_scan(tmp_path, deep=True)
+
+    assert result["static_security"]["state"] in {"CLEAN", "INCOMPLETE"}
 
 
 def test_adoption_cli_reports_local_counts_without_claiming_conversion(

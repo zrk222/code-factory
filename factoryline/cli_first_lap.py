@@ -10,6 +10,23 @@ from typing import Any
 
 def add_parser(sub: Any) -> None:
     """Register the First Lap activation and observation subcommands."""
+    first_proof = sub.add_parser(
+        "first-proof",
+        help="run a local sandbox demonstration and bounded workspace inventory",
+    )
+    first_proof.add_argument("--root", default=".")
+    first_proof.add_argument("--out-dir", help="workspace-contained output directory")
+    first_proof.add_argument("--json", action="store_true")
+    scan = sub.add_parser(
+        "scan", help="assess the workspace with a fast inventory or --deep AST scan"
+    )
+    scan.add_argument("--root", default=".")
+    scan.add_argument(
+        "--deep",
+        action="store_true",
+        help="also run the bounded Python AST lane; may take longer on large repositories",
+    )
+    scan.add_argument("--json", action="store_true")
     first_lap = sub.add_parser(
         "first-lap", help="prepare and verify the human-observed first activation lap"
     )
@@ -133,6 +150,10 @@ def add_parser(sub: Any) -> None:
 
 def run(args: Any) -> int:
     """Execute a First Lap command after parser selection."""
+    if args.cmd == "first-proof":
+        return _run_first_proof(args)
+    if args.cmd == "scan":
+        return _run_scan(args)
     from . import first_lap
 
     workspace = (
@@ -151,6 +172,75 @@ def run(args: Any) -> int:
         result = _first_lap_error(exc)
         code = 2
     _render_first_lap_result(args, result, code)
+    return code
+
+
+def _run_first_proof(args: Any) -> int:
+    from .adoption import AdoptionError, run_first_proof
+    from .e2e_proof import E2EProofError
+
+    try:
+        result = run_first_proof(
+            Path(args.root).resolve(),
+            out_dir=Path(args.out_dir) if args.out_dir else None,
+        )
+    except (AdoptionError, E2EProofError, OSError) as exc:
+        error = {
+            "schema": "factory.first-proof.error.v1",
+            "code": getattr(exc, "code", "E_FIRST_PROOF_FAILED"),
+            "message": str(exc),
+        }
+        print(
+            json.dumps(error, indent=2, sort_keys=True)
+            if args.json
+            else f"first proof failed: {error['code']}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print("factory first-proof")
+        print("=" * 44)
+        print("result   : HOLLOW_TEST_DETECTED")
+        print("meaning  : the sandbox negative check also passed, so the test could not say no")
+        print(f"receipt  : {result['activation_path']}")
+        print(f"share    : {result['proof_card']['paths']['svg']}")
+        print("boundary : sandbox demo plus bounded inventory; no project code was executed or uploaded")
+    return 0
+
+
+def _run_scan(args: Any) -> int:
+    from .adoption import run_repo_scan
+
+    try:
+        result = run_repo_scan(Path(args.root).resolve(), deep=args.deep)
+        code = 2 if result["state"] == "BLOCKED" else 0
+    except (OSError, UnicodeError, ValueError) as exc:
+        result = {
+            "schema": "factory.repo-scan.error.v1",
+            "state": "INVALID",
+            "verdict": "INCOMPLETE",
+            "message": str(exc),
+        }
+        code = 2
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print("factory scan")
+        print("=" * 44)
+        print(f"state    : {result['state']}")
+        print(f"verdict  : {result['verdict']}")
+        assessment = result.get("assessment", {})
+        print(
+            f"inventory: {assessment.get('files_discovered', 0)} files "
+            f"({assessment.get('inventory_sha256', 'unavailable')[:12]})"
+        )
+        print("security : " + str(result.get("static_security", {}).get("state", "unavailable")))
+        for action in result.get("next_actions", []):
+            print(f"next     : {action}")
+        if result.get("message"):
+            print(f"error    : {result['message']}", file=sys.stderr)
     return code
 
 
