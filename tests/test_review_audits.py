@@ -971,6 +971,21 @@ def test_security_scan_ignores_manual_raise_after_unconditional_return(tmp_path)
 
 
 @pytest.mark.parametrize(
+    "handler", ["UserWarning", "Warning", "(ValueError, UserWarning)"]
+)
+def test_security_scan_rejects_warning_swallowed_outside_context(tmp_path, handler):
+    (tmp_path / "case.py").write_text(
+        "import warnings\ndef test_warning():\n"
+        "    try:\n        with warnings.catch_warnings():\n"
+        "            warnings.simplefilter('error', UserWarning)\n"
+        "            warnings.warn('expected', UserWarning)\n"
+        f"    except {handler}:\n        pass\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
     "hidden_filter",
     [
         "if False:\n            warnings.simplefilter('error')",

@@ -1056,7 +1056,7 @@ def _assertion_nodes(node: ast.AST, aliases: dict[str, str]) -> list[ast.AST]:
 
 
 def _warnings_as_errors(node: ast.AST, aliases: dict[str, str]) -> bool:
-    if not isinstance(node, ast.With) or not _effective_assertion(node, aliases):
+    if not isinstance(node, ast.With) or not _effective_warning_context(node, aliases):
         return False
     if not any(
         isinstance(item.context_expr, ast.Call)
@@ -1092,6 +1092,21 @@ def _warnings_as_errors(node: ast.AST, aliases: dict[str, str]) -> bool:
                 ):
                     return True
     return False
+
+
+def _effective_warning_context(node: ast.AST, aliases: dict[str, str]) -> bool:
+    if not _effective_assertion(node, aliases):
+        return False
+    try_nodes = (ast.Try, getattr(ast, "TryStar", ast.Try))
+    for parent, child in getattr(node, "_oracle_ancestors", ()):
+        if isinstance(parent, try_nodes) and child in parent.body:
+            if any(
+                _handler_catches_warning(handler, aliases)
+                and not _handler_reraises(handler)
+                for handler in parent.handlers
+            ):
+                return False
+    return True
 
 
 def _handler_catches_warning(
