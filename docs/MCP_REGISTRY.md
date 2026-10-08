@@ -15,8 +15,8 @@ uvx --from factoryline-code-factory==0.46.8 factory mcp serve
 
 PyPI 0.46.9 is public and can be run directly with
 `uvx --from factoryline-code-factory==0.46.9 factory mcp serve`.
-The 0.47.0 source candidate descriptor uses
-`uvx --from factoryline-code-factory==0.47.0 factory mcp serve`; use it only
+The 0.48.0 source candidate descriptor uses
+`uvx --from factoryline-code-factory==0.48.0 factory mcp serve`; use it only
 after the protected PyPI publication and registry read-back succeed.
 
 The server needs a workspace root. Configure that explicit path in a client
@@ -40,7 +40,7 @@ publishes, deploys, signs, sends a message, or accesses credentials.
 The source inventory also includes `factory.project_scope_review`, which reads
 bounded, workspace-relative PRD/spec Markdown and routes matching scope to the
 existing AppForge and provider-neutral SaaS proof status projections. The
-0.47.0 descriptor remains a candidate until a protected release publishes it
+0.48.0 descriptor remains a candidate until a protected release publishes it
 and the public registry entry is read back. Inspect the live registry version
 before claiming that this branch's tools are available there.
 

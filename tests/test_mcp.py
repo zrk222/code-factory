@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from factoryline import __version__
+
 from io import StringIO
 import hashlib
 import json
@@ -139,7 +141,7 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path, monkeypatch):
         "result": {
             "marker": "MCP_INITIALIZED",
             "protocolVersion": MCP_PROTOCOL_VERSION,
-            "serverInfo": {"name": "code-factory", "version": "0.47.0"},
+            "serverInfo": {"name": "code-factory", "version": __version__},
             "capabilities": {"tools": {}, "resources": {}},
         },
     }

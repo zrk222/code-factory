@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from factoryline import __version__
+
 import json
 
 from factoryline.cli import (
@@ -113,7 +115,7 @@ def test_cache_is_rejected_when_timestamp_is_naive(tmp_path, monkeypatch):
         json.dumps(
             {
                 "package": "factoryline-code-factory",
-                "installed": "0.47.0",
+                "installed": __version__,
                 "latest": "99.0.0",
                 "status": "update_available",
                 "checked_at": "2026-09-26T12:00:00",
@@ -126,7 +128,7 @@ def test_cache_is_rejected_when_timestamp_is_naive(tmp_path, monkeypatch):
     class FakeResponse:
         def read(self, _limit):
             calls.append("network")
-            return json.dumps({"info": {"version": "0.47.0"}}).encode()
+            return json.dumps({"info": {"version": __version__}}).encode()
 
         def __enter__(self):
             return self
@@ -166,7 +168,7 @@ def test_overlong_cached_version_is_ignored_safely(tmp_path, monkeypatch):
         json.dumps(
             {
                 "package": "factoryline-code-factory",
-                "installed": "0.47.0",
+                "installed": __version__,
                 "latest": "9" * 5_000,
                 "status": "update_available",
                 "checked_at": "2026-09-26T12:00:00+00:00",
@@ -179,7 +181,7 @@ def test_overlong_cached_version_is_ignored_safely(tmp_path, monkeypatch):
     class FakeResponse:
         def read(self, _limit):
             calls.append("network")
-            return json.dumps({"info": {"version": "0.47.0"}}).encode()
+            return json.dumps({"info": {"version": __version__}}).encode()
 
         def __enter__(self):
             return self
