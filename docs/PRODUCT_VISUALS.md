@@ -130,4 +130,4 @@ productivity, conversion, Marketplace approval, or production readiness.
 
 ## Updated video preview
 
-[60-second CF/FL audit and repair walkthrough](https://github.com/zrk222/code-factory/raw/refs/heads/codex/tenant-read-contract-20261007/videos/code-factory-proof-of-survival/assets/video/remotion-factory-engine.mp4) — October 8, 2026. Silent captions, current Graph Ops captures, bounded scanner improvements and agent repair evidence requirements. The source render is in `videos/code-factory-proof-of-survival/remotion`.
+[60-second CF/FL audit and repair walkthrough](https://youtu.be/covWDYhUqbM) — October 8, 2026. Silent captions, current Graph Ops captures, bounded scanner improvements and agent repair evidence requirements. The source render is in `videos/code-factory-proof-of-survival/remotion`.
