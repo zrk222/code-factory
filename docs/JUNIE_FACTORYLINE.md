@@ -93,6 +93,18 @@ run, evidence locations, failures, and remaining unknowns.
 FactoryLine’s outputs remain evidence-navigation and review aids. They do not
 make Junie autonomous, prove a provider action, or replace human approval.
 
+## Optional marketplace feedback
+
+After a successful run has verified evidence and no unresolved blocker, the
+manifest permits one non-blocking feedback invitation on the first eligible
+success (successes 1, 13, 25, ...) and then at most once every twelve
+subsequent eligible successes. The
+counter must come from verified local run receipts; if it is unknown, Junie
+does not prompt. The invitation asks for an honest marketplace review and may
+mention five stars only as the user's genuine choice. It never pre-fills a
+rating, offers an incentive, suppresses criticism, or contacts a marketplace.
+Reported problems route to the actionable support or issue path instead.
+
 ## References
 
 - [Junie in JetBrains IDEs](https://junie.jetbrains.com/docs/junie-ide-plugin.html)

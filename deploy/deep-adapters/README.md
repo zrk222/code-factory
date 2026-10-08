@@ -58,3 +58,16 @@ The SDK still rejects paths outside the exact candidate inventory.
 Descriptor-only CodeQL pack extensions are retained as run properties for
 strict importer compatibility. Extensions containing rules or taxa are rejected;
 external property files and unresolved rule references remain unsupported.
+# 0.48.0 worker security refresh
+
+The SDK retains CPython 3.11.17 and uses a digest-pinned Debian Forky base,
+the signed 2026-10-08 Debian archive snapshot, and exact OpenSSL 3.6.5-1
+packages from Sid. Apt signature and package hash verification remain enabled.
+Python build dependencies use wheel hashes; pip and Pygments are patched.
+
+Trivy's Forky/Sid OS coverage is insufficient to establish remediation.
+Validate installed **source-package** versions against Debian Security Tracker
+fixed versions with `dpkg --compare-versions`, and retain the feed digest,
+image digest, package manifest, and per-CVE decisions. Language-package scans
+remain useful. Native clean/failing runtime and fuzz controls must also pass.
+This refresh does not establish vulnerability-free images or full audit coverage.

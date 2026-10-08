@@ -29,7 +29,7 @@ jobs:
         run: |
           python -m pip install code-factory-2-forge==0.10.8
           npm install --no-save --no-package-lock typescript@5.9.3
-      - name: Require A grade at 97.9, 99% attribution and the strict 460 Python file ceiling
+      - name: Require A grade at 97.9, 99.85% attribution and the strict 460 Python file ceiling
         run: |
           forge qa --repo-wide --root . --strict > candidate-quality.json
           python - <<'PY'
@@ -38,7 +38,7 @@ jobs:
           report = json.loads(Path('candidate-quality.json').read_text())
           assert report['grade'] == 'A' and report['passed'] is True
           assert report['metrics']['composite'] >= 97.9
-          assert report['attribution']['rate'] >= 0.99, 'test-intent attribution fell below 99%'
+          assert report['attribution']['rate'] >= 0.9985, 'static test-intent attribution fell below 99.85%'
           assert report['metrics']['max_complexity'] <= 10
           assert not report.get('findings'), 'quality findings remain'
           assert not report['metrics'].get('skipped_paths'), 'source was unreadable'
@@ -73,6 +73,27 @@ jobs:
       - run: npm ci --no-audit
       - name: Audit production and build dependencies without ignore rules
         run: npm run audit
+      - run: npm test
+      - name: Exercise Muse receipt integrity and hook event handling
+        working-directory: .
+        run: node --test plugins/muse-code-factory-audit/tests/mcp-server.test.mjs
+
+  video-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: videos/code-factory-proof-of-survival/remotion
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: videos/code-factory-proof-of-survival/remotion/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit
       - run: npm test
 
   test:

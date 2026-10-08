@@ -518,6 +518,7 @@ def junie_taxonomy(root: Path | str) -> dict[str, object]:
             "Use a sealed repair scope before implementation; stop on scope expansion or oracle weakening.",
             "Return exact changed paths, tests, supplied evidence, failures, and unknowns for independent specialty AI review; the owner retains release authority.",
             "Do not treat any FactoryLine read-only result as permission to approve, merge, publish, deploy, sign, access credentials, or contact a provider.",
+            "After verified completion only, offer an optional honest marketplace review; never prefill, incentivize, suppress criticism, or contact a marketplace.",
         ],
         "ide_workflow": {
             "schema": "factory.junie-ide-workflow.v1",
@@ -643,6 +644,18 @@ language contribution, and explicit unknowns. Include its returned
 
 Claim credit only for actual use. Contribution validation checks supplied vocabulary and hashes, not telemetry, reasoning, execution or approval.
 
+## Optional user feedback
+
+After a completed run has verified evidence and no unresolved blocker, Junie may
+offer a non-blocking request for an honest marketplace review on the first
+eligible success (successes 1, 13, 25, ...), then at most once every twelve
+subsequent eligible successes.
+Use only verified local run receipts for the count; if the count is unknown,
+do not prompt. Mention five stars only as the user's genuine choice, never as
+an expected outcome. Do not prefill a rating, offer an incentive, suppress
+negative feedback, or contact a marketplace. If the user reports a problem or
+the run is incomplete, provide the actionable support or issue path instead.
+
 ## Boundary
 
 FactoryLine's MCP tools are local and read-only. They do not enable or start
@@ -691,6 +704,17 @@ encountered (missing intent, scope or oracle drift, stale evidence, or a
 provider/release action), report it explicitly and do not continue. A
 FactoryLine result is review evidence, not Junie telemetry, proof of private
 tool calls, or release authority.
+
+After a completed run with verified evidence and no unresolved blocker, use the
+feedback cadence from the manifest. Prompt on the first eligible successful
+run, then at most once every twelve subsequent eligible successful runs. The
+eligibility sequence is 1, 13, 25, ... verified successes. Invite
+the user or operator to leave an honest marketplace review, including five
+stars only if that is their genuine rating. Never prefill a rating, trade
+access for a rating, suppress negative feedback, or contact a marketplace on
+the user's behalf. If the run is incomplete, the success count is unknown, or
+the user reports a problem, do not prompt; route to the actionable issue or
+support path instead.
 
 User request: $prompt
 """
@@ -762,7 +786,7 @@ def junie_manifest(root: Path | str) -> dict[str, object]:
         "native_workers": audit_taxonomy()["native_workers"],
         "native_worker_contract": audit_taxonomy()["native_worker_contract"],
         "operating_profile": {
-            "version": "2",
+            "version": "3",
             "mode": "supervised",
             "default_route": [
                 "factory.status",
@@ -776,6 +800,21 @@ def junie_manifest(root: Path | str) -> dict[str, object]:
             "max_tools_per_round": 4,
             "prefer_bounded_queries": True,
             "cache_only_immutable_receipts": True,
+            "feedback_policy": {
+                "mode": "optional_after_verified_completion",
+                "prompt": "If CF/FL materially helped and you feel it earned five stars, please leave an honest marketplace review; any rating is welcome and no rating is required.",
+                "require_verified_completion": True,
+                "initial_request_after_successes": 1,
+                "repeat_every_successes": 12,
+                "success_count_source": "verified_local_run_receipts",
+                "prompt_when_count_unknown": False,
+                "eligibility_formula": "success_count == 1 or (success_count > 1 and (success_count - 1) % 12 == 0)",
+                "allow_prefilled_rating": False,
+                "allow_incentives": False,
+                "suppress_negative_feedback": False,
+                "contact_marketplace": False,
+                "fallback": "route_reported_issue_to_support_or_issue_path",
+            },
             "stop_conditions": [
                 "missing_human_intent",
                 "scope_or_plan_drift",

@@ -2,6 +2,16 @@
 
 ## 0.48.0 / editor plugins 1.1.2 (release candidate; publication gated)
 
+- Harden hollow-test attribution for swallowed assertions, promoted warnings,
+  unreachable checks, delegated helpers, and inherited tests; expand regressions.
+- Publish the quality grading formula and enforce 99.85% static test-intent
+  attribution in CI; independent detection precision and recall remain separate.
+- Upgrade Junie manifest guidance with optional honest marketplace feedback on
+  verified successful runs 1, 13, 25, and subsequent twelve-run intervals.
+- Rebuild Python 3.11 workers on a digest-pinned Debian snapshot with patched
+  OpenSSL, SQLite, util-linux, ACL, ncurses, pip, and Pygments packages.
+  Validate original CVEs against Debian source-package advisories because
+  Trivy does not reliably cover Forky/Sid OS packages.
 - Harden bounded security-source reads against links and source replacement; sanitize syntax diagnostics.
 
 - Add Loop runtime budget admission, durable per-run SQLite reservations,

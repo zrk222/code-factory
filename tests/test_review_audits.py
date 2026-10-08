@@ -876,6 +876,292 @@ def test_security_scan_accepts_imported_helper_with_independent_assertion(tmp_pa
     assert result["oracle_context"]["resolved_edges"][0]["kind"] == "assertion_helper"
 
 
+def test_security_scan_rejects_imported_helper_that_swallows_assertion(tmp_path):
+    (tmp_path / "helpers.py").write_text(
+        "def assert_expected(actual, expected):\n"
+        "    try:\n        assert actual == expected\n"
+        "    except AssertionError:\n        return\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "from helpers import assert_expected\n"
+        "def test_behavior():\n    assert_expected(compute(), 4)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_recognizes_test_named_assertion_helper(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "def test_expected(actual, expected):\n    assert actual == expected\n\n"
+        "def test_behavior():\n    test_expected(compute(), 4)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_recognizes_imported_test_named_assertion_helper(tmp_path):
+    (tmp_path / "helpers.py").write_text(
+        "def test_expected(actual, expected):\n    assert actual == expected\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "from helpers import test_expected\n"
+        "def test_behavior():\n    test_expected(compute(), 4)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_recognizes_assertion_hidden_by_warning_policy(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "import warnings\n"
+        "def test_warning():\n"
+        "    with warnings.catch_warnings():\n"
+        "        warnings.simplefilter('error', UserWarning)\n"
+        "        emit_user_warning()\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [
+        "warnings.simplefilter('error', UserWarning)\n"
+        "warnings.simplefilter('ignore', UserWarning)\n"
+        "emit_user_warning()",
+        "warnings.simplefilter('error', UserWarning)",
+    ],
+)
+def test_security_scan_does_not_trust_inactive_warning_filter(tmp_path, filters):
+    (tmp_path / "case.py").write_text(
+        "import warnings\n"
+        "def test_warning():\n"
+        "    with warnings.catch_warnings():\n"
+        + "\n".join("        " + line for line in filters.splitlines())
+        + "\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_does_not_credit_unrelated_call_after_swallowed_warning(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "import warnings\n"
+        "def test_warning():\n"
+        "    with warnings.catch_warnings():\n"
+        "        warnings.simplefilter('error', UserWarning)\n"
+        "        try:\n"
+        "            warnings.warn('expected', UserWarning)\n"
+        "        except UserWarning:\n"
+        "            pass\n"
+        "        compute()\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_ignores_manual_raise_after_unconditional_return(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "def test_behavior():\n"
+        "    return\n"
+        "    raise AssertionError('unreachable')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "hidden_filter",
+    [
+        "if False:\n            warnings.simplefilter('error')",
+        "def configure():\n            warnings.simplefilter('error')",
+    ],
+)
+def test_security_scan_does_not_execute_nested_warning_filter_syntax(tmp_path, hidden_filter):
+    (tmp_path / "case.py").write_text(
+        "import warnings\n"
+        "def test_warning():\n"
+        "    with warnings.catch_warnings():\n"
+        + "\n".join("        " + line for line in hidden_filter.splitlines())
+        + "\n        perform()\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize("handler", ["Exception", "(AssertionError, ValueError)"])
+def test_security_scan_rejects_helper_swallowing_broad_assertion(tmp_path, handler):
+    (tmp_path / "helpers.py").write_text(
+        "def assert_expected(actual, expected):\n"
+        "    try:\n        assert actual == expected\n"
+        f"    except {handler}:\n        pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "from helpers import assert_expected\n"
+        "def test_behavior():\n    assert_expected(compute(), 4)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_accepts_assertion_reraised_from_handler(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "def test_behavior():\n"
+        "    try:\n        assert compute() == 4\n"
+        "    except Exception:\n        raise\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+@pytest.mark.parametrize(
+    "imports,handler",
+    [
+        ("from builtins import BaseException as Ignore\n", "Ignore"),
+        ("from builtins import Exception as Ignore\n", "Ignore"),
+        ("import builtins as bi\n", "bi.BaseException"),
+    ],
+)
+def test_security_scan_detects_aliased_exception_catch(tmp_path, imports, handler):
+    (tmp_path / "case.py").write_text(
+        imports
+        + "def test_behavior():\n"
+        + "    try:\n        assert compute() == 4\n"
+        + f"    except {handler}:\n        pass\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "imports,suppress",
+    [
+        ("from contextlib import suppress as ignore\n", "ignore"),
+        ("import contextlib as context\n", "context.suppress"),
+    ],
+)
+def test_security_scan_detects_suppress_context_for_assertion(tmp_path, imports, suppress):
+    (tmp_path / "case.py").write_text(
+        imports
+        + "def test_behavior():\n"
+        + f"    with {suppress}(AssertionError):\n"
+        + "        assert compute() == 4\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_detects_assertion_suppressed_in_finally(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "def test_behavior():\n"
+        "    try:\n        assert compute() == 4\n"
+        "    finally:\n        return None\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_accepts_tuple_handler_with_named_reraise(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "def test_behavior():\n"
+        "    try:\n        assert compute() == 4\n"
+        "    except (AssertionError, ValueError) as error:\n        raise error\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_rejects_assertion_swallowed_by_finally_return(tmp_path):
+    (tmp_path / "helpers.py").write_text(
+        "def assert_expected(actual, expected):\n"
+        "    try:\n        assert actual == expected\n"
+        "    except AssertionError:\n"
+        "        try:\n            pass\n"
+        "        finally:\n            return\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "from helpers import assert_expected\n"
+        "def test_behavior():\n    assert_expected(compute(), 4)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "if compute() != 4:\n        raise AssertionError('wrong value')",
+        "if not compute():\n        raise AssertionError('empty result')",
+    ],
+)
+def test_security_scan_recognizes_conditional_manual_assertion(tmp_path, body):
+    (tmp_path / "case.py").write_text(
+        "def test_behavior():\n    " + body + "\n", encoding="utf-8"
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_finds_hollow_inherited_test_in_helper_module(tmp_path):
+    (tmp_path / "base.py").write_text(
+        "class SharedCases:\n    def test_inherited(self):\n        pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "from base import SharedCases\n"
+        "class ConcreteCases(SharedCases):\n    pass\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    finding = next(item for item in result["findings"] if item["code"] == "QUALITY_HOLLOW_TEST")
+    assert finding["path"] == "base.py"
+    assert finding["facts"]["symbol"] == "test_inherited"
+
+
+def test_security_scan_does_not_trust_assertion_caught_in_nested_try(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "def test_behavior():\n"
+        "    try:\n"
+        "        if condition:\n            assert compute() == 4\n"
+        "    except Exception:\n        pass\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_rejects_builtin_exception_alias_and_finally_return(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "from builtins import Exception as Ignore\n"
+        "def test_alias():\n"
+        "    try:\n        assert compute() == 4\n"
+        "    except Ignore:\n        pass\n\n"
+        "def test_finally():\n"
+        "    try:\n        assert compute() == 4\n"
+        "    finally:\n        return\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_HOLLOW_TEST": 2
+    }
+
+
+def test_security_scan_rejects_contextlib_suppress_and_unreachable_manual_raise(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "from contextlib import suppress\n"
+        "def test_suppress():\n"
+        "    with suppress(AssertionError):\n        assert compute() == 4\n\n"
+        "def test_unreachable():\n"
+        "    if False:\n        raise AssertionError('wrong')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_HOLLOW_TEST": 2
+    }
+
+
 def test_security_scan_does_not_trust_imported_production_function(tmp_path):
     (tmp_path / "library.py").write_text(
         "def render(value):\n    assert value is not None\n    return value\n",

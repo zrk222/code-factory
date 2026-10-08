@@ -1,8 +1,20 @@
 # Linux/amd64 worker image recipes. Digests below were resolved from the
 # upstream registries; update only with a reviewed version and digest pair.
-FROM python:3.11.17-slim-bookworm@sha256:8a00ecb83ed9d0864dfd102a1bdb2067fda907ceb30bb86d09da9ee558b19590 AS sdk
+FROM python:3.11.17-slim-trixie@sha256:0dd364ba7e10242f07755449e3a3d0e35f9efd987952737b90def6709ab0c5ce AS python-source
+FROM debian:forky-slim@sha256:3c80e257eff6274d593eb33a94bda5174ccd619836e6a728a73e11c97f2213e3 AS sdk
 USER 0:0
-RUN python -m pip uninstall -y setuptools wheel
+# The signed immutable archive supplies fixes absent from Bookworm/Trixie.
+# Valid-Until is disabled only for this historical snapshot; signature and
+# package hash verification remain enforced by apt.
+RUN printf 'Types: deb\nURIs: http://snapshot.debian.org/archive/debian/20261008T000000Z/\nSuites: forky sid\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\nCheck-Valid-Until: no\n' > /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get -t forky install -y --no-install-recommends ca-certificates libbz2-1.0 libcrypt1 libdb5.3t64 libffi8 libgdbm6t64 liblzma5 libncursesw6 libreadline8t64 libsqlite3-0 libssl3t64=3.6.5-1 openssl=3.6.5-1 openssl-provider-legacy=3.6.5-1 libuuid1 zlib1g libzstd1 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=python-source /usr/local/ /usr/local/
+COPY deploy/deep-adapters/requirements-bootstrap.txt /tmp/requirements-bootstrap.txt
+RUN ldconfig && python -m pip uninstall -y setuptools wheel \
+    && python -m pip install --no-cache-dir --disable-pip-version-check --require-hashes --only-binary=:all: -r /tmp/requirements-bootstrap.txt \
+    && python -c 'import ssl,sqlite3,ctypes,bz2,lzma,readline,curses,uuid; print(ssl.OPENSSL_VERSION,sqlite3.sqlite_version)'
 COPY factoryline/__init__.py factoryline/deep_audit_io.py factoryline/runtime_audit_common.py factoryline/runtime_audit_process.py /usr/local/lib/python3.11/site-packages/factoryline/
 COPY --chmod=0555 deploy/deep-adapters/entrypoint /opt/factory/bin/audit-adapter
 RUN mkdir -p /src /out /opt/factory/rules
