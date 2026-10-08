@@ -655,3 +655,33 @@ fixtures must differ and not detect it. A disabled-detector mutation uses the
 positive fixture and must lose that detection. Runtime/fuzz schemas require
 candidate-bound harnesses, positive engine metrics and exact line/branch accounting.
 These contracts still require validation with real native adapter images.
+
+### Shared enforcement and agent remediation
+
+Runtime evaluators for all six lanes must return finite JSON, the expected lane,
+a supported state, a bounded finding identifier, consequence text and structured
+details. Malformed output becomes `INCOMPLETE`; exceptions expose only bounded
+error codes. This guard also applies to externally supplied evaluators at the
+runtime join. Existing candidate, scenario, command, timeout, cleanup and negative
+control verification remains required.
+
+Static Python, runtime and normalized deep scanner findings now carry
+`factory.audit-remediation.v1` packets. Each packet binds the candidate and finding,
+has a deterministic identity, preserves finding text as untrusted context and
+specifies reproduction, a scoped patch, the same analyzer and negative control,
+affected consumer checks and a separate specialty AI review. Context is copied
+before hashing so later producer mutations cannot rewrite the packet.
+
+The configured host agent executes these steps. Packet creation does not launch
+a provider agent or authorize commands. Existing repair-loop budgets, pause,
+resume, replay and candidate-drift checks remain the execution controls; workers
+must retain unresolved findings and stop when those controls fail. No universal
+scanner accuracy or commercial-agent parity is claimed by this addition.
+
+Research inputs: [CodeRabbit Autofix](https://docs.coderabbit.ai/finishing-touches/autofix)
+documents collecting unresolved findings and verifying generated patches;
+[Devin dependency workflows](https://docs.devin.ai/automation-templates/weekly-dependency-updates)
+document repository knowledge, test execution and risk-grouped changes;
+[Blitzy runtime validation](https://blitzy.com/blog/the-blitzy-sandbox-is-open-autonomous-software-development-at-no-cost)
+describes compilation and runtime validation. CF adopts explicit context,
+reproduction and verification handoffs within its existing agent workflow.

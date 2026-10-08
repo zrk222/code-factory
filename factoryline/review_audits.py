@@ -14,6 +14,7 @@ import operator
 from pathlib import Path, PureWindowsPath
 import re
 from typing import Any
+from .audit_action_refs import audit_remediation_packet
 
 SCHEMA = "factory.review-audit-policy.v1"
 FINGERPRINT_SCHEMA = "factory.code-review-fingerprint.v1"
@@ -1416,9 +1417,7 @@ def _unittest_testcase_classes(
                 return True
         return False
 
-    testcase_classes = {
-        name for name in classes if derives_from_testcase(name)
-    }
+    testcase_classes = {name for name in classes if derives_from_testcase(name)}
     return classes, base_names, testcase_classes
 
 
@@ -1494,8 +1493,7 @@ def _performance_benchmark_test(
         return False
     typed_fixture = "BenchmarkFixture" in _name(benchmark_parameter.annotation)
     marked_fixture = any(
-        _name(decorator).endswith(".benchmark")
-        for decorator in node.decorator_list
+        _name(decorator).endswith(".benchmark") for decorator in node.decorator_list
     )
     imported_fixture = any(
         value.startswith("pytest_codspeed.") or value.startswith("pytest_benchmark.")
@@ -1547,7 +1545,9 @@ def _strong_local_assertion(
         for child in nodes
     ) or any(
         isinstance(child, ast.Call)
-        and _assertion_call(child, aliases, helper_names, unittest_context=unittest_context)
+        and _assertion_call(
+            child, aliases, helper_names, unittest_context=unittest_context
+        )
         and _weak_assertion_reason(child, aliases) is None
         for child in nodes
     )
@@ -1567,16 +1567,20 @@ def _local_assertion_helpers(
     while changed:
         changed = False
         for name, node in functions.items():
-            if name not in helpers and _meaningful_local_assertion(
-                node,
-                _scope_security_aliases(aliases, node),
-                helpers,
-                unittest_context=unittest_context,
-            ) and _strong_local_assertion(
-                node,
-                _scope_security_aliases(aliases, node),
-                helpers,
-                unittest_context=unittest_context,
+            if (
+                name not in helpers
+                and _meaningful_local_assertion(
+                    node,
+                    _scope_security_aliases(aliases, node),
+                    helpers,
+                    unittest_context=unittest_context,
+                )
+                and _strong_local_assertion(
+                    node,
+                    _scope_security_aliases(aliases, node),
+                    helpers,
+                    unittest_context=unittest_context,
+                )
             ):
                 helpers.add(name)
                 changed = True
@@ -1592,9 +1596,7 @@ def _local_weak_assertion_helpers(
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         and not node.name.startswith("test_")
     }
-    strong = _local_assertion_helpers(
-        tree, aliases, unittest_context=unittest_context
-    )
+    strong = _local_assertion_helpers(tree, aliases, unittest_context=unittest_context)
     return {
         name
         for name, node in functions.items()
@@ -1666,7 +1668,9 @@ def _oracle_import_source(
                 and resolved in eligible_abs
                 and not choice.is_symlink()
             ):
-                target_set = child_matches if choice in child_choices else package_matches
+                target_set = (
+                    child_matches if choice in child_choices else package_matches
+                )
                 target_set.add(eligible_abs[resolved])
     if child_matches:
         return next(iter(child_matches)) if len(child_matches) == 1 else None
@@ -1796,7 +1800,9 @@ def _project_oracle_context(root: Path, files: list[Path]) -> tuple[dict, list, 
     for path, tree in snapshots.items():
         aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
         imports = _oracle_imports(root, path, tree, set(files))
-        contexts[path]["helpers"] = _imported_oracle_helpers(imports, snapshots, aliases)
+        contexts[path]["helpers"] = _imported_oracle_helpers(
+            imports, snapshots, aliases
+        )
         contexts[path]["weak_helpers"] = _imported_weak_oracle_helpers(
             imports, snapshots, aliases
         )
@@ -1832,7 +1838,9 @@ def _project_oracle_context(root: Path, files: list[Path]) -> tuple[dict, list, 
                 else []
             )
             for resolved_symbol in selected:
-                edges.add((caller, target, "assertion_helper", resolved_symbol, "strong"))
+                edges.add(
+                    (caller, target, "assertion_helper", resolved_symbol, "strong")
+                )
             selected_weak = (
                 [symbol]
                 if symbol in weak_names
@@ -1854,16 +1862,20 @@ def _project_oracle_context(root: Path, files: list[Path]) -> tuple[dict, list, 
                         "trusted",
                     )
                 )
-    return contexts, bindings, [
-        {
-            "caller": caller,
-            "target": target,
-            "kind": kind,
-            "symbol": symbol,
-            "strength": strength,
-        }
-        for caller, target, kind, symbol, strength in sorted(edges)
-    ]
+    return (
+        contexts,
+        bindings,
+        [
+            {
+                "caller": caller,
+                "target": target,
+                "kind": kind,
+                "symbol": symbol,
+                "strength": strength,
+            }
+            for caller, target, kind, symbol, strength in sorted(edges)
+        ],
+    )
 
 
 def _weak_assertion_reason(
@@ -1922,7 +1934,9 @@ def _weak_test_oracle_finding(
         return None
     if not node.name.startswith("test_"):
         return None
-    if _unconditionally_skipped_test(node) or _performance_benchmark_test(node, aliases):
+    if _unconditionally_skipped_test(node) or _performance_benchmark_test(
+        node, aliases
+    ):
         return None
     nodes = _test_oracle_body_nodes(node, aliases)
     vacuous = _direct_test_vacuous_assertions(node)
@@ -1989,7 +2003,9 @@ def _hollow_test_finding(
         return None
     if not node.name.startswith("test_"):
         return None
-    if _unconditionally_skipped_test(node) or _performance_benchmark_test(node, aliases):
+    if _unconditionally_skipped_test(node) or _performance_benchmark_test(
+        node, aliases
+    ):
         return None
     nodes = _test_oracle_body_nodes(node, aliases)
     vacuous = _direct_test_vacuous_assertions(node)
@@ -2943,6 +2959,21 @@ def _security_scan_coverage(
 
 
 def _seal_security_scan(core: dict[str, Any]) -> dict[str, Any]:
+    candidate = sha256(
+        json.dumps(
+            {
+                "sources": core.get("sources", []),
+                "tenant_read_contract": core.get("tenant_read_contract", {}),
+                "oracle_context": core.get("oracle_context", {}),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    core["candidate_sha256"] = candidate
+    core["agent_actions"] = [
+        audit_remediation_packet(candidate, item) for item in core["findings"]
+    ]
     core["audit_sha256"] = sha256(
         json.dumps(
             core, ensure_ascii=False, sort_keys=True, separators=(",", ":")

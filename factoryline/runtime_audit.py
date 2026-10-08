@@ -11,6 +11,7 @@ from .runtime_audit_common import (
     RuntimeAuditError,
     canonical_bytes,
     lane_result,
+    guarded_lane_evaluator,
     read_stable_json,
     sha256_bytes,
 )
@@ -28,6 +29,7 @@ from .runtime_audit_integrity import (
     validate_receipt_decision,
 )
 from .runtime_attestation import runtime_boundary_decision
+from .audit_action_refs import audit_remediation_packet
 
 Evaluator = Callable[..., dict[str, Any]]
 EVALUATORS: dict[str, Evaluator] = {
@@ -324,7 +326,7 @@ def _evaluate_artifact(
     normalized = dict(artifact)
     normalized.pop("scenario_sha256")
     try:
-        return EVALUATORS[kind](
+        return guarded_lane_evaluator(kind)(EVALUATORS[kind])(
             normalized,
             lane["config"],
             engine=lane["engine"],
@@ -332,6 +334,11 @@ def _evaluate_artifact(
         )
     except Exception as exc:
         error_code = getattr(exc, "code", "E_ARTIFACT_INVALID")
+        if (
+            not isinstance(error_code, str)
+            or re.fullmatch(r"[A-Z0-9_]{1,64}", error_code) is None
+        ):
+            error_code = "E_ARTIFACT_INVALID"
         return lane_result(
             kind,
             "INCOMPLETE",
@@ -556,6 +563,10 @@ def evaluate_runtime_audit(
             "signal_boundary": "Deterministic co-occurrence routing only; signals do not prove causation.",
         },
         "repair_queue": repair_queue,
+        "agent_actions": [
+            audit_remediation_packet(plan["candidate_sha256"], item)
+            for item in repair_queue
+        ],
         "fact_index": facts,
     }
     if boundary_result is not None:
@@ -663,6 +674,8 @@ def runtime_audit_status(root: Path | str) -> dict[str, Any]:
         "state": receipt.get("decision", "INCOMPLETE"),
         "receipt_path": str(receipt_paths[0]),
         "receipt_sha256": receipt.get("receipt_sha256"),
+        "candidate_sha256": receipt.get("candidate_sha256"),
+        "agent_actions": receipt.get("agent_actions", []),
         "lanes": receipt.get("lanes", []),
         "runtime_boundary": receipt.get("runtime_boundary"),
         "authority": "none",

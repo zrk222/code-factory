@@ -25,6 +25,7 @@ from .deep_audit_contract import verify_deep_audit_plan
 from .deep_audit_io import LIMIT, digest, local_file, strict_json
 from .deep_audit_sarif import normalize_sarif
 from .runtime_audit_common import RuntimeAuditError, canonical_bytes
+from .audit_action_refs import audit_remediation_packet
 
 
 def _execution_gap(code: str, action: str, path: str = ".") -> dict:
@@ -1173,6 +1174,7 @@ def _agent_actions(candidate_sha256: str, repair_queue: list[dict]) -> list[dict
                 "evidence_to_attach": "Candidate-bound patch diff, exact validation command, observed before/after behavior, and current hash-bound analyzer receipt.",
                 "affected_paths": [item["path"]] if item.get("path") else [],
                 "finding_id": item.get("finding_id"),
+                "repair_packet": audit_remediation_packet(candidate_sha256, item),
                 "stop_condition": item.get(
                     "consequence",
                     "Keep the deep audit BLOCKED until evidence proves the issue resolved.",

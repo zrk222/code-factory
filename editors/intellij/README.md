@@ -1,5 +1,16 @@
 # FactoryLine for JetBrains IDEs
 
+## Latest audit telemetry preview — October 8, 2026
+
+**Fixed:** bounded evaluator output validation across all six runtime lanes; malformed results stay incomplete. Shared imported assertion helpers and inherited test mixins are resolved by bounded static analysis.
+**Changed:** audit findings carry candidate-bound repair packets with reproduction, negative-control and separate specialty AI review requirements.
+**Added:** Graph Ops agent repair telemetry, evidence requirements, stop conditions and searchable individual test outcomes. Repair packets are consumed by the host agent; this view does not execute or approve repairs.
+
+![Graph Ops current audit and agent repair telemetry](https://raw.githubusercontent.com/zrk222/code-factory/codex/tenant-read-contract-20261007/docs/assets/marketplace/graph-ops-audit-telemetry-current.png)
+
+Actual local Graph Ops capture, October 8, 2026: 415 targeted tests passed. JUnit results are local and unbound; missing runtime receipts and coverage remain explicitly incomplete. Agent repair cards show candidate bindings, required evidence and separate specialty AI review requirements.
+
+
 FactoryLine for JetBrains IDEs keeps the local proof loop next to the project. It
 runs an explicit FactoryLine command, then displays the command result and the
 newest local JSON receipt in a tool window.
@@ -245,3 +256,7 @@ high severity conflicts engage the fail-closed boundary and pause the line at
 reviewer's own baseline and escalates: surface, second approver, fail closed.
 Blocking is refused until blind-spot re-review outcomes correct the proxy.
 Public exports carry distributions only, never per-reviewer rows.
+
+## Updated video preview
+
+[60-second CF/FL audit and repair walkthrough](https://github.com/zrk222/code-factory/raw/refs/heads/codex/tenant-read-contract-20261007/videos/code-factory-proof-of-survival/assets/video/remotion-factory-engine.mp4) — October 8, 2026. Silent captions, current Graph Ops captures, bounded scanner improvements and agent repair evidence requirements. The source render is in `videos/code-factory-proof-of-survival/remotion`.
