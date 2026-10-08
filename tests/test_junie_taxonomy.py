@@ -909,3 +909,25 @@ def test_codeql_profile_preserves_raw_hash_and_rejects_rule_extensions(tmp_path)
         [sys.executable, "-I", "-c", code, str(report)], capture_output=True
     )
     assert rejected.returncode != 0
+
+
+def test_native_worker_dependency_locks_and_entrypoints():
+    """Worker builds reject unverified wheels and ambiguous entrypoints."""
+    import re
+
+    repository = Path(__file__).resolve().parents[1]
+    recipes = repository / "deploy/deep-adapters"
+    dockerfile = (recipes / "Dockerfile").read_text()
+    stages = re.split(r"^FROM ", dockerfile, flags=re.MULTILINE)[1:]
+    assert all(stage.count("ENTRYPOINT ") <= 1 for stage in stages)
+    assert "python:3.11.17-slim-bookworm@sha256:" in dockerfile
+    for family in ("runtime", "fuzz", "codeql"):
+        lock = f"requirements-{family}.txt"
+        requirements = (recipes / lock).read_text().splitlines()
+        pins = [line for line in requirements if line and not line.startswith("#")]
+        assert pins
+        assert all(
+            re.fullmatch(r"[\w-]+==[\d.]+ --hash=sha256:[a-f0-9]{64}", pin)
+            for pin in pins
+        )
+        assert f"--require-hashes --only-binary=:all: -r /tmp/{lock}" in dockerfile

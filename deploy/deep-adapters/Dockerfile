@@ -1,6 +1,8 @@
 # Linux/amd64 worker image recipes. Digests below were resolved from the
 # upstream registries; update only with a reviewed version and digest pair.
-FROM python:3.11.9-slim@sha256:2856e6af199e8128161abd320575eb9b341f3b76f017b5d0c9cd364f60d8a050 AS sdk
+FROM python:3.11.17-slim-bookworm@sha256:8a00ecb83ed9d0864dfd102a1bdb2067fda907ceb30bb86d09da9ee558b19590 AS sdk
+USER 0:0
+RUN python -m pip uninstall -y setuptools wheel
 COPY factoryline/__init__.py factoryline/deep_audit_io.py factoryline/runtime_audit_common.py factoryline/runtime_audit_process.py /usr/local/lib/python3.11/site-packages/factoryline/
 COPY --chmod=0555 deploy/deep-adapters/entrypoint /opt/factory/bin/audit-adapter
 RUN mkdir -p /src /out /opt/factory/rules
@@ -18,7 +20,6 @@ COPY --chown=1000:1000 deploy/deep-adapters/profiles/semgrep-pattern-limited.jso
 COPY --chown=1000:1000 deploy/deep-adapters/rules/semgrep-pattern-limited.yml /opt/factory/rules/semgrep-pattern-limited.yml
 RUN mkdir -p /src /out /opt/factory/rules
 WORKDIR /src
-ENTRYPOINT ["/opt/factory/bin/audit-adapter"]
 USER 1000:1000
 LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="pattern-limited"
 
@@ -26,7 +27,8 @@ ENTRYPOINT ["/usr/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
 FROM sdk AS codeql-python-worker
 USER 0:0
 ADD --checksum=sha256:1ec99cfa9420f04c2330784b4ddb8363a0dd67c3e4471cd93963c50e6c433717 https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.1/codeql-bundle-linux64.tar.zst /tmp/codeql-bundle.tar.zst
-RUN python -m pip install --no-cache-dir --disable-pip-version-check zstandard==0.25.0
+COPY deploy/deep-adapters/requirements-codeql.txt /tmp/requirements-codeql.txt
+RUN python -m pip install --no-cache-dir --disable-pip-version-check --require-hashes --only-binary=:all: -r /tmp/requirements-codeql.txt
 RUN python -c 'import tarfile,zstandard; stream=zstandard.ZstdDecompressor().stream_reader(open("/tmp/codeql-bundle.tar.zst","rb")); tarfile.open(fileobj=stream,mode="r|").extractall("/opt/codeql",filter="data")' && rm -f /tmp/codeql-bundle.tar.zst
 RUN /opt/codeql/codeql/codeql query compile --precompile --threads=4 --ram=4096 -- /opt/codeql/codeql/qlpacks/codeql/python-queries/1.8.11/codeql-suites/python-security-extended.qls && find /opt/codeql/codeql/qlpacks/codeql/python-queries/1.8.11 -type f -name '*.qlx' -exec chmod 0444 {} +
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-python-full.json /opt/factory/adapter-profile.json
@@ -75,7 +77,7 @@ ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
 FROM sdk AS runtime-worker
 USER 0:0
 COPY deploy/deep-adapters/requirements-runtime.txt /tmp/requirements-runtime.txt
-RUN python -m pip install --no-cache-dir --disable-pip-version-check -r /tmp/requirements-runtime.txt
+RUN python -m pip install --no-cache-dir --disable-pip-version-check --require-hashes --only-binary=:all: -r /tmp/requirements-runtime.txt
 USER 1000:1000
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/runtime-coverage.json /opt/factory/adapter-profile.json
 LABEL io.code-factory.configured="true" io.code-factory.harness="candidate-supplied"
@@ -84,7 +86,7 @@ ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
 FROM sdk AS fuzz-worker
 USER 0:0
 COPY deploy/deep-adapters/requirements-fuzz.txt /tmp/requirements-fuzz.txt
-RUN python -m pip install --no-cache-dir --disable-pip-version-check -r /tmp/requirements-fuzz.txt
+RUN python -m pip install --no-cache-dir --disable-pip-version-check --require-hashes --only-binary=:all: -r /tmp/requirements-fuzz.txt
 USER 1000:1000
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/atheris.json /opt/factory/adapter-profile.json
 LABEL io.code-factory.configured="true" io.code-factory.harness="candidate-supplied"

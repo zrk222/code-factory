@@ -1,0 +1,77 @@
+{
+  "schema": "factory.worker-hardening-evaluation.v1",
+  "observed_at": "2026-10-08T03:12:52.596611+00:00",
+  "python": "3.11.17",
+  "base_digest": "sha256:8a00ecb83ed9d0864dfd102a1bdb2067fda907ceb30bb86d09da9ee558b19590",
+  "trivy": "0.68.1",
+  "upstream_base_scan": {
+    "severity_counts": {
+      "LOW": 102,
+      "HIGH": 55,
+      "MEDIUM": 113,
+      "CRITICAL": 2,
+      "UNKNOWN": 1
+    },
+    "fixable_high_critical": 2
+  },
+  "hardened_runtime_scan": {
+    "severity_counts": {
+      "LOW": 103,
+      "HIGH": 53,
+      "MEDIUM": 112,
+      "CRITICAL": 2,
+      "UNKNOWN": 1
+    },
+    "fixable_high_critical": 0
+  },
+  "mutation_tool": "mutmut 3.8.0",
+  "external_repositories": [
+    {
+      "repository": "boltons",
+      "commit": "4e5faa3d7e4008d89e0d8bf1ea87b6d9a061a16d",
+      "selection": "x_clamp",
+      "tests": "tests/test_mathutils.py",
+      "mutants": {
+        "survived": 5,
+        "killed": 8
+      },
+      "mutation_log_sha256": "b6ef8800ad9bc9e29d39999e171b50a6d058ede6c68c97a122611c7bbe501cd4",
+      "cf_full_repository_findings": 45,
+      "cf_selected_tests_hollow_findings": 0
+    },
+    {
+      "repository": "itsdangerous",
+      "commit": "672971d66a2ef9f85151e53283113f33d642dabd",
+      "selection": "x_base64_encode",
+      "tests": "tests/test_itsdangerous/test_encoding.py",
+      "mutants": {
+        "killed": 3,
+        "survived": 3
+      },
+      "mutation_log_sha256": "b958654e19faa953484426286e79da83320ceb8e06262dee95d1f88b51238cfa",
+      "cf_full_repository_findings": 0,
+      "cf_selected_tests_hollow_findings": 0
+    },
+    {
+      "repository": "path",
+      "commit": "67319bba24b0986abcf6c5a749a1b8ab6359bb22",
+      "selection": "x__strip_newlines",
+      "tests": "tests/test_path.py -k unicode",
+      "mutants": {
+        "killed": 5
+      },
+      "mutation_log_sha256": "fcc984a55e90e314974e4edcbc372b04d9882e2af5b4114df581185df6695554",
+      "cf_full_repository_findings": 11,
+      "cf_selected_tests_hollow_findings": 0
+    }
+  ],
+  "limits": [
+    "Selected functions and original upstream test subsets only; not whole-repository mutation coverage.",
+    "Eight survivors are not eight hollow tests; equivalent mutants and unspecified behavior need adjudication.",
+    "CF static hollow-test rules did not identify these boundary and padding mutation gaps.",
+    "Path unicode tests killed all five selected mutants and had no CF hollow-test findings; full repository had other findings not adjudicated here.",
+    "No precision, recall or 99.5 percent accuracy claim follows from this experiment.",
+    "Debian advisories without a fixed version remain; images are not vulnerability-free.",
+    "Full CodeQL image was not rebuilt; its locked bootstrap wheel was installed and verified in the hardened runtime container."
+  ]
+}

@@ -20,8 +20,12 @@ All profile argv is fixed in the image and uses only the documented source,
 output, report, and scratch placeholders. Profiles carry exact version probes.
 The Semgrep rules file is content-hashed. The other profile fingerprints refer
 to their pinned tool bundle, not to a claim that a remote advisory database or
-all tool-internal checks are separately content-addressed. Runtime package
-versions are exact pins; their transitive wheel bytes are not hash-locked.
+all tool-internal checks are separately content-addressed. Runtime, fuzz and CodeQL bootstrap wheels are version- and SHA-256-pinned for
+Linux/amd64 CPython 3.11. Pip requires hashes and binary wheels, rejecting
+unlisted wheel bytes and source builds. The shared SDK uses Python 3.11.17
+slim-bookworm pinned to the Linux/amd64 manifest digest. Unused setuptools
+and wheel packages are removed from the SDK; this does not mean the Debian
+base has no published advisories.
 The vendored Gitleaks rules come from the official [v8.28.0 configuration](https://github.com/gitleaks/gitleaks/blob/v8.28.0/config/gitleaks.toml). The full upstream MIT license and Copyright 2019 Zachary Rice notice are included in the repository and image at [GITLEAKS-LICENSE.txt](rules/GITLEAKS-LICENSE.txt).
 
 CodeQL's immutable official 2.27.1 bundle digest pins the CLI and its Python
