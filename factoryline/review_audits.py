@@ -863,9 +863,7 @@ def _test_oracle_body_nodes(node: ast.AST, aliases: dict[str, str]) -> list[ast.
     nodes = [child for statement in node.body for child in _body_nodes(statement)]
     parents = _oracle_ancestor_map(node.body)
     for statement in node.body:
-        parents[id(statement)] = ((node, statement),) + parents.get(
-            id(statement), ()
-        )
+        parents[id(statement)] = ((node, statement),) + parents.get(id(statement), ())
     for child in nodes:
         child._oracle_ancestors = parents.get(id(child), ())
     shadowed_calls: set[int] = set()
@@ -917,10 +915,10 @@ def _resolved_ast_name(node: ast.AST | None, aliases: dict[str, str]) -> str:
 def _catches_assertion_error(
     handler: ast.ExceptHandler, aliases: dict[str, str]
 ) -> bool:
-    if handler.type is None or _exception_type_catches_assertion(handler.type, handler, aliases):
-        return not (
-            _handler_reraises(handler)
-        )
+    if handler.type is None or _exception_type_catches_assertion(
+        handler.type, handler, aliases
+    ):
+        return not (_handler_reraises(handler))
     return False
 
 
@@ -934,13 +932,21 @@ def _exception_type_catches_assertion(
         )
     name = _resolved_ast_name(exception_type, aliases)
     return name in {
-        "AssertionError", "builtins.AssertionError", "Exception",
-        "builtins.Exception", "BaseException", "builtins.BaseException",
+        "AssertionError",
+        "builtins.AssertionError",
+        "Exception",
+        "builtins.Exception",
+        "BaseException",
+        "builtins.BaseException",
     }
 
 
 def _handler_reraises(handler: ast.ExceptHandler) -> bool:
-    if any(isinstance(child, ast.Return) for stmt in handler.body for child in _body_nodes(stmt)):
+    if any(
+        isinstance(child, ast.Return)
+        for stmt in handler.body
+        for child in _body_nodes(stmt)
+    ):
         return False
     if not handler.body or not isinstance(handler.body[-1], ast.Raise):
         return False
@@ -964,12 +970,18 @@ def _effective_assertion(node: ast.AST, aliases: dict[str, str]) -> bool:
                 return False
         try_nodes = (ast.Try, getattr(ast, "TryStar", ast.Try))
         if isinstance(parent, try_nodes) and child in parent.body:
-            if any(_catches_assertion_error(handler, aliases) for handler in parent.handlers):
+            if any(
+                _catches_assertion_error(handler, aliases)
+                for handler in parent.handlers
+            ):
                 return False
             if any(_finally_suppresses_exception(stmt) for stmt in parent.finalbody):
                 return False
         if isinstance(parent, ast.With) and child in parent.body:
-            if any(_suppresses_assertion(item.context_expr, aliases) for item in parent.items):
+            if any(
+                _suppresses_assertion(item.context_expr, aliases)
+                for item in parent.items
+            ):
                 return False
     return True
 
@@ -981,12 +993,18 @@ def _preceded_by_termination(parent: ast.AST, child: ast.AST) -> bool:
         if not isinstance(body, list) or child not in body:
             continue
         index = body.index(child)
-        return any(isinstance(item, (ast.Return, ast.Raise, ast.Break, ast.Continue)) for item in body[:index])
+        return any(
+            isinstance(item, (ast.Return, ast.Raise, ast.Break, ast.Continue))
+            for item in body[:index]
+        )
     for handler in getattr(parent, "handlers", ()):
         if child not in handler.body:
             continue
         index = handler.body.index(child)
-        return any(isinstance(item, (ast.Return, ast.Raise, ast.Break, ast.Continue)) for item in handler.body[:index])
+        return any(
+            isinstance(item, (ast.Return, ast.Raise, ast.Break, ast.Continue))
+            for item in handler.body[:index]
+        )
     return False
 
 
@@ -1002,8 +1020,10 @@ def _suppresses_assertion(node: ast.AST, aliases: dict[str, str]) -> bool:
         isinstance(node, ast.Call)
         and _resolved_ast_name(node.func, aliases) == "contextlib.suppress"
         and any(
-            _resolved_ast_name(argument, aliases) in {
-                "AssertionError", "builtins.AssertionError",
+            _resolved_ast_name(argument, aliases)
+            in {
+                "AssertionError",
+                "builtins.AssertionError",
             }
             for argument in node.args
         )
@@ -1036,7 +1056,8 @@ def _warnings_as_errors(node: ast.AST, aliases: dict[str, str]) -> bool:
         return False
     if not any(
         isinstance(item.context_expr, ast.Call)
-        and _normalized_call_name(item.context_expr, aliases) == "warnings.catch_warnings"
+        and _normalized_call_name(item.context_expr, aliases)
+        == "warnings.catch_warnings"
         for item in node.items
     ):
         return False
@@ -1046,7 +1067,11 @@ def _warnings_as_errors(node: ast.AST, aliases: dict[str, str]) -> bool:
         if _try_swallows_warning(statement, aliases):
             swallowed_warning = True
             continue
-        calls = [statement.value] if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call) else []
+        calls = (
+            [statement.value]
+            if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call)
+            else []
+        )
         for call in calls:
             is_filter, filter_mode = _warning_filter_mode(call, aliases)
             if is_filter:
@@ -1057,12 +1082,17 @@ def _warnings_as_errors(node: ast.AST, aliases: dict[str, str]) -> bool:
                 swallowed_warning = False
                 continue
             if mode == "error":
-                if not swallowed_warning or _normalized_call_name(call, aliases) == "warnings.warn":
+                if (
+                    not swallowed_warning
+                    or _normalized_call_name(call, aliases) == "warnings.warn"
+                ):
                     return True
     return False
 
 
-def _handler_catches_warning(handler: ast.ExceptHandler, aliases: dict[str, str]) -> bool:
+def _handler_catches_warning(
+    handler: ast.ExceptHandler, aliases: dict[str, str]
+) -> bool:
     if handler.type is None:
         return True
     types = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
@@ -1099,7 +1129,9 @@ def _try_swallows_warning(node: ast.AST, aliases: dict[str, str]) -> bool:
     )
 
 
-def _warning_filter_mode(call: ast.Call, aliases: dict[str, str]) -> tuple[bool, str | None]:
+def _warning_filter_mode(
+    call: ast.Call, aliases: dict[str, str]
+) -> tuple[bool, str | None]:
     if _normalized_call_name(call, aliases) != "warnings.simplefilter":
         return False, None
     if call.args and isinstance(call.args[0], ast.Constant):
@@ -1739,19 +1771,25 @@ def _meaningful_local_assertion(
 ) -> bool:
     nodes = _test_oracle_body_nodes(node, aliases)
     vacuous = _direct_test_vacuous_assertions(node)
-    return any(
-        _effective_assertion(child, aliases)
-        and _assertion_call(child, aliases, helper_names, unittest_context=unittest_context)
-        for child in nodes
-    ) or any(
-        isinstance(child, ast.Assert)
-        and _effective_assertion(child, aliases)
-        and id(child) not in vacuous
-        and not _vacuous_assertion(child.test)
-        for child in nodes
-    ) or any(
-        isinstance(child, (ast.Raise, ast.With))
-        for child in _assertion_nodes(node, aliases)
+    return (
+        any(
+            _effective_assertion(child, aliases)
+            and _assertion_call(
+                child, aliases, helper_names, unittest_context=unittest_context
+            )
+            for child in nodes
+        )
+        or any(
+            isinstance(child, ast.Assert)
+            and _effective_assertion(child, aliases)
+            and id(child) not in vacuous
+            and not _vacuous_assertion(child.test)
+            for child in nodes
+        )
+        or any(
+            isinstance(child, (ast.Raise, ast.With))
+            for child in _assertion_nodes(node, aliases)
+        )
     )
 
 
@@ -1765,24 +1803,28 @@ def _strong_local_assertion(
     """Return true only when a helper carries a non-weak oracle."""
     nodes = _test_oracle_body_nodes(node, aliases)
     vacuous = _direct_test_vacuous_assertions(node)
-    return any(
-        isinstance(child, ast.Assert)
-        and _effective_assertion(child, aliases)
-        and id(child) not in vacuous
-        and not _vacuous_assertion(child.test)
-        and _weak_assertion_reason(child.test, aliases) is None
-        for child in nodes
-    ) or any(
-        isinstance(child, ast.Call)
-        and _effective_assertion(child, aliases)
-        and _assertion_call(
-            child, aliases, helper_names, unittest_context=unittest_context
+    return (
+        any(
+            isinstance(child, ast.Assert)
+            and _effective_assertion(child, aliases)
+            and id(child) not in vacuous
+            and not _vacuous_assertion(child.test)
+            and _weak_assertion_reason(child.test, aliases) is None
+            for child in nodes
         )
-        and _weak_assertion_reason(child, aliases) is None
-        for child in nodes
-    ) or any(
-        isinstance(child, (ast.Raise, ast.With))
-        for child in _assertion_nodes(node, aliases)
+        or any(
+            isinstance(child, ast.Call)
+            and _effective_assertion(child, aliases)
+            and _assertion_call(
+                child, aliases, helper_names, unittest_context=unittest_context
+            )
+            and _weak_assertion_reason(child, aliases) is None
+            for child in nodes
+        )
+        or any(
+            isinstance(child, (ast.Raise, ast.With))
+            for child in _assertion_nodes(node, aliases)
+        )
     )
 
 
@@ -2243,7 +2285,8 @@ def _hollow_test_finding(
         return None
     if assertions and any(
         _effective_assertion(assertion, aliases)
-        and id(assertion) not in vacuous and not _vacuous_assertion(assertion.test)
+        and id(assertion) not in vacuous
+        and not _vacuous_assertion(assertion.test)
         for assertion in assertions
     ):
         return None
@@ -2271,15 +2314,21 @@ def _test_oracle_exempt(node: ast.AST, aliases: dict[str, str]) -> bool:
 
 
 def _test_has_assertion_call(
-    nodes: list[ast.AST], aliases: dict[str, str], helper_names: set[str] | None,
+    nodes: list[ast.AST],
+    aliases: dict[str, str],
+    helper_names: set[str] | None,
     unittest_context: bool,
 ) -> bool:
     for child in nodes:
         if not isinstance(child, ast.Call) or not _effective_assertion(child, aliases):
             continue
-        if _assertion_call(child, aliases, helper_names, unittest_context=unittest_context):
+        if _assertion_call(
+            child, aliases, helper_names, unittest_context=unittest_context
+        ):
             return True
-        if isinstance(child.func, ast.Name) and child.func.id in (helper_names or set()):
+        if isinstance(child.func, ast.Name) and child.func.id in (
+            helper_names or set()
+        ):
             return True
     return False
 

@@ -964,9 +964,7 @@ def test_security_scan_does_not_credit_unrelated_call_after_swallowed_warning(tm
 
 def test_security_scan_ignores_manual_raise_after_unconditional_return(tmp_path):
     (tmp_path / "case.py").write_text(
-        "def test_behavior():\n"
-        "    return\n"
-        "    raise AssertionError('unreachable')\n",
+        "def test_behavior():\n    return\n    raise AssertionError('unreachable')\n",
         encoding="utf-8",
     )
     assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
@@ -979,7 +977,9 @@ def test_security_scan_ignores_manual_raise_after_unconditional_return(tmp_path)
         "def configure():\n            warnings.simplefilter('error')",
     ],
 )
-def test_security_scan_does_not_execute_nested_warning_filter_syntax(tmp_path, hidden_filter):
+def test_security_scan_does_not_execute_nested_warning_filter_syntax(
+    tmp_path, hidden_filter
+):
     (tmp_path / "case.py").write_text(
         "import warnings\n"
         "def test_warning():\n"
@@ -1043,7 +1043,9 @@ def test_security_scan_detects_aliased_exception_catch(tmp_path, imports, handle
         ("import contextlib as context\n", "context.suppress"),
     ],
 )
-def test_security_scan_detects_suppress_context_for_assertion(tmp_path, imports, suppress):
+def test_security_scan_detects_suppress_context_for_assertion(
+    tmp_path, imports, suppress
+):
     (tmp_path / "case.py").write_text(
         imports
         + "def test_behavior():\n"
@@ -1111,12 +1113,13 @@ def test_security_scan_finds_hollow_inherited_test_in_helper_module(tmp_path):
         encoding="utf-8",
     )
     (tmp_path / "case.py").write_text(
-        "from base import SharedCases\n"
-        "class ConcreteCases(SharedCases):\n    pass\n",
+        "from base import SharedCases\nclass ConcreteCases(SharedCases):\n    pass\n",
         encoding="utf-8",
     )
     result = security_scan(tmp_path)
-    finding = next(item for item in result["findings"] if item["code"] == "QUALITY_HOLLOW_TEST")
+    finding = next(
+        item for item in result["findings"] if item["code"] == "QUALITY_HOLLOW_TEST"
+    )
     assert finding["path"] == "base.py"
     assert finding["facts"]["symbol"] == "test_inherited"
 
@@ -1143,12 +1146,12 @@ def test_security_scan_rejects_builtin_exception_alias_and_finally_return(tmp_pa
         "    finally:\n        return\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {
-        "QUALITY_HOLLOW_TEST": 2
-    }
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 2}
 
 
-def test_security_scan_rejects_contextlib_suppress_and_unreachable_manual_raise(tmp_path):
+def test_security_scan_rejects_contextlib_suppress_and_unreachable_manual_raise(
+    tmp_path,
+):
     (tmp_path / "case.py").write_text(
         "from contextlib import suppress\n"
         "def test_suppress():\n"
@@ -1157,9 +1160,7 @@ def test_security_scan_rejects_contextlib_suppress_and_unreachable_manual_raise(
         "    if False:\n        raise AssertionError('wrong')\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {
-        "QUALITY_HOLLOW_TEST": 2
-    }
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 2}
 
 
 def test_security_scan_does_not_trust_imported_production_function(tmp_path):

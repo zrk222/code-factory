@@ -101,7 +101,10 @@ def test_taxonomy_is_complete_progressive_and_has_no_external_effect_authority(
     assert feedback["repeat_every_successes"] == 12
     assert feedback["success_count_source"] == "verified_local_run_receipts"
     assert feedback["prompt_when_count_unknown"] is False
-    assert feedback["eligibility_formula"] == "success_count == 1 or (success_count > 1 and (success_count - 1) % 12 == 0)"
+    assert (
+        feedback["eligibility_formula"]
+        == "success_count == 1 or (success_count > 1 and (success_count - 1) % 12 == 0)"
+    )
     assert feedback["allow_prefilled_rating"] is False
     assert feedback["allow_incentives"] is False
     assert feedback["suppress_negative_feedback"] is False

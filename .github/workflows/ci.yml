@@ -125,6 +125,7 @@ jobs:
         if: matrix.os != 'ubuntu-latest' || matrix.python != '3.11'
         run: python -m pytest -n 2 -q --junitxml=pytest-results.xml --durations=20
       - name: Start runtime coverage receipt
+        id: runtime-coverage-start
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
         run: python scripts/write_ci_runtime_coverage.py start
       - name: Test with runtime statement and branch coverage
@@ -140,7 +141,7 @@ jobs:
           --cov-report=json:.factory/test-reports/coverage.json
           --cov-report=xml:.factory/test-reports/coverage.xml
       - name: Finish runtime coverage receipt
-        if: always() && matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
+        if: always() && steps.runtime-coverage-start.outcome == 'success'
         env:
           TEST_OUTCOME: ${{ steps.runtime-tests.outcome }}
         run: python scripts/write_ci_runtime_coverage.py finish
