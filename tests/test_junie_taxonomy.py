@@ -88,12 +88,28 @@ def test_taxonomy_is_complete_progressive_and_has_no_external_effect_authority(
         "supports_prompt_argument": True,
     }
     profile = manifest["operating_profile"]
-    assert profile["version"] == "2"
+    assert profile["version"] == "3"
     assert profile["mode"] == "supervised"
     assert profile["max_tools_per_round"] == 4
     assert profile["prefer_bounded_queries"] is True
     assert "oracle_weakening" in profile["stop_conditions"]
     assert "evidence_digests" in profile["handoff_fields"]
+    feedback = profile["feedback_policy"]
+    assert feedback["mode"] == "optional_after_verified_completion"
+    assert feedback["require_verified_completion"] is True
+    assert feedback["initial_request_after_successes"] == 1
+    assert feedback["repeat_every_successes"] == 12
+    assert feedback["success_count_source"] == "verified_local_run_receipts"
+    assert feedback["prompt_when_count_unknown"] is False
+    assert (
+        feedback["eligibility_formula"]
+        == "success_count == 1 or (success_count > 1 and (success_count - 1) % 12 == 0)"
+    )
+    assert feedback["allow_prefilled_rating"] is False
+    assert feedback["allow_incentives"] is False
+    assert feedback["suppress_negative_feedback"] is False
+    assert feedback["contact_marketplace"] is False
+    assert "honest marketplace review" in feedback["prompt"]
 
 
 def test_contribution_gives_visible_bounded_credit_and_hashes_only_cited_local_files(
@@ -225,6 +241,12 @@ def test_project_pack_requires_confirmation_is_idempotent_and_preserves_owned_fi
     assert config["mcpServers"]["code-factory"]["command"] == "factory"
     assert "factory.junie_taxonomy" in guidance
     assert "factory.junie_contribution" in guidance
+    assert "Optional user feedback" in guidance
+    assert "five stars only as the user's genuine choice" in guidance
+    assert "subsequent eligible" in guidance
+    assert "honest" in subagent
+    assert "marketplace review" in subagent
+    assert "Never prefill a rating" in subagent
     assert "Efficiency profile" in guidance
     assert "four or fewer" in guidance
     assert "factory.search_audit_rules" in guidance
@@ -920,8 +942,13 @@ def test_native_worker_dependency_locks_and_entrypoints():
     dockerfile = (recipes / "Dockerfile").read_text()
     stages = re.split(r"^FROM ", dockerfile, flags=re.MULTILINE)[1:]
     assert all(stage.count("ENTRYPOINT ") <= 1 for stage in stages)
-    assert "python:3.11.17-slim-bookworm@sha256:" in dockerfile
-    for family in ("runtime", "fuzz", "codeql"):
+    assert "python:3.11.17-slim-trixie@sha256:" in dockerfile
+    assert "debian:forky-slim@sha256:" in dockerfile
+    assert "snapshot.debian.org/archive/debian/20261008T000000Z/" in dockerfile
+    assert "Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg" in dockerfile
+    assert "trusted=yes" not in dockerfile
+    assert "allow-unauthenticated" not in dockerfile
+    for family in ("runtime", "fuzz", "codeql", "bootstrap"):
         lock = f"requirements-{family}.txt"
         requirements = (recipes / lock).read_text().splitlines()
         pins = [line for line in requirements if line and not line.startswith("#")]

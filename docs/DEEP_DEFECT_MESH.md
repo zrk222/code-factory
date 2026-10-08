@@ -71,10 +71,10 @@ error, not a successful audit.
 
 ### Detection accuracy acceptance target
 
-Detection precision and recall must each reach at least 99.5% on independent,
+Detection precision and recall must each reach at least 99.85% on independent,
 held-out evaluations for the applicable audit categories before making that
 accuracy claim. Report TP, FP, FN, TN, sample counts and confidence intervals
 separately by category. A name-based test-intent attribution score or source
 quality grade is not detection accuracy. Missing external evaluation is NOT_RUN;
 public development cases passing are regression evidence, not proof of
-99.5% generalization. Preserve the verifier-only holdout boundary in HOLDOUT.md.
+99.85% generalization. Preserve the verifier-only holdout boundary in HOLDOUT.md.

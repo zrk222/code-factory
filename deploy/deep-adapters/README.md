@@ -23,7 +23,7 @@ to their pinned tool bundle, not to a claim that a remote advisory database or
 all tool-internal checks are separately content-addressed. Runtime, fuzz and CodeQL bootstrap wheels are version- and SHA-256-pinned for
 Linux/amd64 CPython 3.11. Pip requires hashes and binary wheels, rejecting
 unlisted wheel bytes and source builds. The shared SDK uses Python 3.11.17
-slim-bookworm pinned to the Linux/amd64 manifest digest. Unused setuptools
+from the pinned slim-trixie image on a pinned Debian Forky SDK snapshot. Unused setuptools
 and wheel packages are removed from the SDK; this does not mean the Debian
 base has no published advisories.
 The vendored Gitleaks rules come from the official [v8.28.0 configuration](https://github.com/gitleaks/gitleaks/blob/v8.28.0/config/gitleaks.toml). The full upstream MIT license and Copyright 2019 Zachary Rice notice are included in the repository and image at [GITLEAKS-LICENSE.txt](rules/GITLEAKS-LICENSE.txt).
@@ -58,3 +58,16 @@ The SDK still rejects paths outside the exact candidate inventory.
 Descriptor-only CodeQL pack extensions are retained as run properties for
 strict importer compatibility. Extensions containing rules or taxa are rejected;
 external property files and unresolved rule references remain unsupported.
+# 0.48.0 worker security refresh
+
+The SDK retains CPython 3.11.17 and uses a digest-pinned Debian Forky base,
+the signed 2026-10-08 Debian archive snapshot, and exact OpenSSL 3.6.5-1
+packages from Sid. Apt signature and package hash verification remain enabled.
+Python build dependencies use wheel hashes; pip and Pygments are patched.
+
+Trivy's Forky/Sid OS coverage is insufficient to establish remediation.
+Validate installed **source-package** versions against Debian Security Tracker
+fixed versions with `dpkg --compare-versions`, and retain the feed digest,
+image digest, package manifest, and per-CVE decisions. Language-package scans
+remain useful. Native clean/failing runtime and fuzz controls must also pass.
+This refresh does not establish vulnerability-free images or full audit coverage.

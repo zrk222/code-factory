@@ -75,6 +75,7 @@ Changelog = "https://github.com/zrk222/code-factory/releases"
 
 [project.optional-dependencies]
 dev = [
+  "Pillow==12.3.0",
   "setuptools>=77,<83",
   "hypothesis>=6.135,<7",
   "pytest>=8.0",

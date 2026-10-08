@@ -20,6 +20,13 @@ def test_ci_runs_native_python_matrix_on_all_supported_host_families() -> None:
     assert "--junitxml=native-process-parity.junit.xml" in workflow
 
 
+def test_candidate_quality_gate_keeps_attribution_floor_and_python_cap() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "report['attribution']['rate'] >= 0.9985" in workflow
+    assert "max_python_files'] == 460" in workflow
+    assert "<= 460" in workflow
+
+
 @pytest.mark.skipif(
     os.name == "nt", reason="native POSIX parity executes in Linux/macOS CI"
 )

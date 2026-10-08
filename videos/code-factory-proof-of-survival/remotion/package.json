@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "node --test src/render.test.mjs",
     "render:engine": "remotion render src/index.ts CodeFactoryFactoryEngine ../assets/video/remotion-factory-engine.mp4 --codec=h264 --crf=20"
   },
   "dependencies": {

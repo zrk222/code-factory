@@ -1111,6 +1111,29 @@ def test_release_train_write_complete_emits_every_declared_stage(
     assert all(row["feature"] == "release-train" and row["ok"] for row in receipts)
 
 
+def test_release_train_contract_writer_emits_oracle_and_policy_binding(
+    tmp_path: Path,
+) -> None:
+    source = Path(__file__).parents[1] / "scripts" / "release_train_e2e.py"
+    module = runpy.run_path(str(source))
+
+    binding = module["write_release_contract"](tmp_path)
+
+    release = json.loads(
+        (tmp_path / ".factory/release-contracts/release-train.json").read_text()
+    )
+    oracle_path = tmp_path / release["oracle_contract"]
+    oracle = json.loads(oracle_path.read_text())
+    assert release["schema"] == "factory.release-contract.v1"
+    assert release["policy_digest"] == binding["release_contract_policy_digest"]
+    assert release["oracle_contract_sha256"] == binding["oracle_contract_sha256"]
+    assert oracle["contract_sha256"] == binding["oracle_contract_sha256"]
+    handoff_path = tmp_path / ".factory/oracles/handoffs/release-train.json"
+    handoff = json.loads(handoff_path.read_text())
+    assert handoff["marker"] == "ORACLE_HANDOFF_CAPTURED"
+    assert handoff["original_intent"]["sha256"]
+
+
 def test_cancel_deep_run_does_not_rewrite_a_terminal_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

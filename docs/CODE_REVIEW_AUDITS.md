@@ -82,3 +82,44 @@ Individual audit commands return exit 0 only for `no_structural_findings` within
 - Receipts are content-addressed, not signed approvals. `no_structural_findings` means only that these checks found no issue in the declared, supported scope.
 
 For solo developers: catch an omitted check and see where it belongs. For teams: make the convention and unsafe branch inspectable. For enterprise reviewers: retain exact policy/source bindings and explicit coverage gaps rather than another unexplained green badge.
+
+## Published repository quality grading method
+
+CI pins `code-factory-2-forge==0.10.8` and runs
+`forge qa --repo-wide --root . --strict`. Its report lists the actual source
+inventory in `metrics.scope.code_files`; generated, ignored and excluded paths
+are outside that inventory. Compare receipts only when scope and parser versions
+match.
+
+The composite score is `35*T + 25*C + 25*S/100 + 15*D`:
+
+- `T` is the fraction of inspected public functions whose names occur as whole
+  words in discovered test source, rounded to two decimal places.
+- `D` is the documented public-function fraction, also rounded to two decimals.
+- `C` is 1 when maximum complexity is at most 10; otherwise it is
+  `max(0, 1 - (maximum_complexity - 10)/10)`.
+- `S` starts at 100, subtracts the pinned scanner's security-rule penalties and
+  is floored at zero. This is a rule score, not vulnerability prevalence.
+
+For Python, complexity starts at 1 and counts branches, loops, exception
+handlers, context managers, assertions, conditional expressions and boolean
+operators in the function AST. Other languages use their configured parsers.
+This is not call-graph complexity. Ruff's C901 metric and architecture file/line
+budgets are separate checks and can disagree with this metric.
+
+Forge assigns A at 85, B at 70, C at 55 and D at 40. Complexity above 10 prevents
+an A/B result; syntax or unsupported-parser findings fail the grade. CF's CI
+adds stricter requirements: A, composite at least 97.9, static attribution at
+least 99.85%, maximum complexity 10,
+no findings or unreadable source, and at most 460 tracked Python files.
+
+The separate, unrounded `attribution.rate` counts function units passing both
+the test-name linkage and complexity checks, with parser/syntax failures adding
+failed units. Anonymous functions cannot satisfy the name linkage. Name linkage
+is static test intent: even a passing test mentioning a function does not prove
+that every branch ran or that its assertions detect a defect. Behavior tests,
+mutation evidence and runtime coverage must be reported separately.
+
+Neither this grade nor attribution measures detection precision or recall.
+Those require independently labeled defects and clean controls, with false
+positives, false negatives, corpus provenance and evaluation scope published.

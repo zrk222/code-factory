@@ -1,0 +1,52 @@
+name: SDK worker CVE regression
+on:
+  pull_request:
+    paths:
+      - deploy/deep-adapters/**
+      - factoryline/**
+      - scripts/verify_worker_cves*.mjs
+      - .github/workflows/worker-verification.yml
+  push:
+    branches: [main]
+    paths:
+      - deploy/deep-adapters/**
+      - factoryline/**
+      - scripts/verify_worker_cves*.mjs
+      - .github/workflows/worker-verification.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worker-verification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sdk-workers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [codeql-python-worker, osv-worker, syft-worker, gitleaks-worker, trivy-worker, runtime-worker, fuzz-worker]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22"
+      - name: Check regression verifier positive and fail-closed controls
+        run: node --test scripts/verify_worker_cves.test.mjs
+      - name: Build SDK worker from reviewed recipe
+        run: docker build --platform linux/amd64 --target "${{ matrix.target }}" -f deploy/deep-adapters/Dockerfile -t factory-worker:candidate .
+      - name: Verify original fifteen CVEs and package imports using immutable image ID
+        run: node scripts/verify_worker_cves.mjs factory-worker:candidate worker-verification.json "${{ matrix.target }}"
+      - name: Preserve hash-bound tracker and installed source-version evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: worker-verification-${{ matrix.target }}
+          path: worker-verification.json
+          if-no-files-found: error
