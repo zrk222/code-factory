@@ -962,12 +962,8 @@ def _effective_assertion(node: ast.AST, aliases: dict[str, str]) -> bool:
     for parent, child in ancestors:
         if _preceded_by_termination(parent, child):
             return False
-        if isinstance(parent, ast.If) and child in parent.body:
-            if isinstance(parent.test, ast.Constant) and parent.test.value is False:
-                return False
-        if isinstance(parent, ast.If) and child in parent.orelse:
-            if isinstance(parent.test, ast.Constant) and parent.test.value is True:
-                return False
+        if _unreachable_constant_branch(parent, child):
+            return False
         try_nodes = (ast.Try, getattr(ast, "TryStar", ast.Try))
         if isinstance(parent, try_nodes) and child in parent.body:
             if any(
@@ -984,6 +980,14 @@ def _effective_assertion(node: ast.AST, aliases: dict[str, str]) -> bool:
             ):
                 return False
     return True
+
+
+def _unreachable_constant_branch(parent: ast.AST, child: ast.AST) -> bool:
+    if not isinstance(parent, ast.If) or not isinstance(parent.test, ast.Constant):
+        return False
+    return (parent.test.value is False and child in parent.body) or (
+        parent.test.value is True and child in parent.orelse
+    )
 
 
 def _preceded_by_termination(parent: ast.AST, child: ast.AST) -> bool:

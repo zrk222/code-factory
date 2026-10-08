@@ -52,17 +52,20 @@ export function parseManifest(text) {
 }
 export function evaluate(feed, packages, compare, cves = targets) {
   return cves.map(cve => {
-    const matches = packages.filter(pkg => feed[pkg.source]?.[cve]).map(pkg => {
-      const release = feed[pkg.source][cve]?.releases?.sid;
-      const fixed = release?.fixed_version;
-      let state = 'UNKNOWN';
-      if (release?.status === 'resolved' && typeof fixed === 'string' && fixed.length) {
-        state = fixed === '0' || compare(pkg.source_version, fixed) ? 'RESOLVED' : 'UNRESOLVED';
-      } else if (release?.status === 'open') state = 'UNRESOLVED';
-      return { package: pkg, state, advisory: release ?? null };
-    });
+    const matches = packages.filter(pkg => feed[pkg.source]?.[cve])
+      .map(pkg => evaluatePackage(feed[pkg.source][cve], pkg, compare));
     return { cve, state: matches.length && matches.every(match => match.state === 'RESOLVED') ? 'RESOLVED' : 'BLOCKED', packages: matches };
   });
+}
+function evaluatePackage(advisory, pkg, compare) {
+  const release = advisory.releases?.sid;
+  return { package: pkg, state: releaseState(release, pkg.source_version, compare), advisory: release ?? null };
+}
+function releaseState(release, installed, compare) {
+  if (release?.status === 'open') return 'UNRESOLVED';
+  const fixed = release?.fixed_version;
+  if (release?.status !== 'resolved' || typeof fixed !== 'string' || !fixed.length) return 'UNKNOWN';
+  return fixed === '0' || compare(installed, fixed) ? 'RESOLVED' : 'UNRESOLVED';
 }
 export async function verify(image, output, target) {
   const result = { schema: 'factory.worker-cve-regression.v1', observed_at: new Date().toISOString(), image,
