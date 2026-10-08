@@ -13,7 +13,7 @@ Actual local Graph Ops capture, October 8, 2026: 415 targeted tests passed. JUni
 
 ## Native CF and ForgeLine evidence
 
-Version 1.1.0 targets the Code Factory 0.47.0 candidate and provides
+Version 1.1.2 targets the Code Factory 0.48.0 candidate and provides
 **FactoryLine Evidence** in Explorer for VS Code and Open VSX compatible
 editors. Select **Run CF + ForgeLine Audits**, choose a
 workspace, then confirm local execution. The panel shows CF change review,

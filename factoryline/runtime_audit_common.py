@@ -242,6 +242,22 @@ def lane_result(
     }
 
 
+def _validate_lane_result(result: Any, lane: str) -> None:
+    """Require the lane's closed result contract and bounded serialized output."""
+    if (
+        not isinstance(result, dict)
+        or result.get("lane") != lane
+        or result.get("state") not in {"PASS", "FAIL", "INCOMPLETE"}
+        or not isinstance(result.get("finding"), str)
+        or re.fullmatch(r"[A-Za-z0-9_]{1,128}", result["finding"]) is None
+        or not isinstance(result.get("consequence"), str)
+        or not isinstance(result.get("details"), dict)
+    ):
+        raise RuntimeAuditError("E_EVALUATOR_RESULT", "invalid lane result")
+    if len(canonical_bytes(result)) > MAX_ARTIFACT_BYTES:
+        raise RuntimeAuditError("E_EVALUATOR_LIMIT", "lane result exceeds byte budget")
+
+
 def guarded_lane_evaluator(lane: str):
     """Turn malformed lane evidence into a bounded INCOMPLETE result, never a crash or pass."""
 
@@ -250,18 +266,7 @@ def guarded_lane_evaluator(lane: str):
         def guarded(*args, **kwargs):
             try:
                 result = evaluator(*args, **kwargs)
-                if (
-                    not isinstance(result, dict)
-                    or result.get("lane") != lane
-                    or result.get("state") not in {"PASS", "FAIL", "INCOMPLETE"}
-                    or not isinstance(result.get("finding"), str)
-                    or re.fullmatch(r"[A-Za-z0-9_]{1,128}", result["finding"]) is None
-                    or not isinstance(result.get("consequence"), str)
-                    or not isinstance(result.get("details"), dict)
-                ):
-                    raise RuntimeAuditError("E_EVALUATOR_RESULT", "invalid lane result")
-                if len(canonical_bytes(result)) > MAX_ARTIFACT_BYTES:
-                    raise RuntimeAuditError("E_EVALUATOR_LIMIT", "lane result exceeds byte budget")
+                _validate_lane_result(result, lane)
                 return result
             except Exception as exc:
                 code = getattr(exc, "code", "E_ARTIFACT_INVALID")

@@ -18,6 +18,65 @@ from factoryline.change_review import ChangeReviewError, review_change
 from factoryline.cli import main
 
 
+def test_security_scan_rejects_external_source_link(tmp_path):
+    outside = tmp_path.parent / "external-source.txt"
+    outside.write_text("PRIVATE_SOURCE = 1\n", encoding="utf-8")
+    link = tmp_path / "linked.py"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("source symlinks require OS permission")
+    result = security_scan(tmp_path)
+    assert result["unreadable_sources"] == 1
+    assert result["audit_coverage"]["complete"] is False
+    assert "PRIVATE_SOURCE" not in json.dumps(result)
+
+
+def test_security_source_rejects_linked_parent(tmp_path):
+    from factoryline.review_audits import _security_source_bytes
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    outside = tmp_path.parent / "external-sources"
+    outside.mkdir(exist_ok=True)
+    (outside / "source.py").write_text("PRIVATE_SOURCE = 1\n", encoding="utf-8")
+    try:
+        (tmp_path / "linked").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks require OS permission")
+    with pytest.raises(RuntimeAuditError, match="linked evidence"):
+        _security_source_bytes(tmp_path, "linked/source.py")
+
+
+def test_security_binding_recheck_rejects_link_swap(tmp_path):
+    from factoryline.review_audits import _verify_security_bindings
+    from hashlib import sha256
+
+    source = tmp_path / "source.py"
+    raw = b"VALUE = 1\n"
+    source.write_bytes(raw)
+    binding = {
+        "path": "source.py",
+        "sha256": sha256(raw).hexdigest(),
+        "bytes": len(raw),
+    }
+    outside = tmp_path.parent / "external-binding.txt"
+    outside.write_bytes(raw)
+    source.unlink()
+    try:
+        source.symlink_to(outside)
+    except OSError:
+        pytest.skip("source symlinks require OS permission")
+    with pytest.raises(ReviewAuditError, match="Evidence changed"):
+        _verify_security_bindings(tmp_path, [binding])
+
+
+def test_security_syntax_diagnostic_omits_source_and_absolute_path(tmp_path):
+    (tmp_path / "source.py").write_text("PRIVATE_SOURCE = (\n", encoding="utf-8")
+    result = security_scan(tmp_path)
+    details = [finding["facts"].get("detail") for finding in result["findings"]]
+    assert details == ["invalid Python syntax"]
+
+
 def test_audit_command_boundary_is_lazily_loaded() -> None:
     import factoryline.cli as cli
     from factoryline import cli_audit
@@ -565,14 +624,14 @@ def test_security_scan_separates_unreadable_sources_from_parse_errors(
     unreadable = tmp_path / "unreadable.py"
     readable.write_text("value = 1\n", encoding="utf-8")
     unreadable.write_text("value = 2\n", encoding="utf-8")
-    original_open = Path.open
+    original_open = module.os.open
 
     def open_path(path, *args, **kwargs):
-        if path.resolve() == unreadable.resolve():
+        if Path(path).resolve() == unreadable.resolve():
             raise PermissionError("denied")
         return original_open(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "open", open_path)
+    monkeypatch.setattr(module.os, "open", open_path)
 
     result = module.security_scan(tmp_path)
 
@@ -802,8 +861,7 @@ def test_security_scan_accepts_local_helper_with_independent_assertion(tmp_path)
 
 def test_security_scan_accepts_imported_helper_with_independent_assertion(tmp_path):
     (tmp_path / "helpers.py").write_text(
-        "def assert_expected(actual, expected):\n"
-        "    assert actual == expected\n",
+        "def assert_expected(actual, expected):\n    assert actual == expected\n",
         encoding="utf-8",
     )
     (tmp_path / "case.py").write_text(
@@ -820,9 +878,7 @@ def test_security_scan_accepts_imported_helper_with_independent_assertion(tmp_pa
 
 def test_security_scan_does_not_trust_imported_production_function(tmp_path):
     (tmp_path / "library.py").write_text(
-        "def render(value):\n"
-        "    assert value is not None\n"
-        "    return value\n",
+        "def render(value):\n    assert value is not None\n    return value\n",
         encoding="utf-8",
     )
     (tmp_path / "case.py").write_text(
@@ -836,8 +892,7 @@ def test_security_scan_does_not_trust_imported_production_function(tmp_path):
 
 def test_security_scan_does_not_trust_imported_noop_helper(tmp_path):
     (tmp_path / "helpers.py").write_text(
-        "def assert_expected(actual, expected):\n"
-        "    pass\n",
+        "def assert_expected(actual, expected):\n    pass\n",
         encoding="utf-8",
     )
     (tmp_path / "case.py").write_text(
@@ -891,8 +946,7 @@ def test_security_scan_resolves_assertion_submodule_imports(tmp_path):
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
     (package / "assertions.py").write_text(
-        "def assert_expected(actual, expected):\n"
-        "    assert actual == expected\n",
+        "def assert_expected(actual, expected):\n    assert actual == expected\n",
         encoding="utf-8",
     )
     (tmp_path / "case.py").write_text(
@@ -909,8 +963,7 @@ def test_security_scan_resolves_relative_assertion_submodule_imports(tmp_path):
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
     (package / "assertions.py").write_text(
-        "def assert_expected(actual, expected):\n"
-        "    assert actual == expected\n",
+        "def assert_expected(actual, expected):\n    assert actual == expected\n",
         encoding="utf-8",
     )
     (package / "case.py").write_text(
@@ -924,8 +977,7 @@ def test_security_scan_resolves_relative_assertion_submodule_imports(tmp_path):
 
 def test_security_scan_does_not_trust_imported_weak_helper(tmp_path):
     (tmp_path / "helpers.py").write_text(
-        "def assert_present(value):\n"
-        "    assert value is not None\n",
+        "def assert_present(value):\n    assert value is not None\n",
         encoding="utf-8",
     )
     (tmp_path / "case.py").write_text(

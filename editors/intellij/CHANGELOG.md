@@ -1,8 +1,8 @@
 # FactoryLine for IntelliJ Changelog
 
-## 1.1.0 - 2026-10-04 (release candidate; publication gated)
+## 1.1.2 - 2026-10-08 (release candidate; publication gated)
 
-- Fixed Marketplace version alignment with Code Factory 0.47.0.
+- Fixed Marketplace version alignment with Code Factory 0.48.0.
 - Changed the Junie preview to name local audit scope, explicit evidence
   limits, actionable follow-up, and specialty AI review.
 - Added a concise release note for the existing native CF + ForgeLine review

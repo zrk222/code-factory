@@ -11,10 +11,13 @@ from dataclasses import dataclass
 from hashlib import sha256
 import json
 import operator
+import os
 from pathlib import Path, PureWindowsPath
 import re
 from typing import Any
 from .audit_action_refs import audit_remediation_packet
+from .deep_audit_io import local_file
+from .runtime_audit_common import RuntimeAuditError
 
 SCHEMA = "factory.review-audit-policy.v1"
 FINGERPRINT_SCHEMA = "factory.code-review-fingerprint.v1"
@@ -1115,7 +1118,7 @@ def _security_source_files(root: Path) -> list[Path]:
     # because the workspace happens to live under an ignored-looking parent.
     files = []
     for path in root.rglob("*.py"):
-        if not path.is_file():
+        if not path.is_file() and not path.is_symlink():
             continue
         relative_parts = path.relative_to(root).parts
         if ignored.intersection(relative_parts):
@@ -1714,7 +1717,7 @@ def _oracle_snapshots(root: Path, files: list[Path]) -> tuple[dict, list]:
         try:
             if path.is_symlink() or path.stat().st_size > MAX_BYTES:
                 continue
-            data = path.read_bytes()
+            data = _security_source_bytes(root, path.relative_to(root).as_posix())
             if len(data) > MAX_BYTES:
                 continue
             snapshots[path] = ast.parse(data)
@@ -1725,7 +1728,7 @@ def _oracle_snapshots(root: Path, files: list[Path]) -> tuple[dict, list]:
                     "bytes": len(data),
                 }
             )
-        except (OSError, SyntaxError, UnicodeError):
+        except (OSError, SyntaxError, UnicodeError, RuntimeAuditError):
             continue
     return snapshots, bindings
 
@@ -2679,6 +2682,26 @@ def _security_scan_tree(
     return findings
 
 
+def _security_source_bytes(workspace: Path, relative: str) -> bytes:
+    """Read a bounded regular source without following linked workspace entries."""
+    path = local_file(workspace, relative)
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(descriptor, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        checked = local_file(workspace, relative).stat()
+        if (opened.st_dev, opened.st_ino) != (checked.st_dev, checked.st_ino):
+            raise OSError("source changed before read")
+        data = stream.read(MAX_BYTES + 1)
+        after = local_file(workspace, relative).stat()
+        if (opened.st_ino, opened.st_size, opened.st_mtime_ns) != (
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ):
+            raise OSError("source changed during read")
+    return data
+
+
 def _security_scan_file(
     workspace: Path,
     path: Path,
@@ -2690,7 +2713,7 @@ def _security_scan_file(
     relative = path.relative_to(workspace).as_posix()
     binding: dict[str, Any] | None = None
     try:
-        initial_size = path.stat().st_size
+        initial_size = local_file(workspace, relative).stat().st_size
         if initial_size > MAX_BYTES:
             return (
                 None,
@@ -2706,9 +2729,8 @@ def _security_scan_file(
                 ],
                 "too_large",
             )
-        with path.open("rb") as stream:
-            data = stream.read(MAX_BYTES + 1)
-        final_size = path.stat().st_size
+        data = _security_source_bytes(workspace, relative)
+        final_size = local_file(workspace, relative).stat().st_size
         if len(data) > MAX_BYTES or final_size > MAX_BYTES:
             return (
                 None,
@@ -2729,7 +2751,7 @@ def _security_scan_file(
             "sha256": sha256(data).hexdigest(),
             "bytes": len(data),
         }
-        tree = ast.parse(data, filename=str(path))
+        tree = ast.parse(data, filename=relative)
     except SyntaxError as exc:
         return (
             binding,
@@ -2740,12 +2762,12 @@ def _security_scan_file(
                     exc,
                     "Python source cannot be parsed deterministically.",
                     "HIGH",
-                    detail=str(exc),
+                    detail="invalid Python syntax",
                 )
             ],
             "syntax_error",
         )
-    except (OSError, UnicodeError) as exc:
+    except (OSError, UnicodeError, RuntimeAuditError) as exc:
         return (
             binding,
             [
@@ -2783,13 +2805,12 @@ def _verify_security_bindings(workspace: Path, bindings: list[dict[str, Any]]) -
                 raise ReviewAuditError(
                     f"Evidence changed during security scan: {binding['path']}"
                 )
-            with current.open("rb") as stream:
-                data = stream.read(MAX_BYTES + 1)
+            data = _security_source_bytes(workspace, binding["path"])
             if len(data) > MAX_BYTES or current.stat().st_size > MAX_BYTES:
                 raise ReviewAuditError(
                     f"Evidence changed during security scan: {binding['path']}"
                 )
-        except (OSError, UnicodeError) as exc:
+        except (OSError, UnicodeError, RuntimeAuditError) as exc:
             raise ReviewAuditError(
                 f"Evidence changed during security scan: {binding['path']}"
             ) from exc
