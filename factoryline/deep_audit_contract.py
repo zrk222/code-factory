@@ -317,7 +317,9 @@ def _validate_lane_identity(lane: dict) -> None:
 
 def _validate_lane_image(lane: dict) -> None:
     image = require_str(lane["image"], "image", maximum=256)
-    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._/:-]*@sha256:[a-f0-9]{64}", image):
+    if not re.fullmatch(
+        r"(?:[a-zA-Z0-9][a-zA-Z0-9._/:-]*@)?sha256:[a-f0-9]{64}", image
+    ):
         raise RuntimeAuditError(
             "E_IMAGE_PIN", "container image must have an immutable SHA-256 pin"
         )

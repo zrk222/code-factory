@@ -6,8 +6,9 @@ import hashlib
 import json
 import math
 import re
+from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 MAX_ARTIFACT_BYTES = 1_048_576
 IGNORED_VERDICT_FIELDS = {"passed", "ok", "verdict", "decision"}
@@ -239,3 +240,49 @@ def lane_result(
         "consequence": consequence,
         "details": details or {},
     }
+
+
+def _validate_lane_result(result: Any, lane: str) -> None:
+    """Require the lane's closed result contract and bounded serialized output."""
+    if (
+        not isinstance(result, dict)
+        or result.get("lane") != lane
+        or result.get("state") not in {"PASS", "FAIL", "INCOMPLETE"}
+        or not isinstance(result.get("finding"), str)
+        or re.fullmatch(r"[A-Za-z0-9_]{1,128}", result["finding"]) is None
+        or not isinstance(result.get("consequence"), str)
+        or not isinstance(result.get("details"), dict)
+    ):
+        raise RuntimeAuditError("E_EVALUATOR_RESULT", "invalid lane result")
+    if len(canonical_bytes(result)) > MAX_ARTIFACT_BYTES:
+        raise RuntimeAuditError("E_EVALUATOR_LIMIT", "lane result exceeds byte budget")
+
+
+def guarded_lane_evaluator(lane: str):
+    """Turn malformed lane evidence into a bounded INCOMPLETE result, never a crash or pass."""
+
+    def decorate(evaluator: Callable[..., dict[str, Any]]):
+        @wraps(evaluator)
+        def guarded(*args, **kwargs):
+            try:
+                result = evaluator(*args, **kwargs)
+                _validate_lane_result(result, lane)
+                return result
+            except Exception as exc:
+                code = getattr(exc, "code", "E_ARTIFACT_INVALID")
+                if (
+                    not isinstance(code, str)
+                    or re.fullmatch(r"[A-Z0-9_]{1,64}", code) is None
+                ):
+                    code = "E_ARTIFACT_INVALID"
+                return lane_result(
+                    lane,
+                    "INCOMPLETE",
+                    code,
+                    "The lane evidence could not be evaluated safely; provide a corrected, complete artifact.",
+                    details={"error_code": code},
+                )
+
+        return guarded
+
+    return decorate

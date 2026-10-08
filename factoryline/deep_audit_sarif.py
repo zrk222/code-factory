@@ -220,7 +220,7 @@ def _execution_osv(report: dict, lane: dict, sources: dict) -> list:
         raise RuntimeAuditError(
             "E_DEPENDENCY_ERRORS", "OSV reported unresolved analysis errors"
         )
-    for result in _list(report.get("results"), 1, 20_000):
+    for result in _list(report.get("results"), 0, 20_000):
         path = relative_path(_object(result.get("source")).get("path"))
         if path not in sources:
             raise RuntimeAuditError("E_TRACE_UNBOUND", "dependency manifest is unbound")
@@ -390,7 +390,10 @@ def _execution_syft(report, lane, sources):
         raise RuntimeAuditError("E_SBOM", "native Syft JSON required")
     require_str(_object(report.get("schema")).get("version"), "schema.version")
     source = _object(report.get("source"))
-    if source.get("type") != "directory" or source.get("target") != "/src":
+    target = source.get("target")
+    if target is None:
+        target = _object(source.get("metadata")).get("path")
+    if source.get("type") != "directory" or target != "/src":
         raise RuntimeAuditError(
             "E_SBOM_SOURCE", "SBOM must describe the mounted source snapshot"
         )

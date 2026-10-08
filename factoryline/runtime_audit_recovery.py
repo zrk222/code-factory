@@ -5,16 +5,24 @@ from __future__ import annotations
 from typing import Any
 
 from .runtime_audit_common import (
+    canonical_bytes,
     exact_keys,
+    guarded_lane_evaluator,
     lane_result,
     require_int,
+    require_digest,
     require_number,
     require_str,
     require_unique_strings,
+    sha256_bytes,
 )
 from .runtime_audit_policy import validate_lane_policy
 
 LANE = "failure_recovery"
+
+
+def _evidence_digest(observation: dict[str, Any], fields: tuple[str, ...]) -> str:
+    return sha256_bytes(canonical_bytes({key: observation[key] for key in fields}))
 
 
 def _incomplete(finding: str, message: str, details: dict[str, Any] | None = None):
@@ -24,7 +32,7 @@ def _incomplete(finding: str, message: str, details: dict[str, Any] | None = Non
 
 def _identity_matches(artifact: dict[str, Any], engine: str, version: str) -> bool:
     return (
-        artifact["schema"] == "factory.runtime.recovery.v1"
+        artifact["schema"] == "factory.runtime.recovery.v2"
         and artifact["engine"] == engine
         and artifact["engine_version"] == version
     )
@@ -36,32 +44,88 @@ def _required_faults(config: dict[str, Any], artifact: dict[str, Any]):
             config.get("fault_modes"), "config.fault_modes", minimum=1, maximum=32
         )
     )
-    observed = set(
-        require_unique_strings(
-            artifact["fault_modes"], "fault_modes", minimum=1, maximum=32
+    observations = artifact["fault_observations"]
+    if not isinstance(observations, list) or not 1 <= len(observations) <= 32:
+        return None, _incomplete(
+            "RECOVERY_FAULT_EVIDENCE_MISSING",
+            "Each declared fault needs its own observed, phase- and operation-bound evidence.",
         )
-    )
-    missing = sorted(required - observed)
+    observed: dict[str, dict[str, Any]] = {}
+    operation_ids = {
+        require_str(item.get("id"), "operation.id")
+        for item in artifact["operations"]
+        if isinstance(item, dict)
+    }
+    for item in observations:
+        if not isinstance(item, dict):
+            return None, _incomplete(
+                "RECOVERY_FAULT_EVIDENCE_INVALID", "A fault observation is malformed."
+            )
+        exact_keys(
+            item,
+            {"mode", "observed", "phase", "operation_ids", "evidence_sha256"},
+        )
+        mode = require_str(item["mode"], "fault_observation.mode", maximum=128)
+        if mode in observed:
+            return None, _incomplete(
+                "RECOVERY_FAULT_EVIDENCE_INVALID", "Fault modes must be unique."
+            )
+        phase = require_str(item["phase"], "fault_observation.phase", maximum=32)
+        ids = require_unique_strings(
+            item["operation_ids"],
+            "fault_observation.operation_ids",
+            minimum=1,
+            maximum=64,
+        )
+        if phase not in {"pre_fault", "during_fault", "recovered"} or not set(
+            ids
+        ).issubset(operation_ids):
+            return None, _incomplete(
+                "RECOVERY_FAULT_EVIDENCE_INVALID",
+                "Fault evidence must identify a valid phase and recorded operations.",
+            )
+        require_digest(item["evidence_sha256"], "fault_observation.evidence_sha256")
+        if item["evidence_sha256"] != _evidence_digest(
+            item, ("mode", "observed", "phase", "operation_ids")
+        ):
+            return None, _incomplete(
+                "RECOVERY_FAULT_EVIDENCE_HASH_MISMATCH",
+                "Fault evidence fields do not match their canonical digest.",
+                {"mode": mode},
+            )
+        if item["observed"] is not True:
+            return None, _incomplete(
+                "RECOVERY_FAULT_NOT_EXERCISED",
+                "A declared dependency fault lacks observed execution evidence.",
+                {"mode": mode},
+            )
+        observed[mode] = item
+    observed_modes = set(observed)
+    missing = sorted(required - observed_modes)
     if missing:
         return None, _incomplete(
             "RECOVERY_FAULT_MISSING",
             "Not every approved dependency fault was injected.",
             {"missing": missing},
         )
-    return observed, None
+    extra = sorted(observed_modes - required)
+    if extra:
+        return None, _incomplete(
+            "RECOVERY_FAULT_EVIDENCE_INVALID",
+            "Fault observations include modes not authorized by the signed policy.",
+            {"unexpected": extra},
+        )
+    return observed_modes, None
 
 
 def _validate_concurrency(artifact: dict[str, Any], config: dict[str, Any], count: int):
     concurrency = require_int(
         artifact["max_concurrency"], "max_concurrency", minimum=1, maximum=64
     )
-    if (
-        concurrency < config["min_concurrency"]
-        or artifact["fault_observed"] is not True
-    ):
+    if concurrency < config["min_concurrency"]:
         return _incomplete(
             "RECOVERY_FAULT_NOT_EXERCISED",
-            "Fault impact and simultaneous work were not observed.",
+            "The signed simultaneous-work concurrency bound was not reached.",
         )
     if concurrency > count:
         return _incomplete(
@@ -69,6 +133,64 @@ def _validate_concurrency(artifact: dict[str, Any], config: dict[str, Any], coun
             "Claimed concurrency exceeds recorded operations.",
             {"max_concurrency": concurrency, "observed_operations": count},
         )
+    observations = artifact["overlap_observations"]
+    if (
+        not isinstance(observations, list)
+        or not config["min_interleavings"] <= len(observations) <= 128
+    ):
+        return _incomplete(
+            "RECOVERY_RACE_COVERAGE_INCOMPLETE",
+            "The signed minimum number of concurrent interleavings was not observed.",
+            {"required": config["min_interleavings"]},
+        )
+    operation_ids = {
+        require_str(item.get("id"), "operation.id")
+        for item in artifact["operations"]
+        if isinstance(item, dict)
+    }
+    schedule_ids: set[str] = set()
+    for observation in observations:
+        if not isinstance(observation, dict):
+            return _incomplete(
+                "RECOVERY_RACE_EVIDENCE_INVALID", "An overlap observation is malformed."
+            )
+        exact_keys(
+            observation,
+            {"schedule_id", "operation_ids", "overlap_confirmed", "evidence_sha256"},
+        )
+        schedule_id = require_str(observation["schedule_id"], "schedule_id")
+        ids = require_unique_strings(
+            observation["operation_ids"],
+            "overlap.operation_ids",
+            minimum=config["min_concurrency"],
+            maximum=64,
+        )
+        if schedule_id in schedule_ids:
+            return _incomplete(
+                "RECOVERY_RACE_EVIDENCE_INVALID",
+                "Interleaving schedule IDs must be unique.",
+            )
+        schedule_ids.add(schedule_id)
+        require_digest(observation["evidence_sha256"], "overlap.evidence_sha256")
+        if observation["evidence_sha256"] != _evidence_digest(
+            observation, ("schedule_id", "operation_ids", "overlap_confirmed")
+        ):
+            return _incomplete(
+                "RECOVERY_RACE_EVIDENCE_HASH_MISMATCH",
+                "Interleaving evidence fields do not match their canonical digest.",
+                {"schedule_id": schedule_id},
+            )
+        if not set(ids).issubset(operation_ids):
+            return _incomplete(
+                "RECOVERY_RACE_EVIDENCE_INVALID",
+                "An overlap schedule references an unobserved operation.",
+            )
+        if observation["overlap_confirmed"] is not True:
+            return _incomplete(
+                "RECOVERY_RACE_NOT_EXERCISED",
+                "The runner did not confirm actual overlapping execution.",
+                {"schedule_id": schedule_id},
+            )
     return None
 
 
@@ -259,6 +381,7 @@ def _recovered_state(artifact: dict[str, Any], config: dict[str, Any]):
     return failures, cleanup, None
 
 
+@guarded_lane_evaluator(LANE)
 def evaluate_recovery(
     artifact: dict[str, Any],
     config: dict[str, Any],
@@ -275,11 +398,11 @@ def evaluate_recovery(
             "engine",
             "engine_version",
             "operations",
-            "fault_modes",
+            "overlap_observations",
+            "fault_observations",
             "phases",
             "cleanup",
             "max_concurrency",
-            "fault_observed",
             "lost_updates",
         },
     )

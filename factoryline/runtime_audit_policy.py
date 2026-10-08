@@ -97,21 +97,47 @@ def _tenant(config: dict[str, Any]) -> None:
     # Every surface requires 12 observations (4 relations x 3 phases), so 21
     # surfaces is the largest complete matrix that fits the 256-case artifact cap.
     for item in records(
-        config["surfaces"], "surfaces", {"id", "category", "operation", "resource"}, 21
+        config["surfaces"],
+        "surfaces",
+        {
+            "id",
+            "category",
+            "operation",
+            "resource",
+            "owner_data_sha256",
+            "owner_required_fields",
+        },
+        21,
     ):
         if item["category"] not in categories:
             raise RuntimeAuditError("E_POLICY", "unsupported tenant surface category")
         require_str(item["operation"], "operation", maximum=80)
         require_str(item["resource"], "resource", maximum=512)
+        require_digest(item["owner_data_sha256"], "owner_data_sha256")
+        require_unique_strings(
+            item["owner_required_fields"],
+            "owner_required_fields",
+            minimum=1,
+            maximum=128,
+        )
 
 
 def _recovery(config: dict[str, Any]) -> None:
     exact_keys(
         config,
-        {"fault_modes", "postconditions", "min_concurrency", "max_attempts_per_key"},
+        {
+            "fault_modes",
+            "postconditions",
+            "min_concurrency",
+            "min_interleavings",
+            "max_attempts_per_key",
+        },
     )
     require_unique_strings(config["fault_modes"], "fault_modes", minimum=1, maximum=32)
     require_int(config["min_concurrency"], "min_concurrency", minimum=2, maximum=64)
+    require_int(
+        config["min_interleavings"], "min_interleavings", minimum=2, maximum=128
+    )
     require_int(
         config["max_attempts_per_key"], "max_attempts_per_key", minimum=2, maximum=64
     )

@@ -25,7 +25,9 @@ local result and a proposed recovery path whose execution remains locked.
 
 ### Updated audit and individual test results
 
-![Updated Graph Ops audit results with native deep-scan, evaluated audit, six runtime lanes, and searchable individual JUnit cases](assets/marketplace/graph-ops-audit-results-0.46.9.png)
+![Updated Graph Ops audit results with native deep-scan, evaluated audit, six runtime lanes, and searchable individual JUnit cases](assets/marketplace/graph-ops-audit-telemetry-current.png)
+
+Actual local Graph Ops capture, October 8, 2026: 415 targeted tests passed. JUnit results are local and unbound; missing runtime receipts and coverage remain explicitly incomplete. Agent repair cards show candidate bindings, required evidence and separate specialty AI review requirements.
 
 This current local capture shows the new labeled audit surface and individual
 test reporting. A missing scan or signed lane result remains marked not run;
@@ -125,3 +127,7 @@ publishes, deploys, signs, or approves work.
 
 The captures show product behavior. They are not evidence of time, token, cost,
 productivity, conversion, Marketplace approval, or production readiness.
+
+## Updated video preview
+
+[60-second CF/FL audit and repair walkthrough](https://youtu.be/covWDYhUqbM) — October 8, 2026. Silent captions, current Graph Ops captures, bounded scanner improvements and agent repair evidence requirements. The source render is in `videos/code-factory-proof-of-survival/remotion`.

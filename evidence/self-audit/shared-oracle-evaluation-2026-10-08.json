@@ -1,0 +1,88 @@
+{
+  "schema": "factory.shared-oracle-evaluation.v2",
+  "observed_at": "2026-10-08T03:47:22.747089+00:00",
+  "code_factory_parent_commit": "3f57f2dc4b26af6f7f09fbd5dc044463ad4ed5e9",
+  "candidate_source_hashes": {
+    "factoryline/review_audits.py": "c7306f7e20e92c220bc0ca7eaf489067c3ece32b0d4295c81774c84942a33220",
+    "tests/test_review_audits.py": "b485fd6460de6fea60c2e07129d35ed816510ee4b9d751420acc32968cf60cfc"
+  },
+  "external_repositories": [
+    {
+      "repository": "python-slugify",
+      "commit": "f0010f94c853053daa5a5591cc67228b811c0e34",
+      "before_finding_counts": {
+        "QUALITY_HOLLOW_TEST": 8,
+        "SECURITY_DYNAMIC_EXECUTION": 1
+      },
+      "after_finding_counts": {
+        "QUALITY_HOLLOW_TEST": 1,
+        "SECURITY_DYNAMIC_EXECUTION": 1
+      },
+      "after_state": "BLOCKED",
+      "audit_rate": 1.0,
+      "oracle_edge_count": 0,
+      "audit_sha256": "f0c53bf7d8f280984540f34204a6c1abd5358f8a3e1d75d13f1f0860b9bd3741"
+    },
+    {
+      "repository": "humanize",
+      "commit": "785e5dcc0d0308ad0dff3f6cc0faa7085ad0375b",
+      "before_finding_counts": {
+        "QUALITY_HOLLOW_TEST": 15,
+        "QUALITY_WEAK_TEST_ORACLE": 1
+      },
+      "after_finding_counts": {
+        "QUALITY_WEAK_TEST_ORACLE": 1
+      },
+      "after_state": "FINDINGS",
+      "audit_rate": 1.0,
+      "oracle_edge_count": 0,
+      "audit_sha256": "86827e372db4d41933006736960dd8cf78676b0075b2c71a858e0836580f0eb5"
+    },
+    {
+      "repository": "cachetools",
+      "commit": "9976f1a8076631560f49c5b0dfda7e4d00ee0a4a",
+      "before_finding_counts": {
+        "QUALITY_HOLLOW_TEST": 70,
+        "SECURITY_UNSAFE_DESERIALIZATION": 4
+      },
+      "after_finding_counts": {
+        "SECURITY_UNSAFE_DESERIALIZATION": 4
+      },
+      "after_state": "BLOCKED",
+      "audit_rate": 1.0,
+      "oracle_edge_count": 7,
+      "audit_sha256": "25f5cb43806d5abe277a049c084a19de81dec8dd295f7052122b914eae24a925"
+    },
+    {
+      "repository": "python-tabulate",
+      "commit": "268615a5c27dc40e5c22454c07b44d5c50410da0",
+      "before_finding_counts": {
+        "QUALITY_HOLLOW_TEST": 328
+      },
+      "after_finding_counts": {},
+      "after_state": "CLEAN",
+      "audit_rate": 1.0,
+      "oracle_edge_count": 42,
+      "audit_sha256": "f6e10b47fa623599438228eb37ebf92a7d8679e35209b6c73a9af1e10ad0f48d"
+    }
+  ],
+  "regression_receipt": {
+    "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -p pytest_asyncio.plugin tests/test_review_audits.py -q",
+    "passed": 179,
+    "failed": 0,
+    "status": "PASS"
+  },
+  "remediations": [
+    "One local AST import hop now follows direct helpers, re-exported pytest raises/warns, and package submodules without executing repository code.",
+    "Imported weak helpers are reported as weak oracles instead of being trusted as strong assertions.",
+    "Inherited unittest mixin methods are recognized through aliased and indirect TestCase bases.",
+    "Typed or explicitly marked performance benchmarks are excluded from correctness-oracle findings; untyped benchmark-shaped tests remain auditable.",
+    "Receipts include resolved oracle edges and source-bound hashes so trusted context can be independently recomputed."
+  ],
+  "limits": [
+    "This is bounded static Python AST analysis, not runtime exploit proof or a replacement for mutation testing.",
+    "External repositories were scanned at the recorded commits; their remaining findings require repository-owner decisions and were not silently suppressed.",
+    "The experiment does not establish precision, recall, or a 99.5 percent accuracy claim.",
+    "Dynamic execution, unsafe deserialization, and weak non-null assertions remain explicit findings where present."
+  ]
+}

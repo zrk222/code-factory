@@ -6,7 +6,9 @@ from typing import Any
 
 from .runtime_audit_common import (
     exact_keys,
+    guarded_lane_evaluator,
     lane_result,
+    require_digest,
     require_int,
     require_str,
     require_unique_strings,
@@ -100,10 +102,27 @@ def _validate_tenant_case(
 
 
 def _record_owner_case(
-    case_id: str, status: int, findings: list[dict[str, Any]]
+    case_id: str,
+    status: int,
+    digest: object,
+    fields: set[str],
+    expected_digest: str,
+    required_fields: set[str],
+    findings: list[dict[str, Any]],
 ) -> None:
-    if not 200 <= status < 300:
-        findings.append({"id": case_id, "code": "OWNER_REQUEST_DENIED"})
+    observed_digest = digest if isinstance(digest, str) else None
+    missing_fields = sorted(required_fields - fields)
+    if not 200 <= status < 300 or observed_digest != expected_digest or missing_fields:
+        findings.append(
+            {
+                "id": case_id,
+                "code": "OWNER_RESPONSE_MISMATCH",
+                "status": status,
+                "expected_data_sha256": expected_digest,
+                "observed_data_sha256": observed_digest,
+                "missing_fields": missing_fields,
+            }
+        )
 
 
 def _record_denied_case(
@@ -144,6 +163,7 @@ def _record_tenant_case(
     keyed: dict[tuple[str, str], set[str]],
     ids: set[str],
     pairs: set[tuple[str, str, str]],
+    owner_expectations: dict[str, tuple[str, set[str]]],
     findings: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
     validated = _validate_tenant_case(raw_case, ids)
@@ -161,7 +181,16 @@ def _record_tenant_case(
         )
     pairs.add(pair)
     if relation == "owner":
-        _record_owner_case(case_id, status, findings)
+        expected_digest, required_fields = owner_expectations[surface_id]
+        _record_owner_case(
+            case_id,
+            status,
+            case["tenant_data_sha256"],
+            fields,
+            expected_digest,
+            required_fields,
+            findings,
+        )
     else:
         _record_denied_case(
             case,
@@ -203,6 +232,7 @@ def _matrix_completion(
     return None
 
 
+@guarded_lane_evaluator("tenant_isolation")
 def evaluate_tenant(
     artifact: dict[str, Any],
     config: dict[str, Any],
@@ -248,9 +278,23 @@ def evaluate_tenant(
     findings: list[dict[str, Any]] = []
     ids: set[str] = set()
     pairs: set[tuple[str, str, str]] = set()
+    owner_expectations = {
+        item["id"]: (
+            require_digest(item["owner_data_sha256"], "surface.owner_data_sha256"),
+            set(item["owner_required_fields"]),
+        )
+        for item in config["surfaces"]
+    }
     for case in cases:
         issue = _record_tenant_case(
-            case, forbidden, denial_statuses, keyed, ids, pairs, findings
+            case,
+            forbidden,
+            denial_statuses,
+            keyed,
+            ids,
+            pairs,
+            owner_expectations,
+            findings,
         )
         if issue is not None:
             return issue

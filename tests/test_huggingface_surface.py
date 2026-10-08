@@ -81,8 +81,8 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "factory graph ops --root . --json" in page
     assert "PRD Grill" in readme
     assert "factory prd grill PRD.md --root . --mode quick" in page
-    assert "factory-studio-mvp-1280x800.png" in page
-    assert "graph-ops-studio-1280x800.png" in page
+    assert "graph-ops-dashboard-current.png" in page
+    assert "graph-ops-audit-telemetry-current.png" in page
     assert "factoryline-logo-480.png" in page
     assert "code-factory-quickstart-v0171.mp4" not in page
     assert "how-it-works/" not in page

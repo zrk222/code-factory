@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import json
 from hashlib import sha256
 from typing import Any
 
@@ -43,6 +44,54 @@ _CODE_RULES = {
     ],
     "code://factory.audit-action/stop": ACTION_EXECUTION_CONTRACT["stop_rule"],
 }
+
+
+def audit_remediation_packet(candidate_sha256: str, finding: dict[str, Any]) -> dict:
+    """Create a deterministic host-agent handoff; finding text remains untrusted data."""
+    if (
+        not isinstance(candidate_sha256, str)
+        or len(candidate_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in candidate_sha256)
+        or not isinstance(finding, dict)
+    ):
+        raise ValueError("remediation requires a candidate digest and finding object")
+    raw = _canonical(finding)
+    if len(raw) > 1_048_576:
+        raise ValueError("remediation finding exceeds byte budget")
+    finding = json.loads(raw)
+    identity = sha256(
+        _canonical({"candidate": candidate_sha256, "finding": finding})
+    ).hexdigest()
+    return {
+        "schema": "factory.audit-remediation.v1",
+        "id": identity,
+        "candidate_sha256": candidate_sha256,
+        "finding_sha256": sha256(_canonical(finding)).hexdigest(),
+        "finding_context": finding,
+        "context_trust": "UNTRUSTED_DATA",
+        "worker_role": "specialty_ai_remediation_agent",
+        "reviewer_role": "independent_specialty_ai_reviewer",
+        "workflow": [
+            "Resolve repository policy and affected callers before choosing a repair.",
+            "Reproduce the finding with an exact command and retain observed failure evidence.",
+            "Apply the smallest scoped patch in an isolated checkout.",
+            "Run the same analyzer, a known-bad control, and affected consumer checks.",
+            "Have a separate specialty AI reviewer assess the patch and evidence.",
+            "Bind the new candidate and preserve the original failure for replay.",
+        ],
+        "required_evidence": [
+            "before_failure",
+            "patch_diff",
+            "after_observation",
+            "negative_control",
+            "independent_agent_review",
+        ],
+        "stop_rule": "Stop on candidate drift, new failures, missing evidence, or exhausted loop budget; never mark an unresolved finding repaired.",
+        "execution_authority": "host_agent_only",
+        "automatic_execution": False,
+    }
+
+
 _NUMBER_FIELDS = {
     "eligible_changed_paths",
     "eligible_cases",

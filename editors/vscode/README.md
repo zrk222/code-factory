@@ -1,8 +1,19 @@
 # FactoryLine for VS Code
 
+## Latest audit telemetry preview — October 8, 2026
+
+**Fixed:** bounded evaluator output validation across all six runtime lanes; malformed results stay incomplete. Shared imported assertion helpers and inherited test mixins are resolved by bounded static analysis.
+**Changed:** audit findings carry candidate-bound repair packets with reproduction, negative-control and separate specialty AI review requirements.
+**Added:** Graph Ops agent repair telemetry, evidence requirements, stop conditions and searchable individual test outcomes. Repair packets are consumed by the host agent; this view does not execute or approve repairs.
+
+![Graph Ops current audit and agent repair telemetry](https://raw.githubusercontent.com/zrk222/code-factory/codex/tenant-read-contract-20261007/docs/assets/marketplace/graph-ops-audit-telemetry-current.png)
+
+Actual local Graph Ops capture, October 8, 2026: 415 targeted tests passed. JUnit results are local and unbound; missing runtime receipts and coverage remain explicitly incomplete. Agent repair cards show candidate bindings, required evidence and separate specialty AI review requirements.
+
+
 ## Native CF and ForgeLine evidence
 
-Version 1.1.0 targets the Code Factory 0.47.0 candidate and provides
+Version 1.1.2 targets the Code Factory 0.48.0 candidate and provides
 **FactoryLine Evidence** in Explorer for VS Code and Open VSX compatible
 editors. Select **Run CF + ForgeLine Audits**, choose a
 workspace, then confirm local execution. The panel shows CF change review,
@@ -235,3 +246,7 @@ high severity conflicts engage the fail-closed boundary and pause the line at
 reviewer's own baseline and escalates: surface, second approver, fail closed.
 Blocking is refused until blind-spot re-review outcomes correct the proxy.
 Public exports carry distributions only, never per-reviewer rows.
+
+## Updated video preview
+
+[60-second CF/FL audit and repair walkthrough](https://youtu.be/covWDYhUqbM) — October 8, 2026. Silent captions, current Graph Ops captures, bounded scanner improvements and agent repair evidence requirements. The source render is in `videos/code-factory-proof-of-survival/remotion`.

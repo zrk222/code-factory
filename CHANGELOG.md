@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased (next core release; publication gated)
+## 0.48.0 / editor plugins 1.1.2 (release candidate; publication gated)
+
+- Harden bounded security-source reads against links and source replacement; sanitize syntax diagnostics.
 
 - Add Loop runtime budget admission, durable per-run SQLite reservations,
   measured settlement, replay-safe status and a local advisory HSF classifier.

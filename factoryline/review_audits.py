@@ -11,13 +11,18 @@ from dataclasses import dataclass
 from hashlib import sha256
 import json
 import operator
+import os
 from pathlib import Path, PureWindowsPath
 import re
 from typing import Any
+from .audit_action_refs import audit_remediation_packet
+from .deep_audit_io import local_file
+from .runtime_audit_common import RuntimeAuditError
 
 SCHEMA = "factory.review-audit-policy.v1"
 FINGERPRINT_SCHEMA = "factory.code-review-fingerprint.v1"
 SECURITY_SCHEMA = "factory.security-audit.v1"
+TENANT_CONTRACT_SCHEMA = "factory.tenant-read-contract.v1"
 MAX_SECURITY_SOURCE_FILES = 460
 MAX_BYTES = 1_000_000
 MAX_RULES = 128
@@ -708,11 +713,14 @@ def _security_aliases(nodes: list[ast.AST]) -> dict[str, str]:
         if isinstance(node, ast.Import):
             for item in node.names:
                 aliases[item.asname or item.name.split(".")[0]] = item.name
-        elif isinstance(node, ast.ImportFrom) and node.module:
+        elif isinstance(node, ast.ImportFrom):
             for item in node.names:
                 if item.name == "*":
                     continue
-                aliases[item.asname or item.name] = f"{node.module}.{item.name}"
+                module = node.module or item.name
+                aliases[item.asname or item.name] = (
+                    f"{module}.{item.name}" if node.module else item.name
+                )
     return aliases
 
 
@@ -1110,7 +1118,7 @@ def _security_source_files(root: Path) -> list[Path]:
     # because the workspace happens to live under an ignored-looking parent.
     files = []
     for path in root.rglob("*.py"):
-        if not path.is_file():
+        if not path.is_file() and not path.is_symlink():
             continue
         relative_parts = path.relative_to(root).parts
         if ignored.intersection(relative_parts):
@@ -1188,6 +1196,8 @@ def _constant_value(node: ast.expr, known: dict[str, Any] | None = None) -> Any:
     known = known or {}
     if isinstance(node, ast.Name):
         return known.get(node.id, _UNKNOWN_CONSTANT)
+    if isinstance(node, ast.BinOp):
+        return _constant_binary_value(node, known)
     if isinstance(node, ast.BoolOp):
         return _boolean_operation_value(node, known)
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
@@ -1199,6 +1209,40 @@ def _constant_value(node: ast.expr, known: dict[str, Any] | None = None) -> Any:
         return ast.literal_eval(node)
     except (ValueError, TypeError, SyntaxError, RecursionError):
         return _UNKNOWN_CONSTANT
+
+
+def _constant_binary_value(node: ast.BinOp, known: dict[str, Any]) -> Any:
+    """Fold small numeric expressions without evaluating arbitrary Python."""
+    left = _constant_value(node.left, known)
+    right = _constant_value(node.right, known)
+    if (
+        left is _UNKNOWN_CONSTANT
+        or right is _UNKNOWN_CONSTANT
+        or type(left) not in {int, float}
+        or type(right) not in {int, float}
+        or abs(left) > 1_000_000_000_000
+        or abs(right) > 1_000_000_000_000
+    ):
+        return _UNKNOWN_CONSTANT
+    operations = {
+        ast.Add: operator.add,
+        ast.Sub: operator.sub,
+        ast.Mult: operator.mul,
+        ast.Div: operator.truediv,
+        ast.FloorDiv: operator.floordiv,
+        ast.Mod: operator.mod,
+        ast.Pow: operator.pow,
+    }
+    function = operations.get(type(node.op))
+    if function is None or (isinstance(node.op, ast.Pow) and abs(right) > 12):
+        return _UNKNOWN_CONSTANT
+    try:
+        value = function(left, right)
+    except (ArithmeticError, OverflowError, TypeError, ValueError):
+        return _UNKNOWN_CONSTANT
+    if type(value) not in {int, float} or abs(value) > 1_000_000_000_000:
+        return _UNKNOWN_CONSTANT
+    return value
 
 
 def _direct_test_vacuous_assertions(node: ast.AST) -> set[int]:
@@ -1213,9 +1257,6 @@ def _direct_test_vacuous_assertions(node: ast.AST) -> set[int]:
             if _vacuous_assertion(statement.test, known):
                 vacuous.add(id(statement))
             continue
-        bound = _bound_names(statement)
-        for name in bound:
-            known.pop(name, None)
         _remember_direct_constant_assignment(statement, known)
     return vacuous
 
@@ -1223,14 +1264,22 @@ def _direct_test_vacuous_assertions(node: ast.AST) -> set[int]:
 def _remember_direct_constant_assignment(
     statement: ast.stmt, known: dict[str, Any]
 ) -> None:
+    targets: list[ast.expr] = []
+    value: Any = _UNKNOWN_CONSTANT
+    if any(
+        isinstance(item, (ast.Call, ast.Subscript)) for item in _body_nodes(statement)
+    ):
+        for name, prior in list(known.items()):
+            if isinstance(prior, (list, dict, set, tuple)):
+                known.pop(name, None)
     if isinstance(statement, ast.Assign):
         value = _constant_value(statement.value, known)
         targets = statement.targets
     elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
         value = _constant_value(statement.value, known)
         targets = [statement.target]
-    else:
-        return
+    for name in _bound_names(statement):
+        known.pop(name, None)
     if value is _UNKNOWN_CONSTANT:
         return
     for target in targets:
@@ -1301,6 +1350,19 @@ _UNITTEST_ASSERTIONS = {
     "assertWarns",
     "assertWarnsRegex",
 }
+_ORACLE_HELPER_PREFIXES = (
+    "assert",
+    "check",
+    "ensure",
+    "expect",
+    "require",
+    "validate",
+    "verify",
+)
+
+
+def _is_oracle_helper_name(name: str) -> bool:
+    return name.lower().startswith(_ORACLE_HELPER_PREFIXES)
 
 
 def _assertion_call(
@@ -1327,15 +1389,23 @@ def _assertion_call(
     )
 
 
-def _unittest_test_methods(tree: ast.Module, aliases: dict[str, str]) -> set[int]:
+def _unittest_testcase_classes(
+    tree: ast.Module, aliases: dict[str, str]
+) -> tuple[dict[str, ast.ClassDef], dict[str, tuple[str, ...]], set[str]]:
     classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
     base_names: dict[str, tuple[str, ...]] = {}
     for name, node in classes.items():
         normalized = []
         for base in node.bases:
             base_name = _name(base)
-            head, *tail = base_name.split(".")
-            normalized.append(".".join([aliases.get(head, head), *tail]))
+            # ``import unittest.mock`` binds the package name ``unittest`` to
+            # the submodule in the generic alias table, but a base written as
+            # ``unittest.TestCase`` still refers to the package's TestCase.
+            if base_name.startswith("unittest."):
+                normalized.append(base_name)
+            else:
+                head, *tail = base_name.split(".")
+                normalized.append(".".join([aliases.get(head, head), *tail]))
         base_names[name] = tuple(normalized)
 
     def derives_from_testcase(name: str, seen: set[str] | None = None) -> bool:
@@ -1350,13 +1420,43 @@ def _unittest_test_methods(tree: ast.Module, aliases: dict[str, str]) -> set[int
                 return True
         return False
 
-    return {
+    testcase_classes = {name for name in classes if derives_from_testcase(name)}
+    return classes, base_names, testcase_classes
+
+
+def _unittest_test_methods(tree: ast.Module, aliases: dict[str, str]) -> set[int]:
+    classes, base_names, testcase_classes = _unittest_testcase_classes(tree, aliases)
+    methods = {
         id(method)
         for name, class_node in classes.items()
-        if derives_from_testcase(name)
+        if name in testcase_classes
         for method in class_node.body
         if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
+    # A common unittest layout puts the actual test methods in a mixin and
+    # combines that mixin with TestCase in a thin concrete class. Treat those
+    # inherited methods as unittest methods too; otherwise every self.assert*
+    # call in the mixin is incorrectly reported as a hollow test.
+    for name, class_node in classes.items():
+        if name not in testcase_classes:
+            continue
+        pending = list(base for base in base_names.get(name, ()) if base in classes)
+        seen: set[str] = set()
+        while pending:
+            base = pending.pop()
+            if base in seen:
+                continue
+            seen.add(base)
+            base_node = classes[base]
+            methods.update(
+                id(method)
+                for method in base_node.body
+                if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+            )
+            pending.extend(
+                parent for parent in base_names.get(base, ()) if parent in classes
+            )
+    return methods
 
 
 def _unconditionally_skipped_test(node: ast.AST) -> bool:
@@ -1372,12 +1472,57 @@ def _unconditionally_skipped_test(node: ast.AST) -> bool:
     return False
 
 
+def _performance_benchmark_test(
+    node: ast.AST, aliases: dict[str, str] | None = None
+) -> bool:
+    """Exclude only explicitly typed or marked benchmark bodies."""
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    if not node.name.startswith("test_"):
+        return False
+    benchmark_parameter = next(
+        (
+            argument
+            for argument in (
+                *node.args.posonlyargs,
+                *node.args.args,
+                *node.args.kwonlyargs,
+            )
+            if argument.arg == "benchmark"
+        ),
+        None,
+    )
+    if benchmark_parameter is None:
+        return False
+    typed_fixture = "BenchmarkFixture" in _name(benchmark_parameter.annotation)
+    marked_fixture = any(
+        _name(decorator).endswith(".benchmark") for decorator in node.decorator_list
+    )
+    imported_fixture = any(
+        value.startswith("pytest_codspeed.") or value.startswith("pytest_benchmark.")
+        for value in (aliases or {}).values()
+    )
+    return (typed_fixture or marked_fixture or imported_fixture) and any(
+        isinstance(child, ast.Call)
+        and _call_name(child).split(".", 1)[0] == "benchmark"
+        for statement in node.body
+        for child in _body_nodes(statement)
+    )
+
+
 def _meaningful_local_assertion(
-    node: ast.AST, aliases: dict[str, str], helper_names: set[str] | None = None
+    node: ast.AST,
+    aliases: dict[str, str],
+    helper_names: set[str] | None = None,
+    *,
+    unittest_context: bool = False,
 ) -> bool:
     nodes = _test_oracle_body_nodes(node, aliases)
     vacuous = _direct_test_vacuous_assertions(node)
-    return any(_assertion_call(child, aliases, helper_names) for child in nodes) or any(
+    return any(
+        _assertion_call(child, aliases, helper_names, unittest_context=unittest_context)
+        for child in nodes
+    ) or any(
         isinstance(child, ast.Assert)
         and id(child) not in vacuous
         and not _vacuous_assertion(child.test)
@@ -1385,7 +1530,35 @@ def _meaningful_local_assertion(
     )
 
 
-def _local_assertion_helpers(tree: ast.Module, aliases: dict[str, str]) -> set[str]:
+def _strong_local_assertion(
+    node: ast.AST,
+    aliases: dict[str, str],
+    helper_names: set[str] | None = None,
+    *,
+    unittest_context: bool = False,
+) -> bool:
+    """Return true only when a helper carries a non-weak oracle."""
+    nodes = _test_oracle_body_nodes(node, aliases)
+    vacuous = _direct_test_vacuous_assertions(node)
+    return any(
+        isinstance(child, ast.Assert)
+        and id(child) not in vacuous
+        and not _vacuous_assertion(child.test)
+        and _weak_assertion_reason(child.test, aliases) is None
+        for child in nodes
+    ) or any(
+        isinstance(child, ast.Call)
+        and _assertion_call(
+            child, aliases, helper_names, unittest_context=unittest_context
+        )
+        and _weak_assertion_reason(child, aliases) is None
+        for child in nodes
+    )
+
+
+def _local_assertion_helpers(
+    tree: ast.Module, aliases: dict[str, str], *, unittest_context: bool = False
+) -> set[str]:
     functions = {
         node.name: node
         for node in tree.body
@@ -1397,12 +1570,315 @@ def _local_assertion_helpers(tree: ast.Module, aliases: dict[str, str]) -> set[s
     while changed:
         changed = False
         for name, node in functions.items():
-            if name not in helpers and _meaningful_local_assertion(
-                node, _scope_security_aliases(aliases, node), helpers
+            if (
+                name not in helpers
+                and _meaningful_local_assertion(
+                    node,
+                    _scope_security_aliases(aliases, node),
+                    helpers,
+                    unittest_context=unittest_context,
+                )
+                and _strong_local_assertion(
+                    node,
+                    _scope_security_aliases(aliases, node),
+                    helpers,
+                    unittest_context=unittest_context,
+                )
             ):
                 helpers.add(name)
                 changed = True
     return helpers
+
+
+def _local_weak_assertion_helpers(
+    tree: ast.Module, aliases: dict[str, str], *, unittest_context: bool = False
+) -> set[str]:
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and not node.name.startswith("test_")
+    }
+    strong = _local_assertion_helpers(tree, aliases, unittest_context=unittest_context)
+    return {
+        name
+        for name, node in functions.items()
+        if name not in strong
+        and _meaningful_local_assertion(
+            node,
+            _scope_security_aliases(aliases, node),
+            strong,
+            unittest_context=unittest_context,
+        )
+    }
+
+
+def _class_oracle_helpers(tree: ast.Module, aliases: dict, methods: set[int]) -> dict:
+    result = {}
+    for cls in (item for item in tree.body if isinstance(item, ast.ClassDef)):
+        functions = [
+            item
+            for item in cls.body
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+        context = any(id(item) in methods for item in functions)
+        helpers = _local_assertion_helpers(
+            ast.Module(body=functions, type_ignores=[]),
+            aliases,
+            unittest_context=context,
+        )
+        names = {"self." + name for name in helpers}
+        for method in functions:
+            result[id(method)] = names
+    return result
+
+
+def _oracle_import_source(
+    root: Path,
+    path: Path,
+    node: ast.AST,
+    module: str,
+    eligible: set[Path],
+    imported: str | None = None,
+) -> Path | None:
+    root_abs = root.resolve()
+    eligible_abs = {candidate.resolve(): candidate for candidate in eligible}
+    parts = module.split(".") if module else []
+    if isinstance(node, ast.ImportFrom) and node.level:
+        base = path.parent
+        for _ in range(node.level - 1):
+            base = base.parent
+        bases = [base]
+    else:
+        bases = [path.parent, root, root / "src"]
+    child_matches = set()
+    package_matches = set()
+    for base in bases:
+        target = base.joinpath(*parts)
+        child_choices = []
+        if isinstance(node, ast.ImportFrom) and imported and imported != "*":
+            child = target / imported
+            child_choices.extend([child.with_suffix(".py"), child / "__init__.py"])
+        package_choices = (
+            [target.with_suffix(".py"), target / "__init__.py"]
+            if parts
+            else [target / "__init__.py"]
+        )
+        for choice in child_choices + package_choices:
+            resolved = choice.resolve()
+            if (
+                resolved.is_relative_to(root_abs)
+                and resolved in eligible_abs
+                and not choice.is_symlink()
+            ):
+                target_set = (
+                    child_matches if choice in child_choices else package_matches
+                )
+                target_set.add(eligible_abs[resolved])
+    if child_matches:
+        return next(iter(child_matches)) if len(child_matches) == 1 else None
+    return next(iter(package_matches)) if len(package_matches) == 1 else None
+
+
+def _oracle_imports(
+    root: Path, path: Path, tree: ast.Module, eligible: set[Path]
+) -> dict:
+    imports = {}
+    for node in tree.body:
+        if not isinstance(node, (ast.ImportFrom, ast.Import)):
+            continue
+        for item in node.names:
+            if item.name == "*":
+                continue
+            module = (
+                (node.module or "") if isinstance(node, ast.ImportFrom) else item.name
+            )
+            source = _oracle_import_source(
+                root,
+                path,
+                node,
+                module,
+                eligible,
+                item.name if isinstance(node, ast.ImportFrom) else None,
+            )
+            if source is None:
+                continue
+            alias = item.asname or item.name
+            imports[alias] = (
+                source,
+                item.name if isinstance(node, ast.ImportFrom) else None,
+            )
+    return imports
+
+
+def _oracle_snapshots(root: Path, files: list[Path]) -> tuple[dict, list]:
+    snapshots, bindings = {}, []
+    for path in files:
+        try:
+            if path.is_symlink() or path.stat().st_size > MAX_BYTES:
+                continue
+            data = _security_source_bytes(root, path.relative_to(root).as_posix())
+            if len(data) > MAX_BYTES:
+                continue
+            snapshots[path] = ast.parse(data)
+            bindings.append(
+                {
+                    "path": path.relative_to(root).as_posix(),
+                    "sha256": sha256(data).hexdigest(),
+                    "bytes": len(data),
+                }
+            )
+        except (OSError, SyntaxError, UnicodeError, RuntimeAuditError):
+            continue
+    return snapshots, bindings
+
+
+def _imported_oracle_helpers(imports: dict, snapshots: dict, aliases: dict) -> set[str]:
+    helpers = set()
+    for local, (source, symbol) in imports.items():
+        tree = snapshots.get(source)
+        if tree is None:
+            continue
+        names = _local_assertion_helpers(
+            tree, _scope_security_aliases(_module_security_aliases(tree), tree)
+        )
+        names = {name for name in names if _is_oracle_helper_name(name)}
+        exported_assertions = {
+            name
+            for name, target in _module_security_aliases(tree).items()
+            if target in {"pytest.raises", "pytest.warns"}
+        }
+        names.update(exported_assertions)
+        if symbol in names:
+            helpers.add(aliases.get(local, local))
+        elif symbol is None or symbol not in names:
+            helpers.update(aliases.get(local, local) + "." + name for name in names)
+    return helpers
+
+
+def _imported_weak_oracle_helpers(
+    imports: dict, snapshots: dict, aliases: dict
+) -> set[str]:
+    helpers = set()
+    for local, (source, symbol) in imports.items():
+        tree = snapshots.get(source)
+        if tree is None:
+            continue
+        module_aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
+        names = {
+            name
+            for name in _local_weak_assertion_helpers(tree, module_aliases)
+            if _is_oracle_helper_name(name)
+        }
+        if symbol in names:
+            helpers.add(aliases.get(local, local))
+        elif symbol is None or symbol not in names:
+            helpers.update(aliases.get(local, local) + "." + name for name in names)
+    return helpers
+
+
+def _imported_unittest_mixins(tree: ast.Module, aliases: dict, imports: dict) -> list:
+    _classes, base_names, testcase_classes = _unittest_testcase_classes(tree, aliases)
+    references = []
+    for cls in (item for item in tree.body if isinstance(item, ast.ClassDef)):
+        if cls.name not in testcase_classes:
+            continue
+        for base_name in base_names.get(cls.name, ()):
+            reference = imports.get(base_name) or imports.get(
+                base_name.rsplit(".", 1)[-1]
+            )
+            if reference and reference[1]:
+                references.append(reference)
+    return references
+
+
+def _project_oracle_context(root: Path, files: list[Path]) -> tuple[dict, list, list]:
+    """Resolve one local import hop without executing repository code; bind every read."""
+    snapshots, bindings = _oracle_snapshots(root, files)
+    contexts = {
+        path: {"helpers": set(), "weak_helpers": set(), "mixins": set()}
+        for path in snapshots
+    }
+    edges = set()
+    for path, tree in snapshots.items():
+        aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
+        imports = _oracle_imports(root, path, tree, set(files))
+        contexts[path]["helpers"] = _imported_oracle_helpers(
+            imports, snapshots, aliases
+        )
+        contexts[path]["weak_helpers"] = _imported_weak_oracle_helpers(
+            imports, snapshots, aliases
+        )
+        caller = path.relative_to(root).as_posix()
+        for local, (source, symbol) in imports.items():
+            target = source.relative_to(root).as_posix()
+            target_tree = snapshots.get(source)
+            if target_tree is None:
+                continue
+            target_aliases = _scope_security_aliases(
+                _module_security_aliases(target_tree), target_tree
+            )
+            strong_names = {
+                name
+                for name in _local_assertion_helpers(target_tree, target_aliases)
+                if _is_oracle_helper_name(name)
+            }
+            strong_names.update(
+                name
+                for name, target in _module_security_aliases(target_tree).items()
+                if target in {"pytest.raises", "pytest.warns"}
+            )
+            weak_names = {
+                name
+                for name in _local_weak_assertion_helpers(target_tree, target_aliases)
+                if _is_oracle_helper_name(name)
+            }
+            selected = (
+                [symbol]
+                if symbol in strong_names
+                else [f"{local}.{name}" for name in strong_names]
+                if symbol is None or symbol not in strong_names
+                else []
+            )
+            for resolved_symbol in selected:
+                edges.add(
+                    (caller, target, "assertion_helper", resolved_symbol, "strong")
+                )
+            selected_weak = (
+                [symbol]
+                if symbol in weak_names
+                else [f"{local}.{name}" for name in weak_names]
+                if symbol is None or symbol not in weak_names
+                else []
+            )
+            for resolved_symbol in selected_weak:
+                edges.add((caller, target, "assertion_helper", resolved_symbol, "weak"))
+        for source, symbol in _imported_unittest_mixins(tree, aliases, imports):
+            if source in contexts:
+                contexts[source]["mixins"].add(symbol)
+                edges.add(
+                    (
+                        path.relative_to(root).as_posix(),
+                        source.relative_to(root).as_posix(),
+                        "unittest_mixin",
+                        symbol,
+                        "trusted",
+                    )
+                )
+    return (
+        contexts,
+        bindings,
+        [
+            {
+                "caller": caller,
+                "target": target,
+                "kind": kind,
+                "symbol": symbol,
+                "strength": strength,
+            }
+            for caller, target, kind, symbol, strength in sorted(edges)
+        ],
+    )
 
 
 def _weak_assertion_reason(
@@ -1455,12 +1931,15 @@ def _weak_test_oracle_finding(
     helper_names: set[str] | None = None,
     *,
     unittest_context: bool = False,
+    weak_helper_names: set[str] | None = None,
 ) -> dict[str, Any] | None:
     if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return None
     if not node.name.startswith("test_"):
         return None
-    if _unconditionally_skipped_test(node):
+    if _unconditionally_skipped_test(node) or _performance_benchmark_test(
+        node, aliases
+    ):
         return None
     nodes = _test_oracle_body_nodes(node, aliases)
     vacuous = _direct_test_vacuous_assertions(node)
@@ -1476,6 +1955,12 @@ def _weak_test_oracle_finding(
         and _assertion_call(
             child, aliases, helper_names, unittest_context=unittest_context
         )
+    )
+    weak.extend(
+        (child, "delegated helper exposes only a weak assertion")
+        for child in nodes
+        if isinstance(child, ast.Call)
+        and _normalized_call_name(child, aliases) in (weak_helper_names or set())
     )
     weak = [(child, reason) for child, reason in weak if reason]
     strong_assertions = [
@@ -1521,7 +2006,9 @@ def _hollow_test_finding(
         return None
     if not node.name.startswith("test_"):
         return None
-    if _unconditionally_skipped_test(node):
+    if _unconditionally_skipped_test(node) or _performance_benchmark_test(
+        node, aliases
+    ):
         return None
     nodes = _test_oracle_body_nodes(node, aliases)
     vacuous = _direct_test_vacuous_assertions(node)
@@ -1581,6 +2068,113 @@ def _tenant_contract_bindings(
     return {call: tuple(bindings) for call, bindings in sorted(result.items())}
 
 
+def load_tenant_read_contract(
+    root: Path, path: str = ".factory/tenant-read-contract.json"
+) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, Any]]:
+    """Load a bounded, workspace-contained tenant-read declaration for CLI audits."""
+    workspace = Path(root).resolve()
+    relative = _relative_path(path).as_posix()
+    contract_path = (workspace / relative).resolve()
+    if not contract_path.is_relative_to(workspace):
+        raise ReviewAuditError("Tenant-read contract must remain inside the workspace.")
+    if not contract_path.exists():
+        return (), (), {"path": relative, "state": "missing"}
+    try:
+        data, evidence = _read(workspace, relative)
+        contract = json.loads(data, object_pairs_hook=_unique_fields)
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ReviewAuditError(f"Invalid tenant-read contract: {exc}") from exc
+    if not isinstance(contract, dict) or set(contract) != {"schema", "reads"}:
+        raise ReviewAuditError("Invalid tenant-read contract schema or fields.")
+    if contract.get("schema") == "factory.tenant-read-contract.v2":
+        evidence["scoped_reads"] = _tenant_scoped_entries(workspace, contract["reads"])
+        evidence["state"] = "loaded"
+        return (), (), evidence
+    if contract.get("schema") != TENANT_CONTRACT_SCHEMA:
+        raise ReviewAuditError("Invalid tenant-read contract schema or fields.")
+    calls, bindings = _tenant_contract_entries(contract["reads"])
+    normalized_calls = _tenant_contract_calls(calls)
+    normalized_bindings = _tenant_contract_bindings(bindings, normalized_calls)
+    flattened = tuple(
+        f"{call}={binding}"
+        for call, values in normalized_bindings.items()
+        for binding in values
+    )
+    evidence["state"] = "loaded"
+    return normalized_calls, flattened, evidence
+
+
+def _tenant_scoped_entries(workspace: Path, value: Any) -> dict:
+    """Validate exact file scopes without excluding any source from static scanning."""
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_PATHS:
+        raise ReviewAuditError("Scoped tenant contracts require nonempty read scopes.")
+    result = {}
+    for scope in value:
+        if not isinstance(scope, dict) or set(scope) != {"path", "reads"}:
+            raise ReviewAuditError("Tenant scope requires exactly path and reads.")
+        path = _relative_path(scope["path"]).as_posix()
+        if path in result or not (workspace / path).is_file():
+            raise ReviewAuditError(
+                "Tenant scopes must name unique existing source files."
+            )
+        calls, bindings = _tenant_contract_entries(scope["reads"])
+        calls = _tenant_contract_calls(calls)
+        if not calls:
+            raise ReviewAuditError("Scoped tenant read lists must be nonempty.")
+        _tenant_scope_source(workspace, path, calls)
+        result[path] = {
+            "calls": calls,
+            "bindings": _tenant_contract_bindings(bindings, calls),
+        }
+    return result
+
+
+def _tenant_scope_source(workspace: Path, path: str, calls: tuple[str, ...]) -> None:
+    """Reject stale or mistyped read declarations before producing a clean scan."""
+    data, _evidence = _read(workspace, path)
+    try:
+        tree = ast.parse(data)
+    except SyntaxError as exc:
+        raise ReviewAuditError(
+            "Tenant scope must name parseable Python source."
+        ) from exc
+    aliases = _module_security_aliases(tree)
+    observed = {
+        _normalized_call_name(node, aliases)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+    }
+    if not set(calls).issubset(observed):
+        raise ReviewAuditError("Tenant scope declares a read absent from its source.")
+
+
+def _tenant_contract_entries(value: Any) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Validate declared read rows before normalizing names and bindings."""
+    if not isinstance(value, list) or len(value) > MAX_RULES:
+        raise ReviewAuditError("Tenant-read contract requires a bounded reads list.")
+    calls: list[str] = []
+    bindings: list[str] = []
+    for entry in value:
+        if not isinstance(entry, dict) or set(entry) not in (
+            {"call"},
+            {"call", "binding"},
+        ):
+            raise ReviewAuditError(
+                "Each tenant read requires call and optional binding."
+            )
+        call = entry["call"]
+        if not isinstance(call, str):
+            raise ReviewAuditError("Tenant read call must be a qualified Python name.")
+        if call in calls:
+            raise ReviewAuditError("Tenant-read contract calls must be unique.")
+        calls.append(call)
+        if "binding" in entry:
+            if not isinstance(entry["binding"], str):
+                raise ReviewAuditError("Tenant read binding must be a string.")
+            bindings.append(f"{call}={entry['binding']}")
+    return tuple(calls), tuple(bindings)
+
+
 def _tenant_binding_entry(
     value: str, calls: tuple[str, ...], seen: set[str]
 ) -> tuple[str, str]:
@@ -1600,7 +2194,7 @@ def _tenant_binding_entry(
 
 def _tenant_binding_parts(binding: str) -> tuple[str, str, str]:
     parts = binding.split(":")
-    if len(parts) != 3 or not parts[2].isidentifier():
+    if len(parts) != 3 or not NAME.fullmatch(parts[2]):
         raise ReviewAuditError(
             "Tenant bindings use call=position:INDEX:PARAMETER or "
             "call=keyword:NAME:PARAMETER."
@@ -1638,11 +2232,15 @@ def _tenant_comprehension_targets(function: ast.AST) -> set[int]:
 def _tenant_discard_captures(statement: ast.stmt, names: set[str]) -> None:
     for child in _body_nodes(statement):
         if isinstance(child, (ast.MatchAs, ast.MatchStar)) and child.name:
-            names.discard(child.name)
+            names.difference_update(
+                name for name in tuple(names) if name.split(".")[0] == child.name
+            )
         elif isinstance(child, ast.MatchMapping) and child.rest:
             names.discard(child.rest)
         elif isinstance(child, ast.ExceptHandler) and child.name:
-            names.discard(child.name)
+            names.difference_update(
+                name for name in tuple(names) if name.split(".")[0] == child.name
+            )
 
 
 def _tenant_discard_written_names(
@@ -1654,7 +2252,21 @@ def _tenant_discard_written_names(
             and id(child) not in comprehension_targets
             and isinstance(child.ctx, (ast.Store, ast.Del))
         ):
-            names.discard(child.id)
+            names.difference_update(
+                name for name in tuple(names) if name.split(".")[0] == child.id
+            )
+        elif isinstance(child, (ast.Attribute, ast.Subscript)) and isinstance(
+            child.ctx, (ast.Store, ast.Del)
+        ):
+            reference = (
+                _tenant_reference(child.value)
+                if isinstance(child, ast.Subscript)
+                else _tenant_reference(child)
+            )
+            if any(
+                name == reference or name.startswith(reference + ".") for name in names
+            ):
+                names.clear()
 
 
 def _tenant_track_assignment(
@@ -1672,13 +2284,56 @@ def _tenant_track_assignment(
         target, value = statement.target, statement.value
     if target is None:
         return False
-    if isinstance(value, ast.Name) and value.id in names:
-        names.add(target.id)
+    reference = _tenant_reference(value)
+    replacement = {
+        target.id + name[len(reference) :]
+        for name in names
+        if reference and (name == reference or name.startswith(reference + "."))
+    }
+    names.difference_update(
+        name
+        for name in tuple(names)
+        if name == target.id or name.startswith(target.id + ".")
+    )
+    if replacement:
+        names.update(replacement)
     else:
-        names.discard(target.id)
         if value is not None:
             _tenant_discard_written_names(value, names, comprehension_targets)
     return True
+
+
+def _tenant_reference(value: ast.AST | None) -> str:
+    """Return only an explicit name/attribute chain; calls and indexing are unbound."""
+    if isinstance(value, ast.Name):
+        return value.id
+    if isinstance(value, ast.Attribute):
+        head = _tenant_reference(value.value)
+        return f"{head}.{value.attr}" if head else ""
+    return ""
+
+
+def _tenant_discard_mutations(statement: ast.stmt, names: set[str]) -> None:
+    """Invalidate explicit setattr/delattr writes to declared attribute scopes."""
+    for node in _body_nodes(statement):
+        if not isinstance(node, ast.Call) or _call_name(node) not in {
+            "setattr",
+            "delattr",
+            "builtins.setattr",
+            "builtins.delattr",
+        }:
+            continue
+        if len(node.args) < 2 or not isinstance(node.args[1], ast.Constant):
+            names.clear()
+            continue
+        reference = _tenant_reference(node.args[0])
+        attribute = node.args[1].value
+        if (
+            isinstance(attribute, str)
+            and reference
+            and f"{reference}.{attribute}" in names
+        ):
+            names.clear()
 
 
 def _tenant_bound_names(function: ast.AST, parameter: str, use: ast.Call) -> set[str]:
@@ -1689,6 +2344,7 @@ def _tenant_bound_names(function: ast.AST, parameter: str, use: ast.Call) -> set
         if (statement.lineno, statement.col_offset) >= (use.lineno, use.col_offset):
             break
         _tenant_discard_captures(statement, names)
+        _tenant_discard_mutations(statement, names)
         if _tenant_track_assignment(statement, names, comprehension_targets):
             continue
         _tenant_discard_written_names(statement, names, comprehension_targets)
@@ -1723,9 +2379,8 @@ def _tenant_argument_bound(
             else None
         )
         if (
-            isinstance(value, ast.Name)
-            and value.id in _tenant_bound_names(function, parameter, node)
-            and parameter in parameters
+            _tenant_reference(value) in _tenant_bound_names(function, parameter, node)
+            and parameter.split(".")[0] in parameters
         ):
             return True
     return False
@@ -1928,10 +2583,14 @@ def _test_oracle_findings(
     aliases: dict[str, str],
     helper_names: set[str],
     unittest_methods: set[int],
+    class_helpers: dict[int, set[str]] | None = None,
+    weak_helper_names: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     for node in nodes:
         is_unittest_method = id(node) in unittest_methods
+        helpers = helper_names | (class_helpers or {}).get(id(node), set())
+        hollow_helpers = helpers | (weak_helper_names or set())
         scoped_aliases = (
             _scope_security_aliases(aliases, node)
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -1942,7 +2601,7 @@ def _test_oracle_findings(
             relative,
             node,
             scoped_aliases,
-            helper_names,
+            hollow_helpers,
             unittest_context=is_unittest_method,
         )
         if hollow is not None:
@@ -1951,8 +2610,9 @@ def _test_oracle_findings(
             relative,
             node,
             scoped_aliases,
-            helper_names,
+            helpers,
             unittest_context=is_unittest_method,
+            weak_helper_names=weak_helper_names,
         )
         if weak is not None:
             findings.append(weak)
@@ -1980,13 +2640,24 @@ def _security_scan_tree(
     tree: ast.AST,
     tenant_read_calls: tuple[str, ...] = (),
     tenant_read_bindings: dict[str, tuple[str, ...]] | None = None,
+    oracle_context: dict | None = None,
 ) -> list[dict[str, Any]]:
     relative = path.relative_to(root).as_posix()
     nodes = list(ast.walk(tree))
     aliases = _security_aliases(nodes)
     oracle_aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
-    helper_names = _local_assertion_helpers(tree, oracle_aliases)
+    context = oracle_context or {}
+    helper_names = _local_assertion_helpers(tree, oracle_aliases) | set(
+        context.get("helpers", ())
+    )
+    weak_helper_names = _local_weak_assertion_helpers(tree, oracle_aliases) | set(
+        context.get("weak_helpers", ())
+    )
     unittest_methods = _unittest_test_methods(tree, oracle_aliases)
+    for cls in tree.body:
+        if isinstance(cls, ast.ClassDef) and cls.name in context.get("mixins", ()):
+            unittest_methods.update(id(method) for method in cls.body)
+    class_helpers = _class_oracle_helpers(tree, oracle_aliases, unittest_methods)
     findings = _tenant_read_findings(
         relative, nodes, tenant_read_calls, aliases, tenant_read_bindings or {}
     )
@@ -1997,7 +2668,13 @@ def _security_scan_tree(
     )
     findings.extend(
         _test_oracle_findings(
-            relative, nodes, oracle_aliases, helper_names, unittest_methods
+            relative,
+            nodes,
+            oracle_aliases,
+            helper_names,
+            unittest_methods,
+            class_helpers,
+            weak_helper_names,
         )
     )
     for node in nodes:
@@ -2005,17 +2682,38 @@ def _security_scan_tree(
     return findings
 
 
+def _security_source_bytes(workspace: Path, relative: str) -> bytes:
+    """Read a bounded regular source without following linked workspace entries."""
+    path = local_file(workspace, relative)
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(descriptor, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        checked = local_file(workspace, relative).stat()
+        if (opened.st_dev, opened.st_ino) != (checked.st_dev, checked.st_ino):
+            raise OSError("source changed before read")
+        data = stream.read(MAX_BYTES + 1)
+        after = local_file(workspace, relative).stat()
+        if (opened.st_ino, opened.st_size, opened.st_mtime_ns) != (
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ):
+            raise OSError("source changed during read")
+    return data
+
+
 def _security_scan_file(
     workspace: Path,
     path: Path,
     tenant_read_calls: tuple[str, ...] = (),
     tenant_read_bindings: dict[str, tuple[str, ...]] | None = None,
+    oracle_context: dict | None = None,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]], str]:
     """Scan one bounded Python source and return its byte binding and findings."""
     relative = path.relative_to(workspace).as_posix()
     binding: dict[str, Any] | None = None
     try:
-        initial_size = path.stat().st_size
+        initial_size = local_file(workspace, relative).stat().st_size
         if initial_size > MAX_BYTES:
             return (
                 None,
@@ -2031,9 +2729,8 @@ def _security_scan_file(
                 ],
                 "too_large",
             )
-        with path.open("rb") as stream:
-            data = stream.read(MAX_BYTES + 1)
-        final_size = path.stat().st_size
+        data = _security_source_bytes(workspace, relative)
+        final_size = local_file(workspace, relative).stat().st_size
         if len(data) > MAX_BYTES or final_size > MAX_BYTES:
             return (
                 None,
@@ -2054,7 +2751,7 @@ def _security_scan_file(
             "sha256": sha256(data).hexdigest(),
             "bytes": len(data),
         }
-        tree = ast.parse(data, filename=str(path))
+        tree = ast.parse(data, filename=relative)
     except SyntaxError as exc:
         return (
             binding,
@@ -2065,12 +2762,12 @@ def _security_scan_file(
                     exc,
                     "Python source cannot be parsed deterministically.",
                     "HIGH",
-                    detail=str(exc),
+                    detail="invalid Python syntax",
                 )
             ],
             "syntax_error",
         )
-    except (OSError, UnicodeError) as exc:
+    except (OSError, UnicodeError, RuntimeAuditError) as exc:
         return (
             binding,
             [
@@ -2088,7 +2785,12 @@ def _security_scan_file(
     return (
         binding,
         _security_scan_tree(
-            workspace, path, tree, tenant_read_calls, tenant_read_bindings
+            workspace,
+            path,
+            tree,
+            tenant_read_calls,
+            tenant_read_bindings,
+            oracle_context,
         ),
         "audited",
     )
@@ -2103,13 +2805,12 @@ def _verify_security_bindings(workspace: Path, bindings: list[dict[str, Any]]) -
                 raise ReviewAuditError(
                     f"Evidence changed during security scan: {binding['path']}"
                 )
-            with current.open("rb") as stream:
-                data = stream.read(MAX_BYTES + 1)
+            data = _security_source_bytes(workspace, binding["path"])
             if len(data) > MAX_BYTES or current.stat().st_size > MAX_BYTES:
                 raise ReviewAuditError(
                     f"Evidence changed during security scan: {binding['path']}"
                 )
-        except (OSError, UnicodeError) as exc:
+        except (OSError, UnicodeError, RuntimeAuditError) as exc:
             raise ReviewAuditError(
                 f"Evidence changed during security scan: {binding['path']}"
             ) from exc
@@ -2210,27 +2911,38 @@ def _scan_security_sources(
     files: list[Path],
     tenant_read_calls: tuple[str, ...],
     tenant_read_bindings: dict[str, tuple[str, ...]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int], dict[str, int]]:
+    scoped_reads: dict | None = None,
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    dict[str, int],
+    dict[str, int],
+    list[dict[str, Any]],
+]:
     findings: list[dict[str, Any]] = []
     bindings: list[dict[str, Any]] = []
     outcomes = {"syntax_error": 0, "unreadable": 0, "too_large": 0, "audited": 0}
+    contexts, context_bindings, oracle_edges = _project_oracle_context(workspace, files)
     for path in files:
+        scope = (scoped_reads or {}).get(path.relative_to(workspace).as_posix(), {})
+        calls = tuple(sorted(set(tenant_read_calls) | set(scope.get("calls", ()))))
+        scoped_bindings = {**scope.get("bindings", {}), **tenant_read_bindings}
         binding, file_findings, outcome = _security_scan_file(
-            workspace, path, tenant_read_calls, tenant_read_bindings
+            workspace, path, calls, scoped_bindings, contexts.get(path, {})
         )
         if binding is not None:
             bindings.append(binding)
         findings.extend(file_findings)
         if outcome in outcomes:
             outcomes[outcome] += 1
-    _verify_security_bindings(workspace, bindings)
+    _verify_security_bindings(workspace, context_bindings + bindings)
     findings.sort(
         key=lambda item: (item["path"], item["line"], item["code"], item["column"])
     )
     counts: dict[str, int] = {}
     for finding in findings:
         counts[finding["code"]] = counts.get(finding["code"], 0) + 1
-    return bindings, findings, counts, outcomes
+    return bindings, findings, counts, outcomes, oracle_edges
 
 
 def _security_scan_state(files: list[Path], findings: list[dict[str, Any]]) -> str:
@@ -2268,6 +2980,21 @@ def _security_scan_coverage(
 
 
 def _seal_security_scan(core: dict[str, Any]) -> dict[str, Any]:
+    candidate = sha256(
+        json.dumps(
+            {
+                "sources": core.get("sources", []),
+                "tenant_read_contract": core.get("tenant_read_contract", {}),
+                "oracle_context": core.get("oracle_context", {}),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    core["candidate_sha256"] = candidate
+    core["agent_actions"] = [
+        audit_remediation_packet(candidate, item) for item in core["findings"]
+    ]
     core["audit_sha256"] = sha256(
         json.dumps(
             core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -2294,6 +3021,7 @@ def _security_scan_report(
     outcomes: dict[str, int],
     tenant_read_calls: tuple[str, ...],
     tenant_read_bindings: dict[str, tuple[str, ...]],
+    oracle_edges: list[dict[str, Any]],
 ) -> dict[str, Any]:
     state = _security_scan_state(files, findings)
     core: dict[str, Any] = {
@@ -2308,6 +3036,11 @@ def _security_scan_report(
         "tenant_read_contract": _tenant_read_contract(
             tenant_read_calls, tenant_read_bindings
         ),
+        "oracle_context": {
+            "mode": "one_local_import_hop_ast_only",
+            "resolved_edges": oracle_edges,
+            "edge_count": len(oracle_edges),
+        },
         "sources": bindings,
         "findings": findings,
         "finding_counts": dict(sorted(counts.items())),
@@ -2324,11 +3057,40 @@ def _security_scan_report(
     return _seal_security_scan(core)
 
 
+def _validate_tenant_scopes(workspace: Path, scopes: dict | None) -> dict:
+    """Revalidate programmatic declarations through the same contract boundary."""
+    if scopes is None:
+        return {}
+    if not isinstance(scopes, dict) or len(scopes) > MAX_PATHS:
+        raise ReviewAuditError("Invalid tenant read scope map.")
+    rows = []
+    for path, scope in scopes.items():
+        if not isinstance(scope, dict) or set(scope) != {"calls", "bindings"}:
+            raise ReviewAuditError("Invalid scoped tenant calls and bindings.")
+        if not isinstance(scope["calls"], (tuple, list)):
+            raise ReviewAuditError("Scoped calls must be a bounded sequence.")
+        calls = _tenant_contract_calls(tuple(scope["calls"]))
+        bindings = scope["bindings"]
+        if not isinstance(bindings, dict) or set(bindings) - set(calls):
+            raise ReviewAuditError("Scoped bindings must name declared calls.")
+        reads = [_tenant_scope_read(call, bindings) for call in calls]
+        rows.append({"path": path, "reads": reads})
+    return _tenant_scoped_entries(workspace, rows) if rows else {}
+
+
+def _tenant_scope_read(call: str, bindings: dict) -> dict:
+    values = bindings.get(call, ())
+    if not isinstance(values, (tuple, list)) or len(values) > 1:
+        raise ReviewAuditError("Each scoped call requires at most one binding.")
+    return {"call": call, "binding": values[0]} if values else {"call": call}
+
+
 def security_scan(
     root: Path,
     *,
     tenant_read_calls: tuple[str, ...] = (),
     tenant_read_bindings: tuple[str, ...] = (),
+    tenant_read_scopes: dict | None = None,
 ) -> dict[str, Any]:
     """Run a bounded AST security and code-quality scan without importing or executing source."""
     workspace = Path(root).resolve()
@@ -2336,13 +3098,14 @@ def security_scan(
     tenant_read_bindings = _tenant_contract_bindings(
         tenant_read_bindings, tenant_read_calls
     )
+    tenant_read_scopes = _validate_tenant_scopes(workspace, tenant_read_scopes)
     files = _security_source_files(workspace)
     if len(files) > MAX_SECURITY_SOURCE_FILES:
         return _blocked_security_scan_report(
             workspace, files, tenant_read_calls, tenant_read_bindings
         )
-    bindings, findings, counts, outcomes = _scan_security_sources(
-        workspace, files, tenant_read_calls, tenant_read_bindings
+    bindings, findings, counts, outcomes, oracle_edges = _scan_security_sources(
+        workspace, files, tenant_read_calls, tenant_read_bindings, tenant_read_scopes
     )
     return _security_scan_report(
         files,
@@ -2352,6 +3115,7 @@ def security_scan(
         outcomes,
         tenant_read_calls,
         tenant_read_bindings,
+        oracle_edges,
     )
 
 

@@ -17,6 +17,7 @@ from .runtime_audit_common import (
     RuntimeAuditError,
     canonical_bytes,
     require_digest,
+    require_int,
     require_str,
     sha256_bytes,
 )
@@ -546,3 +547,702 @@ def read_run_json(directory: Path, name: str) -> dict:
     if expected != digest(value):
         raise RuntimeAuditError("E_RUN_INTEGRITY", "run state digest mismatch")
     return value
+
+
+def _adapter_profile(profile: dict, lane: dict) -> list[dict]:
+    """Commands come from the immutable image, never from scanned repository text."""
+    expected = {
+        "schema",
+        "engine",
+        "mode",
+        "tool_version",
+        "ruleset_sha256",
+        "commands",
+    }
+    if set(profile) != expected or profile["schema"] != "factory.adapter-profile.v1":
+        raise RuntimeAuditError("E_ADAPTER_PROFILE", "invalid image-bundled profile")
+    for key in ("engine", "mode", "tool_version", "ruleset_sha256"):
+        if profile[key] != lane.get(key):
+            raise RuntimeAuditError(
+                "E_ADAPTER_PROFILE", "profile differs from signed lane"
+            )
+    commands = profile["commands"]
+    if not isinstance(commands, list) or not 1 <= len(commands) <= 64:
+        raise RuntimeAuditError("E_ADAPTER_PROFILE", "bounded command list required")
+    for command in commands:
+        _adapter_command_shape(command)
+    return commands
+
+
+def _adapter_command_shape(command: dict) -> None:
+    if not isinstance(command, dict) or set(command) != {"argv", "accepted_exit_codes"}:
+        raise RuntimeAuditError("E_ADAPTER_PROFILE", "invalid command fields")
+    argv, exits = command["argv"], command["accepted_exit_codes"]
+    if not isinstance(argv, list) or not 1 <= len(argv) <= 128:
+        raise RuntimeAuditError("E_ADAPTER_PROFILE", "bounded argv required")
+    for arg in argv:
+        require_str(arg, "adapter argument", maximum=2048)
+    if not Path(argv[0]).is_absolute():
+        raise RuntimeAuditError(
+            "E_ADAPTER_PROFILE", "absolute executable path required"
+        )
+    if not isinstance(exits, list) or not 1 <= len(exits) <= 16:
+        raise RuntimeAuditError("E_ADAPTER_PROFILE", "bounded exit codes required")
+    if any(type(code) is not int or not 0 <= code <= 255 for code in exits):
+        raise RuntimeAuditError("E_ADAPTER_PROFILE", "invalid exit code")
+
+
+def _adapter_sources(source: Path, inventory: dict) -> None:
+    files = inventory.get("files")
+    if not isinstance(files, list) or not 1 <= len(files) <= 50_000:
+        raise RuntimeAuditError("E_ADAPTER_INPUT", "bounded inventory required")
+    names = set()
+    for item in files:
+        if not isinstance(item, dict) or item.get("path") in names:
+            raise RuntimeAuditError(
+                "E_ADAPTER_INPUT", "unique source bindings required"
+            )
+        path = relative_path(item.get("path"))
+        names.add(path)
+        bound_bytes(source, {"path": path, "sha256": item.get("sha256")})
+
+
+def _adapter_commands(
+    commands: list[dict], lane: dict, source: Path, scratch: Path
+) -> list[dict]:
+    from .runtime_audit_process import run_bounded_command
+
+    timeout = lane.get("timeout_seconds")
+    if type(timeout) is not int or not 1 <= timeout <= 3600:
+        raise RuntimeAuditError("E_ADAPTER_INPUT", "bounded signed timeout required")
+    deadline = time.monotonic() + timeout
+    invocations = []
+    for index, command in enumerate(commands):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeAuditError("E_ADAPTER_TIMEOUT", "adapter deadline exhausted")
+        directory = scratch / str(index)
+        directory.mkdir()
+        facts = run_bounded_command(command["argv"], source, remaining, directory)
+        if (
+            facts["timed_out"]
+            or facts["launch_error"]
+            or facts["output_limit_exceeded"]
+            or not facts["cleanup_confirmed"]
+            or facts["exit_code"] not in command["accepted_exit_codes"]
+            or time.monotonic() > deadline
+        ):
+            raise RuntimeAuditError(
+                "E_ADAPTER_COMMAND", "native command did not complete"
+            )
+        invocations.append({"argv_sha256": digest(command["argv"]), "execution": facts})
+    return invocations
+
+
+def _adapter_contract_parts(contract: dict) -> tuple[dict, dict]:
+    """Validate shared input identity before executing either worker format."""
+    keys = {"schema", "run_id", "manifest_sha256", "inventory", "lane", "obligations"}
+    if (
+        not isinstance(contract, dict)
+        or set(contract) != keys
+        or contract["schema"] != "factory.deep-adapter-input.v1"
+    ):
+        raise RuntimeAuditError("E_ADAPTER_INPUT", "invalid adapter contract")
+    require_str(contract["run_id"], "run_id", maximum=64)
+    require_digest(contract["manifest_sha256"], "manifest_sha256")
+    inventory, lane = contract["inventory"], contract["lane"]
+    if not isinstance(inventory, dict) or not isinstance(lane, dict):
+        raise RuntimeAuditError(
+            "E_ADAPTER_INPUT", "inventory and lane objects required"
+        )
+    require_digest(inventory.get("candidate_sha256"), "candidate_sha256")
+    return inventory, lane
+
+
+def _adapter_output_paths(
+    lane: dict, output: Path, *, create_parents: bool = False
+) -> list[str]:
+    """Reject stale or aliased artifacts before any native tool is started."""
+    paths = [
+        relative_path(lane[key]) for key in ("report", "coverage", "challenge_report")
+    ]
+    if len(set(paths)) != 3:
+        raise RuntimeAuditError("E_ADAPTER_INPUT", "distinct artifact paths required")
+    for path in paths:
+        target = output / path
+        if target.exists() or target.is_symlink():
+            raise RuntimeAuditError("E_ADAPTER_STALE", "preexisting output rejected")
+        if create_parents:
+            target.parent.mkdir(parents=True, exist_ok=True)
+    return paths
+
+
+def execute_adapter_profile(
+    profile: dict, contract: dict, source: Path, output: Path
+) -> dict:
+    """Join actual native artifacts; never synthesize coverage or challenge success."""
+    inventory, lane = _adapter_contract_parts(contract)
+    commands = _adapter_profile(profile, lane)
+    _adapter_sources(source, inventory)
+    report_paths = _adapter_output_paths(lane, Path(output))
+    with tempfile.TemporaryDirectory(prefix="factory-adapter-") as temporary:
+        invocations = _adapter_commands(commands, lane, Path(source), Path(temporary))
+    artifacts = {}
+    for path in sorted(report_paths):
+        artifact = local_file(output, path)
+        with artifact.open("rb") as stream:
+            artifacts[path] = strict_json(stream.read(LIMIT + 1))
+    coverage = artifacts[lane["coverage"]]
+    coverage["native_coverage_sha256"] = digest(coverage)
+    coverage["native_invocations"] = invocations
+    coverage["invocation_sha256"] = digest(invocations)
+    _adapter_sources(source, inventory)
+    return {
+        "schema": "factory.deep-worker.v1",
+        "run_id": contract["run_id"],
+        "candidate_sha256": inventory["candidate_sha256"],
+        "artifacts": artifacts,
+    }
+
+
+def _native_profile(profile: dict, lane: dict) -> None:
+    expected = {
+        "schema",
+        "engine",
+        "mode",
+        "tool_version",
+        "ruleset_sha256",
+        "commands",
+        "version_argv",
+        "report_format",
+    }
+    if set(profile) != expected or profile["schema"] != "factory.native-profile.v1":
+        raise RuntimeAuditError("E_ADAPTER_PROFILE", "invalid native profile")
+    projected = {
+        key: value
+        for key, value in profile.items()
+        if key not in {"version_argv", "report_format"}
+    }
+    projected["schema"] = "factory.adapter-profile.v1"
+    _adapter_profile(projected, lane)
+    _adapter_command_shape(
+        {"argv": profile["version_argv"], "accepted_exit_codes": [0]}
+    )
+    formats = {
+        "codeql": {"sarif"},
+        "semgrep": {"sarif"},
+        "gitleaks": {"sarif"},
+        "trivy": {"sarif"},
+        "osv": {"osv-json"},
+        "syft": {"syft-json"},
+        "runtime": {"runtime-json", "coverage-json"},
+        "atheris": {"runtime-json"},
+        "jazzer": {"runtime-json"},
+        "zap": {"runtime-json"},
+    }
+    if profile["report_format"] not in formats.get(profile["engine"], set()):
+        raise RuntimeAuditError("E_ADAPTER_PROFILE", "unsupported native report")
+
+
+def _native_version(profile: dict, source: Path, scratch: Path, timeout: int) -> dict:
+    from .runtime_audit_process import run_bounded_command
+    import re
+
+    capture = scratch / "version.txt"
+    facts = run_bounded_command(
+        profile["version_argv"], source, timeout, scratch, stdout_path=capture
+    )
+    if (
+        facts["exit_code"] != 0
+        or facts["timed_out"]
+        or facts["launch_error"]
+        or facts["output_limit_exceeded"]
+        or not facts["cleanup_confirmed"]
+    ):
+        raise RuntimeAuditError("E_TOOLCHAIN_PROBE", "native version probe failed")
+    text = capture.read_text(encoding="utf-8")
+    pattern = r"(?<![\w.])v?" + re.escape(profile["tool_version"]) + r"(?![\w.])"
+    if not re.search(pattern, text):
+        raise RuntimeAuditError("E_TOOLCHAIN_DRIFT", "native version differs")
+    return facts
+
+
+def _native_argv(commands: list, bindings: dict) -> list:
+    result = []
+    for command in commands:
+        argv = []
+        for value in command["argv"]:
+            for name, bound in bindings.items():
+                value = value.replace("{" + name + "}", str(bound))
+            argv.append(value)
+        _adapter_command_shape(
+            {"argv": argv, "accepted_exit_codes": command["accepted_exit_codes"]}
+        )
+        result.append(
+            {"argv": argv, "accepted_exit_codes": command["accepted_exit_codes"]}
+        )
+    return result
+
+
+def _native_sarif_metadata(report: dict, profile: dict, invocations: list) -> dict:
+    """Supplement absent metadata from measured execution; preserve native bytes hash."""
+    import copy
+
+    report = copy.deepcopy(report)
+    runs = report.get("runs")
+    if not isinstance(runs, list) or not 1 <= len(runs) <= 16:
+        raise RuntimeAuditError("E_REPORT_JSON", "native SARIF runs missing")
+    for run in runs:
+        driver = run["tool"]["driver"]
+        if driver.get("version", profile["tool_version"]) != profile["tool_version"]:
+            raise RuntimeAuditError(
+                "E_TOOLCHAIN_DRIFT", "native report version differs"
+            )
+        driver.setdefault("version", profile["tool_version"])
+        run.setdefault(
+            "invocations",
+            [
+                {
+                    "executionSuccessful": True,
+                    "properties": {"factory_execution_sha256": digest(invocations)},
+                }
+            ],
+        )
+    return report
+
+
+def _native_junit(output: Path, sources: dict) -> tuple:
+    import xml.etree.ElementTree as ET
+
+    with local_file(output, "runtime.xml").open("rb") as stream:
+        junit = stream.read(LIMIT + 1)
+    if (
+        len(junit) > LIMIT
+        or b"<!DOCTYPE" in junit.upper()
+        or b"<!ENTITY" in junit.upper()
+    ):
+        raise RuntimeAuditError("E_RUNTIME_REPORT", "unsafe or oversized JUnit")
+    try:
+        tree = ET.fromstring(junit)
+    except ET.ParseError as exc:
+        raise RuntimeAuditError("E_RUNTIME_REPORT", "invalid native JUnit") from exc
+    tests, findings, harness = 0, [], None
+    for case in tree.iter("testcase"):
+        if case.find("skipped") is not None:
+            continue
+        tests += 1
+        path = relative_path(case.get("file", ""))
+        if path not in sources:
+            raise RuntimeAuditError("E_HARNESS_BINDING", "JUnit test source is unbound")
+        harness = harness or {"path": path, "sha256": sources[path]}
+        if case.find("failure") is not None or case.find("error") is not None:
+            findings.append(
+                {
+                    "rule_id": "RUNTIME_TEST_FAILURE",
+                    "path": path,
+                    "line": int(case.get("line", "0")) + 1,
+                    "severity": "high",
+                }
+            )
+    if not tests or harness is None:
+        raise RuntimeAuditError("E_RUNTIME_REPORT", "no executed source-bound tests")
+    return tests, findings, harness, sha256_bytes(junit)
+
+
+def _native_coverage_report(
+    raw: dict, lane: dict, inventory: dict, output: Path
+) -> dict:
+    if raw.get("meta", {}).get("branch_coverage") is not True:
+        raise RuntimeAuditError(
+            "E_RUNTIME_COVERAGE", "native branch measurement required"
+        )
+    sources = {item["path"]: item["sha256"] for item in inventory["files"]}
+    tests, findings, harness, junit_hash = _native_junit(output, sources)
+    coverage = _native_source_counts(raw, sources)
+    return {
+        "schema": "factory.deep-runtime-observations.v1",
+        "engine": "runtime",
+        "tool_version": lane["tool_version"],
+        "completed": True,
+        "errors": [],
+        "harness": harness,
+        "metrics": {"tests": tests},
+        "findings": findings,
+        "source_coverage": coverage,
+        "coverage_native_sha256": digest(raw),
+        "junit_sha256": junit_hash,
+    }
+
+
+def _native_source_counts(raw: dict, sources: dict) -> dict:
+    coverage = {}
+    files = raw.get("files")
+    if not isinstance(files, dict) or not all(isinstance(name, str) for name in files):
+        raise RuntimeAuditError(
+            "E_RUNTIME_COVERAGE", "native coverage files object required"
+        )
+    for name, measured in files.items():
+        path = relative_path(name.removeprefix("/src/"))
+        if path not in sources:
+            raise RuntimeAuditError("E_RUNTIME_COVERAGE", "coverage source is unbound")
+        if path in coverage:
+            raise RuntimeAuditError(
+                "E_RUNTIME_COVERAGE", "duplicate native coverage source"
+            )
+        counts = _native_coverage_counts(measured)
+        coverage[path] = {
+            "sha256": sources[path],
+            "lines_total": counts["num_statements"],
+            "lines_covered": counts["covered_lines"],
+            "branches_total": counts["num_branches"],
+            "branches_covered": counts["covered_branches"],
+        }
+    return coverage
+
+
+def _native_coverage_counts(measured: dict) -> dict:
+    """Validate measured totals before exposing them as runtime facts."""
+    if not isinstance(measured, dict) or not isinstance(measured.get("summary"), dict):
+        raise RuntimeAuditError(
+            "E_RUNTIME_COVERAGE", "native coverage summary required"
+        )
+    counts = measured["summary"]
+    for field in (
+        "num_statements",
+        "covered_lines",
+        "num_branches",
+        "covered_branches",
+    ):
+        require_int(counts.get(field), field, minimum=0, maximum=10_000_000)
+    if (
+        counts["covered_lines"] > counts["num_statements"]
+        or counts["covered_branches"] > counts["num_branches"]
+    ):
+        raise RuntimeAuditError(
+            "E_RUNTIME_COVERAGE", "covered counts exceed measured totals"
+        )
+    return counts
+
+
+def _native_runtime_accounting(report: dict, inventory: dict, lane: dict) -> dict:
+    """Expose actual observed source accounting separately from requested inventory."""
+    required = {
+        item["path"]: item["sha256"]
+        for item in inventory["files"]
+        if item["language"] in lane["languages"]
+    }
+    measured = report.get("source_coverage")
+    if not isinstance(measured, dict):
+        return {
+            "state": "UNAVAILABLE",
+            "required_paths": sorted(required),
+            "measured_paths": [],
+            "missing_paths": sorted(required),
+        }
+    if set(measured) - set(required):
+        raise RuntimeAuditError(
+            "E_RUNTIME_COVERAGE", "measured source is outside declared lane"
+        )
+    if any(
+        not isinstance(item, dict) or item.get("sha256") != required[path]
+        for path, item in measured.items()
+    ):
+        raise RuntimeAuditError("E_RUNTIME_COVERAGE", "measured source hash differs")
+    missing = sorted(set(required) - set(measured))
+    return {
+        "state": "PARTIAL" if missing else "COMPLETE",
+        "required_paths": sorted(required),
+        "measured_paths": sorted(measured),
+        "missing_paths": missing,
+    }
+
+
+def _fuzz_snapshot(
+    cov, contract: dict, harness: str, output: Path, state: dict
+) -> None:
+    raw_path = output.with_suffix(".coverage.json")
+    cov.json_report(outfile=str(raw_path))
+    raw = strict_json(raw_path.read_bytes())
+    sources = {item["path"]: item["sha256"] for item in contract["inventory"]["files"]}
+    edges = sum(
+        len(item.get("executed_branches", [])) for item in raw["files"].values()
+    )
+    report = {
+        "schema": "factory.deep-atheris-observations.v1",
+        "engine": "atheris",
+        "tool_version": contract["lane"]["tool_version"],
+        "completed": True,
+        "errors": [],
+        "harness": {"path": harness, "sha256": sources[harness]},
+        "metrics": {
+            "executions": state["executions"],
+            "corpus_size": len(state["inputs"]),
+            "coverage_edges": edges,
+        },
+        "metric_definitions": {
+            "executions": "observed callbacks (lower bound at last snapshot)",
+            "corpus_size": "distinct executed input hashes, not retained native corpus",
+            "coverage_edges": "executed Python branch arcs from coverage.py",
+        },
+        "findings": state["findings"],
+        "source_coverage": _native_source_counts(raw, sources),
+        "coverage_native_sha256": digest(raw),
+    }
+    output.write_bytes(canonical_bytes(report))
+
+
+def native_fuzz_main(argv: list[str]) -> int:
+    """Image-owned Atheris lifecycle; candidate exports only TestOneInput(bytes)."""
+    import atheris
+    import coverage
+    import importlib.util
+    import sys
+
+    harness_path, output = Path(argv[0]), Path(argv[1])
+    contract = strict_json(Path("/factory-contract.json").read_bytes())
+    harness = harness_path.relative_to(Path("/src")).as_posix()
+    sources = {item["path"]: item["sha256"] for item in contract["inventory"]["files"]}
+    bound_bytes(Path("/src"), {"path": harness, "sha256": sources[harness]})
+    cov = coverage.Coverage(branch=True, data_file=None, source=["/src"])
+    cov.start()
+    with atheris.instrument_imports():
+        spec = importlib.util.spec_from_file_location(
+            "factory_fuzz_target", harness_path
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    target = module.TestOneInput
+    state = {"executions": 0, "inputs": set(), "findings": []}
+
+    def callback(data):
+        state["executions"] += 1
+        state["inputs"].add(sha256_bytes(data))
+        try:
+            target(data)
+        except Exception:
+            state["findings"].append(
+                {
+                    "rule_id": "FUZZ_EXCEPTION",
+                    "path": harness,
+                    "line": 1,
+                    "severity": "high",
+                }
+            )
+            _fuzz_snapshot(cov, contract, harness, output, state)
+            raise
+        if state["executions"] == 1 or state["executions"] % 64 == 0:
+            _fuzz_snapshot(cov, contract, harness, output, state)
+
+    atheris.Setup([sys.argv[0], *argv[3:]], atheris.instrument_func(callback))
+    atheris.Fuzz()
+    _fuzz_snapshot(cov, contract, harness, output, state)
+    return 0
+
+
+def _native_report(
+    raw: dict, profile: dict, contract: dict, output: Path, invocations: list
+) -> dict:
+    import copy
+
+    sources = {item["path"]: item["sha256"] for item in contract["inventory"]["files"]}
+    if profile["report_format"] == "sarif":
+        report = _native_sarif_metadata(raw, profile, invocations)
+        return _native_sarif_paths(report, sources)
+    if profile["report_format"] == "coverage-json":
+        return _native_coverage_report(
+            raw, contract["lane"], contract["inventory"], output
+        )
+    report = copy.deepcopy(raw)
+    _native_dependency_paths(report, profile["report_format"], sources)
+    return report
+
+
+def _native_source_path(uri: str, sources: dict, *, scan_root: bool = False) -> str:
+    require_str(uri, "native source URI", maximum=2048)
+    path = uri.removeprefix("file:///src/").removeprefix("/src/")
+    if scan_root and path.startswith("/"):
+        path = path[1:]  # Native Syft directory locations start at the scan root.
+    path = relative_path(path)
+    if path not in sources:
+        raise RuntimeAuditError("E_TRACE_UNBOUND", "native source is outside candidate")
+    return path
+
+
+def _native_artifact_path(artifact: dict, run: dict, sources: dict) -> str:
+    indexed = None
+    if "index" in artifact:
+        index = require_int(
+            artifact["index"], "artifact index", minimum=0, maximum=49999
+        )
+        items = run.get("artifacts", [])
+        if index >= len(items):
+            raise RuntimeAuditError("E_SARIF_INDIRECTION", "artifact index is absent")
+        indexed = items[index]["location"]
+    value = artifact if "uri" in artifact else indexed
+    if not isinstance(value, dict):
+        raise RuntimeAuditError("E_SARIF_INDIRECTION", "native source URI missing")
+    absolute_source = value.get("uri", "").startswith(("/src/", "file:///src/"))
+    if "uriBaseId" in value and not absolute_source:
+        base = run.get("originalUriBaseIds", {}).get(value["uriBaseId"], {})
+        if base.get("uri") not in {"file:///src/", "file:///src", "/src/"}:
+            raise RuntimeAuditError(
+                "E_SARIF_INDIRECTION", "untrusted native source base"
+            )
+    path = _native_source_path(value["uri"], sources)
+    if indexed is not None and "uri" in artifact:
+        if _native_source_path(indexed["uri"], sources) != path:
+            raise RuntimeAuditError(
+                "E_SARIF_INDIRECTION", "native artifact reference differs"
+            )
+    return path
+
+
+def _native_sarif_paths(report: dict, sources: dict) -> dict:
+    for run in report["runs"]:
+        stack = [run]
+        count = 0
+        while stack:
+            item = stack.pop()
+            count += 1
+            if count > 200000:
+                raise RuntimeAuditError(
+                    "E_REPORT_SIZE", "native SARIF tree exceeds budget"
+                )
+            if isinstance(item, list):
+                stack.extend(item)
+            elif isinstance(item, dict):
+                if "artifactLocation" in item:
+                    artifact = item["artifactLocation"]
+                    path = _native_artifact_path(artifact, run, sources)
+                    artifact.update(uri=path)
+                    artifact.pop("uriBaseId", None)
+                    artifact.pop("index", None)
+                stack.extend(item.values())
+    return report
+
+
+def _native_dependency_paths(report: dict, kind: str, sources: dict) -> None:
+    if kind == "osv-json":
+        for result in report.get("results", []):
+            result["source"]["path"] = _native_source_path(
+                result["source"]["path"], sources
+            )
+    elif kind == "syft-json":
+        for artifact in report.get("artifacts", []):
+            for location in artifact.get("locations", []):
+                location["path"] = _native_source_path(
+                    location["path"], sources, scan_root=True
+                )
+
+
+def execute_native_profile(
+    profile: dict, contract: dict, source: Path, output: Path
+) -> dict:
+    """Run native tools; incomplete coverage/challenges remain explicit, never inferred."""
+    inventory, lane = _adapter_contract_parts(contract)
+    _native_profile(profile, lane)
+    _adapter_sources(source, inventory)
+    paths = _adapter_output_paths(lane, output, create_parents=True)
+    timeout = require_int(
+        lane.get("timeout_seconds"), "timeout", minimum=1, maximum=3600
+    )
+    started = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="factory-native-") as temporary:
+        scratch = Path(temporary)
+        probe = scratch / "probe"
+        probe.mkdir()
+        version = _native_version(profile, source, probe, timeout)
+        remaining = timeout - (time.monotonic() - started)
+        if remaining < 1:
+            raise RuntimeAuditError(
+                "E_ADAPTER_TIMEOUT", "version probe exhausted deadline"
+            )
+        commands = _native_argv(
+            profile["commands"],
+            {
+                "source": source,
+                "output": output,
+                "report": output / paths[0],
+                "scratch": scratch,
+            },
+        )
+        invocations = _adapter_commands(
+            commands, {**lane, "timeout_seconds": int(remaining)}, source, scratch
+        )
+    with local_file(output, paths[0]).open("rb") as stream:
+        raw_report = strict_json(stream.read(LIMIT + 1))
+    report = _native_report(raw_report, profile, contract, output, invocations)
+    _adapter_sources(source, inventory)
+    coverage = {
+        "schema": "factory.deep-coverage.v1",
+        "complete": False,
+        "sources": {
+            item["path"]: item["sha256"]
+            for item in inventory["files"]
+            if item["language"] in lane["languages"]
+        },
+        "mode": lane["mode"],
+        "fallback": False,
+        "tool_version": profile["tool_version"],
+        "ruleset_sha256": profile["ruleset_sha256"],
+        "report_sha256": digest(report),
+        "native_report_sha256": digest(raw_report),
+        "source_accounting": _native_runtime_accounting(report, inventory, lane),
+        "native_invocations": invocations,
+        "invocation_sha256": digest(invocations),
+        "version_probe": version,
+        "errors": ["NATIVE_SOURCE_ACCOUNTING_REQUIRED", "NATIVE_CHALLENGES_REQUIRED"],
+        "obligations": [],
+    }
+    artifacts = {
+        paths[0]: report,
+        paths[1]: coverage,
+        paths[2]: {"schema": "factory.deep-challenges.v1", "observations": []},
+    }
+    for path in paths[1:]:
+        (output / path).write_bytes(canonical_bytes(artifacts[path]))
+    return {
+        "schema": "factory.deep-worker.v1",
+        "run_id": contract["run_id"],
+        "candidate_sha256": inventory["candidate_sha256"],
+        "artifacts": artifacts,
+    }
+
+
+def adapter_main(argv: list[str] | None = None) -> int:
+    """Fixed in-image endpoint; Docker isolation and host validation remain mandatory."""
+    import argparse
+    import sys
+
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "native-fuzz":
+        return native_fuzz_main(argv[1:])
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("engine")
+    parser.add_argument("--mode", required=True)
+    args = parser.parse_args(argv)
+    try:
+        with Path("/opt/factory/adapter-profile.json").open("rb") as stream:
+            profile = strict_json(stream.read(LIMIT + 1))
+        with Path("/factory-contract.json").open("rb") as stream:
+            contract = strict_json(stream.read(LIMIT + 1))
+        if (profile.get("engine"), profile.get("mode")) != (args.engine, args.mode):
+            raise RuntimeAuditError("E_ADAPTER_PROFILE", "entrypoint arguments differ")
+        execute = (
+            execute_native_profile
+            if profile.get("schema") == "factory.native-profile.v1"
+            else execute_adapter_profile
+        )
+        bundle = execute(profile, contract, Path("/src"), Path("/out"))
+        print(canonical_bytes(bundle).decode("utf-8"))
+        return 0
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        import sys
+
+        print(getattr(exc, "code", "E_ADAPTER_INPUT"), file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(adapter_main())

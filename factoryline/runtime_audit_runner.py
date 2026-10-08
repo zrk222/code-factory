@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -51,7 +52,13 @@ def _run_one(
     try:
         artifact, artifact_sha256 = read_stable_json(artifact_path)
     except RuntimeAuditError as exc:
-        artifact_error = {"code": exc.code, "message": exc.message}
+        # Path-aware reader messages can disclose absolute workspace paths.
+        code = (
+            exc.code
+            if re.fullmatch(r"[A-Z0-9_]{1,64}", exc.code)
+            else "E_ARTIFACT_INVALID"
+        )
+        artifact_error = {"code": code}
     return {
         "command": command_name,
         "signed_argv": list(lane[argv_key]),
@@ -100,8 +107,11 @@ def _run_one_guarded(
         "artifact_sha256": None,
         "normalized_artifact_sha256": None,
         "artifact_error": {
-            "code": code,
-            "message": "This bounded audit leg could not complete; sibling lane results were preserved.",
+            "code": (
+                code
+                if re.fullmatch(r"[A-Z0-9_]{1,64}", code)
+                else "RUNTIME_AUDIT_LANE_ERROR"
+            ),
         },
     }
 
@@ -159,7 +169,7 @@ def run_runtime_audit_plan(
             executions = [future.result() for future in futures]
     result = {
         "schema": "factory.runtime-audit-execution.v1",
-        "run_root": str(run_root),
+        "run_root": run_root.relative_to(workspace).as_posix(),
         "executions": executions,
         "execution_policy": {
             "max_parallelism": max_parallelism,

@@ -527,6 +527,13 @@ coordinator. It must not be cited as a penetration-test receipt.
    `/opt/factory/bin/audit-adapter <engine> --mode <mode>` and contain the approved
    toolchain/rules/offline vulnerability databases. Engine registration does not
    mean an adapter image is supplied or validated by this release.
+   Local builds can use their full `sha256:<64 lowercase hex>` image ID from
+   `docker image inspect --format '{{.Id}}' <built-image>`, without publishing to
+   a registry. Distributed images use `<repository>@sha256:<manifest-digest>`.
+   Preflight verifies the exact local image ID or repository digest respectively;
+   tags, shortened IDs and mismatched pins are rejected. The signed manifest and
+   authorization bind the same image string. An immutable image pin proves image
+   identity, not adapter correctness or scanner coverage.
 5. Run the explicit command (replace all placeholders with operator pins):
 
    ```text
@@ -557,6 +564,42 @@ coordinator. It must not be cited as a penetration-test receipt.
    --trust-root-sha256 <sha256>`.
 
 ### Adapter evidence contract
+
+The worker endpoint is implemented in `factoryline.deep_audit_io.adapter_main`.
+`deploy/deep-adapters/Dockerfile` builds its pinned, nonroot Linux amd64 SDK image;
+the `gitleaks-worker` target also includes the pinned native binary. Build from
+the repository root with `docker build --network=none --target gitleaks-worker
+-t factory-gitleaks-worker:8.28.0 -f deploy/deep-adapters/Dockerfile .`.
+The base remains explicitly unconfigured. A reviewed final image must copy its
+native toolchain/profile to `/opt/factory/adapter-profile.json` and must use its
+own immutable image pin in the approved manifest. The scanned repository cannot
+provide or override this execution profile.
+
+The `factory.adapter-profile.v1` object requires `engine`, `mode`, `tool_version`,
+`ruleset_sha256` and a bounded `commands` array. Each command supplies an absolute
+executable `argv` and `accepted_exit_codes`. Identity must match the signed lane.
+The worker uses bounded, no-shell execution with one shared deadline and hashes
+source bytes before and after commands. Native commands must write the exact
+declared report, coverage and challenge artifact paths under `/out`. Missing,
+preexisting, oversized, linked or malformed artifacts and command/source drift
+fail closed. The worker joins actual artifacts into `factory.deep-worker.v1`;
+it never invents coverage counters or challenge success. Host normalization and
+signed specialty review remain required. Framework transport tests across six
+engine names are synthetic; they are not native-tool execution proof.
+
+The native Gitleaks foundation has a reproducible, digest-pinned recipe at
+`deploy/native-scanners/gitleaks/Dockerfile`. Build it with
+`docker build --pull=false --network=none -t factory-native-gitleaks:8.28.0 deploy/native-scanners/gitleaks`.
+Record its full local image ID before use. It runs as UID/GID 1000 and preserves
+upstream native SARIF output. Run it with `--network=none --read-only
+--cap-drop=ALL --security-opt=no-new-privileges=true`, a read-only source mount,
+bounded writable output and resource limits. Its label explicitly declares
+`native-sarif-only`; it is **not** a deep-worker adapter. Gitleaks native SARIF
+omits the invocation/version and complete per-source accounting required by the
+current worker protocol. Installing or building this image does not remove
+`SECRETS_NATIVE_ACCOUNTING_UNAVAILABLE`, satisfy challenge requirements, or
+establish all six audit families. The native-foundation build is separate from
+adapter acceptance and full-depth scan approval.
 
 The runner mounts `/factory-contract.json` read-only and sets `FACTORY_CONTRACT`,
 `FACTORY_RUN_ID` and `FACTORY_CANDIDATE_SHA256`. The contract includes the exact lane,
@@ -612,3 +655,33 @@ fixtures must differ and not detect it. A disabled-detector mutation uses the
 positive fixture and must lose that detection. Runtime/fuzz schemas require
 candidate-bound harnesses, positive engine metrics and exact line/branch accounting.
 These contracts still require validation with real native adapter images.
+
+### Shared enforcement and agent remediation
+
+Runtime evaluators for all six lanes must return finite JSON, the expected lane,
+a supported state, a bounded finding identifier, consequence text and structured
+details. Malformed output becomes `INCOMPLETE`; exceptions expose only bounded
+error codes. This guard also applies to externally supplied evaluators at the
+runtime join. Existing candidate, scenario, command, timeout, cleanup and negative
+control verification remains required.
+
+Static Python, runtime and normalized deep scanner findings now carry
+`factory.audit-remediation.v1` packets. Each packet binds the candidate and finding,
+has a deterministic identity, preserves finding text as untrusted context and
+specifies reproduction, a scoped patch, the same analyzer and negative control,
+affected consumer checks and a separate specialty AI review. Context is copied
+before hashing so later producer mutations cannot rewrite the packet.
+
+The configured host agent executes these steps. Packet creation does not launch
+a provider agent or authorize commands. Existing repair-loop budgets, pause,
+resume, replay and candidate-drift checks remain the execution controls; workers
+must retain unresolved findings and stop when those controls fail. No universal
+scanner accuracy or commercial-agent parity is claimed by this addition.
+
+Research inputs: [CodeRabbit Autofix](https://docs.coderabbit.ai/finishing-touches/autofix)
+documents collecting unresolved findings and verifying generated patches;
+[Devin dependency workflows](https://docs.devin.ai/automation-templates/weekly-dependency-updates)
+document repository knowledge, test execution and risk-grouped changes;
+[Blitzy runtime validation](https://blitzy.com/blog/the-blitzy-sandbox-is-open-autonomous-software-development-at-no-cost)
+describes compilation and runtime validation. CF adopts explicit context,
+reproduction and verification handoffs within its existing agent workflow.

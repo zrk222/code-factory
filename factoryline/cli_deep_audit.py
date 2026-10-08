@@ -183,14 +183,26 @@ def add_parser(sub: Any) -> None:
 
 
 def _add_execution_parsers(sub: Any) -> None:
-    for action in ("inventory", "scan", "progress", "cancel", "review", "repairs"):
+    for action in (
+        "inventory",
+        "scan",
+        "progress",
+        "cancel",
+        "pause",
+        "playback",
+        "review",
+        "repairs",
+    ):
         parser = sub.add_parser(
             action, help=f"{action} explicit isolated deep-audit execution"
         )
         parser.add_argument("--root", default=".")
         parser.add_argument("--json", action="store_true")
-        if action in {"progress", "cancel", "review", "repairs"}:
+        if action in {"progress", "cancel", "pause", "playback", "review", "repairs"}:
             parser.add_argument("--run-id", required=True)
+        if action == "playback":
+            parser.add_argument("--after", type=int, default=0)
+            parser.add_argument("--limit", type=int, default=100)
         if action == "repairs":
             parser.add_argument("--before-run")
         if action == "scan":
@@ -211,10 +223,26 @@ def _add_execution_parsers(sub: Any) -> None:
             parser.add_argument("--invocation", required=True)
 
 
-def _run_execution(args: Any) -> int:
+def _run_control(args: Any, root: Path) -> dict:
     from .deep_audit import (
         cancel_deep_run,
         deep_run_status,
+        pause_deep_run,
+        playback_deep_run,
+    )
+
+    actions = {
+        "progress": deep_run_status,
+        "cancel": cancel_deep_run,
+        "pause": pause_deep_run,
+    }
+    if args.deep_cmd == "playback":
+        return playback_deep_run(root, args.run_id, after=args.after, limit=args.limit)
+    return actions[args.deep_cmd](root, args.run_id)
+
+
+def _run_execution(args: Any) -> int:
+    from .deep_audit import (
         execution_repairs,
         scan_deep_audit,
     )
@@ -243,10 +271,8 @@ def _run_execution(args: Any) -> int:
             if args.events:
                 event({"kind": "final_result", "result": result})
                 return 1
-        elif args.deep_cmd == "progress":
-            result = deep_run_status(root, args.run_id)
-        elif args.deep_cmd == "cancel":
-            result = cancel_deep_run(root, args.run_id)
+        elif args.deep_cmd in {"progress", "cancel", "pause", "playback"}:
+            result = _run_control(args, root)
         elif args.deep_cmd == "repairs":
             result = execution_repairs(root, args.run_id, before_run=args.before_run)
         else:
@@ -266,6 +292,8 @@ def _run_execution(args: Any) -> int:
                 "COMPLETE",
                 "READY_FOR_HUMAN_REVIEW",
                 "CANCELLATION_REQUESTED",
+                "PAUSE_REQUESTED",
+                "OBSERVED",
                 "ALREADY_STOPPED",
             }
             else 1,
@@ -365,6 +393,8 @@ def _run_deep(args: Any) -> int:
         "scan",
         "progress",
         "cancel",
+        "pause",
+        "playback",
         "review",
         "repairs",
     }:

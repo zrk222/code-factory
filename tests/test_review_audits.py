@@ -10,11 +10,71 @@ from factoryline.review_audits import (
     ReviewAuditError,
     audit_code,
     audit_fingerprint,
+    load_tenant_read_contract,
     security_evals,
     security_scan,
 )
 from factoryline.change_review import ChangeReviewError, review_change
 from factoryline.cli import main
+
+
+def test_security_scan_rejects_external_source_link(tmp_path):
+    outside = tmp_path.parent / "external-source.txt"
+    outside.write_text("PRIVATE_SOURCE = 1\n", encoding="utf-8")
+    link = tmp_path / "linked.py"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("source symlinks require OS permission")
+    result = security_scan(tmp_path)
+    assert result["unreadable_sources"] == 1
+    assert result["audit_coverage"]["complete"] is False
+    assert "PRIVATE_SOURCE" not in json.dumps(result)
+
+
+def test_security_source_rejects_linked_parent(tmp_path):
+    from factoryline.review_audits import _security_source_bytes
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    outside = tmp_path.parent / "external-sources"
+    outside.mkdir(exist_ok=True)
+    (outside / "source.py").write_text("PRIVATE_SOURCE = 1\n", encoding="utf-8")
+    try:
+        (tmp_path / "linked").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks require OS permission")
+    with pytest.raises(RuntimeAuditError, match="linked evidence"):
+        _security_source_bytes(tmp_path, "linked/source.py")
+
+
+def test_security_binding_recheck_rejects_link_swap(tmp_path):
+    from factoryline.review_audits import _verify_security_bindings
+    from hashlib import sha256
+
+    source = tmp_path / "source.py"
+    raw = b"VALUE = 1\n"
+    source.write_bytes(raw)
+    binding = {
+        "path": "source.py",
+        "sha256": sha256(raw).hexdigest(),
+        "bytes": len(raw),
+    }
+    outside = tmp_path.parent / "external-binding.txt"
+    outside.write_bytes(raw)
+    source.unlink()
+    try:
+        source.symlink_to(outside)
+    except OSError:
+        pytest.skip("source symlinks require OS permission")
+    with pytest.raises(ReviewAuditError, match="Evidence changed"):
+        _verify_security_bindings(tmp_path, [binding])
+
+
+def test_security_syntax_diagnostic_omits_source_and_absolute_path(tmp_path):
+    (tmp_path / "source.py").write_text("PRIVATE_SOURCE = (\n", encoding="utf-8")
+    result = security_scan(tmp_path)
+    details = [finding["facts"].get("detail") for finding in result["findings"]]
+    assert details == ["invalid Python syntax"]
 
 
 def test_audit_command_boundary_is_lazily_loaded() -> None:
@@ -441,6 +501,12 @@ def test_security_scan_receipt_measures_complete_supported_source_coverage(tmp_p
 
 def test_security_cli_displays_measured_source_audit_rate(tmp_path, capsys):
     (tmp_path / "app.py").write_text("answer = 42\n", encoding="utf-8")
+    factory_dir = tmp_path / ".factory"
+    factory_dir.mkdir()
+    (factory_dir / "tenant-read-contract.json").write_text(
+        json.dumps({"schema": "factory.tenant-read-contract.v1", "reads": []}),
+        encoding="utf-8",
+    )
 
     assert main(["audit", "security", "--root", str(tmp_path)]) == 0
 
@@ -558,14 +624,14 @@ def test_security_scan_separates_unreadable_sources_from_parse_errors(
     unreadable = tmp_path / "unreadable.py"
     readable.write_text("value = 1\n", encoding="utf-8")
     unreadable.write_text("value = 2\n", encoding="utf-8")
-    original_open = Path.open
+    original_open = module.os.open
 
     def open_path(path, *args, **kwargs):
-        if path.resolve() == unreadable.resolve():
+        if Path(path).resolve() == unreadable.resolve():
             raise PermissionError("denied")
         return original_open(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "open", open_path)
+    monkeypatch.setattr(module.os, "open", open_path)
 
     result = module.security_scan(tmp_path)
 
@@ -650,7 +716,7 @@ def test_security_evals_kill_all_adversarial_fixtures_and_keep_safe_control_clea
     result = security_evals()
     assert result["marker"] == "SECURITY_EVALS_COMPLETE"
     assert result["state"] == "PASS"
-    assert result["mutation_coverage"] == {"attempted": 12, "caught": 12, "rate": 1.0}
+    assert result["mutation_coverage"] == {"attempted": 14, "caught": 14, "rate": 1.0}
     assert result["safe_controls"] == {"attempted": 4, "passed": 4}
     assert result["authority"]["approval"] is False
 
@@ -677,6 +743,7 @@ def test_security_scan_detects_local_hollow_test_oracles(tmp_path, body):
         "expected = 3\n    alias = expected\n    assert alias == expected",
         "value = value\n    assert value == value",
         "result = 3\n    assert result == 3",
+        "x = 5\n    x = x + 1\n    assert x == 6",
         "assert result or True",
     ],
 )
@@ -708,6 +775,22 @@ def test_security_scan_preserves_real_assertions_and_exception_controls(tmp_path
     assert security_scan(tmp_path)["findings"] == []
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "argument = 5\n    result = compute(argument)\n    assert result == 6",
+        "cases = [(2, 4)]\n    for value, expected in cases:\n        assert compute(value) == expected",
+        "result = compute_value()\n    assert result == 6",
+        "result = 0\n    if condition:\n        result = compute_value()\n    assert result == 6",
+        "result = 0\n    try:\n        result = compute_value()\n    except ValueError:\n        result = fallback()\n    assert result == 6",
+        "result = 0\n    with resource() as result:\n        pass\n    assert result == 6",
+    ],
+)
+def test_security_scan_preserves_runtime_and_branch_rebound_oracles(tmp_path, body):
+    (tmp_path / "case.py").write_text("def test_behavior():\n    " + body + "\n")
+    assert security_scan(tmp_path)["findings"] == []
+
+
 def test_security_scan_does_not_use_a_constant_reassigned_after_assertion(tmp_path):
     (tmp_path / "case.py").write_text(
         "def test_behavior():\n"
@@ -717,7 +800,8 @@ def test_security_scan_does_not_use_a_constant_reassigned_after_assertion(tmp_pa
         "    assert result == 3\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["findings"] == []
+    result = security_scan(tmp_path)
+    assert result["findings"] == []
 
 
 @pytest.mark.parametrize(
@@ -773,6 +857,156 @@ def test_security_scan_accepts_local_helper_with_independent_assertion(tmp_path)
         encoding="utf-8",
     )
     assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_accepts_imported_helper_with_independent_assertion(tmp_path):
+    (tmp_path / "helpers.py").write_text(
+        "def assert_expected(actual, expected):\n    assert actual == expected\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "from helpers import assert_expected\n"
+        "def test_behavior():\n"
+        "    assert_expected(compute_value(), 4)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["findings"] == []
+    assert result["oracle_context"]["edge_count"] == 1
+    assert result["oracle_context"]["resolved_edges"][0]["kind"] == "assertion_helper"
+
+
+def test_security_scan_does_not_trust_imported_production_function(tmp_path):
+    (tmp_path / "library.py").write_text(
+        "def render(value):\n    assert value is not None\n    return value\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "from library import render\n"
+        "def test_behavior():\n"
+        "    render(compute_value())\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_does_not_trust_imported_noop_helper(tmp_path):
+    (tmp_path / "helpers.py").write_text(
+        "def assert_expected(actual, expected):\n    pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "from helpers import assert_expected\n"
+        "def test_behavior():\n"
+        "    assert_expected(compute_value(), 4)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_accepts_testcase_mixin_assertions(tmp_path):
+    (tmp_path / "helpers.py").write_text(
+        "class SharedMixin:\n"
+        "    def test_shared(self):\n"
+        "        self.assertEqual(compute_value(), 4)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "import unittest\n"
+        "from helpers import SharedMixin\n"
+        "class Case(unittest.TestCase, SharedMixin):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_accepts_aliased_indirect_testcase_mixin(tmp_path):
+    (tmp_path / "helpers.py").write_text(
+        "class SharedMixin:\n"
+        "    def test_shared(self):\n"
+        "        self.assertEqual(compute_value(), 4)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "import unittest as ut\n"
+        "from helpers import SharedMixin\n"
+        "class Base(ut.TestCase):\n"
+        "    pass\n"
+        "class Case(Base, SharedMixin):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_resolves_assertion_submodule_imports(tmp_path):
+    package = tmp_path / "checks"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "assertions.py").write_text(
+        "def assert_expected(actual, expected):\n    assert actual == expected\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "from checks import assertions\n"
+        "def test_behavior():\n"
+        "    assertions.assert_expected(compute_value(), 4)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_resolves_relative_assertion_submodule_imports(tmp_path):
+    package = tmp_path / "suite"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "assertions.py").write_text(
+        "def assert_expected(actual, expected):\n    assert actual == expected\n",
+        encoding="utf-8",
+    )
+    (package / "case.py").write_text(
+        "from . import assertions\n"
+        "def test_behavior():\n"
+        "    assertions.assert_expected(compute_value(), 4)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_does_not_trust_imported_weak_helper(tmp_path):
+    (tmp_path / "helpers.py").write_text(
+        "def assert_present(value):\n    assert value is not None\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "from helpers import assert_present\n"
+        "def test_behavior():\n"
+        "    assert_present(compute_value())\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_WEAK_TEST_ORACLE": 1}
+
+
+def test_security_scan_ignores_performance_benchmark_oracles(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "from pytest_codspeed import BenchmarkFixture\n"
+        "def test_speed(benchmark: BenchmarkFixture):\n"
+        "    benchmark(compute_value)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_does_not_skip_untyped_benchmark_named_security_test(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "def test_security_invariant(benchmark):\n"
+        "    benchmark(lambda: dangerous_operation())\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
 
 
 def test_security_scan_rejects_noop_assertion_named_helper(tmp_path):
@@ -1325,8 +1559,13 @@ def test_security_cli_applies_explicit_tenant_contract(tmp_path, capsys):
     (tmp_path / "app.py").write_text(
         "def fetch(record_id):\n    return store.fetch(record_id)\n"
     )
-    assert main(["audit", "security", "--root", str(tmp_path), "--json"]) == 0
-    capsys.readouterr()
+    assert main(["audit", "security", "--root", str(tmp_path), "--json"]) == 1
+    missing_contract = json.loads(capsys.readouterr().out)
+    assert missing_contract["state"] == "INCOMPLETE"
+    assert missing_contract["tenant_read_contract"]["configuration"]["state"] == (
+        "missing"
+    )
+    assert "Tenant isolation remains unassessed" in missing_contract["action_summary"]
     assert (
         main(
             [
@@ -1343,6 +1582,10 @@ def test_security_cli_applies_explicit_tenant_contract(tmp_path, capsys):
     )
     result = json.loads(capsys.readouterr().out)
     assert result["finding_counts"] == {"SECURITY_MISSING_TENANT_ISOLATION": 1}
+    (tmp_path / ".factory" / "tenant-read-contract.json").write_text(
+        json.dumps({"schema": "factory.tenant-read-contract.v1", "reads": []}),
+        encoding="utf-8",
+    )
     (tmp_path / "app.py").write_text(
         "def fetch(record_id, organization_scope):\n"
         "    return store.fetch(record_id, organization_scope)\n",
@@ -1365,6 +1608,88 @@ def test_security_cli_applies_explicit_tenant_contract(tmp_path, capsys):
         == 0
     )
     assert json.loads(capsys.readouterr().out)["state"] == "CLEAN"
+
+
+def test_security_cli_loads_project_contract_for_original_tenant_cases(
+    tmp_path, capsys
+):
+    factory_dir = tmp_path / ".factory"
+    factory_dir.mkdir()
+    contract_path = factory_dir / "tenant-read-contract.json"
+    contract_path.write_text(
+        json.dumps(
+            {
+                "schema": "factory.tenant-read-contract.v1",
+                "reads": [
+                    {
+                        "call": "store.fetch",
+                        "binding": "keyword:tenant_id:org_scope",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    source_path = tmp_path / "app.py"
+    source_path.write_text(
+        "def unscoped(record_id, org_scope):\n"
+        "    return store.fetch(record_id, tenant_id=record_id)\n\n"
+        "def scoped(record_id, org_scope):\n"
+        "    return store.fetch(record_id, tenant_id=org_scope)\n",
+        encoding="utf-8",
+    )
+
+    assert main(["audit", "security", "--root", str(tmp_path), "--json"]) == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["finding_counts"] == {"SECURITY_MISSING_TENANT_ISOLATION": 1}
+    assert result["tenant_read_contract"]["configuration"]["state"] == "loaded"
+    assert result["tenant_read_contract"]["configuration"]["sha256"]
+
+    source_path.write_text(
+        "def unscoped(record_id, org_scope):\n"
+        "    return store.fetch(record_id, tenant_id=org_scope)\n\n"
+        "def scoped(record_id, org_scope):\n"
+        "    return store.fetch(record_id, tenant_id=org_scope)\n",
+        encoding="utf-8",
+    )
+    assert main(["audit", "security", "--root", str(tmp_path), "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["state"] == "CLEAN"
+    assert result["tenant_read_contract"]["configuration"]["path"] == (
+        ".factory/tenant-read-contract.json"
+    )
+
+
+def test_tenant_read_contract_rejects_unknown_fields_and_duplicate_calls(tmp_path):
+    folder = tmp_path / ".factory"
+    folder.mkdir()
+    path = folder / "tenant-read-contract.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "factory.tenant-read-contract.v1",
+                "reads": [{"call": "store.fetch", "extra": True}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ReviewAuditError, match="Each tenant read requires"):
+        load_tenant_read_contract(tmp_path)
+
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "factory.tenant-read-contract.v1",
+                "reads": [
+                    {"call": "store.fetch"},
+                    {"call": "store.fetch"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ReviewAuditError, match="calls must be unique"):
+        load_tenant_read_contract(tmp_path)
 
 
 def test_security_evals_cli_reports_fail_closed_contract(tmp_path, capsys):
@@ -1514,3 +1839,140 @@ def test_rebinds_identity_distinguishes_local_data_from_guard_alias_changes(tmp_
     assert engine.rebinds_identity(ast.parse("store.delete = noop").body[0])
     assert not engine.rebinds_identity(ast.parse("count = 4").body[0])
     assert not engine.rebinds_identity(ast.parse("require_auth()").body[0])
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "errors = []; errors.append(compute()); assert errors == []",
+        "errors = []; alias = errors; alias.append(compute()); assert errors == []",
+        "errors = []\n    for item in inputs:\n        errors.append(item)\n    assert errors == []",
+        "errors = []; mutate(errors); assert errors == []",
+    ],
+)
+def test_mutable_test_state_is_not_folded_across_calls(tmp_path, body):
+    (tmp_path / "case.py").write_text("def test_behavior():\n    " + body + "\n")
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_unmodified_container_constant_assertion_remains_hollow(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "def test_behavior():\n    errors = []\n    assert errors == []\n"
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "before,argument,expected",
+    [
+        ("", "principal.tenant_id", False),
+        ("scope = principal.tenant_id", "scope", False),
+        ("alias = principal", "alias.tenant_id", False),
+        ("principal = other", "principal.tenant_id", True),
+        ("principal.tenant_id = other", "principal.tenant_id", True),
+        ("alias = principal\nalias.tenant_id = other", "principal.tenant_id", True),
+        ("if ready:\n    principal = other", "principal.tenant_id", True),
+        ("if ready:\n    principal.tenant_id = other", "principal.tenant_id", True),
+        ("setattr(principal, 'tenant_id', other)", "principal.tenant_id", True),
+        ("principal.tenant_id[0] = other", "principal.tenant_id", True),
+        (
+            "alias = principal\nsetattr(alias, 'tenant_id', other)",
+            "principal.tenant_id",
+            True,
+        ),
+        ("", "other.tenant_id", True),
+        ("", "principal.organization_id", True),
+        ("", "principal.tenant_id()", True),
+        ("", "principal[tenant_id]", True),
+    ],
+)
+def test_tenant_attribute_binding_rejects_rebinding_and_wrong_scope(
+    tmp_path, before, argument, expected
+):
+    body = "\n".join("    " + line for line in before.splitlines())
+    (tmp_path / "app.py").write_text(
+        f"def read(principal, other, ready):\n{body}\n    return store.fetch({argument})\n",
+        encoding="utf-8",
+    )
+    result = security_scan(
+        tmp_path,
+        tenant_read_calls=("store.fetch",),
+        tenant_read_bindings=("store.fetch=position:0:principal.tenant_id",),
+    )
+    assert bool(result["findings"]) is expected
+    assert all(
+        item["code"] == "SECURITY_MISSING_TENANT_ISOLATION"
+        for item in result["findings"]
+    )
+
+
+def test_scoped_tenant_contract_keeps_other_files_in_security_scan(tmp_path):
+    from factoryline.review_audits import load_tenant_read_contract
+
+    (tmp_path / "app.py").write_text(
+        "def read(principal):\n    return store.fetch(principal.tenant_id)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "other.py").write_text(
+        "def test_hollow():\n    assert True\n", encoding="utf-8"
+    )
+    path = tmp_path / ".factory"
+    path.mkdir()
+    (path / "tenant-read-contract.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.tenant-read-contract.v2",
+                "reads": [
+                    {
+                        "path": "app.py",
+                        "reads": [
+                            {
+                                "call": "store.fetch",
+                                "binding": "position:0:principal.tenant_id",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls, bindings, evidence = load_tenant_read_contract(tmp_path)
+    result = security_scan(
+        tmp_path,
+        tenant_read_calls=calls,
+        tenant_read_bindings=bindings,
+        tenant_read_scopes=evidence["scoped_reads"],
+    )
+    assert result["files_scanned"] == 2
+    assert [item["code"] for item in result["findings"]] == ["QUALITY_HOLLOW_TEST"]
+    assert evidence["state"] == "loaded"
+
+
+@pytest.mark.parametrize(
+    "path,call", [("missing.py", "store.fetch"), ("app.py", "store.typo")]
+)
+def test_scoped_tenant_contract_rejects_missing_source_or_read(tmp_path, path, call):
+    from factoryline.review_audits import load_tenant_read_contract
+
+    (tmp_path / "app.py").write_text(
+        "def read(tenant_id):\n    return store.fetch(tenant_id)\n", encoding="utf-8"
+    )
+    folder = tmp_path / ".factory"
+    folder.mkdir()
+    (folder / "tenant-read-contract.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.tenant-read-contract.v2",
+                "reads": [
+                    {
+                        "path": path,
+                        "reads": [{"call": call, "binding": "position:0:tenant_id"}],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ReviewAuditError, match="unique existing|absent from"):
+        load_tenant_read_contract(tmp_path)

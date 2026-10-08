@@ -37,9 +37,9 @@ def test_public_audit_condition_count_is_recomputed_from_source():
     spec.loader.exec_module(module)
     result = module.inventory()
     assert result["mandatory_audit_lanes"] == 6
-    assert result["lane_specific_rejection_conditions"] == 81
-    assert result["crosscutting_rejection_conditions"] == 62
-    assert result["total_coded_rejection_conditions"] == 143
+    assert result["lane_specific_rejection_conditions"] == 88
+    assert result["crosscutting_rejection_conditions"] == 68
+    assert result["total_coded_rejection_conditions"] == 156
     assert "E_POLICY" in result["crosscutting_condition_codes"]
     assert set(module.NON_CONDITION_MODULES) == {"runtime_audit_process.py"}
     assert not {
@@ -551,10 +551,10 @@ def test_hosted_release_and_editor_versions_are_declared():
         encoding="utf-8"
     )
 
-    assert project["version"] == "0.47.0"
+    assert project["version"] == "0.48.0"
     assert "hosted" in project["optional-dependencies"]
-    assert vscode["version"] == "1.1.1"
-    assert 'version = "1.1.0"' in gradle
+    assert vscode["version"] == "1.1.2"
+    assert 'version = "1.1.2"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
 

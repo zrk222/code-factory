@@ -1,5 +1,16 @@
 # Code Factory
 
+## Latest audit telemetry preview — October 8, 2026
+
+**Fixed:** bounded evaluator output validation across all six runtime lanes; malformed results stay incomplete. Shared imported assertion helpers and inherited test mixins are resolved by bounded static analysis.
+**Changed:** audit findings carry candidate-bound repair packets with reproduction, negative-control and separate specialty AI review requirements.
+**Added:** Graph Ops agent repair telemetry, evidence requirements, stop conditions and searchable individual test outcomes. Repair packets are consumed by the host agent; this view does not execute or approve repairs.
+
+![Graph Ops current audit and agent repair telemetry](docs/assets/marketplace/graph-ops-audit-telemetry-current.png)
+
+Actual local Graph Ops capture, October 8, 2026: 415 targeted tests passed. JUnit results are local and unbound; missing runtime receipts and coverage remain explicitly incomplete. Agent repair cards show candidate bindings, required evidence and separate specialty AI review requirements.
+
+
 Code Factory + ForgeLine (CF/FL) is a robust, local-first code-audit factory.
 It starts by collecting local software review evidence for the candidate change.
 It connects requirements, architecture checks, Python AST security analysis,
@@ -177,3 +188,7 @@ executed coverage nor a security certification.
 - [Release channels and publication evidence](docs/RELEASE_CHANNELS.md)
 - [Changelog](CHANGELOG.md)
 - [Documentation index](docs/DOCUMENTATION_INDEX.json)
+
+## Updated video preview
+
+[60-second CF/FL audit and repair walkthrough](https://youtu.be/covWDYhUqbM) — October 8, 2026. Silent captions, current Graph Ops captures, bounded scanner improvements and agent repair evidence requirements. The source render is in `videos/code-factory-proof-of-survival/remotion`.

@@ -1,0 +1,2 @@
+# Linux/amd64 CPython 3.11 wheel; hash verified against PyPI.
+zstandard==0.25.0 --hash=sha256:9300d02ea7c6506f00e627e287e0492a5eb0371ec1670ae852fefffa6164b072

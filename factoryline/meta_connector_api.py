@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from .hosted_identity import HttpxTransport, JwksCache, get_jwks
+from . import __version__
 from .pr_assurance import PRAssuranceError, verify_oidc_token
 
 
@@ -1085,7 +1086,7 @@ class MetaConnectorAPI:
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {
                     "name": "code-factory-audit-evidence",
-                    "version": "0.47.0",
+                    "version": __version__,
                 },
             }
         if rpc_method == "ping":

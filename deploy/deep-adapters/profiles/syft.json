@@ -1,0 +1,15 @@
+{
+  "schema": "factory.native-profile.v1",
+  "engine": "syft",
+  "mode": "native",
+  "tool_version": "1.33.0",
+  "ruleset_sha256": "cefadcf11bd9cce9e3ec5248bb1538a84e33d519486c1b4523ac155c9b5f5033",
+  "commands": [
+    {
+      "argv": ["/usr/local/bin/syft", "dir:{source}", "--output", "syft-json={report}"],
+      "accepted_exit_codes": [0]
+    }
+  ],
+  "version_argv": ["/usr/local/bin/syft", "version", "--output", "json"],
+  "report_format": "syft-json"
+}

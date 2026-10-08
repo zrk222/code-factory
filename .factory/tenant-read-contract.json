@@ -1,0 +1,48 @@
+{
+  "schema": "factory.tenant-read-contract.v2",
+  "reads": [
+    {
+      "path": "factoryline/control_api.py",
+      "reads": [
+        {
+          "call": "self.store.get",
+          "binding": "position:1:principal.tenant_id"
+        },
+        {
+          "call": "self.store.list",
+          "binding": "position:1:principal.tenant_id"
+        },
+        {
+          "call": "self.store.verify_audit",
+          "binding": "position:1:principal.tenant_id"
+        }
+      ]
+    },
+    {
+      "path": "factoryline/cli_controls.py",
+      "reads": [
+        {
+          "call": "store.get",
+          "binding": "position:1:args.tenant"
+        },
+        {
+          "call": "store.list",
+          "binding": "position:1:args.tenant"
+        },
+        {
+          "call": "store.verify_audit",
+          "binding": "position:1:args.tenant"
+        }
+      ]
+    },
+    {
+      "path": "factoryline/hosted_api.py",
+      "reads": [
+        {
+          "call": "self.store.claim_outbox",
+          "binding": "position:0:tenant_id"
+        }
+      ]
+    }
+  ]
+}

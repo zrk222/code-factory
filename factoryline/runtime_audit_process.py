@@ -19,6 +19,9 @@ def _facts() -> dict:
     return {
         "exit_code": None,
         "timed_out": False,
+        "timeout_seconds": None,
+        "duration_ms": 0,
+        "termination_reason": "not_started",
         "launch_error": False,
         "output_limit_exceeded": False,
         "cleanup_confirmed": False,
@@ -148,16 +151,22 @@ def _wait_for_exit_or_limit(
     timeout_seconds: int,
     overflow: threading.Event,
     cancelled: threading.Event | None = None,
+    *,
+    deadline: float | None = None,
 ) -> bool:
-    deadline = time.monotonic() + timeout_seconds
-    while (
-        child.poll() is None
-        and time.monotonic() < deadline
-        and not overflow.is_set()
-        and not (cancelled is not None and cancelled.is_set())
-    ):
-        time.sleep(0.01)
-    return child.poll() is None and time.monotonic() >= deadline
+    deadline = deadline if deadline is not None else time.monotonic() + timeout_seconds
+    while not overflow.is_set() and not (cancelled is not None and cancelled.is_set()):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return True
+        try:
+            child.wait(timeout=min(0.01, remaining))
+            # A process may become observable as exited just after wait's
+            # timeout boundary. Keep the signed deadline authoritative.
+            return time.monotonic() > deadline
+        except subprocess.TimeoutExpired:
+            continue
+    return False
 
 
 def _join_stream_readers(
@@ -224,20 +233,35 @@ def run_bounded_command(
 ) -> dict:
     """Hash streams without retaining logs; terminate on timeout/output overflow."""
     facts = _facts()
+    started = time.monotonic()
+    facts["timeout_seconds"] = timeout_seconds
     capture = stdout_path.open("xb") if stdout_path is not None else None
+    # Start the budget before process creation and stream setup. Those steps
+    # must not create unmeasured runtime outside the signed timeout.
+    execution_started = time.monotonic()
+    deadline = execution_started + timeout_seconds
     try:
         child = _launch(argv, cwd, _environment(scratch))
     except OSError:
         if capture is not None:
             capture.close()
-        return {**facts, "launch_error": True}
+        facts.update(
+            launch_error=True,
+            termination_reason="launch_error",
+            duration_ms=max(0, round((time.monotonic() - started) * 1000)),
+        )
+        return facts
     overflow = threading.Event()
     streams: dict[str, tuple[str, int]] = {}
     threads = []
+    execution_duration_ms = 0
     try:
         threads = _start_stream_readers(child, overflow, streams, capture)
         facts["timed_out"] = _wait_for_exit_or_limit(
-            child, timeout_seconds, overflow, cancelled
+            child, timeout_seconds, overflow, cancelled, deadline=deadline
+        )
+        execution_duration_ms = max(
+            0, round((time.monotonic() - execution_started) * 1000)
         )
         facts["output_limit_exceeded"] = overflow.is_set()
         cleanup_confirmed, streams_closed = _await_cleanup(child, threads)
@@ -256,4 +280,14 @@ def run_bounded_command(
     facts["exit_code"] = child.returncode
     _stream_facts(facts, streams)
     facts["output_limit_exceeded"] = overflow.is_set()
+    facts["duration_ms"] = execution_duration_ms
+    facts["termination_reason"] = (
+        "cancelled"
+        if facts.get("cancelled")
+        else "timeout"
+        if facts["timed_out"]
+        else "output_limit"
+        if facts["output_limit_exceeded"]
+        else "process_exit"
+    )
     return facts

@@ -1,0 +1,32 @@
+{
+  "schema": "factory.native-profile.v1",
+  "engine": "runtime",
+  "mode": "coverage.py+pytest",
+  "tool_version": "coverage.py 7.16.1; pytest 9.1.1",
+  "ruleset_sha256": "c4dc09887f975e9f21dd6c911d8b4e581a4c3e187aac26f376eac6fc36bec1dd",
+  "commands": [
+    {
+      "argv": [
+        "/usr/local/bin/python",
+        "-I",
+        "-c",
+        "exec('import sys,coverage,pytest\\ncov=coverage.Coverage(branch=True,data_file=sys.argv[2],config_file=False,source=[sys.argv[1]])\\nsys.path.insert(0,sys.argv[1])\\ncov.start()\\ntry:\\n    code=pytest.main([sys.argv[1]+\"/tests\",\"--junitxml=\"+sys.argv[4],\"-o\",\"junit_family=xunit1\",\"-p\",\"no:cacheprovider\"])\\nfinally:\\n    cov.stop()\\n    cov.save()\\n    cov.json_report(outfile=sys.argv[3])\\nsys.exit(code)\\n')",
+        "{source}",
+        "{scratch}/.coverage",
+        "{report}",
+        "{output}/runtime.xml"
+      ],
+      "accepted_exit_codes": [
+        0,
+        1
+      ]
+    }
+  ],
+  "version_argv": [
+    "/usr/local/bin/python",
+    "-I",
+    "-c",
+    "import coverage,pytest;print(f'coverage.py {coverage.__version__}; pytest {pytest.__version__}')"
+  ],
+  "report_format": "coverage-json"
+}

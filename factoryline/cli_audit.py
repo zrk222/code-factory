@@ -51,6 +51,11 @@ def add_parser(sub: Any) -> None:
         ),
     )
     code_audit.add_argument(
+        "--tenant-contract",
+        default=".factory/tenant-read-contract.json",
+        help="workspace-relative tenant-read contract JSON (optional; repeatable CLI declarations supplement it)",
+    )
+    code_audit.add_argument(
         "--base", default="origin/main", help="Git base for dated-evidence review"
     )
     code_audit.add_argument(
@@ -124,14 +129,41 @@ def _run_evals(args: Any) -> int:
 
 
 def _run_security(args: Any) -> int:
-    from .review_audits import ReviewAuditError, security_scan
+    from .review_audits import (
+        ReviewAuditError,
+        _seal_security_scan,
+        load_tenant_read_contract,
+        security_scan,
+    )
 
     try:
+        contract_calls, contract_bindings, contract_evidence = (
+            load_tenant_read_contract(Path(args.root), args.tenant_contract)
+        )
+        calls = tuple(
+            dict.fromkeys([*contract_calls, *getattr(args, "tenant_read_call", [])])
+        )
+        bindings = tuple(
+            dict.fromkeys(
+                [*contract_bindings, *getattr(args, "tenant_read_binding", [])]
+            )
+        )
         result = security_scan(
             Path(args.root),
-            tenant_read_calls=tuple(getattr(args, "tenant_read_call", [])),
-            tenant_read_bindings=tuple(getattr(args, "tenant_read_binding", [])),
+            tenant_read_calls=calls,
+            tenant_read_bindings=bindings,
+            tenant_read_scopes=contract_evidence.get("scoped_reads"),
         )
+        result["tenant_read_contract"]["configuration"] = contract_evidence
+        if contract_evidence["state"] == "missing":
+            if result["state"] == "CLEAN":
+                result["state"] = "INCOMPLETE"
+            result["action_summary"] += (
+                " Tenant isolation remains unassessed for custom reads; add "
+                "`.factory/tenant-read-contract.json` with every tenant-scoped "
+                "read and its binding, or explicitly declare an empty read set."
+            )
+        result = _seal_security_scan(result)
     except ReviewAuditError as error:
         print(json.dumps({"state": "INVALID", "message": str(error)}), file=sys.stderr)
         return 2
