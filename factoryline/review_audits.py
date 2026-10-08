@@ -709,11 +709,14 @@ def _security_aliases(nodes: list[ast.AST]) -> dict[str, str]:
         if isinstance(node, ast.Import):
             for item in node.names:
                 aliases[item.asname or item.name.split(".")[0]] = item.name
-        elif isinstance(node, ast.ImportFrom) and node.module:
+        elif isinstance(node, ast.ImportFrom):
             for item in node.names:
                 if item.name == "*":
                     continue
-                aliases[item.asname or item.name] = f"{node.module}.{item.name}"
+                module = node.module or item.name
+                aliases[item.asname or item.name] = (
+                    f"{module}.{item.name}" if node.module else item.name
+                )
     return aliases
 
 
@@ -1343,6 +1346,19 @@ _UNITTEST_ASSERTIONS = {
     "assertWarns",
     "assertWarnsRegex",
 }
+_ORACLE_HELPER_PREFIXES = (
+    "assert",
+    "check",
+    "ensure",
+    "expect",
+    "require",
+    "validate",
+    "verify",
+)
+
+
+def _is_oracle_helper_name(name: str) -> bool:
+    return name.lower().startswith(_ORACLE_HELPER_PREFIXES)
 
 
 def _assertion_call(
@@ -1369,15 +1385,23 @@ def _assertion_call(
     )
 
 
-def _unittest_test_methods(tree: ast.Module, aliases: dict[str, str]) -> set[int]:
+def _unittest_testcase_classes(
+    tree: ast.Module, aliases: dict[str, str]
+) -> tuple[dict[str, ast.ClassDef], dict[str, tuple[str, ...]], set[str]]:
     classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
     base_names: dict[str, tuple[str, ...]] = {}
     for name, node in classes.items():
         normalized = []
         for base in node.bases:
             base_name = _name(base)
-            head, *tail = base_name.split(".")
-            normalized.append(".".join([aliases.get(head, head), *tail]))
+            # ``import unittest.mock`` binds the package name ``unittest`` to
+            # the submodule in the generic alias table, but a base written as
+            # ``unittest.TestCase`` still refers to the package's TestCase.
+            if base_name.startswith("unittest."):
+                normalized.append(base_name)
+            else:
+                head, *tail = base_name.split(".")
+                normalized.append(".".join([aliases.get(head, head), *tail]))
         base_names[name] = tuple(normalized)
 
     def derives_from_testcase(name: str, seen: set[str] | None = None) -> bool:
@@ -1392,13 +1416,45 @@ def _unittest_test_methods(tree: ast.Module, aliases: dict[str, str]) -> set[int
                 return True
         return False
 
-    return {
+    testcase_classes = {
+        name for name in classes if derives_from_testcase(name)
+    }
+    return classes, base_names, testcase_classes
+
+
+def _unittest_test_methods(tree: ast.Module, aliases: dict[str, str]) -> set[int]:
+    classes, base_names, testcase_classes = _unittest_testcase_classes(tree, aliases)
+    methods = {
         id(method)
         for name, class_node in classes.items()
-        if derives_from_testcase(name)
+        if name in testcase_classes
         for method in class_node.body
         if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
+    # A common unittest layout puts the actual test methods in a mixin and
+    # combines that mixin with TestCase in a thin concrete class. Treat those
+    # inherited methods as unittest methods too; otherwise every self.assert*
+    # call in the mixin is incorrectly reported as a hollow test.
+    for name, class_node in classes.items():
+        if name not in testcase_classes:
+            continue
+        pending = list(base for base in base_names.get(name, ()) if base in classes)
+        seen: set[str] = set()
+        while pending:
+            base = pending.pop()
+            if base in seen:
+                continue
+            seen.add(base)
+            base_node = classes[base]
+            methods.update(
+                id(method)
+                for method in base_node.body
+                if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+            )
+            pending.extend(
+                parent for parent in base_names.get(base, ()) if parent in classes
+            )
+    return methods
 
 
 def _unconditionally_skipped_test(node: ast.AST) -> bool:
@@ -1414,12 +1470,58 @@ def _unconditionally_skipped_test(node: ast.AST) -> bool:
     return False
 
 
+def _performance_benchmark_test(
+    node: ast.AST, aliases: dict[str, str] | None = None
+) -> bool:
+    """Exclude only explicitly typed or marked benchmark bodies."""
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    if not node.name.startswith("test_"):
+        return False
+    benchmark_parameter = next(
+        (
+            argument
+            for argument in (
+                *node.args.posonlyargs,
+                *node.args.args,
+                *node.args.kwonlyargs,
+            )
+            if argument.arg == "benchmark"
+        ),
+        None,
+    )
+    if benchmark_parameter is None:
+        return False
+    typed_fixture = "BenchmarkFixture" in _name(benchmark_parameter.annotation)
+    marked_fixture = any(
+        _name(decorator).endswith(".benchmark")
+        for decorator in node.decorator_list
+    )
+    imported_fixture = any(
+        value.startswith("pytest_codspeed.") or value.startswith("pytest_benchmark.")
+        for value in (aliases or {}).values()
+    )
+    return (typed_fixture or marked_fixture or imported_fixture) and any(
+        isinstance(child, ast.Call)
+        and _call_name(child).split(".", 1)[0] == "benchmark"
+        for statement in node.body
+        for child in _body_nodes(statement)
+    )
+
+
 def _meaningful_local_assertion(
-    node: ast.AST, aliases: dict[str, str], helper_names: set[str] | None = None
+    node: ast.AST,
+    aliases: dict[str, str],
+    helper_names: set[str] | None = None,
+    *,
+    unittest_context: bool = False,
 ) -> bool:
     nodes = _test_oracle_body_nodes(node, aliases)
     vacuous = _direct_test_vacuous_assertions(node)
-    return any(_assertion_call(child, aliases, helper_names) for child in nodes) or any(
+    return any(
+        _assertion_call(child, aliases, helper_names, unittest_context=unittest_context)
+        for child in nodes
+    ) or any(
         isinstance(child, ast.Assert)
         and id(child) not in vacuous
         and not _vacuous_assertion(child.test)
@@ -1427,7 +1529,33 @@ def _meaningful_local_assertion(
     )
 
 
-def _local_assertion_helpers(tree: ast.Module, aliases: dict[str, str]) -> set[str]:
+def _strong_local_assertion(
+    node: ast.AST,
+    aliases: dict[str, str],
+    helper_names: set[str] | None = None,
+    *,
+    unittest_context: bool = False,
+) -> bool:
+    """Return true only when a helper carries a non-weak oracle."""
+    nodes = _test_oracle_body_nodes(node, aliases)
+    vacuous = _direct_test_vacuous_assertions(node)
+    return any(
+        isinstance(child, ast.Assert)
+        and id(child) not in vacuous
+        and not _vacuous_assertion(child.test)
+        and _weak_assertion_reason(child.test, aliases) is None
+        for child in nodes
+    ) or any(
+        isinstance(child, ast.Call)
+        and _assertion_call(child, aliases, helper_names, unittest_context=unittest_context)
+        and _weak_assertion_reason(child, aliases) is None
+        for child in nodes
+    )
+
+
+def _local_assertion_helpers(
+    tree: ast.Module, aliases: dict[str, str], *, unittest_context: bool = False
+) -> set[str]:
     functions = {
         node.name: node
         for node in tree.body
@@ -1440,11 +1568,302 @@ def _local_assertion_helpers(tree: ast.Module, aliases: dict[str, str]) -> set[s
         changed = False
         for name, node in functions.items():
             if name not in helpers and _meaningful_local_assertion(
-                node, _scope_security_aliases(aliases, node), helpers
+                node,
+                _scope_security_aliases(aliases, node),
+                helpers,
+                unittest_context=unittest_context,
+            ) and _strong_local_assertion(
+                node,
+                _scope_security_aliases(aliases, node),
+                helpers,
+                unittest_context=unittest_context,
             ):
                 helpers.add(name)
                 changed = True
     return helpers
+
+
+def _local_weak_assertion_helpers(
+    tree: ast.Module, aliases: dict[str, str], *, unittest_context: bool = False
+) -> set[str]:
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and not node.name.startswith("test_")
+    }
+    strong = _local_assertion_helpers(
+        tree, aliases, unittest_context=unittest_context
+    )
+    return {
+        name
+        for name, node in functions.items()
+        if name not in strong
+        and _meaningful_local_assertion(
+            node,
+            _scope_security_aliases(aliases, node),
+            strong,
+            unittest_context=unittest_context,
+        )
+    }
+
+
+def _class_oracle_helpers(tree: ast.Module, aliases: dict, methods: set[int]) -> dict:
+    result = {}
+    for cls in (item for item in tree.body if isinstance(item, ast.ClassDef)):
+        functions = [
+            item
+            for item in cls.body
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+        context = any(id(item) in methods for item in functions)
+        helpers = _local_assertion_helpers(
+            ast.Module(body=functions, type_ignores=[]),
+            aliases,
+            unittest_context=context,
+        )
+        names = {"self." + name for name in helpers}
+        for method in functions:
+            result[id(method)] = names
+    return result
+
+
+def _oracle_import_source(
+    root: Path,
+    path: Path,
+    node: ast.AST,
+    module: str,
+    eligible: set[Path],
+    imported: str | None = None,
+) -> Path | None:
+    root_abs = root.resolve()
+    eligible_abs = {candidate.resolve(): candidate for candidate in eligible}
+    parts = module.split(".") if module else []
+    if isinstance(node, ast.ImportFrom) and node.level:
+        base = path.parent
+        for _ in range(node.level - 1):
+            base = base.parent
+        bases = [base]
+    else:
+        bases = [path.parent, root, root / "src"]
+    child_matches = set()
+    package_matches = set()
+    for base in bases:
+        target = base.joinpath(*parts)
+        child_choices = []
+        if isinstance(node, ast.ImportFrom) and imported and imported != "*":
+            child = target / imported
+            child_choices.extend([child.with_suffix(".py"), child / "__init__.py"])
+        package_choices = (
+            [target.with_suffix(".py"), target / "__init__.py"]
+            if parts
+            else [target / "__init__.py"]
+        )
+        for choice in child_choices + package_choices:
+            resolved = choice.resolve()
+            if (
+                resolved.is_relative_to(root_abs)
+                and resolved in eligible_abs
+                and not choice.is_symlink()
+            ):
+                target_set = child_matches if choice in child_choices else package_matches
+                target_set.add(eligible_abs[resolved])
+    if child_matches:
+        return next(iter(child_matches)) if len(child_matches) == 1 else None
+    return next(iter(package_matches)) if len(package_matches) == 1 else None
+
+
+def _oracle_imports(
+    root: Path, path: Path, tree: ast.Module, eligible: set[Path]
+) -> dict:
+    imports = {}
+    for node in tree.body:
+        if not isinstance(node, (ast.ImportFrom, ast.Import)):
+            continue
+        for item in node.names:
+            if item.name == "*":
+                continue
+            module = (
+                (node.module or "") if isinstance(node, ast.ImportFrom) else item.name
+            )
+            source = _oracle_import_source(
+                root,
+                path,
+                node,
+                module,
+                eligible,
+                item.name if isinstance(node, ast.ImportFrom) else None,
+            )
+            if source is None:
+                continue
+            alias = item.asname or item.name
+            imports[alias] = (
+                source,
+                item.name if isinstance(node, ast.ImportFrom) else None,
+            )
+    return imports
+
+
+def _oracle_snapshots(root: Path, files: list[Path]) -> tuple[dict, list]:
+    snapshots, bindings = {}, []
+    for path in files:
+        try:
+            if path.is_symlink() or path.stat().st_size > MAX_BYTES:
+                continue
+            data = path.read_bytes()
+            if len(data) > MAX_BYTES:
+                continue
+            snapshots[path] = ast.parse(data)
+            bindings.append(
+                {
+                    "path": path.relative_to(root).as_posix(),
+                    "sha256": sha256(data).hexdigest(),
+                    "bytes": len(data),
+                }
+            )
+        except (OSError, SyntaxError, UnicodeError):
+            continue
+    return snapshots, bindings
+
+
+def _imported_oracle_helpers(imports: dict, snapshots: dict, aliases: dict) -> set[str]:
+    helpers = set()
+    for local, (source, symbol) in imports.items():
+        tree = snapshots.get(source)
+        if tree is None:
+            continue
+        names = _local_assertion_helpers(
+            tree, _scope_security_aliases(_module_security_aliases(tree), tree)
+        )
+        names = {name for name in names if _is_oracle_helper_name(name)}
+        exported_assertions = {
+            name
+            for name, target in _module_security_aliases(tree).items()
+            if target in {"pytest.raises", "pytest.warns"}
+        }
+        names.update(exported_assertions)
+        if symbol in names:
+            helpers.add(aliases.get(local, local))
+        elif symbol is None or symbol not in names:
+            helpers.update(aliases.get(local, local) + "." + name for name in names)
+    return helpers
+
+
+def _imported_weak_oracle_helpers(
+    imports: dict, snapshots: dict, aliases: dict
+) -> set[str]:
+    helpers = set()
+    for local, (source, symbol) in imports.items():
+        tree = snapshots.get(source)
+        if tree is None:
+            continue
+        module_aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
+        names = {
+            name
+            for name in _local_weak_assertion_helpers(tree, module_aliases)
+            if _is_oracle_helper_name(name)
+        }
+        if symbol in names:
+            helpers.add(aliases.get(local, local))
+        elif symbol is None or symbol not in names:
+            helpers.update(aliases.get(local, local) + "." + name for name in names)
+    return helpers
+
+
+def _imported_unittest_mixins(tree: ast.Module, aliases: dict, imports: dict) -> list:
+    _classes, base_names, testcase_classes = _unittest_testcase_classes(tree, aliases)
+    references = []
+    for cls in (item for item in tree.body if isinstance(item, ast.ClassDef)):
+        if cls.name not in testcase_classes:
+            continue
+        for base_name in base_names.get(cls.name, ()):
+            reference = imports.get(base_name) or imports.get(
+                base_name.rsplit(".", 1)[-1]
+            )
+            if reference and reference[1]:
+                references.append(reference)
+    return references
+
+
+def _project_oracle_context(root: Path, files: list[Path]) -> tuple[dict, list, list]:
+    """Resolve one local import hop without executing repository code; bind every read."""
+    snapshots, bindings = _oracle_snapshots(root, files)
+    contexts = {
+        path: {"helpers": set(), "weak_helpers": set(), "mixins": set()}
+        for path in snapshots
+    }
+    edges = set()
+    for path, tree in snapshots.items():
+        aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
+        imports = _oracle_imports(root, path, tree, set(files))
+        contexts[path]["helpers"] = _imported_oracle_helpers(imports, snapshots, aliases)
+        contexts[path]["weak_helpers"] = _imported_weak_oracle_helpers(
+            imports, snapshots, aliases
+        )
+        caller = path.relative_to(root).as_posix()
+        for local, (source, symbol) in imports.items():
+            target = source.relative_to(root).as_posix()
+            target_tree = snapshots.get(source)
+            if target_tree is None:
+                continue
+            target_aliases = _scope_security_aliases(
+                _module_security_aliases(target_tree), target_tree
+            )
+            strong_names = {
+                name
+                for name in _local_assertion_helpers(target_tree, target_aliases)
+                if _is_oracle_helper_name(name)
+            }
+            strong_names.update(
+                name
+                for name, target in _module_security_aliases(target_tree).items()
+                if target in {"pytest.raises", "pytest.warns"}
+            )
+            weak_names = {
+                name
+                for name in _local_weak_assertion_helpers(target_tree, target_aliases)
+                if _is_oracle_helper_name(name)
+            }
+            selected = (
+                [symbol]
+                if symbol in strong_names
+                else [f"{local}.{name}" for name in strong_names]
+                if symbol is None or symbol not in strong_names
+                else []
+            )
+            for resolved_symbol in selected:
+                edges.add((caller, target, "assertion_helper", resolved_symbol, "strong"))
+            selected_weak = (
+                [symbol]
+                if symbol in weak_names
+                else [f"{local}.{name}" for name in weak_names]
+                if symbol is None or symbol not in weak_names
+                else []
+            )
+            for resolved_symbol in selected_weak:
+                edges.add((caller, target, "assertion_helper", resolved_symbol, "weak"))
+        for source, symbol in _imported_unittest_mixins(tree, aliases, imports):
+            if source in contexts:
+                contexts[source]["mixins"].add(symbol)
+                edges.add(
+                    (
+                        path.relative_to(root).as_posix(),
+                        source.relative_to(root).as_posix(),
+                        "unittest_mixin",
+                        symbol,
+                        "trusted",
+                    )
+                )
+    return contexts, bindings, [
+        {
+            "caller": caller,
+            "target": target,
+            "kind": kind,
+            "symbol": symbol,
+            "strength": strength,
+        }
+        for caller, target, kind, symbol, strength in sorted(edges)
+    ]
 
 
 def _weak_assertion_reason(
@@ -1497,12 +1916,13 @@ def _weak_test_oracle_finding(
     helper_names: set[str] | None = None,
     *,
     unittest_context: bool = False,
+    weak_helper_names: set[str] | None = None,
 ) -> dict[str, Any] | None:
     if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return None
     if not node.name.startswith("test_"):
         return None
-    if _unconditionally_skipped_test(node):
+    if _unconditionally_skipped_test(node) or _performance_benchmark_test(node, aliases):
         return None
     nodes = _test_oracle_body_nodes(node, aliases)
     vacuous = _direct_test_vacuous_assertions(node)
@@ -1518,6 +1938,12 @@ def _weak_test_oracle_finding(
         and _assertion_call(
             child, aliases, helper_names, unittest_context=unittest_context
         )
+    )
+    weak.extend(
+        (child, "delegated helper exposes only a weak assertion")
+        for child in nodes
+        if isinstance(child, ast.Call)
+        and _normalized_call_name(child, aliases) in (weak_helper_names or set())
     )
     weak = [(child, reason) for child, reason in weak if reason]
     strong_assertions = [
@@ -1563,7 +1989,7 @@ def _hollow_test_finding(
         return None
     if not node.name.startswith("test_"):
         return None
-    if _unconditionally_skipped_test(node):
+    if _unconditionally_skipped_test(node) or _performance_benchmark_test(node, aliases):
         return None
     nodes = _test_oracle_body_nodes(node, aliases)
     vacuous = _direct_test_vacuous_assertions(node)
@@ -2138,10 +2564,14 @@ def _test_oracle_findings(
     aliases: dict[str, str],
     helper_names: set[str],
     unittest_methods: set[int],
+    class_helpers: dict[int, set[str]] | None = None,
+    weak_helper_names: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     for node in nodes:
         is_unittest_method = id(node) in unittest_methods
+        helpers = helper_names | (class_helpers or {}).get(id(node), set())
+        hollow_helpers = helpers | (weak_helper_names or set())
         scoped_aliases = (
             _scope_security_aliases(aliases, node)
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -2152,7 +2582,7 @@ def _test_oracle_findings(
             relative,
             node,
             scoped_aliases,
-            helper_names,
+            hollow_helpers,
             unittest_context=is_unittest_method,
         )
         if hollow is not None:
@@ -2161,8 +2591,9 @@ def _test_oracle_findings(
             relative,
             node,
             scoped_aliases,
-            helper_names,
+            helpers,
             unittest_context=is_unittest_method,
+            weak_helper_names=weak_helper_names,
         )
         if weak is not None:
             findings.append(weak)
@@ -2190,13 +2621,24 @@ def _security_scan_tree(
     tree: ast.AST,
     tenant_read_calls: tuple[str, ...] = (),
     tenant_read_bindings: dict[str, tuple[str, ...]] | None = None,
+    oracle_context: dict | None = None,
 ) -> list[dict[str, Any]]:
     relative = path.relative_to(root).as_posix()
     nodes = list(ast.walk(tree))
     aliases = _security_aliases(nodes)
     oracle_aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
-    helper_names = _local_assertion_helpers(tree, oracle_aliases)
+    context = oracle_context or {}
+    helper_names = _local_assertion_helpers(tree, oracle_aliases) | set(
+        context.get("helpers", ())
+    )
+    weak_helper_names = _local_weak_assertion_helpers(tree, oracle_aliases) | set(
+        context.get("weak_helpers", ())
+    )
     unittest_methods = _unittest_test_methods(tree, oracle_aliases)
+    for cls in tree.body:
+        if isinstance(cls, ast.ClassDef) and cls.name in context.get("mixins", ()):
+            unittest_methods.update(id(method) for method in cls.body)
+    class_helpers = _class_oracle_helpers(tree, oracle_aliases, unittest_methods)
     findings = _tenant_read_findings(
         relative, nodes, tenant_read_calls, aliases, tenant_read_bindings or {}
     )
@@ -2207,7 +2649,13 @@ def _security_scan_tree(
     )
     findings.extend(
         _test_oracle_findings(
-            relative, nodes, oracle_aliases, helper_names, unittest_methods
+            relative,
+            nodes,
+            oracle_aliases,
+            helper_names,
+            unittest_methods,
+            class_helpers,
+            weak_helper_names,
         )
     )
     for node in nodes:
@@ -2220,6 +2668,7 @@ def _security_scan_file(
     path: Path,
     tenant_read_calls: tuple[str, ...] = (),
     tenant_read_bindings: dict[str, tuple[str, ...]] | None = None,
+    oracle_context: dict | None = None,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]], str]:
     """Scan one bounded Python source and return its byte binding and findings."""
     relative = path.relative_to(workspace).as_posix()
@@ -2298,7 +2747,12 @@ def _security_scan_file(
     return (
         binding,
         _security_scan_tree(
-            workspace, path, tree, tenant_read_calls, tenant_read_bindings
+            workspace,
+            path,
+            tree,
+            tenant_read_calls,
+            tenant_read_bindings,
+            oracle_context,
         ),
         "audited",
     )
@@ -2421,30 +2875,37 @@ def _scan_security_sources(
     tenant_read_calls: tuple[str, ...],
     tenant_read_bindings: dict[str, tuple[str, ...]],
     scoped_reads: dict | None = None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int], dict[str, int]]:
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    dict[str, int],
+    dict[str, int],
+    list[dict[str, Any]],
+]:
     findings: list[dict[str, Any]] = []
     bindings: list[dict[str, Any]] = []
     outcomes = {"syntax_error": 0, "unreadable": 0, "too_large": 0, "audited": 0}
+    contexts, context_bindings, oracle_edges = _project_oracle_context(workspace, files)
     for path in files:
         scope = (scoped_reads or {}).get(path.relative_to(workspace).as_posix(), {})
         calls = tuple(sorted(set(tenant_read_calls) | set(scope.get("calls", ()))))
         scoped_bindings = {**scope.get("bindings", {}), **tenant_read_bindings}
         binding, file_findings, outcome = _security_scan_file(
-            workspace, path, calls, scoped_bindings
+            workspace, path, calls, scoped_bindings, contexts.get(path, {})
         )
         if binding is not None:
             bindings.append(binding)
         findings.extend(file_findings)
         if outcome in outcomes:
             outcomes[outcome] += 1
-    _verify_security_bindings(workspace, bindings)
+    _verify_security_bindings(workspace, context_bindings + bindings)
     findings.sort(
         key=lambda item: (item["path"], item["line"], item["code"], item["column"])
     )
     counts: dict[str, int] = {}
     for finding in findings:
         counts[finding["code"]] = counts.get(finding["code"], 0) + 1
-    return bindings, findings, counts, outcomes
+    return bindings, findings, counts, outcomes, oracle_edges
 
 
 def _security_scan_state(files: list[Path], findings: list[dict[str, Any]]) -> str:
@@ -2508,6 +2969,7 @@ def _security_scan_report(
     outcomes: dict[str, int],
     tenant_read_calls: tuple[str, ...],
     tenant_read_bindings: dict[str, tuple[str, ...]],
+    oracle_edges: list[dict[str, Any]],
 ) -> dict[str, Any]:
     state = _security_scan_state(files, findings)
     core: dict[str, Any] = {
@@ -2522,6 +2984,11 @@ def _security_scan_report(
         "tenant_read_contract": _tenant_read_contract(
             tenant_read_calls, tenant_read_bindings
         ),
+        "oracle_context": {
+            "mode": "one_local_import_hop_ast_only",
+            "resolved_edges": oracle_edges,
+            "edge_count": len(oracle_edges),
+        },
         "sources": bindings,
         "findings": findings,
         "finding_counts": dict(sorted(counts.items())),
@@ -2585,7 +3052,7 @@ def security_scan(
         return _blocked_security_scan_report(
             workspace, files, tenant_read_calls, tenant_read_bindings
         )
-    bindings, findings, counts, outcomes = _scan_security_sources(
+    bindings, findings, counts, outcomes, oracle_edges = _scan_security_sources(
         workspace, files, tenant_read_calls, tenant_read_bindings, tenant_read_scopes
     )
     return _security_scan_report(
@@ -2596,6 +3063,7 @@ def security_scan(
         outcomes,
         tenant_read_calls,
         tenant_read_bindings,
+        oracle_edges,
     )
 
 

@@ -741,7 +741,8 @@ def test_security_scan_does_not_use_a_constant_reassigned_after_assertion(tmp_pa
         "    assert result == 3\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["findings"] == []
+    result = security_scan(tmp_path)
+    assert result["findings"] == []
 
 
 @pytest.mark.parametrize(
@@ -797,6 +798,163 @@ def test_security_scan_accepts_local_helper_with_independent_assertion(tmp_path)
         encoding="utf-8",
     )
     assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_accepts_imported_helper_with_independent_assertion(tmp_path):
+    (tmp_path / "helpers.py").write_text(
+        "def assert_expected(actual, expected):\n"
+        "    assert actual == expected\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "from helpers import assert_expected\n"
+        "def test_behavior():\n"
+        "    assert_expected(compute_value(), 4)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["findings"] == []
+    assert result["oracle_context"]["edge_count"] == 1
+    assert result["oracle_context"]["resolved_edges"][0]["kind"] == "assertion_helper"
+
+
+def test_security_scan_does_not_trust_imported_production_function(tmp_path):
+    (tmp_path / "library.py").write_text(
+        "def render(value):\n"
+        "    assert value is not None\n"
+        "    return value\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "from library import render\n"
+        "def test_behavior():\n"
+        "    render(compute_value())\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_does_not_trust_imported_noop_helper(tmp_path):
+    (tmp_path / "helpers.py").write_text(
+        "def assert_expected(actual, expected):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "from helpers import assert_expected\n"
+        "def test_behavior():\n"
+        "    assert_expected(compute_value(), 4)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_accepts_testcase_mixin_assertions(tmp_path):
+    (tmp_path / "helpers.py").write_text(
+        "class SharedMixin:\n"
+        "    def test_shared(self):\n"
+        "        self.assertEqual(compute_value(), 4)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "import unittest\n"
+        "from helpers import SharedMixin\n"
+        "class Case(unittest.TestCase, SharedMixin):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_accepts_aliased_indirect_testcase_mixin(tmp_path):
+    (tmp_path / "helpers.py").write_text(
+        "class SharedMixin:\n"
+        "    def test_shared(self):\n"
+        "        self.assertEqual(compute_value(), 4)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "import unittest as ut\n"
+        "from helpers import SharedMixin\n"
+        "class Base(ut.TestCase):\n"
+        "    pass\n"
+        "class Case(Base, SharedMixin):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_resolves_assertion_submodule_imports(tmp_path):
+    package = tmp_path / "checks"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "assertions.py").write_text(
+        "def assert_expected(actual, expected):\n"
+        "    assert actual == expected\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "from checks import assertions\n"
+        "def test_behavior():\n"
+        "    assertions.assert_expected(compute_value(), 4)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_resolves_relative_assertion_submodule_imports(tmp_path):
+    package = tmp_path / "suite"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "assertions.py").write_text(
+        "def assert_expected(actual, expected):\n"
+        "    assert actual == expected\n",
+        encoding="utf-8",
+    )
+    (package / "case.py").write_text(
+        "from . import assertions\n"
+        "def test_behavior():\n"
+        "    assertions.assert_expected(compute_value(), 4)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_does_not_trust_imported_weak_helper(tmp_path):
+    (tmp_path / "helpers.py").write_text(
+        "def assert_present(value):\n"
+        "    assert value is not None\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "from helpers import assert_present\n"
+        "def test_behavior():\n"
+        "    assert_present(compute_value())\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"QUALITY_WEAK_TEST_ORACLE": 1}
+
+
+def test_security_scan_ignores_performance_benchmark_oracles(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "from pytest_codspeed import BenchmarkFixture\n"
+        "def test_speed(benchmark: BenchmarkFixture):\n"
+        "    benchmark(compute_value)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_does_not_skip_untyped_benchmark_named_security_test(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "def test_security_invariant(benchmark):\n"
+        "    benchmark(lambda: dangerous_operation())\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
 
 
 def test_security_scan_rejects_noop_assertion_named_helper(tmp_path):
