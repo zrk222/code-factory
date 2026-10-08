@@ -27,6 +27,10 @@ export function docker(args, allowed = [0]) {
   if (result.error || !allowed.includes(result.status)) throw new Error(`docker ${args[0]} failed: ${result.error?.message || result.stderr}`);
   return result;
 }
+export function matchesVersion(output, expected) {
+  const escaped = expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^0-9A-Za-z.+-])v?${escaped}(?=$|[^0-9A-Za-z.+-])`).test(output);
+}
 export async function downloadFeed(fetcher = fetch, maxBytes = 128 * 1024 * 1024) {
   const response = await fetcher(trackerUrl, { signal: AbortSignal.timeout(60000), redirect: 'error' });
   if (!response.ok || !response.body) throw new Error(`Tracker HTTP ${response.status}`);
@@ -90,7 +94,7 @@ export async function verify(image, output, target) {
     const [tool, args, expected] = toolSmokes[target];
     const smoke = run(tool, args);
     const versionOutput = smoke.stdout + smoke.stderr;
-    if (!versionOutput.includes(expected)) throw new Error(`Tool version mismatch: expected ${expected}`);
+    if (!matchesVersion(versionOutput, expected)) throw new Error(`Tool version mismatch: expected ${expected}`);
     result.tool_smoke = { target, tool, expected_version: expected, state: 'PASS', output_sha256: createHash('sha256').update(versionOutput).digest('hex') };
     result.state = result.checks.every(check => check.state === 'RESOLVED') ? 'PASS' : 'BLOCKED';
   } catch (error) { result.error = error.message; }

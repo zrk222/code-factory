@@ -1,7 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { downloadFeed, evaluate, parseManifest, targets, trackerUrl } from './verify_worker_cves.mjs';
+import { downloadFeed, evaluate, matchesVersion, parseManifest, targets, trackerUrl } from './verify_worker_cves.mjs';
+
+test('tool versions require exact tokens, not a substring or prerelease', () => {
+  assert(matchesVersion('Version: v2.27.1\n', '2.27.1'));
+  assert(matchesVersion('{"version":"2.27.1"}', '2.27.1'));
+  for (const value of ['2.27.10', '12.27.1', '2.27.1-rc1', '2.27.1+local']) {
+    assert.equal(matchesVersion(value, '2.27.1'), false);
+  }
+});
 
 const pkg = { binary: 'libfoo', version: '99', source: 'foo', source_version: '1:2.0-1' };
 const feed = release => ({ foo: { 'CVE-example': { releases: { sid: release } } } });
