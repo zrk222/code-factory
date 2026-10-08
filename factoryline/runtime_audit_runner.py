@@ -169,7 +169,7 @@ def run_runtime_audit_plan(
             executions = [future.result() for future in futures]
     result = {
         "schema": "factory.runtime-audit-execution.v1",
-        "run_root": str(run_root),
+        "run_root": run_root.relative_to(workspace).as_posix(),
         "executions": executions,
         "execution_policy": {
             "max_parallelism": max_parallelism,

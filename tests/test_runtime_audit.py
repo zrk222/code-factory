@@ -458,7 +458,7 @@ def test_execute_runtime_audit_binds_verified_plan_digest(monkeypatch, tmp_path)
 
     def run(current, workspace, output, *, plan_sha256=None):
         observed["plan_sha256"] = plan_sha256
-        return {"run_root": str(run_root), "executions": [], "plan_sha256": plan_sha256}
+        return {"run_root": "run", "executions": [], "plan_sha256": plan_sha256}
 
     monkeypatch.setattr("factoryline.runtime_audit.verify_runtime_audit_plan", verify)
     monkeypatch.setattr("factoryline.runtime_audit.run_runtime_audit_plan", run)
@@ -481,7 +481,9 @@ def test_execute_runtime_audit_binds_verified_plan_digest(monkeypatch, tmp_path)
         run_root,
     )
     assert observed["plan_sha256"] == "p" * 64
-    assert result["receipt_path"].endswith("runtime-audit-receipt.json")
+    assert result["receipt_path"] == "run/runtime-audit-receipt.json"
+    assert (tmp_path / result["receipt_path"]).is_file()
+    assert result["execution"]["run_root"] == "run"
     assert len(result["receipt"]["receipt_sha256"]) == 64
 
 

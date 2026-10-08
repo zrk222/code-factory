@@ -36,9 +36,11 @@ def test_runner_uses_exact_argv_separate_artifacts_and_no_worktree_home(tmp_path
     assert all(
         path.is_dir() and path.is_relative_to(tmp_path / "out") for path in homes
     )
-    target_artifact = Path(result["run_root"]) / "lane" / "target" / "artifact.json"
+    target_artifact = (
+        tmp_path / result["run_root"] / "lane" / "target" / "artifact.json"
+    )
     known_bad_artifact = (
-        Path(result["run_root"]) / "lane" / "known_bad" / "artifact.json"
+        tmp_path / result["run_root"] / "lane" / "known_bad" / "artifact.json"
     )
     assert target_artifact.is_file()
     assert known_bad_artifact.is_file()
@@ -80,7 +82,25 @@ def test_missing_artifact_error_does_not_disclose_absolute_path(tmp_path):
     }
     result = run_runtime_audit_plan({"lanes": [lane]}, tmp_path, tmp_path / "out")
 
-    assert str(tmp_path) not in json.dumps(result)
+    decoded = json.loads(json.dumps(result))
+
+    def strings(value):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for item in value.values():
+                yield from strings(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from strings(item)
+
+    assert all(str(tmp_path) not in item for item in strings(decoded))
+    assert decoded["run_root"].startswith("out/run-")
+    assert not Path(decoded["run_root"]).is_absolute()
+    assert str(tmp_path) not in decoded["run_root"]
+    for leg in decoded["executions"][0].values():
+        if isinstance(leg, dict):
+            assert str(tmp_path) not in str(leg.get("artifact_error"))
     assert result["executions"][0]["target"]["artifact_error"] == {
         "code": "E_ARTIFACT_MISSING"
     }

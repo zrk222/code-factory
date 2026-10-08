@@ -605,7 +605,11 @@ def execute_runtime_audit(
         receipt["intake_parameters"] = verification["intake_parameters"]
     receipt.pop("receipt_sha256", None)
     receipt["receipt_sha256"] = sha256_bytes(canonical_bytes(receipt))
-    receipt_path = Path(execution["run_root"]) / "runtime-audit-receipt.json"
+    receipt_path = (
+        Path(workspace_root).resolve()
+        / execution["run_root"]
+        / "runtime-audit-receipt.json"
+    )
     receipt_path.write_text(
         json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -614,7 +618,9 @@ def execute_runtime_audit(
         "post_verification": post_verification,
         "execution": execution,
         "receipt": receipt,
-        "receipt_path": str(receipt_path),
+        "receipt_path": receipt_path.relative_to(
+            Path(workspace_root).resolve()
+        ).as_posix(),
     }
 
 
