@@ -5,6 +5,8 @@ on:
       - deploy/deep-adapters/**
       - factoryline/**
       - scripts/verify_worker_cves*.mjs
+      - scripts/verify_semgrep_surface.mjs
+      - scripts/verify_codeql_cross_file.mjs
       - .github/workflows/worker-verification.yml
   push:
     branches: [main]
@@ -12,6 +14,8 @@ on:
       - deploy/deep-adapters/**
       - factoryline/**
       - scripts/verify_worker_cves*.mjs
+      - scripts/verify_semgrep_surface.mjs
+      - scripts/verify_codeql_cross_file.mjs
       - .github/workflows/worker-verification.yml
   workflow_dispatch:
 
@@ -23,13 +27,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  semgrep-surface:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22"
+      - name: Build hash-bound multi-language rule worker
+        run: docker build --platform linux/amd64 --target semgrep-worker -f deploy/deep-adapters/Dockerfile -t factory-semgrep:candidate .
+      - name: Verify vulnerable and safe native controls in isolation
+        run: node scripts/verify_semgrep_surface.mjs factory-semgrep:candidate semgrep-surface-verification.json
+      - name: Preserve image and source-bound control evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: semgrep-surface-verification
+          path: |
+            semgrep-surface-verification.json
+            semgrep-surface-verification.json.sarif
+            semgrep-surface-verification.json.suppression-enabled.sarif
+          if-no-files-found: error
   sdk-workers:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        target: [codeql-python-worker, osv-worker, syft-worker, gitleaks-worker, trivy-worker, runtime-worker, fuzz-worker]
+        target: [codeql-python-worker, codeql-javascript-worker, codeql-actions-worker, osv-worker, syft-worker, gitleaks-worker, trivy-worker, runtime-worker, fuzz-worker]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -43,6 +71,30 @@ jobs:
         run: docker build --platform linux/amd64 --target "${{ matrix.target }}" -f deploy/deep-adapters/Dockerfile -t factory-worker:candidate .
       - name: Verify original fifteen CVEs and package imports using immutable image ID
         run: node scripts/verify_worker_cves.mjs factory-worker:candidate worker-verification.json "${{ matrix.target }}"
+      - name: Verify JavaScript cross-file source-to-sink controls
+        if: matrix.target == 'codeql-javascript-worker'
+        run: node scripts/verify_codeql_cross_file.mjs factory-worker:candidate codeql-cross-file-verification.json
+      - name: Preserve cross-file findings and flow evidence
+        if: always() && matrix.target == 'codeql-javascript-worker'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: codeql-cross-file-verification
+          path: |
+            codeql-cross-file-verification.json
+            codeql-cross-file-verification.json.*.bundle.json
+          if-no-files-found: error
+      - name: Verify GitHub Actions injection and safe environment controls
+        if: matrix.target == 'codeql-actions-worker'
+        run: node scripts/verify_codeql_cross_file.mjs factory-worker:candidate codeql-actions-verification.json actions
+      - name: Preserve workflow injection findings and flow evidence
+        if: always() && matrix.target == 'codeql-actions-worker'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: codeql-actions-verification
+          path: |
+            codeql-actions-verification.json
+            codeql-actions-verification.json.*.bundle.json
+          if-no-files-found: error
       - name: Preserve hash-bound tracker and installed source-version evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

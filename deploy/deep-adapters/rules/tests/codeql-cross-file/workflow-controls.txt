@@ -1,0 +1,10 @@
+name: Workflow injection control
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect title
+        run: echo "${{ github.event.pull_request.title }}"

@@ -47,7 +47,7 @@ keywords = [
   "survival-card",
 ]
 classifiers = [
-  "Development Status :: 4 - Beta",
+  "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
@@ -126,3 +126,7 @@ factoryline = ["builtin_packs/**/*.json", "builtin_packs/**/*.yaml", "data/*.jso
 
 [tool.setuptools.exclude-package-data]
 factoryline = ["**/__pycache__/*", "**/*.py[cod]"]
+
+[tool.setuptools.data-files]
+"share/code-factory/deep-adapters/profiles" = ["deploy/deep-adapters/profiles/*.json"]
+"share/code-factory/deep-adapters" = ["deploy/deep-adapters/README.md"]

@@ -260,3 +260,20 @@ Public exports carry distributions only, never per-reviewer rows.
 ## Updated video preview
 
 [60-second CF/FL audit and repair walkthrough](https://youtu.be/covWDYhUqbM) — October 8, 2026. Silent captions, current Graph Ops captures, bounded scanner improvements and agent repair evidence requirements. The source render is in `videos/code-factory-proof-of-survival/remotion`.
+
+## Native scanner expansion — core 0.48.0 / editor 1.1.2 source preview
+
+**Fixed:** native scanner controls require vulnerable and safe results bound to
+image, profile and source hashes. Missing evidence remains incomplete.
+**Changed:** agents use one `factory scan --deep` overview and explicitly
+configured native workers selected for the project's languages and risks.
+JavaScript/Actions workers verify bundled compiled queries rather than rebuilding
+them, and receipt discovery skips explicit file checks for unrelated logs.
+**Added:** CodeQL JavaScript/TypeScript interprocedural analysis, GitHub Actions
+security-extended analysis, and eight Python/JavaScript/TypeScript Semgrep
+rules including local taint tracking. CodeQL controls require native flow
+evidence; Semgrep community output does not establish cross-file coverage.
+
+Code Factory is a robust code audit factory with Production/Stable package
+metadata. This source preview does not establish new marketplace publication,
+runtime verification of every repository, or measured detection accuracy.

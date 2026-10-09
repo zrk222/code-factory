@@ -1,5 +1,23 @@
 # Code Factory
 
+## Start with your repository
+
+```powershell
+python -m pip install factoryline-code-factory
+factory --help
+factory guide
+factory scan --root .
+```
+
+The guide offers one plain-language path. The default scan inventories relative
+file names and sizes; it does not read source or run tests, so its `INCOMPLETE`
+result is not a code-quality verdict. For a bounded Python AST check, run
+`factory audit security --root . --json`. That check reports its source
+coverage and limits; it does not prove runtime behavior or that a clean
+repository is safe to release. A prior ForgeLine adoption is not required.
+See [Start Here](docs/START_HERE.md) for a plain-language glossary, the
+optional existing-project adoption path, and the verified CI/CD boundaries.
+
 ## Latest audit telemetry preview — October 8, 2026
 
 **Fixed:** bounded evaluator output validation across all six runtime lanes; malformed results stay incomplete. Shared imported assertion helpers and inherited test mixins are resolved by bounded static analysis.
@@ -18,13 +36,18 @@ behavioral test evidence, workflow integrity, specialty AI review, and
 actionable repair. Its receipts support review; the tool does not certify
 software, guarantee that defects are absent, or approve a release.
 
+**Product naming:** Code Factory is the product and ForgeLine is its audit and
+architecture engine. SpecLine, HSF, and Prestige are advanced internal lanes
+that appear only when a project declares the corresponding scope; they are not
+separate products a new user must learn before running a scan.
+
 ## Current update preview (next core release)
 
 **Fixed:** editor audit views now expose missing and incomplete checks.
 **Changed:** Junie's route connects a diff to bounded evidence and a concrete
 repair handoff. **Added:** project-neutral `factory audit workflows` contracts
-with hash-bound candidate and execution evidence, plus VS Code/Open VSX 1.1.0
-evidence tree, JetBrains 1.1.0 CF + ForgeLine tab, and a native
+with hash-bound candidate and execution evidence, plus VS Code/Open VSX 1.1.2
+evidence tree, JetBrains 1.1.2 CF + ForgeLine tab, and a native
 [OpenCode plugin](plugins/code-factory-opencode/README.md).
 **Candidate detection fixes:** the Python scanner flags tests without a local
 assertion, constant-true assertions, and reflexive comparisons. Declared tenant
@@ -62,6 +85,9 @@ static candidate measurement, not runtime coverage or certification. The
 source-hashed [candidate receipt](evidence/self-audit/quality-candidate-2026-10-06.json)
 records the measured scope. The published core release remains 0.47.0; this
 branch is not merged or published.
+No public precision, recall, or attribution benchmark is claimed here: the
+attribution percentage is an internal static candidate metric, not measured
+defect-detection accuracy on independent AI-generated repositories.
 The [autonomous ops plan](docs/AUTONOMOUS_OPS_EDITOR_PLAN.md) explains the
 proposed Observer Agent loop and its gates. These versions remain release
 candidates until each channel has a verified provider publication receipt.
@@ -105,21 +131,45 @@ or that every check passed.
 
 </details>
 
-## Install and start
+## Add deeper audit lanes
 
 ```powershell
-python -m pip install factoryline-code-factory
-factory --help
-factory guide
+factory scan --root . --deep
 ```
 
-In an interactive terminal, `factory` checks PyPI and caches the result for up
-to 24 hours, then prints a notice when a newer version is available. Two
-simultaneous first runs can both check. It never downloads or installs the
-update. The check is quiet in CI, JSON output, server/MCP, help, version, and
+Deep mode orchestrates architecture, Python security and test-oracle checks,
+workflow integrity, requirements, runtime coverage, and dependency evidence.
+Languages including TypeScript/JSX, Go, Rust, Java, C/C++, C#, Ruby, PHP and
+Swift are inventoried explicitly; missing native analysis remains unmeasured.
+
+For authorized native execution, use:
+
+```powershell
+factory scan --root . --deep --worker-config .factory/worker-config.json --json
+```
+
+The configuration contains workspace-relative `manifest`, `authorization`, and
+`trust_root` paths plus `manifest_sha256` and `trust_root_sha256` pins. This
+invokes the existing signed Docker worker engine for configured CodeQL,
+Semgrep, secrets, dependency, container, runtime and fuzz lanes. Unsigned plans
+are rejected. Completed workers still require independent agent review;
+missing evidence and review cannot produce a passing verdict. Native execution
+requires its configured images and tooling and can take longer than a minute.
+Each unresolved lane includes its next action. Receipt presence alone is not
+verification, and no scan claims to detect every defect.
+
+Package metadata now uses **Production/Stable**, starting with this source
+update. That release-status label is separate from detection accuracy,
+independent benchmark results, and provider publication.
+
+In an interactive terminal, `factory` optionally makes one plain PyPI version
+check and caches the result for up to 24 hours, then prints a notice when a
+newer version is available. It never downloads or installs the update. The
+check is quiet in CI, JSON output, server/MCP, help, version, and
 non-interactive runs; set `FACTORY_DISABLE_UPDATE_CHECK=1` to turn it off. The
-plain PyPI request does not include a project path, account identifier, or
-usage data.
+optional request does not include a project path, account identifier, or usage
+data. All audit and proof commands remain local unless an operator explicitly
+uses a separate provider integration.
 
 Run repository commands from the project being reviewed. `factory guide` is a
 read-only orientation; it does not run tests or agents.
@@ -192,3 +242,20 @@ executed coverage nor a security certification.
 ## Updated video preview
 
 [60-second CF/FL audit and repair walkthrough](https://youtu.be/covWDYhUqbM) — October 8, 2026. Silent captions, current Graph Ops captures, bounded scanner improvements and agent repair evidence requirements. The source render is in `videos/code-factory-proof-of-survival/remotion`.
+
+## Native scanner expansion — core 0.48.0 / editor 1.1.2 source preview
+
+**Fixed:** native scanner controls require vulnerable and safe results bound to
+image, profile and source hashes. Missing evidence remains incomplete.
+**Changed:** agents use one `factory scan --deep` overview and explicitly
+configured native workers selected for the project's languages and risks.
+JavaScript/Actions workers verify bundled compiled queries rather than rebuilding
+them, and receipt discovery skips explicit file checks for unrelated logs.
+**Added:** CodeQL JavaScript/TypeScript interprocedural analysis, GitHub Actions
+security-extended analysis, and eight Python/JavaScript/TypeScript Semgrep
+rules including local taint tracking. CodeQL controls require native flow
+evidence; Semgrep community output does not establish cross-file coverage.
+
+Code Factory is a robust code audit factory with Production/Stable package
+metadata. This source preview does not establish new marketplace publication,
+runtime verification of every repository, or measured detection accuracy.

@@ -3,7 +3,7 @@
   "name": "code-factory-build-audit",
   "displayName": "Code Factory Build Audit",
   "version": "0.2.0",
-  "description": "Muse-native Code Factory audit tools, automatic workspace checks, and actionable evidence for code reviews.",
+  "description": "Muse-native Code Factory workspace checks, source-bound native scanner guidance, and actionable audit evidence.",
   "compat": {
     "source": "native",
     "manifestDir": ".muse-plugin"

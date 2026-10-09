@@ -3,10 +3,10 @@
   "engine": "semgrep",
   "mode": "pattern-limited",
   "tool_version": "1.141.0",
-  "ruleset_sha256": "09ac5b1b23d0c3b3f55557ff90ced1eeb7c88580628d011df86c5c38391cb40f",
+  "ruleset_sha256": "797d5298e4bf28e14812c98a9867dffd9042fef1653979f2b0cbc396b44047a7",
   "commands": [
     {
-      "argv": ["/usr/bin/semgrep", "scan", "--metrics=off", "--disable-version-check", "--no-git-ignore", "--config", "/opt/factory/rules/semgrep-pattern-limited.yml", "--sarif-output", "{report}", "{source}"],
+      "argv": ["/usr/bin/semgrep", "scan", "--metrics=off", "--disable-version-check", "--no-git-ignore", "--disable-nosem", "--dataflow-traces", "--config", "/opt/factory/rules/semgrep-pattern-limited.yml", "--sarif-output", "{report}", "{source}"],
       "accepted_exit_codes": [0, 1]
     }
   ],

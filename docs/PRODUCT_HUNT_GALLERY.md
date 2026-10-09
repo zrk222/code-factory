@@ -53,8 +53,11 @@ Product Hunt product.
 
 I built Code Factory after losing time to AI-generated tests that passed but
 failed in real use. The front door is now deliberately simple: run
-`factory first-proof --root .` and see a safe demonstration of whether a test
-can actually reject a known failure. It stays local and does not change your
+`factory scan --root .` to get a bounded inventory and an explicit
+`INCOMPLETE` or `BLOCKED` verdict for your own repository. Add `--deep` for
+the bounded Python static lane. For the disposable proof harness, run
+`factory first-proof --root .`; it demonstrates the detector without claiming
+to assess your project. Everything stays local and does not change your
 project.
 
 For a solo developer or vibe coder, that is the whole starting value. For a

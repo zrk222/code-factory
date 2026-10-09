@@ -1,0 +1,55 @@
+import os
+import subprocess
+import pickle
+import requests
+import yaml
+
+def command_bad(request):
+    value = request.args.get("command")
+    alias = value
+    if alias:
+        # ruleid: python.request-command-injection
+        os.system(alias)
+
+def command_shell_bad(request):
+    value = request.form.get("command")
+    # ruleid: python.request-command-injection, python.subprocess-shell-true
+    subprocess.run(value, shell=True)
+
+def command_safe(request):
+    value = request.args.get("name")
+    # ok: python.request-command-injection, python.subprocess-shell-true
+    subprocess.run(["echo", value], shell=False)
+
+def sql_bad(request, db):
+    value = request.args.get("name")
+    query = "SELECT * FROM users WHERE name='" + value + "'"
+    # ruleid: python.request-sql-injection
+    db.execute(query)
+
+def sql_safe(request, db):
+    value = request.args.get("name")
+    # ok: python.request-sql-injection
+    db.execute("SELECT * FROM users WHERE name=?", (value,))
+
+def deserialization_bad(raw):
+    # ruleid: python.unsafe-deserialization
+    return pickle.loads(raw)
+
+def deserialization_safe(raw):
+    # ok: python.unsafe-deserialization
+    return yaml.safe_load(raw)
+
+def tls_bad():
+    # ruleid: python.disabled-tls-verification
+    return requests.get("https://example.test", verify=False)
+
+def tls_safe():
+    # ok: python.disabled-tls-verification
+    return requests.get("https://example.test", verify=True)
+
+def command_rebound(request):
+    value = request.args.get("command")
+    value = "echo safe"
+    # ok: python.request-command-injection
+    os.system(value)

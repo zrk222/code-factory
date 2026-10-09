@@ -12,6 +12,9 @@ const scenes = [
   {title:'Keep the failure. Stop unsafe retries.', tag:'EVIDENCE REQUIREMENTS', body:'Finding context is untrusted data. A reviewer role is a requirement, not a completed review.', points:['Before failure + patch diff + after observation','Negative control + independent agent review','Stop on drift, new failures or exhausted budget']},
   {title:'Audit. Repair. Verify again.', tag:'OPEN SOURCE · LOCAL FIRST', body:'Use CF/FL with Junie, Codex or your preferred agent. Receipts support review; they do not certify software or approve releases.', points:['Inspect the source and current evidence','Run the applicable audit locally','github.com/zrk222/code-factory']},
 ];
+const renderPoint = (point: string, index: number) => (
+  <div key={point} style={{display:'flex',gap:24,alignItems:'center',padding:'20px 28px',border:'1px solid #8a775d',borderRadius:12,background:'#e7d7bd',maxWidth:1450}}><span style={{fontFamily:'Consolas, monospace',fontSize:36,fontWeight:700,color:'#126333'}}>{String(index+1).padStart(2,'0')}</span><span style={{fontSize:30}}>{point}</span></div>
+);
 export const FactoryEngine = () => {
   const frame=useCurrentFrame(); const {fps}=useVideoConfig();
   const length=7.5*fps; const index=Math.min(scenes.length-1,Math.floor(frame/length));
@@ -22,7 +25,7 @@ export const FactoryEngine = () => {
       <div style={{display:'flex',alignItems:'center',gap:20}}><Img src={staticFile('factoryline-logo-480.png')} style={{width:76,height:76,objectFit:'contain'}}/><span style={{fontSize:24,fontWeight:700,letterSpacing:2}}>{scene.tag}</span></div>
       <h1 style={{fontSize:64,lineHeight:1.08,maxWidth:1100,margin:'32px 0 20px'}}>{scene.title}</h1>
       <p style={{fontSize:28,lineHeight:1.5,maxWidth:scene.asset?850:1300,margin:0}}>{scene.body}</p>
-      {scene.asset?<div style={{position:'absolute',right:70,bottom:105,width:980,height:585,background:'#101929',borderRadius:16,overflow:'hidden'}}><Img src={staticFile(scene.asset)} style={{width:'100%',height:'100%',objectFit:'contain'}}/></div>:<div style={{marginTop:50,display:'grid',gap:20}}>{scene.points?.map((point,i)=><div key={point} style={{display:'flex',gap:24,alignItems:'center',padding:'20px 28px',border:'1px solid #8a775d',borderRadius:12,background:'#e7d7bd',maxWidth:1450}}><span style={{fontFamily:'Consolas, monospace',fontSize:36,fontWeight:700,color:'#126333'}}>{String(i+1).padStart(2,'0')}</span><span style={{fontSize:30}}>{point}</span></div>)}</div>}
+      {scene.asset?<div style={{position:'absolute',right:70,bottom:105,width:980,height:585,background:'#101929',borderRadius:16,overflow:'hidden'}}><Img src={staticFile(scene.asset)} style={{width:'100%',height:'100%',objectFit:'contain'}}/></div>:<div style={{marginTop:50,display:'grid',gap:20}}>{scene.points?.map(renderPoint)}</div>}
       <div style={{position:'absolute',bottom:46,left:70,right:70,display:'flex',justifyContent:'space-between',fontSize:19}}><span>Current source preview · October 8, 2026 · silent captioned walkthrough</span><span style={{fontFamily:'Consolas, monospace',color:'#126333'}}>{String(index+1).padStart(2,'0')} / 08</span></div>
     </AbsoluteFill>
   </AbsoluteFill>;

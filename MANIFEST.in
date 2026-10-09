@@ -10,6 +10,8 @@ recursive-include editors *.md *.svg
 recursive-include plugins *
 recursive-include factoryline/builtin_packs *
 recursive-include factoryline/data *.json
+recursive-include deploy/deep-adapters/profiles *.json
+include deploy/deep-adapters/README.md
 prune editors/vscode/node_modules
 prune editors/vscode/dist
 prune editors/intellij/.gradle

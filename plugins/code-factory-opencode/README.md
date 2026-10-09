@@ -41,3 +41,20 @@ scan; the ForgeLine lane is a repository inventory. Results are local,
 
 The existing `factory mcp config --client opencode` remains available when an
 agent only needs the read-only Code Factory MCP tools.
+
+## Unified native audit operation
+
+Use `factory scan --root PATH --deep --json` for the local audit overview.
+For authorized native execution, add `--worker-config PATH` with signed,
+SHA-pinned worker configuration. Select workers for the repository languages
+and risk: CodeQL Python, JavaScript/TypeScript, or GitHub Actions; Semgrep's
+Python and JavaScript/TypeScript rules; dependency, secret, configuration,
+runtime and fuzz workers as applicable. MCP status tools read evidence;
+they do not launch these workers.
+
+Bind findings and repair instructions to candidate, profile, tool and image
+hashes. Retain native SARIF flows and reproductions. Rerun affected checks after
+a repair, then obtain separate specialty AI review. Reuse evidence only when
+its complete candidate and execution bindings match; an inventory or stale
+receipt is never a pass. Missing runtime, mutation or language coverage stays
+incomplete. Avoid launching every heavyweight worker for each edit.

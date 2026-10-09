@@ -21,8 +21,8 @@ primary_question: Did the change fulfill approved intent, what could break, and 
 
 ## Current release preview
 
-Core 0.47.0 is a release candidate; VS Code/Open VSX 1.0.2 and
-JetBrains 1.0.2 remain preview targets until provider publication is verified.
+Core 0.48.0 uses the Production/Stable package classifier. VS Code/Open VSX
+and JetBrains source previews target 1.1.2; provider publication is a separate verified event.
 The new source adds native dual-audit evidence views, an OpenCode plugin, and
 the Junie IDE evidence route. The prior 0.46.9 release added Muse Code native
 packages plus a standalone skills/hooks/MCP installation path for Muse builds

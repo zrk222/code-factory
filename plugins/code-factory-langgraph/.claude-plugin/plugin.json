@@ -1,7 +1,7 @@
 {
   "name": "code-factory-langgraph",
   "version": "0.48.0",
-  "description": "Proof-aware LangGraph guidance and read-only resume-parity receipts before review.",
+  "description": "LangGraph proof and native audit with source-bound resume-parity evidence before review.",
   "author": {
     "name": "Richard Katz",
     "email": "rkatz22@gmail.com"
@@ -14,6 +14,6 @@
     "developerName": "Code Factory",
     "category": "Productivity",
     "capabilities": [],
-    "defaultPrompt": "Help me compare two sealed LangGraph transition lineages with Code Factory."
+    "defaultPrompt": "Use Code Factory to compare sealed LangGraph lineages, inspect the audit taxonomy, select relevant native scanner profiles, and return source-bound findings and repair evidence."
   }
 }
