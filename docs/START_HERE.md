@@ -202,6 +202,26 @@ an admitted true answer fails it. The summary uses equal weights and ignores
 expected evaluation labels. Any unresolved criterion keeps the final score
 `null`; its possible score interval is not an achieved grade. This does not
 replace CF's deterministic quality grade, security blockers or release policy.
+The same report includes an **Experimental Jev score**: the equal-weight mean
+of `100 * (1 - finding probability)` for the supplied criteria. It can display
+even when evidence admission abstains. This is an uncalibrated model assessment,
+not detection accuracy or an evidence-validated grade. Missing model responses
+leave the complete score `null`; any observed mean and response coverage remain
+explicitly partial. Evidence probabilities and admitted decisions stay separate.
+Every CLI trial also writes a local journal under `.factory/jev/evaluations`.
+It reserves storage before contacting the provider, flushes each normalized
+answer or error before the next request, and stores the final report with hashes.
+Run IDs link scores, evidence probabilities, abstentions, latency and cost for
+later validation. Raw state and API keys are not copied into the journal.
+Interrupted runs retain partial results; storage failures stop further requests.
+The hash chain detects changed records relative to a retained original; a local
+writer can still replace the entire journal. Journals remain until you remove
+them. The `evaluateCases` library API returns reports to its host; hosts must
+persist them or provide its awaited `onResult` callback for checkpointing.
+Journal directories must stay under the selected workspace and cannot traverse
+linked directory components. Unix archive permissions are restricted to the
+owner; Windows archives inherit the workspace's account ACL. A process with
+write access to the workspace can still tamper with local records.
 See the framework's `grading_protocol` for evidence scope, host provenance
 checks, calibration and bias controls. Loading the framework is not proof that
 its entire calibration protocol has been executed.
