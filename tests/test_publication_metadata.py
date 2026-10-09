@@ -545,9 +545,7 @@ def test_hosted_release_and_editor_versions_are_declared():
         (ROOT / "editors" / "vscode" / "package.json").read_text(encoding="utf-8")
     )
     vscode_lock = json.loads(
-        (ROOT / "editors" / "vscode" / "package-lock.json").read_text(
-            encoding="utf-8"
-        )
+        (ROOT / "editors" / "vscode" / "package-lock.json").read_text(encoding="utf-8")
     )
     vscode_readme = (ROOT / "editors" / "vscode" / "README.md").read_text(
         encoding="utf-8"
