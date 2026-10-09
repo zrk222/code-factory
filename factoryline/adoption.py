@@ -747,7 +747,9 @@ def _native_worker_lane(
     )
 
 
-def _candidate_inventory_lane(inventory: dict[str, Any], source_count: int) -> dict[str, Any]:
+def _candidate_inventory_lane(
+    inventory: dict[str, Any], source_count: int
+) -> dict[str, Any]:
     truncated = inventory.get("files_truncated")
     return _lane(
         "candidate_inventory",
@@ -824,9 +826,7 @@ def _pattern_guard_path_lane(workspace: Path, source_count: int) -> dict[str, An
     )
 
 
-def _non_python_security_lane(
-    workspace: Path, languages: list[str]
-) -> dict[str, Any]:
+def _non_python_security_lane(workspace: Path, languages: list[str]) -> dict[str, Any]:
     non_python = [name for name in languages if name not in {"python", "docs"}]
     receipts = _receipt_inventory(
         workspace,
@@ -1028,8 +1028,7 @@ def _deep_audit_report(
         },
         "claim_boundary": "Full local orchestration of available evidence lanes; not a penetration test, runtime certification, or release approval.",
         "next_actions": [
-            lane["next_action"]
-            for lane in [*blocked, *unmeasured, *review_required]
+            lane["next_action"] for lane in [*blocked, *unmeasured, *review_required]
         ],
     }
     report["audit_sha256"] = _digest(
@@ -1149,9 +1148,7 @@ def run_repo_scan(
     static_security, deep_audit, security_error = _scan_security_and_deep_audit(
         workspace, inventory, deep, worker_config
     )
-    state, verdict = _repo_scan_state(
-        deep_audit, static_security, deep, inventory
-    )
+    state, verdict = _repo_scan_state(deep_audit, static_security, deep, inventory)
     result = {
         "schema": "factory.repo-scan.v1",
         "state": state,
@@ -1180,7 +1177,6 @@ def run_repo_scan(
         result["static_security_error"] = security_error
     result["scan_sha256"] = _sha(result)
     return result
-
 
 
 def run_first_proof(
