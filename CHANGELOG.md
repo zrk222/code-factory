@@ -2,6 +2,19 @@
 
 ## 0.48.0 / editor plugins 1.1.2 (release candidate; publication gated)
 
+- Add native CodeQL JavaScript/TypeScript cross-file analysis and GitHub Actions
+  security-extended profiles. All four vulnerable/safe native controls passed;
+  JavaScript emitted an ordered cross-file flow, while the single-location
+  Actions finding is recorded without inventing absent flow arrays.
+- Bundle all ten native worker profiles and their operating guide in the wheel
+  under `share/code-factory/deep-adapters`. Workers still require explicit signed
+  configuration and pinned images; installing the wheel does not launch Docker.
+- Avoid redundant compilation of bundled CodeQL queries and fix query-pack
+  read permissions for non-root workers. Filter receipt names before file checks.
+- Update Junie profile 4, agent guidance and source previews for unified,
+  selective deep auditing. Package metadata uses Production/Stable status;
+  native controls do not establish universal detection accuracy.
+
 - Harden hollow-test attribution for swallowed assertions, promoted warnings,
   unreachable checks, delegated helpers, and inherited tests; expand regressions.
 - Publish the quality grading formula and enforce 99.85% static test-intent
