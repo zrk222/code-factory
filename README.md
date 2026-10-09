@@ -4,6 +4,7 @@
 
 ```powershell
 python -m pip install factoryline-code-factory
+factory --help
 factory guide
 factory scan --root .
 ```

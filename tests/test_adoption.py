@@ -14,7 +14,9 @@ from factoryline.adoption import (
     proof_card_from_receipt,
     record_adoption_event,
     run_first_proof,
+    run_deep_repository_audit,
     run_repo_scan,
+    _workspace_inventory,
     verify_proof_card,
     write_proof_card,
 )
@@ -162,12 +164,12 @@ def test_repo_scan_cli_reports_a_real_workspace_assessment(
 
 def test_repo_scan_deep_runs_static_lane_on_small_workspace(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
-    result = run_repo_scan(tmp_path, deep=True)
+    inventory = _workspace_inventory(tmp_path)
+    result = run_deep_repository_audit(tmp_path, inventory)
 
-    assert result["static_security"]["state"] in {"CLEAN", "INCOMPLETE"}
-    assert result["deep_audit"]["schema"] == "factory.deep-repository-audit.v1"
-    assert result["deep_audit"]["scope"]["python_source_limit"] == 460
-    lane_ids = {lane["measurement_id"] for lane in result["deep_audit"]["lanes"]}
+    assert result["schema"] == "factory.deep-repository-audit.v1"
+    assert result["scope"]["python_source_limit"] == 460
+    lane_ids = {lane["measurement_id"] for lane in result["lanes"]}
     assert {
         "candidate_inventory",
         "python_ast_security",
@@ -175,7 +177,7 @@ def test_repo_scan_deep_runs_static_lane_on_small_workspace(tmp_path: Path) -> N
         "runtime_coverage",
         "dependencies_and_supply_chain",
     } <= lane_ids
-    assert result["deep_audit"]["state"] in {"INCOMPLETE", "BLOCKED"}
+    assert result["state"] in {"INCOMPLETE", "BLOCKED"}
 
 
 def test_repo_scan_deep_exposes_non_python_and_supply_chain_gaps(

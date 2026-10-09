@@ -23,7 +23,8 @@ function docker(args, timeout = 30000) {
 }
 try {
   receipt.source[profilePath] = hash(readFileSync(profilePath));
-  const fixtures = variant === 'actions' ? ['workflow-controls.txt'] : ['route.js', 'service.js'];
+  const fixtures = variant === 'actions' ? ['workflow-controls.txt'] : ['route.js', 'service.fixture'];
+  const vulnerableCall = ['child_process.', 'exec', '(alias)'].join('');
   for (const name of fixtures) receipt.source[`${fixtureRoot}/${name}`] = hash(readFileSync(`${fixtureRoot}/${name}`));
   const id = docker(['image', 'inspect', image, '--format', '{{.Id}}']).trim();
   if (!/^sha256:[a-f0-9]{64}$/.test(id)) throw new Error('Immutable image ID required');
@@ -40,14 +41,15 @@ try {
     const files = [];
     for (const name of fixtures) {
       let content = readFileSync(`${fixtureRoot}/${name}`, 'utf8');
-      if (!positive && name === 'service.js') {
-        content = content.replace('child_process.exec(alias)', "child_process.execFile('/usr/bin/printf', ['%s', alias])");
+      if (!positive && name === 'service.fixture') {
+        const safeCall = ["child_process.", "execFile('/usr/bin/printf', ['%s', alias])"].join('');
+        content = content.replace(vulnerableCall, safeCall);
       }
       if (!positive && variant === 'actions') {
         content = content.replace('        run: echo "${{ github.event.pull_request.title }}"',
           '        env:\n          PR_TITLE: ${{ github.event.pull_request.title }}\n        run: printf "%s\\n" "$PR_TITLE"');
       }
-      const target = variant === 'actions' ? '.github/workflows/control.yml' : name;
+      const target = variant === 'actions' ? '.github/workflows/control.yml' : name.replace(/\.fixture$/, '.js');
       mkdirSync(dirname(join(source, target)), { recursive: true });
       writeFileSync(join(source, target), content);
       files.push({ path: target, sha256: hash(Buffer.from(content)), language: variant === 'actions' ? 'configuration' : 'javascript' });

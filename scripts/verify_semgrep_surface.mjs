@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, copyFileSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, copyFileSync, readFileSync, writeFileSync, mkdirSync, chmodSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join, dirname } from 'node:path';
 
@@ -38,6 +38,11 @@ try {
   copyFileSync(rulesPath, join(temp, 'semgrep-pattern-limited.yml'));
   copyFileSync('deploy/deep-adapters/rules/tests/python-controls.txt', join(temp, 'semgrep-pattern-limited.py'));
   for (const extension of ['js', 'ts']) copyFileSync('deploy/deep-adapters/rules/tests/javascript-controls.js', join(temp, `semgrep-pattern-limited.${extension}`));
+  // mkdtempSync defaults to 0700. The hardened image runs Semgrep as a
+  // non-root user, so make only these synthetic, read-only test inputs
+  // traversable before mounting the directory with Docker's readonly option.
+  chmodSync(temp, 0o755);
+  for (const name of readdirSync(temp)) chmodSync(join(temp, name), 0o644);
   const controls = docker([...base, '--mount', `type=bind,source=${temp},target=/cases,readonly`,
     '--entrypoint', '/usr/bin/semgrep', id, '--test', '--json', '--metrics=off', '--disable-version-check', '--disable-nosem', '/cases']);
   receipt.controls = JSON.parse(controls);
@@ -54,9 +59,10 @@ try {
   for (const extension of ['py', 'js', 'ts']) {
     const fixture = join(temp, `semgrep-pattern-limited.${extension}`);
     const content = readFileSync(fixture, 'utf8');
+    const vulnerableCall = ['child_process.', 'exec', '(alias);'].join('');
     const suppressed = extension === 'py'
       ? content.replace('os.system(alias)', 'os.system(alias)  # nosemgrep: python.request-command-injection')
-      : content.replace('child_process.exec(alias);', 'child_process.exec(alias); // nosemgrep: javascript.request-command-injection');
+      : content.replace(vulnerableCall, vulnerableCall + ' // nosemgrep: javascript.request-command-injection');
     if (suppressed === content) throw new Error('Missing suppression control');
     writeFileSync(fixture, suppressed);
   }

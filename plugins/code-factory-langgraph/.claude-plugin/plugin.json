@@ -1,7 +1,7 @@
 {
   "name": "code-factory-langgraph",
   "version": "0.48.0",
-  "description": "LangGraph proof and native audit guidance with source-bound evidence before review.",
+  "description": "LangGraph proof and native audit with source-bound resume-parity evidence before review.",
   "author": {
     "name": "Richard Katz",
     "email": "rkatz22@gmail.com"

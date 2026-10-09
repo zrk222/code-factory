@@ -32,8 +32,10 @@ async function renderTsx(file, exports, remotionStub) {
 test('FactoryEngine renders real frame state and clamps to the final scene', async () => {
   const markup = await renderTsx(path.join(here, 'FactoryEngine.tsx'), ({ FactoryEngine }) => {
     const html = renderToStaticMarkup(React.createElement(FactoryEngine));
+    // Rendering this points scene executes the named renderPoint callback.
     assert.match(html, /FIXED/);
     assert.match(html, /Stronger test-oracle analysis/);
+    assert.match(html, /Imported assertion helpers/);
     assert.match(html, /02 \/ 08/);
     return html;
   }, `export const useCurrentFrame=()=>225; export const useVideoConfig=()=>({fps:30}); export const interpolate=(v)=>Math.max(0,Math.min(1,(v[0]??0))); export const staticFile=(v)=>v; export const AbsoluteFill='div'; export const Img='img';`);

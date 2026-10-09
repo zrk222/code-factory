@@ -747,122 +747,88 @@ def _native_worker_lane(
     )
 
 
-def run_deep_repository_audit(
-    root: Path,
-    inventory: dict[str, Any],
-    *,
-    tenant_contract: str = ".factory/tenant-read-contract.json",
-    worker_config: str | None = None,
-) -> dict[str, Any]:
-    """Run all applicable local audit lanes and return an evidence map.
-
-    Native CodeQL, Semgrep, OSV, Trivy, Gitleaks, fuzz and runtime workers are
-    represented as explicit evidence lanes when their receipts are supplied;
-    this command does not pretend that a worker was run merely because an
-    image recipe exists.
-    """
-    workspace = Path(root).resolve()
-    lanes: list[dict[str, Any]] = []
-    python_count = int(inventory.get("file_types", {}).get("python", 0))
-    file_types = inventory.get("file_types", {})
-    source_count = inventory.get("files_discovered", 0)
-    code_count = sum(
-        int(count) for name, count in file_types.items() if name not in {"docs"}
+def _candidate_inventory_lane(inventory: dict[str, Any], source_count: int) -> dict[str, Any]:
+    truncated = inventory.get("files_truncated")
+    return _lane(
+        "candidate_inventory",
+        state="PASS" if source_count and not truncated else "INCOMPLETE",
+        applicable=True,
+        result=inventory,
+        basis="Bounded relative-path inventory with byte sizes and stable digest.",
+        next_action=(
+            "Resolve an empty or truncated candidate inventory before trusting any lane."
+            if not source_count or truncated
+            else "Inventory is bound; continue through every applicable lane."
+        ),
+        denominator_state="MEASURED",
     )
 
-    lanes.append(
-        _lane(
-            "candidate_inventory",
-            state="PASS"
-            if source_count and not inventory.get("files_truncated")
-            else "INCOMPLETE",
-            applicable=True,
-            result=inventory,
-            basis="Bounded relative-path inventory with byte sizes and stable digest.",
-            next_action=(
-                "Resolve an empty or truncated candidate inventory before trusting any lane."
-                if not source_count or inventory.get("files_truncated")
-                else "Inventory is bound; continue through every applicable lane."
-            ),
-            denominator_state="MEASURED",
-        )
-    )
 
+def _architecture_health_lane(workspace: Path) -> dict[str, Any]:
     policy_path = workspace / "architecture-policy.json"
-    if policy_path.is_file():
-        from .architecture_health import evaluate_architecture_health
+    if not policy_path.is_file():
+        return _lane(
+            "architecture_health",
+            state="NOT_APPLICABLE",
+            applicable=False,
+            basis="No architecture-policy.json was supplied by this repository.",
+            next_action="Add a reviewed architecture policy if architecture budgets are required.",
+            denominator_state="UNDECLARED",
+        )
+    from .architecture_health import evaluate_architecture_health
 
-        result, error = _safe(
-            lambda: evaluate_architecture_health(workspace, policy_path, strict=True),
-            error_action="Repair the architecture policy or runner error, then rerun.",
-        )
-        if error:
-            result["next_action"] = error
-        lanes.append(
-            _lane(
-                "architecture_health",
-                state=_state_for_findings(
-                    result, clean=result.get("decision", "INVALID")
-                ),
-                applicable=True,
-                result=result,
-                basis="Strict architecture budgets, file-size guards, boundaries, changelog and cadence policy.",
-                next_action=result.get("next_action", "Resolve architecture findings."),
-            )
-        )
-    else:
-        lanes.append(
-            _lane(
-                "architecture_health",
-                state="NOT_APPLICABLE",
-                applicable=False,
-                basis="No architecture-policy.json was supplied by this repository.",
-                next_action="Add a reviewed architecture policy if architecture budgets are required.",
-                denominator_state="UNDECLARED",
-            )
-        )
+    result, error = _safe(
+        lambda: evaluate_architecture_health(workspace, policy_path, strict=True),
+        error_action="Repair the architecture policy or runner error, then rerun.",
+    )
+    if error:
+        result["next_action"] = error
+    return _lane(
+        "architecture_health",
+        state=_state_for_findings(result, clean=result.get("decision", "INVALID")),
+        applicable=True,
+        result=result,
+        basis="Strict architecture budgets, file-size guards, boundaries, changelog and cadence policy.",
+        next_action=result.get("next_action", "Resolve architecture findings."),
+    )
 
+
+def _pattern_guard_path_lane(workspace: Path, source_count: int) -> dict[str, Any]:
     review_policy = workspace / ".factory" / "review-audits.json"
-    if review_policy.is_file():
-        from .review_audits import audit_code
-
-        result, error = _safe(
-            lambda: audit_code(workspace, ".factory/review-audits.json", tool="all"),
-            error_action="Repair or bind the project review-audits manifest, then rerun.",
+    if not review_policy.is_file():
+        return _lane(
+            "pattern_and_guard_path_audit",
+            state="NOT_MEASURED",
+            applicable=bool(source_count),
+            basis="No .factory/review-audits.json manifest was supplied.",
+            next_action="Create a project review-audits manifest before treating pattern coverage as measured.",
+            denominator_state="UNDECLARED",
         )
-        if error:
-            result["next_action"] = error
-        lanes.append(
-            _lane(
-                "pattern_and_guard_path_audit",
-                state=_state_for_findings(result),
-                applicable=True,
-                result=result,
-                basis="Manifest-bound patterns and guard paths; unlisted paths are not silently counted as clean.",
-                next_action=result.get(
-                    "next_action", "Resolve each pattern or guard-path finding."
-                ),
-            )
-        )
-    else:
-        lanes.append(
-            _lane(
-                "pattern_and_guard_path_audit",
-                state="NOT_MEASURED",
-                applicable=bool(source_count),
-                basis="No .factory/review-audits.json manifest was supplied.",
-                next_action="Create a project review-audits manifest before treating pattern coverage as measured.",
-                denominator_state="UNDECLARED",
-            )
-        )
+    from .review_audits import audit_code
 
-    lanes.extend(_python_audit_lanes(workspace, python_count, tenant_contract))
+    result, error = _safe(
+        lambda: audit_code(workspace, ".factory/review-audits.json", tool="all"),
+        error_action="Repair or bind the project review-audits manifest, then rerun.",
+    )
+    if error:
+        result["next_action"] = error
+    return _lane(
+        "pattern_and_guard_path_audit",
+        state=_state_for_findings(result),
+        applicable=True,
+        result=result,
+        basis="Manifest-bound patterns and guard paths; unlisted paths are not silently counted as clean.",
+        next_action=result.get(
+            "next_action", "Resolve each pattern or guard-path finding."
+        ),
+    )
 
-    languages = [
-        name for name, count in inventory.get("file_types", {}).items() if count
-    ]
+
+def _non_python_security_lane(
+    workspace: Path, languages: list[str]
+) -> dict[str, Any]:
     non_python = [name for name in languages if name not in {"python", "docs"}]
-    non_python_receipts = _receipt_inventory(
+    receipts = _receipt_inventory(
         workspace,
         patterns=(
             "*.sarif",
@@ -872,129 +838,126 @@ def run_deep_repository_audit(
             "*trivy*.json",
         ),
     )
-    lanes.append(
-        _lane(
-            "non_python_security",
-            state="NOT_MEASURED" if non_python else "NOT_APPLICABLE",
-            applicable=bool(non_python),
-            result={"receipts": non_python_receipts, "verification": "UNVERIFIED"},
-            basis="The bundled AST lane does not cover non-Python source languages.",
-            next_action=(
-                "Run and verify language-specific CodeQL/Semgrep or equivalent worker receipts for: "
-                + ", ".join(non_python)
-                if non_python
-                else "No non-Python source was discovered."
-            ),
-            denominator_state="UNMEASURED" if non_python else "MEASURED",
-        )
+    return _lane(
+        "non_python_security",
+        state="NOT_MEASURED" if non_python else "NOT_APPLICABLE",
+        applicable=bool(non_python),
+        result={"receipts": receipts, "verification": "UNVERIFIED"},
+        basis="The bundled AST lane does not cover non-Python source languages.",
+        next_action=(
+            "Run and verify language-specific CodeQL/Semgrep or equivalent worker receipts for: "
+            + ", ".join(non_python)
+            if non_python
+            else "No non-Python source was discovered."
+        ),
+        denominator_state="UNMEASURED" if non_python else "MEASURED",
     )
 
-    documentation_count = int(inventory.get("file_types", {}).get("docs", 0))
-    lanes.append(
-        _lane(
-            "documentation_integrity",
-            state="NOT_MEASURED" if documentation_count else "NOT_APPLICABLE",
-            applicable=bool(documentation_count),
-            result={"files_discovered": documentation_count},
-            basis="Documentation was inventoried separately from executable source; links, examples and product claims need explicit documentation checks.",
-            next_action=(
-                "Run canonical-document, link, example and claim-boundary checks for the documentation set."
-                if documentation_count
-                else "No supported documentation files were discovered."
-            ),
-            denominator_state="UNMEASURED" if documentation_count else "MEASURED",
-        )
+
+def _documentation_integrity_lane(
+    documentation_count: int,
+) -> dict[str, Any]:
+    applicable = bool(documentation_count)
+    return _lane(
+        "documentation_integrity",
+        state="NOT_MEASURED" if applicable else "NOT_APPLICABLE",
+        applicable=applicable,
+        result={"files_discovered": documentation_count},
+        basis="Documentation was inventoried separately from executable source; links, examples and product claims need explicit documentation checks.",
+        next_action=(
+            "Run canonical-document, link, example and claim-boundary checks for the documentation set."
+            if applicable
+            else "No supported documentation files were discovered."
+        ),
+        denominator_state="UNMEASURED" if applicable else "MEASURED",
     )
 
+
+def _workflow_integrity_lane(workspace: Path) -> dict[str, Any]:
     workflow_dir = workspace / ".github" / "workflows"
-    if workflow_dir.is_dir() and list(workflow_dir.glob("*.y*ml")):
-        from .workflow_audit import audit_action_pins
+    if not workflow_dir.is_dir() or not list(workflow_dir.glob("*.y*ml")):
+        return _lane(
+            "workflow_integrity",
+            state="NOT_APPLICABLE",
+            applicable=False,
+            basis="No GitHub workflow files were discovered.",
+            next_action="Declare a CI profile if external workflow integrity is in scope.",
+            denominator_state="MEASURED",
+        )
+    from .workflow_audit import audit_action_pins
 
-        result, error = _safe(
-            lambda: audit_action_pins(workspace),
-            error_action="Repair workflow evidence and rerun.",
-        )
-        if error:
-            result["next_action"] = error
-        lanes.append(
-            _lane(
-                "workflow_integrity",
-                state=_state_for_findings(result),
-                applicable=True,
-                result=result,
-                basis="GitHub workflow syntax and immutable action/container reference pinning.",
-                next_action=result.get(
-                    "next_action", "Pin every workflow action to an immutable revision."
-                ),
-            )
-        )
-    else:
-        lanes.append(
-            _lane(
-                "workflow_integrity",
-                state="NOT_APPLICABLE",
-                applicable=False,
-                basis="No GitHub workflow files were discovered.",
-                next_action="Declare a CI profile if external workflow integrity is in scope.",
-                denominator_state="MEASURED",
-            )
-        )
+    result, error = _safe(
+        lambda: audit_action_pins(workspace),
+        error_action="Repair workflow evidence and rerun.",
+    )
+    if error:
+        result["next_action"] = error
+    return _lane(
+        "workflow_integrity",
+        state=_state_for_findings(result),
+        applicable=True,
+        result=result,
+        basis="GitHub workflow syntax and immutable action/container reference pinning.",
+        next_action=result.get(
+            "next_action", "Pin every workflow action to an immutable revision."
+        ),
+    )
 
+
+def _requirement_runtime_lanes(
+    workspace: Path, code_count: int
+) -> list[dict[str, Any]]:
     from .coverage import requirement_coverage
     from .runtime_coverage import read_runtime_coverage_report
 
-    requirement_result = requirement_coverage(workspace)
-    req_state = (
-        "PASS"
-        if requirement_result.get("status") == "complete"
-        else (
-            "NOT_APPLICABLE"
-            if not requirement_result.get("applicable")
+    requirement = requirement_coverage(workspace)
+    applies = bool(requirement.get("applicable"))
+    requirement_lane = _lane(
+        "requirement_to_test_coverage",
+        state=(
+            "PASS"
+            if requirement.get("status") == "complete"
+            else "NOT_APPLICABLE"
+            if not applies
             else "INCOMPLETE"
-        )
-    )
-    lanes.append(
-        _lane(
-            "requirement_to_test_coverage",
-            state=req_state,
-            applicable=bool(requirement_result.get("applicable")),
-            result=requirement_result,
-            basis="Requirement manifest to non-hollow smoke-test mapping when an app blueprint declares it.",
-            next_action=(
-                "Resolve uncovered requirements."
-                if requirement_result.get("applicable")
-                else "No app requirement manifest declared."
-            ),
-            denominator_state="MEASURED"
-            if requirement_result.get("applicable")
-            else "UNDECLARED",
-        )
-    )
-    runtime_result = read_runtime_coverage_report(workspace, include_files=True)
-    runtime_state = (
-        "PASS"
-        if runtime_result.get("state") == "OBSERVED"
-        and runtime_result.get("receipt_status") == "VERIFIED"
-        else (
-            "NOT_MEASURED" if runtime_result.get("state") == "NOT_RUN" else "INCOMPLETE"
-        )
-    )
-    lanes.append(
-        _lane(
-            "runtime_coverage",
-            state=runtime_state,
-            applicable=bool(code_count),
-            result=runtime_result,
-            basis="Hash-bound Coverage.py statement and branch evidence; runtime counts do not prove correctness.",
-            next_action="Run the project tests with the documented coverage profile and bind a clean receipt.",
-            denominator_state="MEASURED"
-            if runtime_result.get("state") == "OBSERVED"
-            else "UNMEASURED",
-        )
+        ),
+        applicable=applies,
+        result=requirement,
+        basis="Requirement manifest to non-hollow smoke-test mapping when an app blueprint declares it.",
+        next_action=(
+            "Resolve uncovered requirements."
+            if applies
+            else "No app requirement manifest declared."
+        ),
+        denominator_state="MEASURED" if applies else "UNDECLARED",
     )
 
+    runtime = read_runtime_coverage_report(workspace, include_files=True)
+    runtime_state = (
+        "PASS"
+        if runtime.get("state") == "OBSERVED"
+        and runtime.get("receipt_status") == "VERIFIED"
+        else "NOT_MEASURED"
+        if runtime.get("state") == "NOT_RUN"
+        else "INCOMPLETE"
+    )
+    runtime_lane = _lane(
+        "runtime_coverage",
+        state=runtime_state,
+        applicable=bool(code_count),
+        result=runtime,
+        basis="Hash-bound Coverage.py statement and branch evidence; runtime counts do not prove correctness.",
+        next_action="Run the project tests with the documented coverage profile and bind a clean receipt.",
+        denominator_state=(
+            "MEASURED" if runtime.get("state") == "OBSERVED" else "UNMEASURED"
+        ),
+    )
+    return [requirement_lane, runtime_lane]
+
+
+def _supply_chain_lane(workspace: Path) -> dict[str, Any]:
     manifests = _manifest_paths(workspace)
-    supply_chain_receipts = _receipt_inventory(
+    receipts = _receipt_inventory(
         workspace,
         patterns=(
             "*.sbom.json",
@@ -1003,27 +966,29 @@ def run_deep_repository_audit(
             "*provenance*.json",
         ),
     )
-    lanes.append(
-        _lane(
-            "dependencies_and_supply_chain",
-            state="NOT_MEASURED" if manifests else "NOT_APPLICABLE",
-            applicable=bool(manifests),
-            result={
-                "manifests": manifests,
-                "worker_receipts": supply_chain_receipts,
-                "verification": "UNVERIFIED",
-            },
-            basis="Dependency manifests were inventoried; advisory, SBOM and provenance workers require explicit receipts.",
-            next_action=(
-                "Generate a pinned SBOM and run OSV/advisory/provenance workers."
-                if manifests
-                else "No supported dependency manifest was discovered."
-            ),
-            denominator_state="UNMEASURED" if manifests else "MEASURED",
-        )
+    has_manifests = bool(manifests)
+    return _lane(
+        "dependencies_and_supply_chain",
+        state="NOT_MEASURED" if has_manifests else "NOT_APPLICABLE",
+        applicable=has_manifests,
+        result={
+            "manifests": manifests,
+            "worker_receipts": receipts,
+            "verification": "UNVERIFIED",
+        },
+        basis="Dependency manifests were inventoried; advisory, SBOM and provenance workers require explicit receipts.",
+        next_action=(
+            "Generate a pinned SBOM and run OSV/advisory/provenance workers."
+            if has_manifests
+            else "No supported dependency manifest was discovered."
+        ),
+        denominator_state="UNMEASURED" if has_manifests else "MEASURED",
     )
 
-    lanes.append(_native_worker_lane(workspace, worker_config, bool(code_count)))
+
+def _deep_audit_report(
+    lanes: list[dict[str, Any]], python_count: int, languages: list[str]
+) -> dict[str, Any]:
     applicable = [lane for lane in lanes if lane["applicability_state"] == "APPLICABLE"]
     blocked = [lane for lane in applicable if lane["measurement_state"] == "BLOCKED"]
     unmeasured = [
@@ -1033,12 +998,13 @@ def run_deep_repository_audit(
         lane for lane in applicable if lane["measurement_state"] == "REVIEW_REQUIRED"
     ]
     measured = [lane for lane in applicable if lane["measurement_state"] == "MEASURED"]
-    if blocked:
-        state = "BLOCKED"
-    elif unmeasured or review_required:
-        state = "INCOMPLETE"
-    else:
-        state = "PASS"
+    state = (
+        "BLOCKED"
+        if blocked
+        else "INCOMPLETE"
+        if unmeasured or review_required
+        else "PASS"
+    )
     report = {
         "schema": SCHEMA,
         "state": state,
@@ -1063,17 +1029,107 @@ def run_deep_repository_audit(
         "claim_boundary": "Full local orchestration of available evidence lanes; not a penetration test, runtime certification, or release approval.",
         "next_actions": [
             lane["next_action"]
-            for lane in [
-                *blocked,
-                *unmeasured,
-                *review_required,
-            ]
+            for lane in [*blocked, *unmeasured, *review_required]
         ],
     }
     report["audit_sha256"] = _digest(
         {key: value for key, value in report.items() if key != "audit_sha256"}
     )
     return report
+
+
+def run_deep_repository_audit(
+    root: Path,
+    inventory: dict[str, Any],
+    *,
+    tenant_contract: str = ".factory/tenant-read-contract.json",
+    worker_config: str | None = None,
+) -> dict[str, Any]:
+    """Run all applicable local audit lanes and return an evidence map."""
+    workspace = Path(root).resolve()
+    file_types = inventory.get("file_types", {})
+    python_count = int(file_types.get("python", 0))
+    source_count = inventory.get("files_discovered", 0)
+    code_count = sum(
+        int(count) for name, count in file_types.items() if name not in {"docs"}
+    )
+    languages = [name for name, count in file_types.items() if count]
+    lanes = [
+        _candidate_inventory_lane(inventory, source_count),
+        _architecture_health_lane(workspace),
+        _pattern_guard_path_lane(workspace, source_count),
+        *_python_audit_lanes(workspace, python_count, tenant_contract),
+        _non_python_security_lane(workspace, languages),
+        _documentation_integrity_lane(int(file_types.get("docs", 0))),
+        _workflow_integrity_lane(workspace),
+        *_requirement_runtime_lanes(workspace, code_count),
+        _supply_chain_lane(workspace),
+        _native_worker_lane(workspace, worker_config, bool(code_count)),
+    ]
+    return _deep_audit_report(lanes, python_count, languages)
+
+
+def _scan_security_and_deep_audit(
+    workspace: Path,
+    inventory: dict[str, Any],
+    deep: bool,
+    worker_config: str | None,
+) -> tuple[dict[str, Any], dict[str, Any] | None, str | None]:
+    if not deep:
+        return (
+            {
+                "state": "NOT_RUN",
+                "findings": [],
+                "audit_coverage": {"measurement_state": "not_run"},
+                "action_summary": "Use factory scan --deep to orchestrate local audit lanes and identify missing evidence.",
+            },
+            None,
+            None,
+        )
+    try:
+        deep_audit = run_deep_repository_audit(
+            workspace, inventory, worker_config=worker_config
+        )
+        static_security = next(
+            (
+                lane.get("result") or {}
+                for lane in deep_audit["lanes"]
+                if lane["measurement_id"] == "python_ast_security"
+            ),
+            {
+                "state": "NOT_RUN",
+                "findings": [],
+                "audit_coverage": {"measurement_state": "not_run"},
+            },
+        )
+        return static_security, deep_audit, None
+    except (OSError, UnicodeError, ValueError, TypeError) as exc:
+        return (
+            {
+                "state": "INVALID",
+                "findings": [],
+                "audit_coverage": {"measurement_state": "invalid"},
+            },
+            None,
+            "Analyzer failed: " + type(exc).__name__,
+        )
+
+
+def _repo_scan_state(
+    deep_audit: dict[str, Any] | None,
+    static_security: dict[str, Any],
+    deep: bool,
+    inventory: dict[str, Any],
+) -> tuple[str, str]:
+    if deep_audit is not None:
+        state = deep_audit["state"]
+        return state, state
+    findings = static_security.get("findings", [])
+    if static_security.get("state") in {"BLOCKED", "INVALID"} or findings:
+        return "BLOCKED", "BLOCKED"
+    if not deep or inventory["files_discovered"] == 0:
+        return "INCOMPLETE", "INCOMPLETE"
+    return "ASSESSED_STATIC_ONLY", "INCOMPLETE"
 
 
 def run_repo_scan(
@@ -1090,52 +1146,12 @@ def run_repo_scan(
     workspace = Path(root).resolve()
     workspace.mkdir(parents=True, exist_ok=True)
     inventory = _workspace_inventory(workspace)
-    security_error = None
-    deep_audit = None
-    if deep:
-        try:
-            deep_audit = run_deep_repository_audit(
-                workspace, inventory, worker_config=worker_config
-            )
-            static_security = next(
-                (
-                    lane.get("result") or {}
-                    for lane in deep_audit["lanes"]
-                    if lane["measurement_id"] == "python_ast_security"
-                ),
-                {
-                    "state": "NOT_RUN",
-                    "findings": [],
-                    "audit_coverage": {"measurement_state": "not_run"},
-                },
-            )
-        except (OSError, UnicodeError, ValueError, TypeError) as exc:
-            static_security = {
-                "state": "INVALID",
-                "findings": [],
-                "audit_coverage": {"measurement_state": "invalid"},
-            }
-            security_error = "Analyzer failed: " + type(exc).__name__
-    else:
-        static_security = {
-            "state": "NOT_RUN",
-            "findings": [],
-            "audit_coverage": {"measurement_state": "not_run"},
-            "action_summary": "Use `factory scan --deep` to orchestrate local audit lanes and identify missing evidence.",
-        }
-    findings = static_security.get("findings", [])
-    if deep_audit is not None:
-        state = deep_audit["state"]
-        verdict = state
-    elif static_security.get("state") in {"BLOCKED", "INVALID"} or findings:
-        state = "BLOCKED"
-        verdict = "BLOCKED"
-    elif not deep or inventory["files_discovered"] == 0:
-        state = "INCOMPLETE"
-        verdict = "INCOMPLETE"
-    else:
-        state = "ASSESSED_STATIC_ONLY"
-        verdict = "INCOMPLETE"
+    static_security, deep_audit, security_error = _scan_security_and_deep_audit(
+        workspace, inventory, deep, worker_config
+    )
+    state, verdict = _repo_scan_state(
+        deep_audit, static_security, deep, inventory
+    )
     result = {
         "schema": "factory.repo-scan.v1",
         "state": state,
@@ -1150,18 +1166,21 @@ def run_repo_scan(
             "Tests, dependency analysis, runtime behavior, and deployment behavior require explicit project evidence and are not inferred.",
             "Deep orchestration is not a penetration test, runtime certification, or release approval.",
         ],
-        "next_actions": [
-            "Add .factory/tenant-read-contract.json for every tenant-scoped read, or explicitly declare an empty set.",
-            "Run every applicable worker lane and bind clean, commit-scoped receipts before treating the result as complete.",
-            "Review every finding and every unmeasured lane before treating the result as a merge or release decision.",
-        ],
+        "next_actions": (
+            deep_audit["next_actions"]
+            if deep_audit is not None
+            else [
+                "Add .factory/tenant-read-contract.json for every tenant-scoped read, or explicitly declare an empty set.",
+                "Run every applicable worker lane and bind clean, commit-scoped receipts before treating the result as complete.",
+                "Review every finding and every unmeasured lane before treating the result as a merge or release decision.",
+            ]
+        ),
     }
-    if deep_audit is not None:
-        result["next_actions"] = deep_audit["next_actions"]
     if security_error:
         result["static_security_error"] = security_error
     result["scan_sha256"] = _sha(result)
     return result
+
 
 
 def run_first_proof(
