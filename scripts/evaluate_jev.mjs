@@ -252,7 +252,7 @@ function trialConfiguration(options) {
     trueThreshold: options.trueThreshold, timeoutMs: options.timeoutMs, zeroDataRetention: true,
     only: ['typesafe-ai'], maxResponseBytes: MAX_RESPONSE_BYTES, advisoryGrade: options.grade,
     reviewProfile: options.profile ?? 'general',
-    questionPolicy: { findingPrefix: UNTRUSTED_STATE_RULE, evidenceInstructions: EVIDENCE_INSTRUCTIONS } };
+    questionPolicy: { findingPrefix: UNTRUSTED_STATE_RULE, defaultEvidenceInstructions: EVIDENCE_INSTRUCTIONS } };
 }
 
 async function trialHashes(cases, rubric, options) {
@@ -306,21 +306,24 @@ function selectProfile(document, profile) {
   return { ...document, rubric: document.review_profiles[profile] };
 }
 
+function unwrapFramework(rubric, profile) {
+  if (!object(rubric) || !Object.hasOwn(rubric, 'schema')) return { rubric, framework: null };
+  requireValue(rubric.schema === 'factory.judge-framework.v1' && typeof rubric.version === 'string'
+    && /^[\w.-]{1,128}$/.test(rubric.version) && object(rubric.rubric), 'invalid_framework');
+  return { rubric: rubric.rubric, framework: { schema: rubric.schema, version: rubric.version,
+    review_profile: profile ?? 'general',
+    validation: 'envelope_and_one_combined_rubric_only', full_protocol_executed: false } };
+}
+
 export async function loadTrial(casesPath, rubricPath, profile) {
   const input = await readBounded(casesPath);
   const question = await readBounded(rubricPath);
-  let parsed, rubric, framework = null;
+  let parsed, rubric;
   try { parsed = JSON.parse(input.toString('utf8')); rubric = JSON.parse(question.toString('utf8')); }
   catch { throw new TrialError('invalid_input_json'); }
-  rubric = selectProfile(rubric, profile);
-  if (object(rubric) && Object.hasOwn(rubric, 'schema')) {
-    requireValue(rubric.schema === 'factory.judge-framework.v1' && typeof rubric.version === 'string'
-      && /^[\w.-]{1,128}$/.test(rubric.version) && object(rubric.rubric), 'invalid_framework');
-    framework = { schema: rubric.schema, version: rubric.version,
-      review_profile: profile ?? 'general',
-      validation: 'envelope_and_one_combined_rubric_only', full_protocol_executed: false };
-    rubric = rubric.rubric;
-  }
+  const selected = unwrapFramework(selectProfile(rubric, profile), profile);
+  rubric = selected.rubric;
+  const framework = selected.framework;
   const cases = Array.isArray(parsed) ? parsed : parsed?.cases;
   validate(cases, rubric, { live: false, grade: false, falseThreshold: 0.1, trueThreshold: 0.9, timeoutMs: 30_000 });
   return { cases, rubric, framework, hashes: { input: sha(input), rubric: sha(question) } };
