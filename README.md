@@ -1,5 +1,21 @@
 # Code Factory
 
+## Start with your repository
+
+```powershell
+python -m pip install factoryline-code-factory
+factory guide
+factory scan --root .
+```
+
+The guide offers one plain-language path. The default scan inventories relative
+file names and sizes; it does not read source or run tests, so its `INCOMPLETE`
+result is not a code-quality verdict. For a bounded Python AST check, run
+`factory audit security --root . --json`. That check reports its source
+coverage and limits; it does not prove runtime behavior or that a clean
+repository is safe to release. See [Start Here](docs/START_HERE.md) for the
+guided workflow.
+
 ## Latest audit telemetry preview — October 8, 2026
 
 **Fixed:** bounded evaluator output validation across all six runtime lanes; malformed results stay incomplete. Shared imported assertion helpers and inherited test mixins are resolved by bounded static analysis.
@@ -113,21 +129,16 @@ or that every check passed.
 
 </details>
 
-## Install and start
+## Add deeper audit lanes
 
 ```powershell
-python -m pip install factoryline-code-factory
-factory --help
-factory guide
-factory scan --root .
+factory scan --root . --deep
 ```
 
-`factory scan --root .` is the zero-config starting point for an existing
-repository. It records a bounded relative file inventory. Add `--deep` to
-orchestrate architecture, Python security and test-oracle checks, workflow
-integrity, requirements, runtime coverage, and dependency evidence. Languages
-including TypeScript/JSX, Go, Rust, Java, C/C++, C#, Ruby, PHP and Swift are
-inventoried explicitly; missing native analysis remains unmeasured.
+Deep mode orchestrates architecture, Python security and test-oracle checks,
+workflow integrity, requirements, runtime coverage, and dependency evidence.
+Languages including TypeScript/JSX, Go, Rust, Java, C/C++, C#, Ruby, PHP and
+Swift are inventoried explicitly; missing native analysis remains unmeasured.
 
 For authorized native execution, use:
 
