@@ -8,7 +8,7 @@ timeouts, memory limits, challenge outcomes, and report completeness.
 | Family / target | Bundled tool | Evidence format | Scope limit |
 | --- | --- | --- | --- |
 | `codeql-python-worker` | CodeQL 2.27.1 Python bundle | SARIF | Full interprocedural Python query suite; this target covers Python only. |
-| `semgrep-worker` | Semgrep 1.141.0, one local Python rule | SARIF | Pattern-limited only. It cannot satisfy the repository's `interprocedural-full` static gate. The pinned CLI still honors candidate `.semgrepignore`; native source accounting remains necessary. |
+| `semgrep-worker` | Semgrep 1.141.0, eight local Python/JavaScript/TypeScript rules | SARIF | Tracks declared request sources through local aliases into SQL, command and HTML sinks; also checks unsafe Python deserialization and disabled TLS. Pattern-limited only: it cannot satisfy the `interprocedural-full` static gate. Candidate `.semgrepignore` still requires native source accounting. |
 | `osv-worker` | OSV-Scanner 2.2.0 + immutable PyPI database snapshot | OSV JSON | Offline PyPI dependency scanning only; the pinned database snapshot ages and does not cover other ecosystems. |
 | `syft-worker` | Syft 1.33.0 | Syft JSON | Inventory only; this is not a vulnerability scan. |
 | `gitleaks-worker` | Gitleaks 8.28.0 | SARIF | Built-in rules are pinned with the image; native accounting limitations remain. |
@@ -71,3 +71,26 @@ fixed versions with `dpkg --compare-versions`, and retain the feed digest,
 image digest, package manifest, and per-CVE decisions. Language-package scans
 remain useful. Native clean/failing runtime and fuzz controls must also pass.
 This refresh does not establish vulnerability-free images or full audit coverage.
+
+## Expanded native scanning controls
+
+The Semgrep profile disables inline `nosemgrep` suppression and requests
+data-flow traces. The pinned community engine did not emit SARIF code-flow
+traces in native controls, so trace coverage is recorded as `NOT_MEASURED`.
+Its ruleset hash binds eight rules to the image profile.
+Request-to-sink rules follow assignments and concatenations within supported
+local flows. Parameterized SQL, argv execution without a shell, static HTML,
+safe YAML loading, enabled TLS, and values rebound to constants have negative
+controls. These controls measure rule behavior on declared fixtures; they do
+not establish accuracy on arbitrary repositories. Aliased imports, custom
+framework sources, escaping helpers and cross-file flows require additional
+models or the full CodeQL lane. HTML `send` findings require checking the
+response content type and output context during review.
+
+Reproduce the native rule tests in a temporary folder by copying
+`rules/tests/python-controls.txt` to `semgrep-pattern-limited.py`,
+`rules/tests/javascript-controls.js` to both `semgrep-pattern-limited.js` and
+`semgrep-pattern-limited.ts`, and the rules YAML beside those files. Run the
+pinned Semgrep image with `semgrep --test --metrics=off
+--disable-version-check <folder>`. Set `HOME=/tmp` and
+`SEMGREP_SETTINGS_FILE=/tmp/settings.yml` when the container is read-only.

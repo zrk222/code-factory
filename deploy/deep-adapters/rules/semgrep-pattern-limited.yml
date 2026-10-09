@@ -13,3 +13,115 @@ rules:
       confidence: MEDIUM
       technology: [python]
       cwe: ["CWE-78"]
+  - id: python.request-command-injection
+    message: Request data reaches command execution; use argv without shell parsing and validate allowed operations.
+    severity: ERROR
+    languages: [python]
+    mode: taint
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.form.get(...)
+      - pattern: request.args[...]
+      - pattern: request.form[...]
+    pattern-sinks:
+      - pattern: os.system($VALUE)
+      - pattern: os.popen($VALUE)
+      - patterns:
+          - pattern: subprocess.$FUNC($VALUE, ..., shell=True, ...)
+          - focus-metavariable: $VALUE
+    metadata:
+      category: security
+      confidence: HIGH
+      cwe: ["CWE-78"]
+  - id: python.request-sql-injection
+    message: Request data reaches SQL text; bind values as query parameters instead of formatting SQL.
+    severity: ERROR
+    languages: [python]
+    mode: taint
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.form.get(...)
+      - pattern: request.args[...]
+      - pattern: request.form[...]
+    pattern-sinks:
+      - patterns:
+          - pattern: $DB.execute($QUERY, ...)
+          - focus-metavariable: $QUERY
+    metadata:
+      category: security
+      confidence: HIGH
+      cwe: ["CWE-89"]
+  - id: python.unsafe-deserialization
+    message: Unsafe deserialization can execute code; use a non-executable format and validate its schema.
+    severity: WARNING
+    languages: [python]
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+      - pattern: yaml.unsafe_load(...)
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-502"]
+  - id: python.disabled-tls-verification
+    message: TLS certificate validation is disabled; enable verification and configure trusted certificates.
+    severity: WARNING
+    languages: [python]
+    pattern: requests.$METHOD(..., verify=False, ...)
+    metadata:
+      category: security
+      confidence: HIGH
+      cwe: ["CWE-295"]
+  - id: javascript.request-command-injection
+    message: Request data reaches a shell command; use execFile with validated arguments.
+    severity: ERROR
+    languages: [javascript, typescript]
+    mode: taint
+    pattern-sources:
+      - pattern: $REQ.query
+      - pattern: $REQ.body
+      - pattern: $REQ.params
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: child_process.exec($COMMAND, ...)
+              - pattern: child_process.execSync($COMMAND, ...)
+          - focus-metavariable: $COMMAND
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-78"]
+  - id: javascript.request-sql-injection
+    message: Request data reaches SQL text; bind query parameters instead of concatenating values.
+    severity: ERROR
+    languages: [javascript, typescript]
+    mode: taint
+    pattern-sources:
+      - pattern: $REQ.query
+      - pattern: $REQ.body
+      - pattern: $REQ.params
+    pattern-sinks:
+      - patterns:
+          - pattern: $DB.query($QUERY, ...)
+          - focus-metavariable: $QUERY
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-89"]
+  - id: javascript.request-html-injection
+    message: Request data reaches an HTML response; encode output for its context or use an escaping template.
+    severity: ERROR
+    languages: [javascript, typescript]
+    mode: taint
+    pattern-sources:
+      - pattern: $REQ.query
+      - pattern: $REQ.body
+      - pattern: $REQ.params
+    pattern-sinks:
+      - patterns:
+          - pattern: $RES.send($HTML)
+          - focus-metavariable: $HTML
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-79"]

@@ -5,6 +5,7 @@ on:
       - deploy/deep-adapters/**
       - factoryline/**
       - scripts/verify_worker_cves*.mjs
+      - scripts/verify_semgrep_surface.mjs
       - .github/workflows/worker-verification.yml
   push:
     branches: [main]
@@ -12,6 +13,7 @@ on:
       - deploy/deep-adapters/**
       - factoryline/**
       - scripts/verify_worker_cves*.mjs
+      - scripts/verify_semgrep_surface.mjs
       - .github/workflows/worker-verification.yml
   workflow_dispatch:
 
@@ -23,6 +25,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  semgrep-surface:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22"
+      - name: Build hash-bound multi-language rule worker
+        run: docker build --platform linux/amd64 --target semgrep-worker -f deploy/deep-adapters/Dockerfile -t factory-semgrep:candidate .
+      - name: Verify vulnerable and safe native controls in isolation
+        run: node scripts/verify_semgrep_surface.mjs factory-semgrep:candidate semgrep-surface-verification.json
+      - name: Preserve image and source-bound control evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: semgrep-surface-verification
+          path: |
+            semgrep-surface-verification.json
+            semgrep-surface-verification.json.sarif
+          if-no-files-found: error
   sdk-workers:
     runs-on: ubuntu-latest
     timeout-minutes: 60
