@@ -461,6 +461,66 @@ async function executeTrackedTrial(trial, options, output, journal) {
   return report;
 }
 
+function parseJournalEvents(bytes) {
+  let events;
+  try { events = bytes.toString('utf8').trim().split('\n').map(JSON.parse); }
+  catch { throw new TrialError('invalid_journal_json'); }
+  requireValue(events.length >= 1 && events.length <= MAX_CASES + 2, 'invalid_journal_size');
+  let previous = null;
+  for (const event of events) {
+    requireValue(object(event), 'invalid_journal_event');
+    const { event_sha256: digest, ...record } = event;
+    requireValue(record.previous_sha256 === previous && digest === sha(encode(record)), 'journal_hash_mismatch');
+    previous = digest;
+  }
+  return events;
+}
+
+function validateJournalResults(events, start) {
+  const results = [];
+  const ids = new Set();
+  for (const event of events) {
+    requireValue(event.run_id === start.run_id && event.event === 'result' && object(event.result), 'invalid_journal_sequence');
+    const result = event.result;
+    requireValue(typeof result.id === 'string' && !ids.has(result.id)
+      && ['decided', 'abstain', 'error', 'not_run'].includes(result.status), 'invalid_journal_result');
+    ids.add(result.id);
+    results.push(result);
+  }
+  requireValue(results.length <= start.total_criteria, 'invalid_journal_count');
+  return results;
+}
+
+function validateJournalReport(event, start, results, previous) {
+  const report = event.report;
+  requireValue(event.run_id === start.run_id && object(report)
+    && event.report_sha256 === sha(encode(report)), 'journal_report_mismatch');
+  requireValue(report.tracking?.run_id === start.run_id
+    && report.tracking.results_chain_sha256 === previous
+    && encode(report.results) === encode(results) && encode(report.hashes) === encode(start.hashes), 'journal_report_binding');
+  requireValue(results.length === start.total_criteria && report.metrics?.total === start.total_criteria,
+    'journal_report_count');
+}
+
+export async function verifyJournal(path, { expectedJournalSha256 } = {}) {
+  const bytes = await readBounded(path);
+  const journalHash = sha(bytes);
+  if (expectedJournalSha256 !== undefined) requireValue(expectedJournalSha256 === journalHash, 'journal_anchor_mismatch');
+  const events = parseJournalEvents(bytes);
+  const start = events[0];
+  requireValue(start.event === 'start' && start.schema === 'factory.jev-journal.v1'
+    && typeof start.run_id === 'string' && Number.isInteger(start.total_criteria)
+    && start.total_criteria >= 1 && start.total_criteria <= MAX_CASES, 'invalid_journal_start');
+  const final = events.at(-1);
+  const complete = final.event === 'report';
+  const results = validateJournalResults(events.slice(1, complete ? -1 : undefined), start);
+  if (complete) validateJournalReport(final, start, results, events.at(-2).event_sha256);
+  return { schema: 'factory.jev-journal-verification.v1', state: complete ? 'VERIFIED' : 'INCOMPLETE',
+    run_id: start.run_id, journal_sha256: journalHash, recorded_results: results.length,
+    expected_results: start.total_criteria, externally_anchored: expectedJournalSha256 !== undefined,
+    authority: 'Integrity only; not judgment correctness or approval. An unanchored local writer can replace the entire chain.' };
+}
+
 export async function runCli(argv, { env = process.env, fetchImpl = globalThis.fetch,
   archiveRoot = resolve('.factory/jev/evaluations'), archiveBoundary = process.cwd() } = {}) {
   const options = parseArgs(argv);
@@ -476,14 +536,21 @@ export async function runCli(argv, { env = process.env, fetchImpl = globalThis.f
   } finally { await journal?.handle.close(); await output?.close(); }
 }
 
+async function runOperatorCommand(argv) {
+  if (argv[0] !== '--verify-journal') return runCli(argv);
+  requireValue(argv.length === 2, 'invalid_arguments');
+  return verifyJournal(argv[1]);
+}
+
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   if (process.argv.length === 3 && process.argv[2] === '--help') {
     process.stdout.write(USAGE);
+    process.stdout.write('Verify recorded results offline: --verify-journal .factory/jev/evaluations/<run-id>.jsonl\n');
   } else {
   try {
-    const report = await runCli(process.argv.slice(2));
+    const report = await runOperatorCommand(process.argv.slice(2));
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-    process.exitCode = report.mode === 'live' && report.metrics.unresolved ? 2 : 0;
+    process.exitCode = report.state === 'INCOMPLETE' ? 2 : 0;
   } catch (error) {
     process.stderr.write(`${encode({ schema: 'factory.jev-experimental-trial.error.v1',
       state: 'BLOCKED', error: error instanceof TrialError ? error.code : 'evaluation_failed' })}\n`);

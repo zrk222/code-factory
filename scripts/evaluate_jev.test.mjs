@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import {
-  ENDPOINT, MODEL, evaluateCases, loadTrial, parseArgs, runCli, summarizeCosts, summarizeLatency,
+  ENDPOINT, MODEL, evaluateCases, loadTrial, parseArgs, runCli, summarizeCosts, summarizeLatency, verifyJournal,
 } from './evaluate_jev.mjs';
 
 const rubric = { instructions: 'Does the supplied state show a real finding?' };
@@ -54,6 +54,20 @@ test('operator journal checkpoints every answer and error without copying raw st
     assert.equal(report.tracking.results_chain_sha256, events[2].event_sha256);
     assert.deepEqual(events[3].report, report);
     assert.equal(events[3].report_sha256, createHash('sha256').update(JSON.stringify(report)).digest('hex'));
+    const path = join(root, report.tracking.journal_filename);
+    const verification = await verifyJournal(path);
+    assert.equal(verification.state, 'VERIFIED');
+    assert.equal(verification.recorded_results, 2);
+    assert.equal((await verifyJournal(path, { expectedJournalSha256: verification.journal_sha256 })).externally_anchored, true);
+    await assert.rejects(verifyJournal(path, { expectedJournalSha256: '0'.repeat(64) }), /journal_anchor_mismatch/);
+    await writeFile(path, text.replace('"status":"abstain"', '"status":"decided"'));
+    await assert.rejects(verifyJournal(path), /journal_hash_mismatch/);
+    await writeFile(path, events.slice(0, 2).map(JSON.stringify).join('\n') + '\n');
+    assert.equal((await verifyJournal(path)).state, 'INCOMPLETE');
+    await writeFile(path, text);
+    const response = spawnSync(process.execPath, [fileURLToPath(new URL('./evaluate_jev.mjs', import.meta.url)), '--verify-journal', path], { encoding: 'utf8' });
+    assert.equal(response.status, 0);
+    assert.equal(JSON.parse(response.stdout).state, 'VERIFIED');
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

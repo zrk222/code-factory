@@ -222,6 +222,13 @@ Journal directories must stay under the selected workspace and cannot traverse
 linked directory components. Unix archive permissions are restricted to the
 owner; Windows archives inherit the workspace's account ACL. A process with
 write access to the workspace can still tamper with local records.
+Validate a recorded run offline with
+`node scripts/evaluate_jev.mjs --verify-journal .factory/jev/evaluations/<run-id>.jsonl`.
+The verifier checks chained hashes, result order/uniqueness and final report
+bindings; incomplete histories exit with an incomplete result. Integrity does
+not establish judgment accuracy. Integrators can supply an independently
+retained SHA-256 through `verifyJournal(path, { expectedJournalSha256 })` to
+detect replacement of the complete local chain.
 See the framework's `grading_protocol` for evidence scope, host provenance
 checks, calibration and bias controls. Loading the framework is not proof that
 its entire calibration protocol has been executed.
