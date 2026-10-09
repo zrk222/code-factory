@@ -196,6 +196,16 @@ is not correctness. The trial cannot override scanner findings, approve a releas
 or establish production accuracy. The wheel includes the runner under
 `share/code-factory/evaluation` and the framework in `factoryline/data`.
 
+For advisory criterion grading, use `--grade`. Each case must ask whether one
+explicit violation exists: an admitted false answer passes that criterion and
+an admitted true answer fails it. The summary uses equal weights and ignores
+expected evaluation labels. Any unresolved criterion keeps the final score
+`null`; its possible score interval is not an achieved grade. This does not
+replace CF's deterministic quality grade, security blockers or release policy.
+See the framework's `grading_protocol` for evidence scope, host provenance
+checks, calibration and bias controls. Loading the framework is not proof that
+its entire calibration protocol has been executed.
+
 ## Measured optimization
 
 Repeated scans in the same Python process reuse source-bound oracle context.

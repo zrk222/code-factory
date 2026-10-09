@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 
 export const ENDPOINT = 'https://ai-gateway.vercel.sh/v1/evaluate';
 export const MODEL = 'typesafe-ai/jev';
+const USAGE = 'Usage: node scripts/evaluate_jev.mjs --cases cases.json --rubric rubric.json [--out new-report.json] [--grade] [--live] [--true-threshold 0.9] [--false-threshold 0.1] [--timeout-ms 30000]\nDefault is dry run. --grade enables equal-weight experimental advisory grading; unresolved criteria keep the numeric grade null. --live additionally requires AI_GATEWAY_API_KEY. No release or scanner override authority.\n';
 const MAX_INPUT_BYTES = 1_048_576;
 const MAX_RESPONSE_BYTES = 65_536;
 const MAX_CASES = 100;
@@ -21,6 +22,7 @@ const requireValue = (condition, code) => { if (!condition) throw new TrialError
 
 function validate(cases, rubric, options) {
   requireValue(typeof options.live === 'boolean', 'invalid_live_flag');
+  requireValue(typeof options.grade === 'boolean', 'invalid_grade_flag');
   requireValue(Array.isArray(cases) && cases.length > 0 && cases.length <= MAX_CASES, 'invalid_corpus');
   const ids = new Set();
   for (const item of cases) {
@@ -176,7 +178,7 @@ function metricsFor(results, live) {
 
 export async function evaluateCases(cases, rubric, supplied = {}) {
   const options = {
-    live: false, falseThreshold: 0.1, trueThreshold: 0.9, timeoutMs: 30_000,
+    live: false, grade: false, falseThreshold: 0.1, trueThreshold: 0.9, timeoutMs: 30_000,
     fetchImpl: globalThis.fetch, ...supplied, latencies: [],
   };
   validate(cases, rubric, options);
@@ -213,10 +215,34 @@ export function summarizeLatency(latencies, live) {
     max_ms: latencies.length ? Math.max(...latencies) : null };
 }
 
+function gradeOutcome(result) {
+  if (!object(result) || result.status !== 'decided') return 'unresolved';
+  if (result.prediction === false) return 'passed';
+  if (result.prediction === true) return 'failed';
+  return 'unresolved';
+}
+
+/** Equal-weight advisory criterion grade: false finding passes; unresolved prevents a score. */
+function summarizeGrade(results) {
+  requireValue(Array.isArray(results), 'invalid_grade_results');
+  const counts = { total: results.length, passed: 0, failed: 0, unresolved: 0 };
+  for (const result of results) counts[gradeOutcome(result)]++;
+  const lower = counts.total ? counts.passed / counts.total * 100 : null;
+  const upper = counts.total ? (counts.passed + counts.unresolved) / counts.total * 100 : null;
+  const complete = counts.total > 0 && counts.unresolved === 0;
+  return { state: complete ? 'ADVISORY_GRADE' : 'INCOMPLETE',
+    grade: complete ? lower : null, counts,
+    coverage: counts.total ? (counts.passed + counts.failed) / counts.total : 0,
+    possible_score_interval: [lower, upper],
+    method: 'Each supplied criterion has equal weight. Decided finding=false passes; finding=true fails. Abstentions, errors, not-run or invalid predictions remain unresolved. Expected labels and probabilities do not determine the grade.',
+    authority: { experimental: true, release: false, approval: false, scanner_override: false },
+  };
+}
+
 function trialConfiguration(options) {
   return { endpoint: ENDPOINT, model: MODEL, falseThreshold: options.falseThreshold,
     trueThreshold: options.trueThreshold, timeoutMs: options.timeoutMs, zeroDataRetention: true,
-    only: ['typesafe-ai'], maxResponseBytes: MAX_RESPONSE_BYTES,
+    only: ['typesafe-ai'], maxResponseBytes: MAX_RESPONSE_BYTES, advisoryGrade: options.grade,
     questionPolicy: { findingPrefix: UNTRUSTED_STATE_RULE, evidenceInstructions: EVIDENCE_INSTRUCTIONS } };
 }
 
@@ -236,6 +262,7 @@ async function trialReport(cases, rubric, results, options) {
     endpoint: ENDPOINT, thresholds: { true: options.trueThreshold, false: options.falseThreshold },
     hashes: await trialHashes(cases, rubric, options),
     metrics, category_metrics: categoryMetricsFor(results, options.live), results,
+    advisory_grade: options.grade ? summarizeGrade(results) : null,
     cost: summarizeCosts(results, options.live), latency: summarizeLatency(options.latencies, options.live),
     privacy: { zero_data_retention_requested: true, provider_allowlist: ['typesafe-ai'],
       provider_retention_independently_verified: false },
@@ -277,17 +304,18 @@ export async function loadTrial(casesPath, rubricPath) {
     rubric = rubric.rubric;
   }
   const cases = Array.isArray(parsed) ? parsed : parsed?.cases;
-  validate(cases, rubric, { live: false, falseThreshold: 0.1, trueThreshold: 0.9, timeoutMs: 30_000 });
+  validate(cases, rubric, { live: false, grade: false, falseThreshold: 0.1, trueThreshold: 0.9, timeoutMs: 30_000 });
   return { cases, rubric, framework, hashes: { input: sha(input), rubric: sha(question) } };
 }
 
 export function parseArgs(argv) {
-  const options = { live: false };
+  const options = { live: false, grade: false };
   const names = { '--cases': 'casesPath', '--rubric': 'rubricPath', '--out': 'outPath',
     '--true-threshold': 'trueThreshold', '--false-threshold': 'falseThreshold', '--timeout-ms': 'timeoutMs' };
   for (let index = 0; index < argv.length; index++) {
     const flag = argv[index];
-    if (flag === '--live' && options.live === false) { options.live = true; continue; }
+    const booleanOption = { '--live': 'live', '--grade': 'grade' }[flag];
+    if (booleanOption && options[booleanOption] === false) { options[booleanOption] = true; continue; }
     const name = names[flag];
     requireValue(name && options[name] === undefined && argv[index + 1]
       && !argv[index + 1].startsWith('--'), 'invalid_arguments');
@@ -336,6 +364,9 @@ export async function runCli(argv, { env = process.env, fetchImpl = globalThis.f
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  if (process.argv.length === 3 && process.argv[2] === '--help') {
+    process.stdout.write(USAGE);
+  } else {
   try {
     const report = await runCli(process.argv.slice(2));
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
@@ -344,5 +375,6 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     process.stderr.write(`${encode({ schema: 'factory.jev-experimental-trial.error.v1',
       state: 'BLOCKED', error: error instanceof TrialError ? error.code : 'evaluation_failed' })}\n`);
     process.exitCode = 2;
+  }
   }
 }

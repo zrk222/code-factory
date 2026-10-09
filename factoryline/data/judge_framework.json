@@ -38,5 +38,16 @@
     "uncertainty": "Report sample counts and confidence intervals before accuracy claims. A model probability is not measured correctness.",
     "admission": "Compare against the deterministic baseline on a frozen corpus. No production verdict influence without measured non-regression and explicit policy admission."
   },
+  "grading_protocol": {
+    "criterion_design": "One observable violation per criterion, with explicit pass and fail examples. Do not combine security, correctness, maintainability and runtime coverage into one model question.",
+    "evidence_scope": "Specify the minimum evidence for each criterion. Source suffices for a syntactic claim; execution traces are required for a runtime claim. A report consistency check compares bound raw observations with the report, without certifying the entire codebase.",
+    "preflight": "The host verifies source and evidence hashes, candidate identity, applicable tool and policy versions before treating a judgment as admissible. Model agreement cannot repair a broken binding.",
+    "polarity": "The model question asks whether the specified violation is supported. An admitted false prediction passes the criterion; an admitted true prediction fails it. Missing evidence, uncertainty and transport errors remain unresolved.",
+    "method": "Optional advisory summary uses equal weight per criterion. Numeric score is 100 times passed criteria divided by total criteria, only when every criterion is decided. Expected evaluation labels never enter the grading calculation.",
+    "partial_results": "If any criterion is unresolved, final score is null. Show passed, failed, unresolved, grading coverage and the possible score interval. The upper bound is not an achieved grade.",
+    "critical_failures": "Deterministic security failures and required audit failures remain blocking regardless of an advisory score. The summary never replaces CF's existing quality grade or release policy.",
+    "calibration": "Use a frozen development set and separate independently adjudicated holdout with per-category precision, recall, false-positive rates, abstentions and confidence intervals. Repeat paired and adversarial trials across rubric/model revisions before admission.",
+    "bias_controls": "Withhold expected labels; avoid the creating model as sole verifier; compare shuffled evidence order and concise versus verbose evidence. Preserve disagreements instead of accepting majority confidence as proof."
+  },
   "authority": {"experimental": true, "scanner_override": false, "release_approval": false}
 }

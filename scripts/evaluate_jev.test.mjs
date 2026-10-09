@@ -3,6 +3,8 @@ import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   ENDPOINT, MODEL, evaluateCases, loadTrial, parseArgs, runCli, summarizeCosts, summarizeLatency,
 } from './evaluate_jev.mjs';
@@ -22,6 +24,48 @@ function answer(probability, extra = {}, evidenceProbability = 0.99) {
   }), { status: 200 });
 }
 const mock = (responses) => async () => responses.shift();
+
+test('advisory grading aggregates only admitted evaluator decisions', async () => {
+  const corpus = [...cases, { id: 'uncertain', state: 'missing context', expected: true }];
+  const report = await evaluateCases(corpus, rubric, { grade: true, live: true, apiKey: 'mock',
+    fetchImpl: mock([answer(0.01), answer(0.99), answer(0.5)]) });
+  assert.equal(report.advisory_grade.grade, null);
+  assert.deepEqual(report.advisory_grade.counts, { total: 3, passed: 1, failed: 1, unresolved: 1 });
+  assert.equal(report.advisory_grade.coverage, 2 / 3);
+  assert.equal(report.advisory_grade.authority.scanner_override, false);
+});
+
+test('advisory grade has equal weights and ignores evaluation labels', async () => {
+  for (const [probability, score] of [[0.01, 100], [0.99, 0]]) {
+    const options = () => ({ grade: true, live: true, apiKey: 'mock', fetchImpl: mock([answer(probability), answer(probability)]) });
+    const original = await evaluateCases(cases, rubric, options());
+    const relabelled = await evaluateCases(cases.map(item => ({ ...item, expected: !item.expected })), rubric, options());
+    assert.equal(original.advisory_grade.grade, score);
+    assert.deepEqual(original.advisory_grade, relabelled.advisory_grade);
+    assert.equal(original.advisory_grade.coverage, 1);
+  }
+});
+
+test('grading helper is not a public bypass of evidence admission', async () => {
+  const exported = await import('./evaluate_jev.mjs');
+  assert.equal(exported.summarizeGrade, undefined);
+});
+
+test('grading is explicitly enabled, hash bound and blocked by insufficient evidence', async () => {
+  const disabled = await evaluateCases(cases, rubric);
+  const dryGrade = await evaluateCases(cases, rubric, { grade: true });
+  assert.equal(disabled.advisory_grade, null);
+  assert.equal(dryGrade.advisory_grade.grade, null);
+  assert.equal(dryGrade.advisory_grade.counts.unresolved, 2);
+  assert.notEqual(disabled.hashes.configuration, dryGrade.hashes.configuration);
+  const report = await evaluateCases(cases, rubric, {
+    grade: true, live: true, apiKey: 'mock', fetchImpl: mock([answer(0.01), answer(0.99, {}, 0.1)]),
+  });
+  assert.equal(report.advisory_grade.grade, null);
+  assert.deepEqual(report.advisory_grade.counts, { total: 2, passed: 1, failed: 0, unresolved: 1 });
+  assert.equal(report.metrics.confusion.fn, 1);
+  await assert.rejects(evaluateCases(cases, rubric, { grade: 'true' }), /invalid_grade_flag/);
+});
 
 test('summarizeCosts preserves partial, complete, dry-run and overflow costs', () => {
   const complete = [{ reported_cost_usd: 0.001 }, { reported_cost_usd: 0.002 }];
@@ -255,10 +299,22 @@ test('invalid corpus, rubric and thresholds block before transport', async () =>
 
 test('CLI accepts only the explicit contract and rejects arbitrary URLs', () => {
   assert.deepEqual(parseArgs(['--cases', 'cases.json', '--rubric', 'rubric.json']), {
-    casesPath: 'cases.json', rubricPath: 'rubric.json', live: false,
+    casesPath: 'cases.json', rubricPath: 'rubric.json', live: false, grade: false,
   });
+  assert.equal(parseArgs(['--cases', 'cases.json', '--rubric', 'rubric.json', '--grade']).grade, true);
+  assert.throws(() => parseArgs(['--cases', 'cases.json', '--rubric', 'rubric.json', '--grade', '--grade']), /invalid_arguments/);
   assert.throws(() => parseArgs(['--endpoint', 'https://attacker.test']), /invalid_arguments/);
   assert.throws(() => parseArgs(['--live']), /invalid_arguments/);
+});
+
+test('CLI help states opt-in grading, unresolved score and live authorization boundaries', () => {
+  const response = spawnSync(process.execPath, [fileURLToPath(new URL('./evaluate_jev.mjs', import.meta.url)), '--help'],
+    { encoding: 'utf8', env: { ...process.env, AI_GATEWAY_API_KEY: '' } });
+  assert.equal(response.status, 0);
+  assert.match(response.stdout, /--grade/);
+  assert.match(response.stdout, /numeric grade null/);
+  assert.match(response.stdout, /Default is dry run/);
+  assert.equal(response.stderr, '');
 });
 
 test('file loading binds raw input bytes; CLI default works with no key', async () => {
