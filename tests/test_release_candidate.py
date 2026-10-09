@@ -319,6 +319,100 @@ def test_openvsx_cadence_exception_rejects_other_candidate_or_run(
         )
 
 
+def test_pypi_cadence_exception_is_bound_to_core_v0480_run_attempt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    issued = datetime.now(timezone.utc)
+    path = tmp_path / "exception.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "factory.release-cadence-exception.v1",
+                "channel": "core",
+                "version": "0.48.0",
+                "candidate_tag": "v0.48.0",
+                "source_commit": "b" * 40,
+                "requesting_actor": "zrk222",
+                "reason": "Approved one-time PyPI release exception.",
+                "issued_at": issued.isoformat(),
+                "expires_at": (issued + timedelta(minutes=30)).isoformat(),
+                "workflow_run_id": "12345",
+                "workflow_run_attempt": "2",
+                "environment": "pypi",
+                "environment_authorized": True,
+                "publish_enabled": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_RUN_ID", "12345")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    source = {"version": "0.48.0", "commit": "b" * 40}
+    contract = {"approved_by": "zrk222"}
+
+    result = candidate._cadence_exception_payload(
+        tmp_path, path, source, "core", "v0.48.0", contract
+    )
+
+    assert result["channel"] == "core"
+    assert result["version"] == "0.48.0"
+    assert result["candidate_tag"] == "v0.48.0"
+    assert result["workflow_run_id"] == "12345"
+    assert result["workflow_run_attempt"] == "2"
+
+
+def test_pypi_cadence_exception_rejects_other_core_version_tag_or_environment(
+    tmp_path: Path, monkeypatch
+) -> None:
+    issued = datetime.now(timezone.utc)
+    path = tmp_path / "exception.json"
+    value = {
+        "schema": "factory.release-cadence-exception.v1",
+        "channel": "core",
+        "version": "0.48.0",
+        "candidate_tag": "v0.48.0",
+        "source_commit": "b" * 40,
+        "requesting_actor": "zrk222",
+        "reason": "Approved one-time PyPI release exception.",
+        "issued_at": issued.isoformat(),
+        "expires_at": (issued + timedelta(minutes=30)).isoformat(),
+        "workflow_run_id": "12345",
+        "workflow_run_attempt": "2",
+        "environment": "pypi",
+        "environment_authorized": True,
+        "publish_enabled": True,
+    }
+    path.write_text(json.dumps(value), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_RUN_ID", "12345")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+
+    with pytest.raises(ValueError, match="restricted to.*core v0.48.0"):
+        candidate._cadence_exception_payload(
+            tmp_path,
+            path,
+            {"version": "0.48.1", "commit": "b" * 40},
+            "core",
+            "v0.48.1",
+            {"approved_by": "zrk222"},
+        )
+
+    with pytest.raises(
+        ValueError, match="requires successful protected pypi authorization"
+    ):
+        value["environment"] = "openvsx"
+        path.write_text(json.dumps(value), encoding="utf-8")
+        candidate._cadence_exception_payload(
+            tmp_path,
+            path,
+            {"version": "0.48.0", "commit": "b" * 40},
+            "core",
+            "v0.48.0",
+            {"approved_by": "zrk222"},
+        )
+
+
 def test_architecture_health_debt_blocks_candidate_preflight(
     monkeypatch, tmp_path: Path
 ) -> None:

@@ -445,32 +445,36 @@ def _cadence_exception_payload(
     versions = source.get("platform_versions", {})
     identity = {
         "channel": channel,
-        "version": versions.get("vscode") if channel == "vscode" else None,
+        "version": (
+            source.get("version")
+            if channel == "core"
+            else versions.get("vscode")
+            if channel == "vscode"
+            else None
+        ),
         "candidate_tag": candidate_tag,
         "source_commit": source.get("commit"),
         "requesting_actor": (contract or {}).get("approved_by"),
     }
-    if (
-        channel != "vscode"
-        or identity["version"] != "1.1.1"
-        or candidate_tag != "vscode-v1.1.1"
-    ):
+    allowed = {
+        "vscode": ("1.1.1", "vscode-v1.1.1", "openvsx"),
+        "core": ("0.48.0", "v0.48.0", "pypi"),
+    }
+    approved = allowed.get(channel)
+    if approved is None or (identity["version"], candidate_tag) != approved[:2]:
         raise ValueError(
-            "this one-time cadence exception is restricted to vscode-v1.1.1"
+            "this one-time cadence exception is restricted to vscode-v1.1.1 or core v0.48.0"
         )
-    if channel != "vscode" or any(
-        value.get(key) != expected for key, expected in identity.items()
-    ):
-        raise ValueError(
-            "cadence exception does not match the Open VSX candidate identity"
-        )
+    expected_environment = approved[2]
+    if any(value.get(key) != expected for key, expected in identity.items()):
+        raise ValueError("cadence exception does not match the candidate identity")
     if (
-        value.get("environment") != "openvsx"
+        value.get("environment") != expected_environment
         or value.get("environment_authorized") is not True
         or value.get("publish_enabled") is not True
     ):
         raise ValueError(
-            "cadence exception requires successful protected Open VSX authorization"
+            f"cadence exception requires successful protected {expected_environment} authorization"
         )
     reason = value.get("reason")
     if not isinstance(reason, str) or len(reason.strip()) < 12 or len(reason) > 500:
