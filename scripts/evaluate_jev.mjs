@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 
 export const ENDPOINT = 'https://ai-gateway.vercel.sh/v1/evaluate';
 export const MODEL = 'typesafe-ai/jev';
-const USAGE = 'Usage: node scripts/evaluate_jev.mjs --cases cases.json --rubric rubric.json [--out new-report.json] [--grade] [--live] [--true-threshold 0.9] [--false-threshold 0.1] [--timeout-ms 30000]\nDefault is dry run. --grade enables equal-weight experimental advisory grading; unresolved criteria keep the numeric grade null. --live additionally requires AI_GATEWAY_API_KEY. No release or scanner override authority.\n';
+const USAGE = 'Usage: node scripts/evaluate_jev.mjs --cases cases.json --rubric rubric.json [--profile prd|pr] [--out new-report.json] [--grade] [--live] [--true-threshold 0.9] [--false-threshold 0.1] [--timeout-ms 30000]\nDefault is dry run. --grade enables equal-weight experimental advisory grading; unresolved criteria keep the numeric grade null. --live additionally requires AI_GATEWAY_API_KEY. No release or scanner override authority.\n';
 const MAX_INPUT_BYTES = 1_048_576;
 const MAX_RESPONSE_BYTES = 65_536;
 const MAX_CASES = 100;
@@ -36,6 +36,7 @@ function validate(cases, rubric, options) {
   }
   requireValue(object(rubric) && typeof rubric.instructions === 'string'
     && rubric.instructions.trim().length > 0 && Buffer.byteLength(rubric.instructions) <= 32_768, 'invalid_rubric');
+  validateEvidenceInstructions(rubric);
   if (rubric.criteria !== undefined) {
     requireValue(object(rubric.criteria) && typeof rubric.criteria.true === 'string'
       && typeof rubric.criteria.false === 'string' && Object.keys(rubric.criteria).length === 2, 'invalid_rubric');
@@ -53,13 +54,20 @@ function validate(cases, rubric, options) {
   }
 }
 
+function validateEvidenceInstructions(rubric) {
+  if (rubric.evidence_instructions === undefined) return;
+  requireValue(typeof rubric.evidence_instructions === 'string' && rubric.evidence_instructions.trim()
+    && Buffer.byteLength(rubric.evidence_instructions) <= 8192, 'invalid_evidence_instructions');
+}
+
 function requestFor(item, rubric) {
   const question = { type: 'boolean', instructions: UNTRUSTED_STATE_RULE + rubric.instructions };
   if (rubric.criteria) question.criteria = rubric.criteria;
   const body = encode({
     model: MODEL, state: item.state, questions: { finding: question,
-      evidence_sufficient: { type: 'boolean', instructions: EVIDENCE_INSTRUCTIONS,
-        criteria: { true: 'Concrete relevant source or execution evidence with provenance supports judging the rubric.',
+      evidence_sufficient: { type: 'boolean', instructions: rubric.evidence_instructions
+        ? UNTRUSTED_STATE_RULE + rubric.evidence_instructions : EVIDENCE_INSTRUCTIONS,
+        criteria: { true: 'Concrete relevant evidence with provenance, appropriate to the declared criterion and evidence instructions, supports judging the rubric.',
           false: 'Necessary evidence or provenance is absent; only a self-report, assertion of confidence, or unrelated facts are present.' } } },
     providerOptions: { gateway: { zeroDataRetention: true, only: ['typesafe-ai'] } },
   });
@@ -243,6 +251,7 @@ function trialConfiguration(options) {
   return { endpoint: ENDPOINT, model: MODEL, falseThreshold: options.falseThreshold,
     trueThreshold: options.trueThreshold, timeoutMs: options.timeoutMs, zeroDataRetention: true,
     only: ['typesafe-ai'], maxResponseBytes: MAX_RESPONSE_BYTES, advisoryGrade: options.grade,
+    reviewProfile: options.profile ?? 'general',
     questionPolicy: { findingPrefix: UNTRUSTED_STATE_RULE, evidenceInstructions: EVIDENCE_INSTRUCTIONS } };
 }
 
@@ -290,16 +299,25 @@ async function readBounded(path) {
   finally { await handle?.close(); }
 }
 
-export async function loadTrial(casesPath, rubricPath) {
+function selectProfile(document, profile) {
+  if (profile === undefined) return document;
+  requireValue(['prd', 'pr'].includes(profile) && object(document.review_profiles)
+    && object(document.review_profiles[profile]), 'invalid_review_profile');
+  return { ...document, rubric: document.review_profiles[profile] };
+}
+
+export async function loadTrial(casesPath, rubricPath, profile) {
   const input = await readBounded(casesPath);
   const question = await readBounded(rubricPath);
   let parsed, rubric, framework = null;
   try { parsed = JSON.parse(input.toString('utf8')); rubric = JSON.parse(question.toString('utf8')); }
   catch { throw new TrialError('invalid_input_json'); }
+  rubric = selectProfile(rubric, profile);
   if (object(rubric) && Object.hasOwn(rubric, 'schema')) {
     requireValue(rubric.schema === 'factory.judge-framework.v1' && typeof rubric.version === 'string'
       && /^[\w.-]{1,128}$/.test(rubric.version) && object(rubric.rubric), 'invalid_framework');
     framework = { schema: rubric.schema, version: rubric.version,
+      review_profile: profile ?? 'general',
       validation: 'envelope_and_one_combined_rubric_only', full_protocol_executed: false };
     rubric = rubric.rubric;
   }
@@ -311,6 +329,7 @@ export async function loadTrial(casesPath, rubricPath) {
 export function parseArgs(argv) {
   const options = { live: false, grade: false };
   const names = { '--cases': 'casesPath', '--rubric': 'rubricPath', '--out': 'outPath',
+    '--profile': 'profile',
     '--true-threshold': 'trueThreshold', '--false-threshold': 'falseThreshold', '--timeout-ms': 'timeoutMs' };
   for (let index = 0; index < argv.length; index++) {
     const flag = argv[index];
@@ -320,10 +339,14 @@ export function parseArgs(argv) {
     requireValue(name && options[name] === undefined && argv[index + 1]
       && !argv[index + 1].startsWith('--'), 'invalid_arguments');
     const value = argv[++index];
-    options[name] = name.endsWith('Path') ? value : Number(value);
+    options[name] = argumentValue(name, value);
   }
   requireValue(options.casesPath && options.rubricPath, 'invalid_arguments');
   return options;
+}
+
+function argumentValue(name, value) {
+  return name.endsWith('Path') || name === 'profile' ? value : Number(value);
 }
 
 function checkOutputPath(options) {
@@ -352,7 +375,7 @@ async function persistReport(output, report) {
 export async function runCli(argv, { env = process.env, fetchImpl = globalThis.fetch } = {}) {
   const options = parseArgs(argv);
   checkOutputPath(options);
-  const trial = await loadTrial(options.casesPath, options.rubricPath);
+  const trial = await loadTrial(options.casesPath, options.rubricPath, options.profile);
   const evaluationOptions = cliEvaluationOptions(options, trial, env, fetchImpl);
   validate(trial.cases, trial.rubric, evaluationOptions);
   const output = await reserveOutput(options.outPath);

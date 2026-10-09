@@ -208,6 +208,24 @@ its entire calibration protocol has been executed.
 
 ## Measured optimization
 
+### PRD and PR review profiles
+
+Use the packaged framework with `--profile prd` for document requirements or
+`--profile pr` for a changed-code review. Both remain experimental and offline
+by default:
+
+```powershell
+node scripts/evaluate_jev.mjs --cases prd-cases.json --rubric factoryline/data/judge_framework.json --profile prd --grade --out prd-review.json
+node scripts/evaluate_jev.mjs --cases pr-cases.json --rubric factoryline/data/judge_framework.json --profile pr --grade --out pr-review.json
+```
+
+Supply one observable criterion per case. PRD evidence includes the document
+revision, excerpt and location; PR evidence includes the requirement, bound diff,
+affected contracts and relevant execution observations. Expected labels are
+development evaluation annotations, withheld from the provider, and never used
+to award grades. These profiles select rubrics; they do not automatically fetch
+private documents or repositories, run tests, comment on a PR or grant approval.
+
 Repeated scans in the same Python process reuse source-bound oracle context.
 This local cache expires after five minutes and is limited to 16 entries and
 4 MiB. Every scan still reads and verifies current sources and recomputes

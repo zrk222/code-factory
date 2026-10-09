@@ -25,6 +25,42 @@ function answer(probability, extra = {}, evidenceProbability = 0.99) {
 }
 const mock = (responses) => async () => responses.shift();
 
+test('PRD and PR profiles select distinct hash-bound criteria through the operator CLI', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cf-jev-profiles-'));
+  try {
+    const input = join(dir, 'cases.json');
+    await writeFile(input, JSON.stringify(cases));
+    const framework = fileURLToPath(new URL('../factoryline/data/judge_framework.json', import.meta.url));
+    const reports = [];
+    for (const profile of ['prd', 'pr']) {
+      const selected = await loadTrial(input, framework, profile);
+      assert.equal(selected.framework.review_profile, profile);
+      let request;
+      const report = await runCli(['--cases', input, '--rubric', framework, '--profile', profile, '--grade', '--live'], {
+        env: { AI_GATEWAY_API_KEY: 'mock' },
+        fetchImpl: async (_url, options) => { request = JSON.parse(options.body); return answer(0.01); },
+      });
+      assert.ok(request.questions.finding.instructions.includes(profile === 'prd' ? 'PRD criterion' : 'PR criterion'));
+      assert.ok(request.questions.evidence_sufficient.instructions.includes(profile === 'prd' ? 'document excerpt' : 'changed source'));
+      assert.equal(report.advisory_grade.grade, 100);
+      assert.equal(report.framework.review_profile, profile);
+      assert.equal(JSON.stringify(request).includes('"expected"'), false);
+      reports.push(report);
+    }
+    assert.notEqual(reports[0].hashes.configuration, reports[1].hashes.configuration);
+    await assert.rejects(loadTrial(input, framework, 'unknown'), /invalid_review_profile/);
+    const plain = join(dir, 'plain.json');
+    await writeFile(plain, JSON.stringify(rubric));
+    await assert.rejects(loadTrial(input, plain, 'pr'), /invalid_review_profile/);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('criterion-specific evidence instructions are bounded and mandatory when supplied', async () => {
+  for (const invalid of ['', 42, 'x'.repeat(8193)]) {
+    await assert.rejects(evaluateCases(cases, { ...rubric, evidence_instructions: invalid }), /invalid_evidence_instructions/);
+  }
+});
+
 test('advisory grading aggregates only admitted evaluator decisions', async () => {
   const corpus = [...cases, { id: 'uncertain', state: 'missing context', expected: true }];
   const report = await evaluateCases(corpus, rubric, { grade: true, live: true, apiKey: 'mock',
