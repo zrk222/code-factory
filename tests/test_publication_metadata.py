@@ -575,6 +575,11 @@ def test_hosted_release_and_editor_versions_are_declared():
     assert 'version = "1.1.2"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
+    assert "factoryline-code-factory==0.48.0` public release" in release_channels
+    assert (
+        "The 0.48.0 source release is separate from the previously published 0.47.0."
+        in release_channels
+    )
 
 
 def test_wheel_resources_are_specific_and_generated_bytecode_is_excluded():

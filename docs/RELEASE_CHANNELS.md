@@ -23,7 +23,7 @@ not turn a source merge into release approval.
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
 | GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Dispatch `publish.yml` with an existing draft tag; its protected publisher attaches the verified bundle and publishes the release after PyPI | Public release URL and green workflow |
-| PyPI | `factoryline-code-factory==0.47.0` candidate; 0.46.9 is the prior public release | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| PyPI | `factoryline-code-factory==0.48.0` public release | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Manually dispatch the `huggingface` environment workflow | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
@@ -82,7 +82,7 @@ artifact, or workflow dispatch as a completed publication. Each channel is
 reported as published, pending review, blocked, or not configured. Direct
 marketplace uploads require their own provider acceptance and approval evidence.
 
-The 0.47.0 source candidate is separate from the already published 0.46.9.
+The 0.48.0 source release is separate from the previously published 0.47.0.
 Release preflight must pass strict architecture health, prospective cadence,
 source review, and protected provider gates before publication. Do not weaken
 or skip release preflight to force a provider upload.
