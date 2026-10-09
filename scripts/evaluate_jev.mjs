@@ -247,6 +247,26 @@ function summarizeGrade(results) {
   };
 }
 
+function hasModelProbability(result) {
+  return ['decided', 'abstain'].includes(result.status) && Number.isFinite(result.probability)
+    && result.probability >= 0 && result.probability <= 1;
+}
+
+function summarizeExperimentalScore(results) {
+  const observed = results.filter(hasModelProbability);
+  const observedMean = observed.length
+    ? observed.reduce((sum, result) => sum + (1 - result.probability) * 100, 0) / observed.length : null;
+  const complete = observed.length > 0 && observed.length === results.length;
+  return { label: 'Experimental Jev score', state: complete ? 'EXPERIMENTAL' : 'INCOMPLETE',
+    score: complete ? observedMean : null, observed_mean_score: observedMean,
+    observed_criteria: observed.length, total_criteria: results.length,
+    model_response_coverage: observed.length / results.length,
+    admitted_criteria: results.filter((result) => result.status === 'decided').length,
+    method: 'Equal-weight mean of 100 * (1 - model finding probability). Includes abstentions with valid model answers. Expected labels do not enter the score. Missing model answers prevent a complete score.',
+    interpretation: 'Uncalibrated model assessment of supplied criteria; not measured accuracy, an evidence-validated grade, or a whole-codebase score.',
+    authority: { experimental: true, release: false, approval: false, scanner_override: false } };
+}
+
 function trialConfiguration(options) {
   return { endpoint: ENDPOINT, model: MODEL, falseThreshold: options.falseThreshold,
     trueThreshold: options.trueThreshold, timeoutMs: options.timeoutMs, zeroDataRetention: true,
@@ -272,6 +292,7 @@ async function trialReport(cases, rubric, results, options) {
     hashes: await trialHashes(cases, rubric, options),
     metrics, category_metrics: categoryMetricsFor(results, options.live), results,
     advisory_grade: options.grade ? summarizeGrade(results) : null,
+    experimental_score: options.grade ? summarizeExperimentalScore(results) : null,
     cost: summarizeCosts(results, options.live), latency: summarizeLatency(options.latencies, options.live),
     privacy: { zero_data_retention_requested: true, provider_allowlist: ['typesafe-ai'],
       provider_retention_independently_verified: false },

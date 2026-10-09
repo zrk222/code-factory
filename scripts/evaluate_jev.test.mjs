@@ -25,6 +25,35 @@ function answer(probability, extra = {}, evidenceProbability = 0.99) {
 }
 const mock = (responses) => async () => responses.shift();
 
+test('experimental score includes uncertain model assessments without admitting a grade', async () => {
+  const options = () => ({ grade: true, live: true, apiKey: 'mock',
+    fetchImpl: mock([answer(0.8, {}, 0.2), answer(0.2, {}, 0.3)]) });
+  const report = await evaluateCases(cases, rubric, options());
+  assert.equal(report.experimental_score.label, 'Experimental Jev score');
+  assert.equal(report.experimental_score.state, 'EXPERIMENTAL');
+  assert.equal(report.experimental_score.score, 50);
+  assert.equal(report.experimental_score.admitted_criteria, 0);
+  assert.equal(report.experimental_score.authority.approval, false);
+  assert.equal(report.advisory_grade.grade, null);
+  assert.equal(report.metrics.decided, 0);
+  const relabelled = await evaluateCases(cases.map((item) => ({ ...item, expected: !item.expected })), rubric, options());
+  assert.deepEqual(report.experimental_score, relabelled.experimental_score);
+});
+
+test('experimental score never fabricates missing responses or dry-run values', async () => {
+  const report = await evaluateCases(cases, rubric, { grade: true, live: true, apiKey: 'mock',
+    fetchImpl: mock([answer(0.2), new Response('{}', { status: 500 })]) });
+  assert.equal(report.experimental_score.score, null);
+  assert.equal(report.experimental_score.observed_mean_score, 80);
+  assert.equal(report.experimental_score.model_response_coverage, 0.5);
+  assert.equal(report.experimental_score.state, 'INCOMPLETE');
+  const dry = await evaluateCases(cases, rubric, { grade: true });
+  assert.equal(dry.experimental_score.score, null);
+  assert.equal(dry.experimental_score.observed_mean_score, null);
+  assert.equal(dry.experimental_score.observed_criteria, 0);
+  assert.equal((await evaluateCases(cases, rubric)).experimental_score, null);
+});
+
 test('PRD and PR profiles select distinct hash-bound criteria through the operator CLI', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cf-jev-profiles-'));
   try {

@@ -202,6 +202,12 @@ an admitted true answer fails it. The summary uses equal weights and ignores
 expected evaluation labels. Any unresolved criterion keeps the final score
 `null`; its possible score interval is not an achieved grade. This does not
 replace CF's deterministic quality grade, security blockers or release policy.
+The same report includes an **Experimental Jev score**: the equal-weight mean
+of `100 * (1 - finding probability)` for the supplied criteria. It can display
+even when evidence admission abstains. This is an uncalibrated model assessment,
+not detection accuracy or an evidence-validated grade. Missing model responses
+leave the complete score `null`; any observed mean and response coverage remain
+explicitly partial. Evidence probabilities and admitted decisions stay separate.
 See the framework's `grading_protocol` for evidence scope, host provenance
 checks, calibration and bias controls. Loading the framework is not proof that
 its entire calibration protocol has been executed.
