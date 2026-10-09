@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import {
-  ENDPOINT, MODEL, evaluateCases, loadTrial, parseArgs, runCli, summarizeCosts, summarizeLatency, verifyJournal,
+  ENDPOINT, MODEL, evaluateCases, loadTrial, parseArgs, runCli, summarizeCosts, summarizeLatency, verifyJournal, recordOperatorFeedback,
 } from './evaluate_jev.mjs';
 
 const rubric = { instructions: 'Does the supplied state show a real finding?' };
@@ -25,6 +25,56 @@ function answer(probability, extra = {}, evidenceProbability = 0.99) {
   }), { status: 200 });
 }
 const mock = (responses) => async () => responses.shift();
+
+test('operator feedback binds immutable annotations to a verified case without changing judgments', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cf-jev-feedback-'));
+  try {
+    const input = join(dir, 'cases.json'), questions = join(dir, 'rubric.json');
+    await writeFile(input, JSON.stringify(cases)); await writeFile(questions, JSON.stringify(rubric));
+    const root = join(dir, 'runs');
+    const report = await runCli(['--cases', input, '--rubric', questions, '--live'], {
+      env: { AI_GATEWAY_API_KEY: 'mock' }, archiveRoot: root, archiveBoundary: dir,
+      fetchImpl: mock([answer(0.99), answer(0.01)]),
+    });
+    const journal = join(root, report.tracking.journal_filename);
+    const context = { archiveRoot: join(dir, 'feedback'), archiveBoundary: dir };
+    const annotation = { case_id: 'positive', operator_sha256: 'a'.repeat(64),
+      disposition: 'corrected', corrected_finding: false, reason: 'false_positive', evidence_sha256: 'b'.repeat(64) };
+    const before = await readFile(journal, 'utf8');
+    const record = await recordOperatorFeedback(journal, annotation, context);
+    const saved = JSON.parse(await readFile(join(context.archiveRoot, `${record.feedback_id}.json`), 'utf8'));
+    assert.deepEqual(saved, record);
+    assert.equal(record.journal_sha256, createHash('sha256').update(before).digest('hex'));
+    assert.equal(record.result_sha256, createHash('sha256').update(JSON.stringify(report.results[0])).digest('hex'));
+    assert.equal(await readFile(journal, 'utf8'), before);
+    const second = await recordOperatorFeedback(journal, { ...annotation, disposition: 'unresolved',
+      corrected_finding: null, reason: 'uncertain' }, context);
+    assert.notEqual(second.feedback_id, record.feedback_id);
+    const feedbackPath = join(dir, 'annotation.json');
+    await writeFile(feedbackPath, JSON.stringify(annotation));
+    const response = spawnSync(process.execPath, [fileURLToPath(new URL('./evaluate_jev.mjs', import.meta.url)),
+      '--record-feedback', journal, feedbackPath], { cwd: dir, encoding: 'utf8' });
+    assert.equal(response.status, 0);
+    assert.equal(JSON.parse(response.stdout).feedback.reason, 'false_positive');
+    for (const invalid of [{ ...annotation, api_key: 'not allowed' }, { ...annotation, evidence_sha256: 'missing' },
+      { ...annotation, corrected_finding: true }, { ...annotation, disposition: 'confirmed' }]) {
+      await assert.rejects(recordOperatorFeedback(journal, invalid, context), /invalid_feedback|feedback_reason|feedback_confirmation/);
+    }
+    await assert.rejects(recordOperatorFeedback(journal, { ...annotation, case_id: 'unknown' }, context), /feedback_case_not_found/);
+    await assert.rejects(recordOperatorFeedback(journal, { ...annotation, case_id: 'negative' }, context), /feedback_reason_mismatch/);
+    await assert.rejects(recordOperatorFeedback(journal, { ...annotation, corrected_finding: true,
+      reason: 'missing_evidence' }, context), /feedback_correction_unchanged/);
+    const uncertainReport = await runCli(['--cases', input, '--rubric', questions, '--live'], {
+      env: { AI_GATEWAY_API_KEY: 'mock' }, archiveRoot: root, archiveBoundary: dir,
+      fetchImpl: mock([answer(0.6, {}, 0.1), answer(0.6, {}, 0.1)]),
+    });
+    const uncertainJournal = join(root, uncertainReport.tracking.journal_filename);
+    await assert.rejects(recordOperatorFeedback(uncertainJournal, annotation, context), /feedback_reason_mismatch/);
+    await recordOperatorFeedback(uncertainJournal, { ...annotation, reason: 'missing_evidence' }, context);
+    await writeFile(journal, before.split('\n').slice(0, 2).join('\n') + '\n');
+    await assert.rejects(recordOperatorFeedback(journal, annotation, context), /feedback_requires_complete_journal/);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
 
 test('operator journal checkpoints every answer and error without copying raw state or credentials', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cf-jev-journal-'));

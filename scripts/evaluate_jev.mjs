@@ -449,6 +449,70 @@ async function reserveJournal(root, boundary, trial, options) {
   } catch { await handle?.close(); throw new TrialError('journal_write_error'); }
 }
 
+function validateOperatorFeedback(feedback) {
+  const keys = ['case_id', 'operator_sha256', 'disposition', 'corrected_finding', 'reason', 'evidence_sha256'];
+  requireValue(object(feedback) && encode(Object.keys(feedback).sort()) === encode(keys.sort()), 'invalid_feedback_fields');
+  requireValue(typeof feedback.case_id === 'string' && /^[\w.-]{1,128}$/.test(feedback.case_id), 'invalid_feedback_case');
+  requireValue(['confirmed', 'corrected', 'unresolved'].includes(feedback.disposition), 'invalid_feedback_disposition');
+  requireValue(['correct_finding', 'false_positive', 'false_negative', 'missing_evidence', 'scope_mismatch',
+    'transport_failure', 'uncertain'].includes(feedback.reason), 'invalid_feedback_reason');
+  for (const field of ['operator_sha256', 'evidence_sha256']) {
+    requireValue(typeof feedback[field] === 'string' && /^[a-f0-9]{64}$/.test(feedback[field]), 'invalid_feedback_digest');
+  }
+  requireValue(feedback.disposition === 'unresolved' ? feedback.corrected_finding === null
+    : typeof feedback.corrected_finding === 'boolean', 'invalid_feedback_verdict');
+}
+
+async function persistOperatorFeedback(record, root, boundary) {
+  let handle;
+  try {
+    const directory = await secureJournalRoot(root, boundary);
+    const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
+    handle = await open(resolve(directory, `${record.feedback_id}.json`), flags, 0o600);
+    await handle.writeFile(`${encode(record)}\n`);
+    await handle.sync();
+  } catch { throw new TrialError('feedback_write_error'); }
+  finally { await handle?.close(); }
+}
+
+function validateFeedbackBinding(feedback, result) {
+  if (feedback.disposition === 'confirmed') requireValue(result.status === 'decided'
+    && feedback.corrected_finding === result.prediction, 'feedback_confirmation_mismatch');
+  validateFeedbackErrorType(feedback, result);
+  if (feedback.disposition === 'corrected' && result.status === 'decided') {
+    requireValue(feedback.corrected_finding !== result.prediction, 'feedback_correction_unchanged');
+  }
+}
+
+function validateFeedbackErrorType(feedback, result) {
+  if (feedback.reason === 'false_positive') requireValue(result.status === 'decided'
+    && result.prediction === true && feedback.corrected_finding === false, 'feedback_reason_mismatch');
+  if (feedback.reason === 'false_negative') requireValue(result.status === 'decided'
+    && result.prediction === false && feedback.corrected_finding === true, 'feedback_reason_mismatch');
+  if (feedback.reason === 'correct_finding') requireValue(feedback.disposition === 'confirmed', 'feedback_reason_mismatch');
+}
+
+export async function recordOperatorFeedback(journalPath, feedback, {
+  archiveRoot = resolve('.factory/jev/feedback'), archiveBoundary = process.cwd(),
+} = {}) {
+  validateOperatorFeedback(feedback);
+  feedback = structuredClone(feedback);
+  const bytes = await readBounded(journalPath);
+  const verification = await verifyJournal(journalPath, { expectedJournalSha256: sha(bytes) });
+  requireValue(verification.state === 'VERIFIED', 'feedback_requires_complete_journal');
+  const events = parseJournalEvents(bytes);
+  const result = events.at(-1).report.results.find((item) => item.id === feedback.case_id);
+  requireValue(result !== undefined, 'feedback_case_not_found');
+  validateFeedbackBinding(feedback, result);
+  const record = { schema: 'factory.jev-operator-feedback.v1', feedback_id: randomUUID(),
+    observed_at: new Date().toISOString(), run_id: verification.run_id,
+    journal_sha256: verification.journal_sha256, result_sha256: sha(encode(result)), feedback,
+    authority: 'Operator annotation only; independently adjudicate before using as an accuracy label. No automatic tuning or verdict override.' };
+  record.record_sha256 = sha(encode(record));
+  await persistOperatorFeedback(record, archiveRoot, archiveBoundary);
+  return record;
+}
+
 async function executeTrackedTrial(trial, options, output, journal) {
   const onResult = (result) => appendJournal(journal, { event: 'result', run_id: journal.runId,
     observed_at: new Date().toISOString(), result });
@@ -537,6 +601,13 @@ export async function runCli(argv, { env = process.env, fetchImpl = globalThis.f
 }
 
 async function runOperatorCommand(argv) {
+  if (argv[0] === '--record-feedback') {
+    requireValue(argv.length === 3, 'invalid_arguments');
+    let feedback;
+    try { feedback = JSON.parse((await readBounded(argv[2])).toString('utf8')); }
+    catch { throw new TrialError('invalid_feedback_json'); }
+    return recordOperatorFeedback(argv[1], feedback);
+  }
   if (argv[0] !== '--verify-journal') return runCli(argv);
   requireValue(argv.length === 2, 'invalid_arguments');
   return verifyJournal(argv[1]);
@@ -546,6 +617,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   if (process.argv.length === 3 && process.argv[2] === '--help') {
     process.stdout.write(USAGE);
     process.stdout.write('Verify recorded results offline: --verify-journal .factory/jev/evaluations/<run-id>.jsonl\n');
+    process.stdout.write('Record operator correction offline: --record-feedback <journal.jsonl> <feedback.json>\n');
   } else {
   try {
     const report = await runOperatorCommand(process.argv.slice(2));

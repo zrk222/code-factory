@@ -229,6 +229,37 @@ bindings; incomplete histories exit with an incomplete result. Integrity does
 not establish judgment accuracy. Integrators can supply an independently
 retained SHA-256 through `verifyJournal(path, { expectedJournalSha256 })` to
 detect replacement of the complete local chain.
+
+### Operator feedback for Jev validation
+
+Record corrections offline with `--record-feedback <journal.jsonl> <feedback.json>`.
+Each new record under `.factory/jev/feedback` binds the complete verified run,
+case and result hashes. Earlier judgments and annotations remain intact.
+Feedback must contain exactly these fields:
+
+```json
+{
+  "case_id": "case-1",
+  "operator_sha256": "<64-character lowercase pseudonymous operator digest>",
+  "disposition": "corrected",
+  "corrected_finding": false,
+  "reason": "false_positive",
+  "evidence_sha256": "<64-character lowercase supporting-evidence digest>"
+}
+```
+
+Dispositions are `confirmed`, `corrected` or `unresolved`; unresolved verdicts
+use `null`. Reasons are `correct_finding`, `false_positive`, `false_negative`,
+`missing_evidence`, `scope_mismatch`, `transport_failure` or `uncertain`.
+False-positive and false-negative reasons must oppose an original admitted
+prediction; an abstention cannot be labelled as either. Corrections to unresolved
+results use an evidence or uncertainty reason. A confirmed annotation must match
+the original admitted prediction, and a correction must change it.
+Use digests rather than names, emails, source excerpts or credentials. Evidence
+digests identify retained evidence; the recorder does not verify its meaning or
+authenticate the operator. Independently adjudicate annotations before using
+them as calibration labels. Feedback never automatically changes a scanner
+verdict, tunes thresholds, or proves detection accuracy.
 See the framework's `grading_protocol` for evidence scope, host provenance
 checks, calibration and bias controls. Loading the framework is not proof that
 its entire calibration protocol has been executed.
