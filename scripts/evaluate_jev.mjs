@@ -1,7 +1,8 @@
 // Experimental, labeled Jev trials. Does not approve scanner findings or releases.
-import { createHash } from 'node:crypto';
-import { open, readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
+import { chmod, lstat, mkdir, open, readFile, realpath } from 'node:fs/promises';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export const ENDPOINT = 'https://ai-gateway.vercel.sh/v1/evaluate';
@@ -115,6 +116,7 @@ function parseAnswer(payload) {
     && /^(?:\d+)(?:\.\d+)?$/.test(rawCost))) ? Number(rawCost) : NaN;
   return {
     probability: value.probability,
+    response_sha256: sha(encode(payload)),
     evidence_probability: evidence.probability,
     reported_cost_usd: Number.isFinite(cost) && cost >= 0 ? cost : null,
     provider_verified: finalProvider === 'typesafe-ai',
@@ -194,8 +196,10 @@ export async function evaluateCases(cases, rubric, supplied = {}) {
   for (const item of cases) {
     const outcome = options.live ? await evaluateOne(item, rubric, options)
       : { status: 'not_run', prediction: null, probability: null, evidence_probability: null, reported_cost_usd: null, provider_verified: false };
-    results.push({ id: item.id, category: item.category ?? 'unspecified', expected: item.expected, state_sha256: sha(encode(item.state)),
-      ...outcome, latency_ms: options.live ? options.latencies.at(-1) : null });
+    const result = { id: item.id, category: item.category ?? 'unspecified', expected: item.expected, state_sha256: sha(encode(item.state)),
+      ...outcome, latency_ms: options.live ? options.latencies.at(-1) : null };
+    if (options.onResult) await options.onResult(structuredClone(result));
+    results.push(result);
   }
   return trialReport(cases, rubric, results, options);
 }
@@ -396,18 +400,80 @@ async function persistReport(output, report) {
   catch { throw new TrialError('output_write_error'); }
 }
 
-export async function runCli(argv, { env = process.env, fetchImpl = globalThis.fetch } = {}) {
+async function appendJournal(journal, event) {
+  const record = { ...event, previous_sha256: journal.lastHash ?? null };
+  const digest = sha(encode(record));
+  try {
+    await journal.handle.writeFile(`${encode({ ...record, event_sha256: digest })}\n`);
+    await journal.handle.sync();
+    journal.lastHash = digest;
+  } catch { throw new TrialError('journal_write_error'); }
+}
+
+async function ensureJournalComponent(path) {
+  try { await mkdir(path, { mode: 0o700 }); }
+  catch (error) { if (error.code !== 'EEXIST') throw error; }
+  const stat = await lstat(path);
+  requireValue(stat.isDirectory() && !stat.isSymbolicLink(), 'journal_path_error');
+}
+
+async function secureJournalRoot(root, boundary) {
+  const suffix = relative(resolve(boundary), resolve(root));
+  requireValue(suffix && !isAbsolute(suffix) && suffix !== '..'
+    && !suffix.startsWith(`..${sep}`), 'journal_path_error');
+  let directory = await realpath(boundary);
+  for (const component of suffix.split(sep)) {
+    directory = resolve(directory, component);
+    await ensureJournalComponent(directory);
+  }
+  await chmod(directory, 0o700);
+  if (process.platform !== 'win32') {
+    const stat = await lstat(directory);
+    requireValue((stat.mode & 0o077) === 0, 'journal_permissions_error');
+  }
+  return directory;
+}
+
+async function reserveJournal(root, boundary, trial, options) {
+  const runId = randomUUID();
+  let handle;
+  try {
+    const directory = await secureJournalRoot(root, boundary);
+    const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
+    handle = await open(resolve(directory, `${runId}.jsonl`), flags, 0o600);
+    const journal = { handle, runId };
+    await appendJournal(journal, { schema: 'factory.jev-journal.v1', event: 'start', run_id: runId,
+      observed_at: new Date().toISOString(), hashes: await trialHashes(trial.cases, trial.rubric, options),
+      model: MODEL, mode: options.live ? 'live' : 'dry_run', total_criteria: trial.cases.length });
+    return journal;
+  } catch { await handle?.close(); throw new TrialError('journal_write_error'); }
+}
+
+async function executeTrackedTrial(trial, options, output, journal) {
+  const onResult = (result) => appendJournal(journal, { event: 'result', run_id: journal.runId,
+    observed_at: new Date().toISOString(), result });
+  const report = await evaluateCases(trial.cases, trial.rubric, { ...options, onResult });
+  report.tracking = { schema: 'factory.jev-journal.v1', run_id: journal.runId,
+    journal_filename: `${journal.runId}.jsonl`, results_chain_sha256: journal.lastHash,
+    raw_state_stored: false, retention: 'local_until_operator_removes' };
+  await appendJournal(journal, { event: 'report', run_id: journal.runId, report_sha256: sha(encode(report)), report });
+  await persistReport(output, report);
+  return report;
+}
+
+export async function runCli(argv, { env = process.env, fetchImpl = globalThis.fetch,
+  archiveRoot = resolve('.factory/jev/evaluations'), archiveBoundary = process.cwd() } = {}) {
   const options = parseArgs(argv);
   checkOutputPath(options);
   const trial = await loadTrial(options.casesPath, options.rubricPath, options.profile);
   const evaluationOptions = cliEvaluationOptions(options, trial, env, fetchImpl);
   validate(trial.cases, trial.rubric, evaluationOptions);
   const output = await reserveOutput(options.outPath);
+  let journal;
   try {
-    const report = await evaluateCases(trial.cases, trial.rubric, evaluationOptions);
-    await persistReport(output, report);
-    return report;
-  } finally { await output?.close(); }
+    journal = await reserveJournal(archiveRoot, archiveBoundary, trial, evaluationOptions);
+    return await executeTrackedTrial(trial, evaluationOptions, output, journal);
+  } finally { await journal?.handle.close(); await output?.close(); }
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {

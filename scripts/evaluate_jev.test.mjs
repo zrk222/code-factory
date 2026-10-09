@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, symlink, mkdir, chmod, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import {
   ENDPOINT, MODEL, evaluateCases, loadTrial, parseArgs, runCli, summarizeCosts, summarizeLatency,
 } from './evaluate_jev.mjs';
@@ -25,6 +26,56 @@ function answer(probability, extra = {}, evidenceProbability = 0.99) {
 }
 const mock = (responses) => async () => responses.shift();
 
+test('operator journal checkpoints every answer and error without copying raw state or credentials', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cf-jev-journal-'));
+  try {
+    const input = join(dir, 'cases.json'), questions = join(dir, 'rubric.json');
+    await writeFile(input, JSON.stringify(cases));
+    await writeFile(questions, JSON.stringify(rubric));
+    const root = join(dir, 'archive');
+    const report = await runCli(['--cases', input, '--rubric', questions, '--live', '--grade'], {
+      env: { AI_GATEWAY_API_KEY: 'private-test-key' }, archiveRoot: root, archiveBoundary: dir,
+      fetchImpl: mock([answer(0.6, {}, 0.4), new Response('{}', { status: 500 })]),
+    });
+    const text = await readFile(join(root, report.tracking.journal_filename), 'utf8');
+    const events = text.trim().split('\n').map(JSON.parse);
+    assert.deepEqual(events.map((event) => event.event), ['start', 'result', 'result', 'report']);
+    assert.deepEqual(events.slice(1, 3).map((event) => event.result.status), ['abstain', 'error']);
+    assert.equal(events[1].result.response_sha256.length, 64);
+    assert.equal(text.includes('unsafe operation'), false);
+    assert.equal(text.includes('private-test-key'), false);
+    let previous = null;
+    for (const event of events) {
+      const { event_sha256: digest, ...record } = event;
+      assert.equal(record.previous_sha256, previous);
+      assert.equal(createHash('sha256').update(JSON.stringify(record)).digest('hex'), digest);
+      previous = digest;
+    }
+    assert.equal(report.tracking.results_chain_sha256, events[2].event_sha256);
+    assert.deepEqual(events[3].report, report);
+    assert.equal(events[3].report_sha256, createHash('sha256').update(JSON.stringify(report)).digest('hex'));
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('journal reservation failure blocks provider calls and checkpoint failure stops later requests', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cf-jev-no-journal-'));
+  try {
+    const input = join(dir, 'cases.json'), questions = join(dir, 'rubric.json'), root = join(dir, 'file');
+    await writeFile(input, JSON.stringify(cases));
+    await writeFile(questions, JSON.stringify(rubric));
+    await writeFile(root, 'not a directory');
+    let calls = 0;
+    const fetchImpl = async () => { calls++; return answer(0.99); };
+    await assert.rejects(runCli(['--cases', input, '--rubric', questions, '--live'], {
+      env: { AI_GATEWAY_API_KEY: 'mock' }, archiveRoot: root, archiveBoundary: dir, fetchImpl,
+    }), /journal_write_error/);
+    assert.equal(calls, 0);
+    await assert.rejects(evaluateCases(cases, rubric, { live: true, apiKey: 'mock', fetchImpl,
+      onResult: async () => { throw new Error('checkpoint failed'); } }), /checkpoint failed/);
+    assert.equal(calls, 1);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test('experimental score includes uncertain model assessments without admitting a grade', async () => {
   const options = () => ({ grade: true, live: true, apiKey: 'mock',
     fetchImpl: mock([answer(0.8, {}, 0.2), answer(0.2, {}, 0.3)]) });
@@ -38,6 +89,36 @@ test('experimental score includes uncertain model assessments without admitting 
   assert.equal(report.metrics.decided, 0);
   const relabelled = await evaluateCases(cases.map((item) => ({ ...item, expected: !item.expected })), rubric, options());
   assert.deepEqual(report.experimental_score, relabelled.experimental_score);
+});
+
+test('journals reject linked components and escaping roots before provider calls', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cf-jev-linked-'));
+  try {
+    const input = join(dir, 'cases.json'), questions = join(dir, 'rubric.json');
+    await writeFile(input, JSON.stringify(cases)); await writeFile(questions, JSON.stringify(rubric));
+    const target = join(dir, 'target'), link = join(dir, 'linked');
+    await mkdir(target); await symlink(target, link, process.platform === 'win32' ? 'junction' : 'dir');
+    let calls = 0;
+    const context = { env: { AI_GATEWAY_API_KEY: 'mock' }, archiveBoundary: dir,
+      fetchImpl: async () => { calls++; return answer(0.99); } };
+    for (const root of [link, join(link, 'nested'), join(dir, '..', 'escaped')]) {
+      await assert.rejects(runCli(['--cases', input, '--rubric', questions, '--live'],
+        { ...context, archiveRoot: root }), /journal_write_error/);
+    }
+    assert.equal(calls, 0);
+    await chmod(target, 0o777);
+    await runCli(['--cases', input, '--rubric', questions], { ...context, archiveRoot: target });
+    if (process.platform !== 'win32') assert.equal((await stat(target)).mode & 0o077, 0);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('checkpoint callbacks cannot mutate the evaluator report or admission', async () => {
+  const report = await evaluateCases(cases, rubric, { live: true, apiKey: 'mock',
+    fetchImpl: mock([answer(0.6, {}, 0.1), answer(0.6, {}, 0.1)]),
+    onResult: async (result) => { result.status = 'decided'; result.prediction = false; result.probability = 0; } });
+  assert.equal(report.metrics.decided, 0);
+  assert.equal(report.results[0].probability, 0.6);
+  assert.equal(report.results[0].status, 'abstain');
 });
 
 test('experimental score never fabricates missing responses or dry-run values', async () => {
