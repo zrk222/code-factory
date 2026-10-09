@@ -15,6 +15,8 @@ export const targets = Object.freeze([
 ]);
 export const toolSmokes = Object.freeze({
   'codeql-python-worker': ['/opt/codeql/codeql/codeql', ['version', '--format=json'], '2.27.1'],
+  'codeql-javascript-worker': ['/opt/codeql/codeql/codeql', ['version', '--format=json'], '2.27.1'],
+  'codeql-actions-worker': ['/opt/codeql/codeql/codeql', ['version', '--format=json'], '2.27.1'],
   'osv-worker': ['/usr/local/bin/osv-scanner', ['--version'], '2.2.0'],
   'syft-worker': ['/usr/local/bin/syft', ['version'], '1.33.0'],
   'gitleaks-worker': ['/usr/bin/gitleaks', ['version'], '8.28.0'],

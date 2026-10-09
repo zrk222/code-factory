@@ -146,7 +146,7 @@ _STAGES: tuple[dict[str, object], ...] = (
             "factory.agent_license_status",
             "factory.proof_worklog_status",
         ),
-        "outcome": "A sealed scope, returned paths and supplied analyzer/E2E evidence for human review; never an auto-approval.",
+        "outcome": "A sealed scope, returned paths and supplied analyzer/E2E evidence for separate specialty AI review; never an auto-approval.",
     },
     {
         "id": "enterprise",
@@ -560,12 +560,15 @@ def _guidance() -> bytes:
         f"{index}. **{stage['label']}** — {stage['when']}"
         for index, stage in enumerate(_STAGES, start=1)
     )
-    return _pack_text("guidance_template").replace("{stages}", stages).encode("utf-8")
+    return (
+        _pack_text("guidance_template").replace("{stages}", stages)
+        + _pack_text("native_deep_audit")
+    ).encode("utf-8")
 
 
 def _junie_proof_agent_bytes() -> bytes:
     """Return the native Junie read-only proof-review subagent manifest."""
-    return _pack_text("proof_agent").encode("utf-8")
+    return (_pack_text("proof_agent") + _pack_text("native_deep_audit")).encode("utf-8")
 
 
 def _pack_text(key: str) -> str:
@@ -638,7 +641,7 @@ def junie_manifest(root: Path | str) -> dict[str, object]:
         "native_workers": audit_taxonomy()["native_workers"],
         "native_worker_contract": audit_taxonomy()["native_worker_contract"],
         "operating_profile": {
-            "version": "3",
+            "version": "4",
             "mode": "supervised",
             "default_route": [
                 "factory.status",
@@ -647,6 +650,8 @@ def junie_manifest(root: Path | str) -> dict[str, object]:
                 "factory.graph_impact",
                 "factory.search_audit_rules",
                 "factory.runtime_audit_status",
+                "factory.deep_audit_status",
+                "factory.runtime_coverage_status",
                 "factory.junie_contribution",
             ],
             "max_tools_per_round": 4,

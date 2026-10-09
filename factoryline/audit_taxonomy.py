@@ -24,12 +24,24 @@ _NATIVE_WORKERS = {
         "profile": "codeql-python-full.json",
         "version": "2.27.1",
         "scope": "Full Python security-extended query suite; Python only; precompiled in image.",
+        "variants": {
+            "javascript_typescript": {
+                "target": "codeql-javascript-worker",
+                "profile": "codeql-javascript-full.json",
+                "scope": "JavaScript/TypeScript security-extended suite with modeled cross-file source-to-sink SARIF flows.",
+            },
+            "github_actions": {
+                "target": "codeql-actions-worker",
+                "profile": "codeql-actions-full.json",
+                "scope": "GitHub Actions security-extended suite: workflow injection and modeled trust boundaries; configuration inputs only.",
+            },
+        },
     },
     "semgrep": {
         "target": "semgrep-worker",
         "profile": "semgrep-pattern-limited.json",
         "version": "1.141.0",
-        "scope": "One local Python rule; pattern-limited; candidate ignore rules can reduce inspection.",
+        "scope": "Eight Python/JavaScript/TypeScript rules with local request-to-sink taint; inline suppression disabled; candidate ignore rules can reduce inspection. Community SARIF traces remain unmeasured.",
     },
     "osv": {
         "target": "osv-worker",
@@ -76,6 +88,8 @@ _NATIVE_WORKER_CONTRACT = {
     "admission": "Successful native execution is INCOMPLETE until source accounting, applicable obligations and independent challenges are validated; never infer complete=true.",
     "agent_action": "Return path, rule, severity, evidence digest, concrete repair and exact rerun; route missing accounting/challenge evidence as an actionable gap.",
     "tracing": "Preserve native and normalized digests separately, source binding, deadlines, output exhaustion and cleanup failures.",
+    "unified_cli": "factory scan --root PATH --deep --worker-config .factory/worker-config.json --json; configure signed manifest, authorization and SHA-pinned trust root before execution.",
+    "selection": "Use Python CodeQL for Python, JavaScript CodeQL for JS/TS and Actions CodeQL for GitHub workflows; reuse exact image and candidate-bound evidence only. Do not launch all workers for every edit.",
 }
 
 

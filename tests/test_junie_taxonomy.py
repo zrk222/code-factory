@@ -88,7 +88,7 @@ def test_taxonomy_is_complete_progressive_and_has_no_external_effect_authority(
         "supports_prompt_argument": True,
     }
     profile = manifest["operating_profile"]
-    assert profile["version"] == "3"
+    assert profile["version"] == "4"
     assert profile["mode"] == "supervised"
     assert profile["max_tools_per_round"] == 4
     assert profile["prefer_bounded_queries"] is True
@@ -885,18 +885,33 @@ def test_native_worker_catalog_and_junie_manifest_bind_profiles(tmp_path):
         assert worker["scope"]
     manifest = junie_manifest(tmp_path)
     assert manifest["native_workers"] == workers
+    variants = workers["codeql"]["variants"]
+    assert set(variants) == {"javascript_typescript", "github_actions"}
+    for variant in variants.values():
+        profile = json.loads(
+            (
+                repository / "deploy/deep-adapters/profiles" / variant["profile"]
+            ).read_text()
+        )
+        assert profile["engine"] == "codeql"
+        assert profile["mode"] == "interprocedural-full"
+        assert profile["tool_version"] == workers["codeql"]["version"]
+        assert variant["scope"]
     assert manifest["native_worker_contract"] == catalog["native_worker_contract"]
     assert "INCOMPLETE" in manifest["native_worker_contract"]["admission"]
     assert not any(manifest["authority"].values())
 
 
-def test_codeql_profile_preserves_raw_hash_and_rejects_rule_extensions(tmp_path):
+@pytest.mark.parametrize("language", ["python", "javascript", "actions"])
+def test_codeql_profile_preserves_raw_hash_and_rejects_rule_extensions(
+    tmp_path, language
+):
     import sys
 
     repository = Path(__file__).resolve().parents[1]
     profile = json.loads(
         (
-            repository / "deploy/deep-adapters/profiles/codeql-python-full.json"
+            repository / f"deploy/deep-adapters/profiles/codeql-{language}-full.json"
         ).read_text()
     )
     code = profile["commands"][-1]["argv"][3]
@@ -948,6 +963,7 @@ def test_native_worker_dependency_locks_and_entrypoints():
     assert "Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg" in dockerfile
     assert "trusted=yes" not in dockerfile
     assert "allow-unauthenticated" not in dockerfile
+    assert dockerfile.count("RUN chmod -R a+rX /opt/codeql/codeql/qlpacks/codeql/") == 2
     for family in ("runtime", "fuzz", "codeql", "bootstrap"):
         lock = f"requirements-{family}.txt"
         requirements = (recipes / lock).read_text().splitlines()

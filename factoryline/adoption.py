@@ -549,7 +549,7 @@ def _receipt_inventory(
     from .deep_audit_io import local_file
 
     for path in evidence_root.rglob("*"):
-        if not path.is_file() or not any(path.match(pattern) for pattern in patterns):
+        if not any(path.match(pattern) for pattern in patterns) or not path.is_file():
             continue
         relative = path.relative_to(root).as_posix()
         try:

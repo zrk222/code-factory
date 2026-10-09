@@ -30,3 +30,20 @@ ForgeLine `qa --repo-wide` is an inventory check. It is not feature-scoped SSAT 
 For changed Markdown, reStructuredText, AsciiDoc, text, YAML, or JSON PRD/spec documents, the hook routes matching native/mobile/App Store scope to the existing read-only AppForge status projection. SaaS, identity, subscription, or entitlement scope routes to Code Factory's provider-neutral `saas_proof` status projection. Unsupported spec-like formats or incomplete discovery conservatively route both. This project does not ship a separate SaaSForge engine; the hook reports that mapping explicitly.
 
 The automatic status calls never generate a design, execute tests, contact a provider, write source, approve, publish, deploy, merge, sign, or release. Their local receipts are evidence for review, not approval. These hooks are bounded triage: they do not claim full-code-depth penetration coverage. Use the deep-audit scope and coverage contract for complete multi-language, interprocedural, runtime, dependency, and adversarial testing; unsupported or unaccounted code must remain `INCOMPLETE`. For the actionable coverage queue and candidate-bound evaluation command, see `docs/DEEP_AUDIT_DECISIONS.md`.
+
+## Unified native audit operation
+
+Use `factory scan --root PATH --deep --json` for the local audit overview.
+For authorized native execution, add `--worker-config PATH` with signed,
+SHA-pinned worker configuration. Select workers for the repository languages
+and risk: CodeQL Python, JavaScript/TypeScript, or GitHub Actions; Semgrep's
+Python and JavaScript/TypeScript rules; dependency, secret, configuration,
+runtime and fuzz workers as applicable. MCP status tools read evidence;
+they do not launch these workers.
+
+Bind findings and repair instructions to candidate, profile, tool and image
+hashes. Retain native SARIF flows and reproductions. Rerun affected checks after
+a repair, then obtain separate specialty AI review. Reuse evidence only when
+its complete candidate and execution bindings match; an inventory or stale
+receipt is never a pass. Missing runtime, mutation or language coverage stays
+incomplete. Avoid launching every heavyweight worker for each edit.

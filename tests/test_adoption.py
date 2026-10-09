@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 
+
 import pytest
 
 from factoryline.adoption import (
@@ -18,6 +19,29 @@ from factoryline.adoption import (
     write_proof_card,
 )
 from factoryline.cli import main
+
+
+def test_receipt_inventory_skips_stat_for_unmatched_files(tmp_path, monkeypatch):
+    from factoryline.adoption import _receipt_inventory
+
+    evidence = tmp_path / ".factory"
+    evidence.mkdir()
+    for index in range(100):
+        (evidence / f"unrelated-{index}.log").write_text("unrelated")
+    receipt = evidence / "native.sarif"
+    receipt.write_text('{"schema":"native-control"}')
+    original = Path.is_file
+    inspected = []
+
+    def tracked(path):
+        inspected.append(path.name)
+        return original(path)
+
+    monkeypatch.setattr(Path, "is_file", tracked)
+    result = _receipt_inventory(tmp_path, patterns=("*.sarif",))
+    assert [row["path"] for row in result] == [".factory/native.sarif"]
+    assert not any(name.startswith("unrelated-") for name in inspected)
+    assert result[0]["verification"] == "PRESENT_UNVERIFIED"
 
 
 def test_first_proof_catches_the_deliberately_hollow_check_and_writes_a_private_card(

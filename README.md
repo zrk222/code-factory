@@ -28,8 +28,8 @@ separate products a new user must learn before running a scan.
 **Fixed:** editor audit views now expose missing and incomplete checks.
 **Changed:** Junie's route connects a diff to bounded evidence and a concrete
 repair handoff. **Added:** project-neutral `factory audit workflows` contracts
-with hash-bound candidate and execution evidence, plus VS Code/Open VSX 1.1.0
-evidence tree, JetBrains 1.1.0 CF + ForgeLine tab, and a native
+with hash-bound candidate and execution evidence, plus VS Code/Open VSX 1.1.2
+evidence tree, JetBrains 1.1.2 CF + ForgeLine tab, and a native
 [OpenCode plugin](plugins/code-factory-opencode/README.md).
 **Candidate detection fixes:** the Python scanner flags tests without a local
 assertion, constant-true assertions, and reflexive comparisons. Declared tenant
@@ -229,3 +229,20 @@ executed coverage nor a security certification.
 ## Updated video preview
 
 [60-second CF/FL audit and repair walkthrough](https://youtu.be/covWDYhUqbM) — October 8, 2026. Silent captions, current Graph Ops captures, bounded scanner improvements and agent repair evidence requirements. The source render is in `videos/code-factory-proof-of-survival/remotion`.
+
+## Native scanner expansion — core 0.48.0 / editor 1.1.2 source preview
+
+**Fixed:** native scanner controls require vulnerable and safe results bound to
+image, profile and source hashes. Missing evidence remains incomplete.
+**Changed:** agents use one `factory scan --deep` overview and explicitly
+configured native workers selected for the project's languages and risks.
+JavaScript/Actions workers verify bundled compiled queries rather than rebuilding
+them, and receipt discovery skips explicit file checks for unrelated logs.
+**Added:** CodeQL JavaScript/TypeScript interprocedural analysis, GitHub Actions
+security-extended analysis, and eight Python/JavaScript/TypeScript Semgrep
+rules including local taint tracking. CodeQL controls require native flow
+evidence; Semgrep community output does not establish cross-file coverage.
+
+Code Factory is a robust code audit factory with Production/Stable package
+metadata. This source preview does not establish new marketplace publication,
+runtime verification of every repository, or measured detection accuracy.

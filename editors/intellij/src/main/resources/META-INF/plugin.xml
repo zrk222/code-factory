@@ -3,6 +3,7 @@
     <name>FactoryLine AI Proof</name>
     <vendor email="rkatz22@gmail.com" url="https://github.com/zrk222/code-factory">FactoryLine</vendor>
     <description><![CDATA[
+      <p><b>Native audit expansion (core 0.48.0, editor 1.1.2):</b> Source-bound CodeQL Python, JavaScript/TypeScript and GitHub Actions worker profiles, plus multi-language Semgrep local taint rules. Junie guidance selects applicable workers through the unified deep audit CLI. Native execution requires signed worker configuration; status tools only read evidence. Package metadata is Production/Stable; detection accuracy and marketplace publication are separate evidence.</p>
         <p><strong>Your AI-generated change is green. Before you review it, ask one useful question: could its test actually fail?</strong></p>
         <p>That is the common JetBrains workflow gap FactoryLine addresses. <strong>FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains.</strong> It is a local proof layer that challenges hollow tests, makes the exact diff and its proof gap visible, and leaves the release decision with the developer—without uploading source or changing IDE settings.</p>
         <p>Your IDE feels slow. Your AI code looks fine. FactoryLine keeps those concerns separate: Guardian records a bounded local health window, while First Proof and Graph Ops make the code-review evidence visible before more time is spent guessing.</p>

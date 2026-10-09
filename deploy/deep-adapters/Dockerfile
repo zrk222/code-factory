@@ -48,6 +48,22 @@ USER 1000:1000
 LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="python"
 
 ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
+FROM codeql-python-worker AS codeql-javascript-worker
+USER 0:0
+RUN chmod -R a+rX /opt/codeql/codeql/qlpacks/codeql/javascript-queries/2.4.6
+RUN /opt/codeql/codeql/codeql resolve queries --format=json /opt/codeql/codeql/qlpacks/codeql/javascript-queries/2.4.6/codeql-suites/javascript-security-extended.qls > /tmp/native-queries.json && python -c 'import json,pathlib; q=json.load(open("/tmp/native-queries.json")); assert q and all(pathlib.Path(p).with_suffix(".qlx").is_file() for p in q); print("Verified bundled compiled queries:",len(q))' && rm /tmp/native-queries.json
+COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-javascript-full.json /opt/factory/adapter-profile.json
+USER 1000:1000
+LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="javascript-typescript"
+
+FROM codeql-python-worker AS codeql-actions-worker
+USER 0:0
+RUN chmod -R a+rX /opt/codeql/codeql/qlpacks/codeql/actions-queries/0.6.36
+RUN /opt/codeql/codeql/codeql resolve queries --format=json /opt/codeql/codeql/qlpacks/codeql/actions-queries/0.6.36/codeql-suites/actions-security-extended.qls > /tmp/native-queries.json && python -c 'import json,pathlib; q=json.load(open("/tmp/native-queries.json")); assert q and all(pathlib.Path(p).with_suffix(".qlx").is_file() for p in q); print("Verified bundled compiled queries:",len(q))' && rm /tmp/native-queries.json
+COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-actions-full.json /opt/factory/adapter-profile.json
+USER 1000:1000
+LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="actions"
+
 FROM ghcr.io/google/osv-scanner:v2.2.0@sha256:a6e641ed444704349d4319b80019654643aa9036b76ee1699a9f927dfe1b0d5c AS osv-tool
 FROM anchore/syft:v1.33.0@sha256:cefadcf11bd9cce9e3ec5248bb1538a84e33d519486c1b4523ac155c9b5f5033 AS syft-tool
 FROM sdk AS osv-worker

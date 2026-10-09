@@ -35,7 +35,7 @@ short_description: Audit code, review evidence, and resolve defects.
 
 Actual local Graph Ops capture, October 8, 2026: 415 targeted tests passed. JUnit results are local and unbound; missing runtime receipts and coverage remain explicitly incomplete. Agent repair cards show candidate bindings, required evidence and separate specialty AI review requirements.
 
-## 0.47.0 audit workflow preview
+## 0.48.0 audit workflow preview
 
 - **Fixed:** local editor evidence now distinguishes missing, incomplete,
   unavailable, failed, and stale lanes instead of presenting inventory as a
@@ -106,7 +106,7 @@ receive a local receipt. It does not upload or change your project.
   gates before submission. Missing and unclassified evidence stays blocked.
 - **Platform or assurance team:** evaluate policy gates, evidence packets,
   expiring exceptions, and tenant boundaries in a controlled pilot. Code Factory
-  is beta software, not an SLA, compliance certification, customer-reference,
+  has Production/Stable package status; this is not an SLA, compliance certification, customer-reference,
   or procurement-readiness claim.
 
 ### Common pain points, addressed without hidden authority
@@ -271,3 +271,20 @@ high severity conflicts engage the fail-closed boundary and pause the line at
 reviewer's own baseline and escalates: surface, second approver, fail closed.
 Blocking is refused until blind-spot re-review outcomes correct the proxy.
 Public exports carry distributions only, never per-reviewer rows.
+
+## Native scanner expansion — core 0.48.0 / editor 1.1.2 source preview
+
+**Fixed:** native scanner controls require vulnerable and safe results bound to
+image, profile and source hashes. Missing evidence remains incomplete.
+**Changed:** agents use one `factory scan --deep` overview and explicitly
+configured native workers selected for the project's languages and risks.
+JavaScript/Actions workers verify bundled compiled queries rather than rebuilding
+them, and receipt discovery skips explicit file checks for unrelated logs.
+**Added:** CodeQL JavaScript/TypeScript interprocedural analysis, GitHub Actions
+security-extended analysis, and eight Python/JavaScript/TypeScript Semgrep
+rules including local taint tracking. CodeQL controls require native flow
+evidence; Semgrep community output does not establish cross-file coverage.
+
+Code Factory is a robust code audit factory with Production/Stable package
+metadata. This source preview does not establish new marketplace publication,
+runtime verification of every repository, or measured detection accuracy.
