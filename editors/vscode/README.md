@@ -1,19 +1,30 @@
 # FactoryLine for VS Code
 
+## VS Code release 1.1.3
+
+**Fixed:** Marketplace guidance now names the published Code Factory 0.48.0
+core and the matching VSIX filename. The telemetry image uses the stable
+`main` branch URL.
+**Changed:** the listing separates the editor adapter from the separately
+installed Python CLI and states that Marketplace publication needs its own
+public read-back.
+**Added:** explicit package-version guidance for installing this extension.
+This metadata and documentation update does not change editor runtime behavior.
+
 ## Latest audit telemetry preview — October 8, 2026
 
 **Fixed:** bounded evaluator output validation across all six runtime lanes; malformed results stay incomplete. Shared imported assertion helpers and inherited test mixins are resolved by bounded static analysis.
 **Changed:** audit findings carry candidate-bound repair packets with reproduction, negative-control and separate specialty AI review requirements.
 **Added:** Graph Ops agent repair telemetry, evidence requirements, stop conditions and searchable individual test outcomes. Repair packets are consumed by the host agent; this view does not execute or approve repairs.
 
-![Graph Ops current audit and agent repair telemetry](https://raw.githubusercontent.com/zrk222/code-factory/codex/tenant-read-contract-20261007/docs/assets/marketplace/graph-ops-audit-telemetry-current.png)
+![Graph Ops current audit and agent repair telemetry](https://raw.githubusercontent.com/zrk222/code-factory/main/docs/assets/marketplace/graph-ops-audit-telemetry-current.png)
 
 Actual local Graph Ops capture, October 8, 2026: 415 targeted tests passed. JUnit results are local and unbound; missing runtime receipts and coverage remain explicitly incomplete. Agent repair cards show candidate bindings, required evidence and separate specialty AI review requirements.
 
 
 ## Native CF and ForgeLine evidence
 
-Version 1.1.2 targets the Code Factory 0.48.0 candidate and provides
+Version 1.1.3 pairs with the published Code Factory CLI 0.48.0 and provides
 **FactoryLine Evidence** in Explorer for VS Code and Open VSX compatible
 editors. Select **Run CF + ForgeLine Audits**, choose a
 workspace, then confirm local execution. The panel shows CF change review,
@@ -66,20 +77,11 @@ hollow negative control caught in a disposable sandbox, then open
 `factory mvp "Build an approval tracker" --root .`. The
 extension never calls a starter production-ready by itself.
 
-**1.1.0 release preview:** the editor surfaces typed intent-to-proof handoffs,
-route traces, current checkpoints, and proof-delta retry stops beside the
-existing First Proof and AppForge paths. Searchable audit rules and exact-hash
-receipt reuse make evidence easier to locate without loading the whole rule set.
-This is a release preview; marketplace publication requires its own verified
-provider read-back.
-
-**Core candidate detection fixes:** bounded Python checks flag missing local
-assertions, constant-true assertions, and reflexive comparisons. Configure
-`factory audit security --tenant-read-call db.get` for explicit tenant-read
-parameter checks. The unchanged eight-case public regression corpus detects
-six defects and accepts two clean cases locally; this is not independent
-accuracy or runtime isolation. These core fixes require a verified core
-release and are not bundled into the editor extension.
+**Code Factory core 0.48.0:** the Python CLI is released separately from this
+editor extension. The extension invokes the local CLI; it does not bundle or
+install the scanner. Each lane reports its own scope and evidence limits, and
+the editor does not claim that runtime readiness executes tests or establishes
+independent detection accuracy.
 
 **New First Lap control:** `factory first-lap init` creates plain-language
 `MISSION.md`, `END-TO-END.md`, and verifier-only holdout scenarios. Critical
@@ -199,7 +201,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-1.1.0.vsix
+code --install-extension factoryline-vscode-1.1.3.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.
@@ -251,7 +253,7 @@ Public exports carry distributions only, never per-reviewer rows.
 
 [60-second CF/FL audit and repair walkthrough](https://youtu.be/covWDYhUqbM) — October 8, 2026. Silent captions, current Graph Ops captures, bounded scanner improvements and agent repair evidence requirements. The source render is in `videos/code-factory-proof-of-survival/remotion`.
 
-## Native scanner expansion — core 0.48.0 / editor 1.1.2 source preview
+## Native scanner expansion — Code Factory core 0.48.0
 
 **Fixed:** native scanner controls require vulnerable and safe results bound to
 image, profile and source hashes. Missing evidence remains incomplete.
