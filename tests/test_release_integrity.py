@@ -30,6 +30,78 @@ from scripts.verify_release_preflight import verify as verify_release_preflight
 ROOT = Path(__file__).parents[1]
 
 
+def test_core_048_exception_is_explicit_and_protected() -> None:
+    import yaml
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
+    triggers = workflow.get("on", workflow.get(True))
+    option = triggers["workflow_dispatch"]["inputs"]["core_048_cadence_exception"]
+    assert option["type"] == "boolean" and option["default"] is False
+    publish = workflow["jobs"]["publish"]
+    assert publish["environment"] == "pypi"
+    guard = next(
+        step
+        for step in workflow["jobs"]["guard"]["steps"]
+        if step.get("name", "").startswith("Enforce cadence")
+    )
+    assert 'os.environ.get("RELEASE_TAG") != "v0.48.0"' in guard["run"]
+    assert 'os.environ.get("GITHUB_ACTOR") != "zrk222"' in guard["run"]
+    assert 'len(recent) >= policy["max_releases_30d"]' in guard["run"]
+    preflight = next(
+        step
+        for step in publish["steps"]
+        if step.get("name", "").startswith("Require sealed")
+    )
+    assert "timedelta(hours=1)" in preflight["run"]
+    assert (
+        "--cadence-exception .factory/core-048-cadence-exception.json"
+        in preflight["run"]
+    )
+    assert '"${exception_args[@]}"' in preflight["run"]
+
+
+@pytest.mark.parametrize(
+    ("enabled", "tag", "actor", "admitted"),
+    [
+        ("false", "v0.48.0", "zrk222", False),
+        ("true", "v0.48.0", "zrk222", True),
+        ("true", "v0.49.0", "zrk222", False),
+        ("true", "v0.48.0", "other", False),
+    ],
+)
+def test_actual_cadence_workflow_rejects_unapproved_dispatch(
+    tmp_path: Path, monkeypatch, enabled, tag, actor, admitted
+) -> None:
+    import yaml
+    from datetime import datetime, timezone
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
+    step = next(
+        s
+        for s in workflow["jobs"]["guard"]["steps"]
+        if s.get("name", "").startswith("Enforce cadence")
+    )
+    code = step["run"].split("<<'PY'\n", 1)[1].split("\nPY", 1)[0]
+    shutil.copy(ROOT / "release-train.json", tmp_path / "release-train.json")
+    stamp = datetime.now(timezone.utc).isoformat()
+    (tmp_path / "release-history.json").write_text(
+        json.dumps([[{"draft": False, "published_at": stamp}]])
+    )
+    monkeypatch.chdir(tmp_path)
+    for key, value in {
+        "RUNNER_TEMP": str(tmp_path),
+        "CORE_048_EXCEPTION": enabled,
+        "RELEASE_TAG": tag,
+        "GITHUB_ACTOR": actor,
+    }.items():
+        monkeypatch.setenv(key, value)
+    if admitted:
+        exec(compile(code, "publish-cadence", "exec"), {})
+    else:
+        with pytest.raises(SystemExit):
+            exec(compile(code, "publish-cadence", "exec"), {})
+
+
 def _passing_reassessment() -> dict[str, object]:
     passed_unit = {
         "unit": "qa_audit:factoryline/release_integrity.py:review",
