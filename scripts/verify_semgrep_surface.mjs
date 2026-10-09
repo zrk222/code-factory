@@ -56,6 +56,7 @@ try {
   receipt.controls_sha256 = hash(Buffer.from(controls));
   // Exercise suppression only after annotation testing: Semgrep's test runner
   // interprets nosemgrep comments differently from production scan output.
+  const annotated = [];
   for (const extension of ['py', 'js', 'ts']) {
     const fixture = join(temp, `semgrep-pattern-limited.${extension}`);
     const content = readFileSync(fixture, 'utf8');
@@ -64,6 +65,9 @@ try {
       ? content.replace('os.system(alias)', 'os.system(alias)  # nosemgrep: python.request-command-injection')
       : content.replace(vulnerableCall, vulnerableCall + ' // nosemgrep: javascript.request-command-injection');
     if (suppressed === content) throw new Error('Missing suppression control');
+    const lines = suppressed.split(/\r?\n/);
+    const line = lines.findIndex(value => value.includes('nosemgrep:')) + 1;
+    annotated.push(`opt.factory.rules.${extension === 'py' ? 'python' : 'javascript'}.request-command-injection|semgrep-pattern-limited.${extension}|${line}`);
     writeFileSync(fixture, suppressed);
   }
   const argv = profile.commands[0].argv.slice(1);
@@ -77,8 +81,35 @@ try {
   writeFileSync(`${output}.sarif`, native);
   const findings = (sarif.runs ?? []).flatMap(run => run.results ?? []);
   if (findings.length !== 12) throw new Error(`Native profile expected 12 control findings, observed ${findings.length}`);
+  const active = results => results.filter(result => !(result.suppressions ?? []).some(suppression => suppression.status !== 'rejected'));
+  const keys = results => results.map(result => {
+    const locations = result.locations ?? [];
+    if (locations.length !== 1) throw new Error('Control finding requires exactly one primary location');
+    const location = locations[0].physicalLocation;
+    const uri = location?.artifactLocation?.uri ?? '';
+    return `${result.ruleId}|${uri.split('/').at(-1)}|${location?.region?.startLine}`;
+  }).sort();
+  // Semgrep retains inSource metadata even with --disable-nosem. The worker
+  // consumes all results from this profile; only the enabled scan excludes it.
+  const disabledKeys = keys(findings);
+  if (new Set(disabledKeys).size !== 12 || annotated.some(key => !disabledKeys.includes(key))) {
+    throw new Error('Disabled suppression omitted or duplicated an exact control finding');
+  }
+  if (!argv.includes('--disable-nosem')) throw new Error('Production profile must disable inline suppression');
+  const enabled = docker([...base, '--mount', `type=bind,source=${temp},target=/cases,readonly`,
+    '--entrypoint', profile.commands[0].argv[0], id,
+    ...argv.filter(value => value !== '--disable-nosem').map(value => value === '{source}' ? '/cases' : value)]);
+  writeFileSync(`${output}.suppression-enabled.sarif`, enabled);
+  const enabledFindings = (JSON.parse(enabled).runs ?? []).flatMap(run => run.results ?? []);
+  const enabledKeys = keys(active(enabledFindings));
+  const expectedKeys = disabledKeys.filter(key => !annotated.includes(key));
+  if (JSON.stringify(enabledKeys) !== JSON.stringify(expectedKeys)) {
+    throw new Error('Enabled suppression did not remove exactly the three annotated findings');
+  }
   receipt.native_findings = findings.length;
   receipt.inline_suppression_control = 'PASS';
+  receipt.suppression_control = { annotated_findings: annotated.sort(), disabled_report_findings: disabledKeys.length,
+    enabled_unsuppressed_findings: enabledKeys.length, enabled_sarif_sha256: hash(Buffer.from(enabled)) };
   receipt.native_rule_ids = [...new Set(findings.map(result => result.ruleId))].sort();
   receipt.native_sarif_sha256 = hash(Buffer.from(native));
   receipt.native_dataflow_findings = findings.filter(result => result.codeFlows?.length).length;

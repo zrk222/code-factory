@@ -49,6 +49,7 @@ jobs:
           path: |
             semgrep-surface-verification.json
             semgrep-surface-verification.json.sarif
+            semgrep-surface-verification.json.suppression-enabled.sarif
           if-no-files-found: error
   sdk-workers:
     runs-on: ubuntu-latest
