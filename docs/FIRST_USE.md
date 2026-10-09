@@ -3,6 +3,10 @@
 Code Factory is most useful when it meets code you already own. Start with one
 small feature or risky workflow, not a whole migration.
 
+This is an optional, feature-scoped adoption route. To explore the tool without
+changing repository setup, start with `factory scan --root .` instead. You only
+need the ForgeLine packages below if you want an SSAT-backed workflow.
+
 ```powershell
 cd path\to\your-repository
 pip install factoryline-code-factory==0.47.0 code-factory-1-spec==0.5.4 "code-factory-2-forge>=0.10.8"
@@ -10,6 +14,11 @@ factory doctor --json
 factory init .
 forge adopt <feature> --root .
 ```
+
+These steps are separate on purpose: `factory doctor` checks local installation
+readiness, `factory init .` creates the shared `.factory` workspace layout,
+and `forge adopt <feature>` records the starting contract for one feature.
+None is required just to run the repository inventory.
 
 `forge adopt` records a reviewable baseline rather than pretending the factory
 generated the repository. Review that SSAT, then move its existing targets into
@@ -23,7 +32,11 @@ forge architect <feature> <feature>.adoption.ssat.yaml --adopt-existing --root .
 
 The adoption path records the SSAT digest and unchanged target hashes, creates
 only missing SSAT targets, and fails closed if the working code drifts from the
-reviewed contract. Then choose the proof that matches your change:
+reviewed contract. `forge architect --adopt-existing` is the safe path for
+existing targets. `forge architect --force` is a separate overwrite path: it
+replaces existing targets after creating backups. Inspect the contract and use
+`--dry-run` before any scaffold operation whose effects are unclear. Then
+choose the proof that matches your change:
 
 ```powershell
 forge verify-tests <feature> --root .

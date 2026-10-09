@@ -13,8 +13,9 @@ file names and sizes; it does not read source or run tests, so its `INCOMPLETE`
 result is not a code-quality verdict. For a bounded Python AST check, run
 `factory audit security --root . --json`. That check reports its source
 coverage and limits; it does not prove runtime behavior or that a clean
-repository is safe to release. See [Start Here](docs/START_HERE.md) for the
-guided workflow.
+repository is safe to release. A prior ForgeLine adoption is not required.
+See [Start Here](docs/START_HERE.md) for a plain-language glossary, the
+optional existing-project adoption path, and the verified CI/CD boundaries.
 
 ## Latest audit telemetry preview — October 8, 2026
 
