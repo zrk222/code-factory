@@ -7,6 +7,7 @@ certification. A declared guard must raise on denial and must not be rebound.
 from __future__ import annotations
 
 import ast
+from collections import OrderedDict
 from dataclasses import dataclass
 from hashlib import sha256
 import json
@@ -14,7 +15,15 @@ import operator
 import os
 from pathlib import Path, PureWindowsPath
 import re
+import sys
+from threading import RLock
+import time
 from typing import Any
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 from .audit_action_refs import audit_remediation_packet
 from .deep_audit_io import local_file
 from .runtime_audit_common import RuntimeAuditError
@@ -27,8 +36,109 @@ MAX_SECURITY_SOURCE_FILES = 460
 MAX_BYTES = 1_000_000
 MAX_RULES = 128
 MAX_PATHS = 64
+MAX_ORACLE_CONTEXT_CACHE_ENTRIES = 16
+MAX_ORACLE_CONTEXT_CACHE_BYTES = 4 * 1024 * 1024
+ORACLE_CONTEXT_CACHE_TTL_SECONDS = 300
+_ORACLE_CONTEXT_CACHE: OrderedDict[str, tuple[str, int, float]] = OrderedDict()
+_ORACLE_CONTEXT_CACHE_BYTES = 0
+_ORACLE_CONTEXT_CACHE_HITS = 0
+_ORACLE_CONTEXT_CACHE_MISSES = 0
+_ORACLE_CONTEXT_CACHE_LOCK = RLock()
 ORIGINS = {"human_confirmed", "trusted_source", "observed_production", "agent_proposed"}
 NAME = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$")
+
+
+def _oracle_context_cache_clear() -> None:
+    """Clear process-local projected oracle contexts and counters."""
+    global _ORACLE_CONTEXT_CACHE_BYTES, _ORACLE_CONTEXT_CACHE_HITS
+    global _ORACLE_CONTEXT_CACHE_MISSES
+    with _ORACLE_CONTEXT_CACHE_LOCK:
+        _ORACLE_CONTEXT_CACHE.clear()
+        _ORACLE_CONTEXT_CACHE_BYTES = 0
+        _ORACLE_CONTEXT_CACHE_HITS = 0
+        _ORACLE_CONTEXT_CACHE_MISSES = 0
+
+
+def _oracle_context_cache_info() -> dict[str, int]:
+    with _ORACLE_CONTEXT_CACHE_LOCK:
+        return {
+            "entries": len(_ORACLE_CONTEXT_CACHE),
+            "serialized_bytes": _ORACLE_CONTEXT_CACHE_BYTES,
+            "hits": _ORACLE_CONTEXT_CACHE_HITS,
+            "misses": _ORACLE_CONTEXT_CACHE_MISSES,
+        }
+
+
+def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
+    global _ORACLE_CONTEXT_CACHE_BYTES, _ORACLE_CONTEXT_CACHE_HITS
+    global _ORACLE_CONTEXT_CACHE_MISSES
+    with _ORACLE_CONTEXT_CACHE_LOCK:
+        cached = _ORACLE_CONTEXT_CACHE.get(key)
+        if cached is None:
+            _ORACLE_CONTEXT_CACHE_MISSES += 1
+            return None
+        payload, size, created = cached
+        if time.monotonic() - created > ORACLE_CONTEXT_CACHE_TTL_SECONDS:
+            _ORACLE_CONTEXT_CACHE.pop(key, None)
+            _ORACLE_CONTEXT_CACHE_BYTES -= size
+            _ORACLE_CONTEXT_CACHE_MISSES += 1
+            return None
+        _ORACLE_CONTEXT_CACHE.move_to_end(key)
+        _ORACLE_CONTEXT_CACHE_HITS += 1
+    try:
+        document = json.loads(payload)
+        contexts = {
+            Path(item["path"]): {
+                "helpers": set(item["helpers"]),
+                "weak_helpers": set(item["weak_helpers"]),
+                "mixins": set(item["mixins"]),
+                "click_runners": set(item["click_runners"]),
+                "typecheck": item["typecheck"],
+            }
+            for item in document["contexts"]
+        }
+        return contexts, document["edges"]
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        with _ORACLE_CONTEXT_CACHE_LOCK:
+            removed = _ORACLE_CONTEXT_CACHE.pop(key, None)
+            if removed is not None:
+                _ORACLE_CONTEXT_CACHE_BYTES -= removed[1]
+            _ORACLE_CONTEXT_CACHE_MISSES += 1
+        return None
+
+
+def _oracle_context_cache_write(key: str, contexts: dict, edges: list) -> None:
+    global _ORACLE_CONTEXT_CACHE_BYTES
+    rows = []
+    for path, context in sorted(contexts.items(), key=lambda item: str(item[0])):
+        rows.append(
+            {
+                "path": path.as_posix(),
+                "helpers": sorted(context["helpers"]),
+                "weak_helpers": sorted(context["weak_helpers"]),
+                "mixins": sorted(context["mixins"]),
+                "click_runners": sorted(context["click_runners"]),
+                "typecheck": bool(context["typecheck"]),
+            }
+        )
+    payload = json.dumps(
+        {"contexts": rows, "edges": edges}, sort_keys=True, separators=(",", ":")
+    )
+    size = len(payload.encode("utf-8")) + len(key)
+    with _ORACLE_CONTEXT_CACHE_LOCK:
+        if size > MAX_ORACLE_CONTEXT_CACHE_BYTES:
+            return
+        previous = _ORACLE_CONTEXT_CACHE.pop(key, None)
+        if previous is not None:
+            _ORACLE_CONTEXT_CACHE_BYTES -= previous[1]
+        _ORACLE_CONTEXT_CACHE[key] = (payload, size, time.monotonic())
+        _ORACLE_CONTEXT_CACHE_BYTES += size
+        while (
+            len(_ORACLE_CONTEXT_CACHE) > MAX_ORACLE_CONTEXT_CACHE_ENTRIES
+            or _ORACLE_CONTEXT_CACHE_BYTES > MAX_ORACLE_CONTEXT_CACHE_BYTES
+        ):
+            _, (_, removed_bytes, _) = _ORACLE_CONTEXT_CACHE.popitem(last=False)
+            _ORACLE_CONTEXT_CACHE_BYTES -= removed_bytes
 
 
 class ReviewAuditError(ValueError):
@@ -861,11 +971,10 @@ def _scope_security_aliases(aliases: dict[str, str], node: ast.AST) -> dict[str,
 def _test_oracle_body_nodes(node: ast.AST, aliases: dict[str, str]) -> list[ast.AST]:
     """Return test-body nodes without calls shadowed by comprehension targets."""
     nodes = [child for statement in node.body for child in _body_nodes(statement)]
-    parents = _oracle_ancestor_map(node.body)
-    for statement in node.body:
-        parents[id(statement)] = ((node, statement),) + parents.get(id(statement), ())
+    parents = _oracle_ancestor_map(node.body, node)
     for child in nodes:
         child._oracle_ancestors = parents.get(id(child), ())
+        child._oracle_scope = node
     shadowed_calls: set[int] = set()
     for child in nodes:
         if not isinstance(
@@ -894,10 +1003,14 @@ def _test_oracle_body_nodes(node: ast.AST, aliases: dict[str, str]) -> list[ast.
     ]
 
 
-def _oracle_ancestor_map(body: list[ast.stmt]) -> dict[int, tuple]:
+def _oracle_ancestor_map(
+    body: list[ast.stmt], scope: ast.AST | None = None
+) -> dict[int, tuple]:
     parents = {}
     for statement in body:
-        pending = [(statement, ())]
+        ancestors = ((scope, statement),) if scope is not None else ()
+        parents[id(statement)] = ancestors
+        pending = [(statement, ancestors)]
         while pending:
             parent, ancestors = pending.pop()
             for child in ast.iter_child_nodes(parent):
@@ -1028,6 +1141,10 @@ def _suppresses_assertion(node: ast.AST, aliases: dict[str, str]) -> bool:
             in {
                 "AssertionError",
                 "builtins.AssertionError",
+                "Exception",
+                "builtins.Exception",
+                "BaseException",
+                "builtins.BaseException",
             }
             for argument in node.args
         )
@@ -1068,6 +1185,15 @@ def _warnings_as_errors(node: ast.AST, aliases: dict[str, str]) -> bool:
     mode = None
     swallowed_warning = False
     for statement in node.body:
+        if (
+            mode == "error"
+            and not swallowed_warning
+            and isinstance(statement, ast.ClassDef)
+            and (statement.bases or statement.keywords or statement.decorator_list)
+            and _effective_assertion(statement, aliases)
+        ):
+            # Class construction executes bases, the class suite and metaclass.
+            return True
         if _try_swallows_warning(statement, aliases):
             swallowed_warning = True
             continue
@@ -1085,12 +1211,11 @@ def _warnings_as_errors(node: ast.AST, aliases: dict[str, str]) -> bool:
                 mode = None
                 swallowed_warning = False
                 continue
-            if mode == "error":
-                if (
-                    not swallowed_warning
-                    or _normalized_call_name(call, aliases) == "warnings.warn"
-                ):
-                    return True
+            if mode == "error" and (
+                not swallowed_warning
+                or _normalized_call_name(call, aliases) == "warnings.warn"
+            ):
+                return True
     return False
 
 
@@ -1649,6 +1774,7 @@ def _assertion_call(
     leaf = name.rsplit(".", 1)[-1]
     return (
         name in {"pytest.raises", "pytest.warns"}
+        or _click_callback_oracle(node, aliases, helper_names) is not None
         or (
             unittest_context
             and leaf in _UNITTEST_ASSERTIONS
@@ -1656,8 +1782,169 @@ def _assertion_call(
             and isinstance(node.func.value, ast.Name)
             and node.func.value.id in {"self", "cls"}
         )
-        or name in (helper_names or set())
+        or (
+            name in (helper_names or set())
+            and (
+                name not in {"typing.assert_type", "typing_extensions.assert_type"}
+                or _call_name(node).split(".", 1)[0] in aliases
+            )
+        )
     )
+
+
+def _click_callback_oracle(
+    call: ast.Call, aliases: dict[str, str], helpers: set[str] | None = None
+) -> str | None:
+    """Follow a local Click callback only through a proven non-catching runner."""
+    scope = getattr(call, "_oracle_scope", None)
+    if (
+        scope is None
+        or not isinstance(call.func, ast.Attribute)
+        or call.func.attr != "invoke"
+        or not isinstance(call.func.value, ast.Name)
+        or not call.args
+        or not isinstance(call.args[0], ast.Name)
+        or not any(
+            kw.arg == "catch_exceptions"
+            and isinstance(kw.value, ast.Constant)
+            and kw.value.value is False
+            for kw in call.keywords
+        )
+        or any(kw.arg is None for kw in call.keywords)
+    ):
+        return None
+    receiver, command = call.func.value.id, call.args[0].id
+    if _click_receiver_mutated(scope, receiver):
+        return None
+    bindings = [stmt for stmt in scope.body if receiver in _bound_names(stmt)]
+    fixture = receiver in _scope_parameters(scope) and receiver in getattr(
+        scope, "_oracle_click_runners", ()
+    )
+    constructed = (
+        len(bindings) == 1
+        and isinstance(bindings[0], (ast.Assign, ast.AnnAssign))
+        and isinstance(bindings[0].value, ast.Call)
+        and _call_name(bindings[0].value).split(".", 1)[0] in aliases
+        and _normalized_call_name(bindings[0].value, aliases)
+        == "click.testing.CliRunner"
+        and bindings[0].lineno < call.lineno
+    )
+    if not ((fixture and not bindings) or constructed):
+        return None
+    declarations = [stmt for stmt in scope.body if command in _bound_names(stmt)]
+    if len(declarations) != 1 or not isinstance(declarations[0], ast.FunctionDef):
+        return None
+    callback = declarations[0]
+    if callback.lineno >= call.lineno or not _propagating_click_decorators(
+        callback, aliases
+    ):
+        return None
+    scoped = _scope_security_aliases(aliases, callback)
+    if not _meaningful_local_assertion(callback, scoped, helpers):
+        return None
+    return "strong" if _strong_local_assertion(callback, scoped, helpers) else "weak"
+
+
+def _click_receiver_mutated(scope: ast.AST, receiver: str) -> bool:
+    for statement in scope.body:
+        for child in _body_nodes(statement):
+            if (
+                isinstance(child, (ast.Assign, ast.AnnAssign))
+                and isinstance(child.value, ast.Name)
+                and child.value.id == receiver
+            ):
+                return True
+            if isinstance(child, ast.Attribute) and isinstance(
+                child.ctx, (ast.Store, ast.Del)
+            ):
+                if _name(child).split(".", 1)[0] == receiver:
+                    return True
+            if isinstance(child, ast.Call) and any(
+                isinstance(argument, ast.Name) and argument.id == receiver
+                for argument in (
+                    *child.args,
+                    *(keyword.value for keyword in child.keywords),
+                )
+            ):
+                return True
+    return False
+
+
+def _propagating_click_decorators(callback: ast.FunctionDef, aliases: dict) -> bool:
+    names = [
+        _resolved_ast_name(
+            decorator.func if isinstance(decorator, ast.Call) else decorator, aliases
+        )
+        for decorator in callback.decorator_list
+    ]
+    return (
+        bool(names)
+        and names[0] == "click.command"
+        and all(
+            _name(
+                decorator.func if isinstance(decorator, ast.Call) else decorator
+            ).split(".", 1)[0]
+            in aliases
+            for decorator in callback.decorator_list
+        )
+        and all(
+            name
+            in {
+                "click.command",
+                "click.option",
+                "click.argument",
+                "click.pass_context",
+                "click.pass_obj",
+            }
+            for name in names
+        )
+        and not any(
+            isinstance(decorator, ast.Call)
+            and any(kw.arg in {None, "cls"} for kw in decorator.keywords)
+            for decorator in callback.decorator_list
+        )
+    )
+
+
+def _click_runner_fixtures(tree: ast.Module, aliases: dict[str, str]) -> dict:
+    fixtures = {}
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef) or not any(
+            _resolved_ast_name(
+                decorator.func if isinstance(decorator, ast.Call) else decorator,
+                aliases,
+            )
+            == "pytest.fixture"
+            for decorator in node.decorator_list
+        ):
+            continue
+        returns = [
+            child
+            for statement in node.body
+            for child in _body_nodes(statement)
+            if isinstance(child, (ast.Return, ast.Yield, ast.YieldFrom))
+        ]
+        fixtures[node.name] = (
+            len(node.decorator_list) == 1
+            and bool(returns)
+            and not any(
+                isinstance(decorator, ast.Call)
+                and any(kw.arg in {None, "name"} for kw in decorator.keywords)
+                for decorator in node.decorator_list
+            )
+            and all(
+                isinstance(returned, ast.Return)
+                and isinstance(returned.value, ast.Call)
+                and _call_name(returned.value).split(".", 1)[0]
+                in _scope_security_aliases(aliases, node)
+                and _normalized_call_name(
+                    returned.value, _scope_security_aliases(aliases, node)
+                )
+                == "click.testing.CliRunner"
+                for returned in returns
+            )
+        )
+    return fixtures
 
 
 def _unittest_testcase_classes(
@@ -2000,26 +2287,173 @@ def _oracle_imports(
     return imports
 
 
-def _oracle_snapshots(root: Path, files: list[Path]) -> tuple[dict, list]:
-    snapshots, bindings = {}, []
+def _oracle_source_inputs(
+    root: Path, files: list[Path]
+) -> tuple[dict, list, list, bool]:
+    source_bytes: dict[Path, bytes] = {}
+    bindings: list[dict[str, Any]] = []
+    manifest: list[dict[str, Any]] = []
+    cacheable = True
+    retained_bytes = 0
+    retain_source_bytes = True
+    for path in files:
+        relative = path.relative_to(root).as_posix()
+        try:
+            if path.is_symlink():
+                manifest.append({"path": relative, "state": "symlink"})
+                cacheable = False
+                continue
+            initial = local_file(root, relative).stat()
+            if initial.st_size > MAX_BYTES:
+                manifest.append(
+                    {
+                        "path": relative,
+                        "state": "oversized",
+                        "bytes": int(initial.st_size),
+                        "mtime_ns": int(initial.st_mtime_ns),
+                    }
+                )
+                cacheable = False
+                continue
+            data = _security_source_bytes(root, relative)
+            if len(data) > MAX_BYTES:
+                manifest.append(
+                    {"path": relative, "state": "oversized", "bytes": len(data)}
+                )
+                cacheable = False
+                continue
+            digest = sha256(data).hexdigest()
+            manifest.append(
+                {
+                    "path": relative,
+                    "state": "read",
+                    "bytes": len(data),
+                    "sha256": digest,
+                }
+            )
+            bindings.append({"path": relative, "sha256": digest, "bytes": len(data)})
+            if retain_source_bytes and retained_bytes + len(data) <= 16 * 1024 * 1024:
+                source_bytes[path] = data
+                retained_bytes += len(data)
+            else:
+                source_bytes.clear()
+                retain_source_bytes = False
+        except (OSError, SyntaxError, UnicodeError, RuntimeAuditError):
+            manifest.append({"path": relative, "state": "unreadable"})
+            cacheable = False
+            continue
+    manifest.sort(key=lambda item: item["path"])
+    return source_bytes, bindings, manifest, cacheable
+
+
+def _oracle_snapshots(root: Path, files: list[Path], source_bytes: dict) -> dict:
+    snapshots = {}
     for path in files:
         try:
-            if path.is_symlink() or path.stat().st_size > MAX_BYTES:
-                continue
-            data = _security_source_bytes(root, path.relative_to(root).as_posix())
-            if len(data) > MAX_BYTES:
-                continue
-            snapshots[path] = ast.parse(data)
-            bindings.append(
-                {
-                    "path": path.relative_to(root).as_posix(),
-                    "sha256": sha256(data).hexdigest(),
-                    "bytes": len(data),
-                }
+            data = source_bytes.get(path)
+            if data is None:
+                relative = path.relative_to(root).as_posix()
+                if (
+                    path.is_symlink()
+                    or local_file(root, relative).stat().st_size > MAX_BYTES
+                ):
+                    continue
+                data = _security_source_bytes(root, relative)
+                if len(data) > MAX_BYTES:
+                    continue
+            snapshots[path] = ast.parse(
+                data, filename=path.relative_to(root).as_posix()
             )
         except (OSError, SyntaxError, UnicodeError, RuntimeAuditError):
             continue
-    return snapshots, bindings
+    return snapshots
+
+
+def _declared_typecheck_sources(
+    root: Path, files: list[Path]
+) -> tuple[set, list, dict, bool]:
+    """Bind bounded mypy configuration; never exempt a collected runtime file."""
+    config_identity: dict[str, Any] = {"path": "pyproject.toml", "state": "missing"}
+    config_binding: list[dict[str, Any]] = []
+    try:
+        config = local_file(root, "pyproject.toml")
+        if config.stat().st_size > MAX_BYTES:
+            config_identity = {
+                "path": "pyproject.toml",
+                "state": "oversized",
+                "bytes": int(config.stat().st_size),
+            }
+            return set(), [], config_identity, False
+        data = _security_source_bytes(root, "pyproject.toml")
+        if len(data) > MAX_BYTES:
+            config_identity = {
+                "path": "pyproject.toml",
+                "state": "oversized",
+                "bytes": len(data),
+            }
+            return set(), [], config_identity, False
+        config_digest = sha256(data).hexdigest()
+        config_identity = {
+            "path": "pyproject.toml",
+            "state": "read",
+            "bytes": len(data),
+            "sha256": config_digest,
+        }
+        config_binding = [
+            {"path": "pyproject.toml", "sha256": config_digest, "bytes": len(data)}
+        ]
+        settings = tomllib.loads(data.decode("utf-8")).get("tool", {}).get("mypy", {})
+        declared = settings.get("files", [])
+        if not isinstance(declared, list) or len(declared) > MAX_PATHS:
+            return set(), config_binding, config_identity, True
+        roots = [root / _relative_path(item) for item in declared]
+    except RuntimeAuditError as exc:
+        if exc.code == "E_SOURCE_MISSING":
+            return set(), [], config_identity, True
+        config_identity = {"path": "pyproject.toml", "state": "unreadable"}
+        return set(), [], config_identity, False
+    except (OSError, ValueError, UnicodeError, AttributeError):
+        config_identity = {"path": "pyproject.toml", "state": "unreadable"}
+        return set(), config_binding, config_identity, False
+    selected = {
+        path
+        for path in files
+        if not (path.name.startswith("test_") or path.name.endswith("_test.py"))
+        and any(path == target or path.is_relative_to(target) for target in roots)
+    }
+    return selected, config_binding, config_identity, True
+
+
+def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict) -> str:
+    helpers = (
+        ast.parse,
+        _click_runner_fixtures,
+        _scope_security_aliases,
+        _module_security_aliases,
+        _oracle_imports,
+        _oracle_import_source,
+        _imported_oracle_helpers,
+        _imported_weak_oracle_helpers,
+        _imported_unittest_mixins,
+        _unittest_testcase_classes,
+        _class_oracle_helpers,
+        _oracle_snapshots,
+        _oracle_source_inputs,
+        _declared_typecheck_sources,
+        _local_assertion_helpers,
+        _local_weak_assertion_helpers,
+        _is_oracle_helper_name,
+    )
+    identity = {
+        "schema": "factory.security-oracle-context-cache.v1",
+        "root": root.resolve().as_posix(),
+        "sources": manifest,
+        "config": config_identity,
+        "python": [sys.implementation.name, *sys.version_info[:3]],
+        "helpers": [id(helper) for helper in helpers],
+    }
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+    return sha256(encoded).hexdigest()
 
 
 def _imported_oracle_helpers(imports: dict, snapshots: dict, aliases: dict) -> set[str]:
@@ -2081,9 +2515,46 @@ def _imported_unittest_mixins(tree: ast.Module, aliases: dict, imports: dict) ->
     return references
 
 
-def _project_oracle_context(root: Path, files: list[Path]) -> tuple[dict, list, list]:
+def _project_oracle_context(
+    root: Path, files: list[Path], *, cache_enabled: bool = True
+) -> tuple[dict, list, list]:
     """Resolve one local import hop without executing repository code; bind every read."""
-    snapshots, bindings = _oracle_snapshots(root, files)
+    source_bytes, source_bindings, manifest, source_cacheable = _oracle_source_inputs(
+        root, files
+    )
+    typecheck_sources, config_bindings, config_identity, config_cacheable = (
+        _declared_typecheck_sources(root, files)
+    )
+    bindings = source_bindings + config_bindings
+    cache_key = _oracle_context_cache_key(root, manifest, config_identity)
+    cacheable = source_cacheable and config_cacheable
+    if cache_enabled and cacheable:
+        cached = _oracle_context_cache_read(cache_key)
+        if cached is not None:
+            contexts, edges = cached
+            return contexts, bindings, edges
+    snapshots = _oracle_snapshots(root, files, source_bytes)
+    contexts, edges = _build_oracle_context(root, files, snapshots, typecheck_sources)
+    edges.extend(_static_type_edges(root, typecheck_sources, config_bindings))
+    if cache_enabled and cacheable:
+        _oracle_context_cache_write(cache_key, contexts, edges)
+    return contexts, bindings, edges
+
+
+def _build_oracle_context(
+    root: Path, files: list[Path], snapshots: dict, typecheck_sources: set
+) -> tuple[dict, list]:
+    fixture_sources = [
+        (
+            path,
+            _click_runner_fixtures(
+                tree, _scope_security_aliases(_module_security_aliases(tree), tree)
+            ),
+        )
+        for path, tree in snapshots.items()
+        if path.name == "conftest.py"
+    ]
+    fixture_sources.sort(key=lambda item: len(item[0].parts))
     contexts = {
         path: {"helpers": set(), "weak_helpers": set(), "mixins": set()}
         for path in snapshots
@@ -2091,6 +2562,15 @@ def _project_oracle_context(root: Path, files: list[Path]) -> tuple[dict, list, 
     edges = set()
     for path, tree in snapshots.items():
         aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
+        fixtures = {}
+        for source, declared in fixture_sources:
+            if path.parent.is_relative_to(source.parent):
+                fixtures.update(declared)
+        fixtures.update(_click_runner_fixtures(tree, aliases))
+        contexts[path]["click_runners"] = {
+            name for name, trusted in fixtures.items() if trusted
+        }
+        contexts[path]["typecheck"] = path in typecheck_sources
         imports = _oracle_imports(root, path, tree, set(files))
         contexts[path]["helpers"] = _imported_oracle_helpers(
             imports, snapshots, aliases
@@ -2154,38 +2634,58 @@ def _project_oracle_context(root: Path, files: list[Path]) -> tuple[dict, list, 
                         "trusted",
                     )
                 )
-    return (
-        contexts,
-        bindings,
-        [
-            {
-                "caller": caller,
-                "target": target,
-                "kind": kind,
-                "symbol": symbol,
-                "strength": strength,
-            }
-            for caller, target, kind, symbol, strength in sorted(edges)
-        ],
-    )
+    edges = [
+        {
+            "caller": caller,
+            "target": target,
+            "kind": kind,
+            "symbol": symbol,
+            "strength": strength,
+        }
+        for caller, target, kind, symbol, strength in sorted(edges)
+    ]
+    return contexts, edges
+
+
+def _static_type_edges(
+    root: Path, typecheck_sources: set, config_bindings: list
+) -> list:
+    return [
+        {
+            "caller": path.relative_to(root).as_posix(),
+            "target": binding["path"],
+            "kind": "static_type_configuration",
+            "symbol": "mypy.files",
+            "strength": "declared",
+            "sha256": binding["sha256"],
+        }
+        for path in sorted(typecheck_sources)
+        for binding in config_bindings
+    ]
+
+
+def _weak_assertion_call_reason(node: ast.Call, aliases: dict) -> str | None:
+    if _click_callback_oracle(node, aliases) == "weak":
+        return "invoked command callback exposes only a weak assertion"
+    leaf = _normalized_call_name(node, aliases).rsplit(".", 1)[-1]
+    if leaf == "assertIsNotNone" or (
+        leaf == "assertIs"
+        and len(node.args) == 2
+        and any(
+            isinstance(arg, ast.Constant) and arg.value is None for arg in node.args
+        )
+    ):
+        return "non-null assertion does not verify the expected behavior"
+    if leaf in {"assert_called", "assert_called_once", "assert_called_once_with"}:
+        return "mock invocation state does not verify its result or arguments"
+    return None
 
 
 def _weak_assertion_reason(
     node: ast.AST, aliases: dict[str, str] | None = None
 ) -> str | None:
     if isinstance(node, ast.Call):
-        leaf = _normalized_call_name(node, aliases or {}).rsplit(".", 1)[-1]
-        if leaf == "assertIsNotNone" or (
-            leaf == "assertIs"
-            and len(node.args) == 2
-            and any(
-                isinstance(argument, ast.Constant) and argument.value is None
-                for argument in node.args
-            )
-        ):
-            return "non-null assertion does not verify the expected behavior"
-        if leaf in {"assert_called", "assert_called_once", "assert_called_once_with"}:
-            return "mock invocation state does not verify its result or arguments"
+        return _weak_assertion_call_reason(node, aliases or {})
     if isinstance(node, ast.Compare) and len(node.ops) == 1:
         if isinstance(node.ops[0], (ast.Eq, ast.Is)) and len(node.comparators) == 1:
             left = node.left
@@ -2254,6 +2754,7 @@ def _weak_test_oracle_finding(
         child
         for child in nodes
         if isinstance(child, ast.Assert)
+        and _effective_assertion(child, aliases)
         and id(child) not in vacuous
         and not _vacuous_assertion(child.test)
         and _weak_assertion_reason(child.test, aliases) is None
@@ -2262,6 +2763,7 @@ def _weak_test_oracle_finding(
         child
         for child in nodes
         if isinstance(child, ast.Call)
+        and _effective_assertion(child, aliases)
         and _assertion_call(
             child, aliases, helper_names, unittest_context=unittest_context
         )
@@ -2897,11 +3399,22 @@ def _test_oracle_findings(
     unittest_methods: set[int],
     class_helpers: dict[int, set[str]] | None = None,
     weak_helper_names: set[str] | None = None,
+    click_runners: set[str] | None = None,
+    typecheck: bool = False,
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
+    parents = _oracle_ancestor_map(nodes[0].body)
     for node in nodes:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or any(
+            isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
+            for parent, _child in parents.get(id(node), ())
+        ):
+            continue
+        node._oracle_click_runners = click_runners or set()
         is_unittest_method = id(node) in unittest_methods
         helpers = helper_names | (class_helpers or {}).get(id(node), set())
+        if typecheck:
+            helpers = helpers | {"typing.assert_type", "typing_extensions.assert_type"}
         hollow_helpers = helpers | (weak_helper_names or set())
         scoped_aliases = (
             _scope_security_aliases(aliases, node)
@@ -2987,6 +3500,8 @@ def _security_scan_tree(
             unittest_methods,
             class_helpers,
             weak_helper_names,
+            context.get("click_runners", set()),
+            context.get("typecheck", False),
         )
     )
     for node in nodes:
@@ -3224,6 +3739,8 @@ def _scan_security_sources(
     tenant_read_calls: tuple[str, ...],
     tenant_read_bindings: dict[str, tuple[str, ...]],
     scoped_reads: dict | None = None,
+    *,
+    cache_enabled: bool = True,
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
@@ -3234,13 +3751,19 @@ def _scan_security_sources(
     findings: list[dict[str, Any]] = []
     bindings: list[dict[str, Any]] = []
     outcomes = {"syntax_error": 0, "unreadable": 0, "too_large": 0, "audited": 0}
-    contexts, context_bindings, oracle_edges = _project_oracle_context(workspace, files)
+    contexts, context_bindings, oracle_edges = _project_oracle_context(
+        workspace, files, cache_enabled=cache_enabled
+    )
     for path in files:
         scope = (scoped_reads or {}).get(path.relative_to(workspace).as_posix(), {})
         calls = tuple(sorted(set(tenant_read_calls) | set(scope.get("calls", ()))))
         scoped_bindings = {**scope.get("bindings", {}), **tenant_read_bindings}
         binding, file_findings, outcome = _security_scan_file(
-            workspace, path, calls, scoped_bindings, contexts.get(path, {})
+            workspace,
+            path,
+            calls,
+            scoped_bindings,
+            contexts.get(path, {}),
         )
         if binding is not None:
             bindings.append(binding)
@@ -3390,6 +3913,12 @@ def _validate_tenant_scopes(workspace: Path, scopes: dict | None) -> dict:
     return _tenant_scoped_entries(workspace, rows) if rows else {}
 
 
+def _validate_cache_enabled(value: bool) -> bool:
+    if not isinstance(value, bool):
+        raise ReviewAuditError("cache_enabled must be a boolean.")
+    return value
+
+
 def _tenant_scope_read(call: str, bindings: dict) -> dict:
     values = bindings.get(call, ())
     if not isinstance(values, (tuple, list)) or len(values) > 1:
@@ -3403,21 +3932,28 @@ def security_scan(
     tenant_read_calls: tuple[str, ...] = (),
     tenant_read_bindings: tuple[str, ...] = (),
     tenant_read_scopes: dict | None = None,
+    cache_enabled: bool = True,
 ) -> dict[str, Any]:
-    """Run a bounded AST security and code-quality scan without importing or executing source."""
+    """Run a bounded AST scan with content-bound process-local context reuse."""
     workspace = Path(root).resolve()
     tenant_read_calls = _tenant_contract_calls(tenant_read_calls)
     tenant_read_bindings = _tenant_contract_bindings(
         tenant_read_bindings, tenant_read_calls
     )
     tenant_read_scopes = _validate_tenant_scopes(workspace, tenant_read_scopes)
+    cache_enabled = _validate_cache_enabled(cache_enabled)
     files = _security_source_files(workspace)
     if len(files) > MAX_SECURITY_SOURCE_FILES:
         return _blocked_security_scan_report(
             workspace, files, tenant_read_calls, tenant_read_bindings
         )
     bindings, findings, counts, outcomes, oracle_edges = _scan_security_sources(
-        workspace, files, tenant_read_calls, tenant_read_bindings, tenant_read_scopes
+        workspace,
+        files,
+        tenant_read_calls,
+        tenant_read_bindings,
+        tenant_read_scopes,
+        cache_enabled=cache_enabled,
     )
     return _security_scan_report(
         files,

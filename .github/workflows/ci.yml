@@ -77,6 +77,9 @@ jobs:
       - name: Exercise Muse receipt integrity and hook event handling
         working-directory: .
         run: node --test plugins/muse-code-factory-audit/tests/mcp-server.test.mjs
+      - name: Exercise offline Jev evaluation and failure controls
+        working-directory: .
+        run: node --test scripts/evaluate_jev.test.mjs
 
   video-regressions:
     runs-on: ubuntu-latest

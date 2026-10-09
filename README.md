@@ -10,11 +10,12 @@ factory scan --root .
 ```
 
 The guide offers one plain-language path. The default scan inventories relative
-file names and sizes; it does not read source or run tests, so its `INCOMPLETE`
-result is not a code-quality verdict. For a bounded Python AST check, run
-`factory audit security --root . --json`. That check reports its source
-coverage and limits; it does not prove runtime behavior or that a clean
-repository is safe to release. A prior ForgeLine adoption is not required.
+file metadata and reads eligible Python source for bounded AST security and
+test-oracle analysis. It does not execute project code. Quality findings require
+review; high-risk security patterns and analyzer failures block the static lane.
+`factory scan --root . --deep --json` adds every applicable local audit lane.
+Missing runtime or project evidence remains incomplete. Neither mode proves
+that a repository is safe to release. A prior ForgeLine adoption is not required.
 See [Start Here](docs/START_HERE.md) for a plain-language glossary, the
 optional existing-project adoption path, and the verified CI/CD boundaries.
 

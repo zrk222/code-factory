@@ -16,6 +16,8 @@ from factoryline.adoption import (
     run_first_proof,
     run_deep_repository_audit,
     run_repo_scan,
+    _repo_scan_state,
+    _state_for_findings,
     _workspace_inventory,
     verify_proof_card,
     write_proof_card,
@@ -148,7 +150,7 @@ def test_repo_scan_is_zero_config_and_fails_closed_without_project_contract(
     assert result["assessment"]["file_types"]["python"] == 1
     assert result["state"] == "INCOMPLETE"
     assert result["verdict"] == "INCOMPLETE"
-    assert result["static_security"]["state"] == "NOT_RUN"
+    assert result["static_security"]["state"] == "CLEAN"
     assert any("tenant-read-contract" in action for action in result["next_actions"])
 
 
@@ -160,6 +162,28 @@ def test_repo_scan_cli_reports_a_real_workspace_assessment(
     output = json.loads(capsys.readouterr().out)
     assert output["assessment"]["files_discovered"] == 1
     assert output["verdict"] == "INCOMPLETE"
+    assert output["static_security"]["state"] == "NO_SOURCES"
+
+
+def test_default_repo_scan_reads_python_and_keeps_quality_findings_advisory(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.py").write_text("def test_behavior():\n    assert True\n")
+    result = run_repo_scan(tmp_path)
+    assert result["static_security"]["state"] == "FINDINGS"
+    assert result["static_security"]["findings"][0]["code"] == "QUALITY_HOLLOW_TEST"
+    assert result["state"] == "INCOMPLETE"
+    assert result["verdict"] == "INCOMPLETE"
+
+
+def test_default_repo_scan_blocks_high_severity_security_findings(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.py").write_text("def execute(value):\n    eval(value)\n")
+    result = run_repo_scan(tmp_path)
+    assert result["static_security"]["state"] == "BLOCKED"
+    assert result["state"] == "BLOCKED"
+    assert result["verdict"] == "BLOCKED"
 
 
 def test_repo_scan_deep_runs_static_lane_on_small_workspace(tmp_path: Path) -> None:
@@ -178,6 +202,26 @@ def test_repo_scan_deep_runs_static_lane_on_small_workspace(tmp_path: Path) -> N
         "dependencies_and_supply_chain",
     } <= lane_ids
     assert result["state"] in {"INCOMPLETE", "BLOCKED"}
+
+
+def test_repo_scan_deep_quality_only_finding_is_advisory(tmp_path: Path) -> None:
+    (tmp_path / "tests.py").write_text("def test_behavior():\n    assert True\n")
+    result = run_repo_scan(tmp_path, deep=True)
+    lanes = {lane["measurement_id"]: lane for lane in result["deep_audit"]["lanes"]}
+    lane = lanes["python_ast_security"]
+    assert lane["result"]["state"] == "FINDINGS"
+    assert lane["state"] == "REVIEW_REQUIRED"
+    assert lane["measurement_state"] == "REVIEW_REQUIRED"
+    assert result["deep_audit"]["state"] != "BLOCKED"
+
+
+def test_repo_scan_deep_high_severity_security_pattern_blocks(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("def execute(value):\n    eval(value)\n")
+    result = run_repo_scan(tmp_path, deep=True)
+    lanes = {lane["measurement_id"]: lane for lane in result["deep_audit"]["lanes"]}
+    assert lanes["python_ast_security"]["result"]["state"] == "BLOCKED"
+    assert lanes["python_ast_security"]["measurement_state"] == "BLOCKED"
+    assert result["deep_audit"]["state"] == "BLOCKED"
 
 
 def test_repo_scan_deep_exposes_non_python_and_supply_chain_gaps(
@@ -211,6 +255,42 @@ def test_repo_scan_deep_blocks_when_python_limit_is_exceeded(tmp_path: Path) -> 
         == 461
     )
     assert result["deep_audit"]["state"] == "BLOCKED"
+
+
+@pytest.mark.parametrize(
+    "finding",
+    [
+        {"code": "QUALITY_HOLLOW_TEST", "severity": "MEDIUM"},
+        {"code": "SECURITY_PATTERN", "severity": "LOW"},
+    ],
+)
+def test_findings_require_review_without_claiming_a_security_block(finding):
+    result = {"state": "FINDINGS", "findings": [finding]}
+    assert _state_for_findings(result, advisory_findings=True) == "REVIEW_REQUIRED"
+
+
+def test_security_block_and_invalid_analysis_remain_blocked():
+    assert (
+        _state_for_findings({"state": "BLOCKED", "findings": [{"severity": "HIGH"}]})
+        == "BLOCKED"
+    )
+    assert _state_for_findings({"state": "INVALID", "findings": []}) == "BLOCKED"
+
+
+def test_repo_scan_advisory_findings_require_review_but_security_state_blocks():
+    inventory = {"files_discovered": 1}
+    assert _repo_scan_state(
+        None,
+        {"state": "FINDINGS", "findings": [{"severity": "MEDIUM"}]},
+        True,
+        inventory,
+    ) == ("INCOMPLETE", "INCOMPLETE")
+    assert _repo_scan_state(
+        None,
+        {"state": "BLOCKED", "findings": [{"severity": "HIGH"}]},
+        True,
+        inventory,
+    ) == ("BLOCKED", "BLOCKED")
 
 
 def test_adoption_cli_reports_local_counts_without_claiming_conversion(
