@@ -19,7 +19,7 @@ def add_parser(sub: Any) -> None:
     first_proof.add_argument("--json", action="store_true")
     scan = sub.add_parser(
         "scan",
-        help="assess the workspace with a fast inventory or --deep full local audit orchestration",
+        help="audit Python source statically or use --deep for all local audit lanes",
     )
     scan.add_argument("--root", default=".")
     scan.add_argument(

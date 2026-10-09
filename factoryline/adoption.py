@@ -581,10 +581,10 @@ def _receipt_inventory(
     return sorted(rows, key=lambda row: row["path"])
 
 
-def _state_for_findings(result: dict[str, Any], *, clean: str = "PASS") -> str:
+def _state_for_findings(
+    result: dict[str, Any], *, clean: str = "PASS", advisory_findings: bool = False
+) -> str:
     if result.get("state") in {"BLOCKED", "INVALID"}:
-        return "BLOCKED"
-    if result.get("findings") or result.get("regressions"):
         return "BLOCKED"
     if str(result.get("state", "")).upper() in {
         "INCOMPLETE",
@@ -594,6 +594,10 @@ def _state_for_findings(result: dict[str, Any], *, clean: str = "PASS") -> str:
         return "INCOMPLETE"
     if result.get("decision") == "REVIEW_REQUIRED":
         return "REVIEW_REQUIRED"
+    if result.get("findings"):
+        return "REVIEW_REQUIRED" if advisory_findings else "BLOCKED"
+    if result.get("regressions"):
+        return "BLOCKED"
     return clean
 
 
@@ -619,7 +623,9 @@ def _python_audit_lanes(
                 tenant_read_scopes=contract.get("scoped_reads"),
             )
             security_state = _state_for_findings(
-                security, clean=security.get("state", "INVALID")
+                security,
+                clean=security.get("state", "INVALID"),
+                advisory_findings=True,
             )
         except Exception as exc:
             security = {
@@ -1075,16 +1081,7 @@ def _scan_security_and_deep_audit(
     worker_config: str | None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, str | None]:
     if not deep:
-        return (
-            {
-                "state": "NOT_RUN",
-                "findings": [],
-                "audit_coverage": {"measurement_state": "not_run"},
-                "action_summary": "Use factory scan --deep to orchestrate local audit lanes and identify missing evidence.",
-            },
-            None,
-            None,
-        )
+        return _scan_static_security(workspace, inventory), None, None
     try:
         deep_audit = run_deep_repository_audit(
             workspace, inventory, worker_config=worker_config
@@ -1114,6 +1111,36 @@ def _scan_security_and_deep_audit(
         )
 
 
+def _scan_static_security(workspace: Path, inventory: dict[str, Any]) -> dict[str, Any]:
+    python_count = int(inventory.get("file_types", {}).get("python", 0))
+    if not python_count:
+        return {
+            "state": "NO_SOURCES",
+            "findings": [],
+            "audit_coverage": {"measurement_state": "not_applicable"},
+            "action_summary": "No eligible Python sources were found; no static security conclusions were drawn.",
+        }
+    try:
+        from .review_audits import load_tenant_read_contract, security_scan
+
+        calls, bindings, contract = load_tenant_read_contract(
+            workspace, ".factory/tenant-read-contract.json"
+        )
+        return security_scan(
+            workspace,
+            tenant_read_calls=tuple(calls),
+            tenant_read_bindings=tuple(bindings),
+            tenant_read_scopes=contract.get("scoped_reads"),
+        )
+    except Exception as exc:
+        return {
+            "state": "INVALID",
+            "message": "Analyzer failed: " + type(exc).__name__,
+            "findings": [],
+            "audit_coverage": {"measurement_state": "invalid"},
+        }
+
+
 def _repo_scan_state(
     deep_audit: dict[str, Any] | None,
     static_security: dict[str, Any],
@@ -1124,17 +1151,19 @@ def _repo_scan_state(
         state = deep_audit["state"]
         return state, state
     findings = static_security.get("findings", [])
-    if static_security.get("state") in {"BLOCKED", "INVALID"} or findings:
+    if static_security.get("state") in {"BLOCKED", "INVALID"}:
         return "BLOCKED", "BLOCKED"
-    if not deep or inventory["files_discovered"] == 0:
+    if findings:
         return "INCOMPLETE", "INCOMPLETE"
-    return "ASSESSED_STATIC_ONLY", "INCOMPLETE"
+    if static_security.get("regressions"):
+        return "BLOCKED", "BLOCKED"
+    return "INCOMPLETE", "INCOMPLETE"
 
 
 def run_repo_scan(
     root: Path, *, deep: bool = False, worker_config: str | None = None
 ) -> dict[str, Any]:
-    """Run a zero-config inventory and, when requested, every local audit lane.
+    """Run bounded static checks and optionally every local audit lane.
 
     This is intentionally an honest first verdict: static evidence can block a
     workspace, but a clean result remains incomplete until the project supplies
@@ -1158,7 +1187,7 @@ def run_repo_scan(
         "deep_audit": deep_audit,
         "evidence_limits": [
             "Inventory and Python AST findings are local observations, not runtime coverage or certification.",
-            "The default scan is intentionally fast; --deep runs all applicable local audit lanes and reports every unmeasured lane.",
+            "The default scan runs bounded Python AST security and quality checks; --deep runs all applicable local audit lanes and reports every unmeasured lane.",
             "A missing tenant-read contract keeps the Python security lane incomplete even when no static finding is raised.",
             "Tests, dependency analysis, runtime behavior, and deployment behavior require explicit project evidence and are not inferred.",
             "Deep orchestration is not a penetration test, runtime certification, or release approval.",

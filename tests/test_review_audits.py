@@ -499,6 +499,123 @@ def test_security_scan_receipt_measures_complete_supported_source_coverage(tmp_p
     }
 
 
+def test_oracle_context_cache_reuses_only_context_and_preserves_report(tmp_path):
+    import factoryline.review_audits as module
+
+    (tmp_path / "app.py").write_text(
+        "def run(value):\n    return value\n", encoding="utf-8"
+    )
+    module._oracle_context_cache_clear()
+    uncached = security_scan(tmp_path, cache_enabled=False)
+    cached_first = security_scan(tmp_path, cache_enabled=True)
+    cached_second = security_scan(tmp_path, cache_enabled=True)
+    assert cached_first == uncached == cached_second
+    info = module._oracle_context_cache_info()
+    assert info["hits"] >= 1
+    assert info["misses"] >= 1
+    assert info["entries"] <= module.MAX_ORACLE_CONTEXT_CACHE_ENTRIES
+    assert info["serialized_bytes"] <= module.MAX_ORACLE_CONTEXT_CACHE_BYTES
+
+
+def test_oracle_context_cache_is_used_by_default(tmp_path):
+    import factoryline.review_audits as module
+
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    module._oracle_context_cache_clear()
+    first = security_scan(tmp_path)
+    second = security_scan(tmp_path)
+    assert first == second
+    assert module._oracle_context_cache_info()["hits"] >= 1
+
+
+def test_oracle_context_cache_invalidates_source_and_configuration_changes(tmp_path):
+    import factoryline.review_audits as module
+
+    module._oracle_context_cache_clear()
+    source = tmp_path / "app.py"
+    source.write_text("def run(value):\n    return value\n", encoding="utf-8")
+    first = security_scan(tmp_path, cache_enabled=True)
+    assert first["state"] == "CLEAN"
+    first_misses = module._oracle_context_cache_info()["misses"]
+    source.write_text("def run(value):\n    eval(value)\n", encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=True)
+    assert result["state"] == "BLOCKED"
+    assert result["finding_counts"] == {"SECURITY_DYNAMIC_EXECUTION": 1}
+    assert module._oracle_context_cache_info()["misses"] > first_misses
+
+    (tmp_path / "typing_probe.py").write_text(
+        "from typing_extensions import assert_type\n"
+        "def test_type():\n    assert_type(compute(), int)\n",
+        encoding="utf-8",
+    )
+    unconfigured = security_scan(tmp_path, cache_enabled=True)
+    assert unconfigured["finding_counts"].get("QUALITY_HOLLOW_TEST") == 1
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.mypy]\nfiles = ["typing_probe.py"]\n', encoding="utf-8"
+    )
+    configured = security_scan(tmp_path, cache_enabled=True)
+    assert configured["finding_counts"].get("QUALITY_HOLLOW_TEST") is None
+    assert any(
+        row["kind"] == "static_type_configuration"
+        for row in configured["oracle_context"]["resolved_edges"]
+    )
+
+
+def test_oracle_context_cache_invalidates_when_projector_helper_changes(
+    tmp_path, monkeypatch
+):
+    import factoryline.review_audits as module
+
+    (tmp_path / "conftest.py").write_text("import pytest\n", encoding="utf-8")
+    test_path = tmp_path / "test_case.py"
+    test_path.write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    module._oracle_context_cache_clear()
+    first_contexts, _, _ = module._project_oracle_context(
+        tmp_path, module._security_source_files(tmp_path), cache_enabled=True
+    )
+    first_misses = module._oracle_context_cache_info()["misses"]
+    monkeypatch.setattr(
+        module, "_click_runner_fixtures", lambda tree, aliases: {"runner": True}
+    )
+    changed_contexts, _, _ = module._project_oracle_context(
+        tmp_path, module._security_source_files(tmp_path), cache_enabled=True
+    )
+    assert (
+        first_contexts[test_path]["click_runners"]
+        != changed_contexts[test_path]["click_runners"]
+    )
+    assert module._oracle_context_cache_info()["misses"] > first_misses
+
+
+def test_oracle_context_cache_expiration_and_corruption_are_cache_misses(
+    tmp_path, monkeypatch
+):
+    import factoryline.review_audits as module
+
+    (tmp_path / "test_case.py").write_text("def test_case():\n    assert True\n")
+    module._oracle_context_cache_clear()
+    expected = security_scan(tmp_path, cache_enabled=False)
+    first = security_scan(tmp_path, cache_enabled=True)
+    assert first == expected
+    info = module._oracle_context_cache_info()
+    assert info["entries"] == 1
+    key, (_, size, created) = next(iter(module._ORACLE_CONTEXT_CACHE.items()))
+    module._ORACLE_CONTEXT_CACHE[key] = ("{", size, created)
+    corrupt_recovery = security_scan(tmp_path, cache_enabled=True)
+    assert corrupt_recovery == expected
+    assert module._oracle_context_cache_info()["entries"] == 1
+    _, (_, _, refreshed) = next(iter(module._ORACLE_CONTEXT_CACHE.items()))
+
+    monkeypatch.setattr(
+        module.time,
+        "monotonic",
+        lambda: refreshed + module.ORACLE_CONTEXT_CACHE_TTL_SECONDS + 1,
+    )
+    expired_recovery = security_scan(tmp_path, cache_enabled=True)
+    assert expired_recovery == expected
+    assert module._oracle_context_cache_info()["entries"] == 1
+
+
 def test_security_cli_displays_measured_source_audit_rate(tmp_path, capsys):
     (tmp_path / "app.py").write_text("answer = 42\n", encoding="utf-8")
     factory_dir = tmp_path / ".factory"
@@ -2162,6 +2279,343 @@ def test_unmodified_container_constant_assertion_remains_hollow(tmp_path):
         "def test_behavior():\n    errors = []\n    assert errors == []\n"
     )
     assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize("nested", ["def", "async def"])
+def test_security_scan_does_not_collect_nested_test_named_helper(tmp_path, nested):
+    (tmp_path / "case.py").write_text(
+        f"def test_behavior():\n    {nested} test_prompt():\n        pass\n"
+        "    assert compute() == 4\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+@pytest.mark.parametrize(
+    "invoke, assertion, expected",
+    [
+        ("runner.invoke(cli, catch_exceptions=False)", "assert compute() == 4", {}),
+        ("runner.invoke(cli)", "assert compute() == 4", {"QUALITY_HOLLOW_TEST": 1}),
+        (
+            "runner.invoke(cli, catch_exceptions=True)",
+            "assert compute() == 4",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "runner.invoke(cli, catch_exceptions=False)",
+            "assert True",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "runner.invoke(cli, catch_exceptions=False)",
+            "assert compute() is not None",
+            {"QUALITY_WEAK_TEST_ORACLE": 1},
+        ),
+        ("pass", "assert compute() == 4", {"QUALITY_HOLLOW_TEST": 1}),
+        (
+            "runner.invoke(other, catch_exceptions=False)",
+            "assert compute() == 4",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "runner.invoke(cli, catch_exceptions=False)\n    assert result.output == 'expected'",
+            "assert compute() == 4",
+            {},
+        ),
+    ],
+)
+def test_security_scan_follows_only_invoked_noncatching_click_callback(
+    tmp_path, invoke, assertion, expected
+):
+    (tmp_path / "case.py").write_text(
+        "import click\nfrom click.testing import CliRunner\ndef test_behavior():\n"
+        "    @click.command()\n    def cli():\n        " + assertion + "\n"
+        "    runner = CliRunner()\n    " + invoke + "\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == expected
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "try:\n        runner.invoke(cli, catch_exceptions=False)\n    except AssertionError:\n        pass",
+        "with suppress(AssertionError):\n        runner.invoke(cli, catch_exceptions=False)",
+        "with suppress(Exception):\n        runner.invoke(cli, catch_exceptions=False)",
+        "if False:\n        runner.invoke(cli, catch_exceptions=False)",
+        "return\n    runner.invoke(cli, catch_exceptions=False)",
+        "runner = fake_runner\n    runner.invoke(cli, catch_exceptions=False)",
+        "runner.invoke = swallow\n    runner.invoke(cli, catch_exceptions=False)",
+        "setattr(runner, 'invoke', swallow)\n    runner.invoke(cli, catch_exceptions=False)",
+        "configure(runner)\n    runner.invoke(cli, catch_exceptions=False)",
+        "other = runner\n    other.invoke = swallow\n    runner.invoke(cli, catch_exceptions=False)",
+        "cli = other\n    runner.invoke(cli, catch_exceptions=False)",
+    ],
+)
+def test_security_scan_keeps_swallowed_or_rebound_click_callback_hollow(tmp_path, body):
+    (tmp_path / "case.py").write_text(
+        "import click\nfrom click.testing import CliRunner\n"
+        "from contextlib import suppress\ndef test_behavior():\n"
+        "    @click.command()\n    def cli():\n        assert compute() == 4\n"
+        "    runner = CliRunner()\n    " + body + "\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "decorators, assertion",
+    [
+        ("@click.command()\n    @swallow", "assert compute() == 4"),
+        ("@click.command(cls=CustomCommand)", "assert compute() == 4"),
+        (
+            "@click.command()",
+            "try:\n            assert compute() == 4\n        except AssertionError:\n            pass",
+        ),
+        ("@click.command()", "expected = True\n        assert expected"),
+        ("@click.command()", "raise click.ClickException('oops')"),
+        ("@click.command()", "raise click.Abort()"),
+        ("@click.command()", "raise SystemExit(1)"),
+        ("@click.command()", "with contextlib.nullcontext():\n            pass"),
+    ],
+)
+def test_security_scan_rejects_unproven_click_callback_propagation(
+    tmp_path, decorators, assertion
+):
+    (tmp_path / "case.py").write_text(
+        "import click\nimport contextlib\nfrom click.testing import CliRunner\ndef test_behavior():\n    "
+        + decorators
+        + "\n    def cli():\n        "
+        + assertion
+        + "\n"
+        "    runner = CliRunner()\n    runner.invoke(cli, catch_exceptions=False)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "oracle",
+    [
+        "if compute() != 4:\n            raise AssertionError('wrong outcome')",
+        "with pytest.raises(ValueError):\n            compute()",
+    ],
+)
+def test_security_scan_keeps_escaping_click_callback_failure_oracles(tmp_path, oracle):
+    (tmp_path / "case.py").write_text(
+        "import click\nimport pytest\nfrom click.testing import CliRunner\n"
+        "def test_behavior():\n    @click.command()\n    def cli():\n        "
+        + oracle
+        + "\n    runner = CliRunner()\n"
+        "    runner.invoke(cli, catch_exceptions=False)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+@pytest.mark.parametrize(
+    "fixture_body, expected",
+    [
+        ("return CliRunner()", {}),
+        ("return fake_runner", {"QUALITY_HOLLOW_TEST": 1}),
+        (
+            "if arbitrary():\n        return fake_runner\n    return CliRunner()",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+    ],
+)
+def test_security_scan_binds_click_runner_fixture_source(
+    tmp_path, fixture_body, expected
+):
+    (tmp_path / "conftest.py").write_text(
+        "import pytest\nfrom click.testing import CliRunner\n"
+        "@pytest.fixture\ndef runner():\n    " + fixture_body + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "case.py").write_text(
+        "import click\ndef test_behavior(runner):\n"
+        "    @click.command()\n    def cli():\n        assert compute() == 4\n"
+        "    runner.invoke(cli, catch_exceptions=False)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == expected
+
+
+def test_security_scan_nearer_fixture_override_invalidates_click_runner(tmp_path):
+    (tmp_path / "conftest.py").write_text(
+        "import pytest\nfrom click.testing import CliRunner\n"
+        "@pytest.fixture\ndef runner():\n    return CliRunner()\n",
+        encoding="utf-8",
+    )
+    suite = tmp_path / "nested"
+    suite.mkdir()
+    (suite / "conftest.py").write_text(
+        "import pytest\n@pytest.fixture\ndef runner():\n    return fake_runner\n",
+        encoding="utf-8",
+    )
+    (suite / "case.py").write_text(
+        "import click\ndef test_behavior(runner):\n"
+        "    @click.command()\n    def cli():\n        assert compute() == 4\n"
+        "    runner.invoke(cli, catch_exceptions=False)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_keeps_uninvoked_command_with_recursive_invoke_hollow(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "import click\nfrom click.testing import CliRunner\ndef test_behavior():\n"
+        "    runner = CliRunner()\n    @click.command()\n    def cli():\n"
+        "        result = runner.invoke(cli, catch_exceptions=False)\n"
+        "        assert result.output == 'value'\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "filename, declared, body, expected",
+    [
+        ("typing_probe.py", True, "assert_type(compute(), int)", {}),
+        (
+            "typing_probe.py",
+            False,
+            "assert_type(compute(), int)",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "test_runtime.py",
+            True,
+            "assert_type(compute(), int)",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        ("typing_probe.py", True, "compute()", {"QUALITY_HOLLOW_TEST": 1}),
+        (
+            "typing_probe.py",
+            True,
+            "assert_type = lambda *args: None\n    assert_type(compute(), int)",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+    ],
+)
+def test_security_scan_recognizes_individual_declared_static_type_oracle(
+    tmp_path, filename, declared, body, expected
+):
+    (tmp_path / "typing").mkdir()
+    if declared:
+        (tmp_path / "pyproject.toml").write_text('[tool.mypy]\nfiles = ["typing"]\n')
+    (tmp_path / "typing" / filename).write_text(
+        "from typing_extensions import assert_type\ndef test_type():\n    "
+        + body
+        + "\n"
+        "def test_runtime_without_oracle():\n    compute()\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    counts = dict(expected)
+    counts["QUALITY_HOLLOW_TEST"] = counts.get("QUALITY_HOLLOW_TEST", 0) + 1
+    assert result["finding_counts"] == counts
+    if declared and filename == "typing_probe.py":
+        edge = next(
+            item
+            for item in result["oracle_context"]["resolved_edges"]
+            if item["kind"] == "static_type_configuration"
+        )
+        assert edge["target"] == "pyproject.toml"
+        assert len(edge["sha256"]) == 64
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ("class Custom(base):\n            pass", {}),
+        ("class Custom:\n            pass", {"QUALITY_HOLLOW_TEST": 1}),
+        (
+            "warnings.simplefilter('ignore')\n        class Custom(base):\n            pass",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "return\n        class Custom(base):\n            pass",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+    ],
+)
+def test_security_scan_recognizes_warning_policy_during_class_construction(
+    tmp_path, body, expected
+):
+    (tmp_path / "case.py").write_text(
+        "import warnings\ndef test_silent(base):\n    with warnings.catch_warnings():\n"
+        "        warnings.simplefilter('error', DeprecationWarning)\n        "
+        + body
+        + "\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == expected
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        '[tool.mypy]\nfiles = ["../typing"]\n',
+        '[tool.mypy]\nfiles = "typing"\n',
+        "broken = [\n",
+        "#" * 1_000_001,
+    ],
+    ids=["escaping-root", "wrong-type", "malformed", "oversized"],
+)
+def test_security_scan_does_not_trust_invalid_typecheck_configuration(tmp_path, config):
+    (tmp_path / "pyproject.toml").write_text(config, encoding="utf-8")
+    (tmp_path / "typing_probe.py").write_text(
+        "from typing_extensions import assert_type\ndef test_type():\n"
+        "    assert_type(compute(), int)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_rejects_typecheck_configuration_race(tmp_path, monkeypatch):
+    import factoryline.review_audits as module
+
+    config = tmp_path / "pyproject.toml"
+    config.write_text('[tool.mypy]\nfiles = ["typing_probe.py"]\n', encoding="utf-8")
+    (tmp_path / "typing_probe.py").write_text(
+        "from typing_extensions import assert_type\ndef test_type():\n"
+        "    assert_type(compute(), int)\n",
+        encoding="utf-8",
+    )
+    original = module._security_scan_file
+
+    def mutate_after_read(*args):
+        result = original(*args)
+        config.write_text("[tool.mypy]\nfiles = []\n", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(module, "_security_scan_file", mutate_after_read)
+    with pytest.raises(ReviewAuditError, match="Evidence changed.*pyproject.toml"):
+        security_scan(tmp_path)
+
+
+@pytest.mark.parametrize("cache_enabled", [False, True])
+def test_security_scan_rejects_source_change_after_oracle_context_projection(
+    tmp_path, monkeypatch, cache_enabled
+):
+    import factoryline.review_audits as module
+
+    source = tmp_path / "app.py"
+    source.write_text("def run(value):\n    return value\n", encoding="utf-8")
+    module._oracle_context_cache_clear()
+    if cache_enabled:
+        security_scan(tmp_path, cache_enabled=True)
+    original = module._security_scan_file
+
+    def mutate_after_scan(*args, **kwargs):
+        result = original(*args, **kwargs)
+        source.write_text("def run(value):\n    eval(value)\n", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(module, "_security_scan_file", mutate_after_scan)
+    with pytest.raises(ReviewAuditError, match="Evidence changed.*app.py"):
+        security_scan(tmp_path, cache_enabled=cache_enabled)
 
 
 @pytest.mark.parametrize(

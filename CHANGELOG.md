@@ -2,6 +2,18 @@
 
 ## 0.48.0 / editor plugins 1.1.2 (release candidate; publication gated)
 
+- Make `factory scan` audit eligible Python source by default; `--deep` adds
+  the remaining local audit lanes. Analyzer failures and security blockers remain blocking.
+- Resolve false hollow-test findings on nested helpers, declared static type
+  checks, proven non-catching Click callbacks, and executed warnings-as-errors
+  class construction. Preserve uninvoked, swallowed, rebound, and weak oracles.
+- Keep quality-only review findings distinct from security failures in repository
+  orchestration, with explicit incomplete runtime evidence and actionable findings.
+- Cache source-bound oracle context within a process, with bounded storage,
+  expiry and source/config invalidation; recompute findings on every scan.
+- Bundle an experimental Jev evaluation runner and evidence judging framework.
+  Offline preparation is the default; live evaluation requires explicit opt-in.
+  Judge confidence cannot override findings or certify detection accuracy.
 - Add native CodeQL JavaScript/TypeScript cross-file analysis and GitHub Actions
   security-extended profiles. All four vulnerable/safe native controls passed;
   JavaScript emitted an ordered cross-file flow, while the single-location

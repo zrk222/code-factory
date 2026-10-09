@@ -3,7 +3,7 @@
 Code Factory uses one local evidence model at every level. You can begin with
 an outcome instead of a framework, then add rigor only when the work needs it.
 
-## 0. Run your first repository inventory
+## 0. Run your first repository scan
 
 ```powershell
 pip install factoryline-code-factory
@@ -11,14 +11,15 @@ factory scan --root .
 ```
 
 This is the zero-config starting point for an existing repository. It records
-only relative file metadata and returns an inventory state. Add `--deep` to
-run the bounded Python static scanner. The result is `BLOCKED` when findings
-require action and otherwise remains `INCOMPLETE` until project test,
-dependency, tenant-scope, and runtime evidence is supplied. It does not modify
-or upload project source.
+relative file metadata and reads eligible Python source for bounded AST security
+and test-oracle analysis. Add `--deep` to run every applicable local audit lane.
+Quality findings are actionable review items, distinct from high-risk security
+patterns or analyzer failures. Missing project test, dependency, tenant-scope,
+and runtime evidence remains incomplete. It does not execute, modify, or upload
+project source unless you explicitly configure native workers.
 
 You do not need ForgeLine, a feature contract, or a prior adoption step to run
-this inventory. Add deeper workflow structure only when you want it.
+this scan. Add deeper workflow structure only when you want it.
 
 To see the sealed demonstration in a disposable local sandbox, run:
 
@@ -166,7 +167,42 @@ define its own JSON-result policy and artifact retention. Do not treat a local
 receipt as CI-signed evidence or a release approval; add and verify the
 provider's identity and signing boundary separately.
 
-## What Code Factory will and will not optimize
+## Experimental Jev evidence review
+
+The optional Node.js trial runner compares a frozen labelled corpus with
+`typesafe-ai/jev` through Vercel AI Gateway. It evaluates defect support and
+evidence sufficiency separately. It can review a CF finding or compare a report
+with raw source and execution observations. Expected labels are not sent to the
+model; missing evidence, uncertain answers and transport failures stay unresolved.
+
+From a source checkout, prepare cases as a JSON array of
+`{id, category, expected, state}` records. `state` can contain `requirement`,
+`candidate`, `evidence` and `cf_output`. The packaged judging framework defines
+the evidence and evaluation protocol:
+
+```powershell
+node scripts/evaluate_jev.mjs --cases cases.json --rubric factoryline/data/judge_framework.json --out trial-dry-run.json
+```
+
+This defaults to no network and reports `NOT_RUN`. Add `--live` only when you
+intend to transmit the supplied evidence and have configured
+`AI_GATEWAY_API_KEY`. Live calls request zero data retention and restrict the
+provider to TypeSafe AI. The runner records costs only when the provider reports
+them; it cannot independently verify provider retention or immutable model weights.
+
+Freeze development and holdout cases separately, retain disagreements, and
+compare precision, recall, abstentions and coverage by audit category. Confidence
+is not correctness. The trial cannot override scanner findings, approve a release
+or establish production accuracy. The wheel includes the runner under
+`share/code-factory/evaluation` and the framework in `factoryline/data`.
+
+## Measured optimization
+
+Repeated scans in the same Python process reuse source-bound oracle context.
+This local cache expires after five minutes and is limited to 16 entries and
+4 MiB. Every scan still reads and verifies current sources and recomputes
+findings; it does not reuse verdicts. Separate CLI processes do not share it.
+Python callers can pass `cache_enabled=False` to `security_scan` for comparison.
 
 The factory optimizes for a small, fact-derived next action, reuse of verified
 read-only proof, and less reconstruction of context. It does not claim time,
