@@ -141,6 +141,50 @@ def test_repo_scan_deep_runs_static_lane_on_small_workspace(tmp_path: Path) -> N
     result = run_repo_scan(tmp_path, deep=True)
 
     assert result["static_security"]["state"] in {"CLEAN", "INCOMPLETE"}
+    assert result["deep_audit"]["schema"] == "factory.deep-repository-audit.v1"
+    assert result["deep_audit"]["scope"]["python_source_limit"] == 460
+    lane_ids = {lane["measurement_id"] for lane in result["deep_audit"]["lanes"]}
+    assert {
+        "candidate_inventory",
+        "python_ast_security",
+        "scanner_self_evaluation",
+        "runtime_coverage",
+        "dependencies_and_supply_chain",
+    } <= lane_ids
+    assert result["deep_audit"]["state"] in {"INCOMPLETE", "BLOCKED"}
+
+
+def test_repo_scan_deep_exposes_non_python_and_supply_chain_gaps(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "package.json").write_text('{"name":"sample"}\n', encoding="utf-8")
+    (tmp_path / "app.ts").write_text("export const value = 1;\n", encoding="utf-8")
+
+    result = run_repo_scan(tmp_path, deep=True)
+    lanes = {lane["measurement_id"]: lane for lane in result["deep_audit"]["lanes"]}
+
+    assert lanes["python_ast_security"]["state"] == "NOT_APPLICABLE"
+    assert lanes["non_python_security"]["state"] == "NOT_MEASURED"
+    assert lanes["dependencies_and_supply_chain"]["state"] == "NOT_MEASURED"
+    assert result["deep_audit"]["coverage"]["audit_rate"] < 1
+
+
+def test_repo_scan_deep_blocks_when_python_limit_is_exceeded(tmp_path: Path) -> None:
+    for index in range(461):
+        (tmp_path / f"module_{index:03d}.py").write_text(
+            "value = 1\n", encoding="utf-8"
+        )
+
+    result = run_repo_scan(tmp_path, deep=True)
+    lanes = {lane["measurement_id"]: lane for lane in result["deep_audit"]["lanes"]}
+
+    assert result["deep_audit"]["scope"]["python_source_limit"] == 460
+    assert lanes["python_ast_security"]["state"] == "BLOCKED"
+    assert (
+        lanes["python_ast_security"]["result"]["audit_coverage"]["files_discovered"]
+        == 461
+    )
+    assert result["deep_audit"]["state"] == "BLOCKED"
 
 
 def test_adoption_cli_reports_local_counts_without_claiming_conversion(
@@ -177,3 +221,61 @@ def test_adoption_status_fails_closed_for_a_tampered_event(tmp_path: Path) -> No
 
     with pytest.raises(AdoptionError, match="malformed or tampered"):
         adoption_status(tmp_path)
+
+
+def test_native_worker_configuration_requires_explicit_deep(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="requires --deep"):
+        run_repo_scan(tmp_path, worker_config="worker.json")
+
+
+def test_native_worker_configuration_rejects_unknown_fields(tmp_path: Path) -> None:
+    (tmp_path / "app.ts").write_text("export const x = 1;", encoding="utf-8")
+    (tmp_path / "worker.json").write_text('{"command":"arbitrary"}', encoding="utf-8")
+    result = run_repo_scan(tmp_path, deep=True, worker_config="worker.json")
+    lane = next(
+        row
+        for row in result["deep_audit"]["lanes"]
+        if row["measurement_id"] == "native_worker_execution"
+    )
+    assert lane["state"] == "BLOCKED"
+    assert str(tmp_path) not in json.dumps(lane)
+
+
+def test_native_worker_executes_existing_engine_without_granting_approval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factoryline import deep_audit
+
+    (tmp_path / "app.rs").write_text("fn main() {}", encoding="utf-8")
+    for name in ("manifest.json", "auth.json", "trust.json"):
+        (tmp_path / name).write_text("{}", encoding="utf-8")
+    settings = {
+        "manifest": "manifest.json",
+        "manifest_sha256": "a" * 64,
+        "authorization": "auth.json",
+        "trust_root": "trust.json",
+        "trust_root_sha256": "b" * 64,
+    }
+    (tmp_path / "worker.json").write_text(json.dumps(settings), encoding="utf-8")
+    calls = []
+
+    def observe(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {
+            "state": "INCOMPLETE",
+            "analysis_complete": True,
+            "review": "REQUIRED",
+            "run_id": "sample",
+        }
+
+    monkeypatch.setattr(deep_audit, "scan_deep_audit", observe)
+    result = run_repo_scan(tmp_path, deep=True, worker_config="worker.json")
+    lane = next(
+        row
+        for row in result["deep_audit"]["lanes"]
+        if row["measurement_id"] == "native_worker_execution"
+    )
+    assert len(calls) == 1
+    assert lane["measurement_state"] == "REVIEW_REQUIRED"
+    assert result["state"] != "PASS"
+    assert result["assessment"]["file_types"]["rust"] == 1

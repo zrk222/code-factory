@@ -123,11 +123,31 @@ factory scan --root .
 ```
 
 `factory scan --root .` is the zero-config starting point for an existing
-repository. It records a relative file inventory and returns a first state in
-under a minute. Add `--deep` to run the bounded Python static scanner; on large
-repositories that lane may take longer. A clean static result is still
-`INCOMPLETE` until project test, dependency, tenant-scope, and runtime evidence
-is supplied; findings are actionable and block the scan.
+repository. It records a bounded relative file inventory. Add `--deep` to
+orchestrate architecture, Python security and test-oracle checks, workflow
+integrity, requirements, runtime coverage, and dependency evidence. Languages
+including TypeScript/JSX, Go, Rust, Java, C/C++, C#, Ruby, PHP and Swift are
+inventoried explicitly; missing native analysis remains unmeasured.
+
+For authorized native execution, use:
+
+```powershell
+factory scan --root . --deep --worker-config .factory/worker-config.json --json
+```
+
+The configuration contains workspace-relative `manifest`, `authorization`, and
+`trust_root` paths plus `manifest_sha256` and `trust_root_sha256` pins. This
+invokes the existing signed Docker worker engine for configured CodeQL,
+Semgrep, secrets, dependency, container, runtime and fuzz lanes. Unsigned plans
+are rejected. Completed workers still require independent agent review;
+missing evidence and review cannot produce a passing verdict. Native execution
+requires its configured images and tooling and can take longer than a minute.
+Each unresolved lane includes its next action. Receipt presence alone is not
+verification, and no scan claims to detect every defect.
+
+Package metadata now uses **Production/Stable**, starting with this source
+update. That release-status label is separate from detection accuracy,
+independent benchmark results, and provider publication.
 
 In an interactive terminal, `factory` optionally makes one plain PyPI version
 check and caches the result for up to 24 hours, then prints a notice when a

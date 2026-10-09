@@ -18,13 +18,18 @@ def add_parser(sub: Any) -> None:
     first_proof.add_argument("--out-dir", help="workspace-contained output directory")
     first_proof.add_argument("--json", action="store_true")
     scan = sub.add_parser(
-        "scan", help="assess the workspace with a fast inventory or --deep AST scan"
+        "scan",
+        help="assess the workspace with a fast inventory or --deep full local audit orchestration",
     )
     scan.add_argument("--root", default=".")
     scan.add_argument(
         "--deep",
         action="store_true",
-        help="also run the bounded Python AST lane; may take longer on large repositories",
+        help="run every applicable local audit lane and expose unmeasured coverage",
+    )
+    scan.add_argument(
+        "--worker-config",
+        help="workspace-relative signed native worker configuration; requires --deep",
     )
     scan.add_argument("--json", action="store_true")
     first_lap = sub.add_parser(
@@ -203,10 +208,14 @@ def _run_first_proof(args: Any) -> int:
         print("factory first-proof")
         print("=" * 44)
         print("result   : HOLLOW_TEST_DETECTED")
-        print("meaning  : the sandbox negative check also passed, so the test could not say no")
+        print(
+            "meaning  : the sandbox negative check also passed, so the test could not say no"
+        )
         print(f"receipt  : {result['activation_path']}")
         print(f"share    : {result['proof_card']['paths']['svg']}")
-        print("boundary : sandbox demo plus bounded inventory; no project code was executed or uploaded")
+        print(
+            "boundary : sandbox demo plus bounded inventory; no project code was executed or uploaded"
+        )
     return 0
 
 
@@ -214,7 +223,9 @@ def _run_scan(args: Any) -> int:
     from .adoption import run_repo_scan
 
     try:
-        result = run_repo_scan(Path(args.root).resolve(), deep=args.deep)
+        result = run_repo_scan(
+            Path(args.root).resolve(), deep=args.deep, worker_config=args.worker_config
+        )
         code = 2 if result["state"] == "BLOCKED" else 0
     except (OSError, UnicodeError, ValueError) as exc:
         result = {
@@ -236,7 +247,10 @@ def _run_scan(args: Any) -> int:
             f"inventory: {assessment.get('files_discovered', 0)} files "
             f"({assessment.get('inventory_sha256', 'unavailable')[:12]})"
         )
-        print("security : " + str(result.get("static_security", {}).get("state", "unavailable")))
+        print(
+            "security : "
+            + str(result.get("static_security", {}).get("state", "unavailable"))
+        )
         for action in result.get("next_actions", []):
             print(f"next     : {action}")
         if result.get("message"):
