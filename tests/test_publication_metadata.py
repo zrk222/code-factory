@@ -544,6 +544,17 @@ def test_hosted_release_and_editor_versions_are_declared():
     vscode = json.loads(
         (ROOT / "editors" / "vscode" / "package.json").read_text(encoding="utf-8")
     )
+    vscode_lock = json.loads(
+        (ROOT / "editors" / "vscode" / "package-lock.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    vscode_readme = (ROOT / "editors" / "vscode" / "README.md").read_text(
+        encoding="utf-8"
+    )
+    release_channels = (ROOT / "docs" / "RELEASE_CHANNELS.md").read_text(
+        encoding="utf-8"
+    )
     gradle = (ROOT / "editors" / "intellij" / "build.gradle.kts").read_text(
         encoding="utf-8"
     )
@@ -553,7 +564,16 @@ def test_hosted_release_and_editor_versions_are_declared():
 
     assert project["version"] == "0.48.0"
     assert "hosted" in project["optional-dependencies"]
-    assert vscode["version"] == "1.1.2"
+    assert vscode["version"] == "1.1.3"
+    assert vscode_lock["version"] == vscode["version"]
+    assert vscode_lock["packages"][""]["version"] == vscode["version"]
+    assert (
+        "Version 1.1.3 pairs with the published Code Factory CLI 0.48.0"
+        in vscode_readme
+    )
+    assert "factoryline-vscode-1.1.3.vsix" in vscode_readme
+    assert "0.48.0 candidate" not in vscode_readme
+    assert "factoryline-vscode-1.1.3.vsix" in release_channels
     assert 'version = "1.1.2"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
