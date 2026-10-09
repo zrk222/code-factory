@@ -27,7 +27,7 @@ not turn a source merge into release approval.
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Manually dispatch the `huggingface` environment workflow | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
-| VS Code / Open VSX | `factoryline-vscode-1.1.0.vsix` | Upload VS Code through the Microsoft Marketplace website; use the protected publisher workflow for Open VSX | Installable VSIX and public marketplace version |
+| VS Code / Open VSX | `factoryline-vscode-1.1.3.vsix` | Upload VS Code through the Microsoft Marketplace website; use the protected publisher workflow for Open VSX | Installable VSIX and public marketplace version |
 | JetBrains | `factoryline-intellij-1.1.0.zip` | Use the separate protected JetBrains publisher workflow after its live binary-slot and metadata gates permit the update | Compatible ZIP plus an accepted Marketplace upload receipt; public availability still requires moderation |
 | OpenCode | Native `code-factory-opencode` plugin 0.1.0 | Build a self-contained module and install under `.opencode/plugins/`; publish a registry package only after registry authentication and independent receipt | Project plugin loads and CF/ForgeLine lanes run or report exact limits |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |

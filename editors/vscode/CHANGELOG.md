@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.1.3 - 2026-10-09
+
+- Fix Marketplace guidance to pair the VS Code adapter with the published
+  Code Factory 0.48.0 core and install the correctly versioned VSIX.
+- Change the telemetry screenshot URL to the stable `main` branch.
+- Clarify that the extension and Python CLI are separate packages and that
+  Marketplace publication is verified independently from local packaging.
+- No editor runtime behavior changed in this documentation and metadata update.
+
+## 1.1.2 - 2026-10-08
+
+- Harden bounded evaluator output handling across the six editor audit lanes;
+  malformed results remain incomplete.
+- Add Graph Ops repair telemetry with candidate-bound evidence requirements,
+  stop conditions, and searchable individual test outcomes.
+- Preserve the boundary that the host agent performs any repair and the
+  extension neither executes nor approves it.
+
 ## 1.1.1 - 2026-10-06 (Open VSX candidate; publication gated)
 
 - Refactor evidence refresh and finding navigation into focused helpers while
