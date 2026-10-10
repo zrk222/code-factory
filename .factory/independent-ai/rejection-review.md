@@ -15,6 +15,6 @@ No blocking finding remains in this bounded review. The current `recordRejectedT
 
 ## Current source hashes
 
-- `scripts/evaluate_jev.mjs`: SHA-256 `a070c71ed23281bbee9b5a239aa3d1899a665cc8e565b334733a6dd282250735`
+- `scripts/evaluate_jev.mjs`: SHA-256 `5475e7250efd7b21a719ea70f39a3ec62bd00ec023be646a9e9d0987a7e5b262`
 - `scripts/evaluate_jev.test.mjs`: SHA-256 `daccd6becf904cfd6b019ed77bc1c46f9228614704e6447149f80fd79f241084`
 

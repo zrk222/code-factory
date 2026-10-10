@@ -4,7 +4,7 @@
   "candidate": [
     {
       "path": "scripts/evaluate_jev.mjs",
-      "sha256": "a070c71ed23281bbee9b5a239aa3d1899a665cc8e565b334733a6dd282250735",
+      "sha256": "5475e7250efd7b21a719ea70f39a3ec62bd00ec023be646a9e9d0987a7e5b262",
       "kind": "source"
     },
     {
@@ -126,6 +126,14 @@
       "id": "ARCH",
       "category": "state_consistency",
       "requirement": "Strict architecture remains HEALTHY at 460 Python files",
+      "profiles": [
+        "windows-node22"
+      ]
+    },
+    {
+      "id": "QUALITY",
+      "category": "state_consistency",
+      "requirement": "Repo-wide strict grade remains A at least97.9 with complexity at most10",
       "profiles": [
         "windows-node22"
       ]

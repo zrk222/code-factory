@@ -1,0 +1,16 @@
+{
+  "source_base": "c490f9a9187bb8c15dcf532d8bb7d266171ac641",
+  "snapshot": "Git archive plus current exact candidate source bytes",
+  "candidate": [
+    {
+      "path": "scripts/evaluate_jev.mjs",
+      "sha256": "5475e7250efd7b21a719ea70f39a3ec62bd00ec023be646a9e9d0987a7e5b262"
+    },
+    {
+      "path": "scripts/evaluate_jev.test.mjs",
+      "sha256": "daccd6becf904cfd6b019ed77bc1c46f9228614704e6447149f80fd79f241084"
+    }
+  ],
+  "excluded": "Untracked research snapshots and temporary evidence helpers, absent in CI checkout",
+  "prior_diagnostic": "Stopped after verified inventory scope mismatch; no passing result claimed"
+}

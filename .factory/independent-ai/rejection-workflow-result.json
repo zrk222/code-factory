@@ -12,9 +12,9 @@
     "repair": false,
     "signing": false
   },
-  "candidate_sha256": "dbd5dc51f9210be0fe998565fc6f7dcdc062747dd8ebd3f341f0d24f3bb3f689",
-  "checks": 9,
-  "contract_sha256": "bda0bbaf99ede8b8e97833af45b2e09b7797342bad453b5fbb0168b49dace013",
+  "candidate_sha256": "af9f447d1c52a18b52b19fa352c75a0abd891226e30176da29cbdb26130d0609",
+  "checks": 10,
+  "contract_sha256": "69b31a055d6094e6d8707f360cd7028353088c778802b3083ab61905ab093c46",
   "errors": [],
   "inapplicability_evidence": {
     "accessibility": {
@@ -32,12 +32,12 @@
     "No project command or provider is executed.",
     "No approval, certification or deployment authority."
   ],
-  "observations_sha256": "bf02067170fffbfc97b38cc3184035705cace1dc29c0fa463d2bd185124fcf38",
+  "observations_sha256": "09969a21004838cd48c0e7f2506698654a584813761fc84aa78528bef8f727b8",
   "project_id": "code-factory-jev-rejection-journal",
-  "receipt_sha256": "2960a4f654925e825c40783ab2ece5866489ef686bf72247ea0a866622a79eaa",
+  "receipt_sha256": "25db08f422ab2b4b4aaa7255bd40c74c1d8aea3af9fe56bc23c1d36e27dafdd9",
   "resource_usage": {
-    "artifact_references": 13,
-    "bytes_hashed": 167296
+    "artifact_references": 15,
+    "bytes_hashed": 433711
   },
   "schema": "factory.workflow-audit.receipt.v1",
   "state": "PASS"
