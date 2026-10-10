@@ -101,7 +101,7 @@
     {
       "id": "PRIVACY",
       "category": "security_privacy",
-      "requirement": "Separate reviewer verifies no intent-derived oracle credit or weakened swallowed-check logic",
+      "requirement": "Request regressions keep expected labels outside provider state and sanitize private preflight data; no provider retention guarantee",
       "profiles": [
         "windows-node22-jev-experimental"
       ]

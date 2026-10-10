@@ -1,6 +1,6 @@
 {
   "schema": "factory.workflow-audit.observations.v1",
-  "contract_sha256": "c30b267f1e96fd763ab2ad936989500eb207745febffbe9c8de60fe2a9a2121c",
+  "contract_sha256": "bbf010941e2944959f56557ed486c7fe920aa69c965557a2bc32cd1ba05329cb",
   "candidate_sha256": "a4c7813137f6d303b29fbe0167604969678c20e74f52edc8c303d08802e8b2dc",
   "observations": [
     {
@@ -67,14 +67,14 @@
       "id": "PRIVACY",
       "profile": "windows-node22-jev-experimental",
       "status": "PASS",
-      "reason": "Separate reviewer verifies no intent-derived oracle credit or weakened swallowed-check logic; scoped evidence only, no99.85accuracyclaim",
+      "reason": "60passing request/privacy regressions include withheld expected labels and sanitized rejection fields. No changed privacy behavior or provider retention claim.",
       "execution_identity": "Windows Node22; actual live Vercel Jev and offline regression tests",
       "observed_at": "2026-10-10T15:30:58.064698+00:00",
       "artifacts": [
         {
-          "path": ".factory/jev-intent-eval/review.md",
-          "sha256": "dbad17011867bd233a12e2a44d3af94cd75285536d42c62563391db80604a364",
-          "kind": "review"
+          "path": ".factory/jev-intent-eval/tests-final.log",
+          "sha256": "d72912cbacb2160b9f1f0fcdd8d0e3e8ea8949aec49435c529514ff4cc8ff3ea",
+          "kind": "observation"
         }
       ]
     },

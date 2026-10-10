@@ -14,7 +14,7 @@
   },
   "candidate_sha256": "a4c7813137f6d303b29fbe0167604969678c20e74f52edc8c303d08802e8b2dc",
   "checks": 7,
-  "contract_sha256": "c30b267f1e96fd763ab2ad936989500eb207745febffbe9c8de60fe2a9a2121c",
+  "contract_sha256": "bbf010941e2944959f56557ed486c7fe920aa69c965557a2bc32cd1ba05329cb",
   "errors": [],
   "inapplicability_evidence": {
     "accessibility": {
@@ -32,12 +32,12 @@
     "No project command or provider is executed.",
     "No approval, certification or deployment authority."
   ],
-  "observations_sha256": "e6882cdd0137335dcebd6e6aff1527ea4dadf2e2e28a5f489bfb6f72055a7ff6",
+  "observations_sha256": "5eeea038a90363c41e60ea4dc189faaba4ea38852ea7208b659f747a0f7cd1e2",
   "project_id": "jev-executable-oracle-evidence",
-  "receipt_sha256": "949fbc560da01cf9b7f8ac325f5139aae61a4023deef5164eb3b407b829eb226",
+  "receipt_sha256": "0ddff738fe21d43492fc3e1c40a5e020c3443ba41c0f210ae8b9ece77b930294",
   "resource_usage": {
     "artifact_references": 11,
-    "bytes_hashed": 129804
+    "bytes_hashed": 134907
   },
   "schema": "factory.workflow-audit.receipt.v1",
   "state": "PASS"
