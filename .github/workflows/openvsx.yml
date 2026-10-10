@@ -186,7 +186,7 @@ jobs:
           PY
           python scripts/prepare_release_contract.py \
             --root . \
-            --feature "openvsx-${RELEASE_REF}" \
+            --feature "openvsx-${RELEASE_REF//+/-}" \
             --out "$RELEASE_CONTRACT_PATH" \
             --approved-by "$APPROVED_BY"
 

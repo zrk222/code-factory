@@ -54,37 +54,7 @@
   "candidate": [
     {
       "path": ".github/workflows/openvsx.yml",
-      "sha256": "ae9b63b3cdd6bb08b690d7f895f4efacefed13dfc9f685d979fbe09e3b85878e",
-      "kind": "source"
-    },
-    {
-      "path": "factoryline/release_candidate.py",
-      "sha256": "6a81cd47706cca2f58eeed103dd5b2c58e18d0d0eaddbbbdc350ec4d2474543d",
-      "kind": "source"
-    },
-    {
-      "path": "factoryline/release_integrity.py",
-      "sha256": "f18e49aedd86676dc53842f2febb58792f0ab27049bc9ec80935163597dac2f6",
-      "kind": "source"
-    },
-    {
-      "path": "tests/test_release_candidate.py",
-      "sha256": "dd691c521e21be0d041c7b9b148c2bd80becdab7864a1537a82d37f5ec1b66b3",
-      "kind": "source"
-    },
-    {
-      "path": "tests/test_release_integrity.py",
-      "sha256": "de56ca103ed12c98596e1c8319b185b590b537a6ed24e35eb0c5b715dfd88cd9",
-      "kind": "source"
-    },
-    {
-      "path": "specs/openvsx-cadence-exception.md",
-      "sha256": "baeea98014b784bc730a1b00896898e2ceae4a1fd3e23c40bf405188112da20e",
-      "kind": "source"
-    },
-    {
-      "path": "plans/openvsx-cadence-exception.md",
-      "sha256": "bf391bd28caec4d7bd30b7a29ed31b5179114dcc587b1a8d0d49a8cc2c5c3fbb",
+      "sha256": "cfbdb65608c649a3b0b91b9106ea129e6b8cfde31d8dc8958a797df50f83f390",
       "kind": "source"
     }
   ],
@@ -95,7 +65,7 @@
       "profiles": [
         "windows-cpython-3.11"
       ],
-      "requirement": "Exact v1.1.3+build.1 exception admits cadence only while preserving the normal cadence observation and all other preflight gates."
+      "requirement": "Normalize build-tag plus signs only in internal handoff identifiers while preserving release tag identity and all protected gates: Exact v1.1.3+build.1 exception admits cadence only while preserving the normal cadence observation and all other preflight gates."
     },
     {
       "category": "validation",
@@ -103,7 +73,7 @@
       "profiles": [
         "windows-cpython-3.11"
       ],
-      "requirement": "Static release-integrity audit enforces authorization dependency, explicit publish mode, exact candidate version, and run-attempt binding."
+      "requirement": "Normalize build-tag plus signs only in internal handoff identifiers while preserving release tag identity and all protected gates: Static release-integrity audit enforces authorization dependency, explicit publish mode, exact candidate version, and run-attempt binding."
     },
     {
       "category": "failure_recovery",
@@ -111,7 +81,7 @@
       "profiles": [
         "windows-cpython-3.11"
       ],
-      "requirement": "Negative candidate, run-attempt, and workflow-mutation cases block the cadence exception."
+      "requirement": "Normalize build-tag plus signs only in internal handoff identifiers while preserving release tag identity and all protected gates: Negative candidate, run-attempt, and workflow-mutation cases block the cadence exception."
     },
     {
       "category": "state_consistency",
@@ -119,7 +89,7 @@
       "profiles": [
         "windows-cpython-3.11"
       ],
-      "requirement": "Preflight receipts keep normal cadence admissibility separate from exception validity and final candidate admissibility."
+      "requirement": "Normalize build-tag plus signs only in internal handoff identifiers while preserving release tag identity and all protected gates: Preflight receipts keep normal cadence admissibility separate from exception validity and final candidate admissibility."
     },
     {
       "category": "security_privacy",
@@ -127,7 +97,7 @@
       "profiles": [
         "windows-cpython-3.11"
       ],
-      "requirement": "Only protected publish runs reach exception generation; publisher credentials remain absent from candidate validation."
+      "requirement": "Normalize build-tag plus signs only in internal handoff identifiers while preserving release tag identity and all protected gates: Only protected publish runs reach exception generation; publisher credentials remain absent from candidate validation."
     },
     {
       "category": "external_effects",
@@ -135,7 +105,7 @@
       "profiles": [
         "windows-cpython-3.11"
       ],
-      "requirement": "Publication remains gated by protected authorization, candidate validation, and attested immutable source."
+      "requirement": "Normalize build-tag plus signs only in internal handoff identifiers while preserving release tag identity and all protected gates: Publication remains gated by protected authorization, candidate validation, and attested immutable source."
     }
   ],
   "project_id": "openvsx-v1.1.3-cadence-exception",
