@@ -1,0 +1,142 @@
+{
+  "schema": "factory.workflow-audit.observations.v1",
+  "contract_sha256": "8a5b8050ed40bbaec0559a8088fa18c3572a65f0ce284b32461bbc18fb192048",
+  "candidate_sha256": "828550059181e0a311dcf99a2de9b7790a8506577fee94d1909a3f245018bdf4",
+  "observations": [
+    {
+      "id": "TARGET",
+      "profile": "windows-node22-python311",
+      "status": "PASS",
+      "reason": "Full-file and CRLF excerpt target bindings pass; unchanged packets retain compatibility; bounded evidence only, no population accuracy or release claim",
+      "execution_identity": "Windows; Node22.22.0; CPython3.11; evaluator tests, real authorized typesafe-ai/jev calls and strict architecture health",
+      "observed_at": "2026-10-10T14:36:14.407258+00:00",
+      "artifacts": [
+        {
+          "path": ".factory\\independent-ai\\focused-input-tests.log",
+          "sha256": "13937a713da9fba4f9ca77e6deb6e022b5f32584fa3438c6300b2df01a47dbba",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "REJECT",
+      "profile": "windows-node22-python311",
+      "status": "PASS",
+      "reason": "Wrong target name, source coordinates and malformed offsets reject before provider calls; bounded evidence only, no population accuracy or release claim",
+      "execution_identity": "Windows; Node22.22.0; CPython3.11; evaluator tests, real authorized typesafe-ai/jev calls and strict architecture health",
+      "observed_at": "2026-10-10T14:36:14.407258+00:00",
+      "artifacts": [
+        {
+          "path": ".factory\\independent-ai\\focused-input-tests.log",
+          "sha256": "13937a713da9fba4f9ca77e6deb6e022b5f32584fa3438c6300b2df01a47dbba",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "UNRESOLVED",
+      "profile": "windows-node22-python311",
+      "status": "PASS",
+      "reason": "Existing evaluator tests retain abstentions, transport errors and timeout behavior; bounded evidence only, no population accuracy or release claim",
+      "execution_identity": "Windows; Node22.22.0; CPython3.11; evaluator tests, real authorized typesafe-ai/jev calls and strict architecture health",
+      "observed_at": "2026-10-10T14:36:14.408770+00:00",
+      "artifacts": [
+        {
+          "path": ".factory\\independent-ai\\focused-input-tests.log",
+          "sha256": "13937a713da9fba4f9ca77e6deb6e022b5f32584fa3438c6300b2df01a47dbba",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "BINDING",
+      "profile": "windows-node22-python311",
+      "status": "PASS",
+      "reason": "Input/source hashes and live result journal verify without rewriting prior results; bounded evidence only, no population accuracy or release claim",
+      "execution_identity": "Windows; Node22.22.0; CPython3.11; evaluator tests, real authorized typesafe-ai/jev calls and strict architecture health",
+      "observed_at": "2026-10-10T14:36:14.408770+00:00",
+      "artifacts": [
+        {
+          "path": ".factory\\independent-ai\\focused-target-journal-verification.json",
+          "sha256": "41f46fcba884e21bc480299c131d1572b8a22e18e0ebc83e9f8dffe4cc6563e5",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "BLIND",
+      "profile": "windows-node22-python311",
+      "status": "PASS",
+      "reason": "Expected labels remain withheld; invalid target does not call provider; bounded evidence only, no population accuracy or release claim",
+      "execution_identity": "Windows; Node22.22.0; CPython3.11; evaluator tests, real authorized typesafe-ai/jev calls and strict architecture health",
+      "observed_at": "2026-10-10T14:36:14.408770+00:00",
+      "artifacts": [
+        {
+          "path": ".factory\\independent-ai\\focused-input-tests.log",
+          "sha256": "13937a713da9fba4f9ca77e6deb6e022b5f32584fa3438c6300b2df01a47dbba",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "BOUNDS",
+      "profile": "windows-node22-python311",
+      "status": "PASS",
+      "reason": "Source handling remains bounded by existing corpus and state limits; scoped suite completes; bounded evidence only, no population accuracy or release claim",
+      "execution_identity": "Windows; Node22.22.0; CPython3.11; evaluator tests, real authorized typesafe-ai/jev calls and strict architecture health",
+      "observed_at": "2026-10-10T14:36:14.408770+00:00",
+      "artifacts": [
+        {
+          "path": ".factory\\independent-ai\\focused-input-tests.log",
+          "sha256": "13937a713da9fba4f9ca77e6deb6e022b5f32584fa3438c6300b2df01a47dbba",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "LIVE",
+      "profile": "windows-node22-python311",
+      "status": "PASS",
+      "reason": "Authorized focused live trial records three correct source decisions and reported cost; bounded evidence only, no population accuracy or release claim",
+      "execution_identity": "Windows; Node22.22.0; CPython3.11; evaluator tests, real authorized typesafe-ai/jev calls and strict architecture health",
+      "observed_at": "2026-10-10T14:36:14.409350+00:00",
+      "artifacts": [
+        {
+          "path": ".factory\\independent-ai\\focused-target-live.json",
+          "sha256": "81415dea6389f0b6f383d25654e0f32e9fbf8de7fa07a6e4c71d323af5cc9400",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "ARCH",
+      "profile": "windows-node22-python311",
+      "status": "PASS",
+      "reason": "Strict architecture health remains HEALTHY without budget changes; bounded evidence only, no population accuracy or release claim",
+      "execution_identity": "Windows; Node22.22.0; CPython3.11; evaluator tests, real authorized typesafe-ai/jev calls and strict architecture health",
+      "observed_at": "2026-10-10T14:36:14.409350+00:00",
+      "artifacts": [
+        {
+          "path": ".factory\\independent-ai\\focused-input-architecture-health.json",
+          "sha256": "d3f2fd2b673e807ccda3cf7fdda487fcaf95d432362b0556e91f49b87929d192",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "REVIEW",
+      "profile": "windows-node22-python311",
+      "status": "PASS",
+      "reason": "Independent source review found no blocking defect and recorded limits; bounded evidence only, no population accuracy or release claim",
+      "execution_identity": "Windows; Node22.22.0; CPython3.11; evaluator tests, real authorized typesafe-ai/jev calls and strict architecture health",
+      "observed_at": "2026-10-10T14:36:14.409350+00:00",
+      "artifacts": [
+        {
+          "path": ".factory\\independent-ai\\focused-input-review.md",
+          "sha256": "fcef5ff5e9746431a57644049c22cd2f9bbefd58db11c135356175ec74a89056",
+          "kind": "review"
+        }
+      ]
+    }
+  ]
+}

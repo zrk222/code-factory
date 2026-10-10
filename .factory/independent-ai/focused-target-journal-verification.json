@@ -1,0 +1,10 @@
+{
+  "schema": "factory.jev-journal-verification.v1",
+  "state": "VERIFIED",
+  "run_id": "20e7a86e-c3ea-4611-8ab7-bee565d69f1b",
+  "journal_sha256": "04329ac8a7fcdfed1515c66c40cac80bca0cf4c8829a9875d8fafb9de9ef2aff",
+  "recorded_results": 3,
+  "expected_results": 3,
+  "externally_anchored": false,
+  "authority": "Integrity only; not judgment correctness or approval. An unanchored local writer can replace the entire chain."
+}
