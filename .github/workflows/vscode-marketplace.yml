@@ -204,7 +204,7 @@ jobs:
           exception_args=()
           if [[ -n "$EXCEPTION_REASON" ]]; then
             test "$PUBLISH" = true
-            test "$RELEASE_REF" = vscode-v1.1.4
+            test "$RELEASE_REF" = vscode-v1.1.4+build.1
             test "$GITHUB_ACTOR" = zrk222
             python - <<'PY'
           import json, os, subprocess
@@ -217,7 +217,8 @@ jobs:
           now = datetime.now(timezone.utc)
           value = {
               "schema": "factory.release-cadence-exception.v1", "channel": "vscode", "version": "1.1.4",
-              "candidate_tag": "vscode-v1.1.4", "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "monthly_cap_exception": True,
+              "candidate_tag": "vscode-v1.1.4+build.1", "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
               "requesting_actor": os.environ["GITHUB_ACTOR"], "environment": "vscode-marketplace", "environment_authorized": True,
               "publish_enabled": True, "workflow_run_id": os.environ["GITHUB_RUN_ID"], "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
               "issued_at": now.isoformat(), "expires_at": (now + timedelta(minutes=30)).isoformat(), "reason": reason

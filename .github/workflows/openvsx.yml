@@ -17,7 +17,7 @@ on:
         required: true
         type: string
       cadence_exception_reason:
-        description: "One-time cadence exception reason; only the explicitly approved vscode-v1.1.4 release may use this"
+        description: "One-time cadence exception reason; only the explicitly approved vscode-v1.1.4+build.1 release may use this"
         required: false
         default: ""
         type: string
@@ -138,7 +138,7 @@ jobs:
           if [[ -n "$EXCEPTION_REASON" ]]; then
             test "$GITHUB_ACTOR" = zrk222
             test "$PUBLISH" = true || { echo "A cadence exception is valid only for an explicitly publishing run." >&2; exit 1; }
-            test "$RELEASE_REF" = vscode-v1.1.4 || { echo "The one-time exception is restricted to vscode-v1.1.4." >&2; exit 1; }
+            test "$RELEASE_REF" = vscode-v1.1.4+build.1 || { echo "The one-time exception is restricted to vscode-v1.1.4+build.1." >&2; exit 1; }
             test "$(node -p "require('./package.json').version")" = 1.1.4 || { echo "The packaged VS Code version must be 1.1.4." >&2; exit 1; }
             test "${#EXCEPTION_REASON}" -ge 12 && test "${#EXCEPTION_REASON}" -le 500 || { echo "The exception reason must contain 12 to 500 characters." >&2; exit 1; }
           fi
@@ -212,16 +212,17 @@ jobs:
             mkdir -p .factory
             python - <<'PY'
           import json
-          import os
+          import os, subprocess
           from datetime import datetime, timedelta, timezone
           from pathlib import Path
           now = datetime.now(timezone.utc)
           payload = {
               "schema": "factory.release-cadence-exception.v1",
+              "monthly_cap_exception": True,
               "channel": "vscode",
               "version": "1.1.4",
               "candidate_tag": os.environ["RELEASE_REF"],
-              "source_commit": os.popen("git rev-parse HEAD").read().strip(),
+              "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
               "requesting_actor": os.environ["GITHUB_ACTOR"],
               "reason": os.environ["EXCEPTION_REASON"],
               "issued_at": now.isoformat().replace("+00:00", "Z"),

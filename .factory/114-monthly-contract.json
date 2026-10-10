@@ -1,0 +1,149 @@
+{
+  "schema": "factory.workflow-audit.contract.v1",
+  "project_id": "cf-editor-114-authorized-monthly-exception",
+  "candidate": [
+    {
+      "path": ".github/workflows/openvsx.yml",
+      "sha256": "1217fe750c521d3afb8f333640b7e6e727365c6b1e17385a5716e620f91c54e1",
+      "kind": "configuration"
+    },
+    {
+      "path": ".github/workflows/vscode-marketplace.yml",
+      "sha256": "ed22b3e34bcac8a3c4bc9170c50f183050a98eeb1c242452a71b94610a400863",
+      "kind": "configuration"
+    },
+    {
+      "path": "factoryline/release_candidate.py",
+      "sha256": "af570fa0db8f74892de6393a245fa26482cb441e12dca4df6a87a2e411d400c6",
+      "kind": "source"
+    },
+    {
+      "path": "factoryline/release_integrity.py",
+      "sha256": "6c04e812b15bd334dd4c9f88bb27e5c4974515e01050e3c841d47c2364c341a8",
+      "kind": "source"
+    },
+    {
+      "path": "tests/test_release_candidate.py",
+      "sha256": "dc52c2d6c73958e708a3b3c1acd0c0502dc059a497d619ec1668bbd452900341",
+      "kind": "test"
+    },
+    {
+      "path": "tests/test_release_integrity.py",
+      "sha256": "88ed90224a1ac68dc68886e7a017cd149b4ee11df0464adbad2a345e02e5eb4b",
+      "kind": "test"
+    }
+  ],
+  "applicability": [
+    {
+      "category": "happy_path",
+      "applicable": true,
+      "reason": "Actual Open VSX and VS workflow receipts for editor1.1.4 build.1 pass source validator and monthly admission; JetBrains receipt does not bypass the cap."
+    },
+    {
+      "category": "validation",
+      "applicable": true,
+      "reason": "Reject wrong actor, tag, environment, source, expiry and protected authorization. Only explicit authorized monthly-cap receipts for vscode-v1.1.4+build.1 may clear a known cap block; other candidates and invalid states remain blocked."
+    },
+    {
+      "category": "failure_recovery",
+      "applicable": true,
+      "reason": "Expired or invalid exception receipts retain release blockers; optional exception input defaults empty."
+    },
+    {
+      "category": "state_consistency",
+      "applicable": true,
+      "reason": "Source and listing manifests consistently identify unpublished0.48.1/1.1.4; normal release policy remains enforced."
+    },
+    {
+      "category": "security_privacy",
+      "applicable": true,
+      "reason": "Exception receipts bind protected environment, actor, run attempt and exact source; no credential values added."
+    },
+    {
+      "category": "performance",
+      "applicable": true,
+      "reason": "Architecture remains HEALTHY under unchanged460 Python file budget; quality remains A98.8."
+    },
+    {
+      "category": "accessibility",
+      "applicable": false,
+      "reason": "No UI control or interaction changes; listing version text only.",
+      "review_evidence": {
+        "path": ".factory/114-monthly-review.md",
+        "sha256": "2a985db2f0b1ba54a5ca24986b1bf0e20971557420b47b76e9fbb946a65cf8e7",
+        "kind": "review"
+      }
+    },
+    {
+      "category": "external_effects",
+      "applicable": true,
+      "reason": "Static workflow tests verify VS web_upload defaults true and CLI publication skipped; no live publication claimed by this receipt."
+    }
+  ],
+  "checks": [
+    {
+      "id": "SCANNER-HAPPY_PATH",
+      "requirement": "Actual Open VSX and VS workflow receipts for editor1.1.4 build.1 pass source validator and monthly admission; JetBrains receipt does not bypass the cap.",
+      "category": "happy_path",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-VALIDATION",
+      "requirement": "Reject wrong actor, tag, environment, source, expiry and protected authorization. Only explicit authorized monthly-cap receipts for vscode-v1.1.4+build.1 may clear a known cap block; other candidates and invalid states remain blocked.",
+      "category": "validation",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-FAILURE_RECOVERY",
+      "requirement": "Expired or invalid exception receipts retain release blockers; optional exception input defaults empty.",
+      "category": "failure_recovery",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-STATE_CONSISTENCY",
+      "requirement": "Source and listing manifests consistently identify unpublished0.48.1/1.1.4; normal release policy remains enforced.",
+      "category": "state_consistency",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-SECURITY_PRIVACY",
+      "requirement": "Exception receipts bind protected environment, actor, run attempt and exact source; no credential values added.",
+      "category": "security_privacy",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-PERFORMANCE",
+      "requirement": "Architecture remains HEALTHY under unchanged460 Python file budget; quality remains A98.8.",
+      "category": "performance",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-ACCESSIBILITY",
+      "requirement": "No UI control or interaction changes; listing version text only.",
+      "category": "accessibility",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-EXTERNAL_EFFECTS",
+      "requirement": "Static workflow tests verify VS web_upload defaults true and CLI publication skipped; no live publication claimed by this receipt.",
+      "category": "external_effects",
+      "profiles": [
+        "windows-python311"
+      ]
+    }
+  ]
+}

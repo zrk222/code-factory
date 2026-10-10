@@ -615,7 +615,7 @@ def test_release_integrity_rejects_late_openvsx_authorization(tmp_path: Path) ->
     ("old", "new"),
     [
         (
-            'test "$RELEASE_REF" = vscode-v1.1.4 || { echo "The one-time exception is restricted to vscode-v1.1.4." >&2; exit 1; }',
+            'test "$RELEASE_REF" = vscode-v1.1.4+build.1 || { echo "The one-time exception is restricted to vscode-v1.1.4+build.1." >&2; exit 1; }',
             "true",
         ),
         (
@@ -1086,7 +1086,8 @@ def test_failed_or_malformed_receipt_is_rejected(tmp_path):
 @pytest.mark.parametrize(
     ("filename", "tag", "environment"),
     [
-        ("vscode-marketplace.yml", "vscode-v1.1.4", "vscode-marketplace"),
+        ("openvsx.yml", "vscode-v1.1.4+build.1", "openvsx"),
+        ("vscode-marketplace.yml", "vscode-v1.1.4+build.1", "vscode-marketplace"),
         ("jetbrains-marketplace.yml", "jetbrains-v1.1.4", "jetbrains-marketplace"),
     ],
 )
@@ -1107,8 +1108,14 @@ def test_editor_exception_receipt_binds_protected_dispatch(
         for s in workflow["jobs"]["validate"]["steps"]
         if s.get("name") == "Require the sealed candidate preflight"
     )
-    assert f'test "$RELEASE_REF" = {tag}' in step["run"]
-    assert 'test "$GITHUB_ACTOR" = zrk222' in step["run"]
+    assert any(
+        f'test "$RELEASE_REF" = {tag}' in s.get("run", "")
+        for s in workflow["jobs"]["validate"]["steps"]
+    )
+    assert any(
+        'test "$GITHUB_ACTOR" = zrk222' in s.get("run", "")
+        for s in workflow["jobs"]["validate"]["steps"]
+    )
     assert '"${exception_args[@]}"' in step["run"]
     code = step["run"].split("<<'PY'\n", 1)[1].split("\nPY", 1)[0]
     prepare_step = next(
@@ -1127,8 +1134,11 @@ def test_editor_exception_receipt_binds_protected_dispatch(
     contract.write_text(json.dumps({"approved_by": approved_by}))
     for key, value in {
         "RELEASE_CONTRACT_PATH": str(contract),
+        "RELEASE_REF": tag,
+        "PUBLISH": "true",
         "EXCEPTION_REASON": "Owner authorized this one release",
         "GITHUB_ACTOR": "zrk222",
+        "GITHUB_ACTIONS": "true",
         "GITHUB_RUN_ID": "123",
         "GITHUB_RUN_ATTEMPT": "1",
     }.items():
@@ -1139,6 +1149,9 @@ def test_editor_exception_receipt_binds_protected_dispatch(
         (tmp_path / ".factory/release-cadence-exception.json").read_text()
     )
     assert receipt["candidate_tag"] == tag
+    assert receipt.get("monthly_cap_exception", False) is (
+        environment != "jetbrains-marketplace"
+    )
     assert receipt["source_commit"] == "a" * 40
     assert receipt["environment"] == environment
     assert receipt["publish_enabled"] and receipt["environment_authorized"]
@@ -1146,6 +1159,47 @@ def test_editor_exception_receipt_binds_protected_dispatch(
         datetime.fromisoformat(receipt["expires_at"])
         - datetime.fromisoformat(receipt["issued_at"])
     ).total_seconds() == 1800
+    from factoryline.release_candidate import (
+        _cadence_admission,
+        _cadence_exception_payload,
+    )
+
+    validated = _cadence_exception_payload(
+        tmp_path,
+        Path(".factory/release-cadence-exception.json"),
+        {
+            "version": "0.48.1",
+            "commit": "a" * 40,
+            "platform_versions": {"vscode": "1.1.4", "intellij": "1.1.4"},
+        },
+        "vscode" if environment != "jetbrains-marketplace" else "jetbrains",
+        tag,
+        {"approved_by": approved_by},
+    )
+    admitted, _, _ = _cadence_admission(
+        {
+            "release_train_status": "valid",
+            "available": True,
+            "admission": False,
+            "state": "rate_limited",
+            "max_releases_30d": 4,
+            "recent_count": 5,
+            "reason": "Five existing tags exceed the four-tag cap.",
+        },
+        validated,
+    )
+    assert admitted is (environment != "jetbrains-marketplace")
+    if environment == "openvsx":
+        with pytest.raises(ValueError, match="candidate identity"):
+            _cadence_exception_payload(
+                tmp_path,
+                Path(".factory/release-cadence-exception.json"),
+                {"commit": "a" * 40, "platform_versions": {"vscode": "1.1.4"}},
+                "vscode",
+                tag,
+                {"approved_by": "other"},
+            )
+        return
     contract.write_text(json.dumps({"approved_by": "other"}))
     with pytest.raises(AssertionError):
         exec(compile(code, filename, "exec"), {})

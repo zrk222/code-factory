@@ -462,6 +462,8 @@ def _cadence_exception_payload(
         ("core", "0.48.1", "v0.48.1", "pypi"),
         ("vscode", "1.1.4", "vscode-v1.1.4", "openvsx"),
         ("vscode", "1.1.4", "vscode-v1.1.4", "vscode-marketplace"),
+        ("vscode", "1.1.4", "vscode-v1.1.4+build.1", "openvsx"),
+        ("vscode", "1.1.4", "vscode-v1.1.4+build.1", "vscode-marketplace"),
         ("jetbrains", "1.1.4", "jetbrains-v1.1.4", "jetbrains-marketplace"),
     }
     approved = next(
@@ -482,6 +484,16 @@ def _cadence_exception_payload(
     )
     if any(value.get(key) != expected for key, expected in identity.items()):
         raise ValueError("cadence exception does not match the candidate identity")
+    monthly_cap_candidate = (
+        channel == "vscode"
+        and identity["version"] == "1.1.4"
+        and candidate_tag == "vscode-v1.1.4+build.1"
+    )
+    monthly_cap_exception = value.get("monthly_cap_exception", False)
+    if not isinstance(monthly_cap_exception, bool) or (
+        monthly_cap_exception and not monthly_cap_candidate
+    ):
+        raise ValueError("monthly cap exception is restricted to vscode-v1.1.4+build.1")
     if (
         value.get("environment") not in expected_environments
         or value.get("environment_authorized") is not True
@@ -515,6 +527,7 @@ def _cadence_exception_payload(
         "issued_at": issued.isoformat().replace("+00:00", "Z"),
         "expires_at": expires.isoformat().replace("+00:00", "Z"),
         "reason": reason.strip(),
+        "monthly_cap_exception": monthly_cap_exception,
     }
 
 
@@ -538,19 +551,41 @@ def _cadence_admission(
         return admitted, check, blocker
     max_releases = cadence.get("max_releases_30d")
     recent_count = cadence.get("recent_count")
-    cooldown_only = (
-        cadence.get("release_train_status") == "valid"
-        and cadence.get("available") is True
-        and cadence.get("admission") is False
-        and cadence.get("state") == "cooldown"
-        and isinstance(max_releases, int)
+    within_monthly_limit = (
+        isinstance(max_releases, int)
         and not isinstance(max_releases, bool)
         and max_releases > 0
         and isinstance(recent_count, int)
         and not isinstance(recent_count, bool)
         and 0 <= recent_count < max_releases
     )
-    if not cooldown_only:
+    cooldown_only = (
+        cadence.get("release_train_status") == "valid"
+        and cadence.get("available") is True
+        and cadence.get("admission") is False
+        and cadence.get("state") == "cooldown"
+        and within_monthly_limit
+    )
+    monthly_cap_reached = (
+        isinstance(max_releases, int)
+        and not isinstance(max_releases, bool)
+        and max_releases > 0
+        and isinstance(recent_count, int)
+        and not isinstance(recent_count, bool)
+        and recent_count >= max_releases
+    )
+    monthly_cap_override = (
+        cadence.get("release_train_status") == "valid"
+        and cadence.get("available") is True
+        and cadence.get("admission") is False
+        and cadence.get("state") == "rate_limited"
+        and monthly_cap_reached
+        and exception.get("monthly_cap_exception") is True
+        and exception.get("channel") == "vscode"
+        and exception.get("version") == "1.1.4"
+        and exception.get("candidate_tag") == "vscode-v1.1.4+build.1"
+    )
+    if not cooldown_only and not monthly_cap_override:
         return admitted, check, blocker
     return (
         True,
