@@ -1359,3 +1359,44 @@ def test_guarded_lane_evaluator_sanitizes_unknown_failure_codes():
     assert result["state"] == "INCOMPLETE"
     assert result["details"]["error_code"] == "E_ARTIFACT_INVALID"
     assert "secret-fixture" not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    "extra, rejected",
+    [
+        ("", False),
+        (".factory/run-quality.json\n", True),
+        (".factory/contract.json\n", True),
+    ],
+)
+def test_generated_output_guard_reads_exact_candidate_objects(
+    monkeypatch, extra, rejected
+):
+    """Force-added receipts cannot bypass .gitignore or the trusted CI guard."""
+    import textwrap
+
+    workflow = (
+        Path(__file__).parents[1] / ".github/workflows/repository-scope-guard.yml"
+    ).read_text(encoding="utf-8")
+    script = textwrap.dedent(
+        workflow.split("python - <<'PY'\n", 1)[1].split("          PY", 1)[0]
+    )
+    monkeypatch.setenv("PR_HEAD_SHA", "a" * 40)
+    commands = []
+
+    def tracked_paths(command, **kwargs):
+        commands.append(command)
+        return (
+            ".factory/repository-scope.json\n.factory/repository-scope-decisions.json\n.factory/tenant-read-contract.json\n"
+            + extra
+        )
+
+    monkeypatch.setattr(subprocess, "check_output", tracked_paths)
+    if rejected:
+        with pytest.raises(SystemExit, match="Generated evidence must be"):
+            exec(compile(script, "generated-output-guard", "exec"), {})
+    else:
+        exec(compile(script, "generated-output-guard", "exec"), {})
+    assert commands == [
+        ["git", "ls-tree", "-r", "--name-only", "a" * 40, "--", ".factory"]
+    ]

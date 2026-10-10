@@ -50,3 +50,17 @@ policy and checker from the base commit, fetches the pull request head as Git
 objects, and never executes candidate files. Require its status check in main
 branch protection. Run the local report with
 `factory change scope-check --root . --base origin/main`.
+
+## Generated audit evidence
+
+Keep run JSON, terminal logs, local evaluation receipts and screenshots out of
+Git source history. `.factory/` is ignored except for the repository scope policy,
+scope decision records and tenant read contract. The trusted repository-scope CI
+guard rejects any other tracked `.factory/` path, including force-added files.
+Publish reproducible run evidence through CI artifact uploads or release assets;
+include the source commit, exact command, environment and SHA-256 in the asset
+manifest. Existing historical receipts remain available in their original Git
+commits; removing them from the current tree does not change their claims.
+Golden regression fixtures belong in `evals/` or `tests/`; they are source inputs,
+not generated run output. Never include credentials or private evaluation cases
+in public assets.

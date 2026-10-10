@@ -98,6 +98,12 @@ release, validates the immutable tag, waits at the protected `pypi` environment,
 and marks the GitHub release public only after the approved PyPI publication
 succeeds.
 
+Cadence exceptions are disabled after the completed publication of the
+previously approved candidates. No automatic or routine exception path is
+available for a later release; the 4-per-30-day cap and 7-day minimum remain in
+force. Historical exception receipts and already published tags/artifacts are
+retained as immutable records; this policy does not change their status.
+
 ### 0.46.0 core agent handoff evidence under Code Factory authority
 
 This release imports explicit agent handoff structure as evidence: typed acyclic

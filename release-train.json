@@ -28,6 +28,7 @@
     "scope": "per_channel",
     "max_releases_30d": 4,
     "minimum_days_between_releases": 7,
+    "exceptions_enabled": false,
     "exception_requires": "human-release-authority",
     "requires_changelog_entry": true,
     "effective_at": "2026-09-21T15:01:54Z"

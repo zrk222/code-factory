@@ -1,2 +1,0 @@
-# Documentation review
-Only published version, command and candidate wording changed. Public API readback records active/latest 0.48.1 and matching PyPI. v0.48.1 source contains project_scope_review. No source, credentials, retention or client-install claims added. No algorithm, executable interface or visual changes; performance and accessibility are not applicable. Existing read-only authority boundaries remain. Primary-agent review, not independent review.

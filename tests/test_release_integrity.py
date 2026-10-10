@@ -1130,6 +1130,10 @@ def test_editor_exception_receipt_binds_protected_dispatch(
     )
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".factory").mkdir()
+    # This fixture validates historical receipt identity, isolated from production policy.
+    release_train = json.loads((ROOT / "release-train.json").read_text())
+    release_train["cadence"]["exceptions_enabled"] = True
+    (tmp_path / "release-train.json").write_text(json.dumps(release_train))
     contract = tmp_path / "contract.json"
     contract.write_text(json.dumps({"approved_by": approved_by}))
     for key, value in {
