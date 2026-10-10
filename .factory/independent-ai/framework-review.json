@@ -1,0 +1,79 @@
+{
+  "schema": "factory.jev-framework-review.v1",
+  "scope": "Criterion-bound source-oracle framework, packet-completeness question and source hash preflight",
+  "profile": "test_oracle",
+  "framework_version": "1.2.0",
+  "tests": {
+    "node": 46,
+    "python_rule_search": 15
+  },
+  "live_trial": {
+    "cases": 31,
+    "thresholds": {
+      "true": 0.9,
+      "false": 0.1
+    },
+    "metrics": {
+      "total": 31,
+      "decided": 0,
+      "abstentions": 31,
+      "errors": 0,
+      "unresolved": 31,
+      "confusion": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 3,
+        "tn": 0
+      },
+      "precision": null,
+      "recall": 0,
+      "accuracy": 0,
+      "coverage": 0,
+      "policy": "Positive abstentions/errors count as FN; unresolved negatives are not TN. Accuracy denominator is every labeled case. Dry-run has no measured confusion."
+    },
+    "reported_cost_usd": 0.001794618,
+    "mean_latency_ms": 516.1871741935486,
+    "tracking": {
+      "schema": "factory.jev-journal.v1",
+      "run_id": "6834ba0a-3fa4-425e-9b41-5b9b562323e4",
+      "journal_filename": "6834ba0a-3fa4-425e-9b41-5b9b562323e4.jsonl",
+      "results_chain_sha256": "b8d18c2b196a9a8fb1af11c06f21443a845824ede5cc1244a2d65d5a027313d7",
+      "raw_state_stored": false,
+      "retention": "local_until_operator_removes"
+    },
+    "corpus": "Selected public Requests/Rich/Click cases; not an independent holdout",
+    "evidence": "Exact excerpts, revision/path/digest, neutral AST facts, three controlled execution observations",
+    "result": "No admitted decisions. Jev stays experimental/advisory; no 99.85% accuracy claim."
+  },
+  "before_after": {
+    "baseline_decided": 0,
+    "upgraded_decided": 0,
+    "baseline_cases": 31,
+    "upgraded_cases": 31,
+    "meaning": "Packet probabilities increased but unchanged decision coverage does not substantiate accuracy improvement."
+  },
+  "prohibited_inferences": [
+    "Source digest verifies excerpt bytes, not upstream authenticity",
+    "AI agreement is not human-heldout accuracy",
+    "Controlled execution is not full repository mutation coverage",
+    "Local journal integrity is not externally anchored approval"
+  ],
+  "source_files": [
+    {
+      "path": ".gitattributes",
+      "sha256": "e3c488835f97cbeb56f4da618cf6a42a4a6930b5bc958544ceaf1fd385b1979e"
+    },
+    {
+      "path": "factoryline/data/judge_framework.json",
+      "sha256": "9e406f42d38c06b068293be65b39a047184476e7e679abbbca475d45fc41b6b2"
+    },
+    {
+      "path": "scripts/evaluate_jev.mjs",
+      "sha256": "57dc3e064abe4366dd8e20b9c98f8d2e7bfba30ed51051c874f4435fe0a63715"
+    },
+    {
+      "path": "scripts/evaluate_jev.test.mjs",
+      "sha256": "272be489ce4294334f980b118dc8c36ec9b2ff6bf64d6577ea2bde6b20316854"
+    }
+  ]
+}

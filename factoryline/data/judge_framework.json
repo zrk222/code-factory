@@ -1,6 +1,6 @@
 {
   "schema": "factory.judge-framework.v1",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "purpose": "Evaluate findings and CF output consistency against observable evidence; experimental judgments cannot approve or override audits.",
   "case_contract": {
     "id": "Unique stable case identifier",
@@ -71,6 +71,27 @@
         "false": "Relevant bound source and execution evidence satisfy the explicit requirement without the alleged mismatch."
       },
       "evidence_instructions": "Does the state supply the changed source or diff, revision/location and the explicit PR review criterion? For source-only criteria, source and relevant caller contracts are sufficient; do not demand runtime traces unless the criterion makes a runtime claim. For runtime behavior or repair outcomes, require actual executed command, observed result and candidate binding. Synthetic claimed observations are not runtime proof. Missing caller or execution context needed for this specific criterion is insufficient."
+    },
+    "test_oracle": {
+      "instructions": "Does the outer body of the test shown in evidence.source have NO effective failure check? Read Python indentation carefully: statements inside a nested function run only if that function is called. An effective check is a meaningful assert, a real mock interaction assertion, an expected-exception context, or explicit failure on a missing exception. A comparison used as an expression without assert is not a check. A nested callback never called is not a check. A check swallowed by an exception handler is not effective. Return true when no effective check executes in the outer test; return false when at least one does. Resolve called helpers from supplied context. This judges source control flow only.",
+      "criteria": {
+        "true": "No effective failure check executes in the outer test body. Example: def test_x():\n    def callback():\n        assert result == 1\nThe callback is not called. Another example: def test_x():\n    result == expected\nThe comparison is discarded.",
+        "false": "At least one meaningful failure check executes and propagates. Example: def test_x():\n    result = system()\n    assert result == expected\nMock assert_called_once_with after a system interaction and pytest.raises are checks too."
+      },
+      "evidence_instructions": "Is the exact test excerpt present in state.evidence.source, with its repository commit, relative path and excerpt SHA-256 in state.candidate? This checks packet completeness only. Do not decide whether the test has a failure check, authenticate the upstream repository, or require runtime execution. The host verifies the excerpt digest. Called-helper behavior, when absent, must remain unresolved in the finding judgment.",
+      "evidence_criteria": {
+        "true": "The state supplies a nonempty exact test source, commit, relative path and excerpt SHA-256.",
+        "false": "The test source or any of its commit, path or excerpt SHA-256 fields is absent."
+      }
     }
+  },
+  "input_preparation": {
+    "criterion": "One explicit observable violation per question. Repeat its exact wording and polarity in the evidence-sufficiency question; neither question may depend on interpreting unnamed questions.",
+    "source": "Supply the exact test/function body with repository revision, relative source location and excerpt SHA-256. The test_oracle profile rejects missing source, invalid revision and digest mismatch before a provider call.",
+    "context": "Resolve only helpers, caller contracts, decorators and exception propagation needed for the criterion. Record unresolved symbols explicitly; do not replace missing context with inferred success.",
+    "facts": "Separate source-derived control-flow facts from model interpretation. Record test collection, calls actually executed, assertion reachability and error propagation without embedding expected labels or the scanner verdict into blind review.",
+    "runtime": "For behavior claims, attach actual command, exit code, candidate/environment identity and paired failing or mutated controls. Source-only packets support source claims only.",
+    "blind_adjudication": "Freeze label and baseline files separately from model inputs; retain disagreements, abstentions, source hashes, model identity, rubric hashes and all reported costs. Independent AI agreement is distinct from human-reviewed detection accuracy.",
+    "evidence_question": "Keep packet completeness separate from semantic finding assessment. Host checks validate source digest and revision shape; model probability does not authenticate a repository. Missing helper context must leave the finding unresolved."
   }
 }
