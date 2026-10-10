@@ -16,7 +16,7 @@ jobs:
       - run: python -m pip install -e . pytest
       - run: python -m pytest tests/test_benchmark_lab.py
       - run: python -m factoryline.benchmark_lab > public-benchmark-receipt.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: public-seeded-benchmark-receipt
           path: public-benchmark-receipt.json

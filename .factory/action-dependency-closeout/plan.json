@@ -1,0 +1,12 @@
+{
+  "requirement": "Integrate PR122/123/124 exact official action commits without changing workflow behavior, credential handling or required gates. Update pin-bound release-integrity validators to the same verified commits.",
+  "checks": [
+    "official tag commit and node24 compatibility",
+    "workflow regression tests",
+    "Ruff",
+    "architecture strict460",
+    "independent review",
+    "hash-bound workflow audit",
+    "required full CI quality A97.9+"
+  ]
+}

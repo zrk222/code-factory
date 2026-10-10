@@ -161,7 +161,7 @@ def _jetbrains_jdk21_check(root: Path) -> dict[str, Any]:
         block
         for workflow in workflows
         for block in _action_blocks(
-            workflow, "actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961"
+            workflow, "actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6"
         )
     ]
     versions = [
