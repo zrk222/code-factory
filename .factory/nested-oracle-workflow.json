@@ -12,9 +12,9 @@
     "repair": false,
     "signing": false
   },
-  "candidate_sha256": "bc406fc5487701e3a7e33d513767f4fe580ad0a8de8144e8075b622c43894714",
+  "candidate_sha256": "f0ae7f124a4a8613a556e95984e6c776105c2b6e4b5b7894f2523271c5325447",
   "checks": 8,
-  "contract_sha256": "48a9a8d2fa86f2d2302437ad1b9875d1d4da8a8451ede9604945059594769ea4",
+  "contract_sha256": "bf29ccef246829cc67d8a7a80fbd2815473708302d380a7b8a66814ab873987c",
   "errors": [],
   "inapplicability_evidence": {
     "accessibility": {
@@ -39,12 +39,12 @@
     "No project command or provider is executed.",
     "No approval, certification or deployment authority."
   ],
-  "observations_sha256": "99428996764913ab7ba3bfa315927e4303af98a9b92263b3e9348be7270f4938",
+  "observations_sha256": "62b30b674c8f5711edce24849379e22b5825c37404fddb1278dea68000c94659",
   "project_id": "cf-0481-nested-oracle",
-  "receipt_sha256": "c392f604a1c1487cfe1cfec4849e79de66f81f80fe4c4174d05d481b6c813638",
+  "receipt_sha256": "16a4d5e80a0a273703c54268390ccb659e2ef740af6dd8d10328e85c20e48c68",
   "resource_usage": {
     "artifact_references": 91,
-    "bytes_hashed": 3088932
+    "bytes_hashed": 3090439
   },
   "schema": "factory.workflow-audit.receipt.v1",
   "state": "PASS"

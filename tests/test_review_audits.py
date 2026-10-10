@@ -67,7 +67,11 @@ from factoryline.cli import main
         ("def bar():\n        x = 5\n        assert x == 5", "bar()", True),
         ("def bar():\n        assert compute() == 4", "True or bar()", True),
         ("def bar():\n        assert compute() == 4", "value or True or bar()", True),
-        ("def bar():\n        assert compute() == 4", "value and False and bar()", True),
+        (
+            "def bar():\n        assert compute() == 4",
+            "value and False and bar()",
+            True,
+        ),
         ("def bar():\n        assert compute() == 4", "False and bar()", True),
         ("def bar():\n        assert compute() == 4", "bar() if False else None", True),
         ("def bar():\n        assert compute() == 4", "None if True else bar()", True),

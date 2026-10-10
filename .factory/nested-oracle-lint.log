@@ -1,2 +1,6 @@
 All checks passed!
+Would reformat: factoryline\cli.py
+Would reformat: factoryline\ide_playbook.py
+Would reformat: tests\test_adoption_guide.py
+3 files would be reformatted, 439 files already formatted
 All checks passed!
