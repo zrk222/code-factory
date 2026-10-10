@@ -1,0 +1,3 @@
+requests-test_read_timeout test_read_timeout [{'controlled_get_behavior': 'return_normally', 'escaped_exception_type': 'builtins.Failed'}, {'controlled_get_behavior': 'raise_declared_timeout', 'escaped_exception_type': None}]
+requests-test_total_timeout_connect test_total_timeout_connect [{'controlled_get_behavior': 'return_normally', 'escaped_exception_type': 'builtins.Failed'}, {'controlled_get_behavior': 'raise_declared_timeout', 'escaped_exception_type': None}]
+Four context packets generated; two exact-function timeout controls fail when timeout is absent and return normally when declared timeout is raised. No network used.
