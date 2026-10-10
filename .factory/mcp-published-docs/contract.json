@@ -1,0 +1,118 @@
+{
+  "schema": "factory.workflow-audit.contract.v1",
+  "project_id": "mcp-published-docs",
+  "candidate": [
+    {
+      "path": "docs/MCP_REGISTRY.md",
+      "sha256": "c9ed58345481575be62fcd136a23fa0c8bff0c965b38790ba752d6ae3b6dc3f5",
+      "kind": "source"
+    },
+    {
+      "path": ".factory/mcp-published-docs/plan.json",
+      "sha256": "bc36ff7ae109ec78afb08bb037d61323705018344eed0643b8a3a1f53147c9e8",
+      "kind": "source"
+    }
+  ],
+  "applicability": [
+    {
+      "category": "happy_path",
+      "applicable": true,
+      "reason": "Documentation publication contract"
+    },
+    {
+      "category": "validation",
+      "applicable": true,
+      "reason": "Documentation publication contract"
+    },
+    {
+      "category": "failure_recovery",
+      "applicable": true,
+      "reason": "Documentation publication contract"
+    },
+    {
+      "category": "state_consistency",
+      "applicable": true,
+      "reason": "Documentation publication contract"
+    },
+    {
+      "category": "security_privacy",
+      "applicable": true,
+      "reason": "Documentation publication contract"
+    },
+    {
+      "category": "performance",
+      "applicable": false,
+      "reason": "No algorithm or visual interface changes",
+      "review_evidence": {
+        "path": ".factory/mcp-published-docs/review.md",
+        "sha256": "8acdb2235b017ab39697135918a9dffb1f3d26729d1c034084fdef56d6c089c2",
+        "kind": "review"
+      }
+    },
+    {
+      "category": "accessibility",
+      "applicable": false,
+      "reason": "No algorithm or visual interface changes",
+      "review_evidence": {
+        "path": ".factory/mcp-published-docs/review.md",
+        "sha256": "8acdb2235b017ab39697135918a9dffb1f3d26729d1c034084fdef56d6c089c2",
+        "kind": "review"
+      }
+    },
+    {
+      "category": "external_effects",
+      "applicable": true,
+      "reason": "Documentation publication contract"
+    }
+  ],
+  "checks": [
+    {
+      "id": "DOCS",
+      "category": "happy_path",
+      "requirement": "Published install command matches live registry",
+      "profiles": [
+        "windows-py311-public-readback"
+      ]
+    },
+    {
+      "id": "VALIDATE",
+      "category": "validation",
+      "requirement": "MCP descriptor and documentation regression tests pass",
+      "profiles": [
+        "windows-py311-public-readback"
+      ]
+    },
+    {
+      "id": "BOUNDARY",
+      "category": "failure_recovery",
+      "requirement": "Missing publication or client approval must not be promoted to installation success",
+      "profiles": [
+        "windows-py311-public-readback"
+      ]
+    },
+    {
+      "id": "ARCH",
+      "category": "state_consistency",
+      "requirement": "Strict architecture HEALTHY and 460 Python files retained",
+      "profiles": [
+        "windows-py311-public-readback"
+      ]
+    },
+    {
+      "id": "SECURITY",
+      "category": "security_privacy",
+      "requirement": "Read-only and no-credential boundaries unchanged",
+      "profiles": [
+        "windows-py311-public-readback"
+      ]
+    },
+    {
+      "id": "READBACK",
+      "category": "external_effects",
+      "requirement": "Publication claim supported by actual public provider readback",
+      "profiles": [
+        "windows-py311-public-readback"
+      ]
+    }
+  ]
+}

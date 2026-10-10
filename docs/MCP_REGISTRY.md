@@ -2,7 +2,7 @@
 
 Code Factory is published to the Official MCP Registry as
 `io.github.zrk222/code-factory`. The registry package entry uses the public
-PyPI distribution `factoryline-code-factory==0.46.8` and starts the existing
+PyPI distribution `factoryline-code-factory==0.48.1` and starts the existing
 local stdio adapter through `uvx`:
 
 **Use it to give an AI coding client read-only facts about declared intent,
@@ -10,14 +10,14 @@ test challenges, Graph Ops, and review evidence—without handing that client
 write or release authority.**
 
 ```text
-uvx --from factoryline-code-factory==0.46.8 factory mcp serve
+uvx --from factoryline-code-factory==0.48.1 factory mcp serve
 ```
 
-PyPI 0.46.9 is public and can be run directly with
-`uvx --from factoryline-code-factory==0.46.9 factory mcp serve`.
-The 0.48.1 source candidate descriptor uses
-`uvx --from factoryline-code-factory==0.48.1 factory mcp serve`; use it only
-after the protected PyPI publication and registry read-back succeed.
+The active registry entry and PyPI package were verified as `0.48.1` on
+October 10, 2026. The registry reports this version as its latest active entry.
+[Inspect the public registry metadata](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.zrk222%2Fcode-factory/versions/latest)
+and [the published PyPI package](https://pypi.org/project/factoryline-code-factory/0.48.1/).
+Later source commits are separate from these immutable published artifacts.
 
 The server needs a workspace root. Configure that explicit path in a client
 that supports local stdio MCP, or use the existing configuration renderer:
@@ -37,12 +37,11 @@ Proof-gated Repair Loop). It never uploads source,
 starts a worker, runs a graph, writes files, executes a repair, approves work,
 publishes, deploys, signs, sends a message, or accesses credentials.
 
-The source inventory also includes `factory.project_scope_review`, which reads
+The published 0.48.1 source includes `factory.project_scope_review`, which reads
 bounded, workspace-relative PRD/spec Markdown and routes matching scope to the
 existing AppForge and provider-neutral SaaS proof status projections. The
-0.48.1 descriptor remains a candidate until a protected release publishes it
-and the public registry entry is read back. Inspect the live registry version
-before claiming that this branch's tools are available there.
+registry publishes installation metadata; a client must still install and
+approve its configured server before using these tools.
 
 The registry descriptor has `stdio` transport only and contains no environment
 variables or remote endpoint. Your MCP client remains responsible for its own
