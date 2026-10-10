@@ -295,6 +295,70 @@ def test_cadence_exception_does_not_override_other_blocks(cadence) -> None:
     assert blocker["code"] == "E_RELEASE_CADENCE_BLOCKED"
 
 
+def test_monthly_cap_exception_overrides_only_exact_vscode_candidate() -> None:
+    cadence = {
+        "release_train_status": "valid",
+        "available": True,
+        "admission": False,
+        "state": "rate_limited",
+        "recent_count": 4,
+        "max_releases_30d": 4,
+        "reason": "4 version tags are inside the rolling 30-day budget of 4.",
+    }
+    exception = {
+        "channel": "vscode",
+        "version": "1.1.4",
+        "candidate_tag": "vscode-v1.1.4+build.1",
+        "monthly_cap_exception": True,
+    }
+
+    admitted, check, blocker = candidate._cadence_admission(cadence, exception)
+
+    assert admitted is True
+    assert check["passed"] is True
+    assert blocker is None
+
+
+@pytest.mark.parametrize(
+    "exception",
+    [
+        {
+            "channel": "core",
+            "version": "0.48.1",
+            "candidate_tag": "v0.48.1",
+            "monthly_cap_exception": True,
+        },
+        {
+            "channel": "vscode",
+            "version": "1.1.4",
+            "candidate_tag": "vscode-v1.1.4",
+            "monthly_cap_exception": True,
+        },
+        {
+            "channel": "jetbrains",
+            "version": "1.1.4",
+            "candidate_tag": "jetbrains-v1.1.4",
+            "monthly_cap_exception": True,
+        },
+    ],
+)
+def test_monthly_cap_exception_does_not_apply_to_other_candidates(exception) -> None:
+    cadence = {
+        "release_train_status": "valid",
+        "available": True,
+        "admission": False,
+        "state": "rate_limited",
+        "recent_count": 4,
+        "max_releases_30d": 4,
+    }
+
+    admitted, check, blocker = candidate._cadence_admission(cadence, exception)
+
+    assert admitted is False
+    assert check["passed"] is False
+    assert blocker["code"] == "E_RELEASE_CADENCE_BLOCKED"
+
+
 def test_vscode_cadence_exception_is_bound_to_v114_run_attempt(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -528,6 +592,93 @@ def test_editor_cadence_exception_accepts_exact_candidates(
         tmp_path, path, source, channel, tag, {"approved_by": "zrk222"}
     )
     assert result["candidate_tag"] == tag
+
+
+@pytest.mark.parametrize("environment", ["openvsx", "vscode-marketplace"])
+def test_monthly_cap_exception_payload_is_bound_to_vscode_build_one(
+    tmp_path: Path, monkeypatch, environment
+) -> None:
+    issued = datetime.now(timezone.utc)
+    path = tmp_path / "exception.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "factory.release-cadence-exception.v1",
+                "channel": "vscode",
+                "version": "1.1.4",
+                "candidate_tag": "vscode-v1.1.4+build.1",
+                "source_commit": "e" * 40,
+                "requesting_actor": "zrk222",
+                "reason": "Owner approved the monthly cap exception.",
+                "issued_at": issued.isoformat(),
+                "expires_at": (issued + timedelta(minutes=30)).isoformat(),
+                "workflow_run_id": "12345",
+                "workflow_run_attempt": "2",
+                "environment": environment,
+                "environment_authorized": True,
+                "publish_enabled": True,
+                "monthly_cap_exception": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_RUN_ID", "12345")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+
+    result = candidate._cadence_exception_payload(
+        tmp_path,
+        path,
+        {"commit": "e" * 40, "platform_versions": {"vscode": "1.1.4"}},
+        "vscode",
+        "vscode-v1.1.4+build.1",
+        {"approved_by": "zrk222"},
+    )
+
+    assert result["candidate_tag"] == "vscode-v1.1.4+build.1"
+    assert result["monthly_cap_exception"] is True
+
+
+def test_monthly_cap_receipt_flag_rejects_wrong_tag(
+    tmp_path: Path, monkeypatch
+) -> None:
+    issued = datetime.now(timezone.utc)
+    path = tmp_path / "exception.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "factory.release-cadence-exception.v1",
+                "channel": "vscode",
+                "version": "1.1.4",
+                "candidate_tag": "vscode-v1.1.4",
+                "source_commit": "f" * 40,
+                "requesting_actor": "zrk222",
+                "reason": "Owner approved the monthly cap exception.",
+                "issued_at": issued.isoformat(),
+                "expires_at": (issued + timedelta(minutes=30)).isoformat(),
+                "workflow_run_id": "12345",
+                "workflow_run_attempt": "2",
+                "environment": "openvsx",
+                "environment_authorized": True,
+                "publish_enabled": True,
+                "monthly_cap_exception": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_RUN_ID", "12345")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+
+    with pytest.raises(ValueError, match="monthly cap exception is restricted"):
+        candidate._cadence_exception_payload(
+            tmp_path,
+            path,
+            {"commit": "f" * 40, "platform_versions": {"vscode": "1.1.4"}},
+            "vscode",
+            "vscode-v1.1.4",
+            {"approved_by": "zrk222"},
+        )
 
 
 def test_cadence_exception_rejects_expired_candidate(

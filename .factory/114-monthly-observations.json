@@ -1,0 +1,287 @@
+{
+  "schema": "factory.workflow-audit.observations.v1",
+  "contract_sha256": "e8546cd24e7ea0059aacc2fe0a995a1c6101384d4ad1d90ada5e19052ce36f03",
+  "candidate_sha256": "ee6ad257f98bab6c7a13b94bf5f17eb3f00b861c9f41cc8d5fe5489062aefa63",
+  "observations": [
+    {
+      "id": "SCANNER-HAPPY_PATH",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Actual Open VSX and VS workflow receipts for editor1.1.4 build.1 pass source validator and monthly admission; JetBrains receipt does not bypass the cap.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:04:12.461592+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-monthly-tests.log",
+          "sha256": "242b92ed470bffc1e90b60affddb5cb360356f62d9d13037915dd6812c3b1443",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-monthly-lint.log",
+          "sha256": "dfbfc041bdd19189be8d014bfce5b84ea7103eedf88638a48c81d7f7879a5372",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-monthly-review.md",
+          "sha256": "225078202af6cc7af4f886305c36c4dc9dfacd97be5a72d487abf164ab781f62",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/114-monthly-architecture.json",
+          "sha256": "108bec22e080a0e7cb253b80a4ed34153090632430ddeb472e08bf2188eb2ba9",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/114-monthly-quality.json",
+          "sha256": "e25dd51bff9c1d114a3e4ae702ac4ba53b28c901c73270eaf134bb25de915b2f",
+          "kind": "receipt"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-VALIDATION",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Reject wrong actor, tag, environment, source, expiry and protected authorization. Only explicit authorized monthly-cap receipts for vscode-v1.1.4+build.1 may clear a known cap block; other candidates and invalid states remain blocked.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:04:12.467594+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-monthly-tests.log",
+          "sha256": "242b92ed470bffc1e90b60affddb5cb360356f62d9d13037915dd6812c3b1443",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-monthly-lint.log",
+          "sha256": "dfbfc041bdd19189be8d014bfce5b84ea7103eedf88638a48c81d7f7879a5372",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-monthly-review.md",
+          "sha256": "225078202af6cc7af4f886305c36c4dc9dfacd97be5a72d487abf164ab781f62",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/114-monthly-architecture.json",
+          "sha256": "108bec22e080a0e7cb253b80a4ed34153090632430ddeb472e08bf2188eb2ba9",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/114-monthly-quality.json",
+          "sha256": "e25dd51bff9c1d114a3e4ae702ac4ba53b28c901c73270eaf134bb25de915b2f",
+          "kind": "receipt"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-FAILURE_RECOVERY",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Expired or invalid exception receipts retain release blockers; optional exception input defaults empty.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:04:12.467594+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-monthly-tests.log",
+          "sha256": "242b92ed470bffc1e90b60affddb5cb360356f62d9d13037915dd6812c3b1443",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-monthly-lint.log",
+          "sha256": "dfbfc041bdd19189be8d014bfce5b84ea7103eedf88638a48c81d7f7879a5372",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-monthly-review.md",
+          "sha256": "225078202af6cc7af4f886305c36c4dc9dfacd97be5a72d487abf164ab781f62",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/114-monthly-architecture.json",
+          "sha256": "108bec22e080a0e7cb253b80a4ed34153090632430ddeb472e08bf2188eb2ba9",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/114-monthly-quality.json",
+          "sha256": "e25dd51bff9c1d114a3e4ae702ac4ba53b28c901c73270eaf134bb25de915b2f",
+          "kind": "receipt"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-STATE_CONSISTENCY",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Source and listing manifests consistently identify unpublished0.48.1/1.1.4; normal release policy remains enforced.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:04:12.469023+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-monthly-tests.log",
+          "sha256": "242b92ed470bffc1e90b60affddb5cb360356f62d9d13037915dd6812c3b1443",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-monthly-lint.log",
+          "sha256": "dfbfc041bdd19189be8d014bfce5b84ea7103eedf88638a48c81d7f7879a5372",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-monthly-review.md",
+          "sha256": "225078202af6cc7af4f886305c36c4dc9dfacd97be5a72d487abf164ab781f62",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/114-monthly-architecture.json",
+          "sha256": "108bec22e080a0e7cb253b80a4ed34153090632430ddeb472e08bf2188eb2ba9",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/114-monthly-quality.json",
+          "sha256": "e25dd51bff9c1d114a3e4ae702ac4ba53b28c901c73270eaf134bb25de915b2f",
+          "kind": "receipt"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-SECURITY_PRIVACY",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Exception receipts bind protected environment, actor, run attempt and exact source; no credential values added.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:04:12.470535+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-monthly-tests.log",
+          "sha256": "242b92ed470bffc1e90b60affddb5cb360356f62d9d13037915dd6812c3b1443",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-monthly-lint.log",
+          "sha256": "dfbfc041bdd19189be8d014bfce5b84ea7103eedf88638a48c81d7f7879a5372",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-monthly-review.md",
+          "sha256": "225078202af6cc7af4f886305c36c4dc9dfacd97be5a72d487abf164ab781f62",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/114-monthly-architecture.json",
+          "sha256": "108bec22e080a0e7cb253b80a4ed34153090632430ddeb472e08bf2188eb2ba9",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/114-monthly-quality.json",
+          "sha256": "e25dd51bff9c1d114a3e4ae702ac4ba53b28c901c73270eaf134bb25de915b2f",
+          "kind": "receipt"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-PERFORMANCE",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Architecture remains HEALTHY under unchanged460 Python file budget; quality remains A98.8.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:04:12.470535+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-monthly-tests.log",
+          "sha256": "242b92ed470bffc1e90b60affddb5cb360356f62d9d13037915dd6812c3b1443",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-monthly-lint.log",
+          "sha256": "dfbfc041bdd19189be8d014bfce5b84ea7103eedf88638a48c81d7f7879a5372",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-monthly-review.md",
+          "sha256": "225078202af6cc7af4f886305c36c4dc9dfacd97be5a72d487abf164ab781f62",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/114-monthly-architecture.json",
+          "sha256": "108bec22e080a0e7cb253b80a4ed34153090632430ddeb472e08bf2188eb2ba9",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/114-monthly-quality.json",
+          "sha256": "e25dd51bff9c1d114a3e4ae702ac4ba53b28c901c73270eaf134bb25de915b2f",
+          "kind": "receipt"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-ACCESSIBILITY",
+      "profile": "windows-python311",
+      "status": "N/A",
+      "reason": "No UI control or interaction changes; listing version text only.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:04:12.472055+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-monthly-tests.log",
+          "sha256": "242b92ed470bffc1e90b60affddb5cb360356f62d9d13037915dd6812c3b1443",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-monthly-lint.log",
+          "sha256": "dfbfc041bdd19189be8d014bfce5b84ea7103eedf88638a48c81d7f7879a5372",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-monthly-review.md",
+          "sha256": "225078202af6cc7af4f886305c36c4dc9dfacd97be5a72d487abf164ab781f62",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/114-monthly-architecture.json",
+          "sha256": "108bec22e080a0e7cb253b80a4ed34153090632430ddeb472e08bf2188eb2ba9",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/114-monthly-quality.json",
+          "sha256": "e25dd51bff9c1d114a3e4ae702ac4ba53b28c901c73270eaf134bb25de915b2f",
+          "kind": "receipt"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-EXTERNAL_EFFECTS",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Static workflow tests verify VS web_upload defaults true and CLI publication skipped; no live publication claimed by this receipt.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:04:12.472055+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-monthly-tests.log",
+          "sha256": "242b92ed470bffc1e90b60affddb5cb360356f62d9d13037915dd6812c3b1443",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-monthly-lint.log",
+          "sha256": "dfbfc041bdd19189be8d014bfce5b84ea7103eedf88638a48c81d7f7879a5372",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-monthly-review.md",
+          "sha256": "225078202af6cc7af4f886305c36c4dc9dfacd97be5a72d487abf164ab781f62",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/114-monthly-architecture.json",
+          "sha256": "108bec22e080a0e7cb253b80a4ed34153090632430ddeb472e08bf2188eb2ba9",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/114-monthly-quality.json",
+          "sha256": "e25dd51bff9c1d114a3e4ae702ac4ba53b28c901c73270eaf134bb25de915b2f",
+          "kind": "receipt"
+        }
+      ]
+    }
+  ]
+}
