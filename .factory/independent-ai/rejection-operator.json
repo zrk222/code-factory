@@ -1,0 +1,26 @@
+{
+  "command": "node scripts/evaluate_jev.mjs --live",
+  "exit_code": 2,
+  "error": {
+    "schema": "factory.jev-experimental-trial.error.v1",
+    "state": "BLOCKED",
+    "error": "invalid_arguments",
+    "rejection": {
+      "state": "RECORDED",
+      "run_id": "c47c877a-b049-4f31-905b-d9c9ffe007e2",
+      "journal_filename": "c47c877a-b049-4f31-905b-d9c9ffe007e2.jsonl"
+    }
+  },
+  "verification": {
+    "schema": "factory.jev-journal-verification.v1",
+    "state": "VERIFIED_REJECTION",
+    "run_id": "c47c877a-b049-4f31-905b-d9c9ffe007e2",
+    "journal_sha256": "c061b240179c010d091abf4461471ad88fb122027c2e2d4ad46e52a07f4a6b78",
+    "recorded_results": 0,
+    "expected_results": 0,
+    "externally_anchored": false,
+    "authority": "Integrity of a rejected preflight only; no evaluation, judgment correctness or approval."
+  },
+  "no_absolute_path_in_error": true,
+  "provider_key_supplied": false
+}

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, rm, symlink, mkdir, chmod, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, symlink, mkdir, chmod, stat, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -25,6 +25,73 @@ function answer(probability, extra = {}, evidenceProbability = 0.99) {
   }), { status: 200 });
 }
 const mock = (responses) => async () => responses.shift();
+
+test('preflight rejection is durable, sanitized and verified without a provider call', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cf-jev-rejected-'));
+  try {
+    const root = join(dir, 'archive');
+    const secret = 'private-input-and-credential';
+    let calls = 0, failure;
+    await assert.rejects(runCli(['--endpoint', secret], { archiveRoot: root, archiveBoundary: dir,
+      env: { AI_GATEWAY_API_KEY: secret }, fetchImpl: async () => { calls++; return answer(0.99); } }),
+    (error) => { failure = error; return error.message === 'invalid_arguments'; });
+    assert.equal(calls, 0);
+    assert.equal(failure.rejection.state, 'RECORDED');
+    const path = join(root, failure.rejection.journal_filename);
+    const text = await readFile(path, 'utf8');
+    assert.equal(text.includes(secret), false);
+    assert.equal(text.includes(dir), false);
+    assert.equal(text.includes(JSON.stringify(dir).slice(1, -1)), false);
+    const record = JSON.parse(text);
+    assert.equal(record.error, 'invalid_arguments');
+    assert.equal(record.provider_requests, 0);
+    const verified = await verifyJournal(path);
+    assert.equal(verified.state, 'VERIFIED_REJECTION');
+    assert.equal(verified.recorded_results, 0);
+    assert.equal((await verifyJournal(path, { expectedJournalSha256: verified.journal_sha256 })).externally_anchored, true);
+    await assert.rejects(recordOperatorFeedback(path, { case_id: 'positive', operator_sha256: 'a'.repeat(64),
+      disposition: 'unresolved', corrected_finding: null, reason: 'missing_evidence', evidence_sha256: 'b'.repeat(64) },
+    { archiveRoot: join(dir, 'feedback'), archiveBoundary: dir }), /feedback_requires_complete_journal/);
+    const { event_sha256, ...tampered } = record;
+    tampered.provider_requests = 1;
+    await writeFile(path, JSON.stringify({ ...tampered,
+      event_sha256: createHash('sha256').update(JSON.stringify(tampered)).digest('hex') }) + '\n');
+    await assert.rejects(verifyJournal(path), /invalid_rejection_record/);
+    assert.equal((await readdir(root)).length, 1);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('invalid input JSON and missing live key produce separate rejection records', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cf-jev-reject-input-'));
+  try {
+    const root = join(dir, 'archive'), input = join(dir, 'cases.json'), questions = join(dir, 'rubric.json');
+    await writeFile(input, '{private-broken-input'); await writeFile(questions, JSON.stringify(rubric));
+    const context = { env: {}, archiveRoot: root, archiveBoundary: dir, fetchImpl: () => assert.fail('no provider call') };
+    await assert.rejects(runCli(['--cases', input, '--rubric', questions], context), /invalid_input_json/);
+    await writeFile(input, JSON.stringify(cases));
+    await assert.rejects(runCli(['--cases', input, '--rubric', questions, '--live'], context), /missing_api_key/);
+    const files = await readdir(root);
+    assert.equal(files.length, 2);
+    for (const file of files) assert.equal((await verifyJournal(join(root, file))).state, 'VERIFIED_REJECTION');
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('rejection recording fails closed for linked or escaping archives', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cf-jev-reject-boundary-'));
+  try {
+    const target = join(dir, 'target'), linked = join(dir, 'linked');
+    await mkdir(target); await symlink(target, linked, process.platform === 'win32' ? 'junction' : 'dir');
+    for (const root of [linked, join(dir, '..', 'escaping-rejection-root')]) {
+      await assert.rejects(runCli(['--live'], { archiveRoot: root, archiveBoundary: dir,
+        fetchImpl: () => assert.fail('no provider call') }), (error) => {
+        assert.equal(error.message, 'invalid_arguments');
+        assert.deepEqual(error.rejection, { state: 'UNRECORDED', error: 'rejection_write_error' });
+        return true;
+      });
+    }
+    assert.deepEqual(await readdir(target), []);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
 
 test('operator feedback binds immutable annotations to a verified case without changing judgments', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cf-jev-feedback-'));
