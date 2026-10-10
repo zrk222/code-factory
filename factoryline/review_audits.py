@@ -3039,6 +3039,27 @@ def _hollow_test_finding(
         "Test has no local non-vacuous assertion. Add an independent expected outcome and a negative control; delegated helper checks need separate evidence.",
         "MEDIUM",
         symbol=node.name,
+        runtime_oracle_eligible=_completion_only_oracle(node),
+    )
+
+
+def _completion_only_oracle(node: ast.AST) -> bool:
+    """Runtime mutation evidence may credit calls, never ineffective assertions."""
+    children = list(ast.walk(node))[1:]
+    disallowed = (
+        ast.Assert,
+        ast.Raise,
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+        ast.Lambda,
+    )
+    if any(isinstance(child, disallowed) for child in children):
+        return False
+    calls = [child for child in children if isinstance(child, ast.Call)]
+    return bool(calls) and not any(
+        "assert" in ast.unparse(call.func).lower()
+        or "fail" in ast.unparse(call.func).lower()
+        for call in calls
     )
 
 
@@ -4039,6 +4060,7 @@ def _scan_security_sources(
     dict[str, int],
     dict[str, int],
     list[dict[str, Any]],
+    list[dict[str, Any]],
 ]:
     findings: list[dict[str, Any]] = []
     bindings: list[dict[str, Any]] = []
@@ -4069,7 +4091,9 @@ def _scan_security_sources(
     counts: dict[str, int] = {}
     for finding in findings:
         counts[finding["code"]] = counts.get(finding["code"], 0) + 1
-    return bindings, findings, counts, outcomes, oracle_edges
+    scanned = {item["path"] for item in bindings}
+    extra_bindings = [item for item in context_bindings if item["path"] not in scanned]
+    return bindings, findings, counts, outcomes, oracle_edges, extra_bindings
 
 
 def _security_scan_state(files: list[Path], findings: list[dict[str, Any]]) -> str:
@@ -4122,6 +4146,7 @@ def _seal_security_scan(core: dict[str, Any]) -> dict[str, Any]:
     core["agent_actions"] = [
         audit_remediation_packet(candidate, item) for item in core["findings"]
     ]
+    core.pop("audit_sha256", None)
     core["audit_sha256"] = sha256(
         json.dumps(
             core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -4149,6 +4174,7 @@ def _security_scan_report(
     tenant_read_calls: tuple[str, ...],
     tenant_read_bindings: dict[str, tuple[str, ...]],
     oracle_edges: list[dict[str, Any]],
+    oracle_configuration: list[dict[str, Any]],
 ) -> dict[str, Any]:
     state = _security_scan_state(files, findings)
     core: dict[str, Any] = {
@@ -4167,6 +4193,7 @@ def _security_scan_report(
             "mode": "one_local_import_hop_ast_only",
             "resolved_edges": oracle_edges,
             "edge_count": len(oracle_edges),
+            "configuration_sources": oracle_configuration,
         },
         "sources": bindings,
         "findings": findings,
@@ -4180,7 +4207,122 @@ def _security_scan_report(
         },
         "claim_boundary": "Bounded Python AST pattern scan only. Declared tenant argument bindings verify syntactic pass-through, not tenant identity, authorization, or access isolation; this is not a penetration test, runtime exploit proof, dependency advisory, or release approval.",
     }
+    core["source_manifest_sha256"] = sha256(
+        json.dumps(
+            {"sources": bindings, "oracle_context": core["oracle_context"]},
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
     core["action_summary"] = _security_scan_action_summary(state)
+    return _seal_security_scan(core)
+
+
+def _oracle_bound_row(workspace: Path, row: dict, sources: dict) -> None:
+    """Require both original test and mutated production source in this scan."""
+    for path, digest in (
+        (row["path"], row["test_sha256"]),
+        (row["mutation"]["source_path"], row["mutation"]["source_sha256"]),
+    ):
+        if sources.get(path) != digest:
+            raise ReviewAuditError(
+                "Runtime oracle source binding does not match this scan."
+            )
+    raw = _security_source_bytes(workspace, row["path"])
+    if len(raw) > MAX_BYTES or sha256(raw).hexdigest() != row["test_sha256"]:
+        raise ReviewAuditError(
+            "Runtime oracle test source changed during reconciliation."
+        )
+    tree = ast.parse(raw, filename=row["path"])
+    matches = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == row["symbol"]
+        and node.lineno == row["line"]
+    ]
+    if len(matches) != 1:
+        raise ReviewAuditError("Runtime oracle test identity does not match this scan.")
+    parents = _oracle_ancestor_map(tree.body).get(id(matches[0]), ())
+    classes = [
+        parent.name for parent, _child in parents if isinstance(parent, ast.ClassDef)
+    ]
+    if any(
+        isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef))
+        for parent, _child in parents
+    ):
+        raise ReviewAuditError(
+            "Runtime oracle cannot credit a nested helper as a collected test."
+        )
+    prefix = "::".join([row["path"], *classes, row["symbol"]])
+    if any(
+        case != prefix and not case.startswith(prefix + "[")
+        for case in row["baseline"]["case_ids"]
+    ):
+        raise ReviewAuditError(
+            "Runtime oracle collected node does not match the qualified test."
+        )
+
+
+def _reconcile_runtime_oracles(workspace: Path, core: dict, evidence: tuple) -> dict:
+    """Credit only signed same-test mutation observations, keeping static history."""
+    from .runtime_attestation import RuntimeAttestationError, verify_signed_test_oracles
+
+    receipt, trust_root, trust_sha256, environment_sha256 = evidence
+    if not all(value is not None for value in evidence):
+        raise ReviewAuditError(
+            "Runtime oracle evidence requires receipt, trust root and both pins."
+        )
+    if not core["audit_coverage"]["complete"]:
+        raise ReviewAuditError(
+            "Runtime oracle reconciliation requires a complete source scan."
+        )
+    try:
+        verified = verify_signed_test_oracles(
+            local_file(workspace, receipt),
+            local_file(workspace, trust_root),
+            trust_root_sha256=trust_sha256,
+            source_manifest_sha256=core["source_manifest_sha256"],
+            environment_sha256=environment_sha256,
+        )
+        sources = {item["path"]: item["sha256"] for item in core["sources"]}
+        for row in verified["tests"]:
+            _oracle_bound_row(workspace, row, sources)
+        _verify_security_bindings(
+            workspace, core["sources"] + core["oracle_context"]["configuration_sources"]
+        )
+    except (RuntimeAttestationError, RuntimeAuditError, OSError, ValueError) as error:
+        raise ReviewAuditError(
+            "Runtime oracle evidence rejected: " + type(error).__name__
+        ) from error
+    rows = {(row["path"], row["line"], row["symbol"]): row for row in verified["tests"]}
+    retained, reconciled = [], []
+    for finding in core["findings"]:
+        key = (finding["path"], finding["line"], finding["facts"].get("symbol"))
+        row = rows.get(key)
+        if (
+            finding["code"] == "QUALITY_HOLLOW_TEST"
+            and finding["facts"].get("runtime_oracle_eligible")
+            and row
+        ):
+            reconciled.append({"static_finding": finding, "runtime_evidence": row})
+        else:
+            retained.append(finding)
+    core["findings"] = retained
+    core["finding_counts"] = {
+        code: sum(item["code"] == code for item in retained)
+        for code in sorted({item["code"] for item in retained})
+    }
+    core["runtime_oracles"] = {
+        **{key: value for key, value in verified.items() if key != "tests"},
+        "reconciled": reconciled,
+        "reconciled_count": len(reconciled),
+        "unmatched_evidence_count": len(rows) - len(reconciled),
+        "environment_sha256": environment_sha256,
+    }
+    core["state"] = _security_scan_state(core["sources"], retained)
+    core["action_summary"] = _security_scan_action_summary(core["state"])
     return _seal_security_scan(core)
 
 
@@ -4225,6 +4367,10 @@ def security_scan(
     tenant_read_bindings: tuple[str, ...] = (),
     tenant_read_scopes: dict | None = None,
     cache_enabled: bool = True,
+    oracle_evidence: str | None = None,
+    oracle_trust_root: str | None = None,
+    oracle_trust_sha256: str | None = None,
+    oracle_environment_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Run a bounded AST scan with content-bound process-local context reuse."""
     workspace = Path(root).resolve()
@@ -4239,15 +4385,17 @@ def security_scan(
         return _blocked_security_scan_report(
             workspace, files, tenant_read_calls, tenant_read_bindings
         )
-    bindings, findings, counts, outcomes, oracle_edges = _scan_security_sources(
-        workspace,
-        files,
-        tenant_read_calls,
-        tenant_read_bindings,
-        tenant_read_scopes,
-        cache_enabled=cache_enabled,
+    bindings, findings, counts, outcomes, oracle_edges, oracle_configuration = (
+        _scan_security_sources(
+            workspace,
+            files,
+            tenant_read_calls,
+            tenant_read_bindings,
+            tenant_read_scopes,
+            cache_enabled=cache_enabled,
+        )
     )
-    return _security_scan_report(
+    result = _security_scan_report(
         files,
         findings,
         bindings,
@@ -4256,6 +4404,18 @@ def security_scan(
         tenant_read_calls,
         tenant_read_bindings,
         oracle_edges,
+        oracle_configuration,
+    )
+    evidence = (
+        oracle_evidence,
+        oracle_trust_root,
+        oracle_trust_sha256,
+        oracle_environment_sha256,
+    )
+    return (
+        _reconcile_runtime_oracles(workspace, result, evidence)
+        if any(value is not None for value in evidence)
+        else result
     )
 
 

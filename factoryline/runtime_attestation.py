@@ -14,16 +14,21 @@ the caller's trust root.
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
+import json
 from pathlib import Path
 import platform
+import re
 import sys
+import tempfile
 from typing import Any, Iterable
 
 from . import __version__
 from .enterprise_receipts import EnterpriseReceiptError, verify_signed_document
 from .runtime_audit_common import (
+    RuntimeAuditError,
     canonical_bytes,
     exact_keys,
     require_bool,
@@ -37,7 +42,12 @@ from .runtime_audit_common import (
 SCHEMA = "factory.runtime-boundary-attestation.v1"
 PAYLOAD_TYPE = "application/vnd.factory.runtime-boundary-attestation.v1+json"
 VERIFICATION_SCHEMA = "factory.runtime-boundary-verification.v1"
+TEST_ORACLE_SCHEMA = "factory.test-oracle-attestation.v1"
+TEST_ORACLE_PAYLOAD_TYPE = "application/vnd.factory.test-oracle-attestation.v1+json"
+TEST_ORACLE_VERIFICATION_SCHEMA = "factory.test-oracle-verification.v1"
 MAX_VALIDITY = timedelta(hours=24)
+MAX_TEST_ORACLE_BYTES = 1_048_576
+MAX_TEST_ORACLE_CASE_IDS = 2048
 _SUPERVISED_MODE = "supervised_" + "sub" + "process"
 ISOLATION_MODES = (_SUPERVISED_MODE, "isolated_worker", "hardened_vm")
 INDEPENDENT_MODES = {"isolated_worker", "hardened_vm"}
@@ -628,3 +638,377 @@ def verify_signed_runtime_attestation(
     }
     result["verification_sha256"] = _verification_hash(result)
     return result
+
+
+def _oracle_fail(code: str, message: str) -> None:
+    raise RuntimeAttestationError(code, message)
+
+
+def _oracle_read(path: Path, field: str) -> bytes:
+    path = Path(path)
+    try:
+        if path.is_symlink() or not path.is_file():
+            _oracle_fail("E_ORACLE_FILE", f"{field} must be a regular file")
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_TEST_ORACLE_BYTES + 1)
+    except OSError as exc:
+        raise RuntimeAttestationError(
+            "E_ORACLE_FILE", f"{field} could not be read"
+        ) from exc
+    if len(raw) > MAX_TEST_ORACLE_BYTES:
+        _oracle_fail("E_ORACLE_SIZE", f"{field} exceeds the 1 MiB limit")
+    return raw
+
+
+def _oracle_json(raw: bytes, field: str) -> dict[str, Any]:
+    def unique_object(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate JSON key")
+            value[key] = item
+        return value
+
+    try:
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=unique_object,
+            parse_constant=lambda _value: (_ for _ in ()).throw(
+                ValueError("non-finite JSON number")
+            ),
+        )
+        canonical_bytes(value)
+    except (UnicodeError, ValueError, RecursionError) as exc:
+        raise RuntimeAttestationError(
+            "E_ORACLE_JSON", f"{field} is invalid strict JSON"
+        ) from exc
+    if not isinstance(value, dict):
+        _oracle_fail("E_ORACLE_JSON", f"{field} must be a JSON object")
+    return value
+
+
+def _oracle_exact(value: object, fields: set[str], field: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != fields:
+        _oracle_fail("E_ORACLE_SCHEMA", f"{field} has missing or unknown fields")
+    return value
+
+
+def _oracle_relative_py(value: object, field: str, *, test_source: bool) -> str:
+    path = require_str(value, field, maximum=512)
+    parts = path.split("/")
+    if (
+        "\\" in path
+        or path.startswith("/")
+        or any(part in {"", ".", ".."} for part in parts)
+        or re.match(r"^[A-Za-z]:", path)
+        or not path.endswith(".py")
+    ):
+        _oracle_fail("E_ORACLE_PATH", f"{field} must be a safe relative POSIX .py path")
+    if not test_source and (
+        any(part.casefold() in {"test", "tests", "testing"} for part in parts[:-1])
+        or parts[-1].casefold().startswith("test_")
+        or parts[-1].casefold().endswith("_test.py")
+    ):
+        _oracle_fail("E_ORACLE_PATH", f"{field} must identify non-test source")
+    return path
+
+
+def _oracle_case_ids(value: object, field: str, path: str, symbol: str) -> list[str]:
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_TEST_ORACLE_CASE_IDS:
+        _oracle_fail("E_ORACLE_CASES", f"{field} must contain 1..2048 node ids")
+    identity = re.compile(
+        rf"^{re.escape(path)}::(?:[A-Za-z_]\w*::)*{re.escape(symbol)}(?:\[[^\]\r\n]{{1,512}}\])?$"
+    )
+    case_ids = [require_str(item, field, maximum=1024) for item in value]
+    if len(case_ids) != len(set(case_ids)) or any(
+        identity.fullmatch(item) is None for item in case_ids
+    ):
+        _oracle_fail(
+            "E_ORACLE_CASES",
+            f"{field} must uniquely identify only {path}::{symbol} cases",
+        )
+    return sorted(case_ids)
+
+
+def _oracle_test(value: object) -> dict[str, Any]:
+    test = _oracle_exact(
+        value,
+        {"path", "line", "symbol", "test_sha256", "baseline", "mutation"},
+        "test",
+    )
+    path = _oracle_relative_py(test["path"], "test.path", test_source=True)
+    line = require_int(test["line"], "test.line", minimum=1, maximum=10_000_000)
+    symbol = require_str(test["symbol"], "test.symbol", maximum=256)
+    if not symbol.isidentifier() or not symbol.startswith("test_"):
+        _oracle_fail("E_ORACLE_TEST", "test.symbol must be a valid test_* identifier")
+    test_sha = require_digest(test["test_sha256"], "test_sha256")
+    baseline = _oracle_exact(
+        test["baseline"],
+        {"status", "phase", "collection_complete", "case_ids", "report_sha256"},
+        "baseline",
+    )
+    if (
+        baseline["status"] != "PASS"
+        or baseline["phase"] != "call"
+        or baseline["collection_complete"] is not True
+    ):
+        _oracle_fail("E_ORACLE_BASELINE", "baseline must PASS during the call phase")
+    baseline_cases = _oracle_case_ids(
+        baseline["case_ids"], "baseline.case_ids", path, symbol
+    )
+    baseline_report = require_digest(
+        baseline["report_sha256"], "baseline.report_sha256"
+    )
+    mutation = _oracle_exact(
+        test["mutation"],
+        {
+            "source_path",
+            "source_sha256",
+            "mutant_sha256",
+            "status",
+            "phase",
+            "case_ids",
+            "failure_kind",
+            "report_sha256",
+        },
+        "mutation",
+    )
+    source_path = _oracle_relative_py(
+        mutation["source_path"], "mutation.source_path", test_source=False
+    )
+    if source_path == path:
+        _oracle_fail("E_ORACLE_PATH", "mutation cannot modify the test source")
+    source_sha = require_digest(mutation["source_sha256"], "mutation.source_sha256")
+    mutant_sha = require_digest(mutation["mutant_sha256"], "mutation.mutant_sha256")
+    if source_sha == mutant_sha:
+        _oracle_fail(
+            "E_ORACLE_MUTATION", "mutated source digest must differ from baseline"
+        )
+    if mutation["status"] != "FAIL" or mutation["phase"] != "call":
+        _oracle_fail("E_ORACLE_MUTATION", "mutation must FAIL during the call phase")
+    mutation_cases = _oracle_case_ids(
+        mutation["case_ids"], "mutation.case_ids", path, symbol
+    )
+    if mutation_cases != baseline_cases:
+        _oracle_fail(
+            "E_ORACLE_CASES", "baseline and mutation case ids must match exactly"
+        )
+    failure_kind = mutation["failure_kind"]
+    if failure_kind not in {"assertion", "exception"}:
+        _oracle_fail(
+            "E_ORACLE_MUTATION", "mutation failure must be assertion or exception"
+        )
+    return {
+        "path": path,
+        "line": line,
+        "symbol": symbol,
+        "test_sha256": test_sha,
+        "baseline": {
+            "status": "PASS",
+            "phase": "call",
+            "collection_complete": True,
+            "case_ids": baseline_cases,
+            "report_sha256": baseline_report,
+        },
+        "mutation": {
+            "source_path": source_path,
+            "source_sha256": source_sha,
+            "mutant_sha256": mutant_sha,
+            "status": "FAIL",
+            "phase": "call",
+            "case_ids": mutation_cases,
+            "failure_kind": failure_kind,
+            "report_sha256": require_digest(
+                mutation["report_sha256"], "mutation.report_sha256"
+            ),
+        },
+    }
+
+
+def _oracle_payload(
+    value: object,
+    *,
+    source_manifest_sha256: str,
+    environment_sha256: str,
+    now: datetime | None,
+) -> dict[str, Any]:
+    payload = _oracle_exact(
+        value,
+        {
+            "schema",
+            "issued_at",
+            "expires_at",
+            "source_manifest_sha256",
+            "environment_sha256",
+            "authority",
+            "tests",
+        },
+        "payload",
+    )
+    if payload["schema"] != TEST_ORACLE_SCHEMA or payload["authority"] != "none":
+        _oracle_fail("E_ORACLE_SCHEMA", "unexpected test-oracle schema or authority")
+    source_manifest = require_digest(
+        payload["source_manifest_sha256"], "source_manifest_sha256"
+    )
+    environment = require_digest(payload["environment_sha256"], "environment_sha256")
+    if source_manifest != source_manifest_sha256 or environment != environment_sha256:
+        _oracle_fail(
+            "E_ORACLE_BINDING", "source manifest or environment digest differs"
+        )
+    issued = _timestamp(payload["issued_at"], "issued_at")
+    expires = _timestamp(payload["expires_at"], "expires_at")
+    current = datetime.now(timezone.utc) if now is None else now
+    if (
+        not isinstance(current, datetime)
+        or current.tzinfo is None
+        or current.utcoffset() is None
+    ):
+        _oracle_fail("E_ATTESTATION_TIME", "verification time must include a timezone")
+    current = current.astimezone(timezone.utc)
+    if not issued <= current < expires or expires - issued > MAX_VALIDITY:
+        _oracle_fail(
+            "E_ORACLE_FRESHNESS",
+            "oracle attestation is future-dated, expired, or too long",
+        )
+    tests = payload["tests"]
+    if not isinstance(tests, list) or not 1 <= len(tests) <= 460:
+        _oracle_fail("E_ORACLE_TESTS", "tests must contain 1..460 test observations")
+    normalized = [_oracle_test(item) for item in tests]
+    identities = [(item["path"], item["line"], item["symbol"]) for item in normalized]
+    if len(identities) != len(set(identities)):
+        _oracle_fail("E_ORACLE_TESTS", "duplicate test identity")
+    return {
+        "schema": TEST_ORACLE_SCHEMA,
+        "issued_at": issued.isoformat(),
+        "expires_at": expires.isoformat(),
+        "source_manifest_sha256": source_manifest,
+        "environment_sha256": environment,
+        "authority": "none",
+        "tests": normalized,
+    }
+
+
+def _verify_oracle_envelope(
+    receipt_bytes: bytes, trust_bytes: bytes
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    envelope = _oracle_json(receipt_bytes, "receipt")
+    trust = _oracle_json(trust_bytes, "trust root")
+    encoded = envelope.get("payload")
+    if not isinstance(encoded, str):
+        _oracle_fail("E_ORACLE_JSON", "DSSE payload must be base64 text")
+    try:
+        payload_bytes = base64.b64decode(
+            encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True
+        )
+    except (ValueError, TypeError) as exc:
+        raise RuntimeAttestationError(
+            "E_ORACLE_JSON", "DSSE payload encoding is invalid"
+        ) from exc
+    payload = _oracle_json(payload_bytes, "signed payload")
+    keys = trust.get("keys")
+    if not isinstance(keys, list):
+        _oracle_fail("E_TRUST_ROOT", "trust root keys must be an array")
+    signatures = envelope.get("signatures")
+    if (
+        not isinstance(signatures, list)
+        or len(signatures) != 1
+        or not isinstance(signatures[0], dict)
+    ):
+        _oracle_fail("E_ORACLE_SIGNATURE", "exactly one signature is required")
+    signature = signatures[0]
+    key_matches = [
+        item
+        for item in keys
+        if isinstance(item, dict) and item.get("keyid") == signature.get("keyid")
+    ]
+    if len(key_matches) != 1:
+        _oracle_fail(
+            "E_ORACLE_KEY", "signer key is ambiguous or absent from trust root"
+        )
+    key = key_matches[0]
+    if key.get("revoked") or key.get("revoked_at"):
+        _oracle_fail("E_ORACLE_KEY", "signer key is revoked")
+    with tempfile.TemporaryDirectory(prefix="factory-test-oracle-") as temporary:
+        snapshot = Path(temporary)
+        receipt_snapshot = snapshot / "receipt.json"
+        trust_snapshot = snapshot / "trust-root.json"
+        receipt_snapshot.write_bytes(receipt_bytes)
+        trust_snapshot.write_bytes(trust_bytes)
+        try:
+            verified = verify_signed_document(
+                receipt_snapshot,
+                payload_type=TEST_ORACLE_PAYLOAD_TYPE,
+                schema=TEST_ORACLE_SCHEMA,
+                trust_root_path=trust_snapshot,
+                required_key_role="oracle-verifier",
+            )
+        except EnterpriseReceiptError as exc:
+            raise RuntimeAttestationError(exc.code, exc.message) from exc
+    if verified["payload"] != payload:
+        _oracle_fail(
+            "E_ORACLE_JSON", "verified payload differs from strict JSON snapshot"
+        )
+    return payload, verified
+
+
+def verify_signed_test_oracles(
+    path: Path,
+    trust_root_path: Path,
+    *,
+    trust_root_sha256: str,
+    source_manifest_sha256: str,
+    environment_sha256: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Verify a pinned signer’s fresh per-test PASS/mutant-FAIL oracle attestation."""
+    try:
+        receipt_path, trust_path = Path(path), Path(trust_root_path)
+        receipt_bytes = _oracle_read(receipt_path, "receipt")
+        trust_bytes = _oracle_read(trust_path, "trust root")
+        trust_pin = require_digest(trust_root_sha256, "trust_root_sha256")
+        if sha256_bytes(trust_bytes) != trust_pin:
+            _oracle_fail("E_TRUST_ROOT_PIN", "trust root differs from operator pin")
+        expected_source = require_digest(
+            source_manifest_sha256, "source_manifest_sha256"
+        )
+        expected_environment = require_digest(environment_sha256, "environment_sha256")
+        payload, verified = _verify_oracle_envelope(receipt_bytes, trust_bytes)
+        normalized = _oracle_payload(
+            payload,
+            source_manifest_sha256=expected_source,
+            environment_sha256=expected_environment,
+            now=now,
+        )
+        if (
+            _oracle_read(receipt_path, "receipt") != receipt_bytes
+            or _oracle_read(trust_path, "trust root") != trust_bytes
+        ):
+            _oracle_fail(
+                "E_ORACLE_DRIFT", "receipt or trust root changed during verification"
+            )
+        return {
+            "schema": TEST_ORACLE_VERIFICATION_SCHEMA,
+            "state": "VERIFIED",
+            "payload_sha256": verified["payload_sha256"],
+            "receipt_sha256": sha256_bytes(receipt_bytes),
+            "source_manifest_sha256": normalized["source_manifest_sha256"],
+            "environment_sha256": normalized["environment_sha256"],
+            "issued_at": normalized["issued_at"],
+            "expires_at": normalized["expires_at"],
+            "signature": {
+                "keyid": verified["signature"]["keyid"],
+                "identity": verified["signature"]["identity"],
+                "issuer": verified["signature"]["issuer"],
+                "algorithm": verified["signature"]["algorithm"],
+                "role": "oracle-verifier",
+            },
+            "tests": normalized["tests"],
+            "authority": "none",
+            "claim_boundary": "Verified signer attestation only; independent test execution, mutation application, and test-oracle accuracy are not established by signature verification.",
+        }
+    except RuntimeAttestationError:
+        raise
+    except (RuntimeAuditError, OSError, TypeError, ValueError, KeyError) as exc:
+        code = getattr(exc, "code", "E_ORACLE_INVALID")
+        message = getattr(exc, "message", "invalid test-oracle attestation")
+        raise RuntimeAttestationError(code, message) from exc
