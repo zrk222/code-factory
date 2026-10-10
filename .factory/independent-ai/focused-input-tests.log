@@ -1,0 +1,353 @@
+[rtk] /!\ No hook installed — run `rtk init -g` for automatic token savings
+TAP version 13
+# Subtest: operator feedback binds immutable annotations to a verified case without changing judgments
+ok 1 - operator feedback binds immutable annotations to a verified case without changing judgments
+  ---
+  duration_ms: 179.1327
+  type: 'test'
+  ...
+# Subtest: operator journal checkpoints every answer and error without copying raw state or credentials
+ok 2 - operator journal checkpoints every answer and error without copying raw state or credentials
+  ---
+  duration_ms: 104.2133
+  type: 'test'
+  ...
+# Subtest: journal reservation failure blocks provider calls and checkpoint failure stops later requests
+ok 3 - journal reservation failure blocks provider calls and checkpoint failure stops later requests
+  ---
+  duration_ms: 5.4826
+  type: 'test'
+  ...
+# Subtest: experimental score includes uncertain model assessments without admitting a grade
+ok 4 - experimental score includes uncertain model assessments without admitting a grade
+  ---
+  duration_ms: 3.0868
+  type: 'test'
+  ...
+# Subtest: journals reject linked components and escaping roots before provider calls
+ok 5 - journals reject linked components and escaping roots before provider calls
+  ---
+  duration_ms: 14.9944
+  type: 'test'
+  ...
+# Subtest: checkpoint callbacks cannot mutate the evaluator report or admission
+ok 6 - checkpoint callbacks cannot mutate the evaluator report or admission
+  ---
+  duration_ms: 1.1837
+  type: 'test'
+  ...
+# Subtest: experimental score never fabricates missing responses or dry-run values
+ok 7 - experimental score never fabricates missing responses or dry-run values
+  ---
+  duration_ms: 1.9358
+  type: 'test'
+  ...
+# Subtest: PRD, PR and test-oracle profiles select criteria through the operator CLI
+ok 8 - PRD, PR and test-oracle profiles select criteria through the operator CLI
+  ---
+  duration_ms: 37.7609
+  type: 'test'
+  ...
+# Subtest: selected test names and source coordinates bind before provider calls
+ok 9 - selected test names and source coordinates bind before provider calls
+  ---
+  duration_ms: 107.6434
+  type: 'test'
+  ...
+# Subtest: criterion-specific evidence instructions are bounded and mandatory when supplied
+ok 10 - criterion-specific evidence instructions are bounded and mandatory when supplied
+  ---
+  duration_ms: 0.569
+  type: 'test'
+  ...
+# Subtest: evidence question repeats exact criterion and criteria without exposing expected labels
+ok 11 - evidence question repeats exact criterion and criteria without exposing expected labels
+  ---
+  duration_ms: 1.6388
+  type: 'test'
+  ...
+# Subtest: explicit evidence criteria keep evidence question atomic and hide evaluation labels
+ok 12 - explicit evidence criteria keep evidence question atomic and hide evaluation labels
+  ---
+  duration_ms: 1.0245
+  type: 'test'
+  ...
+# Subtest: explicit evidence criteria require bounded exact true and false entries
+ok 13 - explicit evidence criteria require bounded exact true and false entries
+  ---
+  duration_ms: 0.4117
+  type: 'test'
+  ...
+# Subtest: combined criterion and request inputs stay within declared byte bounds
+ok 14 - combined criterion and request inputs stay within declared byte bounds
+  ---
+  duration_ms: 5.2177
+  type: 'test'
+  ...
+# Subtest: advisory grading aggregates only admitted evaluator decisions
+ok 15 - advisory grading aggregates only admitted evaluator decisions
+  ---
+  duration_ms: 3.1185
+  type: 'test'
+  ...
+# Subtest: advisory grade has equal weights and ignores evaluation labels
+ok 16 - advisory grade has equal weights and ignores evaluation labels
+  ---
+  duration_ms: 3.123
+  type: 'test'
+  ...
+# Subtest: grading helper is not a public bypass of evidence admission
+ok 17 - grading helper is not a public bypass of evidence admission
+  ---
+  duration_ms: 0.2164
+  type: 'test'
+  ...
+# Subtest: grading is explicitly enabled, hash bound and blocked by insufficient evidence
+ok 18 - grading is explicitly enabled, hash bound and blocked by insufficient evidence
+  ---
+  duration_ms: 2.1835
+  type: 'test'
+  ...
+# Subtest: summarizeCosts preserves partial, complete, dry-run and overflow costs
+ok 19 - summarizeCosts preserves partial, complete, dry-run and overflow costs
+  ---
+  duration_ms: 0.2367
+  type: 'test'
+  ...
+# Subtest: summarizeLatency preserves measured request denominator and dry-run nulls
+ok 20 - summarizeLatency preserves measured request denominator and dry-run nulls
+  ---
+  duration_ms: 0.1115
+  type: 'test'
+  ...
+# Subtest: default dry run never calls a transport or claims measured accuracy
+ok 21 - default dry run never calls a transport or claims measured accuracy
+  ---
+  duration_ms: 1.21
+  type: 'test'
+  ...
+# Subtest: mocked live positive and negative obey the exact provider contract
+ok 22 - mocked live positive and negative obey the exact provider contract
+  ---
+  duration_ms: 1.708
+  type: 'test'
+  ...
+# Subtest: confusion records independently labeled false positives and false negatives
+ok 23 - confusion records independently labeled false positives and false negatives
+  ---
+  duration_ms: 0.877
+  type: 'test'
+  ...
+# Subtest: confidence band abstains and penalizes unresolved positive labels
+ok 24 - confidence band abstains and penalizes unresolved positive labels
+  ---
+  duration_ms: 0.8288
+  type: 'test'
+  ...
+# Subtest: finding confidence cannot substitute for sufficient concrete evidence
+ok 25 - finding confidence cannot substitute for sufficient concrete evidence
+  ---
+  duration_ms: 0.8789
+  type: 'test'
+  ...
+# Subtest: per-category metrics retain each labeled case without a macro-average claim
+ok 26 - per-category metrics retain each labeled case without a macro-average claim
+  ---
+  duration_ms: 0.9865
+  type: 'test'
+  ...
+# Subtest: threshold boundaries are inclusive and configuration is hash bound
+ok 27 - threshold boundaries are inclusive and configuration is hash bound
+  ---
+  duration_ms: 1.1927
+  type: 'test'
+  ...
+# Subtest: malformed response fails closed: missing answer
+ok 28 - malformed response fails closed: missing answer
+  ---
+  duration_ms: 0.7809
+  type: 'test'
+  ...
+# Subtest: malformed response fails closed: wrong answer type
+ok 29 - malformed response fails closed: wrong answer type
+  ---
+  duration_ms: 0.7206
+  type: 'test'
+  ...
+# Subtest: malformed response fails closed: string probability
+ok 30 - malformed response fails closed: string probability
+  ---
+  duration_ms: 0.7578
+  type: 'test'
+  ...
+# Subtest: malformed response fails closed: negative probability
+ok 31 - malformed response fails closed: negative probability
+  ---
+  duration_ms: 0.67
+  type: 'test'
+  ...
+# Subtest: malformed response fails closed: high probability
+ok 32 - malformed response fails closed: high probability
+  ---
+  duration_ms: 0.6965
+  type: 'test'
+  ...
+# Subtest: malformed response fails closed: wrong model
+ok 33 - malformed response fails closed: wrong model
+  ---
+  duration_ms: 0.6397
+  type: 'test'
+  ...
+# Subtest: malformed response fails closed: wrong routed provider
+ok 34 - malformed response fails closed: wrong routed provider
+  ---
+  duration_ms: 0.5949
+  type: 'test'
+  ...
+# Subtest: malformed response fails closed: missing evidence answer
+ok 35 - malformed response fails closed: missing evidence answer
+  ---
+  duration_ms: 0.737
+  type: 'test'
+  ...
+# Subtest: malformed response fails closed: invalid evidence probability
+ok 36 - malformed response fails closed: invalid evidence probability
+  ---
+  duration_ms: 0.6746
+  type: 'test'
+  ...
+# Subtest: timeout aborts transport and records an unresolved label
+ok 37 - timeout aborts transport and records an unresolved label
+  ---
+  duration_ms: 17.5566
+  type: 'test'
+  ...
+# Subtest: timeout covers response body reads too
+ok 38 - timeout covers response body reads too
+  ---
+  duration_ms: 30.6873
+  type: 'test'
+  ...
+# Subtest: response byte bound rejects oversized streaming responses
+ok 39 - response byte bound rejects oversized streaming responses
+  ---
+  duration_ms: 1.3316
+  type: 'test'
+  ...
+# Subtest: HTTP and transport errors never echo provider or secret text
+ok 40 - HTTP and transport errors never echo provider or secret text
+  ---
+  duration_ms: 2.1519
+  type: 'test'
+  ...
+# Subtest: unknown cost remains unknown rather than an invented zero
+ok 41 - unknown cost remains unknown rather than an invented zero
+  ---
+  duration_ms: 0.9151
+  type: 'test'
+  ...
+# Subtest: invalid corpus, rubric and thresholds block before transport
+ok 42 - invalid corpus, rubric and thresholds block before transport
+  ---
+  duration_ms: 0.5674
+  type: 'test'
+  ...
+# Subtest: CLI accepts only the explicit contract and rejects arbitrary URLs
+ok 43 - CLI accepts only the explicit contract and rejects arbitrary URLs
+  ---
+  duration_ms: 0.2211
+  type: 'test'
+  ...
+# Subtest: CLI help states opt-in grading, unresolved score and live authorization boundaries
+ok 44 - CLI help states opt-in grading, unresolved score and live authorization boundaries
+  ---
+  duration_ms: 57.6587
+  type: 'test'
+  ...
+# Subtest: file loading binds raw input bytes; CLI default works with no key
+ok 45 - file loading binds raw input bytes; CLI default works with no key
+  ---
+  duration_ms: 28.0383
+  type: 'test'
+  ...
+# Subtest: input size bound blocks oversized files before JSON decoding
+ok 46 - input size bound blocks oversized files before JSON decoding
+  ---
+  duration_ms: 11.5352
+  type: 'test'
+  ...
+# Subtest: framework loader binds the entire contract and judges its nested rubric only
+ok 47 - framework loader binds the entire contract and judges its nested rubric only
+  ---
+  duration_ms: 18.8345
+  type: 'test'
+  ...
+# Subtest: worker workflow path filters cover every Docker build input without framework scope
+ok 48 - worker workflow path filters cover every Docker build input without framework scope
+  ---
+  duration_ms: 3.1379
+  type: 'test'
+  ...
+# Subtest: tool versions require exact tokens, not a substring or prerelease
+ok 49 - tool versions require exact tokens, not a substring or prerelease
+  ---
+  duration_ms: 0.2881
+  type: 'test'
+  ...
+# Subtest: baseline remains exactly fifteen original unique CVE IDs
+ok 50 - baseline remains exactly fifteen original unique CVE IDs
+  ---
+  duration_ms: 0.1939
+  type: 'test'
+  ...
+# Subtest: compare uses source version, including epoch, not binary version
+ok 51 - compare uses source version, including epoch, not binary version
+  ---
+  duration_ms: 0.3106
+  type: 'test'
+  ...
+# Subtest: unfixed version and open advisory block
+ok 52 - unfixed version and open advisory block
+  ---
+  duration_ms: 0.1328
+  type: 'test'
+  ...
+# Subtest: unknown, absent, malformed and missing source records fail closed
+ok 53 - unknown, absent, malformed and missing source records fail closed
+  ---
+  duration_ms: 0.1292
+  type: 'test'
+  ...
+# Subtest: all installed binary variants of a source must be resolved
+ok 54 - all installed binary variants of a source must be resolved
+  ---
+  duration_ms: 0.9311
+  type: 'test'
+  ...
+# Subtest: Debian fixed_version zero means not affected without comparison
+ok 55 - Debian fixed_version zero means not affected without comparison
+  ---
+  duration_ms: 0.1313
+  type: 'test'
+  ...
+# Subtest: manifest rejects empty or incomplete source metadata
+ok 56 - manifest rejects empty or incomplete source metadata
+  ---
+  duration_ms: 0.6151
+  type: 'test'
+  ...
+# Subtest: official HTTPS feed preserves raw SHA256 and rejects errors, redirects and oversize data
+ok 57 - official HTTPS feed preserves raw SHA256 and rejects errors, redirects and oversize data
+  ---
+  duration_ms: 19.3985
+  type: 'test'
+  ...
+1..57
+# tests 57
+# suites 0
+# pass 57
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 745.5502

@@ -358,6 +358,21 @@ function validateTestOracleCases(cases) {
       && typeof candidate.excerpt_sha256 === 'string' && /^[a-f0-9]{64}$/i.test(candidate.excerpt_sha256)
       && candidate.excerpt_sha256.toLowerCase() === sha(Buffer.from(source, 'utf8')),
     'invalid_test_oracle_evidence_binding');
+    const selected = item.state.evidence.selected_test;
+    if (selected !== undefined) {
+      const firstLine = item.state.evidence.source_start_line ?? 1;
+      const lines = source.split(/\r?\n/);
+      if (lines.at(-1) === '') lines.pop();
+      requireValue(object(selected) && typeof selected.name === 'string'
+        && /^[A-Za-z_]\w*$/.test(selected.name)
+        && Number.isInteger(firstLine) && firstLine > 0
+        && Number.isInteger(selected.start_line) && selected.start_line >= firstLine
+        && Number.isInteger(selected.end_line) && selected.end_line >= selected.start_line
+        && selected.end_line < firstLine + lines.length,
+      'invalid_test_oracle_target_binding');
+      requireValue(new RegExp(`^\\s*(?:async\\s+)?def\\s+${selected.name}\\s*\\(`)
+        .test(lines[selected.start_line - firstLine]), 'invalid_test_oracle_target_binding');
+    }
   }
 }
 

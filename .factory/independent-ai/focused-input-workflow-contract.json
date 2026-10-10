@@ -1,0 +1,142 @@
+{
+  "schema": "factory.workflow-audit.contract.v1",
+  "project_id": "code-factory-jev-focused-target",
+  "candidate": [
+    {
+      "path": "scripts/evaluate_jev.mjs",
+      "sha256": "d7e4bec07bf5cab56c7e18604502c90a15254b82a33e43ef2b974d361d387221",
+      "kind": "source"
+    },
+    {
+      "path": "scripts/evaluate_jev.test.mjs",
+      "sha256": "87855cf39429635ffd4f3a0d5d15dab51bd2f0d667805a6a4a5a1038bb0680f7",
+      "kind": "source"
+    },
+    {
+      "path": "factoryline/data/judge_framework.json",
+      "sha256": "390c488ea20d813efe5c0f0a0260b544fee35fe3b6860b27e617715461ca9bf2",
+      "kind": "source"
+    }
+  ],
+  "applicability": [
+    {
+      "category": "happy_path",
+      "applicable": true,
+      "reason": "Scoped source validation, framework, operator and regression checks"
+    },
+    {
+      "category": "validation",
+      "applicable": true,
+      "reason": "Scoped source validation, framework, operator and regression checks"
+    },
+    {
+      "category": "failure_recovery",
+      "applicable": true,
+      "reason": "Scoped source validation, framework, operator and regression checks"
+    },
+    {
+      "category": "state_consistency",
+      "applicable": true,
+      "reason": "Scoped source validation, framework, operator and regression checks"
+    },
+    {
+      "category": "security_privacy",
+      "applicable": true,
+      "reason": "Scoped source validation, framework, operator and regression checks"
+    },
+    {
+      "category": "performance",
+      "applicable": true,
+      "reason": "Scoped source validation, framework, operator and regression checks"
+    },
+    {
+      "category": "accessibility",
+      "applicable": false,
+      "reason": "No UI or interaction surface changed",
+      "review_evidence": {
+        "path": ".factory\\independent-ai\\focused-input-scope-review.md",
+        "sha256": "2c008cd5a86f5ed06219bc602216e5240cb16b76c25027110633ad4b2a858709",
+        "kind": "review"
+      }
+    },
+    {
+      "category": "external_effects",
+      "applicable": true,
+      "reason": "Scoped source validation, framework, operator and regression checks"
+    }
+  ],
+  "checks": [
+    {
+      "id": "TARGET",
+      "category": "happy_path",
+      "requirement": "Full-file and CRLF excerpt target bindings pass; unchanged packets retain compatibility",
+      "profiles": [
+        "windows-node22-python311"
+      ]
+    },
+    {
+      "id": "REJECT",
+      "category": "validation",
+      "requirement": "Wrong target name, source coordinates and malformed offsets reject before provider calls",
+      "profiles": [
+        "windows-node22-python311"
+      ]
+    },
+    {
+      "id": "UNRESOLVED",
+      "category": "failure_recovery",
+      "requirement": "Existing evaluator tests retain abstentions, transport errors and timeout behavior",
+      "profiles": [
+        "windows-node22-python311"
+      ]
+    },
+    {
+      "id": "BINDING",
+      "category": "state_consistency",
+      "requirement": "Input/source hashes and live result journal verify without rewriting prior results",
+      "profiles": [
+        "windows-node22-python311"
+      ]
+    },
+    {
+      "id": "BLIND",
+      "category": "security_privacy",
+      "requirement": "Expected labels remain withheld; invalid target does not call provider",
+      "profiles": [
+        "windows-node22-python311"
+      ]
+    },
+    {
+      "id": "BOUNDS",
+      "category": "performance",
+      "requirement": "Source handling remains bounded by existing corpus and state limits; scoped suite completes",
+      "profiles": [
+        "windows-node22-python311"
+      ]
+    },
+    {
+      "id": "LIVE",
+      "category": "external_effects",
+      "requirement": "Authorized focused live trial records three correct source decisions and reported cost",
+      "profiles": [
+        "windows-node22-python311"
+      ]
+    },
+    {
+      "id": "ARCH",
+      "category": "state_consistency",
+      "requirement": "Strict architecture health remains HEALTHY without budget changes",
+      "profiles": [
+        "windows-node22-python311"
+      ]
+    },
+    {
+      "id": "REVIEW",
+      "category": "security_privacy",
+      "requirement": "Independent source review found no blocking defect and recorded limits",
+      "profiles": [
+        "windows-node22-python311"
+      ]
+    }
+  ]
+}

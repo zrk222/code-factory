@@ -1,0 +1,28 @@
+{
+  "scope": [
+    "scripts/evaluate_jev.mjs",
+    "scripts/evaluate_jev.test.mjs",
+    "factoryline/data/judge_framework.json"
+  ],
+  "route": "CF strict doctor passes; focused evaluator tests, architecture, independent review and workflow audit before completion",
+  "requirements": [
+    "When selected_test is supplied, name and line range must bind to an actual function declaration in exact digest-validated source before any provider call.",
+    "Support full-file inputs and explicit excerpt source_start_line; preserve packets without selected_test.",
+    "Jev reviews only selected target and reachable helper context; never borrows assertions from unrelated tests.",
+    "No changed thresholds, labels, scanner verdicts, or release authority."
+  ],
+  "before": [
+    {
+      "path": "scripts/evaluate_jev.mjs",
+      "sha256": "57dc3e064abe4366dd8e20b9c98f8d2e7bfba30ed51051c874f4435fe0a63715"
+    },
+    {
+      "path": "scripts/evaluate_jev.test.mjs",
+      "sha256": "272be489ce4294334f980b118dc8c36ec9b2ff6bf64d6577ea2bde6b20316854"
+    },
+    {
+      "path": "factoryline/data/judge_framework.json",
+      "sha256": "ba4f2ccd5d6d41666997edcc159ba81816a7f0c0fdedb1a1a86703fc44675d70"
+    }
+  ]
+}

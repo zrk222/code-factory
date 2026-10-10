@@ -254,6 +254,53 @@ test('PRD, PR and test-oracle profiles select criteria through the operator CLI'
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+test('selected test names and source coordinates bind before provider calls', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cf-jev-target-'));
+  try {
+    const input = join(dir, 'cases.json');
+    const framework = fileURLToPath(new URL('../factoryline/data/judge_framework.json', import.meta.url));
+    const source = 'def test_unrelated():\n    assert system() == 1\n\nasync def test_target():\n    pass\n';
+    const candidate = { commit: 'a'.repeat(40), path: 'tests/test_value.py',
+      excerpt_sha256: createHash('sha256').update(source).digest('hex') };
+    const item = { id: 'target', expected: true, state: { requirement: 'Review only test_target',
+      candidate, evidence: { source, selected_test: { name: 'test_target', start_line: 4, end_line: 5 } } } };
+    await writeFile(input, JSON.stringify([item]));
+    const trial = await loadTrial(input, framework, 'test_oracle');
+    assert.match(trial.rubric.instructions, /Never credit assertions in unrelated tests/);
+    assert.deepEqual(trial.cases[0].state.evidence.selected_test, item.state.evidence.selected_test);
+    const excerpt = '    def test_method(self):\r\n        self.assertEqual(system(), 1)\r\n';
+    const focused = structuredClone(item);
+    focused.state.candidate.excerpt_sha256 = createHash('sha256').update(excerpt).digest('hex');
+    focused.state.evidence = { source: excerpt, source_start_line: 503,
+      selected_test: { name: 'test_method', start_line: 503, end_line: 504 } };
+    await writeFile(input, JSON.stringify([focused]));
+    await loadTrial(input, framework, 'test_oracle');
+    for (const selected of [null, { name: 'test_missing', start_line: 4, end_line: 5 },
+      { name: 'test_target', start_line: 2, end_line: 5 },
+      { name: 'test_target', start_line: 4, end_line: 6 },
+      { name: 'test_target', start_line: 4, end_line: 3 },
+      { name: 'test_target', start_line: 4.5, end_line: 5 },
+      { name: 'test_target.*', start_line: 4, end_line: 5 }]) {
+      const invalid = structuredClone(item);
+      invalid.state.evidence.selected_test = selected;
+      await writeFile(input, JSON.stringify([invalid]));
+      let calls = 0;
+      await assert.rejects(runCli(['--cases', input, '--rubric', framework,
+        '--profile', 'test_oracle', '--live'], {
+        env: { AI_GATEWAY_API_KEY: 'mock' },
+        fetchImpl: async () => { calls++; return answer(0.01); },
+      }), /invalid_test_oracle_target_binding/);
+      assert.equal(calls, 0);
+    }
+    for (const offset of [0, -1, 1.5, '503']) {
+      const invalid = structuredClone(focused);
+      invalid.state.evidence.source_start_line = offset;
+      await writeFile(input, JSON.stringify([invalid]));
+      await assert.rejects(loadTrial(input, framework, 'test_oracle'), /invalid_test_oracle_target_binding/);
+    }
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test('criterion-specific evidence instructions are bounded and mandatory when supplied', async () => {
   for (const invalid of ['', 42, 'x'.repeat(8193)]) {
     await assert.rejects(evaluateCases(cases, { ...rubric, evidence_instructions: invalid }), /invalid_evidence_instructions/);
