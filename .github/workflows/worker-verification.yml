@@ -3,7 +3,11 @@ on:
   pull_request:
     paths:
       - deploy/deep-adapters/**
-      - factoryline/**
+      - .dockerignore
+      - factoryline/__init__.py
+      - factoryline/deep_audit_io.py
+      - factoryline/runtime_audit_common.py
+      - factoryline/runtime_audit_process.py
       - scripts/verify_worker_cves*.mjs
       - scripts/verify_semgrep_surface.mjs
       - scripts/verify_codeql_cross_file.mjs
@@ -12,7 +16,11 @@ on:
     branches: [main]
     paths:
       - deploy/deep-adapters/**
-      - factoryline/**
+      - .dockerignore
+      - factoryline/__init__.py
+      - factoryline/deep_audit_io.py
+      - factoryline/runtime_audit_common.py
+      - factoryline/runtime_audit_process.py
       - scripts/verify_worker_cves*.mjs
       - scripts/verify_semgrep_surface.mjs
       - scripts/verify_codeql_cross_file.mjs

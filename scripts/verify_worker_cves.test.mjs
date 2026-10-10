@@ -1,7 +1,39 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { downloadFeed, evaluate, matchesVersion, parseManifest, targets, trackerUrl } from './verify_worker_cves.mjs';
+
+test('worker workflow path filters cover every Docker build input without framework scope', () => {
+  const workflow = readFileSync('.github/workflows/worker-verification.yml', 'utf8').replace(/\r\n/g, '\n');
+  const dockerfile = readFileSync('deploy/deep-adapters/Dockerfile', 'utf8').replace(/\r\n/g, '\n');
+  const dockerSourceFiles = [...new Set([...dockerfile.matchAll(/^COPY\s+(.+)$/gm)]
+    .flatMap(match => match[1].trim().split(/\s+/).slice(0, -1))
+    .filter(path => path.startsWith('factoryline/')))];
+  assert.deepEqual(dockerSourceFiles.sort(), [
+    'factoryline/__init__.py',
+    'factoryline/deep_audit_io.py',
+    'factoryline/runtime_audit_common.py',
+    'factoryline/runtime_audit_process.py',
+  ].sort());
+
+  const triggers = [...workflow.matchAll(/^  (pull_request|push):\n([\s\S]*?)(?=^  [a-z_]+:|^permissions:)/gm)];
+  assert.deepEqual(triggers.map(match => match[1]).sort(), ['pull_request', 'push']);
+  for (const trigger of triggers) {
+    const paths = [...trigger[2].matchAll(/^      - (.+)$/gm)].map(match => match[1]);
+    assert(paths.includes('deploy/deep-adapters/**'));
+    assert(paths.includes('.dockerignore'));
+    assert(paths.includes('scripts/verify_worker_cves*.mjs'));
+    assert(paths.includes('scripts/verify_semgrep_surface.mjs'));
+    assert(paths.includes('scripts/verify_codeql_cross_file.mjs'));
+    assert(paths.includes('.github/workflows/worker-verification.yml'));
+    for (const path of dockerSourceFiles) assert(paths.includes(path), `missing Docker COPY input ${path}`);
+    assert.deepEqual(paths.filter(path => path.startsWith('factoryline/')).sort(), dockerSourceFiles.slice().sort());
+    assert.equal(paths.includes('factoryline/**'), false);
+    assert.equal(paths.some(path => path.startsWith('factoryline/') && path.endsWith('/judge_framework.json')), false);
+  }
+  assert.match(workflow, /^  workflow_dispatch:\s*$/m);
+});
 
 test('tool versions require exact tokens, not a substring or prerelease', () => {
   assert(matchesVersion('Version: v2.27.1\n', '2.27.1'));

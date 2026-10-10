@@ -1,0 +1,1 @@
+Original recursive-exception body returns; cause mutation escapes AssertionError. Controlled Console, not upstream Rich runtime.

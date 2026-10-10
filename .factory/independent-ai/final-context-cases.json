@@ -1,0 +1,1624 @@
+[
+  {
+    "id": "click-test_open_file_pathlib_dash",
+    "category": "test_oracle_strength",
+    "expected": true,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "click",
+        "commit": "2247b35ea1c47c727d7a06e51fa280e12a863ff6",
+        "path": "tests/test_utils/test_open_file.py",
+        "source_file_sha256": "d81cb79dd932f0c19b05a3ba3782f21f02407942b4e116936c53ee4b2143ce26",
+        "excerpt_sha256": "8fe986e4334d78b01c04c5d4dafd54fd0079e35f6e57b7e2f2f432361c978f22"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import os\nimport pathlib\nimport stat\nimport pytest\nimport click\nfrom click._compat import WIN\ndef test_open_file_pathlib_dash(runner):\n\n    @click.command()\n    @click.argument('filename', type=click.Path(allow_dash=True, path_type=pathlib.Path))\n    def cli(filename):\n        click.echo(str(type(filename)))\n        with click.open_file(filename) as f:\n            click.echo(f.read())\n        result = runner.invoke(cli, ['-'], input='value')\n        assert result.exception is None\n        assert result.output == 'pathlib.Path\\nvalue\\n'\n",
+        "execution_control": {
+          "id": "click-test_open_file_pathlib_dash",
+          "source_sha256": "8fe986e4334d78b01c04c5d4dafd54fd0079e35f6e57b7e2f2f432361c978f22",
+          "execution": "Exact top-level test function with real Click decorators and a runner that raises AssertionError if invoked.",
+          "observed_runner_invocations": 0,
+          "original_test_exception": null,
+          "scope": "Controlled excerpt execution only; not an upstream suite or library mutation score."
+        },
+        "structural_facts": {
+          "entrypoint": "test_open_file_pathlib_dash",
+          "direct_body_calls": [],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [
+            {
+              "name": "cli",
+              "line": 11
+            }
+          ],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        },
+        "source_observations": {
+          "definitions": [
+            {
+              "name": "test_open_file_pathlib_dash",
+              "parent": "<module>",
+              "line": 7,
+              "end_line": 17
+            },
+            {
+              "name": "cli",
+              "parent": "test_open_file_pathlib_dash",
+              "line": 11,
+              "end_line": 17
+            }
+          ],
+          "calls": [
+            {
+              "callee": "click.echo",
+              "parent": "cli",
+              "line": 12
+            },
+            {
+              "callee": "str",
+              "parent": "cli",
+              "line": 12
+            },
+            {
+              "callee": "type",
+              "parent": "cli",
+              "line": 12
+            },
+            {
+              "callee": "click.open_file",
+              "parent": "cli",
+              "line": 13
+            },
+            {
+              "callee": "click.echo",
+              "parent": "cli",
+              "line": 14
+            },
+            {
+              "callee": "f.read",
+              "parent": "cli",
+              "line": 14
+            },
+            {
+              "callee": "runner.invoke",
+              "parent": "cli",
+              "line": 15
+            }
+          ],
+          "assertions": [
+            {
+              "expression": "result.exception is None",
+              "parent": "cli",
+              "line": 16
+            },
+            {
+              "expression": "result.output == 'pathlib.Path\\nvalue\\n'",
+              "parent": "cli",
+              "line": 17
+            }
+          ],
+          "call_edges": [],
+          "extraction": {
+            "method": "Independent standard-library Python AST lexical-parent walk",
+            "python": "3.11.9",
+            "source_sha256": "8fe986e4334d78b01c04c5d4dafd54fd0079e35f6e57b7e2f2f432361c978f22",
+            "scope": "Syntactic parents and direct-name edges, not dynamic dispatch or runtime coverage"
+          }
+        }
+      }
+    }
+  },
+  {
+    "id": "requests-test_session_close_proxy_clear",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "requests",
+        "commit": "611c6162cbc4ac2020a2f91c7cfa4f3abf9bbb60",
+        "path": "tests/test_requests.py",
+        "source_file_sha256": "bc9a6811d6c0f4247fb4ca844e3eeb84c13088321b684692b0ef3eeac0b38bc5",
+        "excerpt_sha256": "30962f38350d738021b4f5bf13b8f56de4ff9e83477982ea9c6e9b1a67b7ff13"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import collections\nimport contextlib\nimport io\nimport json\nimport os\nimport pickle\nimport re\nimport tempfile\nimport threading\nimport warnings\nfrom unittest import mock\nimport pytest\nimport urllib3\nfrom urllib3.util import Timeout as Urllib3Timeout\nimport requests\nfrom requests.adapters import HTTPAdapter\nfrom requests.auth import HTTPDigestAuth, _basic_auth_str\nfrom requests.compat import JSONDecodeError, Morsel, MutableMapping, builtin_str, cookielib, getproxies, is_urllib3_1, urlparse\nfrom requests.cookies import cookiejar_from_dict, morsel_to_cookie\nfrom requests.exceptions import ChunkedEncodingError, ConnectionError, ConnectTimeout, ContentDecodingError, InvalidHeader, InvalidProxyURL, InvalidSchema, InvalidURL, MissingSchema, ProxyError, ReadTimeout, RequestException, RetryError, Timeout, TooManyRedirects, UnrewindableBodyError\nfrom requests.exceptions import SSLError as RequestsSSLError\nfrom requests.hooks import default_hooks\nfrom requests.models import PreparedRequest, urlencode\nfrom requests.sessions import SessionRedirectMixin\nfrom requests.structures import CaseInsensitiveDict\nfrom . import SNIMissingWarning\nfrom .compat import StringIO\nfrom .testserver.server import TLSServer, consume_socket_content\nfrom .utils import override_environ\ndef test_session_close_proxy_clear(self):\n    proxies = {'one': mock.Mock(), 'two': mock.Mock()}\n    session = requests.Session()\n    with mock.patch.dict(session.adapters['http://'].proxy_manager, proxies):\n        session.close()\n        proxies['one'].clear.assert_called_once_with()\n        proxies['two'].clear.assert_called_once_with()\n",
+        "structural_facts": {
+          "entrypoint": "test_session_close_proxy_clear",
+          "direct_body_calls": [
+            {
+              "expression": "mock.Mock",
+              "line": 31
+            },
+            {
+              "expression": "mock.Mock",
+              "line": 31
+            },
+            {
+              "expression": "requests.Session",
+              "line": 32
+            },
+            {
+              "expression": "mock.patch.dict",
+              "line": 33
+            },
+            {
+              "expression": "session.close",
+              "line": 34
+            },
+            {
+              "expression": "proxies['one'].clear.assert_called_once_with",
+              "line": 35
+            },
+            {
+              "expression": "proxies['two'].clear.assert_called_once_with",
+              "line": 36
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "requests-test_read_timeout",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "requests",
+        "commit": "611c6162cbc4ac2020a2f91c7cfa4f3abf9bbb60",
+        "path": "tests/test_requests.py",
+        "source_file_sha256": "bc9a6811d6c0f4247fb4ca844e3eeb84c13088321b684692b0ef3eeac0b38bc5",
+        "excerpt_sha256": "bf97b06ba1d1f6cc8a0896eed203c2c39ffb5a3a7ba494f0917772ad4b29ce05"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import collections\nimport contextlib\nimport io\nimport json\nimport os\nimport pickle\nimport re\nimport tempfile\nimport threading\nimport warnings\nfrom unittest import mock\nimport pytest\nimport urllib3\nfrom urllib3.util import Timeout as Urllib3Timeout\nimport requests\nfrom requests.adapters import HTTPAdapter\nfrom requests.auth import HTTPDigestAuth, _basic_auth_str\nfrom requests.compat import JSONDecodeError, Morsel, MutableMapping, builtin_str, cookielib, getproxies, is_urllib3_1, urlparse\nfrom requests.cookies import cookiejar_from_dict, morsel_to_cookie\nfrom requests.exceptions import ChunkedEncodingError, ConnectionError, ConnectTimeout, ContentDecodingError, InvalidHeader, InvalidProxyURL, InvalidSchema, InvalidURL, MissingSchema, ProxyError, ReadTimeout, RequestException, RetryError, Timeout, TooManyRedirects, UnrewindableBodyError\nfrom requests.exceptions import SSLError as RequestsSSLError\nfrom requests.hooks import default_hooks\nfrom requests.models import PreparedRequest, urlencode\nfrom requests.sessions import SessionRedirectMixin\nfrom requests.structures import CaseInsensitiveDict\nfrom . import SNIMissingWarning\nfrom .compat import StringIO\nfrom .testserver.server import TLSServer, consume_socket_content\nfrom .utils import override_environ\n@pytest.mark.parametrize('timeout', ((None, 0.1), Urllib3Timeout(connect=None, read=0.1)))\ndef test_read_timeout(self, httpbin, timeout):\n    try:\n        requests.get(httpbin('delay/10'), timeout=timeout)\n        pytest.fail('The recv() request should time out.')\n    except ReadTimeout:\n        pass\n",
+        "structural_facts": {
+          "entrypoint": "test_read_timeout",
+          "direct_body_calls": [
+            {
+              "expression": "requests.get",
+              "line": 33
+            },
+            {
+              "expression": "httpbin",
+              "line": 33
+            },
+            {
+              "expression": "pytest.fail",
+              "line": 34
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        },
+        "source_observations": {
+          "definitions": [
+            {
+              "name": "test_read_timeout",
+              "parent": "<module>",
+              "line": 31,
+              "end_line": 36
+            }
+          ],
+          "calls": [
+            {
+              "callee": "requests.get",
+              "parent": "test_read_timeout",
+              "line": 33
+            },
+            {
+              "callee": "httpbin",
+              "parent": "test_read_timeout",
+              "line": 33
+            },
+            {
+              "callee": "pytest.fail",
+              "parent": "test_read_timeout",
+              "line": 34
+            }
+          ],
+          "assertions": [],
+          "call_edges": [],
+          "extraction": {
+            "method": "Independent standard-library Python AST lexical-parent walk",
+            "python": "3.11.9",
+            "source_sha256": "bf97b06ba1d1f6cc8a0896eed203c2c39ffb5a3a7ba494f0917772ad4b29ce05",
+            "scope": "Syntactic parents and direct-name edges, not dynamic dispatch or runtime coverage"
+          }
+        },
+        "controlled_execution": {
+          "source_sha256": "bf97b06ba1d1f6cc8a0896eed203c2c39ffb5a3a7ba494f0917772ad4b29ce05",
+          "commands": "Execute exact function body without parametrization decorators with real pytest.fail and real Requests timeout classes; substitute only requests.get; no network",
+          "dependencies": {
+            "pytest": "9.0.2",
+            "requests": "2.33.0"
+          },
+          "observations": [
+            {
+              "controlled_get_behavior": "return_normally",
+              "escaped_exception_type": "builtins.Failed"
+            },
+            {
+              "controlled_get_behavior": "raise_declared_timeout",
+              "escaped_exception_type": null
+            }
+          ],
+          "scope": "Controlled excerpt behavior; not upstream environment or network correctness"
+        }
+      }
+    }
+  },
+  {
+    "id": "requests-test_total_timeout_connect",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "requests",
+        "commit": "611c6162cbc4ac2020a2f91c7cfa4f3abf9bbb60",
+        "path": "tests/test_requests.py",
+        "source_file_sha256": "bc9a6811d6c0f4247fb4ca844e3eeb84c13088321b684692b0ef3eeac0b38bc5",
+        "excerpt_sha256": "689a9e225a1423cafa2d91468a0790f6a0e45f6987be12e35754ae76a90f728c"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import collections\nimport contextlib\nimport io\nimport json\nimport os\nimport pickle\nimport re\nimport tempfile\nimport threading\nimport warnings\nfrom unittest import mock\nimport pytest\nimport urllib3\nfrom urllib3.util import Timeout as Urllib3Timeout\nimport requests\nfrom requests.adapters import HTTPAdapter\nfrom requests.auth import HTTPDigestAuth, _basic_auth_str\nfrom requests.compat import JSONDecodeError, Morsel, MutableMapping, builtin_str, cookielib, getproxies, is_urllib3_1, urlparse\nfrom requests.cookies import cookiejar_from_dict, morsel_to_cookie\nfrom requests.exceptions import ChunkedEncodingError, ConnectionError, ConnectTimeout, ContentDecodingError, InvalidHeader, InvalidProxyURL, InvalidSchema, InvalidURL, MissingSchema, ProxyError, ReadTimeout, RequestException, RetryError, Timeout, TooManyRedirects, UnrewindableBodyError\nfrom requests.exceptions import SSLError as RequestsSSLError\nfrom requests.hooks import default_hooks\nfrom requests.models import PreparedRequest, urlencode\nfrom requests.sessions import SessionRedirectMixin\nfrom requests.structures import CaseInsensitiveDict\nfrom . import SNIMissingWarning\nfrom .compat import StringIO\nfrom .testserver.server import TLSServer, consume_socket_content\nfrom .utils import override_environ\n@pytest.mark.parametrize('timeout', ((0.1, 0.1), Urllib3Timeout(connect=0.1, read=0.1)))\ndef test_total_timeout_connect(self, timeout):\n    try:\n        requests.get(TARPIT, timeout=timeout)\n        pytest.fail('The connect() request should time out.')\n    except ConnectTimeout:\n        pass\n",
+        "structural_facts": {
+          "entrypoint": "test_total_timeout_connect",
+          "direct_body_calls": [
+            {
+              "expression": "requests.get",
+              "line": 33
+            },
+            {
+              "expression": "pytest.fail",
+              "line": 34
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        },
+        "source_observations": {
+          "definitions": [
+            {
+              "name": "test_total_timeout_connect",
+              "parent": "<module>",
+              "line": 31,
+              "end_line": 36
+            }
+          ],
+          "calls": [
+            {
+              "callee": "requests.get",
+              "parent": "test_total_timeout_connect",
+              "line": 33
+            },
+            {
+              "callee": "pytest.fail",
+              "parent": "test_total_timeout_connect",
+              "line": 34
+            }
+          ],
+          "assertions": [],
+          "call_edges": [],
+          "extraction": {
+            "method": "Independent standard-library Python AST lexical-parent walk",
+            "python": "3.11.9",
+            "source_sha256": "689a9e225a1423cafa2d91468a0790f6a0e45f6987be12e35754ae76a90f728c",
+            "scope": "Syntactic parents and direct-name edges, not dynamic dispatch or runtime coverage"
+          }
+        },
+        "controlled_execution": {
+          "source_sha256": "689a9e225a1423cafa2d91468a0790f6a0e45f6987be12e35754ae76a90f728c",
+          "commands": "Execute exact function body without parametrization decorators with real pytest.fail and real Requests timeout classes; substitute only requests.get; no network",
+          "dependencies": {
+            "pytest": "9.0.2",
+            "requests": "2.33.0"
+          },
+          "observations": [
+            {
+              "controlled_get_behavior": "return_normally",
+              "escaped_exception_type": "builtins.Failed"
+            },
+            {
+              "controlled_get_behavior": "raise_declared_timeout",
+              "escaped_exception_type": null
+            }
+          ],
+          "scope": "Controlled excerpt behavior; not upstream environment or network correctness"
+        }
+      }
+    }
+  },
+  {
+    "id": "requests-test_should_bypass_proxies_pass_only_hostname",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "requests",
+        "commit": "611c6162cbc4ac2020a2f91c7cfa4f3abf9bbb60",
+        "path": "tests/test_utils.py",
+        "source_file_sha256": "3953bda8c96f8f38f0f9ead5f0cb1c7aabb3cfba48f513fc742a3abe9f84d192",
+        "excerpt_sha256": "3226aa017ded995aa1f551e3f6503c21f24ef7212c0e4b90c8f8855831ca6d81"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import copy\nimport filecmp\nimport os\nimport tarfile\nimport zipfile\nfrom collections import deque\nfrom io import BytesIO\nfrom unittest import mock\nimport pytest\nfrom requests import compat\nfrom requests._internal_utils import unicode_is_ascii\nfrom requests.cookies import RequestsCookieJar\nfrom requests.structures import CaseInsensitiveDict\nfrom requests.utils import _parse_content_type_header, add_dict_to_cookiejar, address_in_network, dotted_netmask, extract_zipped_paths, get_auth_from_url, get_encoding_from_headers, get_encodings_from_content, get_environ_proxies, get_netrc_auth, guess_filename, guess_json_utf, is_ipv4_address, is_valid_cidr, iter_slices, parse_dict_header, parse_header_links, prepend_scheme_if_needed, requote_uri, select_proxy, set_environ, should_bypass_proxies, super_len, to_key_val_list, to_native_string, unquote_header_value, unquote_unreserved, urldefragauth\nfrom .compat import StringIO, cStringIO\n@pytest.mark.parametrize('url, expected', (('http://172.16.1.1/', '172.16.1.1'), ('http://172.16.1.1:5000/', '172.16.1.1'), ('http://user:pass@172.16.1.1', '172.16.1.1'), ('http://user:pass@172.16.1.1:5000', '172.16.1.1'), ('http://hostname/', 'hostname'), ('http://hostname:5000/', 'hostname'), ('http://user:pass@hostname', 'hostname'), ('http://user:pass@hostname:5000', 'hostname')))\ndef test_should_bypass_proxies_pass_only_hostname(url, expected):\n    \"\"\"The proxy_bypass function should be called with a hostname or IP without\n    a port number or auth credentials.\n    \"\"\"\n    with mock.patch('requests.utils.proxy_bypass') as proxy_bypass:\n        should_bypass_proxies(url, no_proxy=None)\n        proxy_bypass.assert_called_once_with(expected)\n",
+        "structural_facts": {
+          "entrypoint": "test_should_bypass_proxies_pass_only_hostname",
+          "direct_body_calls": [
+            {
+              "expression": "mock.patch",
+              "line": 21
+            },
+            {
+              "expression": "should_bypass_proxies",
+              "line": 22
+            },
+            {
+              "expression": "proxy_bypass.assert_called_once_with",
+              "line": 23
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_erase_line",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_win32_console.py",
+        "source_file_sha256": "2594201795abf36b10c50b5225923aabeaa6918d9bb1a7e47d1ab08664353fa6",
+        "excerpt_sha256": "d8a64a88eb88d8fd2bc3a964aaf8873af9cb4b43ce7eb18bad1478a905786078"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import dataclasses\nimport sys\nfrom unittest import mock\nfrom unittest.mock import patch\nimport pytest\nfrom rich.style import Style\n@patch.object(_win32_console, 'FillConsoleOutputCharacter', return_value=None)\n@patch.object(_win32_console, 'FillConsoleOutputAttribute', return_value=None)\ndef test_erase_line(FillConsoleOutputAttribute, FillConsoleOutputCharacter, win32_console_getters, win32_handle):\n    term = LegacyWindowsTerm(sys.stdout)\n    term.erase_line()\n    start = WindowsCoordinates(row=CURSOR_Y, col=0)\n    FillConsoleOutputCharacter.assert_called_once_with(win32_handle, ' ', length=SCREEN_WIDTH, start=start)\n    FillConsoleOutputAttribute.assert_called_once_with(win32_handle, DEFAULT_STYLE_ATTRIBUTE, length=SCREEN_WIDTH, start=start)\n",
+        "structural_facts": {
+          "entrypoint": "test_erase_line",
+          "direct_body_calls": [
+            {
+              "expression": "LegacyWindowsTerm",
+              "line": 10
+            },
+            {
+              "expression": "term.erase_line",
+              "line": 11
+            },
+            {
+              "expression": "WindowsCoordinates",
+              "line": 12
+            },
+            {
+              "expression": "FillConsoleOutputCharacter.assert_called_once_with",
+              "line": 13
+            },
+            {
+              "expression": "FillConsoleOutputAttribute.assert_called_once_with",
+              "line": 14
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_erase_end_of_line",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_win32_console.py",
+        "source_file_sha256": "2594201795abf36b10c50b5225923aabeaa6918d9bb1a7e47d1ab08664353fa6",
+        "excerpt_sha256": "0c4db521be3b443025d44b23cf265b738c9df4657f0b23c38cd99cbff882b662"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import dataclasses\nimport sys\nfrom unittest import mock\nfrom unittest.mock import patch\nimport pytest\nfrom rich.style import Style\n@patch.object(_win32_console, 'FillConsoleOutputCharacter', return_value=None)\n@patch.object(_win32_console, 'FillConsoleOutputAttribute', return_value=None)\ndef test_erase_end_of_line(FillConsoleOutputAttribute, FillConsoleOutputCharacter, win32_console_getters, win32_handle):\n    term = LegacyWindowsTerm(sys.stdout)\n    term.erase_end_of_line()\n    FillConsoleOutputCharacter.assert_called_once_with(win32_handle, ' ', length=SCREEN_WIDTH - CURSOR_X, start=CURSOR_POSITION)\n    FillConsoleOutputAttribute.assert_called_once_with(win32_handle, DEFAULT_STYLE_ATTRIBUTE, length=SCREEN_WIDTH - CURSOR_X, start=CURSOR_POSITION)\n",
+        "structural_facts": {
+          "entrypoint": "test_erase_end_of_line",
+          "direct_body_calls": [
+            {
+              "expression": "LegacyWindowsTerm",
+              "line": 10
+            },
+            {
+              "expression": "term.erase_end_of_line",
+              "line": 11
+            },
+            {
+              "expression": "FillConsoleOutputCharacter.assert_called_once_with",
+              "line": 12
+            },
+            {
+              "expression": "FillConsoleOutputAttribute.assert_called_once_with",
+              "line": 13
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_erase_start_of_line",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_win32_console.py",
+        "source_file_sha256": "2594201795abf36b10c50b5225923aabeaa6918d9bb1a7e47d1ab08664353fa6",
+        "excerpt_sha256": "a911495f9cf092e6a11fffe3dc476117660c1bca04cabfa72ca79f17361d4814"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import dataclasses\nimport sys\nfrom unittest import mock\nfrom unittest.mock import patch\nimport pytest\nfrom rich.style import Style\n@patch.object(_win32_console, 'FillConsoleOutputCharacter', return_value=None)\n@patch.object(_win32_console, 'FillConsoleOutputAttribute', return_value=None)\ndef test_erase_start_of_line(FillConsoleOutputAttribute, FillConsoleOutputCharacter, win32_console_getters, win32_handle):\n    term = LegacyWindowsTerm(sys.stdout)\n    term.erase_start_of_line()\n    start = WindowsCoordinates(CURSOR_Y, 0)\n    FillConsoleOutputCharacter.assert_called_once_with(win32_handle, ' ', length=CURSOR_X, start=start)\n    FillConsoleOutputAttribute.assert_called_once_with(win32_handle, DEFAULT_STYLE_ATTRIBUTE, length=CURSOR_X, start=start)\n",
+        "structural_facts": {
+          "entrypoint": "test_erase_start_of_line",
+          "direct_body_calls": [
+            {
+              "expression": "LegacyWindowsTerm",
+              "line": 10
+            },
+            {
+              "expression": "term.erase_start_of_line",
+              "line": 11
+            },
+            {
+              "expression": "WindowsCoordinates",
+              "line": 12
+            },
+            {
+              "expression": "FillConsoleOutputCharacter.assert_called_once_with",
+              "line": 13
+            },
+            {
+              "expression": "FillConsoleOutputAttribute.assert_called_once_with",
+              "line": 14
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_move_cursor_to",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_win32_console.py",
+        "source_file_sha256": "2594201795abf36b10c50b5225923aabeaa6918d9bb1a7e47d1ab08664353fa6",
+        "excerpt_sha256": "3c76dfc5e4a975d4db55c4796c522c19abad54312c8a3f7130e1da6dab3ec239"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import dataclasses\nimport sys\nfrom unittest import mock\nfrom unittest.mock import patch\nimport pytest\nfrom rich.style import Style\n@patch.object(_win32_console, 'SetConsoleCursorPosition', return_value=None)\ndef test_move_cursor_to(SetConsoleCursorPosition, win32_console_getters, win32_handle):\n    coords = WindowsCoordinates(row=4, col=5)\n    term = LegacyWindowsTerm(sys.stdout)\n    term.move_cursor_to(coords)\n    SetConsoleCursorPosition.assert_called_once_with(win32_handle, coords=coords)\n",
+        "structural_facts": {
+          "entrypoint": "test_move_cursor_to",
+          "direct_body_calls": [
+            {
+              "expression": "WindowsCoordinates",
+              "line": 9
+            },
+            {
+              "expression": "LegacyWindowsTerm",
+              "line": 10
+            },
+            {
+              "expression": "term.move_cursor_to",
+              "line": 11
+            },
+            {
+              "expression": "SetConsoleCursorPosition.assert_called_once_with",
+              "line": 12
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_move_cursor_up",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_win32_console.py",
+        "source_file_sha256": "2594201795abf36b10c50b5225923aabeaa6918d9bb1a7e47d1ab08664353fa6",
+        "excerpt_sha256": "f79f6338c3282ad02527c491e7762c6839652a4d86a514c06ac3d739bdd5f553"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import dataclasses\nimport sys\nfrom unittest import mock\nfrom unittest.mock import patch\nimport pytest\nfrom rich.style import Style\n@patch.object(_win32_console, 'SetConsoleCursorPosition', return_value=None)\ndef test_move_cursor_up(SetConsoleCursorPosition, win32_console_getters, win32_handle):\n    term = LegacyWindowsTerm(sys.stdout)\n    term.move_cursor_up()\n    SetConsoleCursorPosition.assert_called_once_with(win32_handle, coords=WindowsCoordinates(row=CURSOR_Y - 1, col=CURSOR_X))\n",
+        "structural_facts": {
+          "entrypoint": "test_move_cursor_up",
+          "direct_body_calls": [
+            {
+              "expression": "LegacyWindowsTerm",
+              "line": 9
+            },
+            {
+              "expression": "term.move_cursor_up",
+              "line": 10
+            },
+            {
+              "expression": "SetConsoleCursorPosition.assert_called_once_with",
+              "line": 11
+            },
+            {
+              "expression": "WindowsCoordinates",
+              "line": 11
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_move_cursor_down",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_win32_console.py",
+        "source_file_sha256": "2594201795abf36b10c50b5225923aabeaa6918d9bb1a7e47d1ab08664353fa6",
+        "excerpt_sha256": "77d439526275592fbd39b6f9ebaa89b0281893f9ceca4799b9f745615f90a538"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import dataclasses\nimport sys\nfrom unittest import mock\nfrom unittest.mock import patch\nimport pytest\nfrom rich.style import Style\n@patch.object(_win32_console, 'SetConsoleCursorPosition', return_value=None)\ndef test_move_cursor_down(SetConsoleCursorPosition, win32_console_getters, win32_handle):\n    term = LegacyWindowsTerm(sys.stdout)\n    term.move_cursor_down()\n    SetConsoleCursorPosition.assert_called_once_with(win32_handle, coords=WindowsCoordinates(row=CURSOR_Y + 1, col=CURSOR_X))\n",
+        "structural_facts": {
+          "entrypoint": "test_move_cursor_down",
+          "direct_body_calls": [
+            {
+              "expression": "LegacyWindowsTerm",
+              "line": 9
+            },
+            {
+              "expression": "term.move_cursor_down",
+              "line": 10
+            },
+            {
+              "expression": "SetConsoleCursorPosition.assert_called_once_with",
+              "line": 11
+            },
+            {
+              "expression": "WindowsCoordinates",
+              "line": 11
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_move_cursor_forward",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_win32_console.py",
+        "source_file_sha256": "2594201795abf36b10c50b5225923aabeaa6918d9bb1a7e47d1ab08664353fa6",
+        "excerpt_sha256": "3999f9e4a0deaaf443017395c85aaf6d02829a0ba0df052d792a458925663063"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import dataclasses\nimport sys\nfrom unittest import mock\nfrom unittest.mock import patch\nimport pytest\nfrom rich.style import Style\n@patch.object(_win32_console, 'SetConsoleCursorPosition', return_value=None)\ndef test_move_cursor_forward(SetConsoleCursorPosition, win32_console_getters, win32_handle):\n    term = LegacyWindowsTerm(sys.stdout)\n    term.move_cursor_forward()\n    SetConsoleCursorPosition.assert_called_once_with(win32_handle, coords=WindowsCoordinates(row=CURSOR_Y, col=CURSOR_X + 1))\n",
+        "structural_facts": {
+          "entrypoint": "test_move_cursor_forward",
+          "direct_body_calls": [
+            {
+              "expression": "LegacyWindowsTerm",
+              "line": 9
+            },
+            {
+              "expression": "term.move_cursor_forward",
+              "line": 10
+            },
+            {
+              "expression": "SetConsoleCursorPosition.assert_called_once_with",
+              "line": 11
+            },
+            {
+              "expression": "WindowsCoordinates",
+              "line": 11
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_move_cursor_forward_newline_wrap",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_win32_console.py",
+        "source_file_sha256": "2594201795abf36b10c50b5225923aabeaa6918d9bb1a7e47d1ab08664353fa6",
+        "excerpt_sha256": "d980b02ffa90e7862856315c96dfcdc9c68e15d8d648199886f7177df3e0f382"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import dataclasses\nimport sys\nfrom unittest import mock\nfrom unittest.mock import patch\nimport pytest\nfrom rich.style import Style\n@patch.object(_win32_console, 'SetConsoleCursorPosition', return_value=None)\ndef test_move_cursor_forward_newline_wrap(SetConsoleCursorPosition, win32_console_getters, win32_handle):\n    cursor_at_end_of_line = StubScreenBufferInfo(dwCursorPosition=COORD(SCREEN_WIDTH - 1, CURSOR_Y))\n    win32_console_getters['GetConsoleScreenBufferInfo'].return_value = cursor_at_end_of_line\n    term = LegacyWindowsTerm(sys.stdout)\n    term.move_cursor_forward()\n    SetConsoleCursorPosition.assert_called_once_with(win32_handle, coords=WindowsCoordinates(row=CURSOR_Y + 1, col=0))\n",
+        "structural_facts": {
+          "entrypoint": "test_move_cursor_forward_newline_wrap",
+          "direct_body_calls": [
+            {
+              "expression": "StubScreenBufferInfo",
+              "line": 9
+            },
+            {
+              "expression": "COORD",
+              "line": 9
+            },
+            {
+              "expression": "LegacyWindowsTerm",
+              "line": 11
+            },
+            {
+              "expression": "term.move_cursor_forward",
+              "line": 12
+            },
+            {
+              "expression": "SetConsoleCursorPosition.assert_called_once_with",
+              "line": 13
+            },
+            {
+              "expression": "WindowsCoordinates",
+              "line": 13
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_move_cursor_to_column",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_win32_console.py",
+        "source_file_sha256": "2594201795abf36b10c50b5225923aabeaa6918d9bb1a7e47d1ab08664353fa6",
+        "excerpt_sha256": "e701698543594314b24df30dacbecb0e573bf96cfe70cd60e9a859940e2aa7ae"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import dataclasses\nimport sys\nfrom unittest import mock\nfrom unittest.mock import patch\nimport pytest\nfrom rich.style import Style\n@patch.object(_win32_console, 'SetConsoleCursorPosition', return_value=None)\ndef test_move_cursor_to_column(SetConsoleCursorPosition, win32_console_getters, win32_handle):\n    term = LegacyWindowsTerm(sys.stdout)\n    term.move_cursor_to_column(5)\n    SetConsoleCursorPosition.assert_called_once_with(win32_handle, coords=WindowsCoordinates(CURSOR_Y, 5))\n",
+        "structural_facts": {
+          "entrypoint": "test_move_cursor_to_column",
+          "direct_body_calls": [
+            {
+              "expression": "LegacyWindowsTerm",
+              "line": 9
+            },
+            {
+              "expression": "term.move_cursor_to_column",
+              "line": 10
+            },
+            {
+              "expression": "SetConsoleCursorPosition.assert_called_once_with",
+              "line": 11
+            },
+            {
+              "expression": "WindowsCoordinates",
+              "line": 11
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_move_cursor_backward",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_win32_console.py",
+        "source_file_sha256": "2594201795abf36b10c50b5225923aabeaa6918d9bb1a7e47d1ab08664353fa6",
+        "excerpt_sha256": "f37aa2b3d2fa81dfbd2d3f3b26a5ddfe33458fc982e3f71797530e9cee4c25e0"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import dataclasses\nimport sys\nfrom unittest import mock\nfrom unittest.mock import patch\nimport pytest\nfrom rich.style import Style\n@patch.object(_win32_console, 'SetConsoleCursorPosition', return_value=None)\ndef test_move_cursor_backward(SetConsoleCursorPosition, win32_console_getters, win32_handle):\n    term = LegacyWindowsTerm(sys.stdout)\n    term.move_cursor_backward()\n    SetConsoleCursorPosition.assert_called_once_with(win32_handle, coords=WindowsCoordinates(row=CURSOR_Y, col=CURSOR_X - 1))\n",
+        "structural_facts": {
+          "entrypoint": "test_move_cursor_backward",
+          "direct_body_calls": [
+            {
+              "expression": "LegacyWindowsTerm",
+              "line": 9
+            },
+            {
+              "expression": "term.move_cursor_backward",
+              "line": 10
+            },
+            {
+              "expression": "SetConsoleCursorPosition.assert_called_once_with",
+              "line": 11
+            },
+            {
+              "expression": "WindowsCoordinates",
+              "line": 11
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_move_cursor_backward_prev_line_wrap",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_win32_console.py",
+        "source_file_sha256": "2594201795abf36b10c50b5225923aabeaa6918d9bb1a7e47d1ab08664353fa6",
+        "excerpt_sha256": "ea082e0d0f84cf89fa7b9d07da3f201af1f25511684d62260ad681853271cf03"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import dataclasses\nimport sys\nfrom unittest import mock\nfrom unittest.mock import patch\nimport pytest\nfrom rich.style import Style\n@patch.object(_win32_console, 'SetConsoleCursorPosition', return_value=None)\ndef test_move_cursor_backward_prev_line_wrap(SetConsoleCursorPosition, win32_console_getters, win32_handle):\n    cursor_at_start_of_line = StubScreenBufferInfo(dwCursorPosition=COORD(0, CURSOR_Y))\n    win32_console_getters['GetConsoleScreenBufferInfo'].return_value = cursor_at_start_of_line\n    term = LegacyWindowsTerm(sys.stdout)\n    term.move_cursor_backward()\n    SetConsoleCursorPosition.assert_called_once_with(win32_handle, coords=WindowsCoordinates(row=CURSOR_Y - 1, col=SCREEN_WIDTH - 1))\n",
+        "structural_facts": {
+          "entrypoint": "test_move_cursor_backward_prev_line_wrap",
+          "direct_body_calls": [
+            {
+              "expression": "StubScreenBufferInfo",
+              "line": 9
+            },
+            {
+              "expression": "COORD",
+              "line": 9
+            },
+            {
+              "expression": "LegacyWindowsTerm",
+              "line": 11
+            },
+            {
+              "expression": "term.move_cursor_backward",
+              "line": 12
+            },
+            {
+              "expression": "SetConsoleCursorPosition.assert_called_once_with",
+              "line": 13
+            },
+            {
+              "expression": "WindowsCoordinates",
+              "line": 13
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_set_title",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_win32_console.py",
+        "source_file_sha256": "2594201795abf36b10c50b5225923aabeaa6918d9bb1a7e47d1ab08664353fa6",
+        "excerpt_sha256": "f338e07715201f3041d2beda15d552fddd381cfe430295d0092614be2c1b975f"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import dataclasses\nimport sys\nfrom unittest import mock\nfrom unittest.mock import patch\nimport pytest\nfrom rich.style import Style\n@patch.object(_win32_console, 'SetConsoleTitle', return_value=None)\ndef test_set_title(SetConsoleTitle, win32_console_getters):\n    term = LegacyWindowsTerm(sys.stdout)\n    term.set_title('title')\n    SetConsoleTitle.assert_called_once_with('title')\n",
+        "structural_facts": {
+          "entrypoint": "test_set_title",
+          "direct_body_calls": [
+            {
+              "expression": "LegacyWindowsTerm",
+              "line": 9
+            },
+            {
+              "expression": "term.set_title",
+              "line": 10
+            },
+            {
+              "expression": "SetConsoleTitle.assert_called_once_with",
+              "line": 11
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_text_only",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_windows_renderer.py",
+        "source_file_sha256": "76d414134004c40de8030a9e41947e77419844b7bd6066f207c18cd91ebfd6cd",
+        "excerpt_sha256": "e02353c281a33789ae41d3406accd7104fa8a9772783a85564aefe4161724aee"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import sys\nfrom unittest.mock import call, create_autospec\nimport pytest\nfrom rich.segment import ControlType, Segment\nfrom rich.style import Style\ndef test_text_only(legacy_term_mock):\n    text = 'Hello, world!'\n    buffer = [Segment(text)]\n    legacy_windows_render(buffer, legacy_term_mock)\n    legacy_term_mock.write_text.assert_called_once_with(text)\n",
+        "structural_facts": {
+          "entrypoint": "test_text_only",
+          "direct_body_calls": [
+            {
+              "expression": "Segment",
+              "line": 8
+            },
+            {
+              "expression": "legacy_windows_render",
+              "line": 9
+            },
+            {
+              "expression": "legacy_term_mock.write_text.assert_called_once_with",
+              "line": 10
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_text_with_style",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_windows_renderer.py",
+        "source_file_sha256": "76d414134004c40de8030a9e41947e77419844b7bd6066f207c18cd91ebfd6cd",
+        "excerpt_sha256": "053e2ec64f588d7fde6fdd5824b77e5f2d9bafb528b9eeb633c51c9fbcc8ef20"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import sys\nfrom unittest.mock import call, create_autospec\nimport pytest\nfrom rich.segment import ControlType, Segment\nfrom rich.style import Style\ndef test_text_with_style(legacy_term_mock):\n    text = 'Hello, world!'\n    style = Style.parse('black on red')\n    buffer = [Segment(text, style)]\n    legacy_windows_render(buffer, legacy_term_mock)\n    legacy_term_mock.write_styled.assert_called_once_with(text, style)\n",
+        "structural_facts": {
+          "entrypoint": "test_text_with_style",
+          "direct_body_calls": [
+            {
+              "expression": "Style.parse",
+              "line": 8
+            },
+            {
+              "expression": "Segment",
+              "line": 9
+            },
+            {
+              "expression": "legacy_windows_render",
+              "line": 10
+            },
+            {
+              "expression": "legacy_term_mock.write_styled.assert_called_once_with",
+              "line": 11
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_control_cursor_move_to",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_windows_renderer.py",
+        "source_file_sha256": "76d414134004c40de8030a9e41947e77419844b7bd6066f207c18cd91ebfd6cd",
+        "excerpt_sha256": "6ed136ee8d75fb835962bc3c0df00b091f1e638d0435dcfeb95730ffe5a0381a"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import sys\nfrom unittest.mock import call, create_autospec\nimport pytest\nfrom rich.segment import ControlType, Segment\nfrom rich.style import Style\ndef test_control_cursor_move_to(legacy_term_mock):\n    buffer = [Segment('', None, [(ControlType.CURSOR_MOVE_TO, 20, 30)])]\n    legacy_windows_render(buffer, legacy_term_mock)\n    legacy_term_mock.move_cursor_to.assert_called_once_with(WindowsCoordinates(row=29, col=19))\n",
+        "structural_facts": {
+          "entrypoint": "test_control_cursor_move_to",
+          "direct_body_calls": [
+            {
+              "expression": "Segment",
+              "line": 7
+            },
+            {
+              "expression": "legacy_windows_render",
+              "line": 8
+            },
+            {
+              "expression": "legacy_term_mock.move_cursor_to.assert_called_once_with",
+              "line": 9
+            },
+            {
+              "expression": "WindowsCoordinates",
+              "line": 9
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_control_carriage_return",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_windows_renderer.py",
+        "source_file_sha256": "76d414134004c40de8030a9e41947e77419844b7bd6066f207c18cd91ebfd6cd",
+        "excerpt_sha256": "a79c5a1b9f23c549fb63e4dc23a5614cf68f195adbef6e4c8ec9b1fbf8da7a31"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import sys\nfrom unittest.mock import call, create_autospec\nimport pytest\nfrom rich.segment import ControlType, Segment\nfrom rich.style import Style\ndef test_control_carriage_return(legacy_term_mock):\n    buffer = [Segment('', None, [(ControlType.CARRIAGE_RETURN,)])]\n    legacy_windows_render(buffer, legacy_term_mock)\n    legacy_term_mock.write_text.assert_called_once_with('\\r')\n",
+        "structural_facts": {
+          "entrypoint": "test_control_carriage_return",
+          "direct_body_calls": [
+            {
+              "expression": "Segment",
+              "line": 7
+            },
+            {
+              "expression": "legacy_windows_render",
+              "line": 8
+            },
+            {
+              "expression": "legacy_term_mock.write_text.assert_called_once_with",
+              "line": 9
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_control_home",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_windows_renderer.py",
+        "source_file_sha256": "76d414134004c40de8030a9e41947e77419844b7bd6066f207c18cd91ebfd6cd",
+        "excerpt_sha256": "d937415bd90020cb523f5b1349ae7a68552bb91a3993235488f85bd4511998d0"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import sys\nfrom unittest.mock import call, create_autospec\nimport pytest\nfrom rich.segment import ControlType, Segment\nfrom rich.style import Style\ndef test_control_home(legacy_term_mock):\n    buffer = [Segment('', None, [(ControlType.HOME,)])]\n    legacy_windows_render(buffer, legacy_term_mock)\n    legacy_term_mock.move_cursor_to.assert_called_once_with(WindowsCoordinates(0, 0))\n",
+        "structural_facts": {
+          "entrypoint": "test_control_home",
+          "direct_body_calls": [
+            {
+              "expression": "Segment",
+              "line": 7
+            },
+            {
+              "expression": "legacy_windows_render",
+              "line": 8
+            },
+            {
+              "expression": "legacy_term_mock.move_cursor_to.assert_called_once_with",
+              "line": 9
+            },
+            {
+              "expression": "WindowsCoordinates",
+              "line": 9
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_control_cursor_single_cell_movement",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_windows_renderer.py",
+        "source_file_sha256": "76d414134004c40de8030a9e41947e77419844b7bd6066f207c18cd91ebfd6cd",
+        "excerpt_sha256": "d4252896b30fe4de3200ddca720c177696c96f35b8f3f5a4745ebe03e2b14de2"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import sys\nfrom unittest.mock import call, create_autospec\nimport pytest\nfrom rich.segment import ControlType, Segment\nfrom rich.style import Style\n@pytest.mark.parametrize('control_type, method_name', [(ControlType.CURSOR_UP, 'move_cursor_up'), (ControlType.CURSOR_DOWN, 'move_cursor_down'), (ControlType.CURSOR_FORWARD, 'move_cursor_forward'), (ControlType.CURSOR_BACKWARD, 'move_cursor_backward')])\ndef test_control_cursor_single_cell_movement(legacy_term_mock, control_type, method_name):\n    buffer = [Segment('', None, [(control_type,)])]\n    legacy_windows_render(buffer, legacy_term_mock)\n    getattr(legacy_term_mock, method_name).assert_called_once_with()\n",
+        "structural_facts": {
+          "entrypoint": "test_control_cursor_single_cell_movement",
+          "direct_body_calls": [
+            {
+              "expression": "Segment",
+              "line": 8
+            },
+            {
+              "expression": "legacy_windows_render",
+              "line": 9
+            },
+            {
+              "expression": "getattr(legacy_term_mock, method_name).assert_called_once_with",
+              "line": 10
+            },
+            {
+              "expression": "getattr",
+              "line": 10
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_control_erase_line",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_windows_renderer.py",
+        "source_file_sha256": "76d414134004c40de8030a9e41947e77419844b7bd6066f207c18cd91ebfd6cd",
+        "excerpt_sha256": "fed6f80e32a35f87e48750cf94d227eed1d77057bcb501e565656c60c59ec816"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import sys\nfrom unittest.mock import call, create_autospec\nimport pytest\nfrom rich.segment import ControlType, Segment\nfrom rich.style import Style\n@pytest.mark.parametrize('erase_mode, method_name', [(0, 'erase_end_of_line'), (1, 'erase_start_of_line'), (2, 'erase_line')])\ndef test_control_erase_line(legacy_term_mock, erase_mode, method_name):\n    buffer = [Segment('', None, [(ControlType.ERASE_IN_LINE, erase_mode)])]\n    legacy_windows_render(buffer, legacy_term_mock)\n    getattr(legacy_term_mock, method_name).assert_called_once_with()\n",
+        "structural_facts": {
+          "entrypoint": "test_control_erase_line",
+          "direct_body_calls": [
+            {
+              "expression": "Segment",
+              "line": 8
+            },
+            {
+              "expression": "legacy_windows_render",
+              "line": 9
+            },
+            {
+              "expression": "getattr(legacy_term_mock, method_name).assert_called_once_with",
+              "line": 10
+            },
+            {
+              "expression": "getattr",
+              "line": 10
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_control_show_cursor",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_windows_renderer.py",
+        "source_file_sha256": "76d414134004c40de8030a9e41947e77419844b7bd6066f207c18cd91ebfd6cd",
+        "excerpt_sha256": "1b8514d48bc2ddbdf3771d684bba592242c3874f416f9c9d193cc16b55526a4b"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import sys\nfrom unittest.mock import call, create_autospec\nimport pytest\nfrom rich.segment import ControlType, Segment\nfrom rich.style import Style\ndef test_control_show_cursor(legacy_term_mock):\n    buffer = [Segment('', None, [(ControlType.SHOW_CURSOR,)])]\n    legacy_windows_render(buffer, legacy_term_mock)\n    legacy_term_mock.show_cursor.assert_called_once_with()\n",
+        "structural_facts": {
+          "entrypoint": "test_control_show_cursor",
+          "direct_body_calls": [
+            {
+              "expression": "Segment",
+              "line": 7
+            },
+            {
+              "expression": "legacy_windows_render",
+              "line": 8
+            },
+            {
+              "expression": "legacy_term_mock.show_cursor.assert_called_once_with",
+              "line": 9
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_control_hide_cursor",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_windows_renderer.py",
+        "source_file_sha256": "76d414134004c40de8030a9e41947e77419844b7bd6066f207c18cd91ebfd6cd",
+        "excerpt_sha256": "d66ca382c78333927d58aece19e810b1c6443603599eaa90181dced83a3c9089"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import sys\nfrom unittest.mock import call, create_autospec\nimport pytest\nfrom rich.segment import ControlType, Segment\nfrom rich.style import Style\ndef test_control_hide_cursor(legacy_term_mock):\n    buffer = [Segment('', None, [(ControlType.HIDE_CURSOR,)])]\n    legacy_windows_render(buffer, legacy_term_mock)\n    legacy_term_mock.hide_cursor.assert_called_once_with()\n",
+        "structural_facts": {
+          "entrypoint": "test_control_hide_cursor",
+          "direct_body_calls": [
+            {
+              "expression": "Segment",
+              "line": 7
+            },
+            {
+              "expression": "legacy_windows_render",
+              "line": 8
+            },
+            {
+              "expression": "legacy_term_mock.hide_cursor.assert_called_once_with",
+              "line": 9
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_control_cursor_move_to_column",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_windows_renderer.py",
+        "source_file_sha256": "76d414134004c40de8030a9e41947e77419844b7bd6066f207c18cd91ebfd6cd",
+        "excerpt_sha256": "e15dc4c1962ea2d206cb4bc6e26db71cf6ae7c38a32cb0bcc198f65f97c90c35"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import sys\nfrom unittest.mock import call, create_autospec\nimport pytest\nfrom rich.segment import ControlType, Segment\nfrom rich.style import Style\ndef test_control_cursor_move_to_column(legacy_term_mock):\n    buffer = [Segment('', None, [(ControlType.CURSOR_MOVE_TO_COLUMN, 3)])]\n    legacy_windows_render(buffer, legacy_term_mock)\n    legacy_term_mock.move_cursor_to_column.assert_called_once_with(2)\n",
+        "structural_facts": {
+          "entrypoint": "test_control_cursor_move_to_column",
+          "direct_body_calls": [
+            {
+              "expression": "Segment",
+              "line": 7
+            },
+            {
+              "expression": "legacy_windows_render",
+              "line": 8
+            },
+            {
+              "expression": "legacy_term_mock.move_cursor_to_column.assert_called_once_with",
+              "line": 9
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_control_set_terminal_window_title",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_windows_renderer.py",
+        "source_file_sha256": "76d414134004c40de8030a9e41947e77419844b7bd6066f207c18cd91ebfd6cd",
+        "excerpt_sha256": "889c9f4a67dcdb83ac1d281a684e3abc6490e895d04a5179509390f3217636f1"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import sys\nfrom unittest.mock import call, create_autospec\nimport pytest\nfrom rich.segment import ControlType, Segment\nfrom rich.style import Style\ndef test_control_set_terminal_window_title(legacy_term_mock):\n    buffer = [Segment('', None, [(ControlType.SET_WINDOW_TITLE, 'Hello, world!')])]\n    legacy_windows_render(buffer, legacy_term_mock)\n    legacy_term_mock.set_title.assert_called_once_with('Hello, world!')\n",
+        "structural_facts": {
+          "entrypoint": "test_control_set_terminal_window_title",
+          "direct_body_calls": [
+            {
+              "expression": "Segment",
+              "line": 7
+            },
+            {
+              "expression": "legacy_windows_render",
+              "line": 8
+            },
+            {
+              "expression": "legacy_term_mock.set_title.assert_called_once_with",
+              "line": 9
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_get_style",
+    "category": "test_oracle_strength",
+    "expected": true,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_console.py",
+        "source_file_sha256": "60da0ce519daf0c4ba1a7129d3d34232160e74fef11a66900bd32c4c91c8b4b6",
+        "excerpt_sha256": "a7fbcd934ddc6b618a4772b1c653cec7feac98cf00f5e228f216c7bde0298256"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import datetime\nimport io\nimport os\nimport subprocess\nimport sys\nimport tempfile\nfrom typing import Optional, Tuple, Type, Union\nfrom unittest import mock\nimport pytest\nfrom rich import errors\nfrom rich._null_file import NullFile\nfrom rich.color import ColorSystem\nfrom rich.console import CaptureError, Console, ConsoleDimensions, ConsoleOptions, ScreenUpdate, group\nfrom rich.control import Control\nfrom rich.measure import measure_renderables\nfrom rich.padding import Padding\nfrom rich.pager import SystemPager\nfrom rich.panel import Panel\nfrom rich.region import Region\nfrom rich.segment import Segment\nfrom rich.status import Status\nfrom rich.style import Style\nfrom rich.text import Text\ndef test_get_style() -> None:\n    console = Console()\n    console.get_style('repr.brace') == Style(bold=True)\n",
+        "execution_control": {
+          "id": "rich-test_get_style",
+          "source_sha256": "a7fbcd934ddc6b618a4772b1c653cec7feac98cf00f5e228f216c7bde0298256",
+          "execution": "Exact test function with controlled Console.get_style returning a non-equal object; negative control adds assert to discarded comparison.",
+          "original_test_exception": null,
+          "assertion_negative_control_exception": "AssertionError",
+          "scope": "Controlled excerpt execution only; not an upstream suite or library mutation score."
+        },
+        "structural_facts": {
+          "entrypoint": "test_get_style",
+          "direct_body_calls": [
+            {
+              "expression": "Console",
+              "line": 25
+            },
+            {
+              "expression": "console.get_style",
+              "line": 26
+            },
+            {
+              "expression": "Style",
+              "line": 26
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [
+            {
+              "expression": "console.get_style('repr.brace') == Style(bold=True)",
+              "line": 26
+            }
+          ],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_get_style_default",
+    "category": "test_oracle_strength",
+    "expected": true,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_console.py",
+        "source_file_sha256": "60da0ce519daf0c4ba1a7129d3d34232160e74fef11a66900bd32c4c91c8b4b6",
+        "excerpt_sha256": "ebe9798dc24ed32f8ead0268728d830b61ece22d1e2512a8f5aef079aa5dea5f"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import datetime\nimport io\nimport os\nimport subprocess\nimport sys\nimport tempfile\nfrom typing import Optional, Tuple, Type, Union\nfrom unittest import mock\nimport pytest\nfrom rich import errors\nfrom rich._null_file import NullFile\nfrom rich.color import ColorSystem\nfrom rich.console import CaptureError, Console, ConsoleDimensions, ConsoleOptions, ScreenUpdate, group\nfrom rich.control import Control\nfrom rich.measure import measure_renderables\nfrom rich.padding import Padding\nfrom rich.pager import SystemPager\nfrom rich.panel import Panel\nfrom rich.region import Region\nfrom rich.segment import Segment\nfrom rich.status import Status\nfrom rich.style import Style\nfrom rich.text import Text\ndef test_get_style_default() -> None:\n    console = Console()\n    console.get_style('foobar', default='red') == Style(color='red')\n",
+        "execution_control": {
+          "id": "rich-test_get_style_default",
+          "source_sha256": "ebe9798dc24ed32f8ead0268728d830b61ece22d1e2512a8f5aef079aa5dea5f",
+          "execution": "Exact test function with controlled Console.get_style returning a non-equal object; negative control adds assert to discarded comparison.",
+          "original_test_exception": null,
+          "assertion_negative_control_exception": "AssertionError",
+          "scope": "Controlled excerpt execution only; not an upstream suite or library mutation score."
+        },
+        "structural_facts": {
+          "entrypoint": "test_get_style_default",
+          "direct_body_calls": [
+            {
+              "expression": "Console",
+              "line": 25
+            },
+            {
+              "expression": "console.get_style",
+              "line": 26
+            },
+            {
+              "expression": "Style",
+              "line": 26
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [
+            {
+              "expression": "console.get_style('foobar', default='red') == Style(color='red')",
+              "line": 26
+            }
+          ],
+          "nested_definitions": [],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        }
+      }
+    }
+  },
+  {
+    "id": "rich-test_recursive_exception",
+    "category": "test_oracle_strength",
+    "expected": false,
+    "state": {
+      "requirement": "Determine whether this top-level collected test lacks a reachable, non-vacuous assertion or failure oracle that can propagate failure to the test runner. This is a bounded source-oracle question, not a claim of runtime execution or complete test quality.",
+      "candidate": {
+        "repository": "rich",
+        "commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "path": "tests/test_traceback.py",
+        "source_file_sha256": "8dd88d268b396412debc617c5533d2c4ae96b3dc62339e79d438ab50722c09e0",
+        "excerpt_sha256": "4b9d16c750cc937c09be3dbe1ba6973696d14dac05d05ed1da680de15696f6b0"
+      },
+      "evidence": {
+        "kind": "exact_upstream_source_excerpt",
+        "source": "import io\nimport re\nimport sys\nfrom typing import List\nimport pytest\nfrom rich.console import Console\nfrom rich.theme import Theme\nfrom rich.traceback import Traceback, install\ndef test_recursive_exception() -> None:\n    \"\"\"Regression test for https://github.com/Textualize/rich/issues/3708\n\n    Test this doesn't create an infinite loop.\n\n    \"\"\"\n    console = Console()\n\n    def foo() -> None:\n        try:\n            raise RuntimeError('Hello')\n        except Exception as e:\n            raise e from e\n\n    def bar() -> None:\n        try:\n            foo()\n        except Exception as e:\n            assert e is e.__cause__\n            console.print_exception(show_locals=True)\n    bar()\n",
+        "structural_facts": {
+          "entrypoint": "test_recursive_exception",
+          "direct_body_calls": [
+            {
+              "expression": "Console",
+              "line": 15
+            },
+            {
+              "expression": "bar",
+              "line": 29
+            }
+          ],
+          "direct_assertions": [],
+          "discarded_comparisons": [],
+          "nested_definitions": [
+            {
+              "name": "foo",
+              "line": 17
+            },
+            {
+              "name": "bar",
+              "line": 23
+            }
+          ],
+          "method": "Python AST observations excluding deferred function/class/lambda bodies; facts are syntax, not runtime coverage."
+        },
+        "source_observations": {
+          "definitions": [
+            {
+              "name": "test_recursive_exception",
+              "parent": "<module>",
+              "line": 9,
+              "end_line": 29
+            },
+            {
+              "name": "foo",
+              "parent": "test_recursive_exception",
+              "line": 17,
+              "end_line": 21
+            },
+            {
+              "name": "bar",
+              "parent": "test_recursive_exception",
+              "line": 23,
+              "end_line": 28
+            }
+          ],
+          "calls": [
+            {
+              "callee": "Console",
+              "parent": "test_recursive_exception",
+              "line": 15
+            },
+            {
+              "callee": "RuntimeError",
+              "parent": "foo",
+              "line": 19
+            },
+            {
+              "callee": "foo",
+              "parent": "bar",
+              "line": 25
+            },
+            {
+              "callee": "console.print_exception",
+              "parent": "bar",
+              "line": 28
+            },
+            {
+              "callee": "bar",
+              "parent": "test_recursive_exception",
+              "line": 29
+            }
+          ],
+          "assertions": [
+            {
+              "expression": "e is e.__cause__",
+              "parent": "bar",
+              "line": 27
+            }
+          ],
+          "call_edges": [
+            {
+              "from": "bar",
+              "to": "foo",
+              "line": 25,
+              "kind": "direct_name_syntax"
+            },
+            {
+              "from": "test_recursive_exception",
+              "to": "bar",
+              "line": 29,
+              "kind": "direct_name_syntax"
+            }
+          ],
+          "extraction": {
+            "method": "Independent standard-library Python AST lexical-parent walk",
+            "python": "3.11.9",
+            "source_sha256": "4b9d16c750cc937c09be3dbe1ba6973696d14dac05d05ed1da680de15696f6b0",
+            "scope": "Syntactic parents and direct-name edges, not dynamic dispatch or runtime coverage"
+          }
+        }
+      }
+    }
+  }
+]

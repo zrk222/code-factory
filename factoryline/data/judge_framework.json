@@ -1,6 +1,6 @@
 {
   "schema": "factory.judge-framework.v1",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "purpose": "Evaluate findings and CF output consistency against observable evidence; experimental judgments cannot approve or override audits.",
   "case_contract": {
     "id": "Unique stable case identifier",
@@ -78,10 +78,10 @@
         "true": "No effective failure check executes in the outer test body. Example: def test_x():\n    def callback():\n        assert result == 1\nThe callback is not called. Another example: def test_x():\n    result == expected\nThe comparison is discarded.",
         "false": "At least one meaningful failure check executes and propagates. Example: def test_x():\n    result = system()\n    assert result == expected\nMock assert_called_once_with after a system interaction and pytest.raises are checks too."
       },
-      "evidence_instructions": "Is the exact test excerpt present in state.evidence.source, with its repository commit, relative path and excerpt SHA-256 in state.candidate? This checks packet completeness only. Do not decide whether the test has a failure check, authenticate the upstream repository, or require runtime execution. The host verifies the excerpt digest. Called-helper behavior, when absent, must remain unresolved in the finding judgment.",
+      "evidence_instructions": "Is Python test-function source text present in state.evidence.source? Check text presence only. The host separately rejects missing revision/path/digest or a digest mismatch. Do not judge assertion reachability, helper behavior or runtime execution in this question.",
       "evidence_criteria": {
-        "true": "The state supplies a nonempty exact test source, commit, relative path and excerpt SHA-256.",
-        "false": "The test source or any of its commit, path or excerpt SHA-256 fields is absent."
+        "true": "state.evidence.source contains Python test-function source text.",
+        "false": "state.evidence.source is missing, empty or lacks the test function source."
       }
     }
   },
@@ -92,6 +92,9 @@
     "facts": "Separate source-derived control-flow facts from model interpretation. Record test collection, calls actually executed, assertion reachability and error propagation without embedding expected labels or the scanner verdict into blind review.",
     "runtime": "For behavior claims, attach actual command, exit code, candidate/environment identity and paired failing or mutated controls. Source-only packets support source claims only.",
     "blind_adjudication": "Freeze label and baseline files separately from model inputs; retain disagreements, abstentions, source hashes, model identity, rubric hashes and all reported costs. Independent AI agreement is distinct from human-reviewed detection accuracy.",
-    "evidence_question": "Keep packet completeness separate from semantic finding assessment. Host checks validate source digest and revision shape; model probability does not authenticate a repository. Missing helper context must leave the finding unresolved."
+    "evidence_question": "Keep packet completeness separate from semantic finding assessment. Host checks validate source digest and revision shape; model probability does not authenticate a repository. Missing helper context must leave the finding unresolved.",
+    "control_flow": "For nested definitions and delegated checks, supply label-blind lexical parent names, statement line spans and direct-name call edges, bound to the excerpt hash and extractor version. Distinguish syntactic edges from resolved dynamic dispatch. Ask Jev to cross-check source against these facts; never insert a final scanner verdict as an input fact.",
+    "execution_controls": "For disputed exception behavior, include exact command and source digest, dependency versions, controlled dependency behavior and escaped exception types. Identify omitted decorators and synthetic dependencies explicitly. Such observations do not certify the original upstream environment or complete runtime coverage.",
+    "unresolved_followup": "Retain each abstaining criterion, source binding, raw probabilities and observations. Request missing helper/caller semantics or independent reviewer adjudication. Do not lower thresholds or replace an abstention with the deterministic scanner finding."
   }
 }

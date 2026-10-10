@@ -1,0 +1,44 @@
+{
+  "agent_actions": [],
+  "authority": {
+    "approval": false,
+    "connector": false,
+    "credential": false,
+    "deployment": false,
+    "execution": false,
+    "merge": false,
+    "messaging": false,
+    "publication": false,
+    "repair": false,
+    "signing": false
+  },
+  "candidate_sha256": "709b462debc63e0c44c35d63d160cfbd9a6ca897e9643961975772b2f6159aa1",
+  "checks": 10,
+  "contract_sha256": "9a139a5ffa06fd0485b329f215d6af273b278bda6158e45ae71f828f24d36790",
+  "errors": [],
+  "inapplicability_evidence": {
+    "accessibility": {
+      "actual_sha256": "c4a880e7cc11601716da07cfc3869337e591c1362901b5b03107a2d2b8b63c09",
+      "current": true,
+      "kind": "review",
+      "path": ".factory/independent-ai/applicability-review.md",
+      "sha256": "c4a880e7cc11601716da07cfc3869337e591c1362901b5b03107a2d2b8b63c09"
+    }
+  },
+  "limits": [
+    "Recorded evidence completeness and hashes only; observations require review.",
+    "Inapplicability review evidence is hash-bound but its judgment and identity are not authenticated.",
+    "Each contract/observation JSON input and evidence artifact is limited to 16 MiB; total evidence hashing is limited to 128 MiB, 4096 artifact references, and 4096 required check/profile pairs.",
+    "No project command or provider is executed.",
+    "No approval, certification or deployment authority."
+  ],
+  "observations_sha256": "1a26c013a1e4ed55d11ba2218b7a62c7d3e4e6fde9824de5439af1898d645611",
+  "project_id": "code-factory-jev-packet-calibration",
+  "receipt_sha256": "5cfb19058a013f06076460ab59cddccdcd9876a76c2add0c1881b42580a4e10c",
+  "resource_usage": {
+    "artifact_references": 15,
+    "bytes_hashed": 111543
+  },
+  "schema": "factory.workflow-audit.receipt.v1",
+  "state": "PASS"
+}
