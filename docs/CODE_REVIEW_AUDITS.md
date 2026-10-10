@@ -123,3 +123,36 @@ mutation evidence and runtime coverage must be reported separately.
 Neither this grade nor attribution measures detection precision or recall.
 Those require independently labeled defects and clean controls, with false
 positives, false negatives, corpus provenance and evaluation scope published.
+
+### Argument and exception oracles
+
+The Python test-intent scanner recognizes standard mock argument and await
+assertions, including `assert_called_once_with`, and imported `pytest.fail`
+checks used to reject an unexpected successful operation. A direct invocation
+of that same mock before its assertion remains a self-check; unrelated calls
+do not establish an independent oracle. Swallowed `pytest.fail` exceptions,
+unreachable checks and suppressing `finally` returns remain findings.
+
+A direct `pickle.loads(pickle.dumps(value))` or matching dill round-trip in a
+test source remains visible as an informational security finding with
+`input_provenance=direct_local_serialization`. It does not alone block the scan.
+This classification concerns byte provenance, not safety of custom reducers.
+External bytes, transformed buffers, mismatched libraries, source-visible
+serializer replacement and production-source round-trips retain high severity.
+These are static recognitions; runtime negative controls and independent
+accuracy measurements remain separate evidence.
+
+### External-source regression corpus
+
+`tests/fixtures/external_oracle_cases.json` contains 30 cases extracted from
+requests, rich and Click, with upstream commit, original path, source digest,
+label rationale and original license text. The test runs those sources through
+the real scanner. It preserves three genuine missing-oracle controls and checks
+27 legitimate argument/exception oracles. The cases were selected after reading
+scanner findings, so they are public regressions, not an independently held-out
+corpus and not a population precision/recall estimate.
+
+The original eight seeded benchmark cases remain a separate control suite.
+Neither adding regressions nor a reduction in findings establishes accuracy.
+Full-repository comparisons use identical upstream snapshots and record remaining
+findings rather than treating a smaller count as a verified clean result.

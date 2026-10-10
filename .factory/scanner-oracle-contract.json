@@ -1,0 +1,149 @@
+{
+  "schema": "factory.workflow-audit.contract.v1",
+  "project_id": "cf-scanner-oracle-roundtrip",
+  "candidate": [
+    {
+      "path": "factoryline/review_audits.py",
+      "sha256": "dd5b11c592e17462f24bfc75074507180a9e85479887f3fb88e64c4e2819cee0",
+      "kind": "source"
+    },
+    {
+      "path": "tests/test_review_audits.py",
+      "sha256": "f07bedee73a03a587934963607eec13f53ade392d6f1ec6ef7af97548b256692",
+      "kind": "test"
+    },
+    {
+      "path": "tests/fixtures/external_oracle_cases.json",
+      "sha256": "b0ba2c549bea45ea30ff1cb348184e26c2975129196817adebd7301aadde6657",
+      "kind": "test"
+    },
+    {
+      "path": "docs/CODE_REVIEW_AUDITS.md",
+      "sha256": "b044075669818a02558b540467ef5fd8500285edfa66d30ec3cdff309e4ac04c",
+      "kind": "documentation"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "sha256": "ea50aa8de736725c619c92ccb553b6847567c76b119be8cb1cbc865207e86f99",
+      "kind": "documentation"
+    }
+  ],
+  "applicability": [
+    {
+      "category": "happy_path",
+      "applicable": true,
+      "reason": "Recognize mock argument/await checks and expected-exception fail oracles; 30 upstream-source controls pass."
+    },
+    {
+      "category": "validation",
+      "applicable": true,
+      "reason": "Keep direct self-checks, swallowed/unreachable failures, mutated serializers and unproven inputs flagged."
+    },
+    {
+      "category": "failure_recovery",
+      "applicable": true,
+      "reason": "Existing parse, read, symlink, invalid-contract and failure-path scanner tests continue to pass."
+    },
+    {
+      "category": "state_consistency",
+      "applicable": true,
+      "reason": "Hash-bound corpus provenance and scanner source; public benchmark remains separate from external regressions."
+    },
+    {
+      "category": "security_privacy",
+      "applicable": true,
+      "reason": "Scanner does not execute source; pickle direct test-input provenance remains visible; external inputs remain HIGH."
+    },
+    {
+      "category": "performance",
+      "applicable": true,
+      "reason": "Retain strict 460-file limit and existing bounded AST/import resolution; record snapshot runtime observations."
+    },
+    {
+      "category": "accessibility",
+      "applicable": false,
+      "reason": "No UI is modified.",
+      "review_evidence": {
+        "path": ".factory/scanner-oracle-review.md",
+        "sha256": "0d14b8261645e7b73343dbaacad2d9e814e5e430cb457e14331ce75ce09ed201",
+        "kind": "review"
+      }
+    },
+    {
+      "category": "external_effects",
+      "applicable": false,
+      "reason": "No publishing, credentials, hosted deployment or network behavior is modified.",
+      "review_evidence": {
+        "path": ".factory/scanner-oracle-review.md",
+        "sha256": "0d14b8261645e7b73343dbaacad2d9e814e5e430cb457e14331ce75ce09ed201",
+        "kind": "review"
+      }
+    }
+  ],
+  "checks": [
+    {
+      "id": "SCANNER-HAPPY_PATH",
+      "requirement": "Recognize mock argument/await checks and expected-exception fail oracles; 30 upstream-source controls pass.",
+      "category": "happy_path",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-VALIDATION",
+      "requirement": "Keep direct self-checks, swallowed/unreachable failures, mutated serializers and unproven inputs flagged.",
+      "category": "validation",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-FAILURE_RECOVERY",
+      "requirement": "Existing parse, read, symlink, invalid-contract and failure-path scanner tests continue to pass.",
+      "category": "failure_recovery",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-STATE_CONSISTENCY",
+      "requirement": "Hash-bound corpus provenance and scanner source; public benchmark remains separate from external regressions.",
+      "category": "state_consistency",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-SECURITY_PRIVACY",
+      "requirement": "Scanner does not execute source; pickle direct test-input provenance remains visible; external inputs remain HIGH.",
+      "category": "security_privacy",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-PERFORMANCE",
+      "requirement": "Retain strict 460-file limit and existing bounded AST/import resolution; record snapshot runtime observations.",
+      "category": "performance",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-ACCESSIBILITY",
+      "requirement": "No UI is modified.",
+      "category": "accessibility",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-EXTERNAL_EFFECTS",
+      "requirement": "No publishing, credentials, hosted deployment or network behavior is modified.",
+      "category": "external_effects",
+      "profiles": [
+        "windows-python311"
+      ]
+    }
+  ]
+}
