@@ -1,0 +1,209 @@
+{
+  "schema": "factory.workflow-audit.contract.v1",
+  "project_id": "cf-0481-nested-oracle",
+  "candidate": [
+    {
+      "path": "CHANGELOG.md",
+      "sha256": "7602ad2210f9922e036431378c5119ab51eac506a4a6f56e048c541758d0f3e7",
+      "kind": "documentation"
+    },
+    {
+      "path": "CITATION.cff",
+      "sha256": "37eb3a00c860ebec97e4ba4fc4017bc6a3f1c85ebb2bcd665a5a33f26659a6c0",
+      "kind": "configuration"
+    },
+    {
+      "path": "README.md",
+      "sha256": "3d5c73c19adf7f47eb0b7298bcee9d6eb2826c66f3c17406b3e0fade1c17c688",
+      "kind": "documentation"
+    },
+    {
+      "path": "docs/CODE_REVIEW_AUDITS.md",
+      "sha256": "d7927e246a518e9be0dffef2cea5f57b0b2ce7e8a4a228b1720bd0273018f452",
+      "kind": "documentation"
+    },
+    {
+      "path": "docs/LLM_PRODUCT_CARD.md",
+      "sha256": "ef8a58d3ccc4f16dacbe423e579ea437eea1cbc96f87d7a6f990e41e40d41010",
+      "kind": "documentation"
+    },
+    {
+      "path": "docs/MCP_REGISTRY.md",
+      "sha256": "23b70eeda827f2cb4a4f4220cc4f49c269d5ba994e16e328352df480d0b4e69a",
+      "kind": "documentation"
+    },
+    {
+      "path": "docs/RELEASE_CHANNELS.md",
+      "sha256": "a7a53dc175d58ba1a82006eb7f448c8258a1574c72ffb2d74163674923e94f23",
+      "kind": "documentation"
+    },
+    {
+      "path": "editors/intellij/README.md",
+      "sha256": "264e352f196818d0acf1a1d563a5aa3243fe6e0e46d68334926da7a7a8394ec5",
+      "kind": "documentation"
+    },
+    {
+      "path": "editors/intellij/build.gradle.kts",
+      "sha256": "ed79736ed1836268798d7798e1f9b769162155ea3898b3f753b92fb4cae08ef6",
+      "kind": "configuration"
+    },
+    {
+      "path": "editors/vscode/package-lock.json",
+      "sha256": "3c72d0582e4ab08ef9a98dea32465ff5715042cc9eb5f083834128828ad9552e",
+      "kind": "configuration"
+    },
+    {
+      "path": "editors/vscode/package.json",
+      "sha256": "dabd9ee826e4ee11b55cb503f6b3be7887eaa70e715e7a63ea89bfd367a3061f",
+      "kind": "configuration"
+    },
+    {
+      "path": "factoryline/__init__.py",
+      "sha256": "7e26f620dc97b96dd16538ca3fb952e48820336d1927ad036bf8e740a2a370bf",
+      "kind": "source"
+    },
+    {
+      "path": "factoryline/review_audits.py",
+      "sha256": "76fbc458c82dbf7be6c0e5b0fae8467d6ae56b8524fbf70e59106c6913e2f9af",
+      "kind": "source"
+    },
+    {
+      "path": "mcp/server.json",
+      "sha256": "65cabd12cc74dfca0456d4fd0e1b42fabaf32aeb9f0eb1140d1f5b4df6c8423c",
+      "kind": "configuration"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "41bf7ae7c946c58e1d778b45353ca6e874e95ed4b8c64f903509c60b33591b94",
+      "kind": "configuration"
+    },
+    {
+      "path": "tests/fixtures/external_oracle_cases.json",
+      "sha256": "dbeede177e562da0f42fa2b1379e71eec4248731931b2f7fccc814cedfb1eb11",
+      "kind": "test"
+    },
+    {
+      "path": "tests/test_review_audits.py",
+      "sha256": "9f999ebaea8c6fb17180ae20ed7508cb66923e83cbf3e7e25f8bf11df507738c",
+      "kind": "test"
+    }
+  ],
+  "applicability": [
+    {
+      "category": "happy_path",
+      "applicable": true,
+      "reason": "Recognize mock argument/await checks and expected-exception fail oracles; 31 upstream-source controls pass."
+    },
+    {
+      "category": "validation",
+      "applicable": true,
+      "reason": "Keep direct self-checks, swallowed/unreachable failures, mutated serializers and unproven inputs flagged."
+    },
+    {
+      "category": "failure_recovery",
+      "applicable": true,
+      "reason": "Existing parse, read, symlink, invalid-contract and failure-path scanner tests continue to pass."
+    },
+    {
+      "category": "state_consistency",
+      "applicable": true,
+      "reason": "Hash-bound corpus provenance and scanner source; public benchmark remains separate from external regressions."
+    },
+    {
+      "category": "security_privacy",
+      "applicable": true,
+      "reason": "Scanner does not execute source; pickle direct test-input provenance remains visible; external inputs remain HIGH."
+    },
+    {
+      "category": "performance",
+      "applicable": true,
+      "reason": "Retain strict 460-file limit and existing bounded AST/import resolution; record snapshot runtime observations."
+    },
+    {
+      "category": "accessibility",
+      "applicable": false,
+      "reason": "No UI is modified.",
+      "review_evidence": {
+        "path": ".factory/nested-oracle-review.md",
+        "sha256": "d28132409172b086393664df01c3f6804a44adff179159e512b72676e2268a26",
+        "kind": "review"
+      }
+    },
+    {
+      "category": "external_effects",
+      "applicable": false,
+      "reason": "No publishing, credentials, hosted deployment or network behavior is modified.",
+      "review_evidence": {
+        "path": ".factory/nested-oracle-review.md",
+        "sha256": "d28132409172b086393664df01c3f6804a44adff179159e512b72676e2268a26",
+        "kind": "review"
+      }
+    }
+  ],
+  "checks": [
+    {
+      "id": "SCANNER-HAPPY_PATH",
+      "requirement": "Validate scoped nested-helper behavior, inherited-name/short-circuit negatives, upstream-source corpus and coherent unpublished0.48.1/1.1.4 metadata: happy_path",
+      "category": "happy_path",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-VALIDATION",
+      "requirement": "Validate scoped nested-helper behavior, inherited-name/short-circuit negatives, upstream-source corpus and coherent unpublished0.48.1/1.1.4 metadata: validation",
+      "category": "validation",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-FAILURE_RECOVERY",
+      "requirement": "Validate scoped nested-helper behavior, inherited-name/short-circuit negatives, upstream-source corpus and coherent unpublished0.48.1/1.1.4 metadata: failure_recovery",
+      "category": "failure_recovery",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-STATE_CONSISTENCY",
+      "requirement": "Validate scoped nested-helper behavior, inherited-name/short-circuit negatives, upstream-source corpus and coherent unpublished0.48.1/1.1.4 metadata: state_consistency",
+      "category": "state_consistency",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-SECURITY_PRIVACY",
+      "requirement": "Validate scoped nested-helper behavior, inherited-name/short-circuit negatives, upstream-source corpus and coherent unpublished0.48.1/1.1.4 metadata: security_privacy",
+      "category": "security_privacy",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-PERFORMANCE",
+      "requirement": "Validate scoped nested-helper behavior, inherited-name/short-circuit negatives, upstream-source corpus and coherent unpublished0.48.1/1.1.4 metadata: performance",
+      "category": "performance",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-ACCESSIBILITY",
+      "requirement": "Validate scoped nested-helper behavior, inherited-name/short-circuit negatives, upstream-source corpus and coherent unpublished0.48.1/1.1.4 metadata: accessibility",
+      "category": "accessibility",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-EXTERNAL_EFFECTS",
+      "requirement": "Validate scoped nested-helper behavior, inherited-name/short-circuit negatives, upstream-source corpus and coherent unpublished0.48.1/1.1.4 metadata: external_effects",
+      "category": "external_effects",
+      "profiles": [
+        "windows-python311"
+      ]
+    }
+  ]
+}

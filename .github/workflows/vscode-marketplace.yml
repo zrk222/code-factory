@@ -17,6 +17,17 @@ on:
         required: true
         type: string
 
+      cadence_exception_reason:
+        description: "Owner-approved one-time 1.1.4 cadence exception reason"
+        required: false
+        default: ""
+        type: string
+      web_upload:
+        description: "Prepare the protected candidate for manual website upload; skip CLI publication"
+        required: false
+        default: true
+        type: boolean
+
 permissions:
   actions: read
   attestations: read
@@ -181,10 +192,40 @@ jobs:
         env:
           RELEASE_CONTRACT_PATH: ${{ inputs.release_contract }}
           RELEASE_REF: ${{ inputs.release_ref }}
+          PUBLISH: ${{ inputs.publish }}
+          EXCEPTION_REASON: ${{ inputs.cadence_exception_reason }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
           [[ "$RELEASE_CONTRACT_PATH" != /* && "$RELEASE_CONTRACT_PATH" != *..* ]] || { echo "release_contract must be a workspace-relative path" >&2; exit 1; }
           test -f "$RELEASE_CONTRACT_PATH" || { echo "release contract is not present in the immutable checkout" >&2; exit 1; }
+          exception_args=()
+          if [[ -n "$EXCEPTION_REASON" ]]; then
+            test "$PUBLISH" = true
+            test "$RELEASE_REF" = vscode-v1.1.4
+            test "$GITHUB_ACTOR" = zrk222
+            python - <<'PY'
+          import json, os, subprocess
+          from datetime import datetime, timedelta, timezone
+          from pathlib import Path
+          reason = os.environ["EXCEPTION_REASON"].strip()
+          assert 12 <= len(reason) <= 500
+          contract = json.loads(Path(os.environ["RELEASE_CONTRACT_PATH"]).read_text())
+          assert contract["approved_by"] == os.environ["GITHUB_ACTOR"]
+          now = datetime.now(timezone.utc)
+          value = {
+              "schema": "factory.release-cadence-exception.v1", "channel": "vscode", "version": "1.1.4",
+              "candidate_tag": "vscode-v1.1.4", "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "requesting_actor": os.environ["GITHUB_ACTOR"], "environment": "vscode-marketplace", "environment_authorized": True,
+              "publish_enabled": True, "workflow_run_id": os.environ["GITHUB_RUN_ID"], "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "issued_at": now.isoformat(), "expires_at": (now + timedelta(minutes=30)).isoformat(), "reason": reason
+          }
+          Path(".factory/release-cadence-exception.json").write_text(json.dumps(value))
+          PY
+            exception_args=(--cadence-exception .factory/release-cadence-exception.json)
+          fi
           python -m factoryline.cli release preflight \
             --root . \
             --channel vscode \
@@ -193,6 +234,7 @@ jobs:
             --artifact-dir editors/vscode \
             --metadata-path context/PROGRESS.md \
             --out editors/vscode/release-preflight.json \
+            "${exception_args[@]}" \
             --json
 
       - name: Seal the verified Marketplace candidate
@@ -221,7 +263,7 @@ jobs:
 
   publish:
     name: publish verified Marketplace candidate
-    if: ${{ always() && inputs.publish == true && needs.authorize.result == 'success' && needs.validate.result == 'success' }}
+    if: ${{ always() && inputs.publish == true && inputs.web_upload != true && needs.authorize.result == 'success' && needs.validate.result == 'success' }}
     needs: [authorize, validate, attested-source]
     runs-on: ubuntu-latest
     environment: vscode-marketplace

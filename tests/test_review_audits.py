@@ -19,6 +19,108 @@ from factoryline.cli import main
 
 
 @pytest.mark.parametrize(
+    ("helper", "invocation", "hollow"),
+    [
+        ("def bar():\n        assert compute() == 4", "bar()", False),
+        ("def bar():\n        assert compute() == 4", "pass", True),
+        ("def bar():\n        assert True", "bar()", True),
+        (
+            "def bar():\n        try:\n            assert compute() == 4\n        except AssertionError:\n            pass",
+            "bar()",
+            True,
+        ),
+        ("def bar():\n        assert compute() == 4", "bar = noop\n    bar()", True),
+        ("@swallow\n    def bar():\n        assert compute() == 4", "bar()", True),
+        ("async def bar():\n        assert compute() == 4", "bar()", True),
+        ("async def bar():\n        assert compute() == 4", "await bar()", False),
+        (
+            "def bar():\n        assert compute() == 4",
+            "try:\n        bar()\n    except AssertionError:\n        pass",
+            True,
+        ),
+        (
+            "def bar():\n        assert compute() == 4\n    def foo():\n        bar()",
+            "foo()",
+            False,
+        ),
+        (
+            "async def bar():\n        assert compute() == 4\n    def foo():\n        bar()",
+            "foo()",
+            True,
+        ),
+        (
+            "def foo():\n        def bar():\n            assert compute() == 4",
+            "bar()",
+            True,
+        ),
+        (
+            "def bar():\n        assert compute() == 4\n    def foo(bar):\n        bar()",
+            "foo(noop)",
+            True,
+        ),
+        ("def bar():\n        return\n        assert compute() == 4", "bar()", True),
+        (
+            "def bar():\n        assert compute() == 4\n    def bar():\n        pass",
+            "bar()",
+            True,
+        ),
+        ("def bar():\n        x = 5\n        assert x == 5", "bar()", True),
+        ("def bar():\n        assert compute() == 4", "True or bar()", True),
+        ("def bar():\n        assert compute() == 4", "value or True or bar()", True),
+        (
+            "def bar():\n        assert compute() == 4",
+            "value and False and bar()",
+            True,
+        ),
+        ("def bar():\n        assert compute() == 4", "False and bar()", True),
+        ("def bar():\n        assert compute() == 4", "bar() if False else None", True),
+        ("def bar():\n        assert compute() == 4", "None if True else bar()", True),
+        ("def bar():\n        assert compute() == 4", "False or bar()", False),
+        ("def bar():\n        assert compute() == 4", "True and bar()", False),
+        (
+            "def bar():\n        assert compute() == 4",
+            "from somewhere import noop as bar\n    bar()",
+            True,
+        ),
+        (
+            "def bar():\n        assert compute() == 4\n    def foo(*bar):\n        bar()",
+            "foo(noop)",
+            True,
+        ),
+        (
+            "def bar():\n        assert compute() == 4",
+            "class bar:\n        pass\n    bar()",
+            True,
+        ),
+    ],
+)
+def test_security_scan_tracks_invoked_nested_oracle_helpers(
+    tmp_path, helper, invocation, hollow
+):
+    (tmp_path / "test_behavior.py").write_text(
+        "async def test_behavior():\n    " + helper + "\n    " + invocation + "\n"
+    )
+    result = security_scan(tmp_path)
+    assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in result["findings"]) is hollow
+
+
+def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path):
+    (tmp_path / "test_behavior.py").write_text(
+        "def test_behavior():\n    bar()\n    def bar():\n        assert compute() == 4\n"
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_nested_helper_shadows_module_oracle(tmp_path):
+    (tmp_path / "test_behavior.py").write_text(
+        "def assert_ok():\n    assert compute() == 4\n"
+        "def test_behavior():\n    def assert_ok():\n        pass\n"
+        "    def foo():\n        assert_ok()\n    foo()\n"
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
     "case",
     json.loads(
         (Path(__file__).parent / "fixtures/external_oracle_cases.json").read_text()

@@ -1,0 +1,447 @@
+{
+  "schema": "factory.workflow-audit.observations.v1",
+  "contract_sha256": "bf29ccef246829cc67d8a7a80fbd2815473708302d380a7b8a66814ab873987c",
+  "candidate_sha256": "f0ae7f124a4a8613a556e95984e6c776105c2b6e4b5b7894f2523271c5325447",
+  "observations": [
+    {
+      "id": "SCANNER-HAPPY_PATH",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Validate scoped nested-helper behavior, inherited-name/short-circuit negatives, upstream-source corpus and coherent unpublished0.48.1/1.1.4 metadata: happy_path",
+      "execution_identity": "Windows CPython3.11 source scanner; isolated installed0.48.1 wheel; pinned upstream snapshots; independent bounded agent review",
+      "observed_at": "2026-10-10T11:10:25.956578+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/nested-oracle-final-regressions.log",
+          "sha256": "1f26b137092fa800cf65d173fb53742c2a33bb6632a70678ad469438bfba741c",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/nested-oracle-lint.log",
+          "sha256": "38aca0f6bf734b5acb0372c4bf66a06d453d649b903ccaa6b21ea1925331625e",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/nested-oracle-review.md",
+          "sha256": "d28132409172b086393664df01c3f6804a44adff179159e512b72676e2268a26",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/nested-oracle-architecture.json",
+          "sha256": "e6cd9d7418e8454ec629d282320160595ec6c24137b267715f8896496f12555a",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/nested-oracle-quality.json",
+          "sha256": "e25dd51bff9c1d114a3e4ae702ac4ba53b28c901c73270eaf134bb25de915b2f",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/nested-oracle-real-repos.json",
+          "sha256": "b7f37fb812f9d36631727e95bcd4a3f8905ad5e87d09b755ba3ae51f650115d9",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/0481-wheel-corpus.log",
+          "sha256": "5c2d6bb638ab2b3c4dbdfad795925a4a78f614b56b8de171acbf9c42cb167495",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/0481-wheel-smoke.log",
+          "sha256": "7e9e3d26e5da3cbec5f44994cf119a1aa42722eb5c062e770641991778be2699",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/0481-wheel-integrity.json",
+          "sha256": "728683682eea01a7bced6af8a7424ad9d5ab09c88b17e5aae502f504e0eb9cfd",
+          "kind": "receipt"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-VALIDATION",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Validate scoped nested-helper behavior, inherited-name/short-circuit negatives, upstream-source corpus and coherent unpublished0.48.1/1.1.4 metadata: validation",
+      "execution_identity": "Windows CPython3.11 source scanner; isolated installed0.48.1 wheel; pinned upstream snapshots; independent bounded agent review",
+      "observed_at": "2026-10-10T11:10:25.956578+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/nested-oracle-final-regressions.log",
+          "sha256": "1f26b137092fa800cf65d173fb53742c2a33bb6632a70678ad469438bfba741c",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/nested-oracle-lint.log",
+          "sha256": "38aca0f6bf734b5acb0372c4bf66a06d453d649b903ccaa6b21ea1925331625e",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/nested-oracle-review.md",
+          "sha256": "d28132409172b086393664df01c3f6804a44adff179159e512b72676e2268a26",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/nested-oracle-architecture.json",
+          "sha256": "e6cd9d7418e8454ec629d282320160595ec6c24137b267715f8896496f12555a",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/nested-oracle-quality.json",
+          "sha256": "e25dd51bff9c1d114a3e4ae702ac4ba53b28c901c73270eaf134bb25de915b2f",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/nested-oracle-real-repos.json",
+          "sha256": "b7f37fb812f9d36631727e95bcd4a3f8905ad5e87d09b755ba3ae51f650115d9",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/0481-wheel-corpus.log",
+          "sha256": "5c2d6bb638ab2b3c4dbdfad795925a4a78f614b56b8de171acbf9c42cb167495",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/0481-wheel-smoke.log",
+          "sha256": "7e9e3d26e5da3cbec5f44994cf119a1aa42722eb5c062e770641991778be2699",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/0481-wheel-integrity.json",
+          "sha256": "728683682eea01a7bced6af8a7424ad9d5ab09c88b17e5aae502f504e0eb9cfd",
+          "kind": "receipt"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-FAILURE_RECOVERY",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Validate scoped nested-helper behavior, inherited-name/short-circuit negatives, upstream-source corpus and coherent unpublished0.48.1/1.1.4 metadata: failure_recovery",
+      "execution_identity": "Windows CPython3.11 source scanner; isolated installed0.48.1 wheel; pinned upstream snapshots; independent bounded agent review",
+      "observed_at": "2026-10-10T11:10:25.956578+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/nested-oracle-final-regressions.log",
+          "sha256": "1f26b137092fa800cf65d173fb53742c2a33bb6632a70678ad469438bfba741c",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/nested-oracle-lint.log",
+          "sha256": "38aca0f6bf734b5acb0372c4bf66a06d453d649b903ccaa6b21ea1925331625e",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/nested-oracle-review.md",
+          "sha256": "d28132409172b086393664df01c3f6804a44adff179159e512b72676e2268a26",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/nested-oracle-architecture.json",
+          "sha256": "e6cd9d7418e8454ec629d282320160595ec6c24137b267715f8896496f12555a",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/nested-oracle-quality.json",
+          "sha256": "e25dd51bff9c1d114a3e4ae702ac4ba53b28c901c73270eaf134bb25de915b2f",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/nested-oracle-real-repos.json",
+          "sha256": "b7f37fb812f9d36631727e95bcd4a3f8905ad5e87d09b755ba3ae51f650115d9",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/0481-wheel-corpus.log",
+          "sha256": "5c2d6bb638ab2b3c4dbdfad795925a4a78f614b56b8de171acbf9c42cb167495",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/0481-wheel-smoke.log",
+          "sha256": "7e9e3d26e5da3cbec5f44994cf119a1aa42722eb5c062e770641991778be2699",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/0481-wheel-integrity.json",
+          "sha256": "728683682eea01a7bced6af8a7424ad9d5ab09c88b17e5aae502f504e0eb9cfd",
+          "kind": "receipt"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-STATE_CONSISTENCY",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Validate scoped nested-helper behavior, inherited-name/short-circuit negatives, upstream-source corpus and coherent unpublished0.48.1/1.1.4 metadata: state_consistency",
+      "execution_identity": "Windows CPython3.11 source scanner; isolated installed0.48.1 wheel; pinned upstream snapshots; independent bounded agent review",
+      "observed_at": "2026-10-10T11:10:25.956578+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/nested-oracle-final-regressions.log",
+          "sha256": "1f26b137092fa800cf65d173fb53742c2a33bb6632a70678ad469438bfba741c",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/nested-oracle-lint.log",
+          "sha256": "38aca0f6bf734b5acb0372c4bf66a06d453d649b903ccaa6b21ea1925331625e",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/nested-oracle-review.md",
+          "sha256": "d28132409172b086393664df01c3f6804a44adff179159e512b72676e2268a26",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/nested-oracle-architecture.json",
+          "sha256": "e6cd9d7418e8454ec629d282320160595ec6c24137b267715f8896496f12555a",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/nested-oracle-quality.json",
+          "sha256": "e25dd51bff9c1d114a3e4ae702ac4ba53b28c901c73270eaf134bb25de915b2f",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/nested-oracle-real-repos.json",
+          "sha256": "b7f37fb812f9d36631727e95bcd4a3f8905ad5e87d09b755ba3ae51f650115d9",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/0481-wheel-corpus.log",
+          "sha256": "5c2d6bb638ab2b3c4dbdfad795925a4a78f614b56b8de171acbf9c42cb167495",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/0481-wheel-smoke.log",
+          "sha256": "7e9e3d26e5da3cbec5f44994cf119a1aa42722eb5c062e770641991778be2699",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/0481-wheel-integrity.json",
+          "sha256": "728683682eea01a7bced6af8a7424ad9d5ab09c88b17e5aae502f504e0eb9cfd",
+          "kind": "receipt"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-SECURITY_PRIVACY",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Validate scoped nested-helper behavior, inherited-name/short-circuit negatives, upstream-source corpus and coherent unpublished0.48.1/1.1.4 metadata: security_privacy",
+      "execution_identity": "Windows CPython3.11 source scanner; isolated installed0.48.1 wheel; pinned upstream snapshots; independent bounded agent review",
+      "observed_at": "2026-10-10T11:10:25.956578+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/nested-oracle-final-regressions.log",
+          "sha256": "1f26b137092fa800cf65d173fb53742c2a33bb6632a70678ad469438bfba741c",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/nested-oracle-lint.log",
+          "sha256": "38aca0f6bf734b5acb0372c4bf66a06d453d649b903ccaa6b21ea1925331625e",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/nested-oracle-review.md",
+          "sha256": "d28132409172b086393664df01c3f6804a44adff179159e512b72676e2268a26",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/nested-oracle-architecture.json",
+          "sha256": "e6cd9d7418e8454ec629d282320160595ec6c24137b267715f8896496f12555a",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/nested-oracle-quality.json",
+          "sha256": "e25dd51bff9c1d114a3e4ae702ac4ba53b28c901c73270eaf134bb25de915b2f",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/nested-oracle-real-repos.json",
+          "sha256": "b7f37fb812f9d36631727e95bcd4a3f8905ad5e87d09b755ba3ae51f650115d9",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/0481-wheel-corpus.log",
+          "sha256": "5c2d6bb638ab2b3c4dbdfad795925a4a78f614b56b8de171acbf9c42cb167495",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/0481-wheel-smoke.log",
+          "sha256": "7e9e3d26e5da3cbec5f44994cf119a1aa42722eb5c062e770641991778be2699",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/0481-wheel-integrity.json",
+          "sha256": "728683682eea01a7bced6af8a7424ad9d5ab09c88b17e5aae502f504e0eb9cfd",
+          "kind": "receipt"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-PERFORMANCE",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Validate scoped nested-helper behavior, inherited-name/short-circuit negatives, upstream-source corpus and coherent unpublished0.48.1/1.1.4 metadata: performance",
+      "execution_identity": "Windows CPython3.11 source scanner; isolated installed0.48.1 wheel; pinned upstream snapshots; independent bounded agent review",
+      "observed_at": "2026-10-10T11:10:25.956578+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/nested-oracle-final-regressions.log",
+          "sha256": "1f26b137092fa800cf65d173fb53742c2a33bb6632a70678ad469438bfba741c",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/nested-oracle-lint.log",
+          "sha256": "38aca0f6bf734b5acb0372c4bf66a06d453d649b903ccaa6b21ea1925331625e",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/nested-oracle-review.md",
+          "sha256": "d28132409172b086393664df01c3f6804a44adff179159e512b72676e2268a26",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/nested-oracle-architecture.json",
+          "sha256": "e6cd9d7418e8454ec629d282320160595ec6c24137b267715f8896496f12555a",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/nested-oracle-quality.json",
+          "sha256": "e25dd51bff9c1d114a3e4ae702ac4ba53b28c901c73270eaf134bb25de915b2f",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/nested-oracle-real-repos.json",
+          "sha256": "b7f37fb812f9d36631727e95bcd4a3f8905ad5e87d09b755ba3ae51f650115d9",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/0481-wheel-corpus.log",
+          "sha256": "5c2d6bb638ab2b3c4dbdfad795925a4a78f614b56b8de171acbf9c42cb167495",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/0481-wheel-smoke.log",
+          "sha256": "7e9e3d26e5da3cbec5f44994cf119a1aa42722eb5c062e770641991778be2699",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/0481-wheel-integrity.json",
+          "sha256": "728683682eea01a7bced6af8a7424ad9d5ab09c88b17e5aae502f504e0eb9cfd",
+          "kind": "receipt"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-ACCESSIBILITY",
+      "profile": "windows-python311",
+      "status": "N/A",
+      "reason": "No UI is modified.",
+      "execution_identity": "Windows CPython3.11 source scanner; isolated installed0.48.1 wheel; pinned upstream snapshots; independent bounded agent review",
+      "observed_at": "2026-10-10T11:10:25.956578+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/nested-oracle-final-regressions.log",
+          "sha256": "1f26b137092fa800cf65d173fb53742c2a33bb6632a70678ad469438bfba741c",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/nested-oracle-lint.log",
+          "sha256": "38aca0f6bf734b5acb0372c4bf66a06d453d649b903ccaa6b21ea1925331625e",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/nested-oracle-review.md",
+          "sha256": "d28132409172b086393664df01c3f6804a44adff179159e512b72676e2268a26",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/nested-oracle-architecture.json",
+          "sha256": "e6cd9d7418e8454ec629d282320160595ec6c24137b267715f8896496f12555a",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/nested-oracle-quality.json",
+          "sha256": "e25dd51bff9c1d114a3e4ae702ac4ba53b28c901c73270eaf134bb25de915b2f",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/nested-oracle-real-repos.json",
+          "sha256": "b7f37fb812f9d36631727e95bcd4a3f8905ad5e87d09b755ba3ae51f650115d9",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/0481-wheel-corpus.log",
+          "sha256": "5c2d6bb638ab2b3c4dbdfad795925a4a78f614b56b8de171acbf9c42cb167495",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/0481-wheel-smoke.log",
+          "sha256": "7e9e3d26e5da3cbec5f44994cf119a1aa42722eb5c062e770641991778be2699",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/0481-wheel-integrity.json",
+          "sha256": "728683682eea01a7bced6af8a7424ad9d5ab09c88b17e5aae502f504e0eb9cfd",
+          "kind": "receipt"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-EXTERNAL_EFFECTS",
+      "profile": "windows-python311",
+      "status": "N/A",
+      "reason": "No publishing, credentials, hosted deployment or network behavior is modified.",
+      "execution_identity": "Windows CPython3.11 source scanner; isolated installed0.48.1 wheel; pinned upstream snapshots; independent bounded agent review",
+      "observed_at": "2026-10-10T11:10:25.956578+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/nested-oracle-final-regressions.log",
+          "sha256": "1f26b137092fa800cf65d173fb53742c2a33bb6632a70678ad469438bfba741c",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/nested-oracle-lint.log",
+          "sha256": "38aca0f6bf734b5acb0372c4bf66a06d453d649b903ccaa6b21ea1925331625e",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/nested-oracle-review.md",
+          "sha256": "d28132409172b086393664df01c3f6804a44adff179159e512b72676e2268a26",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/nested-oracle-architecture.json",
+          "sha256": "e6cd9d7418e8454ec629d282320160595ec6c24137b267715f8896496f12555a",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/nested-oracle-quality.json",
+          "sha256": "e25dd51bff9c1d114a3e4ae702ac4ba53b28c901c73270eaf134bb25de915b2f",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/nested-oracle-real-repos.json",
+          "sha256": "b7f37fb812f9d36631727e95bcd4a3f8905ad5e87d09b755ba3ae51f650115d9",
+          "kind": "receipt"
+        },
+        {
+          "path": ".factory/0481-wheel-corpus.log",
+          "sha256": "5c2d6bb638ab2b3c4dbdfad795925a4a78f614b56b8de171acbf9c42cb167495",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/0481-wheel-smoke.log",
+          "sha256": "7e9e3d26e5da3cbec5f44994cf119a1aa42722eb5c062e770641991778be2699",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/0481-wheel-integrity.json",
+          "sha256": "728683682eea01a7bced6af8a7424ad9d5ab09c88b17e5aae502f504e0eb9cfd",
+          "kind": "receipt"
+        }
+      ]
+    }
+  ]
+}
