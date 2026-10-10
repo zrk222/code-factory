@@ -38,8 +38,18 @@ def test_editor_candidate_tag_must_match_editor_version(tmp_path, monkeypatch):
         )
 
 
+def _write_exception_policy(root: Path, enabled: bool) -> None:
+    policy = json.loads(
+        (Path(__file__).parents[1] / "release-train.json").read_text(encoding="utf-8")
+    )
+    policy["cadence"]["exceptions_enabled"] = enabled
+    (root / "release-train.json").write_text(json.dumps(policy), encoding="utf-8")
+
+
 @pytest.fixture(autouse=True)
-def _eligible_release_cadence(monkeypatch) -> None:
+def _eligible_release_cadence(monkeypatch, tmp_path: Path) -> None:
+    # Historical identity fixtures run in isolated roots with exceptions explicitly enabled.
+    _write_exception_policy(tmp_path, True)
     monkeypatch.setattr(
         candidate,
         "release_cadence_status",
@@ -400,6 +410,87 @@ def test_vscode_cadence_exception_is_bound_to_v114_run_attempt(
 
     assert result["workflow_run_attempt"] == "2"
     assert result["candidate_tag"] == "vscode-v1.1.4"
+
+
+def test_disabled_release_policy_rejects_otherwise_valid_exception(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_exception_policy(tmp_path, False)
+    issued = datetime.now(timezone.utc)
+    path = tmp_path / "exception.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "factory.release-cadence-exception.v1",
+                "channel": "core",
+                "version": "0.48.1",
+                "candidate_tag": "v0.48.1",
+                "source_commit": "a" * 40,
+                "requesting_actor": "zrk222",
+                "reason": "Valid historical exception fixture for test.",
+                "issued_at": issued.isoformat(),
+                "expires_at": (issued + timedelta(minutes=30)).isoformat(),
+                "workflow_run_id": "12345",
+                "workflow_run_attempt": "2",
+                "environment": "pypi",
+                "environment_authorized": True,
+                "publish_enabled": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_RUN_ID", "12345")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    cadence = {
+        "release_train_status": "valid",
+        "available": True,
+        "admission": False,
+        "state": "cooldown",
+        "recent_count": 2,
+        "max_releases_30d": 4,
+        "reason": "The minimum 7-day interval has not elapsed.",
+    }
+
+    exception, error, admitted, blocker, checks, blockers = (
+        candidate._cadence_candidate_preflight(
+            tmp_path,
+            cadence,
+            path,
+            {"version": "0.48.1", "commit": "a" * 40},
+            "core",
+            "v0.48.1",
+            {"approved_by": "zrk222"},
+        )
+    )
+
+    assert exception is None
+    assert "disabled by policy" in error
+    assert admitted is False
+    assert blocker["code"] == "E_RELEASE_CADENCE_BLOCKED"
+    exception_check = next(
+        item for item in checks if item["id"] == "RELEASE_CADENCE_EXCEPTION"
+    )
+    assert exception_check["passed"] is False
+    assert any(
+        item["code"] == "E_RELEASE_CADENCE_EXCEPTION_INVALID" for item in blockers
+    )
+
+
+@pytest.mark.parametrize("policy_text", ["{", '{"cadence": {}}'])
+def test_malformed_release_exception_policy_fails_closed(
+    tmp_path: Path, policy_text: str, monkeypatch
+) -> None:
+    (tmp_path / "release-train.json").write_text(policy_text, encoding="utf-8")
+    path = tmp_path / "exception.json"
+    path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(
+        ValueError, match="policy is unavailable or invalid|must declare boolean"
+    ):
+        candidate._cadence_exception_payload(
+            tmp_path, path, {"version": "0.48.1"}, "core", "v0.48.1", None
+        )
 
 
 def test_vscode_cadence_exception_rejects_other_candidate_or_run(

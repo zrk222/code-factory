@@ -1688,8 +1688,74 @@ def test_security_scan_ignores_performance_benchmark_oracles(tmp_path):
     assert security_scan(tmp_path)["findings"] == []
 
 
+def test_security_scan_ignores_call_form_benchmark_marker(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "from pytest import mark as marks\n"
+        "@marks.benchmark(group='throughput')\n"
+        "def test_speed(benchmark):\n"
+        "    benchmark(compute_value)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_ignores_pedantic_benchmark_fixture(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "from pytest_benchmark.fixture import BenchmarkFixture\n"
+        "def test_speed(benchmark: BenchmarkFixture):\n"
+        "    benchmark.pedantic(compute_value, iterations=5, rounds=2)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
 def test_security_scan_does_not_skip_untyped_benchmark_named_security_test(tmp_path):
     (tmp_path / "case.py").write_text(
+        "def test_security_invariant(benchmark):\n"
+        "    benchmark(lambda: dangerous_operation())\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_does_not_exempt_untyped_benchmark_parameter_alone(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "def test_behavior(benchmark):\n    pass\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "def test_security_invariant(benchmark: NotBenchmarkFixture):",
+        "@pytest.mark.benchmarking\ndef test_security_invariant(benchmark):",
+    ],
+)
+def test_security_scan_rejects_lookalike_benchmark_signals(tmp_path, declaration):
+    (tmp_path / "case.py").write_text(
+        f"{declaration}\n    benchmark(lambda: dangerous_operation())\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "imports",
+    [
+        "import custom_benchmarks",
+        "from pytest_benchmark import plugin",
+    ],
+)
+def test_security_scan_rejects_unrelated_benchmark_imports(tmp_path, imports):
+    decorator = (
+        "@custom_benchmarks.benchmark()\n"
+        if imports.startswith("import custom")
+        else ""
+    )
+    (tmp_path / "case.py").write_text(
+        f"{imports}\n{decorator}"
         "def test_security_invariant(benchmark):\n"
         "    benchmark(lambda: dangerous_operation())\n",
         encoding="utf-8",

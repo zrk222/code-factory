@@ -424,6 +424,25 @@ def _exception_run_identity(value: dict[str, Any]) -> tuple[str, str]:
     return run_id, run_attempt
 
 
+def _require_cadence_exceptions_enabled(root: Path) -> None:
+    """Reject exception receipts unless the release-train policy enables them."""
+    policy_path = _inside(root, Path("release-train.json"), "release train policy")
+    try:
+        policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            "release cadence exception policy is unavailable or invalid"
+        ) from exc
+    cadence = policy.get("cadence") if isinstance(policy, dict) else None
+    enabled = cadence.get("exceptions_enabled") if isinstance(cadence, dict) else None
+    if not isinstance(enabled, bool):
+        raise ValueError(
+            "release cadence policy must declare boolean exceptions_enabled"
+        )
+    if not enabled:
+        raise ValueError("new release cadence exceptions are disabled by policy")
+
+
 def _cadence_exception_payload(
     root: Path,
     path: Path | None,
@@ -435,6 +454,7 @@ def _cadence_exception_payload(
     """Load one exact, expiring release exception without granting authority."""
     if path is None:
         return None
+    _require_cadence_exceptions_enabled(root)
     candidate = _inside(Path(root).resolve(), Path(path), "cadence exception")
     value = json.loads(candidate.read_text(encoding="utf-8-sig"))
     if (

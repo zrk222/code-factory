@@ -62,3 +62,24 @@ jobs:
             cat repository-scope-review.json
             exit 1
           fi
+      - name: Reject tracked generated run output
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          allowed = {
+              ".factory/repository-scope.json",
+              ".factory/repository-scope-decisions.json",
+              ".factory/tenant-read-contract.json",
+          }
+          tracked = subprocess.check_output(
+              ["git", "ls-tree", "-r", "--name-only", os.environ["PR_HEAD_SHA"], "--", ".factory"],
+              text=True,
+          ).splitlines()
+          rejected = sorted(set(tracked) - allowed)
+          if rejected:
+              raise SystemExit("Generated evidence must be a CI/release asset, not tracked source: " + ", ".join(rejected))
+          print("Generated-output guard PASS: operational configuration only")
+          PY

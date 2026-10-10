@@ -2142,15 +2142,23 @@ def _performance_benchmark_test(
     )
     if benchmark_parameter is None:
         return False
-    typed_fixture = "BenchmarkFixture" in _name(benchmark_parameter.annotation)
+    resolved_aliases = aliases or {}
+    typed_fixture = _resolved_ast_name(
+        benchmark_parameter.annotation, resolved_aliases
+    ) in {
+        "pytest_benchmark.BenchmarkFixture",
+        "pytest_benchmark.fixture.BenchmarkFixture",
+        "pytest_codspeed.BenchmarkFixture",
+    }
     marked_fixture = any(
-        _name(decorator).endswith(".benchmark") for decorator in node.decorator_list
+        _resolved_ast_name(
+            decorator.func if isinstance(decorator, ast.Call) else decorator,
+            resolved_aliases,
+        )
+        == "pytest.mark.benchmark"
+        for decorator in node.decorator_list
     )
-    imported_fixture = any(
-        value.startswith("pytest_codspeed.") or value.startswith("pytest_benchmark.")
-        for value in (aliases or {}).values()
-    )
-    return (typed_fixture or marked_fixture or imported_fixture) and any(
+    return (typed_fixture or marked_fixture) and any(
         isinstance(child, ast.Call)
         and _call_name(child).split(".", 1)[0] == "benchmark"
         for statement in node.body

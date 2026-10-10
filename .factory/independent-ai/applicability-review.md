@@ -1,1 +1,0 @@
-Pure CLI/framework change. No visual, browser, keyboard or screen-reader surface changes: accessibility is not applicable. Network effect is limited to explicitly authorized public-source evaluation calls. Credentials stayed process-local and were removed after calls. Tests use mock transport; live results remain unresolved and have no scanner or release authority.
