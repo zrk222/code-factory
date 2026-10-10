@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Recognize mock argument/await assertions and `pytest.fail` exception-expectation
+  checks. Keep direct mock self-checks, swallowed failures and unreachable checks
+  visible; unrelated calls do not clear a self-check.
+- Classify direct pickle/dill round-trips in test sources as informational,
+  retaining their local-input provenance and custom-reducer warning. External,
+  transformed, cross-library, replaced-serializer and production inputs remain
+  high-severity findings.
+
 ## 0.48.0 / editor plugins 1.1.2 (release candidate; publication gated)
 
 - Make `factory scan` audit eligible Python source by default; `--deep` adds

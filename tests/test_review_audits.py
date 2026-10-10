@@ -18,6 +18,173 @@ from factoryline.change_review import ChangeReviewError, review_change
 from factoryline.cli import main
 
 
+@pytest.mark.parametrize(
+    "case",
+    json.loads(
+        (Path(__file__).parent / "fixtures/external_oracle_cases.json").read_text()
+    ),
+    ids=lambda case: case["id"],
+)
+def test_security_scan_external_repository_oracle_regressions(tmp_path, case):
+    (tmp_path / "test_external.py").write_text(case["source"], encoding="utf-8")
+    result = security_scan(tmp_path)
+    hollow = any(
+        finding["code"] == "QUALITY_HOLLOW_TEST" for finding in result["findings"]
+    )
+    assert hollow is case["expected_hollow"], (case["id"], result["findings"])
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "perform(send)\n    send.assert_called_once_with('payload')",
+        "perform(send)\n    send.assert_called_with('payload', timeout=3)",
+        "perform(send)\n    send.assert_any_call('payload')",
+        "perform(send)\n    send.assert_called_once_with()",
+        "await perform(send)\n    send.assert_awaited_once_with('payload')",
+        "try:\n        operation()\n        pytest.fail('should raise')\n    except TimeoutError:\n        pass",
+        "try:\n        operation()\n        pytest.fail('should raise')\n    except Exception:\n        pass",
+        "with contextlib.suppress(Exception):\n        operation()\n        pytest.fail('should raise')",
+    ],
+)
+def test_security_scan_accepts_argument_and_exception_oracles(tmp_path, body):
+    (tmp_path / "test_behavior.py").write_text(
+        "import pytest, contextlib\nasync def test_behavior():\n    " + body + "\n"
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "send('payload')\n    send.assert_called_once_with('payload')",
+        "send('payload'); send.assert_called_once_with('payload')",
+        "send('payload')\n    unrelated_helper()\n    send.assert_called_once_with('payload')",
+        "send('payload')\n    print('test')\n    send.assert_called_once_with('payload')",
+        "try:\n        operation()\n        pytest.fail('should raise')\n    except BaseException:\n        pass",
+        "try:\n        operation()\n        pytest.fail('should raise')\n    finally:\n        return",
+        "with contextlib.suppress(BaseException):\n        pytest.fail('should raise')",
+        "return\n    pytest.fail('should raise')",
+        "pytest = fake_framework\n    pytest.fail('should raise')",
+        "try:\n        operation()\n        pytest.fail('should raise')\n    except pytest.fail.Exception:\n        pass",
+    ],
+)
+def test_security_scan_keeps_self_checks_and_swallowed_failures_flagged(tmp_path, body):
+    (tmp_path / "test_behavior.py").write_text(
+        "import pytest, contextlib\ndef test_behavior():\n    " + body + "\n"
+    )
+    assert security_scan(tmp_path)["findings"]
+
+
+@pytest.mark.parametrize("library", ["pickle", "dill"])
+def test_security_scan_classifies_test_roundtrip_as_nonblocking(tmp_path, library):
+    (tmp_path / "test_roundtrip.py").write_text(
+        f"import {library} as serializer\n"
+        "def test_roundtrip():\n"
+        "    own_object = {'value': 4}\n"
+        "    assert serializer.loads(serializer.dumps(own_object)) == own_object\n"
+    )
+    result = security_scan(tmp_path)
+    assert result["state"] == "FINDINGS"
+    assert len(result["findings"]) == 1
+    assert result["findings"][0]["severity"] == "INFO"
+    assert (
+        result["findings"][0]["facts"]["input_provenance"]
+        == "direct_local_serialization"
+    )
+
+
+@pytest.mark.parametrize(
+    ("filename", "expression"),
+    [
+        ("production.py", "pickle.loads(pickle.dumps(value))"),
+        ("test_input.py", "pickle.loads(payload)"),
+        ("test_input.py", "pickle.loads(transform(pickle.dumps(value)))"),
+        ("test_input.py", "pickle.loads(dill.dumps(value))"),
+    ],
+)
+def test_security_scan_keeps_unproven_deserialization_blocked(
+    tmp_path, filename, expression
+):
+    (tmp_path / filename).write_text(f"import pickle, dill\nresult = {expression}\n")
+    result = security_scan(tmp_path)
+    assert result["state"] == "BLOCKED"
+    assert result["findings"][0]["severity"] == "HIGH"
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "pickle.dumps = get_external_bytes",
+        "setattr(pickle, 'dumps', get_external_bytes)",
+        "monkeypatch.setattr('pickle.dumps', get_external_bytes)",
+        "patch('pickle.dumps', side_effect=get_external_bytes).start()",
+    ],
+)
+def test_security_scan_does_not_trust_replaced_serializer(tmp_path, replacement):
+    (tmp_path / "test_input.py").write_text(
+        f"import pickle\n{replacement}\nresult = pickle.loads(pickle.dumps(value))\n"
+    )
+    assert security_scan(tmp_path)["state"] == "BLOCKED"
+
+
+def test_security_scan_preserves_high_severity_for_patched_serializer_alias(tmp_path):
+    (tmp_path / "test_input.py").write_text(
+        "import pickle as serializer\nfrom unittest.mock import patch\n"
+        "@patch('pickle.dumps', side_effect=get_external_bytes)\n"
+        "def test_input(mock_dumps):\n"
+        "    assert serializer.loads(serializer.dumps(value)) == value\n"
+    )
+    assert security_scan(tmp_path)["state"] == "BLOCKED"
+
+
+def test_security_scan_retains_pickle_decorator_roundtrip_evidence(tmp_path):
+    (tmp_path / "test_roundtrip.py").write_text(
+        "import pickle, pytest\n"
+        "@pytest.mark.parametrize('duplicate', [lambda value: pickle.loads(pickle.dumps(value))])\n"
+        "def test_copy(duplicate):\n    assert duplicate({'value': 4}) == {'value': 4}\n"
+    )
+    result = security_scan(tmp_path)
+    assert result["state"] == "FINDINGS"
+    assert result["findings"][0]["severity"] == "INFO"
+
+
+@pytest.mark.parametrize(
+    ("source", "mutation"),
+    [
+        (
+            "from unittest.mock import Mock\nsend = Mock()\n"
+            "def perform(send):\n    send('payload')\n"
+            "def test_behavior():\n    perform(send)\n    send.assert_called_once_with('payload')\n",
+            "send.assert_called_once_with('incorrect')",
+        ),
+        (
+            "import pytest\ndef operation():\n    raise TimeoutError()\n"
+            "def test_behavior():\n    try:\n        operation()\n"
+            "        pytest.fail('should raise')\n    except TimeoutError:\n        pass\n",
+            "return None",
+        ),
+    ],
+)
+def test_argument_and_exception_oracles_fail_runtime_negative_controls(
+    tmp_path, source, mutation
+):
+    import runpy
+
+    (tmp_path / "test_behavior.py").write_text(source)
+    assert security_scan(tmp_path)["findings"] == []
+    namespace = runpy.run_path(str(tmp_path / "test_behavior.py"))
+    namespace["test_behavior"]()
+    if "Mock" in source:
+        broken = source.replace("send.assert_called_once_with('payload')", mutation)
+    else:
+        broken = source.replace("raise TimeoutError()", mutation)
+    (tmp_path / "test_negative_control.py").write_text(broken)
+    namespace = runpy.run_path(str(tmp_path / "test_negative_control.py"))
+    with pytest.raises((AssertionError, pytest.fail.Exception)):
+        namespace["test_behavior"]()
+
+
 def test_security_scan_rejects_external_source_link(tmp_path):
     outside = tmp_path.parent / "external-source.txt"
     outside.write_text("PRIVATE_SOURCE = 1\n", encoding="utf-8")

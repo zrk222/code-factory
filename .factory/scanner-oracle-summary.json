@@ -1,0 +1,68 @@
+{
+  "schema": "factory.external-source-regression.v1",
+  "scope": "Five pinned local OSS snapshots, AST scan; selected public regression corpus, not heldout precision/recall",
+  "results": [
+    {
+      "repository": "click",
+      "snapshot": "2247b35ea1c47c727d7a06e51fa280e12a863ff6",
+      "candidate_source_sha256": "dd5b11c592e17462f24bfc75074507180a9e85479887f3fb88e64c4e2819cee0",
+      "baseline_source_sha256": "e3c4648992a263c291b74371008a23a40958c245759c6093ed420fec3bd3ce1b",
+      "baseline_hollow": 4,
+      "candidate_hollow": 4,
+      "candidate_state": "FINDINGS",
+      "candidate_high_findings": 0
+    },
+    {
+      "repository": "requests",
+      "snapshot": "611c6162cbc4ac2020a2f91c7cfa4f3abf9bbb60",
+      "candidate_source_sha256": "dd5b11c592e17462f24bfc75074507180a9e85479887f3fb88e64c4e2819cee0",
+      "baseline_source_sha256": "e3c4648992a263c291b74371008a23a40958c245759c6093ed420fec3bd3ce1b",
+      "baseline_hollow": 15,
+      "candidate_hollow": 11,
+      "candidate_state": "BLOCKED",
+      "candidate_high_findings": 1
+    },
+    {
+      "repository": "rich",
+      "snapshot": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+      "candidate_source_sha256": "dd5b11c592e17462f24bfc75074507180a9e85479887f3fb88e64c4e2819cee0",
+      "baseline_source_sha256": "e3c4648992a263c291b74371008a23a40958c245759c6093ed420fec3bd3ce1b",
+      "baseline_hollow": 36,
+      "candidate_hollow": 13,
+      "candidate_state": "BLOCKED",
+      "candidate_high_findings": 7
+    },
+    {
+      "repository": "httpx",
+      "snapshot": "b5addb64f0161ff6bfe94c124ef76f6a1fba5254",
+      "candidate_source_sha256": "dd5b11c592e17462f24bfc75074507180a9e85479887f3fb88e64c4e2819cee0",
+      "baseline_source_sha256": "e3c4648992a263c291b74371008a23a40958c245759c6093ed420fec3bd3ce1b",
+      "baseline_hollow": 3,
+      "candidate_hollow": 2,
+      "candidate_state": "FINDINGS",
+      "candidate_high_findings": 0
+    },
+    {
+      "repository": "pydantic-core",
+      "snapshot": "383eb95a19433754c0cecf7025b50c26b6d97a36",
+      "candidate_source_sha256": "dd5b11c592e17462f24bfc75074507180a9e85479887f3fb88e64c4e2819cee0",
+      "baseline_source_sha256": "e3c4648992a263c291b74371008a23a40958c245759c6093ed420fec3bd3ce1b",
+      "baseline_hollow": 93,
+      "candidate_hollow": 92,
+      "candidate_state": "BLOCKED",
+      "candidate_high_findings": 3
+    }
+  ],
+  "external_controls": {
+    "cases": 30,
+    "clean_controls": 27,
+    "hollow_controls": 3,
+    "matched": 30
+  },
+  "tests_passed": 412,
+  "quality_grade": "A",
+  "quality_composite": 98.8,
+  "static_attribution": 1.0,
+  "tracked_python_limit": 460,
+  "remaining": "Unlabeled remaining flags and hosted reviews are not completion evidence"
+}

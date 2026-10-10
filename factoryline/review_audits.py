@@ -1069,6 +1069,30 @@ def _handler_reraises(handler: ast.ExceptHandler) -> bool:
     )
 
 
+def _catches_oracle_failure(
+    handler: ast.ExceptHandler, node: ast.AST, aliases: dict
+) -> bool:
+    if (
+        not isinstance(node, ast.Call)
+        or _normalized_call_name(node, aliases) != "pytest.fail"
+    ):
+        return _catches_assertion_error(handler, aliases)
+    if _handler_reraises(handler):
+        return False
+    return handler.type is None or _catches_pytest_failure(handler.type, aliases)
+
+
+def _catches_pytest_failure(exception: ast.AST, aliases: dict) -> bool:
+    if isinstance(exception, ast.Tuple):
+        return any(_catches_pytest_failure(item, aliases) for item in exception.elts)
+    return _resolved_ast_name(exception, aliases) in {
+        "BaseException",
+        "builtins.BaseException",
+        "pytest.fail.Exception",
+        "_pytest.outcomes.Failed",
+    }
+
+
 def _effective_assertion(node: ast.AST, aliases: dict[str, str]) -> bool:
     """Assertions in a try suite count only when AssertionError is not swallowed."""
     ancestors = getattr(node, "_oracle_ancestors", ())
@@ -1080,7 +1104,7 @@ def _effective_assertion(node: ast.AST, aliases: dict[str, str]) -> bool:
         try_nodes = (ast.Try, getattr(ast, "TryStar", ast.Try))
         if isinstance(parent, try_nodes) and child in parent.body:
             if any(
-                _catches_assertion_error(handler, aliases)
+                _catches_oracle_failure(handler, node, aliases)
                 for handler in parent.handlers
             ):
                 return False
@@ -1088,7 +1112,7 @@ def _effective_assertion(node: ast.AST, aliases: dict[str, str]) -> bool:
                 return False
         if isinstance(parent, ast.With) and child in parent.body:
             if any(
-                _suppresses_assertion(item.context_expr, aliases)
+                _suppresses_assertion(item.context_expr, aliases, node)
                 for item in parent.items
             ):
                 return False
@@ -1132,7 +1156,20 @@ def _finally_suppresses_exception(node: ast.AST) -> bool:
     )
 
 
-def _suppresses_assertion(node: ast.AST, aliases: dict[str, str]) -> bool:
+def _suppresses_assertion(
+    node: ast.AST, aliases: dict[str, str], oracle: ast.AST | None = None
+) -> bool:
+    if (
+        isinstance(oracle, ast.Call)
+        and _normalized_call_name(oracle, aliases) == "pytest.fail"
+    ):
+        return (
+            isinstance(node, ast.Call)
+            and _resolved_ast_name(node.func, aliases) == "contextlib.suppress"
+            and any(
+                _catches_pytest_failure(argument, aliases) for argument in node.args
+            )
+        )
     return (
         isinstance(node, ast.Call)
         and _resolved_ast_name(node.func, aliases) == "contextlib.suppress"
@@ -1774,6 +1811,8 @@ def _assertion_call(
     leaf = name.rsplit(".", 1)[-1]
     return (
         name in {"pytest.raises", "pytest.warns"}
+        or (name == "pytest.fail" and _call_name(node).split(".", 1)[0] in aliases)
+        or _mock_argument_oracle(node)
         or _click_callback_oracle(node, aliases, helper_names) is not None
         or (
             unittest_context
@@ -1790,6 +1829,36 @@ def _assertion_call(
             )
         )
     )
+
+
+def _mock_argument_oracle(node: ast.Call) -> bool:
+    if not isinstance(node.func, ast.Attribute) or node.func.attr not in {
+        "assert_called_with",
+        "assert_called_once_with",
+        "assert_any_call",
+        "assert_has_calls",
+        "assert_awaited_with",
+        "assert_awaited_once_with",
+        "assert_any_await",
+        "assert_has_awaits",
+    }:
+        return False
+    return not _mock_self_check(node)
+
+
+def _mock_self_check(node: ast.Call) -> bool:
+    scope = getattr(node, "_oracle_scope", None)
+    if scope is None:
+        return False
+    receiver = _name(node.func.value)
+    calls = [
+        child
+        for statement in scope.body
+        for child in _body_nodes(statement)
+        if isinstance(child, ast.Call)
+        and (child.lineno, child.col_offset) < (node.lineno, node.col_offset)
+    ]
+    return any(_call_name(child) == receiver for child in calls)
 
 
 def _click_callback_oracle(
@@ -2676,7 +2745,9 @@ def _weak_assertion_call_reason(node: ast.Call, aliases: dict) -> str | None:
         )
     ):
         return "non-null assertion does not verify the expected behavior"
-    if leaf in {"assert_called", "assert_called_once", "assert_called_once_with"}:
+    if leaf in {"assert_called", "assert_called_once"} or (
+        leaf == "assert_called_once_with" and _mock_self_check(node)
+    ):
         return "mock invocation state does not verify its result or arguments"
     return None
 
@@ -3445,11 +3516,22 @@ def _test_oracle_findings(
 
 
 def _security_node_findings(
-    relative: str, node: ast.AST, aliases: dict[str, str]
+    relative: str,
+    node: ast.AST,
+    aliases: dict[str, str],
+    roundtrip_aliases: dict | None = None,
 ) -> list[dict[str, Any]]:
     if isinstance(node, ast.Call):
         call = _normalized_call_name(node, aliases)
         finding = _security_call_finding(call, relative, node)
+        if finding and finding["code"] == "SECURITY_UNSAFE_DESERIALIZATION":
+            if _test_serialization_roundtrip(relative, node, roundtrip_aliases or {}):
+                finding["severity"] = "INFO"
+                finding["message"] = (
+                    "Test deserializes bytes produced by a direct local serialization. "
+                    "This is not external-byte input; custom object reducers still execute code."
+                )
+                finding["facts"]["input_provenance"] = "direct_local_serialization"
         return [finding] if finding is not None else []
     if isinstance(node, ast.ExceptHandler):
         finding = _bare_except_finding(relative, node)
@@ -3457,6 +3539,61 @@ def _security_node_findings(
     if isinstance(node, (ast.Assign, ast.AnnAssign)):
         return _literal_assignment_diagnostics(relative, node)
     return []
+
+
+def _test_serialization_roundtrip(relative: str, node: ast.Call, aliases: dict) -> bool:
+    path = Path(relative)
+    if not (
+        "tests" in path.parts
+        or path.name.startswith("test_")
+        or path.name.endswith("_test.py")
+    ):
+        return False
+    if len(node.args) != 1 or node.keywords or not isinstance(node.args[0], ast.Call):
+        return False
+    serialized = node.args[0]
+    loaded_name = _normalized_call_name(node, aliases)
+    return (
+        len(serialized.args) == 1
+        and not isinstance(serialized.args[0], ast.Starred)
+        and _normalized_call_name(serialized, aliases)
+        == loaded_name.removesuffix("loads") + "dumps"
+        and _call_name(serialized).split(".", 1)[0] in aliases
+        and not any(keyword.arg is None for keyword in serialized.keywords)
+    )
+
+
+def _unmodified_serialization_aliases(nodes: list[ast.AST], aliases: dict) -> dict:
+    """Only downgrade round-trips through imports without source-visible mutation."""
+    mutated = {
+        _name(node).split(".", 1)[0]
+        for node in nodes
+        if isinstance(node, (ast.Name, ast.Attribute))
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+    }
+    mutated.update(node.arg for node in nodes if isinstance(node, ast.arg))
+    for node in nodes:
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        if _call_name(node).rsplit(".", 1)[-1] in {
+            "setattr",
+            "delattr",
+            "object",
+            "patch",
+            "dict",
+        }:
+            target = node.args[0]
+            name = (
+                target.value
+                if isinstance(target, ast.Constant) and isinstance(target.value, str)
+                else _name(target)
+            )
+            mutated.add(name.split(".", 1)[0])
+    return {
+        name: value
+        for name, value in aliases.items()
+        if name not in mutated and value.split(".", 1)[0] not in mutated
+    }
 
 
 def _security_scan_tree(
@@ -3504,8 +3641,11 @@ def _security_scan_tree(
             context.get("typecheck", False),
         )
     )
+    roundtrip_aliases = _unmodified_serialization_aliases(nodes, aliases)
     for node in nodes:
-        findings.extend(_security_node_findings(relative, node, aliases))
+        findings.extend(
+            _security_node_findings(relative, node, aliases, roundtrip_aliases)
+        )
     return findings
 
 
