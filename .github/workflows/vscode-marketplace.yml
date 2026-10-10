@@ -165,7 +165,7 @@ jobs:
         env:
           RELEASE_REF: ${{ inputs.release_ref }}
           RELEASE_CONTRACT_PATH: ${{ inputs.release_contract }}
-          APPROVED_BY: ${{ github.actor }} (protected vscode deployment approval)
+          APPROVED_BY: ${{ github.actor }}
         run: |
           set -euo pipefail
           python - <<'PY'

@@ -158,7 +158,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           RELEASE_REF: ${{ inputs.release_ref }}
-          APPROVED_BY: ${{ github.actor }} (protected jetbrains deployment approval)
+          APPROVED_BY: ${{ github.actor }}
         run: |
           set -euo pipefail
           python scripts/prepare_release_contract.py \

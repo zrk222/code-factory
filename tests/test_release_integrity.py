@@ -1111,10 +1111,20 @@ def test_editor_exception_receipt_binds_protected_dispatch(
     assert 'test "$GITHUB_ACTOR" = zrk222' in step["run"]
     assert '"${exception_args[@]}"' in step["run"]
     code = step["run"].split("<<'PY'\n", 1)[1].split("\nPY", 1)[0]
+    prepare_step = next(
+        s
+        for s in workflow["jobs"]["validate"]["steps"]
+        if s.get("name") == "Prepare source-bound release contract"
+    )
+    assert prepare_step["env"]["APPROVED_BY"] == "${{ github.actor }}"
+    assert '--approved-by "$APPROVED_BY"' in prepare_step["run"]
+    approved_by = prepare_step["env"]["APPROVED_BY"].replace(
+        "${{ github.actor }}", "zrk222"
+    )
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".factory").mkdir()
     contract = tmp_path / "contract.json"
-    contract.write_text(json.dumps({"approved_by": "zrk222"}))
+    contract.write_text(json.dumps({"approved_by": approved_by}))
     for key, value in {
         "RELEASE_CONTRACT_PATH": str(contract),
         "EXCEPTION_REASON": "Owner authorized this one release",
