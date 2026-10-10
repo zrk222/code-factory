@@ -140,7 +140,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-python-${{ inputs.release_tag }}
           path: dist/
@@ -177,7 +177,7 @@ jobs:
           version="$(node -p "require('./package.json').version")"
           npx vsce package --no-dependencies --out "factoryline-vscode-${version}.vsix"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-vscode-${{ inputs.release_tag }}
           path: editors/vscode/factoryline-vscode-*.vsix
@@ -209,7 +209,7 @@ jobs:
           chmod +x gradlew
           ./gradlew check guardianReleaseGate
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-intellij-${{ inputs.release_tag }}
           path: editors/intellij/build/distributions/*.zip

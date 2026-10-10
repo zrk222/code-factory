@@ -237,7 +237,7 @@ jobs:
             --release-ref "$RELEASE_REF" \
             --commit "$(git rev-parse HEAD)" \
             --channel "$MARKETPLACE_CHANNEL"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: jetbrains-marketplace-${{ inputs.release_ref }}
           path: marketplace-candidate/
@@ -245,7 +245,7 @@ jobs:
           retention-days: 14
       - name: Preserve verifier and test reports
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: jetbrains-validation-reports-${{ inputs.release_ref }}
           path: editors/intellij/build/reports/
@@ -350,7 +350,7 @@ jobs:
           exit 1
       - name: Preserve compatibility report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: jetbrains-compatibility-${{ inputs.release_ref }}-${{ matrix.product }}
           path: editors/intellij/build/reports/pluginVerifier/

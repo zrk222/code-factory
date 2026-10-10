@@ -51,7 +51,7 @@ jobs:
         run: node scripts/verify_semgrep_surface.mjs factory-semgrep:candidate semgrep-surface-verification.json
       - name: Preserve image and source-bound control evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: semgrep-surface-verification
           path: |
@@ -84,7 +84,7 @@ jobs:
         run: node scripts/verify_codeql_cross_file.mjs factory-worker:candidate codeql-cross-file-verification.json
       - name: Preserve cross-file findings and flow evidence
         if: always() && matrix.target == 'codeql-javascript-worker'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: codeql-cross-file-verification
           path: |
@@ -96,7 +96,7 @@ jobs:
         run: node scripts/verify_codeql_cross_file.mjs factory-worker:candidate codeql-actions-verification.json actions
       - name: Preserve workflow injection findings and flow evidence
         if: always() && matrix.target == 'codeql-actions-worker'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: codeql-actions-verification
           path: |
@@ -105,7 +105,7 @@ jobs:
           if-no-files-found: error
       - name: Preserve hash-bound tracker and installed source-version evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: worker-verification-${{ matrix.target }}
           path: worker-verification.json
