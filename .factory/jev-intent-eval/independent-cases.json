@@ -1,0 +1,302 @@
+[
+  {
+    "id": "hollow_name_docstring_comment",
+    "category": "test_oracle",
+    "expected": true,
+    "state": {
+      "candidate": {
+        "source_sha256": "8f3d6af45f9df03ff9a46e62688a85c6f51e6f47348fc993cdcb6e7c2c72ecbe",
+        "commit": "a7946b998cc796186150d76463db159fc1f6ba00",
+        "path": "tests/fixtures/external_oracle_cases.json",
+        "excerpt_sha256": "5d52661c2ed1303b6948702bbd8da29a6d9ded1756c2c355cf856313fc34decc"
+      },
+      "requirement": "Does the outer body of the selected test have no effective failure check? A check must be meaningful, execute on the shown source path, and propagate; intent text and smoke invocation alone do not count. Judge source control flow only.",
+      "evidence": {
+        "scope": "constructed source-only excerpt; no runtime execution claimed",
+        "source": "def test_validates_and_asserts():\n    \"\"\"Asserts the computed result.\"\"\"\n    value = compute()\n    # assert value == 7\n    value == 7\n",
+        "source_start_line": 1,
+        "selected_test": {
+          "start_line": 1,
+          "name": "test_validates_and_asserts",
+          "end_line": 5
+        }
+      }
+    },
+    "adjudication": "Name, docstring and comment claim validation, but the only comparison is discarded."
+  },
+  {
+    "id": "hollow_smoke_only",
+    "category": "test_oracle",
+    "expected": true,
+    "state": {
+      "candidate": {
+        "source_sha256": "8f3d6af45f9df03ff9a46e62688a85c6f51e6f47348fc993cdcb6e7c2c72ecbe",
+        "commit": "a7946b998cc796186150d76463db159fc1f6ba00",
+        "path": "tests/fixtures/external_oracle_cases.json",
+        "excerpt_sha256": "6b44454c2eafea5acc90220ae9244cdd25177096014430b7242f0d1a97122c1e"
+      },
+      "requirement": "Does the outer body of the selected test have no effective failure check? A check must be meaningful, execute on the shown source path, and propagate; intent text and smoke invocation alone do not count. Judge source control flow only.",
+      "evidence": {
+        "scope": "constructed source-only excerpt; no runtime execution claimed",
+        "source": "def test_smoke():\n    run_application()\n",
+        "source_start_line": 1,
+        "selected_test": {
+          "start_line": 1,
+          "name": "test_smoke",
+          "end_line": 2
+        }
+      }
+    },
+    "adjudication": "A smoke invocation with no exception or outcome check is not an effective failure oracle."
+  },
+  {
+    "id": "hollow_swallowed_assertion",
+    "category": "test_oracle",
+    "expected": true,
+    "state": {
+      "candidate": {
+        "source_sha256": "8f3d6af45f9df03ff9a46e62688a85c6f51e6f47348fc993cdcb6e7c2c72ecbe",
+        "commit": "a7946b998cc796186150d76463db159fc1f6ba00",
+        "path": "tests/fixtures/external_oracle_cases.json",
+        "excerpt_sha256": "32a6395f091a330fc80cb021b7786bcdae24b8ec7fa4c2ed2bbdc0cebf1eac0b"
+      },
+      "requirement": "Does the outer body of the selected test have no effective failure check? A check must be meaningful, execute on the shown source path, and propagate; intent text and smoke invocation alone do not count. Judge source control flow only.",
+      "evidence": {
+        "scope": "constructed source-only excerpt; no runtime execution claimed",
+        "source": "def test_assertion_is_swallowed():\n    try:\n        assert calculate() == 4\n    except AssertionError:\n        pass\n",
+        "source_start_line": 1,
+        "selected_test": {
+          "start_line": 1,
+          "name": "test_assertion_is_swallowed",
+          "end_line": 5
+        }
+      }
+    },
+    "adjudication": "The assertion failure is caught and suppressed by the test body."
+  },
+  {
+    "id": "hollow_uncalled_callback",
+    "category": "test_oracle",
+    "expected": true,
+    "state": {
+      "candidate": {
+        "source_sha256": "8f3d6af45f9df03ff9a46e62688a85c6f51e6f47348fc993cdcb6e7c2c72ecbe",
+        "commit": "a7946b998cc796186150d76463db159fc1f6ba00",
+        "path": "tests/fixtures/external_oracle_cases.json",
+        "excerpt_sha256": "6ea0bca6709b2e381ab79b88c7f22bd30cb08efa788d2567e8d7f4bbdef586ab"
+      },
+      "requirement": "Does the outer body of the selected test have no effective failure check? A check must be meaningful, execute on the shown source path, and propagate; intent text and smoke invocation alone do not count. Judge source control flow only.",
+      "evidence": {
+        "scope": "constructed source-only excerpt; no runtime execution claimed",
+        "source": "def test_callback_checks_value():\n    def callback():\n        assert calculate() == 4\n    register(callback)\n",
+        "source_start_line": 1,
+        "selected_test": {
+          "start_line": 1,
+          "name": "test_callback_checks_value",
+          "end_line": 4
+        }
+      }
+    },
+    "adjudication": "The nested assertion is never directly called; registration semantics are unresolved and excluded."
+  },
+  {
+    "id": "hollow_uncalled_assertion_callback",
+    "category": "test_oracle",
+    "expected": true,
+    "state": {
+      "candidate": {
+        "source_sha256": "8f3d6af45f9df03ff9a46e62688a85c6f51e6f47348fc993cdcb6e7c2c72ecbe",
+        "commit": "a7946b998cc796186150d76463db159fc1f6ba00",
+        "path": "tests/fixtures/external_oracle_cases.json",
+        "excerpt_sha256": "7a5e0d865ac0bff19fbf23efe5c17c2c4547cd17bdd3be9f945c044fcf67c229"
+      },
+      "requirement": "Does the outer body of the selected test have no effective failure check? A check must be meaningful, execute on the shown source path, and propagate; intent text and smoke invocation alone do not count. Judge source control flow only.",
+      "evidence": {
+        "scope": "constructed source-only excerpt; no runtime execution claimed",
+        "source": "def test_uninvoked_callback():\n    def callback():\n        assert False\n    # callback() verifies failure\n    pass\n",
+        "source_start_line": 1,
+        "selected_test": {
+          "start_line": 1,
+          "name": "test_uninvoked_callback",
+          "end_line": 5
+        }
+      }
+    },
+    "adjudication": "A callback with an assertion is defined but not called; the comment does not execute it."
+  },
+  {
+    "id": "hollow_called_noop_smoke",
+    "category": "test_oracle",
+    "expected": true,
+    "state": {
+      "candidate": {
+        "source_sha256": "8f3d6af45f9df03ff9a46e62688a85c6f51e6f47348fc993cdcb6e7c2c72ecbe",
+        "commit": "a7946b998cc796186150d76463db159fc1f6ba00",
+        "path": "tests/fixtures/external_oracle_cases.json",
+        "excerpt_sha256": "953f1eb3f219fe6b9249f94e3fb431bb16973792def4725159165feea92970fb"
+      },
+      "requirement": "Does the outer body of the selected test have no effective failure check? A check must be meaningful, execute on the shown source path, and propagate; intent text and smoke invocation alone do not count. Judge source control flow only.",
+      "evidence": {
+        "scope": "constructed source-only excerpt; no runtime execution claimed",
+        "source": "def test_callback_smoke():\n    def callback():\n        pass\n    callback()\n",
+        "source_start_line": 1,
+        "selected_test": {
+          "start_line": 1,
+          "name": "test_callback_smoke",
+          "end_line": 4
+        }
+      }
+    },
+    "adjudication": "The callback is called, but its body has no failure check; invocation alone is a smoke path."
+  },
+  {
+    "id": "meaningful_expected_exception",
+    "category": "test_oracle",
+    "expected": false,
+    "state": {
+      "candidate": {
+        "source_sha256": "8f3d6af45f9df03ff9a46e62688a85c6f51e6f47348fc993cdcb6e7c2c72ecbe",
+        "commit": "a7946b998cc796186150d76463db159fc1f6ba00",
+        "path": "tests/fixtures/external_oracle_cases.json",
+        "excerpt_sha256": "47072aff9eaa8ed77b72250e6bfab68a643f9b747400d9c21a36e56575986a76"
+      },
+      "requirement": "Does the outer body of the selected test have no effective failure check? A check must be meaningful, execute on the shown source path, and propagate; intent text and smoke invocation alone do not count. Judge source control flow only.",
+      "evidence": {
+        "scope": "constructed source-only excerpt; no runtime execution claimed",
+        "source": "import pytest\ndef test_rejects_bad_input():\n    with pytest.raises(ValueError):\n        parse(None)\n",
+        "source_start_line": 1,
+        "selected_test": {
+          "start_line": 2,
+          "name": "test_rejects_bad_input",
+          "end_line": 4
+        }
+      }
+    },
+    "adjudication": "The expected-exception context fails if parse(None) does not raise ValueError; external parse semantics are irrelevant."
+  },
+  {
+    "id": "meaningful_missing_exception_failure",
+    "category": "test_oracle",
+    "expected": false,
+    "state": {
+      "candidate": {
+        "source_sha256": "8f3d6af45f9df03ff9a46e62688a85c6f51e6f47348fc993cdcb6e7c2c72ecbe",
+        "commit": "a7946b998cc796186150d76463db159fc1f6ba00",
+        "path": "tests/fixtures/external_oracle_cases.json",
+        "excerpt_sha256": "52de42bda2a06437057504079e562ae5bf5627ce8ceae4eb6d96c509d1f1fee3"
+      },
+      "requirement": "Does the outer body of the selected test have no effective failure check? A check must be meaningful, execute on the shown source path, and propagate; intent text and smoke invocation alone do not count. Judge source control flow only.",
+      "evidence": {
+        "scope": "constructed source-only excerpt; no runtime execution claimed",
+        "source": "def test_requires_failure():\n    try:\n        action()\n    except ValueError:\n        pass\n    else:\n        raise AssertionError('expected ValueError')\n",
+        "source_start_line": 1,
+        "selected_test": {
+          "start_line": 1,
+          "name": "test_requires_failure",
+          "end_line": 7
+        }
+      }
+    },
+    "adjudication": "The explicit else branch fails when the required exception is absent; action semantics are not assumed."
+  },
+  {
+    "id": "meaningful_mock_interaction",
+    "category": "test_oracle",
+    "expected": false,
+    "state": {
+      "candidate": {
+        "source_sha256": "8f3d6af45f9df03ff9a46e62688a85c6f51e6f47348fc993cdcb6e7c2c72ecbe",
+        "commit": "a7946b998cc796186150d76463db159fc1f6ba00",
+        "path": "tests/fixtures/external_oracle_cases.json",
+        "excerpt_sha256": "fb3d1728f037f53477743a7e711a2fa3c7638b5e4497f239bf2a991a95a52754"
+      },
+      "requirement": "Does the outer body of the selected test have no effective failure check? A check must be meaningful, execute on the shown source path, and propagate; intent text and smoke invocation alone do not count. Judge source control flow only.",
+      "evidence": {
+        "scope": "constructed source-only excerpt; no runtime execution claimed",
+        "source": "from unittest.mock import Mock\ndef test_calls_dependency():\n    dependency = Mock()\n    run(dependency)\n    dependency.assert_called_once_with('ready')\n",
+        "source_start_line": 1,
+        "selected_test": {
+          "start_line": 2,
+          "name": "test_calls_dependency",
+          "end_line": 5
+        }
+      }
+    },
+    "adjudication": "A mock interaction assertion checks the supplied mock call and can fail for a wrong or missing call."
+  },
+  {
+    "id": "meaningful_swallowed_decoy_then_assert",
+    "category": "test_oracle",
+    "expected": false,
+    "state": {
+      "candidate": {
+        "source_sha256": "8f3d6af45f9df03ff9a46e62688a85c6f51e6f47348fc993cdcb6e7c2c72ecbe",
+        "commit": "a7946b998cc796186150d76463db159fc1f6ba00",
+        "path": "tests/fixtures/external_oracle_cases.json",
+        "excerpt_sha256": "9cc42c952ac127fc7950dfd2dc5c4503c207c2779e7e71edcdba26ddcbb8175d"
+      },
+      "requirement": "Does the outer body of the selected test have no effective failure check? A check must be meaningful, execute on the shown source path, and propagate; intent text and smoke invocation alone do not count. Judge source control flow only.",
+      "evidence": {
+        "scope": "constructed source-only excerpt; no runtime execution claimed",
+        "source": "def test_assert_after_handler():\n    try:\n        assert False\n    except AssertionError:\n        pass\n    assert status == 'ready'\n",
+        "source_start_line": 1,
+        "selected_test": {
+          "start_line": 1,
+          "name": "test_assert_after_handler",
+          "end_line": 6
+        }
+      }
+    },
+    "adjudication": "The first assertion is swallowed, but the later outer assertion remains effective."
+  },
+  {
+    "id": "meaningful_called_callback",
+    "category": "test_oracle",
+    "expected": false,
+    "state": {
+      "candidate": {
+        "source_sha256": "8f3d6af45f9df03ff9a46e62688a85c6f51e6f47348fc993cdcb6e7c2c72ecbe",
+        "commit": "a7946b998cc796186150d76463db159fc1f6ba00",
+        "path": "tests/fixtures/external_oracle_cases.json",
+        "excerpt_sha256": "b6cc1421ec3327168e7d3cbadf070909c9df6f166e0814922c97ef1cb2658f84"
+      },
+      "requirement": "Does the outer body of the selected test have no effective failure check? A check must be meaningful, execute on the shown source path, and propagate; intent text and smoke invocation alone do not count. Judge source control flow only.",
+      "evidence": {
+        "scope": "constructed source-only excerpt; no runtime execution claimed",
+        "source": "def test_invoked_callback_checks():\n    def callback():\n        assert value == 3\n    callback()\n",
+        "source_start_line": 1,
+        "selected_test": {
+          "start_line": 1,
+          "name": "test_invoked_callback_checks",
+          "end_line": 4
+        }
+      }
+    },
+    "adjudication": "The nested assertion is reached via a direct call in the test body and propagates."
+  },
+  {
+    "id": "meaningful_assertion_with_smoke",
+    "category": "test_oracle",
+    "expected": false,
+    "state": {
+      "candidate": {
+        "source_sha256": "8f3d6af45f9df03ff9a46e62688a85c6f51e6f47348fc993cdcb6e7c2c72ecbe",
+        "commit": "a7946b998cc796186150d76463db159fc1f6ba00",
+        "path": "tests/fixtures/external_oracle_cases.json",
+        "excerpt_sha256": "56f9417112836dec50409545e30a9e4d43d079915b264ed77731762fc53112d1"
+      },
+      "requirement": "Does the outer body of the selected test have no effective failure check? A check must be meaningful, execute on the shown source path, and propagate; intent text and smoke invocation alone do not count. Judge source control flow only.",
+      "evidence": {
+        "scope": "constructed source-only excerpt; no runtime execution claimed",
+        "source": "def test_smoke_has_contract():\n    result = run_application()\n    assert result == 'ready'\n",
+        "source_start_line": 1,
+        "selected_test": {
+          "start_line": 1,
+          "name": "test_smoke_has_contract",
+          "end_line": 3
+        }
+      }
+    },
+    "adjudication": "The smoke-style invocation is followed by an explicit outcome assertion."
+  }
+]

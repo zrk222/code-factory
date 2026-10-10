@@ -1,0 +1,112 @@
+{
+  "schema": "factory.workflow-audit.observations.v1",
+  "contract_sha256": "c30b267f1e96fd763ab2ad936989500eb207745febffbe9c8de60fe2a9a2121c",
+  "candidate_sha256": "a4c7813137f6d303b29fbe0167604969678c20e74f52edc8c303d08802e8b2dc",
+  "observations": [
+    {
+      "id": "REGRESSION",
+      "profile": "windows-node22-jev-experimental",
+      "status": "PASS",
+      "reason": "60 Node regressions pass including exact intent and ANY-check instructions; scoped evidence only, no99.85accuracyclaim",
+      "execution_identity": "Windows Node22; actual live Vercel Jev and offline regression tests",
+      "observed_at": "2026-10-10T15:30:58.044275+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/jev-intent-eval/tests-final.log",
+          "sha256": "d72912cbacb2160b9f1f0fcdd8d0e3e8ea8949aec49435c529514ff4cc8ff3ea",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "BINDING",
+      "profile": "windows-node22-jev-experimental",
+      "status": "PASS",
+      "reason": "Unchanged frozen input bindings and framework versions recorded; scoped evidence only, no99.85accuracyclaim",
+      "execution_identity": "Windows Node22; actual live Vercel Jev and offline regression tests",
+      "observed_at": "2026-10-10T15:30:58.053279+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/jev-intent-eval/evaluation-summary.json",
+          "sha256": "a654d849a703e30137d42a4f95cbc6b71118026dbd7ec7a02e8fa61c685462e8",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "UNCERTAINTY",
+      "profile": "windows-node22-jev-experimental",
+      "status": "PASS",
+      "reason": "Abstentions retained and actionable; no threshold lowering; scoped evidence only, no99.85accuracyclaim",
+      "execution_identity": "Windows Node22; actual live Vercel Jev and offline regression tests",
+      "observed_at": "2026-10-10T15:30:58.064698+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/jev-intent-eval/evaluation-summary.json",
+          "sha256": "a654d849a703e30137d42a4f95cbc6b71118026dbd7ec7a02e8fa61c685462e8",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "ARCH",
+      "profile": "windows-node22-jev-experimental",
+      "status": "PASS",
+      "reason": "Strict architecture HEALTHY460Pythonfiles; scoped evidence only, no99.85accuracyclaim",
+      "execution_identity": "Windows Node22; actual live Vercel Jev and offline regression tests",
+      "observed_at": "2026-10-10T15:30:58.064698+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/jev-intent-eval/architecture.json",
+          "sha256": "f98a2fb686585592366ab3a38fb5bb6ee0eb2f45e26bb30a155472c9d8dba624",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "PRIVACY",
+      "profile": "windows-node22-jev-experimental",
+      "status": "PASS",
+      "reason": "Separate reviewer verifies no intent-derived oracle credit or weakened swallowed-check logic; scoped evidence only, no99.85accuracyclaim",
+      "execution_identity": "Windows Node22; actual live Vercel Jev and offline regression tests",
+      "observed_at": "2026-10-10T15:30:58.064698+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/jev-intent-eval/review.md",
+          "sha256": "dbad17011867bd233a12e2a44d3af94cd75285536d42c62563391db80604a364",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "id": "PERFORMANCE",
+      "profile": "windows-node22-jev-experimental",
+      "status": "PASS",
+      "reason": "Bounded live request cost/latency recorded, no speed claim; scoped evidence only, no99.85accuracyclaim",
+      "execution_identity": "Windows Node22; actual live Vercel Jev and offline regression tests",
+      "observed_at": "2026-10-10T15:30:58.065712+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/jev-intent-eval/evaluation-summary.json",
+          "sha256": "a654d849a703e30137d42a4f95cbc6b71118026dbd7ec7a02e8fa61c685462e8",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "PROVIDER",
+      "profile": "windows-node22-jev-experimental",
+      "status": "PASS",
+      "reason": "Actual live model trials with verified journals; no publication or approval; scoped evidence only, no99.85accuracyclaim",
+      "execution_identity": "Windows Node22; actual live Vercel Jev and offline regression tests",
+      "observed_at": "2026-10-10T15:30:58.065712+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/jev-intent-eval/evaluation-summary.json",
+          "sha256": "a654d849a703e30137d42a4f95cbc6b71118026dbd7ec7a02e8fa61c685462e8",
+          "kind": "observation"
+        }
+      ]
+    }
+  ]
+}

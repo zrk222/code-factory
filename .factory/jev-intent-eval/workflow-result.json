@@ -1,0 +1,44 @@
+{
+  "agent_actions": [],
+  "authority": {
+    "approval": false,
+    "connector": false,
+    "credential": false,
+    "deployment": false,
+    "execution": false,
+    "merge": false,
+    "messaging": false,
+    "publication": false,
+    "repair": false,
+    "signing": false
+  },
+  "candidate_sha256": "a4c7813137f6d303b29fbe0167604969678c20e74f52edc8c303d08802e8b2dc",
+  "checks": 7,
+  "contract_sha256": "c30b267f1e96fd763ab2ad936989500eb207745febffbe9c8de60fe2a9a2121c",
+  "errors": [],
+  "inapplicability_evidence": {
+    "accessibility": {
+      "actual_sha256": "9f6b2662d72134230f8c9aed2f174253b46eb9cefbfa609ab6e857b0c66ced98",
+      "current": true,
+      "kind": "review",
+      "path": ".factory/jev-intent-eval/scope.md",
+      "sha256": "9f6b2662d72134230f8c9aed2f174253b46eb9cefbfa609ab6e857b0c66ced98"
+    }
+  },
+  "limits": [
+    "Recorded evidence completeness and hashes only; observations require review.",
+    "Inapplicability review evidence is hash-bound but its judgment and identity are not authenticated.",
+    "Each contract/observation JSON input and evidence artifact is limited to 16 MiB; total evidence hashing is limited to 128 MiB, 4096 artifact references, and 4096 required check/profile pairs.",
+    "No project command or provider is executed.",
+    "No approval, certification or deployment authority."
+  ],
+  "observations_sha256": "e6882cdd0137335dcebd6e6aff1527ea4dadf2e2e28a5f489bfb6f72055a7ff6",
+  "project_id": "jev-executable-oracle-evidence",
+  "receipt_sha256": "949fbc560da01cf9b7f8ac325f5139aae61a4023deef5164eb3b407b829eb226",
+  "resource_usage": {
+    "artifact_references": 11,
+    "bytes_hashed": 129804
+  },
+  "schema": "factory.workflow-audit.receipt.v1",
+  "state": "PASS"
+}
