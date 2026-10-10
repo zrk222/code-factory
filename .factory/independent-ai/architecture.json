@@ -1,0 +1,156 @@
+{
+  "accepted_baseline_debt": [],
+  "accepted_debt": null,
+  "accepted_regressions": [],
+  "baseline_debt": [],
+  "decision": "HEALTHY",
+  "metrics": {
+    "cli_command_declarations": 176,
+    "cli_lines": 4854,
+    "core_modules": 127,
+    "documentation_index": {
+      "canonical_count": 4,
+      "coverage_patterns": 5,
+      "status": "valid",
+      "unmatched": []
+    },
+    "file_size_guard": {
+      "enforced": true,
+      "files": {
+        "factoryline/architecture_health.py": {
+          "bytes": 50667,
+          "lines": 1411,
+          "max_bytes": 50993,
+          "max_lines": 1414
+        },
+        "factoryline/audit_taxonomy.py": {
+          "bytes": 46670,
+          "lines": 789,
+          "max_bytes": 49071,
+          "max_lines": 814
+        },
+        "factoryline/audit_trace.py": {
+          "bytes": 23804,
+          "lines": 675,
+          "max_bytes": 24995,
+          "max_lines": 709
+        },
+        "factoryline/benchmark_lab.py": {
+          "bytes": 19994,
+          "lines": 518,
+          "max_bytes": 20093,
+          "max_lines": 521
+        },
+        "factoryline/cli.py": {
+          "bytes": 179557,
+          "lines": 4854,
+          "max_bytes": 182806,
+          "max_lines": 4932
+        },
+        "factoryline/github_account_overview.py": {
+          "bytes": 26345,
+          "lines": 781,
+          "max_bytes": 27663,
+          "max_lines": 821
+        },
+        "factoryline/graph_ops.py": {
+          "bytes": 220566,
+          "lines": 5842,
+          "max_bytes": 220566,
+          "max_lines": 5842
+        },
+        "factoryline/junie_review.py": {
+          "bytes": 77815,
+          "lines": 1789,
+          "max_bytes": 81706,
+          "max_lines": 1879
+        },
+        "factoryline/junie_taxonomy.py": {
+          "bytes": 33010,
+          "lines": 801,
+          "max_bytes": 38638,
+          "max_lines": 910
+        },
+        "factoryline/mcp.py": {
+          "bytes": 188046,
+          "lines": 4369,
+          "max_bytes": 196619,
+          "max_lines": 4556
+        }
+      }
+    },
+    "markdown_files": 608,
+    "markdown_python_ratio": 1.3217,
+    "module_domains": {
+      "agent_protocols": 11,
+      "appforge": 16,
+      "cli_surfaces": 38,
+      "core": 127,
+      "enterprise": 6,
+      "graph_ops": 5,
+      "verification": 47
+    },
+    "python_files": 460,
+    "release_train": {
+      "cadence": {
+        "effective_at": "2026-09-21T15:01:54Z",
+        "exception_requires": "human-release-authority",
+        "max_releases_30d": 4,
+        "minimum_days_between_releases": 7,
+        "requires_changelog_entry": true,
+        "scope": "per_channel"
+      },
+      "channels": 3,
+      "status": "valid"
+    },
+    "total_factoryline_modules": 250,
+    "tracked_files": 1950,
+    "version": "0.48.1"
+  },
+  "next_action": "Architecture budgets are within policy. Release admission is blocked by the cadence guard: 4 version tags are inside the rolling 30-day budget of 4. Next eligible at 2026-10-26T05:53:51.000001Z.",
+  "policy": {
+    "baseline": {
+      "captured_at": "2026-09-15",
+      "cli_command_declarations": 484,
+      "cli_lines": 6505,
+      "core_modules": 196,
+      "markdown_files": 655,
+      "markdown_python_ratio": 1.6416,
+      "python_files": 399,
+      "version": "0.46.5"
+    },
+    "budgets": {
+      "max_cli_command_declarations": 184,
+      "max_cli_lines": 4977,
+      "max_core_modules": 129,
+      "max_markdown_files": 659,
+      "max_markdown_python_ratio": 1.7,
+      "max_python_files": 460
+    },
+    "path": "C:\\Users\\rkatz\\Documents\\Codex\\2026-09-24\\op\\work\\code-factory-review2\\architecture-policy.json",
+    "sha256": "sha256:2bcc976f50f5d60c22308fdc326151140f9502380cfdc86c2b3a4caa9e176972"
+  },
+  "regressions": [],
+  "release_cadence": {
+    "admission": false,
+    "available": true,
+    "channel": "core",
+    "cooldown_until": "2026-10-17T11:33:08Z",
+    "effective_at": "2026-09-21T15:01:54Z",
+    "excluded_candidate_tag": null,
+    "latest_interval_days": 0.93,
+    "latest_release_at": "2026-10-10T11:33:08Z",
+    "latest_tag": "v0.48.1",
+    "max_releases_30d": 4,
+    "minimum_days_between_releases": 7,
+    "next_eligible_at": "2026-10-26T05:53:51.000001Z",
+    "pre_policy_release_count": 89,
+    "reason": "4 version tags are inside the rolling 30-day budget of 4.",
+    "recent_count": 4,
+    "release_train_status": "valid",
+    "state": "rate_limited",
+    "window_budget_until": "2026-10-26T05:53:51.000001Z"
+  },
+  "root": "C:\\Users\\rkatz\\Documents\\Codex\\2026-09-24\\op\\work\\code-factory-review2",
+  "schema": "factory.architecture-health.v1"
+}

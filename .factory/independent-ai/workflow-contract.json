@@ -1,0 +1,152 @@
+{
+  "schema": "factory.workflow-audit.contract.v1",
+  "project_id": "code-factory-jev-criterion-bound-inputs",
+  "candidate": [
+    {
+      "path": "factoryline/data/judge_framework.json",
+      "sha256": "9e406f42d38c06b068293be65b39a047184476e7e679abbbca475d45fc41b6b2",
+      "kind": "source"
+    },
+    {
+      "path": "scripts/evaluate_jev.mjs",
+      "sha256": "57dc3e064abe4366dd8e20b9c98f8d2e7bfba30ed51051c874f4435fe0a63715",
+      "kind": "source"
+    },
+    {
+      "path": "scripts/evaluate_jev.test.mjs",
+      "sha256": "272be489ce4294334f980b118dc8c36ec9b2ff6bf64d6577ea2bde6b20316854",
+      "kind": "source"
+    },
+    {
+      "path": ".factory/independent-ai/final-review.md",
+      "sha256": "4eb36bba698c882b6c787b74ae4d66f0606edb888363cf30b62c47a3c7a7c309",
+      "kind": "review"
+    },
+    {
+      "path": ".gitattributes",
+      "sha256": "e3c488835f97cbeb56f4da618cf6a42a4a6930b5bc958544ceaf1fd385b1979e",
+      "kind": "source"
+    }
+  ],
+  "applicability": [
+    {
+      "category": "happy_path",
+      "applicable": true,
+      "reason": "Covered by scoped tests or recorded authorized operator trial."
+    },
+    {
+      "category": "validation",
+      "applicable": true,
+      "reason": "Covered by scoped tests or recorded authorized operator trial."
+    },
+    {
+      "category": "failure_recovery",
+      "applicable": true,
+      "reason": "Covered by scoped tests or recorded authorized operator trial."
+    },
+    {
+      "category": "state_consistency",
+      "applicable": true,
+      "reason": "Covered by scoped tests or recorded authorized operator trial."
+    },
+    {
+      "category": "security_privacy",
+      "applicable": true,
+      "reason": "Covered by scoped tests or recorded authorized operator trial."
+    },
+    {
+      "category": "performance",
+      "applicable": true,
+      "reason": "Covered by scoped tests or recorded authorized operator trial."
+    },
+    {
+      "category": "accessibility",
+      "applicable": false,
+      "reason": "Pure CLI/framework change; no visual or interaction surface changed.",
+      "review_evidence": {
+        "path": ".factory/independent-ai/applicability-review.md",
+        "sha256": "c4a880e7cc11601716da07cfc3869337e591c1362901b5b03107a2d2b8b63c09",
+        "kind": "review"
+      }
+    },
+    {
+      "category": "external_effects",
+      "applicable": true,
+      "reason": "Covered by scoped tests or recorded authorized operator trial."
+    }
+  ],
+  "checks": [
+    {
+      "id": "PROFILE_PACKET",
+      "category": "happy_path",
+      "requirement": "Dedicated test-oracle rubric and atomic evidence question are selected and source-bound",
+      "profiles": [
+        "windows-node22-python311"
+      ]
+    },
+    {
+      "id": "REJECT_INVALID",
+      "category": "validation",
+      "requirement": "Malformed packet fields, source digest mismatch and malformed evidence criteria reject before provider calls",
+      "profiles": [
+        "windows-node22-python311"
+      ]
+    },
+    {
+      "id": "FAIL_CLOSED",
+      "category": "failure_recovery",
+      "requirement": "Timeouts, malformed responses and low confidence remain unresolved without override",
+      "profiles": [
+        "windows-node22-python311"
+      ]
+    },
+    {
+      "id": "RECORD_UNRESOLVED",
+      "category": "state_consistency",
+      "requirement": "Live trial records all31 abstentions and journal verification; no accuracy upgrade is claimed",
+      "profiles": [
+        "windows-node22-python311"
+      ]
+    },
+    {
+      "id": "PRIVATE_BLIND",
+      "category": "security_privacy",
+      "requirement": "Expected labels stay out of requests; credentials never enter reports; authority unchanged",
+      "profiles": [
+        "windows-node22-python311"
+      ]
+    },
+    {
+      "id": "BOUNDED_LATENCY",
+      "category": "performance",
+      "requirement": "Timeout bounds tested and actual live request latency recorded without claiming speedup",
+      "profiles": [
+        "windows-node22-python311"
+      ]
+    },
+    {
+      "id": "AUTHORIZED_PROVIDER",
+      "category": "external_effects",
+      "requirement": "Explicitly authorized trial uses restricted provider and records costs, zero errors and no released verdict",
+      "profiles": [
+        "windows-node22-python311"
+      ]
+    },
+    {
+      "id": "FILE_BUDGET",
+      "category": "validation",
+      "requirement": "Architecture remains HEALTHY at460 Python files",
+      "profiles": [
+        "windows-node22-python311"
+      ]
+    },
+    {
+      "id": "RULE_REGRESSION",
+      "category": "validation",
+      "requirement": "Existing Python rule-search tests remain passing",
+      "profiles": [
+        "windows-node22-python311"
+      ]
+    }
+  ]
+}
