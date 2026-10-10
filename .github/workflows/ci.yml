@@ -48,7 +48,7 @@ jobs:
           assert policy['budgets']['max_python_files'] == 460
           print('CANDIDATE_QUALITY_A_97_9_AND_460_CEILING_OK')
           PY
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
           name: candidate-quality
@@ -150,14 +150,14 @@ jobs:
         run: python scripts/write_ci_runtime_coverage.py finish
       - name: Upload test results and timing evidence
         if: always() && (matrix.os != 'ubuntu-latest' || matrix.python != '3.11')
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: pytest-${{ matrix.os }}-${{ matrix.python }}
           path: pytest-results.xml
           if-no-files-found: error
       - name: Upload runtime coverage reports
         if: always() && matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: pytest-${{ matrix.os }}-${{ matrix.python }}
           path: |
@@ -188,7 +188,7 @@ jobs:
         run: >-
           python -m pytest -q -rA tests/test_ci_platform_parity.py
           --junitxml=native-process-parity.junit.xml
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: native-process-parity-${{ matrix.os }}
           path: native-process-parity.junit.xml
@@ -219,7 +219,7 @@ jobs:
           ! /tmp/factory-wheel/bin/factory verify missing-feature --root /tmp --strict-release --json
           /tmp/factory-wheel/bin/python -c "import factoryline; print(factoryline.__version__)"
           /tmp/factory-wheel/bin/python /tmp/release_train_e2e.py
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: python-distributions
           path: dist/

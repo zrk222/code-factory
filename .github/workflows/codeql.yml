@@ -39,7 +39,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6
         if: matrix.language == 'java-kotlin'
         with:
           distribution: temurin
@@ -65,7 +65,7 @@ jobs:
           output: '${{ runner.temp }}/codeql-results'
       - name: Preserve native findings even when upload fails
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: codeql-${{ matrix.language }}-${{ github.sha }}
           path: '${{ runner.temp }}/codeql-results/*.sarif'

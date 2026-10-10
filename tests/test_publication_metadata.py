@@ -290,7 +290,7 @@ def test_publish_workflow_uses_trusted_publishing_without_stored_credentials():
     assert "id-token: write" in workflow
     assert "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" in workflow
     assert (
-        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in workflow
+        "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" in workflow
     )
     assert (
         "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" in workflow
@@ -435,7 +435,7 @@ def test_marketplace_workflow_uses_current_gradle_action_and_scoped_secret():
     assert "Test, verify, and check Marketplace package metadata" in workflow
     assert "jetbrains_release_artifact.py" in workflow
     assert (
-        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in workflow
+        "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" in workflow
     )
     assert (
         "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" in workflow
@@ -861,7 +861,7 @@ def test_ci_builds_checks_and_smokes_the_installable_package():
     assert "python -m pip install dist/*.whl" in workflow
     assert "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" in workflow
     assert (
-        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in workflow
+        "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" in workflow
     )
 
 

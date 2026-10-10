@@ -1,0 +1,389 @@
+{
+  "steps": [
+    {
+      "file": ".github/workflows/audit-benchmark.yml",
+      "job": "benchmark",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "public-seeded-benchmark-receipt",
+        "path": "public-benchmark-receipt.json"
+      }
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "job": "candidate-quality",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "candidate-quality",
+        "path": "candidate-quality.json",
+        "if-no-files-found": "error"
+      }
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "job": "test",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "${{ matrix.os }}",
+      "with": {
+        "name": "pytest-${{ matrix.os }}-${{ matrix.python }}",
+        "path": "pytest-results.xml",
+        "if-no-files-found": "error"
+      }
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "job": "test",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "${{ matrix.os }}",
+      "with": {
+        "name": "pytest-${{ matrix.os }}-${{ matrix.python }}",
+        "path": ".factory/test-reports/pytest.xml\n.factory/test-reports/coverage.json\n.factory/test-reports/coverage.xml\n.factory/test-reports/coverage.run.json\n",
+        "include-hidden-files": true,
+        "if-no-files-found": "error"
+      }
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "job": "native-process-parity",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "${{ matrix.os }}",
+      "with": {
+        "name": "native-process-parity-${{ matrix.os }}",
+        "path": "native-process-parity.junit.xml",
+        "if-no-files-found": "error"
+      }
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "job": "package-contract",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "python-distributions",
+        "path": "dist/",
+        "if-no-files-found": "error"
+      }
+    },
+    {
+      "file": ".github/workflows/codeql.yml",
+      "job": "analyze",
+      "uses": "actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6",
+      "runner": "ubuntu-latest",
+      "with": {
+        "distribution": "temurin",
+        "java-version": "21"
+      }
+    },
+    {
+      "file": ".github/workflows/codeql.yml",
+      "job": "analyze",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "codeql-${{ matrix.language }}-${{ github.sha }}",
+        "path": "${{ runner.temp }}/codeql-results/*.sarif",
+        "if-no-files-found": "warn"
+      }
+    },
+    {
+      "file": ".github/workflows/factory-pr-proof-review.yml",
+      "job": "advisory-proof-review",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "factoryline-github-proof-review",
+        "path": "github-proof-review.json\nrepository-scope-review.json\n.factory/github-proof-review/\n",
+        "if-no-files-found": "error"
+      }
+    },
+    {
+      "file": ".github/workflows/factory-proof.yml",
+      "job": "passport",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "factory-passport",
+        "path": ".factory/passports/\n.factory/challenges/\n.factory/traces/\n"
+      }
+    },
+    {
+      "file": ".github/workflows/github-packages.yml",
+      "job": "publish",
+      "uses": "docker/login-action@dbcb813823bdd20940b903addbd779551569679f",
+      "runner": "ubuntu-latest",
+      "with": {
+        "registry": "ghcr.io",
+        "username": "${{ github.actor }}",
+        "password": "${{ secrets.GITHUB_TOKEN }}"
+      }
+    },
+    {
+      "file": ".github/workflows/intellij-plugin.yml",
+      "job": "test-package-verify",
+      "uses": "actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6",
+      "runner": "ubuntu-latest",
+      "with": {
+        "distribution": "temurin",
+        "java-version": "21"
+      }
+    },
+    {
+      "file": ".github/workflows/intellij-plugin.yml",
+      "job": "test-package-verify",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "factoryline-intellij-plugin",
+        "path": "editors/intellij/build/distributions/*.zip"
+      }
+    },
+    {
+      "file": ".github/workflows/intellij-plugin.yml",
+      "job": "compatibility",
+      "uses": "actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6",
+      "runner": "ubuntu-latest",
+      "with": {
+        "distribution": "temurin",
+        "java-version": "21"
+      }
+    },
+    {
+      "file": ".github/workflows/jetbrains-marketplace.yml",
+      "job": "validate",
+      "uses": "actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6",
+      "runner": "ubuntu-latest",
+      "with": {
+        "distribution": "temurin",
+        "java-version": "21"
+      }
+    },
+    {
+      "file": ".github/workflows/jetbrains-marketplace.yml",
+      "job": "validate",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "jetbrains-marketplace-${{ inputs.release_ref }}",
+        "path": "marketplace-candidate/",
+        "if-no-files-found": "error",
+        "retention-days": 14
+      }
+    },
+    {
+      "file": ".github/workflows/jetbrains-marketplace.yml",
+      "job": "validate",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "jetbrains-validation-reports-${{ inputs.release_ref }}",
+        "path": "editors/intellij/build/reports/",
+        "if-no-files-found": "ignore",
+        "retention-days": 14
+      }
+    },
+    {
+      "file": ".github/workflows/jetbrains-marketplace.yml",
+      "job": "compatibility",
+      "uses": "actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6",
+      "runner": "ubuntu-latest",
+      "with": {
+        "distribution": "temurin",
+        "java-version": "21"
+      }
+    },
+    {
+      "file": ".github/workflows/jetbrains-marketplace.yml",
+      "job": "compatibility",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "jetbrains-compatibility-${{ inputs.release_ref }}-${{ matrix.product }}",
+        "path": "editors/intellij/build/reports/pluginVerifier/",
+        "if-no-files-found": "ignore",
+        "retention-days": 14
+      }
+    },
+    {
+      "file": ".github/workflows/jetbrains-marketplace.yml",
+      "job": "publish",
+      "uses": "actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6",
+      "runner": "ubuntu-latest",
+      "with": {
+        "distribution": "temurin",
+        "java-version": "21"
+      }
+    },
+    {
+      "file": ".github/workflows/mutation-audit.yml",
+      "job": "audit",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "mutation-evidence-${{ github.sha }}",
+        "path": "${{ runner.temp }}/mutation-evidence/",
+        "if-no-files-found": "error"
+      }
+    },
+    {
+      "file": ".github/workflows/opencode-plugin.yml",
+      "job": "build-test-pack",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "code-factory-opencode-0.1.0",
+        "path": "plugins/code-factory-opencode/code-factory-opencode-0.1.0.tgz",
+        "if-no-files-found": "error"
+      }
+    },
+    {
+      "file": ".github/workflows/openvsx.yml",
+      "job": "validate",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "openvsx-candidate-${{ inputs.release_ref }}",
+        "path": "openvsx-candidate/",
+        "if-no-files-found": "error",
+        "retention-days": 14
+      }
+    },
+    {
+      "file": ".github/workflows/publish.yml",
+      "job": "validate_python",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "release-python-${{ inputs.release_tag }}",
+        "path": "dist/",
+        "if-no-files-found": "error",
+        "retention-days": 30
+      }
+    },
+    {
+      "file": ".github/workflows/publish.yml",
+      "job": "validate_vscode",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "release-vscode-${{ inputs.release_tag }}",
+        "path": "editors/vscode/factoryline-vscode-*.vsix",
+        "if-no-files-found": "error",
+        "retention-days": 30
+      }
+    },
+    {
+      "file": ".github/workflows/publish.yml",
+      "job": "validate_intellij",
+      "uses": "actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6",
+      "runner": "ubuntu-latest",
+      "with": {
+        "distribution": "temurin",
+        "java-version": "21"
+      }
+    },
+    {
+      "file": ".github/workflows/publish.yml",
+      "job": "validate_intellij",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "release-intellij-${{ inputs.release_tag }}",
+        "path": "editors/intellij/build/distributions/*.zip",
+        "if-no-files-found": "error",
+        "retention-days": 30
+      }
+    },
+    {
+      "file": ".github/workflows/signed-receipts.yml",
+      "job": "isolated-check",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "ci-check-${{ matrix.check }}",
+        "path": "ci-${{ matrix.check }}.json\nci-${{ matrix.check }}.log\nci-tests.xml\n.factory/challenges/verify-receipts.json\n"
+      }
+    },
+    {
+      "file": ".github/workflows/signed-receipts.yml",
+      "job": "sign-and-verify",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "signed-factory-receipt",
+        "path": "ci-receipt.json\nci-receipt.json.sigstore.json\nci-checks/\n"
+      }
+    },
+    {
+      "file": ".github/workflows/vscode-extension.yml",
+      "job": "test-package",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "factoryline-vscode-vsix",
+        "path": "editors/vscode/factoryline-vscode.vsix"
+      }
+    },
+    {
+      "file": ".github/workflows/vscode-marketplace.yml",
+      "job": "validate",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "vscode-marketplace-candidate-${{ inputs.release_ref }}",
+        "path": "vscode-marketplace-candidate/",
+        "if-no-files-found": "error",
+        "retention-days": 14
+      }
+    },
+    {
+      "file": ".github/workflows/worker-verification.yml",
+      "job": "semgrep-surface",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "semgrep-surface-verification",
+        "path": "semgrep-surface-verification.json\nsemgrep-surface-verification.json.sarif\nsemgrep-surface-verification.json.suppression-enabled.sarif\n",
+        "if-no-files-found": "error"
+      }
+    },
+    {
+      "file": ".github/workflows/worker-verification.yml",
+      "job": "sdk-workers",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "codeql-cross-file-verification",
+        "path": "codeql-cross-file-verification.json\ncodeql-cross-file-verification.json.*.bundle.json\n",
+        "if-no-files-found": "error"
+      }
+    },
+    {
+      "file": ".github/workflows/worker-verification.yml",
+      "job": "sdk-workers",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "codeql-actions-verification",
+        "path": "codeql-actions-verification.json\ncodeql-actions-verification.json.*.bundle.json\n",
+        "if-no-files-found": "error"
+      }
+    },
+    {
+      "file": ".github/workflows/worker-verification.yml",
+      "job": "sdk-workers",
+      "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "runner": "ubuntu-latest",
+      "with": {
+        "name": "worker-verification-${{ matrix.target }}",
+        "path": "worker-verification.json",
+        "if-no-files-found": "error"
+      }
+    }
+  ],
+  "verified_steps": 35,
+  "delta_is_pin_only": true,
+  "inputs_valid": true,
+  "boundary": "GitHub.com hosted runner inputs and workflow conditions unchanged; live CI required for hosted execution."
+}

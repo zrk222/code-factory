@@ -1,0 +1,2 @@
+# Direct source review
+Reviewed all changed workflow and Python hunks. Changes are verified upstream SHA substitutions only. Release fan-in artifact names, inputs, conditions, permissions, secret references, environment protections and publication guards are unchanged. Pin-bound validator references match new pins. Negative assertion retains the obsolete upload SHA exclusion. No new Python files. This is primary-agent review, not independent human or second-agent review; delegated reviewer hit usage limit.
