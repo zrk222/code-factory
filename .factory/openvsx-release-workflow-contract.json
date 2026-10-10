@@ -32,7 +32,7 @@
       "review_evidence": {
         "kind": "review",
         "path": ".factory/openvsx-release-evidence/scope-review.md",
-        "sha256": "87fa0cdc8388483e8eef9c77e46aaf3c864470d90738d7c7af51714d60285ef6"
+        "sha256": "bd705be6f7e56f7e77a99f65a845df2d5a542d9416809ab51d99d9e39200c7ec"
       }
     },
     {
@@ -42,7 +42,7 @@
       "review_evidence": {
         "kind": "review",
         "path": ".factory/openvsx-release-evidence/scope-review.md",
-        "sha256": "87fa0cdc8388483e8eef9c77e46aaf3c864470d90738d7c7af51714d60285ef6"
+        "sha256": "bd705be6f7e56f7e77a99f65a845df2d5a542d9416809ab51d99d9e39200c7ec"
       }
     },
     {
@@ -53,69 +53,39 @@
   ],
   "candidate": [
     {
-      "kind": "source",
       "path": ".github/workflows/openvsx.yml",
-      "sha256": "003054432af137b2a4b7bfe878d2c9e5358392592de8a7d1819ff830b877fb35"
+      "sha256": "ae9b63b3cdd6bb08b690d7f895f4efacefed13dfc9f685d979fbe09e3b85878e",
+      "kind": "source"
     },
     {
-      "kind": "source",
-      "path": "editors/vscode/CHANGELOG.md",
-      "sha256": "baef4f058fc09ae9c27e929cec2fb4b303fa68c258f7454727b5f191731702bf"
-    },
-    {
-      "kind": "source",
-      "path": "editors/vscode/package-lock.json",
-      "sha256": "eebbdd545cbbb763a8f258bb5cdfde60199032cfedb9413e970695df369bb18c"
-    },
-    {
-      "kind": "source",
-      "path": "editors/vscode/package.json",
-      "sha256": "640371546065635aff1462ab826a9f2741917477df029eb4dc8e7e4d790873cf"
-    },
-    {
-      "kind": "source",
-      "path": "factoryline/cli_release.py",
-      "sha256": "cf7d38a6f24bb8dfc4da5641eb1dfac00cdd73ab75f3e983edb346afd9ab25f3"
-    },
-    {
-      "kind": "source",
       "path": "factoryline/release_candidate.py",
-      "sha256": "ecb3fda02b7bc03f1e9613c202f4e6ec2f8a28f8de660d7ee499f61a5dc1dd73"
+      "sha256": "6a81cd47706cca2f58eeed103dd5b2c58e18d0d0eaddbbbdc350ec4d2474543d",
+      "kind": "source"
     },
     {
-      "kind": "source",
       "path": "factoryline/release_integrity.py",
-      "sha256": "e679b0e06a96c5109bb9c1e0e3b4d832cb1544a6bd2718f6d4514507b6a95ec5"
+      "sha256": "f18e49aedd86676dc53842f2febb58792f0ab27049bc9ec80935163597dac2f6",
+      "kind": "source"
     },
     {
-      "kind": "source",
       "path": "tests/test_release_candidate.py",
-      "sha256": "6e8c4eb2cb3eddc87287cda97c7a76ff4b1e62075255fa42d8182de476ed7cd4"
+      "sha256": "dd691c521e21be0d041c7b9b148c2bd80becdab7864a1537a82d37f5ec1b66b3",
+      "kind": "source"
     },
     {
-      "kind": "source",
       "path": "tests/test_release_integrity.py",
-      "sha256": "fe68617d4ca9db608ea6a664c680e109236a4fac6e324233b0a37f353ffbcf3b"
+      "sha256": "de56ca103ed12c98596e1c8319b185b590b537a6ed24e35eb0c5b715dfd88cd9",
+      "kind": "source"
     },
     {
-      "kind": "source",
       "path": "specs/openvsx-cadence-exception.md",
-      "sha256": "d7df0b8af2794ed8de316f0a1c753fd470c8f6241b55eac6eb0d5fe084ec0b1a"
+      "sha256": "baeea98014b784bc730a1b00896898e2ceae4a1fd3e23c40bf405188112da20e",
+      "kind": "source"
     },
     {
-      "kind": "source",
       "path": "plans/openvsx-cadence-exception.md",
-      "sha256": "7812d806db0b1982cb65b9405a79867af7bfe3328efd4ccfd71a7840df05c48f"
-    },
-    {
-      "kind": "source",
-      "path": "context/PROGRESS.md",
-      "sha256": "b2016a0a485bb907f2337090cb31f2ff734bf7cb5efa3c98f140a8f003a126d1"
-    },
-    {
-      "kind": "source",
-      "path": "tests/test_publication_metadata.py",
-      "sha256": "e774c801808993edddcf44223d8f48cd43ab3dcc11dff9ee0185051caeb506f2"
+      "sha256": "bf391bd28caec4d7bd30b7a29ed31b5179114dcc587b1a8d0d49a8cc2c5c3fbb",
+      "kind": "source"
     }
   ],
   "checks": [
@@ -125,7 +95,7 @@
       "profiles": [
         "windows-cpython-3.11"
       ],
-      "requirement": "Exact v1.1.1 exception admits cadence only while preserving the normal cadence observation and all other preflight gates."
+      "requirement": "Exact v1.1.3+build.1 exception admits cadence only while preserving the normal cadence observation and all other preflight gates."
     },
     {
       "category": "validation",
@@ -168,6 +138,6 @@
       "requirement": "Publication remains gated by protected authorization, candidate validation, and attested immutable source."
     }
   ],
-  "project_id": "openvsx-v1.1.1-cadence-exception",
+  "project_id": "openvsx-v1.1.3-cadence-exception",
   "schema": "factory.workflow-audit.contract.v1"
 }

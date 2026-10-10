@@ -457,13 +457,13 @@ def _cadence_exception_payload(
         "requesting_actor": (contract or {}).get("approved_by"),
     }
     allowed = {
-        "vscode": ("1.1.1", "vscode-v1.1.1", "openvsx"),
+        "vscode": ("1.1.3", "vscode-v1.1.3+build.1", "openvsx"),
         "core": ("0.48.0", "v0.48.0", "pypi"),
     }
     approved = allowed.get(channel)
     if approved is None or (identity["version"], candidate_tag) != approved[:2]:
         raise ValueError(
-            "this one-time cadence exception is restricted to vscode-v1.1.1 or core v0.48.0"
+            "this one-time cadence exception is restricted to vscode-v1.1.3+build.1 or core v0.48.0"
         )
     expected_environment = approved[2]
     if any(value.get(key) != expected for key, expected in identity.items()):

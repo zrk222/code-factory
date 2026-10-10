@@ -226,7 +226,7 @@ def test_release_cadence_hold_blocks_candidate_preflight(
     )
 
 
-def test_openvsx_cadence_exception_is_bound_to_v111_run_attempt(
+def test_openvsx_cadence_exception_is_bound_to_v113_run_attempt(
     tmp_path: Path, monkeypatch
 ) -> None:
     issued = datetime.now(timezone.utc)
@@ -236,8 +236,8 @@ def test_openvsx_cadence_exception_is_bound_to_v111_run_attempt(
             {
                 "schema": "factory.release-cadence-exception.v1",
                 "channel": "vscode",
-                "version": "1.1.1",
-                "candidate_tag": "vscode-v1.1.1",
+                "version": "1.1.3",
+                "candidate_tag": "vscode-v1.1.3+build.1",
                 "source_commit": "a" * 40,
                 "requesting_actor": "zrk222",
                 "reason": "Approved one-time Open VSX release exception.",
@@ -257,16 +257,16 @@ def test_openvsx_cadence_exception_is_bound_to_v111_run_attempt(
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
     source = {
         "commit": "a" * 40,
-        "platform_versions": {"vscode": "1.1.1"},
+        "platform_versions": {"vscode": "1.1.3"},
     }
     contract = {"approved_by": "zrk222"}
 
     result = candidate._cadence_exception_payload(
-        tmp_path, path, source, "vscode", "vscode-v1.1.1", contract
+        tmp_path, path, source, "vscode", "vscode-v1.1.3+build.1", contract
     )
 
     assert result["workflow_run_attempt"] == "2"
-    assert result["candidate_tag"] == "vscode-v1.1.1"
+    assert result["candidate_tag"] == "vscode-v1.1.3+build.1"
 
 
 def test_openvsx_cadence_exception_rejects_other_candidate_or_run(
@@ -277,8 +277,8 @@ def test_openvsx_cadence_exception_rejects_other_candidate_or_run(
     value = {
         "schema": "factory.release-cadence-exception.v1",
         "channel": "vscode",
-        "version": "1.1.1",
-        "candidate_tag": "vscode-v1.1.1",
+        "version": "1.1.3",
+        "candidate_tag": "vscode-v1.1.3+build.1",
         "source_commit": "a" * 40,
         "requesting_actor": "zrk222",
         "reason": "Approved one-time Open VSX release exception.",
@@ -301,14 +301,14 @@ def test_openvsx_cadence_exception_rejects_other_candidate_or_run(
         candidate._cadence_exception_payload(
             tmp_path,
             path,
-            {"commit": "a" * 40, "platform_versions": {"vscode": "1.1.1"}},
+            {"commit": "a" * 40, "platform_versions": {"vscode": "1.1.3"}},
             "vscode",
-            "vscode-v1.1.1",
+            "vscode-v1.1.3+build.1",
             {"approved_by": "zrk222"},
         )
 
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
-    with pytest.raises(ValueError, match="restricted to vscode-v1.1.1"):
+    with pytest.raises(ValueError, match=r"restricted to vscode-v1\.1\.3\+build\.1"):
         candidate._cadence_exception_payload(
             tmp_path,
             path,
