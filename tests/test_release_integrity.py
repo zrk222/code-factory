@@ -30,12 +30,12 @@ from scripts.verify_release_preflight import verify as verify_release_preflight
 ROOT = Path(__file__).parents[1]
 
 
-def test_core_048_exception_is_explicit_and_protected() -> None:
+def test_core_0481_exception_is_explicit_and_protected() -> None:
     import yaml
 
     workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
     triggers = workflow.get("on", workflow.get(True))
-    option = triggers["workflow_dispatch"]["inputs"]["core_048_cadence_exception"]
+    option = triggers["workflow_dispatch"]["inputs"]["core_0481_cadence_exception"]
     assert option["type"] == "boolean" and option["default"] is False
     publish = workflow["jobs"]["publish"]
     assert publish["environment"] == "pypi"
@@ -44,7 +44,7 @@ def test_core_048_exception_is_explicit_and_protected() -> None:
         for step in workflow["jobs"]["guard"]["steps"]
         if step.get("name", "").startswith("Enforce cadence")
     )
-    assert 'os.environ.get("RELEASE_TAG") != "v0.48.0"' in guard["run"]
+    assert 'os.environ.get("RELEASE_TAG") != "v0.48.1"' in guard["run"]
     assert 'os.environ.get("GITHUB_ACTOR") != "zrk222"' in guard["run"]
     assert 'len(recent) >= policy["max_releases_30d"]' in guard["run"]
     preflight = next(
@@ -54,7 +54,7 @@ def test_core_048_exception_is_explicit_and_protected() -> None:
     )
     assert "timedelta(hours=1)" in preflight["run"]
     assert (
-        "--cadence-exception .factory/core-048-cadence-exception.json"
+        "--cadence-exception .factory/core-0481-cadence-exception.json"
         in preflight["run"]
     )
     assert '"${exception_args[@]}"' in preflight["run"]
@@ -63,10 +63,10 @@ def test_core_048_exception_is_explicit_and_protected() -> None:
 @pytest.mark.parametrize(
     ("enabled", "tag", "actor", "admitted"),
     [
-        ("false", "v0.48.0", "zrk222", False),
-        ("true", "v0.48.0", "zrk222", True),
+        ("false", "v0.48.1", "zrk222", False),
+        ("true", "v0.48.1", "zrk222", True),
         ("true", "v0.49.0", "zrk222", False),
-        ("true", "v0.48.0", "other", False),
+        ("true", "v0.48.1", "other", False),
     ],
 )
 def test_actual_cadence_workflow_rejects_unapproved_dispatch(
@@ -90,7 +90,7 @@ def test_actual_cadence_workflow_rejects_unapproved_dispatch(
     monkeypatch.chdir(tmp_path)
     for key, value in {
         "RUNNER_TEMP": str(tmp_path),
-        "CORE_048_EXCEPTION": enabled,
+        "CORE_0481_EXCEPTION": enabled,
         "RELEASE_TAG": tag,
         "GITHUB_ACTOR": actor,
     }.items():
@@ -615,7 +615,7 @@ def test_release_integrity_rejects_late_openvsx_authorization(tmp_path: Path) ->
     ("old", "new"),
     [
         (
-            'test "$RELEASE_REF" = vscode-v1.1.3+build.1 || { echo "The one-time exception is restricted to vscode-v1.1.3+build.1." >&2; exit 1; }',
+            'test "$RELEASE_REF" = vscode-v1.1.4 || { echo "The one-time exception is restricted to vscode-v1.1.4." >&2; exit 1; }',
             "true",
         ),
         (
@@ -1081,3 +1081,74 @@ def test_failed_or_malformed_receipt_is_rejected(tmp_path):
     malformed.write_text("[]", encoding="utf-8")
     assert verify_release_preflight_main([str(failed)]) == 1
     assert verify_release_preflight_main([str(malformed)]) == 1
+
+
+@pytest.mark.parametrize(
+    ("filename", "tag", "environment"),
+    [
+        ("vscode-marketplace.yml", "vscode-v1.1.4", "vscode-marketplace"),
+        ("jetbrains-marketplace.yml", "jetbrains-v1.1.4", "jetbrains-marketplace"),
+    ],
+)
+def test_editor_exception_receipt_binds_protected_dispatch(
+    tmp_path, monkeypatch, filename, tag, environment
+):
+    import yaml
+    from datetime import datetime
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows" / filename).read_text())
+    triggers = workflow.get("on", workflow.get(True))
+    assert (
+        triggers["workflow_dispatch"]["inputs"]["cadence_exception_reason"]["default"]
+        == ""
+    )
+    step = next(
+        s
+        for s in workflow["jobs"]["validate"]["steps"]
+        if s.get("name") == "Require the sealed candidate preflight"
+    )
+    assert f'test "$RELEASE_REF" = {tag}' in step["run"]
+    assert 'test "$GITHUB_ACTOR" = zrk222' in step["run"]
+    assert '"${exception_args[@]}"' in step["run"]
+    code = step["run"].split("<<'PY'\n", 1)[1].split("\nPY", 1)[0]
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".factory").mkdir()
+    contract = tmp_path / "contract.json"
+    contract.write_text(json.dumps({"approved_by": "zrk222"}))
+    for key, value in {
+        "RELEASE_CONTRACT_PATH": str(contract),
+        "EXCEPTION_REASON": "Owner authorized this one release",
+        "GITHUB_ACTOR": "zrk222",
+        "GITHUB_RUN_ID": "123",
+        "GITHUB_RUN_ATTEMPT": "1",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: "a" * 40)
+    exec(compile(code, filename, "exec"), {})
+    receipt = json.loads(
+        (tmp_path / ".factory/release-cadence-exception.json").read_text()
+    )
+    assert receipt["candidate_tag"] == tag
+    assert receipt["source_commit"] == "a" * 40
+    assert receipt["environment"] == environment
+    assert receipt["publish_enabled"] and receipt["environment_authorized"]
+    assert (
+        datetime.fromisoformat(receipt["expires_at"])
+        - datetime.fromisoformat(receipt["issued_at"])
+    ).total_seconds() == 1800
+    contract.write_text(json.dumps({"approved_by": "other"}))
+    with pytest.raises(AssertionError):
+        exec(compile(code, filename, "exec"), {})
+
+
+def test_vscode_website_upload_defaults_to_no_cli_publication():
+    import yaml
+
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/vscode-marketplace.yml").read_text()
+    )
+    triggers = workflow.get("on", workflow.get(True))
+    assert triggers["workflow_dispatch"]["inputs"]["web_upload"]["default"] is True
+    assert "inputs.web_upload != true" in workflow["jobs"]["publish"]["if"]
+    assert workflow["jobs"]["authorize"]["environment"] == "vscode-marketplace"
+    assert "needs.authorize.result == 'success'" in workflow["jobs"]["validate"]["if"]

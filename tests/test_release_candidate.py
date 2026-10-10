@@ -226,7 +226,76 @@ def test_release_cadence_hold_blocks_candidate_preflight(
     )
 
 
-def test_openvsx_cadence_exception_is_bound_to_v113_run_attempt(
+def test_cadence_exception_overrides_only_valid_cooldown() -> None:
+    cadence = {
+        "release_train_status": "valid",
+        "available": True,
+        "admission": False,
+        "state": "cooldown",
+        "recent_count": 2,
+        "max_releases_30d": 4,
+        "reason": "The minimum 7-day interval has not elapsed.",
+    }
+
+    admitted, check, blocker = candidate._cadence_admission(
+        cadence, {"candidate_tag": "v0.48.1"}
+    )
+
+    assert admitted is True
+    assert check["passed"] is True
+    assert blocker is None
+
+
+@pytest.mark.parametrize(
+    "cadence",
+    [
+        {
+            "release_train_status": "valid",
+            "available": True,
+            "admission": False,
+            "state": "rate_limited",
+            "recent_count": 4,
+            "max_releases_30d": 4,
+            "reason": "The rolling 30-day release limit was reached.",
+        },
+        {
+            "release_train_status": "invalid",
+            "available": True,
+            "admission": False,
+            "state": "cooldown",
+            "recent_count": 2,
+            "max_releases_30d": 4,
+            "reason": "Invalid release train configuration.",
+        },
+        {
+            "release_train_status": "valid",
+            "available": False,
+            "admission": False,
+            "state": "unknown",
+            "reason": "Cadence evidence is unavailable.",
+        },
+        {
+            "release_train_status": "valid",
+            "available": True,
+            "admission": False,
+            "state": "cooldown",
+            "recent_count": 4,
+            "max_releases_30d": 4,
+            "reason": "Inconsistent cooldown state at monthly cap.",
+        },
+    ],
+)
+def test_cadence_exception_does_not_override_other_blocks(cadence) -> None:
+    admitted, check, blocker = candidate._cadence_admission(
+        cadence, {"candidate_tag": "v0.48.1"}
+    )
+
+    assert admitted is False
+    assert check["passed"] is False
+    assert blocker["code"] == "E_RELEASE_CADENCE_BLOCKED"
+
+
+def test_vscode_cadence_exception_is_bound_to_v114_run_attempt(
     tmp_path: Path, monkeypatch
 ) -> None:
     issued = datetime.now(timezone.utc)
@@ -236,16 +305,16 @@ def test_openvsx_cadence_exception_is_bound_to_v113_run_attempt(
             {
                 "schema": "factory.release-cadence-exception.v1",
                 "channel": "vscode",
-                "version": "1.1.3",
-                "candidate_tag": "vscode-v1.1.3+build.1",
+                "version": "1.1.4",
+                "candidate_tag": "vscode-v1.1.4",
                 "source_commit": "a" * 40,
                 "requesting_actor": "zrk222",
-                "reason": "Approved one-time Open VSX release exception.",
+                "reason": "Approved one-time VS Code release exception.",
                 "issued_at": issued.isoformat(),
                 "expires_at": (issued + timedelta(minutes=30)).isoformat(),
                 "workflow_run_id": "12345",
                 "workflow_run_attempt": "2",
-                "environment": "openvsx",
+                "environment": "vscode-marketplace",
                 "environment_authorized": True,
                 "publish_enabled": True,
             }
@@ -257,19 +326,19 @@ def test_openvsx_cadence_exception_is_bound_to_v113_run_attempt(
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
     source = {
         "commit": "a" * 40,
-        "platform_versions": {"vscode": "1.1.3"},
+        "platform_versions": {"vscode": "1.1.4"},
     }
     contract = {"approved_by": "zrk222"}
 
     result = candidate._cadence_exception_payload(
-        tmp_path, path, source, "vscode", "vscode-v1.1.3+build.1", contract
+        tmp_path, path, source, "vscode", "vscode-v1.1.4", contract
     )
 
     assert result["workflow_run_attempt"] == "2"
-    assert result["candidate_tag"] == "vscode-v1.1.3+build.1"
+    assert result["candidate_tag"] == "vscode-v1.1.4"
 
 
-def test_openvsx_cadence_exception_rejects_other_candidate_or_run(
+def test_vscode_cadence_exception_rejects_other_candidate_or_run(
     tmp_path: Path, monkeypatch
 ) -> None:
     issued = datetime.now(timezone.utc)
@@ -277,16 +346,16 @@ def test_openvsx_cadence_exception_rejects_other_candidate_or_run(
     value = {
         "schema": "factory.release-cadence-exception.v1",
         "channel": "vscode",
-        "version": "1.1.3",
-        "candidate_tag": "vscode-v1.1.3+build.1",
+        "version": "1.1.4",
+        "candidate_tag": "vscode-v1.1.4",
         "source_commit": "a" * 40,
         "requesting_actor": "zrk222",
-        "reason": "Approved one-time Open VSX release exception.",
+        "reason": "Approved one-time VS Code release exception.",
         "issued_at": issued.isoformat(),
         "expires_at": (issued + timedelta(minutes=30)).isoformat(),
         "workflow_run_id": "12345",
         "workflow_run_attempt": "2",
-        "environment": "openvsx",
+        "environment": "vscode-marketplace",
         "environment_authorized": True,
         "publish_enabled": True,
     }
@@ -301,25 +370,25 @@ def test_openvsx_cadence_exception_rejects_other_candidate_or_run(
         candidate._cadence_exception_payload(
             tmp_path,
             path,
-            {"commit": "a" * 40, "platform_versions": {"vscode": "1.1.3"}},
+            {"commit": "a" * 40, "platform_versions": {"vscode": "1.1.4"}},
             "vscode",
-            "vscode-v1.1.3+build.1",
+            "vscode-v1.1.4",
             {"approved_by": "zrk222"},
         )
 
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
-    with pytest.raises(ValueError, match=r"restricted to vscode-v1\.1\.3\+build\.1"):
+    with pytest.raises(ValueError, match="restricted to"):
         candidate._cadence_exception_payload(
             tmp_path,
             path,
-            {"commit": "a" * 40, "platform_versions": {"vscode": "1.1.2"}},
+            {"commit": "a" * 40, "platform_versions": {"vscode": "1.1.3"}},
             "vscode",
-            "vscode-v1.1.2",
+            "vscode-v1.1.3",
             {"approved_by": "zrk222"},
         )
 
 
-def test_pypi_cadence_exception_is_bound_to_core_v0480_run_attempt(
+def test_pypi_cadence_exception_is_bound_to_core_v0481_run_attempt(
     tmp_path: Path, monkeypatch
 ) -> None:
     issued = datetime.now(timezone.utc)
@@ -329,8 +398,8 @@ def test_pypi_cadence_exception_is_bound_to_core_v0480_run_attempt(
             {
                 "schema": "factory.release-cadence-exception.v1",
                 "channel": "core",
-                "version": "0.48.0",
-                "candidate_tag": "v0.48.0",
+                "version": "0.48.1",
+                "candidate_tag": "v0.48.1",
                 "source_commit": "b" * 40,
                 "requesting_actor": "zrk222",
                 "reason": "Approved one-time PyPI release exception.",
@@ -348,16 +417,16 @@ def test_pypi_cadence_exception_is_bound_to_core_v0480_run_attempt(
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("GITHUB_RUN_ID", "12345")
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
-    source = {"version": "0.48.0", "commit": "b" * 40}
+    source = {"version": "0.48.1", "commit": "b" * 40}
     contract = {"approved_by": "zrk222"}
 
     result = candidate._cadence_exception_payload(
-        tmp_path, path, source, "core", "v0.48.0", contract
+        tmp_path, path, source, "core", "v0.48.1", contract
     )
 
     assert result["channel"] == "core"
-    assert result["version"] == "0.48.0"
-    assert result["candidate_tag"] == "v0.48.0"
+    assert result["version"] == "0.48.1"
+    assert result["candidate_tag"] == "v0.48.1"
     assert result["workflow_run_id"] == "12345"
     assert result["workflow_run_attempt"] == "2"
 
@@ -370,8 +439,8 @@ def test_pypi_cadence_exception_rejects_other_core_version_tag_or_environment(
     value = {
         "schema": "factory.release-cadence-exception.v1",
         "channel": "core",
-        "version": "0.48.0",
-        "candidate_tag": "v0.48.0",
+        "version": "0.48.1",
+        "candidate_tag": "v0.48.1",
         "source_commit": "b" * 40,
         "requesting_actor": "zrk222",
         "reason": "Approved one-time PyPI release exception.",
@@ -388,7 +457,21 @@ def test_pypi_cadence_exception_rejects_other_core_version_tag_or_environment(
     monkeypatch.setenv("GITHUB_RUN_ID", "12345")
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
 
-    with pytest.raises(ValueError, match="restricted to.*core v0.48.0"):
+    with pytest.raises(ValueError, match="restricted to"):
+        candidate._cadence_exception_payload(
+            tmp_path,
+            path,
+            {"version": "0.48.2", "commit": "b" * 40},
+            "core",
+            "v0.48.2",
+            {"approved_by": "zrk222"},
+        )
+
+    with pytest.raises(
+        ValueError, match="requires successful protected authorization for pypi"
+    ):
+        value["environment"] = "openvsx"
+        path.write_text(json.dumps(value), encoding="utf-8")
         candidate._cadence_exception_payload(
             tmp_path,
             path,
@@ -398,17 +481,92 @@ def test_pypi_cadence_exception_rejects_other_core_version_tag_or_environment(
             {"approved_by": "zrk222"},
         )
 
-    with pytest.raises(
-        ValueError, match="requires successful protected pypi authorization"
-    ):
-        value["environment"] = "openvsx"
-        path.write_text(json.dumps(value), encoding="utf-8")
+
+@pytest.mark.parametrize(
+    ("channel", "version", "tag", "environment", "source"),
+    [
+        ("vscode", "1.1.4", "vscode-v1.1.4", "openvsx", {"vscode": "1.1.4"}),
+        (
+            "jetbrains",
+            "1.1.4",
+            "jetbrains-v1.1.4",
+            "jetbrains-marketplace",
+            {"intellij": "1.1.4"},
+        ),
+    ],
+)
+def test_editor_cadence_exception_accepts_exact_candidates(
+    tmp_path: Path, monkeypatch, channel, version, tag, environment, source
+) -> None:
+    issued = datetime.now(timezone.utc)
+    path = tmp_path / "exception.json"
+    value = {
+        "schema": "factory.release-cadence-exception.v1",
+        "channel": channel,
+        "version": version,
+        "candidate_tag": tag,
+        "source_commit": "c" * 40,
+        "requesting_actor": "zrk222",
+        "reason": "Approved one-time editor release exception.",
+        "issued_at": issued.isoformat(),
+        "expires_at": (issued + timedelta(minutes=30)).isoformat(),
+        "workflow_run_id": "12345",
+        "workflow_run_attempt": "2",
+        "environment": environment,
+        "environment_authorized": True,
+        "publish_enabled": True,
+    }
+    path.write_text(json.dumps(value), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_RUN_ID", "12345")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+
+    source = {"commit": "c" * 40, "platform_versions": source}
+    if channel == "core":
+        source["version"] = version
+    result = candidate._cadence_exception_payload(
+        tmp_path, path, source, channel, tag, {"approved_by": "zrk222"}
+    )
+    assert result["candidate_tag"] == tag
+
+
+def test_cadence_exception_rejects_expired_candidate(
+    tmp_path: Path, monkeypatch
+) -> None:
+    issued = datetime.now(timezone.utc) - timedelta(hours=2)
+    path = tmp_path / "exception.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "factory.release-cadence-exception.v1",
+                "channel": "core",
+                "version": "0.48.1",
+                "candidate_tag": "v0.48.1",
+                "source_commit": "d" * 40,
+                "requesting_actor": "zrk222",
+                "reason": "Approved one-time PyPI release exception.",
+                "issued_at": issued.isoformat(),
+                "expires_at": (issued + timedelta(minutes=30)).isoformat(),
+                "workflow_run_id": "12345",
+                "workflow_run_attempt": "2",
+                "environment": "pypi",
+                "environment_authorized": True,
+                "publish_enabled": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_RUN_ID", "12345")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+
+    with pytest.raises(ValueError, match="not currently valid"):
         candidate._cadence_exception_payload(
             tmp_path,
             path,
-            {"version": "0.48.0", "commit": "b" * 40},
+            {"version": "0.48.1", "commit": "d" * 40},
             "core",
-            "v0.48.0",
+            "v0.48.1",
             {"approved_by": "zrk222"},
         )
 

@@ -1,5 +1,10 @@
 # FactoryLine for VS Code
 
+## VS Code 1.1.4 release candidate (not published)
+
+This candidate targets Code Factory core 0.48.1. Marketplace publication and
+provider read-back remain separate release steps.
+
 ## VS Code release 1.1.3
 
 **Fixed:** Marketplace guidance now names the published Code Factory 0.48.0
@@ -201,7 +206,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-1.1.3.vsix
+code --install-extension factoryline-vscode-1.1.4.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.
@@ -253,7 +258,7 @@ Public exports carry distributions only, never per-reviewer rows.
 
 [60-second CF/FL audit and repair walkthrough](https://youtu.be/covWDYhUqbM) — October 8, 2026. Silent captions, current Graph Ops captures, bounded scanner improvements and agent repair evidence requirements. The source render is in `videos/code-factory-proof-of-survival/remotion`.
 
-## Native scanner expansion — Code Factory core 0.48.0
+## Native scanner expansion — Code Factory core 0.48.1 candidate
 
 **Fixed:** native scanner controls require vulnerable and safe results bound to
 image, profile and source hashes. Missing evidence remains incomplete.

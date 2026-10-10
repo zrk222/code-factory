@@ -7,8 +7,8 @@ on:
         description: Draft release tag to validate and publish after review
         required: true
         type: string
-      core_048_cadence_exception:
-        description: Explicit owner-approved one-time cooldown exception for v0.48.0 only
+      core_0481_cadence_exception:
+        description: Explicit owner-approved one-time cooldown exception for v0.48.1 only
         required: false
         default: false
         type: boolean
@@ -75,7 +75,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
-          CORE_048_EXCEPTION: ${{ inputs.core_048_cadence_exception }}
+          CORE_0481_EXCEPTION: ${{ inputs.core_0481_cadence_exception }}
         run: |
           set -euo pipefail
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/release-history.json"
@@ -91,9 +91,9 @@ jobs:
           published = [parse(item["published_at"]) for page in pages for item in page if not item["draft"]]
           active = sorted(stamp for stamp in published if stamp >= effective)
           recent = [stamp for stamp in active if stamp > now - timedelta(days=30)]
-          exception = os.environ.get("CORE_048_EXCEPTION") == "true"
-          if exception and (os.environ.get("RELEASE_TAG") != "v0.48.0" or os.environ.get("GITHUB_ACTOR") != "zrk222"):
-              raise SystemExit("One-time core exception requires owner dispatch of v0.48.0")
+          exception = os.environ.get("CORE_0481_EXCEPTION") == "true"
+          if exception and (os.environ.get("RELEASE_TAG") != "v0.48.1" or os.environ.get("GITHUB_ACTOR") != "zrk222"):
+              raise SystemExit("One-time core exception requires owner dispatch of v0.48.1")
           if len(recent) >= policy["max_releases_30d"]:
               raise SystemExit("Actual published release count exceeds admission policy")
           if active and now < active[-1] + timedelta(days=policy["minimum_days_between_releases"]) and not exception:
@@ -268,7 +268,7 @@ jobs:
         env:
           RELEASE_CONTRACT_PATH: .factory/release-contracts/release.json
           RELEASE_TAG: ${{ inputs.release_tag }}
-          CORE_048_EXCEPTION: ${{ inputs.core_048_cadence_exception }}
+          CORE_0481_EXCEPTION: ${{ inputs.core_0481_cadence_exception }}
         run: |
           set -euo pipefail
           test -n "$RELEASE_CONTRACT_PATH" || {
@@ -280,25 +280,25 @@ jobs:
             exit 1
           }
           exception_args=()
-          if [[ "$CORE_048_EXCEPTION" == "true" ]]; then
+          if [[ "$CORE_0481_EXCEPTION" == "true" ]]; then
             python - <<'PY'
           import json, os, subprocess
           from datetime import datetime, timedelta, timezone
           from pathlib import Path
-          assert os.environ["RELEASE_TAG"] == "v0.48.0" and os.environ["GITHUB_ACTOR"] == "zrk222"
+          assert os.environ["RELEASE_TAG"] == "v0.48.1" and os.environ["GITHUB_ACTOR"] == "zrk222"
           contract = json.loads(Path(os.environ["RELEASE_CONTRACT_PATH"]).read_text())
           now = datetime.now(timezone.utc)
           value = {
-              "schema": "factory.release-cadence-exception.v1", "channel": "core", "version": "0.48.0",
-              "candidate_tag": "v0.48.0", "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "schema": "factory.release-cadence-exception.v1", "channel": "core", "version": "0.48.1",
+              "candidate_tag": "v0.48.1", "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
               "requesting_actor": contract["approved_by"], "environment": "pypi", "environment_authorized": True,
               "publish_enabled": True, "workflow_run_id": os.environ["GITHUB_RUN_ID"], "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
               "issued_at": now.isoformat(), "expires_at": (now + timedelta(hours=1)).isoformat(),
-              "reason": "Owner explicitly approved one-time core 0.48.0 publication on October 9, 2026; normal cadence retained."
+              "reason": "Owner explicitly approved one-time core 0.48.1 publication on October 10, 2026; normal cadence retained."
           }
-          Path(".factory/core-048-cadence-exception.json").write_text(json.dumps(value))
+          Path(".factory/core-0481-cadence-exception.json").write_text(json.dumps(value))
           PY
-            exception_args=(--cadence-exception .factory/core-048-cadence-exception.json)
+            exception_args=(--cadence-exception .factory/core-0481-cadence-exception.json)
           fi
           python -m factoryline.cli release preflight \
             --root . \

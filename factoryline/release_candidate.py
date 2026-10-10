@@ -432,7 +432,7 @@ def _cadence_exception_payload(
     candidate_tag: str | None,
     contract: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
-    """Load one exact, expiring Open VSX exception without granting authority."""
+    """Load one exact, expiring release exception without granting authority."""
     if path is None:
         return None
     candidate = _inside(Path(root).resolve(), Path(path), "cadence exception")
@@ -450,6 +450,8 @@ def _cadence_exception_payload(
             if channel == "core"
             else versions.get("vscode")
             if channel == "vscode"
+            else versions.get("intellij")
+            if channel == "jetbrains"
             else None
         ),
         "candidate_tag": candidate_tag,
@@ -457,24 +459,37 @@ def _cadence_exception_payload(
         "requesting_actor": (contract or {}).get("approved_by"),
     }
     allowed = {
-        "vscode": ("1.1.3", "vscode-v1.1.3+build.1", "openvsx"),
-        "core": ("0.48.0", "v0.48.0", "pypi"),
+        ("core", "0.48.1", "v0.48.1", "pypi"),
+        ("vscode", "1.1.4", "vscode-v1.1.4", "openvsx"),
+        ("vscode", "1.1.4", "vscode-v1.1.4", "vscode-marketplace"),
+        ("jetbrains", "1.1.4", "jetbrains-v1.1.4", "jetbrains-marketplace"),
     }
-    approved = allowed.get(channel)
-    if approved is None or (identity["version"], candidate_tag) != approved[:2]:
+    approved = next(
+        (
+            environment
+            for approved_channel, version, tag, environment in allowed
+            if (channel, identity["version"], candidate_tag)
+            == (approved_channel, version, tag)
+        ),
+        None,
+    )
+    if approved is None:
         raise ValueError(
-            "this one-time cadence exception is restricted to vscode-v1.1.3+build.1 or core v0.48.0"
+            "this one-time cadence exception is restricted to core v0.48.1, vscode v1.1.4, or jetbrains v1.1.4"
         )
-    expected_environment = approved[2]
+    expected_environments = (
+        {"openvsx", "vscode-marketplace"} if channel == "vscode" else {approved}
+    )
     if any(value.get(key) != expected for key, expected in identity.items()):
         raise ValueError("cadence exception does not match the candidate identity")
     if (
-        value.get("environment") != expected_environment
+        value.get("environment") not in expected_environments
         or value.get("environment_authorized") is not True
         or value.get("publish_enabled") is not True
     ):
         raise ValueError(
-            f"cadence exception requires successful protected {expected_environment} authorization"
+            "cadence exception requires successful protected authorization for "
+            + " or ".join(sorted(expected_environments))
         )
     reason = value.get("reason")
     if not isinstance(reason, str) or len(reason.strip()) < 12 or len(reason) > 500:
@@ -520,6 +535,22 @@ def _cadence_admission(
 ) -> tuple[bool, dict[str, Any], dict[str, str] | None]:
     admitted, check, blocker = _cadence_preflight(cadence)
     if admitted or exception is None:
+        return admitted, check, blocker
+    max_releases = cadence.get("max_releases_30d")
+    recent_count = cadence.get("recent_count")
+    cooldown_only = (
+        cadence.get("release_train_status") == "valid"
+        and cadence.get("available") is True
+        and cadence.get("admission") is False
+        and cadence.get("state") == "cooldown"
+        and isinstance(max_releases, int)
+        and not isinstance(max_releases, bool)
+        and max_releases > 0
+        and isinstance(recent_count, int)
+        and not isinstance(recent_count, bool)
+        and 0 <= recent_count < max_releases
+    )
+    if not cooldown_only:
         return admitted, check, blocker
     return (
         True,

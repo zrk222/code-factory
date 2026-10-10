@@ -272,7 +272,7 @@ reviewer's own baseline and escalates: surface, second approver, fail closed.
 Blocking is refused until blind-spot re-review outcomes correct the proxy.
 Public exports carry distributions only, never per-reviewer rows.
 
-## Native scanner expansion — core 0.48.0 / editor 1.1.2 source preview
+## Native scanner expansion — core 0.48.1 / editor 1.1.4 source preview
 
 **Fixed:** native scanner controls require vulnerable and safe results bound to
 image, profile and source hashes. Missing evidence remains incomplete.

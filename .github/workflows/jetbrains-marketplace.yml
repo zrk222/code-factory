@@ -15,6 +15,12 @@ on:
         required: true
         type: string
 
+      cadence_exception_reason:
+        description: "Owner-approved one-time 1.1.4 cadence exception reason"
+        required: false
+        default: ""
+        type: string
+
 permissions:
   actions: read
   attestations: read
@@ -166,9 +172,37 @@ jobs:
         env:
           RELEASE_CONTRACT_PATH: .factory/release-contracts/jetbrains.json
           RELEASE_REF: ${{ inputs.release_ref }}
+          EXCEPTION_REASON: ${{ inputs.cadence_exception_reason }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
           test -f "$RELEASE_CONTRACT_PATH" || { echo "release contract is not present in the immutable checkout" >&2; exit 1; }
+          exception_args=()
+          if [[ -n "$EXCEPTION_REASON" ]]; then
+            test "$RELEASE_REF" = jetbrains-v1.1.4
+            test "$GITHUB_ACTOR" = zrk222
+            python - <<'PY'
+          import json, os, subprocess
+          from datetime import datetime, timedelta, timezone
+          from pathlib import Path
+          reason = os.environ["EXCEPTION_REASON"].strip()
+          assert 12 <= len(reason) <= 500
+          contract = json.loads(Path(os.environ["RELEASE_CONTRACT_PATH"]).read_text())
+          assert contract["approved_by"] == os.environ["GITHUB_ACTOR"]
+          now = datetime.now(timezone.utc)
+          value = {
+              "schema": "factory.release-cadence-exception.v1", "channel": "jetbrains", "version": "1.1.4",
+              "candidate_tag": "jetbrains-v1.1.4", "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "requesting_actor": os.environ["GITHUB_ACTOR"], "environment": "jetbrains-marketplace", "environment_authorized": True,
+              "publish_enabled": True, "workflow_run_id": os.environ["GITHUB_RUN_ID"], "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "issued_at": now.isoformat(), "expires_at": (now + timedelta(minutes=30)).isoformat(), "reason": reason
+          }
+          Path(".factory/release-cadence-exception.json").write_text(json.dumps(value))
+          PY
+            exception_args=(--cadence-exception .factory/release-cadence-exception.json)
+          fi
           python -m factoryline.cli release preflight \
             --root . \
             --channel jetbrains \
@@ -177,6 +211,7 @@ jobs:
             --artifact-dir editors/intellij/build/distributions \
             --metadata-path context/PROGRESS.md \
             --out editors/intellij/build/distributions/release-preflight.json \
+            "${exception_args[@]}" \
             --json
       - name: Seal the verified Marketplace candidate
         shell: bash
