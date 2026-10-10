@@ -1,0 +1,97 @@
+{
+  "schema": "factory.workflow-audit.observations.v1",
+  "contract_sha256": "b26ff005a5c21c0f6b330df5884e1823653c469ee610009bd359ec6cfec0a020",
+  "candidate_sha256": "1827067149840acf5269502c65616d3c2c0b3327b5e3c297b85943951dae3660",
+  "observations": [
+    {
+      "id": "DOCS",
+      "profile": "windows-py311-public-readback",
+      "status": "PASS",
+      "reason": "Published install command matches live registry; documentation scope only",
+      "execution_identity": "Windows CPython3.11 pytest no third-party autoload; official public HTTP readback; primary-agent diff review",
+      "observed_at": "2026-10-10T16:21:44.364663+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/mcp-published-docs/provider.json",
+          "sha256": "34bd0f253d7fce5adef1f19a2af98c1f6a69af3e0afb3735d5fc7f1aaa910fd7",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "VALIDATE",
+      "profile": "windows-py311-public-readback",
+      "status": "PASS",
+      "reason": "MCP descriptor and documentation regression tests pass; documentation scope only",
+      "execution_identity": "Windows CPython3.11 pytest no third-party autoload; official public HTTP readback; primary-agent diff review",
+      "observed_at": "2026-10-10T16:21:44.365753+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/mcp-published-docs/tests-final.log",
+          "sha256": "927cad3a89f53243f0b0586a8dd3cbd537a84134552346d907a5ea87873bd7cc",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "BOUNDARY",
+      "profile": "windows-py311-public-readback",
+      "status": "PASS",
+      "reason": "Missing publication or client approval must not be promoted to installation success; documentation scope only",
+      "execution_identity": "Windows CPython3.11 pytest no third-party autoload; official public HTTP readback; primary-agent diff review",
+      "observed_at": "2026-10-10T16:21:44.365753+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/mcp-published-docs/review.md",
+          "sha256": "8acdb2235b017ab39697135918a9dffb1f3d26729d1c034084fdef56d6c089c2",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "id": "ARCH",
+      "profile": "windows-py311-public-readback",
+      "status": "PASS",
+      "reason": "Strict architecture HEALTHY and 460 Python files retained; documentation scope only",
+      "execution_identity": "Windows CPython3.11 pytest no third-party autoload; official public HTTP readback; primary-agent diff review",
+      "observed_at": "2026-10-10T16:21:44.365753+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/mcp-published-docs/architecture.json",
+          "sha256": "27c83d8cb14cf78e0fa48b9e0fdb125d6e8b59e5601d3eb3c965cf58736e15f3",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "SECURITY",
+      "profile": "windows-py311-public-readback",
+      "status": "PASS",
+      "reason": "Read-only and no-credential boundaries unchanged; documentation scope only",
+      "execution_identity": "Windows CPython3.11 pytest no third-party autoload; official public HTTP readback; primary-agent diff review",
+      "observed_at": "2026-10-10T16:21:44.365753+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/mcp-published-docs/review.md",
+          "sha256": "8acdb2235b017ab39697135918a9dffb1f3d26729d1c034084fdef56d6c089c2",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "id": "READBACK",
+      "profile": "windows-py311-public-readback",
+      "status": "PASS",
+      "reason": "Publication claim supported by actual public provider readback; documentation scope only",
+      "execution_identity": "Windows CPython3.11 pytest no third-party autoload; official public HTTP readback; primary-agent diff review",
+      "observed_at": "2026-10-10T16:21:44.366290+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/mcp-published-docs/provider.json",
+          "sha256": "34bd0f253d7fce5adef1f19a2af98c1f6a69af3e0afb3735d5fc7f1aaa910fd7",
+          "kind": "observation"
+        }
+      ]
+    }
+  ]
+}

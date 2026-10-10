@@ -1,0 +1,79 @@
+[
+  {
+    "url": "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.zrk222%2Fcode-factory/versions/latest",
+    "observed_at": "2026-10-10T16:18:59.701413+00:00",
+    "result": {
+      "server": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "io.github.zrk222/code-factory",
+        "description": "Local audit evidence for agents: source, workflows, runtime, repair and native scanner status.",
+        "repository": {
+          "url": "https://github.com/zrk222/code-factory",
+          "source": "github",
+          "id": "1293217553"
+        },
+        "version": "0.48.1",
+        "packages": [
+          {
+            "registryType": "pypi",
+            "registryBaseUrl": "https://pypi.org",
+            "identifier": "factoryline-code-factory",
+            "version": "0.48.1",
+            "runtimeHint": "uvx",
+            "transport": {
+              "type": "stdio"
+            },
+            "runtimeArguments": [
+              {
+                "value": "factoryline-code-factory==0.48.1",
+                "type": "named",
+                "name": "--from"
+              }
+            ],
+            "packageArguments": [
+              {
+                "value": "factory",
+                "type": "positional"
+              },
+              {
+                "value": "mcp",
+                "type": "positional"
+              },
+              {
+                "value": "serve",
+                "type": "positional"
+              }
+            ]
+          }
+        ]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "active",
+          "statusChangedAt": "2026-10-10T11:53:04.528909Z",
+          "publishedAt": "2026-10-10T11:53:04.528909Z",
+          "updatedAt": "2026-10-10T11:53:04.528909Z",
+          "isLatest": true
+        }
+      }
+    }
+  },
+  {
+    "url": "https://pypi.org/pypi/factoryline-code-factory/json",
+    "observed_at": "2026-10-10T16:19:01.834919+00:00",
+    "result": {
+      "version": "0.48.1",
+      "classifiers": [
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Topic :: Software Development :: Build Tools",
+        "Topic :: Software Development :: Quality Assurance"
+      ]
+    }
+  }
+]
