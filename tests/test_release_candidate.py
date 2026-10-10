@@ -40,9 +40,7 @@ def test_editor_candidate_tag_must_match_editor_version(tmp_path, monkeypatch):
 
 def _write_exception_policy(root: Path, enabled: bool) -> None:
     policy = json.loads(
-        (Path(__file__).parents[1] / "release-train.json").read_text(
-            encoding="utf-8"
-        )
+        (Path(__file__).parents[1] / "release-train.json").read_text(encoding="utf-8")
     )
     policy["cadence"]["exceptions_enabled"] = enabled
     (root / "release-train.json").write_text(json.dumps(policy), encoding="utf-8")
@@ -487,7 +485,9 @@ def test_malformed_release_exception_policy_fails_closed(
     path = tmp_path / "exception.json"
     path.write_text("{}", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="policy is unavailable or invalid|must declare boolean"):
+    with pytest.raises(
+        ValueError, match="policy is unavailable or invalid|must declare boolean"
+    ):
         candidate._cadence_exception_payload(
             tmp_path, path, {"version": "0.48.1"}, "core", "v0.48.1", None
         )

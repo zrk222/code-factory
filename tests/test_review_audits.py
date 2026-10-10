@@ -1720,8 +1720,7 @@ def test_security_scan_does_not_skip_untyped_benchmark_named_security_test(tmp_p
 
 def test_security_scan_does_not_exempt_untyped_benchmark_parameter_alone(tmp_path):
     (tmp_path / "case.py").write_text(
-        "def test_behavior(benchmark):\n"
-        "    pass\n",
+        "def test_behavior(benchmark):\n    pass\n",
         encoding="utf-8",
     )
     assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
@@ -1750,7 +1749,11 @@ def test_security_scan_rejects_lookalike_benchmark_signals(tmp_path, declaration
     ],
 )
 def test_security_scan_rejects_unrelated_benchmark_imports(tmp_path, imports):
-    decorator = "@custom_benchmarks.benchmark()\n" if imports.startswith("import custom") else ""
+    decorator = (
+        "@custom_benchmarks.benchmark()\n"
+        if imports.startswith("import custom")
+        else ""
+    )
     (tmp_path / "case.py").write_text(
         f"{imports}\n{decorator}"
         "def test_security_invariant(benchmark):\n"
