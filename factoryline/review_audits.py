@@ -974,6 +974,14 @@ def _test_oracle_body_nodes(node: ast.AST, aliases: dict[str, str]) -> list[ast.
     parents = _oracle_ancestor_map(node.body, node)
     for child in nodes:
         child._oracle_ancestors = parents.get(id(child), ())
+        child._oracle_parent = next(
+            (
+                parent
+                for parent, descendant in parents.get(id(child), ())
+                if descendant is child
+            ),
+            None,
+        )
         child._oracle_scope = node
     shadowed_calls: set[int] = set()
     for child in nodes:
@@ -1120,11 +1128,24 @@ def _effective_assertion(node: ast.AST, aliases: dict[str, str]) -> bool:
 
 
 def _unreachable_constant_branch(parent: ast.AST, child: ast.AST) -> bool:
-    if not isinstance(parent, ast.If) or not isinstance(parent.test, ast.Constant):
-        return False
-    return (parent.test.value is False and child in parent.body) or (
-        parent.test.value is True and child in parent.orelse
-    )
+    if isinstance(parent, ast.If) and isinstance(parent.test, ast.Constant):
+        return (parent.test.value is False and child in parent.body) or (
+            parent.test.value is True and child in parent.orelse
+        )
+    if isinstance(parent, ast.IfExp) and isinstance(parent.test, ast.Constant):
+        return (parent.test.value is False and child is parent.body) or (
+            parent.test.value is True and child is parent.orelse
+        )
+    if isinstance(parent, ast.BoolOp) and child in parent.values:
+        index = parent.values.index(child)
+        for preceding in parent.values[:index]:
+            if not isinstance(preceding, ast.Constant):
+                continue
+            if isinstance(parent.op, ast.Or) and bool(preceding.value):
+                return True
+            if isinstance(parent.op, ast.And) and not bool(preceding.value):
+                return True
+    return False
 
 
 def _preceded_by_termination(parent: ast.AST, child: ast.AST) -> bool:
@@ -2276,6 +2297,127 @@ def _class_oracle_helpers(tree: ast.Module, aliases: dict, methods: set[int]) ->
         for method in functions:
             result[id(method)] = names
     return result
+
+
+def _nested_helper_definitions(test: ast.AST) -> dict[str, ast.AST] | None:
+    definitions = {}
+    for child in test.body:
+        if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if child.name in definitions:
+            return None
+        definitions[child.name] = child
+    return definitions
+
+
+def _nested_helper_names_are_unbound(test: ast.AST, definitions: dict) -> bool:
+    names = set(definitions)
+    for statement in test.body:
+        if statement in definitions.values():
+            continue
+        if _bound_names(statement).intersection(names):
+            return False
+    for function in definitions.values():
+        if _scope_parameters(function).intersection(names):
+            return False
+        for statement in function.body:
+            if _bound_names(statement).intersection(names):
+                return False
+        if any(
+            isinstance(child, (ast.Global, ast.Nonlocal))
+            and names.intersection(child.names)
+            for child in _iter_ast_nodes(function)
+        ):
+            return False
+    return True
+
+
+def _nested_helper_calls_assertion(
+    nodes: list, definitions: dict, targets: set, aliases: dict
+) -> bool:
+    for call in nodes:
+        if not isinstance(call, ast.Call):
+            continue
+        target = _call_name(call)
+        if target not in targets or call.lineno <= definitions[target].lineno:
+            continue
+        if isinstance(definitions[target], ast.AsyncFunctionDef) and not isinstance(
+            getattr(call, "_oracle_parent", None), ast.Await
+        ):
+            continue
+        if _effective_assertion(call, aliases):
+            return True
+    return False
+
+
+def _nested_helper_effective_names(
+    definitions: dict, aliases: dict, inherited: set
+) -> set[str]:
+    candidates = {
+        name for name, function in definitions.items() if not function.decorator_list
+    }
+    effective: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for name in candidates - effective:
+            function = definitions[name]
+            scoped = _scope_security_aliases(aliases, function)
+            nodes = _test_oracle_body_nodes(function, scoped)
+            local_bindings = _scope_parameters(function)
+            for statement in function.body:
+                local_bindings.update(_bound_names(statement))
+            safe_inherited = inherited - local_bindings
+            if _strong_local_assertion(function, scoped, safe_inherited) or (
+                _nested_helper_calls_assertion(nodes, definitions, effective, scoped)
+            ):
+                effective.add(name)
+                changed = True
+    return effective
+
+
+def _nested_helper_inherited_names(
+    test: ast.AST, definitions: dict, inherited: set
+) -> set:
+    safe = inherited - set(definitions)
+    for statement in test.body:
+        if statement not in definitions.values():
+            safe -= _bound_names(statement)
+    return safe
+
+
+def _direct_nested_helper_calls(
+    test: ast.AST, definitions: dict, effective: set, aliases: dict
+) -> set[str]:
+    body_nodes = _test_oracle_body_nodes(test, aliases)
+    direct = set()
+    for name, function in definitions.items():
+        if name not in effective:
+            continue
+        for call in (child for child in body_nodes if isinstance(child, ast.Call)):
+            if _call_name(call) != name or call.lineno <= function.lineno:
+                continue
+            if isinstance(function, ast.AsyncFunctionDef) and not isinstance(
+                getattr(call, "_oracle_parent", None), ast.Await
+            ):
+                continue
+            if _effective_assertion(call, aliases):
+                direct.add(name)
+    return direct
+
+
+def _invoked_nested_assertion_helpers(
+    test: ast.AST, aliases: dict[str, str], inherited: set[str]
+) -> set[str]:
+    """Find directly invoked nested helpers with effective assertions."""
+    if not isinstance(test, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return set()
+    definitions = _nested_helper_definitions(test)
+    if not definitions or not _nested_helper_names_are_unbound(test, definitions):
+        return set()
+    inherited = _nested_helper_inherited_names(test, definitions, inherited)
+    effective = _nested_helper_effective_names(definitions, aliases, inherited)
+    return _direct_nested_helper_calls(test, definitions, effective, aliases)
 
 
 def _oracle_import_source(
@@ -3484,6 +3626,8 @@ def _test_oracle_findings(
         node._oracle_click_runners = click_runners or set()
         is_unittest_method = id(node) in unittest_methods
         helpers = helper_names | (class_helpers or {}).get(id(node), set())
+        if node.name.startswith("test_"):
+            helpers |= _invoked_nested_assertion_helpers(node, aliases, helpers)
         if typecheck:
             helpers = helpers | {"typing.assert_type", "typing_extensions.assert_type"}
         hollow_helpers = helpers | (weak_helper_names or set())

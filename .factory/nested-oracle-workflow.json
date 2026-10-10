@@ -1,0 +1,51 @@
+{
+  "agent_actions": [],
+  "authority": {
+    "approval": false,
+    "connector": false,
+    "credential": false,
+    "deployment": false,
+    "execution": false,
+    "merge": false,
+    "messaging": false,
+    "publication": false,
+    "repair": false,
+    "signing": false
+  },
+  "candidate_sha256": "bc406fc5487701e3a7e33d513767f4fe580ad0a8de8144e8075b622c43894714",
+  "checks": 8,
+  "contract_sha256": "48a9a8d2fa86f2d2302437ad1b9875d1d4da8a8451ede9604945059594769ea4",
+  "errors": [],
+  "inapplicability_evidence": {
+    "accessibility": {
+      "actual_sha256": "d28132409172b086393664df01c3f6804a44adff179159e512b72676e2268a26",
+      "current": true,
+      "kind": "review",
+      "path": ".factory/nested-oracle-review.md",
+      "sha256": "d28132409172b086393664df01c3f6804a44adff179159e512b72676e2268a26"
+    },
+    "external_effects": {
+      "actual_sha256": "d28132409172b086393664df01c3f6804a44adff179159e512b72676e2268a26",
+      "current": true,
+      "kind": "review",
+      "path": ".factory/nested-oracle-review.md",
+      "sha256": "d28132409172b086393664df01c3f6804a44adff179159e512b72676e2268a26"
+    }
+  },
+  "limits": [
+    "Recorded evidence completeness and hashes only; observations require review.",
+    "Inapplicability review evidence is hash-bound but its judgment and identity are not authenticated.",
+    "Each contract/observation JSON input and evidence artifact is limited to 16 MiB; total evidence hashing is limited to 128 MiB, 4096 artifact references, and 4096 required check/profile pairs.",
+    "No project command or provider is executed.",
+    "No approval, certification or deployment authority."
+  ],
+  "observations_sha256": "99428996764913ab7ba3bfa315927e4303af98a9b92263b3e9348be7270f4938",
+  "project_id": "cf-0481-nested-oracle",
+  "receipt_sha256": "c392f604a1c1487cfe1cfec4849e79de66f81f80fe4c4174d05d481b6c813638",
+  "resource_usage": {
+    "artifact_references": 91,
+    "bytes_hashed": 3088932
+  },
+  "schema": "factory.workflow-audit.receipt.v1",
+  "state": "PASS"
+}

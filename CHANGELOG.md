@@ -1,10 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.48.1 / editor plugins 1.1.4 (release candidate; publication gated)
 
 - Recognize mock argument/await assertions and `pytest.fail` exception-expectation
   checks. Keep direct mock self-checks, swallowed failures and unreachable checks
   visible; unrelated calls do not clear a self-check.
+- Recognize assertions in directly invoked local helpers, including awaited
+  asynchronous helpers and bounded helper chains. Preserve findings for uncalled,
+  decorated, rebound, unawaited and exception-swallowing helper paths.
+- Add upstream-source regressions from requests and Rich alongside Click controls;
+  retain the seeded benchmark separately from real-repository evidence.
 - Classify direct pickle/dill round-trips in test sources as informational,
   retaining their local-input provenance and custom-reducer warning. External,
   transformed, cross-library, replaced-serializer and production inputs remain

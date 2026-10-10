@@ -261,7 +261,7 @@ Public exports carry distributions only, never per-reviewer rows.
 
 [60-second CF/FL audit and repair walkthrough](https://youtu.be/covWDYhUqbM) — October 8, 2026. Silent captions, current Graph Ops captures, bounded scanner improvements and agent repair evidence requirements. The source render is in `videos/code-factory-proof-of-survival/remotion`.
 
-## Native scanner expansion — core 0.48.0 / editor 1.1.2 source preview
+## Native scanner expansion — core 0.48.1 / editor 1.1.4 source preview
 
 **Fixed:** native scanner controls require vulnerable and safe results bound to
 image, profile and source hashes. Missing evidence remains incomplete.

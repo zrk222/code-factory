@@ -144,11 +144,11 @@ accuracy measurements remain separate evidence.
 
 ### External-source regression corpus
 
-`tests/fixtures/external_oracle_cases.json` contains 30 cases extracted from
+`tests/fixtures/external_oracle_cases.json` contains 31 cases extracted from
 requests, rich and Click, with upstream commit, original path, source digest,
 label rationale and original license text. The test runs those sources through
 the real scanner. It preserves three genuine missing-oracle controls and checks
-27 legitimate argument/exception oracles. The cases were selected after reading
+28 legitimate argument/exception or invoked local helper oracles. The cases were selected after reading
 scanner findings, so they are public regressions, not an independently held-out
 corpus and not a population precision/recall estimate.
 
