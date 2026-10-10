@@ -1,0 +1,142 @@
+{
+  "schema": "factory.workflow-audit.contract.v1",
+  "project_id": "code-factory-jev-rejection-journal",
+  "candidate": [
+    {
+      "path": "scripts/evaluate_jev.mjs",
+      "sha256": "a070c71ed23281bbee9b5a239aa3d1899a665cc8e565b334733a6dd282250735",
+      "kind": "source"
+    },
+    {
+      "path": "scripts/evaluate_jev.test.mjs",
+      "sha256": "daccd6becf904cfd6b019ed77bc1c46f9228614704e6447149f80fd79f241084",
+      "kind": "source"
+    },
+    {
+      "path": ".factory/independent-ai/rejection-plan.json",
+      "sha256": "437cbb1cb5992f94619a5356fd9c9e5bddbacba79cce7fa19629942448882803",
+      "kind": "source"
+    }
+  ],
+  "applicability": [
+    {
+      "category": "happy_path",
+      "applicable": true,
+      "reason": "Scoped CLI persistence and compatibility checks"
+    },
+    {
+      "category": "validation",
+      "applicable": true,
+      "reason": "Scoped CLI persistence and compatibility checks"
+    },
+    {
+      "category": "failure_recovery",
+      "applicable": true,
+      "reason": "Scoped CLI persistence and compatibility checks"
+    },
+    {
+      "category": "state_consistency",
+      "applicable": true,
+      "reason": "Scoped CLI persistence and compatibility checks"
+    },
+    {
+      "category": "security_privacy",
+      "applicable": true,
+      "reason": "Scoped CLI persistence and compatibility checks"
+    },
+    {
+      "category": "performance",
+      "applicable": true,
+      "reason": "Scoped CLI persistence and compatibility checks"
+    },
+    {
+      "category": "accessibility",
+      "applicable": false,
+      "reason": "No visual UI changes",
+      "review_evidence": {
+        "path": ".factory/independent-ai/rejection-scope-review.md",
+        "sha256": "127d3471e73bfe7ac5ba3a6833942a1bb83fb65b8efa24623e6c2a1b3bc9bd55",
+        "kind": "review"
+      }
+    },
+    {
+      "category": "external_effects",
+      "applicable": true,
+      "reason": "Scoped CLI persistence and compatibility checks"
+    }
+  ],
+  "checks": [
+    {
+      "id": "JOURNAL",
+      "category": "happy_path",
+      "requirement": "Rejected preflight receives a durable verifiable single-event failure record",
+      "profiles": [
+        "windows-node22"
+      ]
+    },
+    {
+      "id": "VALIDATE",
+      "category": "validation",
+      "requirement": "Malformed arguments, JSON and missing credentials reject before requests",
+      "profiles": [
+        "windows-node22"
+      ]
+    },
+    {
+      "id": "FAILURE",
+      "category": "failure_recovery",
+      "requirement": "Linked and escaping roots expose UNRECORDED while preserving the rejection",
+      "profiles": [
+        "windows-node22"
+      ]
+    },
+    {
+      "id": "INTEGRITY",
+      "category": "state_consistency",
+      "requirement": "Tampered records reject; rejected trials cannot accept completed-evaluation feedback",
+      "profiles": [
+        "windows-node22"
+      ]
+    },
+    {
+      "id": "PRIVACY",
+      "category": "security_privacy",
+      "requirement": "No raw arguments, credentials or escaped absolute paths enter the failure journal",
+      "profiles": [
+        "windows-node22"
+      ]
+    },
+    {
+      "id": "BOUNDS",
+      "category": "performance",
+      "requirement": "Corpus/body/time limits and bounded operator regressions remain passing",
+      "profiles": [
+        "windows-node22"
+      ]
+    },
+    {
+      "id": "REQUESTS",
+      "category": "external_effects",
+      "requirement": "Preflight failure makes zero provider calls; real CLI operator rejection verifies offline",
+      "profiles": [
+        "windows-node22"
+      ]
+    },
+    {
+      "id": "ARCH",
+      "category": "state_consistency",
+      "requirement": "Strict architecture remains HEALTHY at 460 Python files",
+      "profiles": [
+        "windows-node22"
+      ]
+    },
+    {
+      "id": "REVIEW",
+      "category": "security_privacy",
+      "requirement": "Separate reviewer assesses current source privacy, boundaries and failure states",
+      "profiles": [
+        "windows-node22"
+      ]
+    }
+  ]
+}

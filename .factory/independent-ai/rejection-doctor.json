@@ -1,0 +1,137 @@
+{
+  "ok": true,
+  "installation_ok": true,
+  "workflow_ok": true,
+  "provenance_ok": true,
+  "modules": [
+    {
+      "module": "specline",
+      "cli": "specline",
+      "package": "code-factory-1-spec",
+      "installed": true,
+      "version": "0.5.4",
+      "minimum": "0.5.4",
+      "version_ok": true,
+      "commands_ok": true,
+      "missing_commands": [],
+      "installation_ok": true,
+      "workflow": {
+        "ok": true,
+        "provenance_ok": true,
+        "provenance": {
+          "build_hash": "1f83fba85dadb8acd429a505d402a3534aa15ba5fd4c2abdf09447e3055f19dd",
+          "direct_url": null,
+          "identity_complete": true,
+          "install_origin": "site-packages",
+          "package": "code-factory-1-spec",
+          "python": "3.11.9",
+          "receipt_schema": "factory.receipt.v2",
+          "runtime": {
+            "implementation": "cpython",
+            "python": "3.11.9"
+          },
+          "schema": "factory.provenance.v1",
+          "source_commit": "ccba4e4d6e37029d5eb5e37b8eb94759b8dbe8b9",
+          "version": "0.5.4"
+        }
+      }
+    },
+    {
+      "module": "forgeline",
+      "cli": "forge",
+      "package": "code-factory-2-forge",
+      "installed": true,
+      "version": "0.10.8",
+      "minimum": "0.10.8",
+      "version_ok": true,
+      "commands_ok": true,
+      "missing_commands": [],
+      "installation_ok": true,
+      "workflow": {
+        "ok": true,
+        "provenance_ok": true,
+        "provenance": {
+          "build_hash": "376b6c5cb011fa47b2c83f78a603e6a971059d3cb5b16e61d63220bac78a14d8",
+          "direct_url": null,
+          "identity_complete": true,
+          "install_origin": "site-packages",
+          "package": "code-factory-2-forge",
+          "python": "3.11.9",
+          "receipt_schema": "forge.receipt.v1",
+          "runtime": {
+            "implementation": "cpython",
+            "python": "3.11.9"
+          },
+          "schema": "forgeline.provenance.v1",
+          "source_commit": "218b61b5f73bee12579740a5dd244a0a4e8eff54",
+          "version": "0.10.8"
+        },
+        "canary": "mjs-ts-and-tsx-feature-qa"
+      }
+    },
+    {
+      "module": "hsf",
+      "cli": "hsf",
+      "package": "code-factory-3-compile",
+      "installed": true,
+      "version": "0.5.5",
+      "minimum": "0.5.5",
+      "version_ok": true,
+      "commands_ok": true,
+      "missing_commands": [],
+      "installation_ok": true,
+      "workflow": {
+        "ok": true,
+        "provenance_ok": true,
+        "provenance": {
+          "build_hash": "bb018b3f2b7abbb163e3fce80d2dfddda87dfd44b12d0e0e2ec54394651bdff3",
+          "direct_url": null,
+          "identity_complete": true,
+          "install_origin": "site-packages",
+          "package": "code-factory-3-compile",
+          "python": "3.11.9",
+          "receipt_schema": "factory.receipt.v2",
+          "runtime": {
+            "implementation": "cpython",
+            "python": "3.11.9"
+          },
+          "schema": "factory.provenance.v1",
+          "source_commit": "ae6e614dc675853b4e8476643e40e5500dd94ff4",
+          "version": "0.5.5"
+        }
+      }
+    },
+    {
+      "module": "prestige",
+      "cli": "prestige",
+      "package": "code-factory-4-design",
+      "installed": true,
+      "version": "0.9.0",
+      "minimum": "0.7.4",
+      "version_ok": true,
+      "commands_ok": true,
+      "missing_commands": [],
+      "installation_ok": true,
+      "workflow": {
+        "ok": true,
+        "provenance_ok": true,
+        "provenance": {
+          "build_hash": "52bdbdda8ba6702a74e639aed9bbfa98fbf9b2f99381cc51ff4c294230e2208c",
+          "direct_url": "file:///C:/Users/rkatz/Documents/Codex/2026-07-24/wh/work/prestige-emotional-design/dist/code_factory_4_design-0.9.0-py3-none-any.whl",
+          "identity_complete": true,
+          "install_origin": "direct-url",
+          "package": "code-factory-4-design",
+          "python": "3.11.9",
+          "receipt_schema": "factory.receipt.v2",
+          "runtime": {
+            "implementation": "cpython",
+            "python": "3.11.9"
+          },
+          "schema": "factory.provenance.v1",
+          "source_commit": "4d48b698e78a4a1a45b2c7b6c7c6c9af6e3c0d32",
+          "version": "0.9.0"
+        }
+      }
+    }
+  ]
+}

@@ -495,6 +495,24 @@ async function reserveJournal(root, boundary, trial, options) {
   } catch { await handle?.close(); throw new TrialError('journal_write_error'); }
 }
 
+async function recordRejectedTrial(error, root, boundary) {
+  const runId = randomUUID();
+  const unrecorded = { state: 'UNRECORDED', error: 'rejection_write_error' };
+  let handle, tracking = unrecorded;
+  try {
+    const directory = await secureJournalRoot(root, boundary);
+    const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
+    handle = await open(resolve(directory, `${runId}.jsonl`), flags, 0o600);
+    await appendJournal({ handle, runId }, { schema: 'factory.jev-rejection.v1', event: 'rejected',
+      run_id: runId, observed_at: new Date().toISOString(), error: error.code, provider_requests: 0 });
+    tracking = { state: 'RECORDED', run_id: runId, journal_filename: `${runId}.jsonl` };
+  } catch { tracking = unrecorded; }
+  finally {
+    try { await handle?.close(); } catch { tracking = unrecorded; }
+  }
+  return tracking;
+}
+
 function validateOperatorFeedback(feedback) {
   const keys = ['case_id', 'operator_sha256', 'disposition', 'corrected_finding', 'reason', 'evidence_sha256'];
   requireValue(object(feedback) && encode(Object.keys(feedback).sort()) === encode(keys.sort()), 'invalid_feedback_fields');
@@ -612,11 +630,29 @@ function validateJournalReport(event, start, results, previous) {
     'journal_report_count');
 }
 
+function verifyRejectedTrial(events, journalHash, anchored) {
+  const { event_sha256, ...record } = events[0];
+  const keys = ['schema', 'event', 'run_id', 'observed_at', 'error', 'provider_requests', 'previous_sha256'];
+  requireValue(events.length === 1 && encode(Object.keys(record).sort()) === encode(keys.sort())
+    && record.schema === 'factory.jev-rejection.v1' && record.event === 'rejected'
+    && typeof record.run_id === 'string' && /^[a-f0-9-]{36}$/.test(record.run_id)
+    && typeof record.observed_at === 'string' && /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(record.observed_at)
+    && typeof record.error === 'string' && /^[a-z_]{1,80}$/.test(record.error)
+    && record.provider_requests === 0, 'invalid_rejection_record');
+  return { schema: 'factory.jev-journal-verification.v1', state: 'VERIFIED_REJECTION',
+    run_id: record.run_id, journal_sha256: journalHash, recorded_results: 0, expected_results: 0,
+    externally_anchored: anchored,
+    authority: 'Integrity of a rejected preflight only; no evaluation, judgment correctness or approval.' };
+}
+
 export async function verifyJournal(path, { expectedJournalSha256 } = {}) {
   const bytes = await readBounded(path);
   const journalHash = sha(bytes);
   if (expectedJournalSha256 !== undefined) requireValue(expectedJournalSha256 === journalHash, 'journal_anchor_mismatch');
   const events = parseJournalEvents(bytes);
+  if (events[0].event === 'rejected') {
+    return verifyRejectedTrial(events, journalHash, expectedJournalSha256 !== undefined);
+  }
   const start = events[0];
   requireValue(start.event === 'start' && start.schema === 'factory.jev-journal.v1'
     && typeof start.run_id === 'string' && Number.isInteger(start.total_criteria)
@@ -633,16 +669,23 @@ export async function verifyJournal(path, { expectedJournalSha256 } = {}) {
 
 export async function runCli(argv, { env = process.env, fetchImpl = globalThis.fetch,
   archiveRoot = resolve('.factory/jev/evaluations'), archiveBoundary = process.cwd() } = {}) {
-  const options = parseArgs(argv);
-  checkOutputPath(options);
-  const trial = await loadTrial(options.casesPath, options.rubricPath, options.profile);
-  const evaluationOptions = cliEvaluationOptions(options, trial, env, fetchImpl);
-  validate(trial.cases, trial.rubric, evaluationOptions);
-  const output = await reserveOutput(options.outPath);
-  let journal;
+  let journal, output;
   try {
+    const options = parseArgs(argv);
+    checkOutputPath(options);
+    const trial = await loadTrial(options.casesPath, options.rubricPath, options.profile);
+    const evaluationOptions = cliEvaluationOptions(options, trial, env, fetchImpl);
+    validate(trial.cases, trial.rubric, evaluationOptions);
+    output = await reserveOutput(options.outPath);
     journal = await reserveJournal(archiveRoot, archiveBoundary, trial, evaluationOptions);
     return await executeTrackedTrial(trial, evaluationOptions, output, journal);
+  } catch (error) {
+    if (!journal) {
+      const failure = error instanceof TrialError ? error : new TrialError('preflight_failed');
+      failure.rejection = await recordRejectedTrial(failure, archiveRoot, archiveBoundary);
+      throw failure;
+    }
+    throw error;
   } finally { await journal?.handle.close(); await output?.close(); }
 }
 
@@ -671,7 +714,8 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     process.exitCode = report.state === 'INCOMPLETE' ? 2 : 0;
   } catch (error) {
     process.stderr.write(`${encode({ schema: 'factory.jev-experimental-trial.error.v1',
-      state: 'BLOCKED', error: error instanceof TrialError ? error.code : 'evaluation_failed' })}\n`);
+      state: 'BLOCKED', error: error instanceof TrialError ? error.code : 'evaluation_failed',
+      ...(error.rejection ? { rejection: error.rejection } : {}) })}\n`);
     process.exitCode = 2;
   }
   }
