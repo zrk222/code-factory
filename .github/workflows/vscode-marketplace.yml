@@ -187,7 +187,7 @@ jobs:
           PY
           python scripts/prepare_release_contract.py \
             --root . \
-            --feature "vscode-${RELEASE_REF}" \
+            --feature "vscode-${RELEASE_REF//+/-}" \
             --out "$RELEASE_CONTRACT_PATH" \
             --approved-by "$APPROVED_BY"
 

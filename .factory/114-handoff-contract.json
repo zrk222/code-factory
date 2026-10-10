@@ -1,0 +1,129 @@
+{
+  "schema": "factory.workflow-audit.contract.v1",
+  "project_id": "cf-vscode-114-build-tag-handoff",
+  "candidate": [
+    {
+      "path": ".github/workflows/vscode-marketplace.yml",
+      "sha256": "31302ac6fec338d04aad99bb19e90b525705cbc4c750ade284de3bee727e83e9",
+      "kind": "configuration"
+    },
+    {
+      "path": "tests/test_release_integrity.py",
+      "sha256": "ead6823dd1949c267495eebe6ebd5886ec9af4531cd1421b4ecfb5d7fc273b2b",
+      "kind": "test"
+    }
+  ],
+  "applicability": [
+    {
+      "category": "happy_path",
+      "applicable": true,
+      "reason": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar."
+    },
+    {
+      "category": "validation",
+      "applicable": true,
+      "reason": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar."
+    },
+    {
+      "category": "failure_recovery",
+      "applicable": true,
+      "reason": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar."
+    },
+    {
+      "category": "state_consistency",
+      "applicable": true,
+      "reason": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar."
+    },
+    {
+      "category": "security_privacy",
+      "applicable": true,
+      "reason": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar."
+    },
+    {
+      "category": "performance",
+      "applicable": true,
+      "reason": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar."
+    },
+    {
+      "category": "accessibility",
+      "applicable": false,
+      "reason": "No product UI or accessible controls changed; workflow authorization only.",
+      "review_evidence": {
+        "path": ".factory/114-handoff-review.md",
+        "sha256": "2ed9710ce68622ca1f47bc1bf23c467dca51dd3d30b709ea90ea5abd1d1cbe6d",
+        "kind": "review"
+      }
+    },
+    {
+      "category": "external_effects",
+      "applicable": true,
+      "reason": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar."
+    }
+  ],
+  "checks": [
+    {
+      "id": "SCANNER-HAPPY_PATH",
+      "requirement": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar.",
+      "category": "happy_path",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-VALIDATION",
+      "requirement": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar.",
+      "category": "validation",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-FAILURE_RECOVERY",
+      "requirement": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar.",
+      "category": "failure_recovery",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-STATE_CONSISTENCY",
+      "requirement": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar.",
+      "category": "state_consistency",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-SECURITY_PRIVACY",
+      "requirement": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar.",
+      "category": "security_privacy",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-PERFORMANCE",
+      "requirement": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar.",
+      "category": "performance",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-ACCESSIBILITY",
+      "requirement": "No product UI or accessible controls changed; workflow authorization only.",
+      "category": "accessibility",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-EXTERNAL_EFFECTS",
+      "requirement": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar.",
+      "category": "external_effects",
+      "profiles": [
+        "windows-python311"
+      ]
+    }
+  ]
+}
