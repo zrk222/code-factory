@@ -1,0 +1,44 @@
+{
+  "agent_actions": [],
+  "authority": {
+    "approval": false,
+    "connector": false,
+    "credential": false,
+    "deployment": false,
+    "execution": false,
+    "merge": false,
+    "messaging": false,
+    "publication": false,
+    "repair": false,
+    "signing": false
+  },
+  "candidate_sha256": "1cb54d9e744395f6eafc8581b296f8b400fb3817e6d198db1f01b5bcd2eca005",
+  "checks": 8,
+  "contract_sha256": "49362dc8a3397c5e409b623bee85688e502cec2cc467b4176ca7d2ec1ea0f8c1",
+  "errors": [],
+  "inapplicability_evidence": {
+    "accessibility": {
+      "actual_sha256": "2ed9710ce68622ca1f47bc1bf23c467dca51dd3d30b709ea90ea5abd1d1cbe6d",
+      "current": true,
+      "kind": "review",
+      "path": ".factory/114-handoff-review.md",
+      "sha256": "2ed9710ce68622ca1f47bc1bf23c467dca51dd3d30b709ea90ea5abd1d1cbe6d"
+    }
+  },
+  "limits": [
+    "Recorded evidence completeness and hashes only; observations require review.",
+    "Inapplicability review evidence is hash-bound but its judgment and identity are not authenticated.",
+    "Each contract/observation JSON input and evidence artifact is limited to 16 MiB; total evidence hashing is limited to 128 MiB, 4096 artifact references, and 4096 required check/profile pairs.",
+    "No project command or provider is executed.",
+    "No approval, certification or deployment authority."
+  ],
+  "observations_sha256": "5c670357c94f62c2d8c1b9ce70cc8d4ada51658e2bc9e28f7ef7caa56ed3db8f",
+  "project_id": "cf-vscode-114-build-tag-handoff",
+  "receipt_sha256": "c4ab7b651c7484520500daca63ffa4fc9d3b8dfb920ba13ddcf61a579e956175",
+  "resource_usage": {
+    "artifact_references": 27,
+    "bytes_hashed": 76886
+  },
+  "schema": "factory.workflow-audit.receipt.v1",
+  "state": "PASS"
+}

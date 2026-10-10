@@ -1221,3 +1221,9 @@ def test_vscode_website_upload_defaults_to_no_cli_publication():
     assert "secrets.VSCE_PAT" in credential["run"]
     assert website["if"] == "inputs.web_upload == true"
     assert "VSCE_PAT" not in website["run"]
+    prepare = next(
+        step
+        for step in workflow["jobs"]["validate"]["steps"]
+        if step.get("name") == "Prepare source-bound release contract"
+    )
+    assert '--feature "vscode-${RELEASE_REF//+/-}"' in prepare["run"]

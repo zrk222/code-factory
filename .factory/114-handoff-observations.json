@@ -1,0 +1,207 @@
+{
+  "schema": "factory.workflow-audit.observations.v1",
+  "contract_sha256": "49362dc8a3397c5e409b623bee85688e502cec2cc467b4176ca7d2ec1ea0f8c1",
+  "candidate_sha256": "1cb54d9e744395f6eafc8581b296f8b400fb3817e6d198db1f01b5bcd2eca005",
+  "observations": [
+    {
+      "id": "SCANNER-HAPPY_PATH",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:37:36.897267+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-handoff-tests.log",
+          "sha256": "48287d61abf9fee56be656f6131e2c88b9be564a946ae1a8c6ddb4beff1654ca",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-handoff-review.md",
+          "sha256": "2ed9710ce68622ca1f47bc1bf23c467dca51dd3d30b709ea90ea5abd1d1cbe6d",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/114-handoff-bash.log",
+          "sha256": "81ea7db36594a1092d35073d94a429583c0b145b93da4d69d82312052ea663af",
+          "kind": "log"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-VALIDATION",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:37:36.901268+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-handoff-tests.log",
+          "sha256": "48287d61abf9fee56be656f6131e2c88b9be564a946ae1a8c6ddb4beff1654ca",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-handoff-review.md",
+          "sha256": "2ed9710ce68622ca1f47bc1bf23c467dca51dd3d30b709ea90ea5abd1d1cbe6d",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/114-handoff-bash.log",
+          "sha256": "81ea7db36594a1092d35073d94a429583c0b145b93da4d69d82312052ea663af",
+          "kind": "log"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-FAILURE_RECOVERY",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:37:36.901268+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-handoff-tests.log",
+          "sha256": "48287d61abf9fee56be656f6131e2c88b9be564a946ae1a8c6ddb4beff1654ca",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-handoff-review.md",
+          "sha256": "2ed9710ce68622ca1f47bc1bf23c467dca51dd3d30b709ea90ea5abd1d1cbe6d",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/114-handoff-bash.log",
+          "sha256": "81ea7db36594a1092d35073d94a429583c0b145b93da4d69d82312052ea663af",
+          "kind": "log"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-STATE_CONSISTENCY",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:37:36.901268+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-handoff-tests.log",
+          "sha256": "48287d61abf9fee56be656f6131e2c88b9be564a946ae1a8c6ddb4beff1654ca",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-handoff-review.md",
+          "sha256": "2ed9710ce68622ca1f47bc1bf23c467dca51dd3d30b709ea90ea5abd1d1cbe6d",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/114-handoff-bash.log",
+          "sha256": "81ea7db36594a1092d35073d94a429583c0b145b93da4d69d82312052ea663af",
+          "kind": "log"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-SECURITY_PRIVACY",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:37:36.902783+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-handoff-tests.log",
+          "sha256": "48287d61abf9fee56be656f6131e2c88b9be564a946ae1a8c6ddb4beff1654ca",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-handoff-review.md",
+          "sha256": "2ed9710ce68622ca1f47bc1bf23c467dca51dd3d30b709ea90ea5abd1d1cbe6d",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/114-handoff-bash.log",
+          "sha256": "81ea7db36594a1092d35073d94a429583c0b145b93da4d69d82312052ea663af",
+          "kind": "log"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-PERFORMANCE",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:37:36.902783+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-handoff-tests.log",
+          "sha256": "48287d61abf9fee56be656f6131e2c88b9be564a946ae1a8c6ddb4beff1654ca",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-handoff-review.md",
+          "sha256": "2ed9710ce68622ca1f47bc1bf23c467dca51dd3d30b709ea90ea5abd1d1cbe6d",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/114-handoff-bash.log",
+          "sha256": "81ea7db36594a1092d35073d94a429583c0b145b93da4d69d82312052ea663af",
+          "kind": "log"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-ACCESSIBILITY",
+      "profile": "windows-python311",
+      "status": "N/A",
+      "reason": "No product UI or accessible controls changed; workflow authorization only.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:37:36.902783+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-handoff-tests.log",
+          "sha256": "48287d61abf9fee56be656f6131e2c88b9be564a946ae1a8c6ddb4beff1654ca",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-handoff-review.md",
+          "sha256": "2ed9710ce68622ca1f47bc1bf23c467dca51dd3d30b709ea90ea5abd1d1cbe6d",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/114-handoff-bash.log",
+          "sha256": "81ea7db36594a1092d35073d94a429583c0b145b93da4d69d82312052ea663af",
+          "kind": "log"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-EXTERNAL_EFFECTS",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Normalize plus signs only in the internal feature ID, as OpenVSX does. Original release_ref remains exact for immutable tag, source commit, cadence exception and preflight; Bash expression produces an identifier accepted by unchanged handoff grammar.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:37:36.903792+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-handoff-tests.log",
+          "sha256": "48287d61abf9fee56be656f6131e2c88b9be564a946ae1a8c6ddb4beff1654ca",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-handoff-review.md",
+          "sha256": "2ed9710ce68622ca1f47bc1bf23c467dca51dd3d30b709ea90ea5abd1d1cbe6d",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/114-handoff-bash.log",
+          "sha256": "81ea7db36594a1092d35073d94a429583c0b145b93da4d69d82312052ea663af",
+          "kind": "log"
+        }
+      ]
+    }
+  ]
+}
