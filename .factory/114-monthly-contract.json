@@ -29,7 +29,7 @@
     },
     {
       "path": "tests/test_release_integrity.py",
-      "sha256": "88ed90224a1ac68dc68886e7a017cd149b4ee11df0464adbad2a345e02e5eb4b",
+      "sha256": "79b7ae4dabcd7b1ea080e34d8f7efa5b9dda2ae450fb6363b00953c97b990b10",
       "kind": "test"
     }
   ],
@@ -70,7 +70,7 @@
       "reason": "No UI control or interaction changes; listing version text only.",
       "review_evidence": {
         "path": ".factory/114-monthly-review.md",
-        "sha256": "2a985db2f0b1ba54a5ca24986b1bf0e20971557420b47b76e9fbb946a65cf8e7",
+        "sha256": "225078202af6cc7af4f886305c36c4dc9dfacd97be5a72d487abf164ab781f62",
         "kind": "review"
       }
     },

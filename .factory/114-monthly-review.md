@@ -19,3 +19,7 @@ Model admission permits a monthly-cap override only for a valid, available `rate
 - The current Open VSX, VS Code Marketplace, JetBrains, and core publication workflow YAML files parse with `yaml.safe_load`.
 - `.factory/114-monthly-tests.log` records **96 passed**. The updated integration test executes the Open VSX and VS Code receipt generators, validates their emitted receipt through `_cadence_exception_payload`, and checks `_cadence_admission` against a synthetic cap-exceeded state; JetBrains remains a negative control. These are local workflow-code fixtures with live-shaped GitHub environment variables, not a live Actions execution.
 - Static review and local tests do not establish protected-environment approval or provider publication.
+
+## Python 3.10 expiry-test compatibility review
+
+Reviewed the current two-line change in `tests/test_release_integrity.py`. It normalizes trailing `Z` to `+00:00` before calling `datetime.fromisoformat` for both receipt timestamps, allowing the expiry-duration assertion to run on Python 3.10 while retaining timezone-aware parsing and the exact 1,800-second assertion. The edit is test-only and does not change the release receipt or exception validation behavior. Per the reported CI evidence, Python 3.10's newly added expiry test was the only failure; the focused suite passed on Python 3.11. This review confirms the compatibility fix is narrowly scoped; it does not independently rerun the Python 3.10 CI matrix.

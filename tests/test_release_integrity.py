@@ -1156,8 +1156,8 @@ def test_editor_exception_receipt_binds_protected_dispatch(
     assert receipt["environment"] == environment
     assert receipt["publish_enabled"] and receipt["environment_authorized"]
     assert (
-        datetime.fromisoformat(receipt["expires_at"])
-        - datetime.fromisoformat(receipt["issued_at"])
+        datetime.fromisoformat(receipt["expires_at"].replace("Z", "+00:00"))
+        - datetime.fromisoformat(receipt["issued_at"].replace("Z", "+00:00"))
     ).total_seconds() == 1800
     from factoryline.release_candidate import (
         _cadence_admission,

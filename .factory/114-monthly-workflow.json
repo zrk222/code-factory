@@ -12,17 +12,17 @@
     "repair": false,
     "signing": false
   },
-  "candidate_sha256": "45519e0d20efef553d5ee85c9184f6a0fc8eddfbf816d8be2076e6dab287438c",
+  "candidate_sha256": "ee6ad257f98bab6c7a13b94bf5f17eb3f00b861c9f41cc8d5fe5489062aefa63",
   "checks": 8,
-  "contract_sha256": "df98ed6fc51398502eb23c159471afadf84a106e61394a8eb4728f3f666a1b51",
+  "contract_sha256": "e8546cd24e7ea0059aacc2fe0a995a1c6101384d4ad1d90ada5e19052ce36f03",
   "errors": [],
   "inapplicability_evidence": {
     "accessibility": {
-      "actual_sha256": "2a985db2f0b1ba54a5ca24986b1bf0e20971557420b47b76e9fbb946a65cf8e7",
+      "actual_sha256": "225078202af6cc7af4f886305c36c4dc9dfacd97be5a72d487abf164ab781f62",
       "current": true,
       "kind": "review",
       "path": ".factory/114-monthly-review.md",
-      "sha256": "2a985db2f0b1ba54a5ca24986b1bf0e20971557420b47b76e9fbb946a65cf8e7"
+      "sha256": "225078202af6cc7af4f886305c36c4dc9dfacd97be5a72d487abf164ab781f62"
     }
   },
   "limits": [
@@ -32,12 +32,12 @@
     "No project command or provider is executed.",
     "No approval, certification or deployment authority."
   ],
-  "observations_sha256": "299ddcc6c23e214b16372349f5e5e44fa2ff711635b6c590a342d29bbca037d7",
+  "observations_sha256": "ec564c9c82013c86f4b09f7335d14c64e9c46c1f94ad106809f2f5dbd61a0691",
   "project_id": "cf-editor-114-authorized-monthly-exception",
-  "receipt_sha256": "6bc2e744d117477b4168b08dc61244d4d5201250b042b5f2b97a3b58ee67931e",
+  "receipt_sha256": "6fae5d0008328391a4e574bf69d1c78e8a927ee7a02233d8698f366c8dfdb3a3",
   "resource_usage": {
     "artifact_references": 47,
-    "bytes_hashed": 2451918
+    "bytes_hashed": 2462597
   },
   "schema": "factory.workflow-audit.receipt.v1",
   "state": "PASS"
