@@ -1,0 +1,97 @@
+{
+  "schema": "factory.workflow-audit.observations.v1",
+  "contract_sha256": "ccbfcfbdfb73196f408222cd152d17372cc6c61a524571711b7121235dbf463f",
+  "candidate_sha256": "f8e393fa8a2cbb767148a5054aefa24a932393172f36545e86da1b5dab1ee734",
+  "observations": [
+    {
+      "id": "PINS",
+      "profile": "windows-py311-offline-regression",
+      "status": "PASS",
+      "reason": "Official upstream tag commits and supported action inputs; local scoped evidence, no publication claim",
+      "execution_identity": "CPython3.11 Windows; pytest third-party autoload disabled; official gh API; primary source review",
+      "observed_at": "2026-10-10T16:15:09.440125+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/action-dependency-closeout/compatibility.json",
+          "sha256": "94707938cddeab957820a1e993c960d226542c375979459505cda818ee9732bc",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "REGRESSION",
+      "profile": "windows-py311-offline-regression",
+      "status": "PASS",
+      "reason": "Relevant workflow/release integrity regression tests pass; local scoped evidence, no publication claim",
+      "execution_identity": "CPython3.11 Windows; pytest third-party autoload disabled; official gh API; primary source review",
+      "observed_at": "2026-10-10T16:15:09.451706+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/action-dependency-closeout/tests-confirmed.log",
+          "sha256": "1cac761cc76ddd51d0017bb7f0011f074b562b033dfdfa0a0b6cb149f0d70b76",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "RECOVERY",
+      "profile": "windows-py311-offline-regression",
+      "status": "PASS",
+      "reason": "Existing fail-closed release regression cases remain enforced; local scoped evidence, no publication claim",
+      "execution_identity": "CPython3.11 Windows; pytest third-party autoload disabled; official gh API; primary source review",
+      "observed_at": "2026-10-10T16:15:09.451706+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/action-dependency-closeout/tests-confirmed.log",
+          "sha256": "1cac761cc76ddd51d0017bb7f0011f074b562b033dfdfa0a0b6cb149f0d70b76",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "ARCH",
+      "profile": "windows-py311-offline-regression",
+      "status": "PASS",
+      "reason": "Strict architecture remains HEALTHY and 460 Python files; local scoped evidence, no publication claim",
+      "execution_identity": "CPython3.11 Windows; pytest third-party autoload disabled; official gh API; primary source review",
+      "observed_at": "2026-10-10T16:15:09.452636+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/action-dependency-closeout/architecture.json",
+          "sha256": "27c83d8cb14cf78e0fa48b9e0fdb125d6e8b59e5601d3eb3c965cf58736e15f3",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "SECURITY",
+      "profile": "windows-py311-offline-regression",
+      "status": "PASS",
+      "reason": "SHA pinning and credential/permission boundaries preserved; local scoped evidence, no publication claim",
+      "execution_identity": "CPython3.11 Windows; pytest third-party autoload disabled; official gh API; primary source review",
+      "observed_at": "2026-10-10T16:15:09.452636+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/action-dependency-closeout/review.md",
+          "sha256": "67605ade49d9cfda441144077aa4951a078a13086bc20611efb174c67c7b5c0c",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "id": "EFFECTS",
+      "profile": "windows-py311-offline-regression",
+      "status": "PASS",
+      "reason": "No local live publication; workflow authority guards unchanged; local scoped evidence, no publication claim",
+      "execution_identity": "CPython3.11 Windows; pytest third-party autoload disabled; official gh API; primary source review",
+      "observed_at": "2026-10-10T16:15:09.463166+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/action-dependency-closeout/review.md",
+          "sha256": "67605ade49d9cfda441144077aa4951a078a13086bc20611efb174c67c7b5c0c",
+          "kind": "review"
+        }
+      ]
+    }
+  ]
+}

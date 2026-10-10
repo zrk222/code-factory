@@ -136,7 +136,7 @@ jobs:
           }
       - name: Require an open Marketplace binary-update slot
         run: python3 "$GITHUB_WORKSPACE/scripts/jetbrains_marketplace_status.py" --plugin-id 33009 --require-upload-slot --json
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6
         with:
           distribution: temurin
           java-version: "21"
@@ -237,7 +237,7 @@ jobs:
             --release-ref "$RELEASE_REF" \
             --commit "$(git rev-parse HEAD)" \
             --channel "$MARKETPLACE_CHANNEL"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: jetbrains-marketplace-${{ inputs.release_ref }}
           path: marketplace-candidate/
@@ -245,7 +245,7 @@ jobs:
           retention-days: 14
       - name: Preserve verifier and test reports
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: jetbrains-validation-reports-${{ inputs.release_ref }}
           path: editors/intellij/build/reports/
@@ -288,7 +288,7 @@ jobs:
           git merge-base --is-ancestor "$APPROVED_COMMIT" "$GITHUB_SHA"
           git checkout --detach "$APPROVED_COMMIT"
           test "$(git rev-parse HEAD)" = "$APPROVED_COMMIT"
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6
         with:
           distribution: temurin
           java-version: "21"
@@ -350,7 +350,7 @@ jobs:
           exit 1
       - name: Preserve compatibility report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: jetbrains-compatibility-${{ inputs.release_ref }}-${{ matrix.product }}
           path: editors/intellij/build/reports/pluginVerifier/
@@ -384,7 +384,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           git fetch --no-tags origin "refs/tags/$RELEASE_REF"
           test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$APPROVED_COMMIT"
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6
         with:
           distribution: temurin
           java-version: "21"

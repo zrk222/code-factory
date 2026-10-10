@@ -103,7 +103,7 @@ def _validator_has_tagged_artifact(job: Any, artifact_name: str) -> bool:
     return any(
         isinstance(step, dict)
         and step.get("uses")
-        == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+        == "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         and isinstance(step.get("with"), dict)
         and step["with"].get("name") == artifact_name
         for step in steps
@@ -488,7 +488,7 @@ def _jetbrains_check(workflow: str) -> dict[str, Any]:
         guard in workflow
         and "--require-upload-slot" in workflow
         and workflow.index(guard)
-        < workflow.index("actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961")
+        < workflow.index("actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6")
         and workflow.index(guard)
         < workflow.index(
             "gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92"
