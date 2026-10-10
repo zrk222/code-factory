@@ -67,6 +67,21 @@ def add_parser(sub: Any) -> None:
     )
     code_audit.add_argument("--json", action="store_true")
     code_audit.add_argument(
+        "--oracle-evidence",
+        help="workspace-relative DSSE per-test mutation attestation (security only)",
+    )
+    code_audit.add_argument(
+        "--oracle-trust-root",
+        help="workspace-relative oracle-verifier public trust root",
+    )
+    code_audit.add_argument(
+        "--oracle-trust-sha256", help="operator-pinned trust root SHA-256"
+    )
+    code_audit.add_argument(
+        "--oracle-environment-sha256",
+        help="expected runner/environment contract SHA-256",
+    )
+    code_audit.add_argument(
         "--contract", default=".factory/workflow-audit-contract.json"
     )
     code_audit.add_argument(
@@ -153,6 +168,10 @@ def _run_security(args: Any) -> int:
             tenant_read_calls=calls,
             tenant_read_bindings=bindings,
             tenant_read_scopes=contract_evidence.get("scoped_reads"),
+            oracle_evidence=getattr(args, "oracle_evidence", None),
+            oracle_trust_root=getattr(args, "oracle_trust_root", None),
+            oracle_trust_sha256=getattr(args, "oracle_trust_sha256", None),
+            oracle_environment_sha256=getattr(args, "oracle_environment_sha256", None),
         )
         result["tenant_read_contract"]["configuration"] = contract_evidence
         if contract_evidence["state"] == "missing":

@@ -3067,3 +3067,332 @@ def test_scoped_tenant_contract_rejects_missing_source_or_read(tmp_path, path, c
     )
     with pytest.raises(ReviewAuditError, match="unique existing|absent from"):
         load_tenant_read_contract(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "body,eligible",
+    [
+        ("validate(5)", True),
+        ("pass", False),
+        ("validate(5)\n    assert True", False),
+        (
+            "try:\n        assert result == 4\n    except AssertionError:\n        pass",
+            False,
+        ),
+        ("def helper():\n        assert compute() == 4", False),
+    ],
+)
+def test_runtime_oracle_eligibility_does_not_weaken_static_scan(
+    tmp_path, body, eligible
+):
+    (tmp_path / "test_app.py").write_text(
+        "def test_validate():\n    " + body + "\n", encoding="utf-8"
+    )
+    result = security_scan(tmp_path)
+    finding = next(
+        item for item in result["findings"] if item["code"] == "QUALITY_HOLLOW_TEST"
+    )
+    import ast
+    from factoryline.review_audits import _completion_only_oracle
+
+    node = ast.parse("def test_validate():\n    " + body + "\n").body[0]
+    assert _completion_only_oracle(node) is eligible
+    assert finding["facts"]["runtime_oracle_eligible"] is eligible
+    assert result["state"] == "FINDINGS"
+
+
+def _runtime_oracle_scan_fixture(tmp_path):
+    from hashlib import sha256
+    import factoryline.review_audits as module
+
+    (tmp_path / "app.py").write_text(
+        "def validate(value):\n    return value\n", encoding="utf-8"
+    )
+    (tmp_path / "test_app.py").write_text(
+        "from app import validate\ndef test_validate():\n    validate(5)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "oracle.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "trust.json").write_text("{}", encoding="utf-8")
+    row = {
+        "path": "test_app.py",
+        "line": 2,
+        "symbol": "test_validate",
+        "test_sha256": sha256((tmp_path / "test_app.py").read_bytes()).hexdigest(),
+        "baseline": {
+            "status": "PASS",
+            "phase": "call",
+            "collection_complete": True,
+            "case_ids": ["test_app.py::test_validate"],
+            "report_sha256": "a" * 64,
+        },
+        "mutation": {
+            "source_path": "app.py",
+            "source_sha256": sha256((tmp_path / "app.py").read_bytes()).hexdigest(),
+            "mutant_sha256": "b" * 64,
+            "status": "FAIL",
+            "phase": "call",
+            "case_ids": ["test_app.py::test_validate"],
+            "failure_kind": "exception",
+            "report_sha256": "c" * 64,
+        },
+    }
+    kwargs = {
+        "oracle_evidence": "oracle.json",
+        "oracle_trust_root": "trust.json",
+        "oracle_trust_sha256": "d" * 64,
+        "oracle_environment_sha256": "e" * 64,
+    }
+    return module, row, kwargs
+
+
+def test_scan_reconciles_bound_completion_oracle_and_retains_static_history(
+    tmp_path, monkeypatch
+):
+    import factoryline.runtime_attestation as attestation
+
+    module, row, kwargs = _runtime_oracle_scan_fixture(tmp_path)
+    initial = security_scan(tmp_path)
+
+    def verified(*args, **values):
+        assert values["source_manifest_sha256"] == initial["source_manifest_sha256"]
+        assert values["environment_sha256"] == "e" * 64
+        return {"state": "VERIFIED", "tests": [row], "receipt_sha256": "f" * 64}
+
+    monkeypatch.setattr(attestation, "verify_signed_test_oracles", verified)
+    module._oracle_bound_row(
+        tmp_path, row, {item["path"]: item["sha256"] for item in initial["sources"]}
+    )
+    result = security_scan(tmp_path, **kwargs)
+    replay = module._reconcile_runtime_oracles(
+        tmp_path, initial.copy(), tuple(kwargs.values())
+    )
+    assert replay == result
+    assert result["state"] == "CLEAN" and result["findings"] == []
+    assert (
+        result["runtime_oracles"]["reconciled"][0]["static_finding"]
+        == initial["findings"][0]
+    )
+    assert result["runtime_oracles"]["reconciled_count"] == 1
+    assert result["candidate_sha256"] == initial["candidate_sha256"]
+    assert (
+        result["audit_sha256"]
+        == module._seal_security_scan(result.copy())["audit_sha256"]
+    )
+
+
+@pytest.mark.parametrize("change", ["test_hash", "source_hash", "line", "class"])
+def test_scan_rejects_misbound_runtime_oracle(tmp_path, monkeypatch, change):
+    import factoryline.runtime_attestation as attestation
+
+    _module, row, kwargs = _runtime_oracle_scan_fixture(tmp_path)
+    if change == "test_hash":
+        row["test_sha256"] = "0" * 64
+    elif change == "source_hash":
+        row["mutation"]["source_sha256"] = "0" * 64
+    elif change == "line":
+        row["line"] = 1
+    else:
+        row["baseline"]["case_ids"] = ["test_app.py::OtherClass::test_validate"]
+    monkeypatch.setattr(
+        attestation,
+        "verify_signed_test_oracles",
+        lambda *args, **values: {"tests": [row]},
+    )
+    with pytest.raises(ReviewAuditError, match="Runtime oracle evidence rejected"):
+        security_scan(tmp_path, **kwargs)
+
+
+def test_scan_keeps_constant_assertion_despite_runtime_receipt(tmp_path, monkeypatch):
+    from hashlib import sha256
+    import factoryline.runtime_attestation as attestation
+
+    _module, row, kwargs = _runtime_oracle_scan_fixture(tmp_path)
+    (tmp_path / "test_app.py").write_text(
+        "from app import validate\ndef test_validate():\n    validate(5)\n    assert True\n",
+        encoding="utf-8",
+    )
+    row["test_sha256"] = sha256((tmp_path / "test_app.py").read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        attestation,
+        "verify_signed_test_oracles",
+        lambda *args, **values: {"tests": [row]},
+    )
+    result = security_scan(tmp_path, **kwargs)
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert result["runtime_oracles"]["reconciled_count"] == 0
+
+
+def test_scan_rejects_partial_runtime_evidence_configuration(tmp_path):
+    _module, _row, kwargs = _runtime_oracle_scan_fixture(tmp_path)
+    del kwargs["oracle_environment_sha256"]
+    with pytest.raises(
+        ReviewAuditError, match="requires receipt, trust root and both pins"
+    ):
+        security_scan(tmp_path, **kwargs)
+
+
+def test_security_scan_seal_is_idempotent(tmp_path):
+    import factoryline.review_audits as module
+
+    (tmp_path / "app.py").write_text("value = 5\n", encoding="utf-8")
+    result = security_scan(tmp_path)
+    assert module._seal_security_scan(result.copy()) == result
+
+
+def test_signed_runtime_oracle_cli_after_observed_mutant_failure(tmp_path, capsys):
+    from datetime import datetime, timedelta, timezone
+    from hashlib import sha256
+    import os
+    import subprocess
+    import sys
+    from factoryline.enterprise_receipts import generate_key_material, sign_payload
+    from factoryline.runtime_attestation import (
+        TEST_ORACLE_SCHEMA,
+        TEST_ORACLE_PAYLOAD_TYPE,
+    )
+
+    _module, row, kwargs = _runtime_oracle_scan_fixture(tmp_path)
+    environment = {
+        **os.environ,
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        "PYTHONPATH": str(tmp_path),
+        "NO_COLOR": "1",
+    }
+    command = [
+        sys.executable,
+        "-m",
+        "pytest",
+        "test_app.py::test_validate",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+    ]
+    baseline = subprocess.run(
+        command,
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+    original = (tmp_path / "app.py").read_bytes()
+    mutant = b"def validate(value):\n    raise ValueError('negative control')\n"
+    try:
+        (tmp_path / "app.py").write_bytes(mutant)
+        mutated = subprocess.run(
+            command,
+            cwd=tmp_path,
+            env=environment,
+            capture_output=True,
+            timeout=20,
+            check=False,
+        )
+    finally:
+        (tmp_path / "app.py").write_bytes(original)
+    assert baseline.returncode == 0 and b"1 passed" in baseline.stdout
+    assert mutated.returncode == 1 and b"ValueError: negative control" in mutated.stdout
+    assert b"FAILED test_app.py::test_validate" in mutated.stdout
+    row["baseline"]["report_sha256"] = sha256(
+        baseline.stdout + baseline.stderr
+    ).hexdigest()
+    row["mutation"]["report_sha256"] = sha256(
+        mutated.stdout + mutated.stderr
+    ).hexdigest()
+    row["mutation"]["mutant_sha256"] = sha256(mutant).hexdigest()
+    initial = security_scan(tmp_path)
+    now = datetime.now(timezone.utc)
+    payload = {
+        "schema": TEST_ORACLE_SCHEMA,
+        "issued_at": now.isoformat(),
+        "expires_at": (now + timedelta(hours=1)).isoformat(),
+        "source_manifest_sha256": initial["source_manifest_sha256"],
+        "environment_sha256": kwargs["oracle_environment_sha256"],
+        "authority": "none",
+        "tests": [row],
+    }
+    keys = generate_key_material(
+        out_dir=tmp_path / ".factory" / "keys",
+        keyid="local-test-oracle",
+        identity="test-only@example",
+        issuer="local-test",
+    )
+    trust = json.loads(Path(keys["trust_root"]).read_text(encoding="utf-8"))
+    trust["keys"][0]["roles"] = ["oracle-verifier"]
+    (tmp_path / "trust.json").write_text(json.dumps(trust), encoding="utf-8")
+    kwargs["oracle_trust_sha256"] = sha256(
+        (tmp_path / "trust.json").read_bytes()
+    ).hexdigest()
+    envelope = sign_payload(
+        payload,
+        payload_type=TEST_ORACLE_PAYLOAD_TYPE,
+        private_key_path=Path(keys["private_key"]),
+        keyid=keys["keyid"],
+        identity=keys["identity"],
+        issuer=keys["issuer"],
+    )
+    (tmp_path / "oracle.json").write_text(json.dumps(envelope), encoding="utf-8")
+    (tmp_path / ".factory" / "tenant-read-contract.json").write_text(
+        json.dumps({"schema": "factory.tenant-read-contract.v1", "reads": []}),
+        encoding="utf-8",
+    )
+    code = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--oracle-evidence",
+            "oracle.json",
+            "--oracle-trust-root",
+            "trust.json",
+            "--oracle-trust-sha256",
+            kwargs["oracle_trust_sha256"],
+            "--oracle-environment-sha256",
+            kwargs["oracle_environment_sha256"],
+            "--json",
+        ]
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert code == 0 and result["state"] == "CLEAN"
+    assert result["runtime_oracles"]["reconciled_count"] == 1
+    assert result["runtime_oracles"]["signature"]["identity"] == "test-only@example"
+    assert "not established" in result["runtime_oracles"]["claim_boundary"]
+    assert (
+        result["runtime_oracles"]["reconciled"][0]["static_finding"]["code"]
+        == "QUALITY_HOLLOW_TEST"
+    )
+
+
+def test_runtime_oracle_rechecks_scanner_configuration_after_verification(
+    tmp_path, monkeypatch
+):
+    import factoryline.runtime_attestation as attestation
+
+    _module, row, kwargs = _runtime_oracle_scan_fixture(tmp_path)
+    config = tmp_path / "pyproject.toml"
+    config.write_text("[tool.mypy]\nfiles = []\n", encoding="utf-8")
+
+    def drift(*args, **values):
+        config.write_text('[tool.mypy]\nfiles = ["test_app.py"]\n', encoding="utf-8")
+        return {"tests": [row]}
+
+    monkeypatch.setattr(attestation, "verify_signed_test_oracles", drift)
+    with pytest.raises(ReviewAuditError, match="Runtime oracle evidence rejected"):
+        security_scan(tmp_path, **kwargs)
+
+
+def test_runtime_oracle_rechecks_source_after_verification(tmp_path, monkeypatch):
+    import factoryline.runtime_attestation as attestation
+
+    _module, row, kwargs = _runtime_oracle_scan_fixture(tmp_path)
+
+    def drift(*args, **values):
+        (tmp_path / "app.py").write_text(
+            "def validate(value):\n    eval(value)\n", encoding="utf-8"
+        )
+        return {"tests": [row]}
+
+    monkeypatch.setattr(attestation, "verify_signed_test_oracles", drift)
+    with pytest.raises(ReviewAuditError, match="Runtime oracle evidence rejected"):
+        security_scan(tmp_path, **kwargs)

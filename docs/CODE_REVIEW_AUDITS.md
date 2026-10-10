@@ -156,3 +156,60 @@ The original eight seeded benchmark cases remain a separate control suite.
 Neither adding regressions nor a reduction in findings establishes accuracy.
 Full-repository comparisons use identical upstream snapshots and record remaining
 findings rather than treating a smaller count as a verified clean result.
+
+
+### Completion-only tests: runtime oracle reconciliation
+
+A valid-input validator or no-exception smoke test may have an observable
+runtime oracle even when its source contains no assertion. CF continues to flag
+such tests by default. Names, comments and bare calls do not clear a finding.
+
+For a trusted runner's per-test evidence, use:
+
+```powershell
+factory audit security --root . --json `
+  --oracle-evidence .factory/test-oracles/observations.dsse.json `
+  --oracle-trust-root .factory/test-oracles/trust-root.json `
+  --oracle-trust-sha256 <operator-pinned-public-trust-root-sha256> `
+  --oracle-environment-sha256 <expected-runner-contract-sha256>
+```
+
+The DSSE payload type is
+`application/vnd.factory.test-oracle-attestation.v1+json`; its schema is
+`factory.test-oracle-attestation.v1`. The payload requires `issued_at`,
+`expires_at` (at most 24 hours apart), `source_manifest_sha256` from the initial
+scan, `environment_sha256`, `authority: "none"`, and 1–460 `tests`.
+The environment contract should bind the exact interpreter, dependency lock,
+runner image, argv, configuration and execution policy. Pin it independently of
+the received attestation. The public trust-root key must have the
+`oracle-verifier` role; absent, ambiguous or revoked keys are rejected. Keep the
+signing key in the trusted runner, never in the candidate repository.
+
+Each test records `path`, `line`, `symbol`, `test_sha256`, `baseline` and
+`mutation`. Baseline requires `status: "PASS"`, `phase: "call"`,
+`collection_complete: true`, all collected `case_ids` and `report_sha256`.
+Mutation requires the exact same cases, `status: "FAIL"`, `phase: "call"`,
+`failure_kind: "assertion"` or `"exception"`, `report_sha256`, and
+`source_path`, `source_sha256`, `mutant_sha256` for changed production code.
+Both report digests refer to the retained execution artifacts. The runner must
+actually run the baseline and source mutation, distinguish call failures from
+collection/setup/teardown errors, and attest every parameterized case; a
+suite-wide mutation score is insufficient. Existing `factory senior replay`
+and repair comparison primitives can support isolated temporary source copies.
+
+CF verifies the signature, current test/production source hashes, source and
+scanner-configuration manifest, expected environment, exact qualified test
+identity, complete matching case sets and freshness. It rejects partial,
+misbound, tampered or stale evidence. Timeouts, crashes and fixture failures do
+not qualify. It clears only completion-only hollow findings: ineffective,
+constant or swallowed assertions, nested checks and empty tests remain findings.
+Security findings are unaffected. The `runtime_oracles.reconciled` report keeps
+the original static finding, per-test evidence, signer and receipt hashes.
+
+This command verifies an operator-trusted runner's attestation offline; it
+neither executes the submitted project nor independently proves that the signer
+ran the mutation. Its scope is the recorded mutation and test. It is not a
+population accuracy measurement, proof of all behavior, or release approval.
+Runtime evidence is opt-in on `audit security`; the aggregate `scan` command
+retains its existing static behavior. Store generated observations and reports
+outside tracked source, for example as private CI artifacts.
