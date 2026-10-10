@@ -1,3 +1,1 @@
-# Open VSX 1.1.1 workflow audit scope
-
-Performance and accessibility are not applicable: this change updates a release workflow, Python release-preflight checks, and package metadata; it adds no user-facing UI and does not change runtime audit execution. The external publication effect is applicable and is guarded by the protected Open VSX environment and successful authorization, validation, and source-attestation jobs.
+Scoped review 2026-10-10: only the explicit Open VSX 1.1.3+build.1 exception identity is renewed; original tag stays immutable. No UI, performance paths, credentials, normal budgets, expiry, run-attempt, protected environment or artifact checks changed. 108 relevant tests pass, including rejected wrong versions and mutated authorization gates. Remote CI and provider publication remain required.

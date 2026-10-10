@@ -4,7 +4,7 @@ SpecFactor-target: 0.75–2.5
 
 ## MUST — Functional core
 ### Description
-Publish the VS Code adapter 1.1.1 to Open VSX from an exact, reviewed main commit, using the maintainer's explicitly approved one-time cadence exception. Keep the normal seven-day rule in force for every other release.
+Publish the VS Code adapter 1.1.3 to Open VSX from an exact, reviewed main commit, using the maintainer's explicitly approved one-time cadence exception. Keep the normal seven-day rule in force for every other release.
 
 ### User roles
 - Publisher: requests the protected Open VSX workflow and supplies the exception reason.
@@ -17,12 +17,12 @@ Publish the VS Code adapter 1.1.1 to Open VSX from an exact, reviewed main commi
 - If the publication is not explicitly enabled or the protected deployment environment has not authorized the run, the system shall not apply the exception or access the Open VSX credential.
 - If any source, architecture, artifact, metadata, or CI check fails, the system shall block publication even when the cadence exception is valid.
 - When a candidate has no matching cadence exception, preflight shall reject release if fewer than seven days have passed since the previous release for the same channel or if four or more releases for the same channel fall within the previous 30 days.
-- The system shall package VSX version 1.1.1 from the reviewed merged source and publish only through the protected Open VSX workflow.
+- The system shall package VSX version 1.1.3 from the reviewed merged source and publish only through the protected Open VSX workflow.
 
 ### Acceptance criteria (Gherkin)
 ```gherkin
 Scenario: exact one-time cadence exception
-  Given a source-bound 1.1.1 candidate and explicit, unexpired exception for the same VSX tag and commit
+  Given a source-bound 1.1.3 candidate and explicit, unexpired exception for the same VSX tag and commit
   And the protected Open VSX publication environment has authorized the run
   When all non-cadence release checks pass
   Then preflight records the failed normal cadence and a separate valid exception

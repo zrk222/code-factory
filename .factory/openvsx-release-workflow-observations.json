@@ -1,97 +1,157 @@
 {
-  "candidate_sha256": "fb68ff5c1604b7abcf2aa68bd7d9ec9adc893c28bb96642ebf10b98189c989ea",
-  "contract_sha256": "3ea0deb60f64c42c037f8e09eb6ed1125f3ece1792d9d2ffc332722a0b82a447",
+  "schema": "factory.workflow-audit.observations.v1",
+  "contract_sha256": "9c6e1a0073ce56afc6ff26f09dae9b4bc2a9bed3a2c01e48fd81291012212843",
+  "candidate_sha256": "c9230e95d969b4c244f785cb4a9b63b638b16fe3e828458bf1a2bfd2f90f402f",
   "observations": [
     {
-      "artifacts": [
-        {
-          "kind": "log",
-          "path": ".factory/openvsx-release-evidence/verification.md",
-          "sha256": "b2a54c1417ac8d64b8311498cb7b6a3d1c54c13aa4d7412cb41e2472011b899b"
-        }
-      ],
-      "execution_identity": "Codex local Windows PowerShell; CPython 3.11.9; authenticated provider release not executed.",
       "id": "OVSX-EXCEPTION-PREFLIGHT",
-      "observed_at": "2026-10-06T07:45:39.208430Z",
       "profile": "windows-cpython-3.11",
-      "reason": "Recorded local execution and its scoped evidence; CI remains authoritative for the pushed candidate.",
-      "status": "PASS"
-    },
-    {
+      "status": "PASS",
+      "reason": "108 focused release tests pass; release integrity confirms protected topology. Scope review records exact exception renewal; remote publication is not claimed.",
+      "execution_identity": "Codex Windows CPython 3.11; local pytest and factory release integrity",
+      "observed_at": "2026-10-10T09:22:29.194299+00:00",
       "artifacts": [
         {
-          "kind": "log",
-          "path": ".factory/openvsx-release-evidence/verification.md",
-          "sha256": "b2a54c1417ac8d64b8311498cb7b6a3d1c54c13aa4d7412cb41e2472011b899b"
+          "path": ".factory/openvsx-113-tests-final.log",
+          "sha256": "27abbc1ba475550d645df0f58a2780afa4dad97058d0866debda3740a55086b8",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/openvsx-113-integrity.json",
+          "sha256": "866bf0f8022165c4edee25c027070af3413dc0784f295e7aa7e0ce77e0d796fc",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/openvsx-release-evidence/scope-review.md",
+          "sha256": "bd705be6f7e56f7e77a99f65a845df2d5a542d9416809ab51d99d9e39200c7ec",
+          "kind": "review"
         }
-      ],
-      "execution_identity": "Codex local Windows PowerShell; CPython 3.11.9; authenticated provider release not executed.",
+      ]
+    },
+    {
       "id": "OVSX-WORKFLOW-BOUNDS",
-      "observed_at": "2026-10-06T07:45:39.208430Z",
       "profile": "windows-cpython-3.11",
-      "reason": "Recorded local execution and its scoped evidence; CI remains authoritative for the pushed candidate.",
-      "status": "PASS"
-    },
-    {
+      "status": "PASS",
+      "reason": "108 focused release tests pass; release integrity confirms protected topology. Scope review records exact exception renewal; remote publication is not claimed.",
+      "execution_identity": "Codex Windows CPython 3.11; local pytest and factory release integrity",
+      "observed_at": "2026-10-10T09:22:29.194299+00:00",
       "artifacts": [
         {
-          "kind": "log",
-          "path": ".factory/openvsx-release-evidence/verification.md",
-          "sha256": "b2a54c1417ac8d64b8311498cb7b6a3d1c54c13aa4d7412cb41e2472011b899b"
+          "path": ".factory/openvsx-113-tests-final.log",
+          "sha256": "27abbc1ba475550d645df0f58a2780afa4dad97058d0866debda3740a55086b8",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/openvsx-113-integrity.json",
+          "sha256": "866bf0f8022165c4edee25c027070af3413dc0784f295e7aa7e0ce77e0d796fc",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/openvsx-release-evidence/scope-review.md",
+          "sha256": "bd705be6f7e56f7e77a99f65a845df2d5a542d9416809ab51d99d9e39200c7ec",
+          "kind": "review"
         }
-      ],
-      "execution_identity": "Codex local Windows PowerShell; CPython 3.11.9; authenticated provider release not executed.",
+      ]
+    },
+    {
       "id": "OVSX-FAIL-CLOSED",
-      "observed_at": "2026-10-06T07:45:39.208430Z",
       "profile": "windows-cpython-3.11",
-      "reason": "Recorded local execution and its scoped evidence; CI remains authoritative for the pushed candidate.",
-      "status": "PASS"
-    },
-    {
+      "status": "PASS",
+      "reason": "108 focused release tests pass; release integrity confirms protected topology. Scope review records exact exception renewal; remote publication is not claimed.",
+      "execution_identity": "Codex Windows CPython 3.11; local pytest and factory release integrity",
+      "observed_at": "2026-10-10T09:22:29.194299+00:00",
       "artifacts": [
         {
-          "kind": "log",
-          "path": ".factory/openvsx-release-evidence/verification.md",
-          "sha256": "b2a54c1417ac8d64b8311498cb7b6a3d1c54c13aa4d7412cb41e2472011b899b"
+          "path": ".factory/openvsx-113-tests-final.log",
+          "sha256": "27abbc1ba475550d645df0f58a2780afa4dad97058d0866debda3740a55086b8",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/openvsx-113-integrity.json",
+          "sha256": "866bf0f8022165c4edee25c027070af3413dc0784f295e7aa7e0ce77e0d796fc",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/openvsx-release-evidence/scope-review.md",
+          "sha256": "bd705be6f7e56f7e77a99f65a845df2d5a542d9416809ab51d99d9e39200c7ec",
+          "kind": "review"
         }
-      ],
-      "execution_identity": "Codex local Windows PowerShell; CPython 3.11.9; authenticated provider release not executed.",
+      ]
+    },
+    {
       "id": "OVSX-RECEIPT-STATE",
-      "observed_at": "2026-10-06T07:45:39.208430Z",
       "profile": "windows-cpython-3.11",
-      "reason": "Recorded local execution and its scoped evidence; CI remains authoritative for the pushed candidate.",
-      "status": "PASS"
-    },
-    {
+      "status": "PASS",
+      "reason": "108 focused release tests pass; release integrity confirms protected topology. Scope review records exact exception renewal; remote publication is not claimed.",
+      "execution_identity": "Codex Windows CPython 3.11; local pytest and factory release integrity",
+      "observed_at": "2026-10-10T09:22:29.194299+00:00",
       "artifacts": [
         {
-          "kind": "log",
-          "path": ".factory/openvsx-release-evidence/verification.md",
-          "sha256": "b2a54c1417ac8d64b8311498cb7b6a3d1c54c13aa4d7412cb41e2472011b899b"
+          "path": ".factory/openvsx-113-tests-final.log",
+          "sha256": "27abbc1ba475550d645df0f58a2780afa4dad97058d0866debda3740a55086b8",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/openvsx-113-integrity.json",
+          "sha256": "866bf0f8022165c4edee25c027070af3413dc0784f295e7aa7e0ce77e0d796fc",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/openvsx-release-evidence/scope-review.md",
+          "sha256": "bd705be6f7e56f7e77a99f65a845df2d5a542d9416809ab51d99d9e39200c7ec",
+          "kind": "review"
         }
-      ],
-      "execution_identity": "Codex local Windows PowerShell; CPython 3.11.9; authenticated provider release not executed.",
+      ]
+    },
+    {
       "id": "OVSX-AUTH-BOUNDARY",
-      "observed_at": "2026-10-06T07:45:39.208430Z",
       "profile": "windows-cpython-3.11",
-      "reason": "Recorded local execution and its scoped evidence; CI remains authoritative for the pushed candidate.",
-      "status": "PASS"
-    },
-    {
+      "status": "PASS",
+      "reason": "108 focused release tests pass; release integrity confirms protected topology. Scope review records exact exception renewal; remote publication is not claimed.",
+      "execution_identity": "Codex Windows CPython 3.11; local pytest and factory release integrity",
+      "observed_at": "2026-10-10T09:22:29.194299+00:00",
       "artifacts": [
         {
-          "kind": "log",
-          "path": ".factory/openvsx-release-evidence/verification.md",
-          "sha256": "b2a54c1417ac8d64b8311498cb7b6a3d1c54c13aa4d7412cb41e2472011b899b"
+          "path": ".factory/openvsx-113-tests-final.log",
+          "sha256": "27abbc1ba475550d645df0f58a2780afa4dad97058d0866debda3740a55086b8",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/openvsx-113-integrity.json",
+          "sha256": "866bf0f8022165c4edee25c027070af3413dc0784f295e7aa7e0ce77e0d796fc",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/openvsx-release-evidence/scope-review.md",
+          "sha256": "bd705be6f7e56f7e77a99f65a845df2d5a542d9416809ab51d99d9e39200c7ec",
+          "kind": "review"
         }
-      ],
-      "execution_identity": "Codex local Windows PowerShell; CPython 3.11.9; authenticated provider release not executed.",
+      ]
+    },
+    {
       "id": "OVSX-PUBLICATION-GATE",
-      "observed_at": "2026-10-06T07:45:39.208430Z",
       "profile": "windows-cpython-3.11",
-      "reason": "Recorded local execution and its scoped evidence; CI remains authoritative for the pushed candidate.",
-      "status": "PASS"
+      "status": "PASS",
+      "reason": "108 focused release tests pass; release integrity confirms protected topology. Scope review records exact exception renewal; remote publication is not claimed.",
+      "execution_identity": "Codex Windows CPython 3.11; local pytest and factory release integrity",
+      "observed_at": "2026-10-10T09:22:29.194299+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/openvsx-113-tests-final.log",
+          "sha256": "27abbc1ba475550d645df0f58a2780afa4dad97058d0866debda3740a55086b8",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/openvsx-113-integrity.json",
+          "sha256": "866bf0f8022165c4edee25c027070af3413dc0784f295e7aa7e0ce77e0d796fc",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/openvsx-release-evidence/scope-review.md",
+          "sha256": "bd705be6f7e56f7e77a99f65a845df2d5a542d9416809ab51d99d9e39200c7ec",
+          "kind": "review"
+        }
+      ]
     }
-  ],
-  "schema": "factory.workflow-audit.observations.v1"
+  ]
 }

@@ -615,7 +615,7 @@ def test_release_integrity_rejects_late_openvsx_authorization(tmp_path: Path) ->
     ("old", "new"),
     [
         (
-            'test "$RELEASE_REF" = vscode-v1.1.1 || { echo "The one-time exception is restricted to vscode-v1.1.1." >&2; exit 1; }',
+            'test "$RELEASE_REF" = vscode-v1.1.3+build.1 || { echo "The one-time exception is restricted to vscode-v1.1.3+build.1." >&2; exit 1; }',
             "true",
         ),
         (

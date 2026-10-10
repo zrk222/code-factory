@@ -432,8 +432,8 @@ def _openvsx_preflight_passes(workflow: str, validate: str, publish: str) -> boo
         and "cadence_exception_reason:" in workflow
         and 0 <= exception_guard < preflight_step
         and 'test "$PUBLISH" = true' in exception_gate
-        and 'test "$RELEASE_REF" = vscode-v1.1.1' in exception_gate
-        and "require('./package.json').version\")\" = 1.1.1" in exception_gate
+        and 'test "$RELEASE_REF" = vscode-v1.1.3+build.1' in exception_gate
+        and "require('./package.json').version\")\" = 1.1.3" in exception_gate
         and 'test "${#EXCEPTION_REASON}" -ge 12 && test "${#EXCEPTION_REASON}" -le 500'
         in exception_gate
         and 'if [[ -n "$EXCEPTION_REASON" ]]; then' in preflight_gate
