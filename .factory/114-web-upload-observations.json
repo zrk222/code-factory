@@ -1,0 +1,167 @@
+{
+  "schema": "factory.workflow-audit.observations.v1",
+  "contract_sha256": "b2db3d4b163bd248061113b3f530f4c3daa53103f216d30fdb12a7292550d334",
+  "candidate_sha256": "30049aba1013ad4c674f0c76cbb43f21c05ebb34fb0c13a3ed232f2566df6ce3",
+  "observations": [
+    {
+      "id": "SCANNER-HAPPY_PATH",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Protected website mode does not require a CLI token; CLI mode still requires PAT. Protected environment, attested source, immutable tag, validate dependency and no CLI publication in web mode remain enforced.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:27:25.882574+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-web-upload-tests.log",
+          "sha256": "9050538ad7b813aa59d3e73c845fbede5510b30fabe3ac121883dcba7a1da3e2",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-web-upload-review.md",
+          "sha256": "f8d61a651fd138b402e915105a6f6b68e5d8550a25d751f83fba3a96478735d1",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-VALIDATION",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Protected website mode does not require a CLI token; CLI mode still requires PAT. Protected environment, attested source, immutable tag, validate dependency and no CLI publication in web mode remain enforced.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:27:25.883573+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-web-upload-tests.log",
+          "sha256": "9050538ad7b813aa59d3e73c845fbede5510b30fabe3ac121883dcba7a1da3e2",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-web-upload-review.md",
+          "sha256": "f8d61a651fd138b402e915105a6f6b68e5d8550a25d751f83fba3a96478735d1",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-FAILURE_RECOVERY",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Protected website mode does not require a CLI token; CLI mode still requires PAT. Protected environment, attested source, immutable tag, validate dependency and no CLI publication in web mode remain enforced.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:27:25.883573+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-web-upload-tests.log",
+          "sha256": "9050538ad7b813aa59d3e73c845fbede5510b30fabe3ac121883dcba7a1da3e2",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-web-upload-review.md",
+          "sha256": "f8d61a651fd138b402e915105a6f6b68e5d8550a25d751f83fba3a96478735d1",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-STATE_CONSISTENCY",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Protected website mode does not require a CLI token; CLI mode still requires PAT. Protected environment, attested source, immutable tag, validate dependency and no CLI publication in web mode remain enforced.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:27:25.883573+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-web-upload-tests.log",
+          "sha256": "9050538ad7b813aa59d3e73c845fbede5510b30fabe3ac121883dcba7a1da3e2",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-web-upload-review.md",
+          "sha256": "f8d61a651fd138b402e915105a6f6b68e5d8550a25d751f83fba3a96478735d1",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-SECURITY_PRIVACY",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Protected website mode does not require a CLI token; CLI mode still requires PAT. Protected environment, attested source, immutable tag, validate dependency and no CLI publication in web mode remain enforced.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:27:25.883573+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-web-upload-tests.log",
+          "sha256": "9050538ad7b813aa59d3e73c845fbede5510b30fabe3ac121883dcba7a1da3e2",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-web-upload-review.md",
+          "sha256": "f8d61a651fd138b402e915105a6f6b68e5d8550a25d751f83fba3a96478735d1",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-PERFORMANCE",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "No runtime code or file count changes; configuration has mutually exclusive authorization steps.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:27:25.883573+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-web-upload-tests.log",
+          "sha256": "9050538ad7b813aa59d3e73c845fbede5510b30fabe3ac121883dcba7a1da3e2",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-web-upload-review.md",
+          "sha256": "f8d61a651fd138b402e915105a6f6b68e5d8550a25d751f83fba3a96478735d1",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-ACCESSIBILITY",
+      "profile": "windows-python311",
+      "status": "N/A",
+      "reason": "No product UI or accessible controls changed; workflow authorization only.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:27:25.884861+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-web-upload-tests.log",
+          "sha256": "9050538ad7b813aa59d3e73c845fbede5510b30fabe3ac121883dcba7a1da3e2",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-web-upload-review.md",
+          "sha256": "f8d61a651fd138b402e915105a6f6b68e5d8550a25d751f83fba3a96478735d1",
+          "kind": "review"
+        }
+      ]
+    },
+    {
+      "id": "SCANNER-EXTERNAL_EFFECTS",
+      "profile": "windows-python311",
+      "status": "PASS",
+      "reason": "Protected website mode does not require a CLI token; CLI mode still requires PAT. Protected environment, attested source, immutable tag, validate dependency and no CLI publication in web mode remain enforced.",
+      "execution_identity": "Windows CPython3.11 local source acceptance tests and static workflow review; full CI and publication remain separate gates",
+      "observed_at": "2026-10-10T12:27:25.884861+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/114-web-upload-tests.log",
+          "sha256": "9050538ad7b813aa59d3e73c845fbede5510b30fabe3ac121883dcba7a1da3e2",
+          "kind": "log"
+        },
+        {
+          "path": ".factory/114-web-upload-review.md",
+          "sha256": "f8d61a651fd138b402e915105a6f6b68e5d8550a25d751f83fba3a96478735d1",
+          "kind": "review"
+        }
+      ]
+    }
+  ]
+}

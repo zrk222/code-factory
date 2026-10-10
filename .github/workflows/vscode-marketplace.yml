@@ -79,7 +79,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: vscode-marketplace
     steps:
-      - name: Record the protected release authorization
+      - name: Require CLI publisher credential
+        if: inputs.web_upload != true
         shell: bash
         run: |
           set -euo pipefail
@@ -88,6 +89,9 @@ jobs:
             exit 1
           }
           echo "A scoped Visual Studio Marketplace publisher credential is available."
+      - name: Record protected website upload authorization
+        if: inputs.web_upload == true
+        run: echo "Protected approval granted for manual website upload; candidate validation remains required."
 
   validate:
     permissions:

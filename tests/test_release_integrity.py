@@ -1216,3 +1216,8 @@ def test_vscode_website_upload_defaults_to_no_cli_publication():
     assert "inputs.web_upload != true" in workflow["jobs"]["publish"]["if"]
     assert workflow["jobs"]["authorize"]["environment"] == "vscode-marketplace"
     assert "needs.authorize.result == 'success'" in workflow["jobs"]["validate"]["if"]
+    credential, website = workflow["jobs"]["authorize"]["steps"]
+    assert credential["if"] == "inputs.web_upload != true"
+    assert "secrets.VSCE_PAT" in credential["run"]
+    assert website["if"] == "inputs.web_upload == true"
+    assert "VSCE_PAT" not in website["run"]

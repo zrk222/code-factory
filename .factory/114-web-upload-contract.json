@@ -1,0 +1,129 @@
+{
+  "schema": "factory.workflow-audit.contract.v1",
+  "project_id": "cf-vscode-114-website-authorization",
+  "candidate": [
+    {
+      "path": ".github/workflows/vscode-marketplace.yml",
+      "sha256": "ae83d35b9e9cb89ed689b3d96522059e303e9ca3925cabd781ffa7032032418c",
+      "kind": "configuration"
+    },
+    {
+      "path": "tests/test_release_integrity.py",
+      "sha256": "554aaca827e8296d1af2303827f518d3d82851e055467f7ec7cf88a54710e0b5",
+      "kind": "test"
+    }
+  ],
+  "applicability": [
+    {
+      "category": "happy_path",
+      "applicable": true,
+      "reason": "Protected website mode does not require a CLI token; CLI mode still requires PAT. Protected environment, attested source, immutable tag, validate dependency and no CLI publication in web mode remain enforced."
+    },
+    {
+      "category": "validation",
+      "applicable": true,
+      "reason": "Protected website mode does not require a CLI token; CLI mode still requires PAT. Protected environment, attested source, immutable tag, validate dependency and no CLI publication in web mode remain enforced."
+    },
+    {
+      "category": "failure_recovery",
+      "applicable": true,
+      "reason": "Protected website mode does not require a CLI token; CLI mode still requires PAT. Protected environment, attested source, immutable tag, validate dependency and no CLI publication in web mode remain enforced."
+    },
+    {
+      "category": "state_consistency",
+      "applicable": true,
+      "reason": "Protected website mode does not require a CLI token; CLI mode still requires PAT. Protected environment, attested source, immutable tag, validate dependency and no CLI publication in web mode remain enforced."
+    },
+    {
+      "category": "security_privacy",
+      "applicable": true,
+      "reason": "Protected website mode does not require a CLI token; CLI mode still requires PAT. Protected environment, attested source, immutable tag, validate dependency and no CLI publication in web mode remain enforced."
+    },
+    {
+      "category": "performance",
+      "applicable": true,
+      "reason": "No runtime code or file count changes; configuration has mutually exclusive authorization steps."
+    },
+    {
+      "category": "accessibility",
+      "applicable": false,
+      "reason": "No product UI or accessible controls changed; workflow authorization only.",
+      "review_evidence": {
+        "path": ".factory/114-web-upload-review.md",
+        "sha256": "f8d61a651fd138b402e915105a6f6b68e5d8550a25d751f83fba3a96478735d1",
+        "kind": "review"
+      }
+    },
+    {
+      "category": "external_effects",
+      "applicable": true,
+      "reason": "Protected website mode does not require a CLI token; CLI mode still requires PAT. Protected environment, attested source, immutable tag, validate dependency and no CLI publication in web mode remain enforced."
+    }
+  ],
+  "checks": [
+    {
+      "id": "SCANNER-HAPPY_PATH",
+      "requirement": "Protected website mode does not require a CLI token; CLI mode still requires PAT. Protected environment, attested source, immutable tag, validate dependency and no CLI publication in web mode remain enforced.",
+      "category": "happy_path",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-VALIDATION",
+      "requirement": "Protected website mode does not require a CLI token; CLI mode still requires PAT. Protected environment, attested source, immutable tag, validate dependency and no CLI publication in web mode remain enforced.",
+      "category": "validation",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-FAILURE_RECOVERY",
+      "requirement": "Protected website mode does not require a CLI token; CLI mode still requires PAT. Protected environment, attested source, immutable tag, validate dependency and no CLI publication in web mode remain enforced.",
+      "category": "failure_recovery",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-STATE_CONSISTENCY",
+      "requirement": "Protected website mode does not require a CLI token; CLI mode still requires PAT. Protected environment, attested source, immutable tag, validate dependency and no CLI publication in web mode remain enforced.",
+      "category": "state_consistency",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-SECURITY_PRIVACY",
+      "requirement": "Protected website mode does not require a CLI token; CLI mode still requires PAT. Protected environment, attested source, immutable tag, validate dependency and no CLI publication in web mode remain enforced.",
+      "category": "security_privacy",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-PERFORMANCE",
+      "requirement": "No runtime code or file count changes; configuration has mutually exclusive authorization steps.",
+      "category": "performance",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-ACCESSIBILITY",
+      "requirement": "No product UI or accessible controls changed; workflow authorization only.",
+      "category": "accessibility",
+      "profiles": [
+        "windows-python311"
+      ]
+    },
+    {
+      "id": "SCANNER-EXTERNAL_EFFECTS",
+      "requirement": "Protected website mode does not require a CLI token; CLI mode still requires PAT. Protected environment, attested source, immutable tag, validate dependency and no CLI publication in web mode remain enforced.",
+      "category": "external_effects",
+      "profiles": [
+        "windows-python311"
+      ]
+    }
+  ]
+}
