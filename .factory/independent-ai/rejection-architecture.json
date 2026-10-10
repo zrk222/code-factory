@@ -79,8 +79,8 @@
         }
       }
     },
-    "markdown_files": 613,
-    "markdown_python_ratio": 1.3326,
+    "markdown_files": 615,
+    "markdown_python_ratio": 1.337,
     "module_domains": {
       "agent_protocols": 11,
       "appforge": 16,
@@ -104,7 +104,7 @@
       "status": "valid"
     },
     "total_factoryline_modules": 250,
-    "tracked_files": 1987,
+    "tracked_files": 1997,
     "version": "0.48.1"
   },
   "next_action": "Architecture budgets are within policy. Release admission is blocked by the cadence guard: 4 version tags are inside the rolling 30-day budget of 4. Next eligible at 2026-10-26T05:53:51.000001Z.",

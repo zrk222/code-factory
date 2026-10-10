@@ -1,7 +1,7 @@
 {
   "schema": "factory.workflow-audit.observations.v1",
-  "contract_sha256": "bda0bbaf99ede8b8e97833af45b2e09b7797342bad453b5fbb0168b49dace013",
-  "candidate_sha256": "dbd5dc51f9210be0fe998565fc6f7dcdc062747dd8ebd3f341f0d24f3bb3f689",
+  "contract_sha256": "69b31a055d6094e6d8707f360cd7028353088c778802b3083ab61905ab093c46",
+  "candidate_sha256": "af9f447d1c52a18b52b19fa352c75a0abd891226e30176da29cbdb26130d0609",
   "observations": [
     {
       "id": "JOURNAL",
@@ -9,11 +9,11 @@
       "status": "PASS",
       "reason": "Rejected preflight receives a durable verifiable single-event failure record; scoped evidence, no model accuracy or release claim",
       "execution_identity": "Windows; Node22.22.0; node --test scripts/evaluate_jev.test.mjs scripts/verify_worker_cves.test.mjs; CLI negative operator; factory architecture health --strict",
-      "observed_at": "2026-10-10T15:04:08.075438+00:00",
+      "observed_at": "2026-10-10T15:13:23.288362+00:00",
       "artifacts": [
         {
           "path": ".factory/independent-ai/rejection-tests.log",
-          "sha256": "71ae7666e3609e1a48ad76e92c488723c8c2e3fd0ce9c44f7fcd2c0e8d576487",
+          "sha256": "fff0e99034dc89d9c4a2b40dd34691a697e808e1bd9f51f2eb2b9a7318164cd1",
           "kind": "observation"
         }
       ]
@@ -24,11 +24,11 @@
       "status": "PASS",
       "reason": "Malformed arguments, JSON and missing credentials reject before requests; scoped evidence, no model accuracy or release claim",
       "execution_identity": "Windows; Node22.22.0; node --test scripts/evaluate_jev.test.mjs scripts/verify_worker_cves.test.mjs; CLI negative operator; factory architecture health --strict",
-      "observed_at": "2026-10-10T15:04:08.088502+00:00",
+      "observed_at": "2026-10-10T15:13:23.295284+00:00",
       "artifacts": [
         {
           "path": ".factory/independent-ai/rejection-tests.log",
-          "sha256": "71ae7666e3609e1a48ad76e92c488723c8c2e3fd0ce9c44f7fcd2c0e8d576487",
+          "sha256": "fff0e99034dc89d9c4a2b40dd34691a697e808e1bd9f51f2eb2b9a7318164cd1",
           "kind": "observation"
         }
       ]
@@ -39,11 +39,11 @@
       "status": "PASS",
       "reason": "Linked and escaping roots expose UNRECORDED while preserving the rejection; scoped evidence, no model accuracy or release claim",
       "execution_identity": "Windows; Node22.22.0; node --test scripts/evaluate_jev.test.mjs scripts/verify_worker_cves.test.mjs; CLI negative operator; factory architecture health --strict",
-      "observed_at": "2026-10-10T15:04:08.088502+00:00",
+      "observed_at": "2026-10-10T15:13:23.295857+00:00",
       "artifacts": [
         {
           "path": ".factory/independent-ai/rejection-tests.log",
-          "sha256": "71ae7666e3609e1a48ad76e92c488723c8c2e3fd0ce9c44f7fcd2c0e8d576487",
+          "sha256": "fff0e99034dc89d9c4a2b40dd34691a697e808e1bd9f51f2eb2b9a7318164cd1",
           "kind": "observation"
         }
       ]
@@ -54,11 +54,11 @@
       "status": "PASS",
       "reason": "Tampered records reject; rejected trials cannot accept completed-evaluation feedback; scoped evidence, no model accuracy or release claim",
       "execution_identity": "Windows; Node22.22.0; node --test scripts/evaluate_jev.test.mjs scripts/verify_worker_cves.test.mjs; CLI negative operator; factory architecture health --strict",
-      "observed_at": "2026-10-10T15:04:08.089571+00:00",
+      "observed_at": "2026-10-10T15:13:23.295857+00:00",
       "artifacts": [
         {
           "path": ".factory/independent-ai/rejection-tests.log",
-          "sha256": "71ae7666e3609e1a48ad76e92c488723c8c2e3fd0ce9c44f7fcd2c0e8d576487",
+          "sha256": "fff0e99034dc89d9c4a2b40dd34691a697e808e1bd9f51f2eb2b9a7318164cd1",
           "kind": "observation"
         }
       ]
@@ -69,11 +69,11 @@
       "status": "PASS",
       "reason": "No raw arguments, credentials or escaped absolute paths enter the failure journal; scoped evidence, no model accuracy or release claim",
       "execution_identity": "Windows; Node22.22.0; node --test scripts/evaluate_jev.test.mjs scripts/verify_worker_cves.test.mjs; CLI negative operator; factory architecture health --strict",
-      "observed_at": "2026-10-10T15:04:08.089571+00:00",
+      "observed_at": "2026-10-10T15:13:23.295857+00:00",
       "artifacts": [
         {
           "path": ".factory/independent-ai/rejection-tests.log",
-          "sha256": "71ae7666e3609e1a48ad76e92c488723c8c2e3fd0ce9c44f7fcd2c0e8d576487",
+          "sha256": "fff0e99034dc89d9c4a2b40dd34691a697e808e1bd9f51f2eb2b9a7318164cd1",
           "kind": "observation"
         }
       ]
@@ -84,11 +84,11 @@
       "status": "PASS",
       "reason": "Corpus/body/time limits and bounded operator regressions remain passing; scoped evidence, no model accuracy or release claim",
       "execution_identity": "Windows; Node22.22.0; node --test scripts/evaluate_jev.test.mjs scripts/verify_worker_cves.test.mjs; CLI negative operator; factory architecture health --strict",
-      "observed_at": "2026-10-10T15:04:08.089571+00:00",
+      "observed_at": "2026-10-10T15:13:23.295857+00:00",
       "artifacts": [
         {
           "path": ".factory/independent-ai/rejection-tests.log",
-          "sha256": "71ae7666e3609e1a48ad76e92c488723c8c2e3fd0ce9c44f7fcd2c0e8d576487",
+          "sha256": "fff0e99034dc89d9c4a2b40dd34691a697e808e1bd9f51f2eb2b9a7318164cd1",
           "kind": "observation"
         }
       ]
@@ -99,7 +99,7 @@
       "status": "PASS",
       "reason": "Preflight failure makes zero provider calls; real CLI operator rejection verifies offline; scoped evidence, no model accuracy or release claim",
       "execution_identity": "Windows; Node22.22.0; node --test scripts/evaluate_jev.test.mjs scripts/verify_worker_cves.test.mjs; CLI negative operator; factory architecture health --strict",
-      "observed_at": "2026-10-10T15:04:08.089571+00:00",
+      "observed_at": "2026-10-10T15:13:23.296393+00:00",
       "artifacts": [
         {
           "path": ".factory/independent-ai/rejection-operator.json",
@@ -114,11 +114,31 @@
       "status": "PASS",
       "reason": "Strict architecture remains HEALTHY at 460 Python files; scoped evidence, no model accuracy or release claim",
       "execution_identity": "Windows; Node22.22.0; node --test scripts/evaluate_jev.test.mjs scripts/verify_worker_cves.test.mjs; CLI negative operator; factory architecture health --strict",
-      "observed_at": "2026-10-10T15:04:08.090508+00:00",
+      "observed_at": "2026-10-10T15:13:23.296908+00:00",
       "artifacts": [
         {
           "path": ".factory/independent-ai/rejection-architecture.json",
-          "sha256": "35e4a87628baab397fa9929e7ba0349133f709d9ed6aa27628c8839806da8ff3",
+          "sha256": "584db219cfd242a836cc192559d56712f8231c29873d5dcda23f40a25f88c329",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "QUALITY",
+      "profile": "windows-node22",
+      "status": "PASS",
+      "reason": "Repo-wide strict grade remains A at least97.9 with complexity at most10; scoped evidence, no model accuracy or release claim",
+      "execution_identity": "Windows; Node22.22.0; node --test scripts/evaluate_jev.test.mjs scripts/verify_worker_cves.test.mjs; CLI negative operator; factory architecture health --strict",
+      "observed_at": "2026-10-10T15:13:23.303136+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/independent-ai/rejection-quality-local.json",
+          "sha256": "8183be23d81b39cd377432345c05e47459eb28a6475d6961ad23031f9676852b",
+          "kind": "observation"
+        },
+        {
+          "path": ".factory/independent-ai/rejection-quality-scope.json",
+          "sha256": "4fe2aab04663ad64865c181814a4d46ea47afc553901598434ce4ef454f9754d",
           "kind": "observation"
         }
       ]
@@ -129,11 +149,11 @@
       "status": "PASS",
       "reason": "Separate reviewer assesses current source privacy, boundaries and failure states; scoped evidence, no model accuracy or release claim",
       "execution_identity": "Windows; Node22.22.0; node --test scripts/evaluate_jev.test.mjs scripts/verify_worker_cves.test.mjs; CLI negative operator; factory architecture health --strict",
-      "observed_at": "2026-10-10T15:04:08.097014+00:00",
+      "observed_at": "2026-10-10T15:13:23.309982+00:00",
       "artifacts": [
         {
           "path": ".factory/independent-ai/rejection-review.md",
-          "sha256": "9ba29345f9432aa01085d87da67def7daf9eaef6c2f1f609241ae185a381e558",
+          "sha256": "47787d8db8997d2f15792af0508a3b70912f9dd3319bcd4e6a7a9fde809924f8",
           "kind": "review"
         }
       ]

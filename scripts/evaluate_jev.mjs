@@ -645,14 +645,7 @@ function verifyRejectedTrial(events, journalHash, anchored) {
     authority: 'Integrity of a rejected preflight only; no evaluation, judgment correctness or approval.' };
 }
 
-export async function verifyJournal(path, { expectedJournalSha256 } = {}) {
-  const bytes = await readBounded(path);
-  const journalHash = sha(bytes);
-  if (expectedJournalSha256 !== undefined) requireValue(expectedJournalSha256 === journalHash, 'journal_anchor_mismatch');
-  const events = parseJournalEvents(bytes);
-  if (events[0].event === 'rejected') {
-    return verifyRejectedTrial(events, journalHash, expectedJournalSha256 !== undefined);
-  }
+function verifyEvaluationJournal(events, journalHash, anchored) {
   const start = events[0];
   requireValue(start.event === 'start' && start.schema === 'factory.jev-journal.v1'
     && typeof start.run_id === 'string' && Number.isInteger(start.total_criteria)
@@ -663,8 +656,18 @@ export async function verifyJournal(path, { expectedJournalSha256 } = {}) {
   if (complete) validateJournalReport(final, start, results, events.at(-2).event_sha256);
   return { schema: 'factory.jev-journal-verification.v1', state: complete ? 'VERIFIED' : 'INCOMPLETE',
     run_id: start.run_id, journal_sha256: journalHash, recorded_results: results.length,
-    expected_results: start.total_criteria, externally_anchored: expectedJournalSha256 !== undefined,
+    expected_results: start.total_criteria, externally_anchored: anchored,
     authority: 'Integrity only; not judgment correctness or approval. An unanchored local writer can replace the entire chain.' };
+}
+
+export async function verifyJournal(path, { expectedJournalSha256 } = {}) {
+  const bytes = await readBounded(path);
+  const journalHash = sha(bytes);
+  if (expectedJournalSha256 !== undefined) requireValue(expectedJournalSha256 === journalHash, 'journal_anchor_mismatch');
+  const events = parseJournalEvents(bytes);
+  const anchored = expectedJournalSha256 !== undefined;
+  if (events[0].event === 'rejected') return verifyRejectedTrial(events, journalHash, anchored);
+  return verifyEvaluationJournal(events, journalHash, anchored);
 }
 
 export async function runCli(argv, { env = process.env, fetchImpl = globalThis.fetch,
