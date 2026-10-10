@@ -1,0 +1,15 @@
+{
+  "requirement": "VS Marketplace authorization secret passes through env not generated shell source; preserve authorization gates and quoted value check.",
+  "origin_pr": 130,
+  "candidate": [
+    ".github/workflows/vscode-marketplace.yml",
+    "tests/test_release_integrity.py"
+  ],
+  "checks": [
+    "release-integrity focused regression",
+    "strict architecture460",
+    "independent diffreview",
+    "hash-bound workflow gate",
+    "fullCIcandidategradeA97.9+"
+  ]
+}

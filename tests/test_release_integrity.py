@@ -1218,7 +1218,9 @@ def test_vscode_website_upload_defaults_to_no_cli_publication():
     assert "needs.authorize.result == 'success'" in workflow["jobs"]["validate"]["if"]
     credential, website = workflow["jobs"]["authorize"]["steps"]
     assert credential["if"] == "inputs.web_upload != true"
-    assert "secrets.VSCE_PAT" in credential["run"]
+    assert credential["env"]["VSCE_PAT"] == "${{ secrets.VSCE_PAT }}"
+    assert 'test -n "$VSCE_PAT"' in credential["run"]
+    assert "secrets.VSCE_PAT" not in credential["run"]
     assert website["if"] == "inputs.web_upload == true"
     assert "VSCE_PAT" not in website["run"]
     prepare = next(
@@ -1227,3 +1229,14 @@ def test_vscode_website_upload_defaults_to_no_cli_publication():
         if step.get("name") == "Prepare source-bound release contract"
     )
     assert '--feature "vscode-${RELEASE_REF//+/-}"' in prepare["run"]
+
+
+def test_vscode_marketplace_token_is_passed_through_step_environment() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "vscode-marketplace.yml").read_text(
+        encoding="utf-8"
+    )
+    authorize = workflow.split("  authorize:", 1)[1].split("  validate:", 1)[0]
+
+    assert "VSCE_PAT: ${{ secrets.VSCE_PAT }}" in authorize
+    assert 'test -n "$VSCE_PAT"' in authorize
+    assert 'test -n "${{ secrets.VSCE_PAT }}"' not in authorize

@@ -1,0 +1,102 @@
+{
+  "schema": "factory.workflow-audit.observations.v1",
+  "contract_sha256": "a22160b022dbc2dcb63a7bcde6c7a5fc474b9a3cccfd4e029381b90720f62969",
+  "candidate_sha256": "3a3b7fa0f3402d28e81d6e1783dfcea735bdd4e16343068fafc5f993255a9179",
+  "observations": [
+    {
+      "id": "TOKEN",
+      "profile": "windows-gitbash-py311-no-third-party-plugins",
+      "status": "PASS",
+      "reason": "Nonempty synthetic token accepted without embedding into shell source; bounded offline evidence only",
+      "execution_identity": "Windows GitBash; CPython3.11 pytest plugin autoload disabled due unrelated anchorpyimportfailure; factoryarchitecturestrict",
+      "observed_at": "2026-10-10T15:48:26.192608+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/marketplace-token-closeout/operator.json",
+          "sha256": "142a83760d7dc14e32246d12f433ac02c19e624640a201d658a78c6ecd7320ed",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "MISSING",
+      "profile": "windows-gitbash-py311-no-third-party-plugins",
+      "status": "PASS",
+      "reason": "Missing synthetic credential rejects before publication; bounded offline evidence only",
+      "execution_identity": "Windows GitBash; CPython3.11 pytest plugin autoload disabled due unrelated anchorpyimportfailure; factoryarchitecturestrict",
+      "observed_at": "2026-10-10T15:48:26.192608+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/marketplace-token-closeout/operator.json",
+          "sha256": "142a83760d7dc14e32246d12f433ac02c19e624640a201d658a78c6ecd7320ed",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "RECOVERY",
+      "profile": "windows-gitbash-py311-no-third-party-plugins",
+      "status": "PASS",
+      "reason": "Release-integrity66tests pass including default website/noCLI credential path; bounded offline evidence only",
+      "execution_identity": "Windows GitBash; CPython3.11 pytest plugin autoload disabled due unrelated anchorpyimportfailure; factoryarchitecturestrict",
+      "observed_at": "2026-10-10T15:48:26.192608+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/marketplace-token-closeout/tests-final.log",
+          "sha256": "4f314a2f78ff241946740da2bd842e8e4ff949ddbd832156f74a788a4675d2b4",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "ARCH",
+      "profile": "windows-gitbash-py311-no-third-party-plugins",
+      "status": "PASS",
+      "reason": "Strict architecture HEALTHY retains460Pythonfiles; bounded offline evidence only",
+      "execution_identity": "Windows GitBash; CPython3.11 pytest plugin autoload disabled due unrelated anchorpyimportfailure; factoryarchitecturestrict",
+      "observed_at": "2026-10-10T15:48:26.198121+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/marketplace-token-closeout/architecture-final.json",
+          "sha256": "78664fd3ee2693e67e88f5c2a3396fcce25087c2e8a852700508669253222a90",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "PRIVACY",
+      "profile": "windows-gitbash-py311-no-third-party-plugins",
+      "status": "PASS",
+      "reason": "Independent diffreview and shell-metacharacter execution verify code/data separation; bounded offline evidence only",
+      "execution_identity": "Windows GitBash; CPython3.11 pytest plugin autoload disabled due unrelated anchorpyimportfailure; factoryarchitecturestrict",
+      "observed_at": "2026-10-10T15:48:26.203134+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/marketplace-token-closeout/review.md",
+          "sha256": "31373233854cf95d64f0263a925288374e012f0244ae42d597676ff40edb37cc",
+          "kind": "review"
+        },
+        {
+          "path": ".factory/marketplace-token-closeout/operator.json",
+          "sha256": "142a83760d7dc14e32246d12f433ac02c19e624640a201d658a78c6ecd7320ed",
+          "kind": "observation"
+        }
+      ]
+    },
+    {
+      "id": "EFFECTS",
+      "profile": "windows-gitbash-py311-no-third-party-plugins",
+      "status": "PASS",
+      "reason": "Offline synthetic script checks require no network or live credentials; bounded offline evidence only",
+      "execution_identity": "Windows GitBash; CPython3.11 pytest plugin autoload disabled due unrelated anchorpyimportfailure; factoryarchitecturestrict",
+      "observed_at": "2026-10-10T15:48:26.208214+00:00",
+      "artifacts": [
+        {
+          "path": ".factory/marketplace-token-closeout/operator.json",
+          "sha256": "142a83760d7dc14e32246d12f433ac02c19e624640a201d658a78c6ecd7320ed",
+          "kind": "observation"
+        }
+      ]
+    }
+  ]
+}
