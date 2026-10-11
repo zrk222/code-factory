@@ -1617,3 +1617,319 @@ def test_zap_native_rule_ledger_accepts_real_core_plugin_zero():
     assert verify(raw, {"engine": "zap", "rule_ids": ["0"]}, bindings)[
         "plugin_ids"
     ] == [0]
+
+
+def _host_zap_lane_fixture():
+    return {
+        "id": "zap",
+        "engine": "zap",
+        "image": "sha256:" + "a" * 64,
+        "argv": ["/opt/factory/bin/audit-adapter", "zap", "--mode", "active"],
+        "memory_mib": 1024,
+        "timeout_seconds": 60,
+        "rule_ids": ["40012"],
+        "native_target": {
+            "schema": "factory.zap-target.v1",
+            "image": "sha256:" + "b" * 64,
+            "argv": ["/opt/factory/bin/candidate-app"],
+            "port": 8765,
+            "readiness_path": "/health",
+            "routes": [
+                {
+                    "id": "home",
+                    "method": "GET",
+                    "path": "/",
+                    "query": {"input": "seed"},
+                    "source_bindings": {"app.py": "c" * 64},
+                }
+            ],
+        },
+    }
+
+
+def test_host_zap_app_isolated_from_output_contract_and_host(tmp_path):
+    from factoryline.deep_audit import _zap_app_argv
+
+    argv = _zap_app_argv(
+        ["docker"], _host_zap_lane_fixture(), tmp_path, "app", "private-net"
+    )
+    assert "--network=private-net" in argv
+    assert "--network-alias=factory-target" in argv
+    assert "--detach" in argv and "--read-only" in argv
+    assert not any("/out:" in item or "/factory-contract" in item for item in argv)
+    assert not any(
+        "FACTORY_CANDIDATE" in item or "FACTORY_RUN_ID" in item for item in argv
+    )
+    assert argv[-1] == "sha256:" + "b" * 64 or "sha256:" + "b" * 64 in argv
+    assert "readonly,bind-recursive=readonly" in next(
+        item for item in argv if "target=/src," in item
+    )
+    assert "--pull=never" in argv and "--cap-drop=ALL" in argv
+    assert not any("docker.sock" in item or "--publish" in item for item in argv)
+
+
+def test_host_zap_worker_mounts_request_readonly_and_uses_internal_network(tmp_path):
+    from factoryline.deep_audit import _zap_worker_argv
+
+    argv = _zap_worker_argv(
+        ["docker"],
+        _host_zap_lane_fixture(),
+        tmp_path,
+        "worker",
+        "private-net",
+        {"run_id": "run-1"},
+        {"candidate_sha256": "c" * 64},
+        tmp_path / "contract",
+        tmp_path / "request",
+    )
+    assert "--network=private-net" in argv
+    assert "--network=none" not in argv
+    assert any(
+        item.endswith("target=/factory-zap-request.json,readonly") for item in argv
+    )
+    assert any(item.endswith("target=/factory-contract.json,readonly") for item in argv)
+    assert "native-zap" in argv and "/factory-zap-request.json" in argv
+    assert "--entrypoint" in argv and "/usr/local/bin/python" in argv
+    assert not any("docker.sock" in item or "--publish" in item for item in argv)
+
+
+def test_host_zap_request_binds_whole_signed_lane_and_deadline(monkeypatch):
+    import factoryline.deep_audit as host
+
+    monkeypatch.setattr(host.time, "monotonic", lambda: 10.0)
+    lane = _host_zap_lane_fixture()
+    request = host._zap_target_request(
+        {"run_id": "run-1"},
+        {"candidate_sha256": "c" * 64},
+        lane,
+        lane["native_target"]["routes"][0],
+        20.0,
+    )
+    assert request["profile_sha256"] == digest(lane)
+    assert request["target"] == lane["native_target"] and request["route_id"] == "home"
+    assert request["timeout_seconds"] == 10
+    with pytest.raises(RuntimeAuditError, match="budget exhausted"):
+        host._zap_target_request(
+            {"run_id": "run-1"},
+            {"candidate_sha256": "c" * 64},
+            lane,
+            lane["native_target"]["routes"][0],
+            10.1,
+        )
+
+
+def test_host_zap_network_requires_actual_internal_flag(monkeypatch):
+    import factoryline.deep_audit as host
+
+    responses = iter([({"exit_code": 0}, b"net"), ({"exit_code": 0}, b"false")])
+    calls = []
+
+    def control(base, args):
+        calls.append(args)
+        return next(responses)
+
+    monkeypatch.setattr(host, "_docker_control", control)
+    with pytest.raises(RuntimeAuditError, match="routing boundary"):
+        host._zap_internal_network(["docker"], "net")
+    assert calls[0] == ["network", "create", "--internal", "net"]
+
+
+@pytest.mark.parametrize("failure", ["route", "network", "cleanup"])
+def test_host_zap_failure_always_removes_app_and_network(
+    tmp_path, monkeypatch, failure
+):
+    import factoryline.deep_audit as host
+    import factoryline.deep_audit_contract as contract
+
+    lane = _host_zap_lane_fixture()
+    cleaned = []
+    monkeypatch.setattr(contract, "_validate_zap_target", lambda *args: None)
+    monkeypatch.setattr(host, "_docker_base", lambda: ["docker"])
+    monkeypatch.setattr(host, "_docker_preflight", lambda *args: None)
+
+    def create(*args):
+        if failure == "network":
+            raise RuntimeAuditError("E_ZAP_NETWORK", "network failure")
+
+    monkeypatch.setattr(host, "_zap_internal_network", create)
+    monkeypatch.setattr(
+        host, "_docker_control", lambda *args: ({"exit_code": 0}, b"true")
+    )
+
+    def route(*args):
+        if failure == "route":
+            raise RuntimeAuditError("E_ZAP_WORKER", "route failure")
+        return {"route_id": "home"}
+
+    monkeypatch.setattr(host, "_zap_target_route", route)
+    monkeypatch.setattr(
+        host, "_container_cleanup", lambda base, name: cleaned.append("app") or True
+    )
+    monkeypatch.setattr(
+        host,
+        "_zap_network_cleanup",
+        lambda base, name: cleaned.append("network") or failure != "cleanup",
+    )
+    with pytest.raises(RuntimeAuditError):
+        host._execute_zap_target(
+            tmp_path,
+            {"run_id": "run-1", "active_lane": "zap"},
+            tmp_path,
+            lane,
+            {"candidate_sha256": "c" * 64},
+            {"obligations": []},
+            None,
+        )
+    assert cleaned == ["app", "network"]
+
+
+def test_host_zap_completed_routes_keep_control_and_replay_gaps(tmp_path, monkeypatch):
+    import factoryline.deep_audit as host
+    import factoryline.deep_audit_contract as contract
+
+    monkeypatch.setattr(contract, "_validate_zap_target", lambda *args: None)
+    monkeypatch.setattr(host, "_docker_base", lambda: ["docker"])
+    monkeypatch.setattr(host, "_docker_preflight", lambda *args: None)
+    monkeypatch.setattr(host, "_zap_internal_network", lambda *args: None)
+    monkeypatch.setattr(
+        host, "_docker_control", lambda *args: ({"exit_code": 0}, b"true")
+    )
+    monkeypatch.setattr(host, "_zap_target_route", lambda *args: {"route_id": "home"})
+    monkeypatch.setattr(host, "_container_cleanup", lambda *args: True)
+    monkeypatch.setattr(host, "_zap_network_cleanup", lambda *args: True)
+    result = host._execute_zap_target(
+        tmp_path,
+        {"run_id": "run-1", "active_lane": "zap"},
+        tmp_path,
+        _host_zap_lane_fixture(),
+        {"candidate_sha256": "c" * 64},
+        {"obligations": []},
+        None,
+    )
+    assert result["state"] == "INCOMPLETE"
+    assert result["gaps"] == [
+        "ZAP_SIGNED_CONTROLS_REQUIRED",
+        "ZAP_INDEPENDENT_REPLAY_REQUIRED",
+    ]
+    assert result["native_execution"]["cleanup_confirmed"] is True
+    assert result["native_execution"]["routes"] == [{"route_id": "home"}]
+
+
+def test_host_zap_rejects_monitor_that_does_not_terminate(tmp_path, monkeypatch):
+    import factoryline.deep_audit as host
+    import factoryline.deep_audit_contract as contract
+
+    class StuckMonitor:
+        ident = 1
+
+        def __init__(self, **kwargs):
+            pass
+
+        def start(self):
+            pass
+
+        def join(self, timeout=None):
+            pass
+
+        def is_alive(self):
+            return True
+
+    monkeypatch.setattr(contract, "_validate_zap_target", lambda *args: None)
+    monkeypatch.setattr(host.threading, "Thread", StuckMonitor)
+    monkeypatch.setattr(host, "_docker_base", lambda: ["docker"])
+    monkeypatch.setattr(host, "_docker_preflight", lambda *args: None)
+    monkeypatch.setattr(host, "_zap_internal_network", lambda *args: None)
+    monkeypatch.setattr(
+        host, "_docker_control", lambda *args: ({"exit_code": 0}, b"true")
+    )
+    monkeypatch.setattr(host, "_zap_target_route", lambda *args: {"route_id": "home"})
+    cleaned = []
+    monkeypatch.setattr(
+        host, "_container_cleanup", lambda *args: cleaned.append("app") or True
+    )
+    monkeypatch.setattr(
+        host, "_zap_network_cleanup", lambda *args: cleaned.append("network") or True
+    )
+    with pytest.raises(RuntimeAuditError, match="cleanup unverified"):
+        host._execute_zap_target(
+            tmp_path,
+            {"run_id": "run-1", "active_lane": "zap"},
+            tmp_path,
+            _host_zap_lane_fixture(),
+            {"candidate_sha256": "c" * 64},
+            {"obligations": []},
+            None,
+        )
+    assert cleaned == ["app", "network"]
+
+
+@pytest.mark.parametrize("tamper", [None, "binding", "ledger", "cleanup"])
+def test_host_zap_rechecks_native_ledger_and_exact_route_identity(tamper):
+    import factoryline.deep_audit as host
+    from factoryline.deep_audit_contract import _zap_target_url
+
+    lane = _host_zap_lane_fixture()
+    lane["rule_ids"] = ["40012", "40013"]
+    target = lane["native_target"]
+    route = target["routes"][0]
+    request = {
+        "run_id": "run-1",
+        "candidate_sha256": "a" * 64,
+        "profile_sha256": digest(lane),
+        "rule_ids": lane["rule_ids"],
+        "target": target,
+        "route_id": "home",
+    }
+    bindings = {
+        key: request[key] for key in ("run_id", "candidate_sha256", "profile_sha256")
+    }
+    bindings["host_id"] = sha256_bytes(b"http://factory-target:8765")
+    _, raw, _, _ = _zap_ledger_fixture()
+    rows = [{**json.loads(line), **bindings} for line in raw.splitlines()]
+    observation = {
+        **bindings,
+        "target_sha256": digest(target),
+        "route_sha256": digest(route),
+        "target_url": _zap_target_url(target, route),
+        "version": {"version": "2.17.0"},
+        "scan_status": {"status": "100"},
+        "native_ledger": "".join(canonical_bytes(row).decode() + "\n" for row in rows),
+        "effective_inventory_before": {
+            "scanners": [{"id": item, "enabled": "true"} for item in lane["rule_ids"]]
+        },
+        "effective_inventory_after": {
+            "scanners": [{"id": item, "enabled": "true"} for item in lane["rule_ids"]]
+        },
+        "cleanup_complete": True,
+        "process_facts": {"cleanup_confirmed": True},
+    }
+    if tamper == "binding":
+        observation["route_sha256"] = "d" * 64
+    elif tamper == "ledger":
+        observation["native_ledger"] = ""
+        observation["native_verification"] = {"state": "VERIFIED"}
+    elif tamper == "cleanup":
+        observation["process_facts"]["cleanup_confirmed"] = "false"
+    if tamper:
+        with pytest.raises(RuntimeAuditError):
+            host._zap_host_observation(observation, request)
+    else:
+        assert host._zap_host_observation(observation, request) is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (b"E_ZAP_SCAN\n", "E_ZAP_SCAN"),
+        (b"Traceback (most recent call last):\n/host/private.py", None),
+        (b"E_ZAP_SCAN /host/private.py", None),
+        (b"E_" + b"A" * 255, None),
+    ],
+)
+def test_zap_worker_diagnostic_retains_only_bounded_codes(tmp_path, raw, expected):
+    from factoryline.deep_audit import _zap_worker_diagnostic
+
+    path = tmp_path / "worker-errors.txt"
+    path.write_bytes(raw)
+
+    assert _zap_worker_diagnostic(path) == expected

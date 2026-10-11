@@ -335,6 +335,10 @@ def _execute_lane(
     plan: dict,
     emit,
 ) -> dict:
+    if lane["engine"] == "zap" and "native_target" in lane:
+        return _execute_zap_target(
+            directory, state, snapshot, lane, inventory, plan, emit
+        )
     from .deep_audit_sarif import normalize_execution_bundle
     from .deep_audit_io import write_run_json
     from .runtime_audit_process import run_bounded_command
@@ -480,6 +484,339 @@ def _execute_lane(
     write_run_json(directory, f"bundle-{lane['id']}.json", bundle)
     result.update(bundle_sha256=digest(bundle), execution=facts)
     return result
+
+
+def _zap_internal_network(base, name):
+    """Create and verify a host-owned network without external routing."""
+    facts, _ = _docker_control(base, ["network", "create", "--internal", name])
+    if facts["exit_code"] != 0:
+        raise RuntimeAuditError("E_ZAP_NETWORK", "internal network creation failed")
+    facts, raw = _docker_control(
+        base, ["network", "inspect", name, "--format", "{{json .Internal}}"]
+    )
+    if facts["exit_code"] != 0 or raw.strip() != b"true":
+        raise RuntimeAuditError("E_ZAP_NETWORK", "internal routing boundary unverified")
+
+
+def _zap_network_cleanup(base, name):
+    """Confirm removal of the privately generated audit network."""
+    try:
+        _docker_control(base, ["network", "rm", name])
+        facts, raw = _docker_control(base, ["network", "ls", "--format", "{{.Name}}"])
+        return facts["exit_code"] == 0 and name not in raw.decode().splitlines()
+    except (OSError, ValueError):
+        return False
+
+
+def _zap_app_argv(base, lane, snapshot, name, network):
+    """Isolate the pinned candidate service from worker output and contracts."""
+    target = lane["native_target"]
+    argv = _container_argv(
+        base,
+        {**lane, "image": target["image"], "argv": target["argv"]},
+        snapshot,
+        name,
+        "candidate-app",
+        "0" * 64,
+    )
+    argv[argv.index("--network=none")] = "--network=" + network
+    output = argv.index("/out:rw,nosuid,nodev,noexec,size=64m,mode=1777")
+    del argv[output - 1 : output + 1]
+    for value in (
+        "FACTORY_RUN_ID=candidate-app",
+        "FACTORY_CANDIDATE_SHA256=" + "0" * 64,
+    ):
+        position = argv.index(value)
+        del argv[position - 1 : position + 1]
+    position = argv.index("--pull=never")
+    argv[position:position] = ["--detach", "--network-alias=factory-target"]
+    return argv
+
+
+def _zap_worker_argv(
+    base, lane, snapshot, name, network, state, inventory, contract, request
+):
+    """Launch a fresh scanner for one host-bound route request."""
+    worker = {
+        **lane,
+        "argv": [
+            "/usr/local/bin/python",
+            "-I",
+            "-m",
+            "factoryline.deep_audit_io",
+            "native-zap",
+            "--request",
+            "/factory-zap-request.json",
+        ],
+    }
+    argv = _container_argv(
+        base,
+        worker,
+        snapshot,
+        name,
+        state["run_id"],
+        inventory["candidate_sha256"],
+        contract,
+    )
+    argv[argv.index("--network=none")] = "--network=" + network
+    if "," in str(request):
+        raise RuntimeAuditError("E_MOUNT_PATH", "request mount path contains comma")
+    index = argv.index("--entrypoint")
+    argv[index:index] = [
+        "--mount",
+        f"type=bind,source={request},target=/factory-zap-request.json,readonly",
+    ]
+    return argv
+
+
+def _zap_target_request(state, inventory, lane, route, deadline):
+    """Bind execution to the signed lane and remaining host-owned budget."""
+    remaining = int(deadline - time.monotonic())
+    if remaining < 1:
+        raise RuntimeAuditError("E_ZAP_TIMEOUT", "signed target budget exhausted")
+    return {
+        "schema": "factory.zap-native-request.v2",
+        "run_id": state["run_id"],
+        "candidate_sha256": inventory["candidate_sha256"],
+        "profile_sha256": digest(lane),
+        "rule_ids": lane["rule_ids"],
+        "timeout_seconds": min(lane["timeout_seconds"], remaining),
+        "target": lane["native_target"],
+        "route_id": route["id"],
+    }
+
+
+def _zap_target_route(
+    base,
+    snapshot,
+    lane,
+    route,
+    network,
+    state,
+    inventory,
+    plan,
+    directory,
+    deadline,
+    cancelled,
+):
+    """Retain bounded native observations from an independently isolated worker."""
+    from .runtime_audit_process import run_bounded_command
+    from .deep_audit_io import write_run_json
+
+    name = "factory-zap-worker-" + uuid.uuid4().hex
+    try:
+        with tempfile.TemporaryDirectory(prefix="factory-zap-route-") as temporary:
+            scratch = Path(temporary)
+            request = _zap_target_request(state, inventory, lane, route, deadline)
+            request_file, contract_file = (
+                scratch / "request.json",
+                scratch / "contract.json",
+            )
+            request_file.write_bytes(canonical_bytes(request))
+            contract_file.write_bytes(
+                canonical_bytes(
+                    {
+                        "schema": "factory.deep-adapter-input.v1",
+                        "run_id": state["run_id"],
+                        "manifest_sha256": state["manifest_sha256"],
+                        "inventory": inventory,
+                        "lane": lane,
+                        "obligations": plan["obligations"],
+                    }
+                )
+            )
+            argv = _zap_worker_argv(
+                base,
+                lane,
+                snapshot,
+                name,
+                network,
+                state,
+                inventory,
+                contract_file,
+                request_file,
+            )
+            output = scratch / "observation.json"
+            errors = scratch / "worker-errors.txt"
+            facts = run_bounded_command(
+                argv,
+                scratch,
+                request["timeout_seconds"],
+                scratch,
+                stdout_path=output,
+                stderr_path=errors,
+                cancelled=cancelled,
+            )
+            write_run_json(
+                directory,
+                f"zap-process-{lane['id']}-{route['id']}.json",
+                {
+                    "request_sha256": digest(request),
+                    "process": facts,
+                    "diagnostic_code": _zap_worker_diagnostic(errors),
+                },
+            )
+            if (
+                facts["exit_code"] != 0
+                or facts["timed_out"]
+                or facts["output_limit_exceeded"]
+                or facts.get("cancelled")
+                or not facts["cleanup_confirmed"]
+            ):
+                raise RuntimeAuditError("E_ZAP_WORKER", "native route execution failed")
+            observation = strict_json(output.read_bytes())
+            _zap_host_observation(observation, request)
+            retained = {
+                "request": request,
+                "observation": observation,
+                "process": facts,
+            }
+            write_run_json(directory, f"zap-{lane['id']}-{route['id']}.json", retained)
+            return {
+                "route_id": route["id"],
+                "observation_sha256": digest(observation),
+                "process": facts,
+            }
+    finally:
+        if not _container_cleanup(base, name):
+            raise RuntimeAuditError(
+                "E_CONTAINER_CLEANUP", "ZAP worker cleanup unverified"
+            )
+
+
+def _zap_worker_diagnostic(path):
+    """Retain only bounded machine codes, never raw worker logs or paths."""
+    import re
+
+    if not path.exists():
+        return None
+    with path.open("rb") as stream:
+        raw = stream.read(257)
+    text = raw.strip().decode("ascii", errors="replace")
+    return text if re.fullmatch(r"E_[A-Z0-9_]{1,100}", text) else None
+
+
+def _zap_host_observation(observation, request):
+    """Reverify native bytes instead of trusting the worker's verification label."""
+    from .deep_audit_contract import _zap_target_url
+    from .deep_audit_sarif import _verify_zap_native_rule_ledger
+
+    target = request["target"]
+    route = next(item for item in target["routes"] if item["id"] == request["route_id"])
+    origin = f"http://factory-target:{target['port']}"
+    bindings = {
+        key: request[key] for key in ("run_id", "candidate_sha256", "profile_sha256")
+    }
+    bindings["host_id"] = sha256_bytes(origin.encode())
+    expected = {
+        **bindings,
+        "target_sha256": digest(target),
+        "route_sha256": digest(route),
+    }
+    if not isinstance(observation, dict) or any(
+        observation.get(k) != v for k, v in expected.items()
+    ):
+        raise RuntimeAuditError(
+            "E_ZAP_BINDING", "native route observation identity differs"
+        )
+    if observation.get("target_url") != _zap_target_url(target, route):
+        raise RuntimeAuditError("E_ZAP_BINDING", "native route URL differs")
+    if observation.get("version") != {"version": "2.17.0"} or observation.get(
+        "scan_status"
+    ) != {"status": "100"}:
+        raise RuntimeAuditError("E_ZAP_SCAN", "native version or completion differs")
+    _verify_zap_native_rule_ledger(
+        observation["native_ledger"].encode(),
+        {"engine": "zap", "rule_ids": request["rule_ids"]},
+        bindings,
+    )
+    for key in ("effective_inventory_before", "effective_inventory_after"):
+        from .deep_audit_io import _zap_enabled_inventory
+
+        if _zap_enabled_inventory(observation[key]) != request["rule_ids"]:
+            raise RuntimeAuditError("E_ZAP_INVENTORY", "native effective rules differ")
+    if (
+        observation.get("cleanup_complete") is not True
+        or observation.get("process_facts", {}).get("cleanup_confirmed") is not True
+    ):
+        raise RuntimeAuditError("E_ZAP_CLEANUP", "native process cleanup unverified")
+
+
+def _execute_zap_target(directory, state, snapshot, lane, inventory, plan, emit):
+    """Execute signed targets with separate filesystems and an internal network."""
+    from .deep_audit_contract import _validate_zap_target
+
+    target = lane["native_target"]
+    _validate_zap_target(target, inventory)
+    base, deadline = _docker_base(), time.monotonic() + lane["timeout_seconds"]
+    _docker_preflight(base, lane)
+    _docker_preflight(base, {"image": target["image"]})
+    suffix = uuid.uuid4().hex
+    network, app = "factory-zap-network-" + suffix, "factory-zap-app-" + suffix
+    cancelled, stop = threading.Event(), threading.Event()
+    monitor = threading.Thread(
+        target=_monitor_lane,
+        args=(directory, state, stop, cancelled, emit),
+        daemon=True,
+    )
+    observations = []
+    try:
+        _zap_internal_network(base, network)
+        facts, _ = _docker_control(
+            base, _zap_app_argv(base, lane, snapshot, app, network)[len(base) :]
+        )
+        if facts["exit_code"] != 0:
+            raise RuntimeAuditError(
+                "E_ZAP_TARGET", "pinned candidate service failed to start"
+            )
+        facts, raw = _docker_control(
+            base, ["container", "inspect", app, "--format", "{{json .State.Running}}"]
+        )
+        if facts["exit_code"] != 0 or raw.strip() != b"true":
+            raise RuntimeAuditError(
+                "E_ZAP_TARGET", "candidate service exited before scanning"
+            )
+        monitor.start()
+        for route in target["routes"]:
+            if cancelled.is_set():
+                raise RuntimeAuditError("E_ZAP_CANCELLED", "target audit cancelled")
+            observations.append(
+                _zap_target_route(
+                    base,
+                    snapshot,
+                    lane,
+                    route,
+                    network,
+                    state,
+                    inventory,
+                    plan,
+                    directory,
+                    deadline,
+                    cancelled,
+                )
+            )
+    finally:
+        stop.set()
+        if monitor.ident is not None:
+            monitor.join(timeout=2)
+        app_removed = _container_cleanup(base, app)
+        network_removed = _zap_network_cleanup(base, network)
+        if not (app_removed and network_removed) or monitor.is_alive():
+            raise RuntimeAuditError(
+                "E_ZAP_CLEANUP", "candidate service isolation cleanup unverified"
+            )
+    return {
+        "lane_id": lane["id"],
+        "state": "INCOMPLETE",
+        "findings": [],
+        "gaps": ["ZAP_SIGNED_CONTROLS_REQUIRED", "ZAP_INDEPENDENT_REPLAY_REQUIRED"],
+        "native_execution": {
+            "target_sha256": digest(target),
+            "routes": observations,
+            "cleanup_confirmed": True,
+            "claim_boundary": "DAST route evidence is not source-line coverage.",
+        },
+    }
 
 
 def _codeql_replay_result(

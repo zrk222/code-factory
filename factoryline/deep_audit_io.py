@@ -8312,6 +8312,72 @@ def _zap_native_request(request):
     return bindings
 
 
+def _zap_native_v2_context(request, contract):
+    from .deep_audit_contract import _validate_zap_target, _zap_target_url
+
+    fields = {
+        "schema",
+        "run_id",
+        "candidate_sha256",
+        "profile_sha256",
+        "rule_ids",
+        "timeout_seconds",
+        "target",
+        "route_id",
+    }
+    exact_keys(request, fields)
+    if set(request) != fields or request["schema"] != "factory.zap-native-request.v2":
+        raise RuntimeAuditError("E_ZAP_REQUEST", "native v2 request fields differ")
+    inventory, lane = _adapter_contract_parts(contract)
+    if lane.get("engine") != "zap" or "native_target" not in lane:
+        raise RuntimeAuditError("E_ZAP_REQUEST", "signed ZAP target required")
+    target = request["target"]
+    if target != lane["native_target"]:
+        raise RuntimeAuditError("E_ZAP_TARGET", "request target differs from contract")
+    _validate_zap_target(target, inventory)
+    route_id = require_str(request["route_id"], "route_id", maximum=64)
+    routes = [route for route in target["routes"] if route["id"] == route_id]
+    if len(routes) != 1:
+        raise RuntimeAuditError("E_ZAP_ROUTE", "declared route required")
+    route = routes[0]
+    from .deep_audit_sarif import _zap_ledger_bindings, _zap_ledger_plugins
+
+    bindings = {
+        "run_id": contract["run_id"],
+        "candidate_sha256": inventory["candidate_sha256"],
+        "profile_sha256": digest(lane),
+        "host_id": sha256_bytes(_zap_target_base_url(target).encode("utf-8")),
+    }
+    _zap_ledger_bindings(bindings)
+    if any(
+        request[key] != bindings[key]
+        for key in ("run_id", "candidate_sha256", "profile_sha256")
+    ):
+        raise RuntimeAuditError("E_ZAP_BINDING", "request differs from signed contract")
+    expected_rule_ids = lane.get("rule_ids")
+    if request["rule_ids"] != expected_rule_ids:
+        raise RuntimeAuditError("E_ZAP_INVENTORY", "request rules differ from lane")
+    _zap_ledger_plugins({"rule_ids": request["rule_ids"]})
+    timeout = require_int(
+        request["timeout_seconds"], "ZAP timeout", minimum=1, maximum=3600
+    )
+    lane_timeout = require_int(
+        lane.get("timeout_seconds"), "lane timeout", minimum=1, maximum=3600
+    )
+    if timeout > lane_timeout:
+        raise RuntimeAuditError("E_ZAP_TIMEOUT", "request exceeds signed timeout")
+    return {
+        "bindings": bindings,
+        "target": target,
+        "route": route,
+        "route_id": route_id,
+        "target_url": _zap_target_url(target, route),
+        "base_url": _zap_target_base_url(target),
+        "target_sha256": digest(target),
+        "route_sha256": digest(route),
+    }
+
+
 def _zap_api(component, kind, name, deadline, *, watch=None, **arguments):
     from urllib.request import ProxyHandler, build_opener
     from urllib.parse import urlencode
@@ -8327,7 +8393,16 @@ def _zap_api(component, kind, name, deadline, *, watch=None, **arguments):
         ("ascan", "action", "enableScanners"),
     }:
         raise RuntimeAuditError("E_ZAP_API", "unapproved API action")
-    _zap_api_arguments(component, kind, name, arguments)
+    if watch is not None and watch.get("target") is not None:
+        _zap_validate_target_watch(watch)
+    _zap_api_arguments(
+        component,
+        kind,
+        name,
+        arguments,
+        target_url=watch.get("target_url") if watch else None,
+        base_url=watch.get("base_url") if watch else None,
+    )
     if watch is not None:
         _zap_check_daemon(watch)
     remaining = deadline - time.monotonic()
@@ -8353,18 +8428,22 @@ def _zap_api(component, kind, name, deadline, *, watch=None, **arguments):
     return value
 
 
-def _zap_api_arguments(component, kind, name, arguments):
+def _zap_api_arguments(
+    component, kind, name, arguments, *, target_url=None, base_url=None
+):
+    target_url = target_url or "http://127.0.0.1:8765/?input=seed"
+    base_url = base_url or "http://127.0.0.1:8765"
     fixed = {
         ("core", "action", "accessUrl"): {
-            "url": "http://127.0.0.1:8765/?input=seed",
+            "url": target_url,
             "followRedirects": "false",
         },
         ("ascan", "action", "scan"): {
-            "url": "http://127.0.0.1:8765/?input=seed",
+            "url": target_url,
             "recurse": "false",
             "inScopeOnly": "false",
         },
-        ("core", "view", "alerts"): {"baseurl": "http://127.0.0.1:8765"},
+        ("core", "view", "alerts"): {"baseurl": base_url},
     }
     endpoint = (component, kind, name)
     if endpoint in fixed:
@@ -8394,6 +8473,29 @@ def _zap_api_arguments(component, kind, name, arguments):
         return
     if arguments:
         raise RuntimeAuditError("E_ZAP_API", "unexpected API arguments")
+
+
+def _zap_validate_target_watch(watch):
+    from .deep_audit_contract import _validate_zap_target, _zap_target_url
+
+    target, route = watch["target"], watch["route"]
+    _validate_zap_target(target)
+    if route not in target["routes"]:
+        raise RuntimeAuditError("E_ZAP_ROUTE", "watch route is not declared")
+    if (
+        watch.get("target_url") != _zap_target_url(target, route)
+        or watch.get("base_url") != _zap_target_base_url(target)
+        or watch.get("target_sha256") != digest(target)
+        or watch.get("route_sha256") != digest(route)
+    ):
+        raise RuntimeAuditError("E_ZAP_TARGET", "watch target binding differs")
+
+
+def _zap_target_base_url(target):
+    from .deep_audit_contract import _zap_target_url
+
+    readiness_url = _zap_target_url(target)
+    return readiness_url.removesuffix(target["readiness_path"])
 
 
 def _zap_daemon_argv(home):
@@ -8444,8 +8546,15 @@ def _zap_check_daemon(watch):
         raise RuntimeAuditError("E_ZAP_PROCESS", "native daemon exited unexpectedly")
 
 
-def _zap_watch(child, deadline, overflow):
-    return {"child": child, "deadline": deadline, "overflow": overflow}
+def _zap_watch(child, deadline, overflow, context=None):
+    context = context or {}
+    return {
+        "child": child,
+        "deadline": deadline,
+        "overflow": overflow,
+        "target_url": context.get("target_url"),
+        "base_url": context.get("base_url"),
+    }
 
 
 def _zap_wait_ready(child, deadline, watch):
@@ -8504,7 +8613,7 @@ def _zap_select_rules(rule_ids, deadline, watch):
 def _zap_start_scan(child, deadline, watch):
     from urllib.error import HTTPError
 
-    target = "http://127.0.0.1:8765/?input=seed"
+    target = watch["target_url"] or "http://127.0.0.1:8765/?input=seed"
     access = _zap_api(
         "core",
         "action",
@@ -8566,6 +8675,8 @@ def _zap_measure_scan(request, bindings, child, deadline, watch):
     from .deep_audit_sarif import _verify_zap_native_rule_ledger
 
     version = _zap_wait_ready(child, deadline, watch)
+    if watch.get("target") is not None:
+        _zap_probe_target(watch)
     before = _zap_select_rules(request["rule_ids"], deadline, watch)
     _zap_check_daemon(watch)
     identifier, access = _zap_start_scan(child, deadline, watch)
@@ -8593,7 +8704,46 @@ def _zap_measure_scan(request, bindings, child, deadline, watch):
         "alerts": alerts,
         "native_ledger": ledger.decode("utf-8"),
         "native_verification": verification,
+        **(
+            {
+                "target_sha256": watch["target_sha256"],
+                "route_sha256": watch["route_sha256"],
+                "target_url": watch["target_url"],
+            }
+            if watch.get("target") is not None
+            else {}
+        ),
     }
+
+
+def _zap_probe_target(watch):
+    from urllib.error import HTTPError
+    from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+
+    class RejectRedirect(HTTPRedirectHandler):
+        def redirect_request(self, _request, _fp, _code, _message, _headers, _url):
+            return None
+
+    _zap_check_daemon(watch)
+    target = watch["target"]
+    readiness = target["readiness_path"]
+    url = watch["base_url"] + readiness
+    remaining = watch["deadline"] - time.monotonic()
+    if remaining <= 0:
+        raise RuntimeAuditError("E_ZAP_TIMEOUT", "target readiness deadline exhausted")
+    try:
+        opener = build_opener(ProxyHandler({}), RejectRedirect())
+        with opener.open(
+            Request(url, method="GET"), timeout=min(5, remaining)
+        ) as response:
+            response.read(1)
+            if not 200 <= response.status < 300:
+                raise RuntimeAuditError("E_ZAP_TARGET_READY", "target readiness failed")
+    except HTTPError as exc:
+        raise RuntimeAuditError(
+            "E_ZAP_TARGET_READY", "target readiness failed"
+        ) from exc
+    _zap_check_daemon(watch)
 
 
 def _zap_retained_ledger(output):
@@ -8641,7 +8791,16 @@ def _run_zap_native_scan(request):
     from .runtime_audit_process import _await_cleanup, _start_stream_readers
     import socket
 
-    bindings = _zap_native_request(request)
+    if not isinstance(request, dict):
+        raise RuntimeAuditError("E_ZAP_REQUEST", "native request object required")
+    context = None
+    if request.get("schema") == "factory.zap-native-request.v2":
+        with Path("/factory-contract.json").open("rb") as stream:
+            contract = strict_json(stream.read(LIMIT + 1))
+        context = _zap_native_v2_context(request, contract)
+        bindings = context["bindings"]
+    else:
+        bindings = _zap_native_request(request)
     output = Path("/out")
     if output.is_symlink() or not output.is_dir() or os.name != "posix":
         raise RuntimeAuditError(
@@ -8651,7 +8810,6 @@ def _run_zap_native_scan(request):
         raise RuntimeAuditError("E_ZAP_OUTPUT", "native ledger must not preexist")
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 8090))
-    deadline = time.monotonic() + request["timeout_seconds"]
     with tempfile.TemporaryDirectory(prefix="factory-zap-") as root:
         started = time.monotonic()
         child = subprocess.Popen(
@@ -8667,7 +8825,9 @@ def _run_zap_native_scan(request):
         streams = {}
         readers = []
         deadline = started + request["timeout_seconds"]
-        watch = _zap_watch(child, deadline, overflow)
+        watch = _zap_watch(child, deadline, overflow, context)
+        if context:
+            watch.update(context)
         try:
             readers = _start_stream_readers(child, overflow, streams)
             result = _zap_measure_scan(request, bindings, child, deadline, watch)
@@ -8701,6 +8861,23 @@ def adapter_main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "native-fuzz":
         return native_fuzz_main(argv[1:])
+    if argv and argv[0] == "native-zap":
+        if argv != ["native-zap", "--request", "/factory-zap-request.json"]:
+            print("E_ZAP_REQUEST", file=sys.stderr)
+            return 2
+        try:
+            with Path("/factory-zap-request.json").open("rb") as stream:
+                request = strict_json(stream.read(LIMIT + 1))
+            result = _run_zap_native_scan(request)
+            print(
+                _bounded_json_bytes(result, LIMIT, "E_WORKER_BUNDLE_SIZE").decode(
+                    "utf-8"
+                )
+            )
+            return 0
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            print(getattr(exc, "code", "E_ADAPTER_INPUT"), file=sys.stderr)
+            return 2
 
     parser = argparse.ArgumentParser()
     parser.add_argument("engine")

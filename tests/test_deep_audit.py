@@ -7418,3 +7418,139 @@ def test_zap_native_api_rejects_target_and_scope_drift(endpoint, arguments):
 
     with pytest.raises(RuntimeAuditError):
         _zap_api_arguments(*endpoint, arguments)
+
+
+def _native_zap_v2_fixture():
+    from factoryline.deep_audit_io import digest
+
+    source_sha = "c" * 64
+    target = {
+        "schema": "factory.zap-target.v1",
+        "image": "sha256:" + "d" * 64,
+        "argv": ["/app/server"],
+        "port": 8765,
+        "readiness_path": "/health",
+        "routes": [
+            {
+                "id": "health_query",
+                "method": "GET",
+                "path": "/lookup",
+                "query": {"input": "seed"},
+                "source_bindings": {"app.py": source_sha},
+            }
+        ],
+    }
+    lane = {
+        "engine": "zap",
+        "timeout_seconds": 120,
+        "rule_ids": ["40012"],
+        "native_target": target,
+    }
+    inventory = {
+        "candidate_sha256": "a" * 64,
+        "files": [{"path": "app.py", "sha256": source_sha}],
+    }
+    contract = {
+        "schema": "factory.deep-adapter-input.v1",
+        "run_id": "e" * 32,
+        "manifest_sha256": "f" * 64,
+        "inventory": inventory,
+        "lane": lane,
+        "obligations": [],
+    }
+    request = {
+        "schema": "factory.zap-native-request.v2",
+        "run_id": contract["run_id"],
+        "candidate_sha256": inventory["candidate_sha256"],
+        "profile_sha256": digest(lane),
+        "rule_ids": lane["rule_ids"],
+        "timeout_seconds": 90,
+        "target": deepcopy(target),
+        "route_id": "health_query",
+    }
+    return request, contract
+
+
+def test_zap_native_v2_request_binds_target_route_inventory_and_profile():
+    from factoryline.deep_audit_io import _zap_native_v2_context, digest
+
+    request, contract = _native_zap_v2_fixture()
+    result = _zap_native_v2_context(request, contract)
+
+    assert result["target_url"] == "http://factory-target:8765/lookup?input=seed"
+    assert result["base_url"] == "http://factory-target:8765"
+    assert result["route_id"] == "health_query"
+    assert result["target_sha256"] == digest(request["target"])
+    assert result["route_sha256"] == digest(request["target"]["routes"][0])
+    assert result["bindings"]["host_id"] == sha256_bytes(result["base_url"].encode())
+    assert result["bindings"]["profile_sha256"] == request["profile_sha256"]
+
+
+def test_zap_native_v2_api_watch_rejects_rewritten_target_before_network():
+    import threading
+
+    from factoryline.deep_audit_io import _zap_api, _zap_native_v2_context, _zap_watch
+
+    request, contract = _native_zap_v2_fixture()
+    context = _zap_native_v2_context(request, contract)
+
+    class Child:
+        def poll(self):
+            return None
+
+    watch = _zap_watch(Child(), time.monotonic() + 10, threading.Event(), context)
+    watch.update(context)
+    watch["target_url"] = "http://127.0.0.1:8765/unsafe"
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_TARGET"):
+        _zap_api("core", "action", "accessUrl", watch["deadline"], watch=watch)
+
+
+def test_native_zap_cli_rejects_operator_selected_request_path(capsys):
+    from factoryline.deep_audit_io import adapter_main
+
+    assert adapter_main(["native-zap", "--request", "/tmp/untrusted.json"]) == 2
+    assert capsys.readouterr().err.strip() == "E_ZAP_REQUEST"
+
+
+def test_zap_native_driver_rejects_non_object_request_before_dispatch():
+    from factoryline.deep_audit_io import _run_zap_native_scan
+
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_REQUEST"):
+        _run_zap_native_scan([])
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "source_binding",
+        "route_id",
+        "candidate",
+        "profile",
+        "rules",
+        "timeout",
+        "target_url",
+    ],
+)
+def test_zap_native_v2_request_rejects_target_or_binding_drift(mutation):
+    from factoryline.deep_audit_io import _zap_native_v2_context
+
+    request, contract = _native_zap_v2_fixture()
+    if mutation == "source_binding":
+        request["target"]["routes"][0]["source_bindings"]["app.py"] = "0" * 64
+        contract["lane"]["native_target"] = deepcopy(request["target"])
+    elif mutation == "route_id":
+        request["route_id"] = "other"
+    elif mutation == "candidate":
+        request["candidate_sha256"] = "0" * 64
+    elif mutation == "profile":
+        request["profile_sha256"] = "0" * 64
+    elif mutation == "rules":
+        request["rule_ids"] = ["40013"]
+    elif mutation == "timeout":
+        request["timeout_seconds"] = 121
+    else:
+        request["target"]["routes"][0]["path"] = "https://external.invalid/"
+        contract["lane"]["native_target"] = deepcopy(request["target"])
+
+    with pytest.raises(RuntimeAuditError):
+        _zap_native_v2_context(request, contract)
