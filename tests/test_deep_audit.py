@@ -2326,3 +2326,222 @@ def test_semgrep_challenge_fixture_rejects_missing_or_unbound_anchor(
             tmp_path,
             fixture_path,
         )
+
+
+def test_codeql_query_resolution_records_native_selection(tmp_path, monkeypatch):
+    from factoryline.deep_audit_io import resolve_codeql_query_inventory
+
+    suite = tmp_path / "suite.qls"
+    suite.write_text("- queries: .")
+    query = tmp_path / "query.ql"
+    query.write_text("/** @id js/example */ select 1")
+    paths = ["/opt/codeql/codeql/qlpacks/codeql/javascript-queries/1/security/query.ql"]
+    original = __import__(
+        "factoryline.deep_audit_io", fromlist=["local_file"]
+    ).local_file
+    monkeypatch.setattr(
+        "factoryline.deep_audit_io.local_file",
+        lambda root, path: query
+        if str(root).replace("\\", "/").endswith("/qlpacks")
+        else original(root, path),
+    )
+
+    def run(argv, cwd, timeout, scratch, *, stdout_path):
+        raw = json.dumps(paths).encode()
+        stdout_path.write_bytes(raw)
+        return dict(
+            exit_code=0,
+            timed_out=False,
+            launch_error=False,
+            output_limit_exceeded=False,
+            cleanup_confirmed=True,
+            stdout_sha256=sha256_bytes(raw),
+        )
+
+    monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
+    result = resolve_codeql_query_inventory("codeql", suite, tmp_path, tmp_path, 30)
+    assert result["queries"] == {
+        "codeql/javascript-queries/1/security/query.ql": sha256_bytes(
+            query.read_bytes()
+        )
+    }
+    assert result["suite_sha256"] == sha256_bytes(suite.read_bytes())
+    assert result["argv"][1:3] == ["resolve", "queries"]
+    assert "not execution" in result["claim_boundary"]
+
+
+@pytest.mark.parametrize(
+    "paths",
+    [
+        [],
+        {},
+        ["outside.ql"],
+        ["/opt/codeql/codeql/qlpacks/../escape.ql"],
+        ["/opt/codeql/codeql/qlpacks/test.txt"],
+        ["x"] * 1025,
+    ],
+)
+def test_codeql_query_inventory_rejects_invalid_selection(paths):
+    from factoryline.deep_audit_io import _codeql_resolved_queries
+
+    with pytest.raises(RuntimeAuditError):
+        _codeql_resolved_queries(paths)
+
+
+def test_codeql_query_inventory_rejects_duplicate_and_linked_query(
+    tmp_path, monkeypatch
+):
+    from factoryline.deep_audit_io import _codeql_resolved_queries
+
+    query = tmp_path / "query.ql"
+    query.write_text("select 1")
+    path = "/opt/codeql/codeql/qlpacks/test/query.ql"
+    monkeypatch.setattr(
+        "factoryline.deep_audit_io.local_file", lambda root, path: query
+    )
+    with pytest.raises(RuntimeAuditError, match="duplicate"):
+        _codeql_resolved_queries([path, path])
+
+    def linked(*args):
+        raise RuntimeAuditError("E_SYMLINK", "linked query forbidden")
+
+    monkeypatch.setattr("factoryline.deep_audit_io.local_file", linked)
+    with pytest.raises(RuntimeAuditError, match="linked"):
+        _codeql_resolved_queries([path])
+
+
+@pytest.mark.parametrize(
+    "mutant",
+    [
+        {"sentinel.ql": "b" * 64},
+        {},
+        {"target.ql": "a" * 64, "sentinel.ql": "b" * 64},
+        {"sentinel.ql": "c" * 64},
+        {"sentinel.ql": "b" * 64, "extra.ql": "d" * 64},
+    ],
+)
+def test_codeql_query_mutation_requires_exact_target_only_removal(mutant):
+    from factoryline.deep_audit_io import verify_codeql_query_isolation
+
+    baseline = {"target.ql": "a" * 64, "sentinel.ql": "b" * 64}
+    if mutant == {"sentinel.ql": "b" * 64}:
+        assert (
+            verify_codeql_query_isolation(baseline, mutant, "target.ql")[
+                "disabled_query"
+            ]
+            == "target.ql"
+        )
+    else:
+        with pytest.raises(RuntimeAuditError):
+            verify_codeql_query_isolation(baseline, mutant, "target.ql")
+
+
+def test_codeql_resolution_repeated_calls_use_isolated_runtime_homes(
+    tmp_path, monkeypatch
+):
+    from factoryline.deep_audit_io import resolve_codeql_query_inventory
+
+    suite = tmp_path / "suite.qls"
+    suite.write_text("- queries: .")
+    monkeypatch.setattr(
+        "factoryline.deep_audit_io._codeql_resolved_queries",
+        lambda paths: {"sentinel.ql": "a" * 64},
+    )
+    homes = []
+
+    def run(argv, cwd, timeout, scratch, *, stdout_path):
+        home = scratch / "runtime-home"
+        home.mkdir(exist_ok=False)
+        homes.append(home)
+        raw = b'["native.ql"]'
+        stdout_path.write_bytes(raw)
+        return dict(
+            exit_code=0,
+            timed_out=False,
+            launch_error=False,
+            output_limit_exceeded=False,
+            cleanup_confirmed=True,
+            stdout_sha256=sha256_bytes(raw),
+        )
+
+    monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
+    for _ in range(2):
+        assert resolve_codeql_query_inventory("codeql", suite, tmp_path, tmp_path, 30)[
+            "queries"
+        ]
+    assert homes[0] != homes[1]
+
+
+@pytest.mark.parametrize("raw", [b"not json", b"null", b"[]"])
+def test_codeql_native_resolution_rejects_malformed_output(tmp_path, monkeypatch, raw):
+    from factoryline.deep_audit_io import resolve_codeql_query_inventory
+
+    suite = tmp_path / "suite.qls"
+    suite.write_text("- queries: .")
+
+    def run(argv, cwd, timeout, scratch, *, stdout_path):
+        stdout_path.write_bytes(raw)
+        return dict(
+            exit_code=0,
+            timed_out=False,
+            launch_error=False,
+            output_limit_exceeded=False,
+            cleanup_confirmed=True,
+            stdout_sha256=sha256_bytes(raw),
+        )
+
+    monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
+    with pytest.raises(RuntimeAuditError):
+        resolve_codeql_query_inventory("codeql", suite, tmp_path, tmp_path, 30)
+
+
+def test_codeql_native_resolution_refuses_timed_out_process(tmp_path, monkeypatch):
+    from factoryline.deep_audit_io import resolve_codeql_query_inventory
+
+    suite = tmp_path / "suite.qls"
+    suite.write_text("- queries: .")
+    monkeypatch.setattr(
+        "factoryline.runtime_audit_process.run_bounded_command",
+        lambda *args, **kw: dict(
+            exit_code=0,
+            timed_out=True,
+            launch_error=False,
+            output_limit_exceeded=False,
+            cleanup_confirmed=True,
+        ),
+    )
+    with pytest.raises(RuntimeAuditError, match="resolution failed"):
+        resolve_codeql_query_inventory("codeql", suite, tmp_path, tmp_path, 30)
+
+
+@pytest.mark.parametrize(
+    "commands",
+    [
+        None,
+        [],
+        [{}],
+        [{}, {}],
+        [{}, {"argv": []}],
+        [{}, {"argv": ["codeql", "bad", "analyze", "db", "suite"]}],
+    ],
+)
+def test_codeql_preflight_rejects_malformed_profile(commands, tmp_path):
+    from factoryline.deep_audit_io import _codeql_query_preflight
+
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_INVENTORY"):
+        _codeql_query_preflight({"commands": commands}, tmp_path, tmp_path, 30)
+
+
+def test_codeql_preflight_rejects_exhausted_deadline_before_launch(
+    tmp_path, monkeypatch
+):
+    from factoryline.deep_audit_io import _codeql_query_preflight
+
+    def unexpected(*args):
+        pytest.fail("deadline exhaustion must not launch CodeQL")
+
+    monkeypatch.setattr(
+        "factoryline.deep_audit_io.resolve_codeql_query_inventory", unexpected
+    )
+    with pytest.raises(RuntimeAuditError, match="E_ADAPTER_TIMEOUT"):
+        _codeql_query_preflight({}, tmp_path, tmp_path, 0)

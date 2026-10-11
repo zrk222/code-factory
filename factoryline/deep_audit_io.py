@@ -1977,6 +1977,11 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
         probe = scratch / "probe"
         probe.mkdir()
         version = _native_version(profile, source, probe, timeout)
+        query_inventory = None
+        if lane["engine"] == "codeql":
+            query_inventory = _codeql_query_preflight(
+                profile, source, scratch, int(timeout - (time.monotonic() - started))
+            )
         remaining = timeout - (time.monotonic() - started)
         if remaining < 1:
             raise RuntimeAuditError(
@@ -2043,6 +2048,7 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
         "version_probe": version,
         "semgrep_rule_execution": semgrep_execution,
         "trivy_rule_execution": trivy_execution,
+        "codeql_query_inventory": query_inventory,
         "raw_report_bytes": (
             raw_report_bytes if profile["report_format"] != "runtime-junit" else None
         ),
@@ -2904,6 +2910,11 @@ def _native_profile_coverage(
         "errors": errors,
         "obligations": covered_obligations,
         **(
+            {"codeql_query_inventory": execution["codeql_query_inventory"]}
+            if execution.get("codeql_query_inventory") is not None
+            else {}
+        ),
+        **(
             {"semgrep_rule_execution": execution["semgrep_rule_execution"]}
             if execution.get("semgrep_rule_execution") is not None
             else {}
@@ -2944,6 +2955,123 @@ def _native_profile_coverage(
             rule_count,
         )
     return coverage
+
+
+def _codeql_query_preflight(profile, source, scratch, remaining):
+    if remaining < 1:
+        raise RuntimeAuditError(
+            "E_ADAPTER_TIMEOUT", "query resolution deadline exhausted"
+        )
+    commands = profile.get("commands")
+    if not isinstance(commands, list) or len(commands) < 2:
+        raise RuntimeAuditError("E_CODEQL_INVENTORY", "analyze command required")
+    command = commands[1]
+    argv = command.get("argv") if isinstance(command, dict) else None
+    if not isinstance(argv, list) or len(argv) < 5:
+        raise RuntimeAuditError("E_CODEQL_INVENTORY", "bounded analyze argv required")
+    if argv[1:3] != ["database", "analyze"] or not isinstance(argv[4], str):
+        raise RuntimeAuditError("E_CODEQL_INVENTORY", "native analyze suite required")
+    return resolve_codeql_query_inventory(
+        argv[0], Path(argv[4]), source, scratch, remaining
+    )
+
+
+def _codeql_suite_bytes(suite):
+    with suite.open("rb") as stream:
+        raw = stream.read(1_048_577)
+    if len(raw) > 1_048_576 or suite.is_symlink():
+        raise RuntimeAuditError("E_CODEQL_INVENTORY", "bounded regular suite required")
+    return raw
+
+
+def resolve_codeql_query_inventory(codeql, suite, source, scratch, timeout):
+    """Record native suite resolution and query bytes, not query execution coverage."""
+    from .runtime_audit_process import run_bounded_command
+
+    timeout = require_int(timeout, "query resolution timeout", minimum=1, maximum=3600)
+    suite = local_file(Path(suite).parent, Path(suite).name)
+    suite_raw = _codeql_suite_bytes(suite)
+    run_root = Path(scratch) / ("query-resolution-" + uuid.uuid4().hex)
+    run_root.mkdir()
+    capture = run_root / "queries.json"
+    argv = [str(codeql), "resolve", "queries", "--format=json", "--", str(suite)]
+    deadline = time.monotonic() + timeout
+    facts = run_bounded_command(argv, source, timeout, run_root, stdout_path=capture)
+    if _adapter_command_failed(facts, [0], deadline):
+        raise RuntimeAuditError("E_CODEQL_INVENTORY", "native query resolution failed")
+    with capture.open("rb") as stream:
+        raw = stream.read(1_048_577)
+    if len(raw) > 1_048_576 or sha256_bytes(raw) != facts["stdout_sha256"]:
+        raise RuntimeAuditError("E_CODEQL_INVENTORY", "query resolution output differs")
+    try:
+        paths = json.loads(raw, parse_constant=_finite)
+    except (ValueError, RecursionError, UnicodeError) as error:
+        raise RuntimeAuditError(
+            "E_CODEQL_INVENTORY", "invalid query resolution JSON"
+        ) from error
+    queries = _codeql_resolved_queries(paths)
+    if _codeql_suite_bytes(suite) != suite_raw:
+        raise RuntimeAuditError("E_CODEQL_INVENTORY", "suite changed during resolution")
+    return dict(
+        schema="factory.codeql-query-inventory.v1",
+        suite_sha256=sha256_bytes(suite_raw),
+        queries=queries,
+        query_inventory_sha256=digest(queries),
+        argv=argv,
+        argv_sha256=digest(argv),
+        execution=facts,
+        raw_resolution_sha256=sha256_bytes(raw),
+        claim_boundary="Native suite selection and query content identity only; not execution or source coverage",
+    )
+
+
+def _codeql_resolved_queries(paths):
+    if not isinstance(paths, list) or not 1 <= len(paths) <= 1024:
+        raise RuntimeAuditError(
+            "E_CODEQL_INVENTORY", "bounded nonempty query list required"
+        )
+    queries, total = {}, 0
+    root = Path("/opt/codeql/codeql/qlpacks")
+    for value in paths:
+        require_str(value, "resolved query", maximum=2048)
+        path = Path(value)
+        try:
+            relative = path.relative_to(root).as_posix()
+        except ValueError as error:
+            raise RuntimeAuditError(
+                "E_CODEQL_INVENTORY", "query is outside pinned packs"
+            ) from error
+        relative_path(relative)
+        if path.suffix != ".ql" or relative in queries:
+            raise RuntimeAuditError("E_CODEQL_INVENTORY", "duplicate or non-query path")
+        with local_file(root, relative).open("rb") as stream:
+            raw = stream.read(1_048_577)
+        total += len(raw)
+        if len(raw) > 1_048_576 or total > 8_388_608:
+            raise RuntimeAuditError(
+                "E_CODEQL_INVENTORY", "query content budget exceeded"
+            )
+        queries[relative] = sha256_bytes(raw)
+    return dict(sorted(queries.items()))
+
+
+def verify_codeql_query_isolation(baseline, mutated, target_query):
+    """Require exactly one removed query and unchanged nonempty sentinel inventory."""
+    relative_path(target_query)
+    for inventory in (baseline, mutated):
+        if not isinstance(inventory, dict) or not inventory:
+            raise RuntimeAuditError("E_CODEQL_MUTATION", "query inventory required")
+        for path, seal in inventory.items():
+            relative_path(path)
+            require_digest(seal, "query content hash")
+    expected = {path: seal for path, seal in baseline.items() if path != target_query}
+    if target_query not in baseline or not expected or mutated != expected:
+        raise RuntimeAuditError(
+            "E_CODEQL_MUTATION", "mutation must remove only target query"
+        )
+    return dict(
+        disabled_query=target_query, remaining_query_inventory_sha256=digest(mutated)
+    )
 
 
 def _native_source_accounting(execution, report, inventory, lane):
