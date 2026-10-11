@@ -467,6 +467,24 @@ def test_native_worker_executes_existing_engine_without_granting_approval(
             "analysis_complete": True,
             "review": "REQUIRED",
             "run_id": "sample",
+            "candidate_sha256": "c" * 64,
+            "lanes": [
+                {
+                    "family": family,
+                    "engine": "bounded-scanner",
+                    "state": "OBSERVED",
+                    "gaps": [],
+                    "findings": [],
+                }
+                for family in (
+                    "static",
+                    "secrets",
+                    "configuration",
+                    "dependencies",
+                    "runtime",
+                    "fuzz",
+                )
+            ],
         }
 
     monkeypatch.setattr(deep_audit, "scan_deep_audit", observe)
@@ -480,3 +498,104 @@ def test_native_worker_executes_existing_engine_without_granting_approval(
     assert lane["measurement_state"] == "REVIEW_REQUIRED"
     assert result["state"] != "PASS"
     assert result["assessment"]["file_types"]["rust"] == 1
+    domains = result["deep_audit"]["native_domains"]["domains"]
+    assert len(domains) == 6
+    assert all(row["state"] == "REVIEW_REQUIRED" for row in domains)
+    assert all(row["result"]["candidate_sha256"] == "c" * 64 for row in domains)
+
+
+@pytest.mark.parametrize(
+    "family", ["static", "secrets", "configuration", "dependencies", "runtime", "fuzz"]
+)
+@pytest.mark.parametrize("worker_state", ["OBSERVED", "INCOMPLETE"])
+def test_native_domains_preserve_scoped_evidence(family, worker_state):
+    from factoryline.adoption import _native_domain_projection
+
+    worker = {
+        "lane_id": "bounded-worker",
+        "engine": "scanner",
+        "family": family,
+        "state": worker_state,
+        "gaps": [] if worker_state == "OBSERVED" else ["MUTATION_SURVIVED"],
+        "report_sha256": "a" * 64,
+        "coverage_sha256": "b" * 64,
+        "challenge_sha256": "c" * 64,
+        "covered_paths": ["app.ts"],
+        "obligations": ["security-boundary"],
+        "findings": [
+            {
+                "finding_id": "finding",
+                "path": "app.ts",
+                "line": 4,
+                "remediation": "Repair the boundary",
+                "source_sha256": "d" * 64,
+            }
+        ],
+    }
+    lanes = [
+        {
+            "measurement_id": "native_worker_execution",
+            "result": {
+                "run_id": "run",
+                "candidate_sha256": "e" * 64,
+                "manifest_sha256": "f" * 64,
+                "lanes": [worker],
+                "gaps": [],
+            },
+        },
+        {
+            "measurement_id": "dependencies_and_supply_chain",
+            "state": "NOT_MEASURED",
+            "result": {},
+        },
+        {"measurement_id": "runtime_coverage", "state": "NOT_MEASURED", "result": {}},
+    ]
+    report = _native_domain_projection(lanes)
+    domain = next(
+        row for row in report["domains"] if row["measurement_id"] == "native_" + family
+    )
+    assert domain["state"] == (
+        "REVIEW_REQUIRED" if worker_state == "OBSERVED" else "INCOMPLETE"
+    )
+    assert domain["result"]["workers"] == [worker]
+    assert domain["result"]["candidate_sha256"] == "e" * 64
+    assert report["findings"][0]["remediation"] == "Repair the boundary"
+    assert report["findings"][0]["engine"] == "scanner"
+    assert report["authority"] == "none"
+    assert all(row["state"] == "NOT_RUN" for row in report["domains"] if row != domain)
+    assert lanes[1]["state"] == lanes[2]["state"] == "NOT_MEASURED"
+
+
+@pytest.mark.parametrize(
+    "drift", ["SOURCE_CHANGED_DURING_RUN", "CANDIDATE_DRIFT", "SNAPSHOT_DRIFT"]
+)
+def test_native_domains_do_not_promote_stale_or_partial_workers(drift):
+    from factoryline.adoption import _native_domain_projection
+
+    lanes = [
+        {
+            "measurement_id": "native_worker_execution",
+            "result": {
+                "lanes": [
+                    {
+                        "family": "static",
+                        "engine": "scanner",
+                        "state": "OBSERVED",
+                        "gaps": [],
+                    }
+                ],
+                "gaps": [{"code": drift}],
+            },
+        },
+        {"measurement_id": "dependencies_and_supply_chain", "result": {}},
+        {"measurement_id": "runtime_coverage", "result": {}},
+    ]
+    report = _native_domain_projection(lanes)
+    assert report["domains"][0]["state"] == "INCOMPLETE"
+    assert report["domains"][0]["result"]["observed_workers"] == 0
+    assert report["domains"][0]["result"]["source_current"] is False
+    lanes[0]["result"]["gaps"] = []
+    lanes[0]["result"]["lanes"].append(
+        {"family": "static", "state": "INCOMPLETE", "gaps": ["coverage"]}
+    )
+    assert _native_domain_projection(lanes)["domains"][0]["state"] == "INCOMPLETE"
