@@ -441,6 +441,8 @@ def _execution_lane_fields(lane: dict, version: int) -> set[str]:
         fields.add("native_artifact_roles")
         if lane.get("engine") != "syft":
             fields.update({"rule_ids", "mutation_config_sha256"})
+        if lane.get("engine") == "trivy" and "native_policy" in lane:
+            fields.add("native_policy")
     if lane.get("engine") == "gitleaks" and "rule_ids" in lane:
         fields.add("rule_ids")
         if "mutation_config_sha256" in lane:
@@ -480,9 +482,23 @@ def _validate_execution_identity(plan: dict) -> None:
 
 def _validate_v2_lane(lane: dict) -> None:
     _validate_v2_roles(lane)
+    if "native_policy" in lane:
+        _validate_v2_trivy_policy(lane)
     if lane["engine"] == "syft":
         return
     _validate_v2_rule_inventory(lane)
+
+
+def _validate_v2_trivy_policy(lane: dict) -> None:
+    policy = lane["native_policy"]
+    if lane["engine"] != "trivy" or not isinstance(policy, dict):
+        raise RuntimeAuditError("E_NATIVE_POLICY", "native policy is Trivy-only")
+    if set(policy) != {"config_sha256", "baseline_ignore_sha256"}:
+        raise RuntimeAuditError("E_NATIVE_POLICY", "invalid Trivy policy identity")
+    require_digest(policy["config_sha256"], "native_policy.config_sha256")
+    require_digest(
+        policy["baseline_ignore_sha256"], "native_policy.baseline_ignore_sha256"
+    )
 
 
 def _validate_v2_roles(lane: dict) -> None:

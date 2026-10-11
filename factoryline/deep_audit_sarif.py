@@ -1315,6 +1315,9 @@ def _challenge_execution_v2_binding(
 
 
 def _challenge_execution_config_valid_v2(execution, obligation, identity, lane):
+    baseline = _challenge_baseline_config_sha256(lane)
+    if baseline is None:
+        return False
     expected_mutation = None
     if identity[1] == "mutation":
         mutation_hashes = lane.get("mutation_config_sha256")
@@ -1330,12 +1333,29 @@ def _challenge_execution_config_valid_v2(execution, obligation, identity, lane):
         if expected_effective is None:
             return False
     else:
-        expected_effective = lane["ruleset_sha256"]
+        expected_effective = baseline
     return (
         execution.get("effective_config_sha256") == expected_effective
-        and execution.get("baseline_config_sha256") == lane["ruleset_sha256"]
+        and execution.get("baseline_config_sha256") == baseline
         and execution.get("mutation") == expected_mutation
     )
+
+
+def _challenge_baseline_config_sha256(lane):
+    if lane["engine"] != "trivy":
+        return lane["ruleset_sha256"]
+    policy = lane.get("native_policy")
+    if not isinstance(policy, dict) or set(policy) != {
+        "config_sha256",
+        "baseline_ignore_sha256",
+    }:
+        return None
+    try:
+        for value in policy.values():
+            require_digest(value, "native policy digest")
+    except RuntimeAuditError:
+        return None
+    return policy["baseline_ignore_sha256"]
 
 
 def _challenge_execution_budgets_valid_v2(execution, lane):

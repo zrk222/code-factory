@@ -569,6 +569,57 @@ def test_execution_manifest_v2_binds_roles_and_fixture_manifest(tmp_path):
         load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
 
 
+def test_v2_trivy_native_policy_identity_is_optional_and_strict(tmp_path):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import load_execution_manifest
+
+    _, manifest, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    _v2_execution_plan(plan, inventory)
+    trivy = next(lane for lane in plan["lanes"] if lane["engine"] == "trivy")
+    original_ruleset = trivy["ruleset_sha256"]
+    policy = {"config_sha256": "e" * 64, "baseline_ignore_sha256": "f" * 64}
+    trivy["native_policy"] = policy
+    manifest.write_text(json.dumps(plan), encoding="utf-8")
+    assert (
+        load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes())) == plan
+    )
+    assert trivy["ruleset_sha256"] == original_ruleset
+
+    del trivy["native_policy"]
+    manifest.write_text(json.dumps(plan), encoding="utf-8")
+    assert (
+        load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes())) == plan
+    )
+
+    invalid_policies = [
+        {"config_sha256": "e" * 64},
+        {"config_sha256": "e" * 64, "baseline_ignore_sha256": "f" * 64, "extra": "x"},
+        {"config_sha256": "bad", "baseline_ignore_sha256": "f" * 64},
+        {"config_sha256": None, "baseline_ignore_sha256": "f" * 64},
+    ]
+    for invalid_policy in invalid_policies:
+        candidate = deepcopy(plan)
+        next(lane for lane in candidate["lanes"] if lane["engine"] == "trivy")[
+            "native_policy"
+        ] = invalid_policy
+        manifest.write_text(json.dumps(candidate), encoding="utf-8")
+        with pytest.raises(RuntimeAuditError):
+            load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
+
+    for schema, engine in (
+        ("factory.deep-execution.v2", "codeql"),
+        ("factory.deep-execution.v1", "trivy"),
+    ):
+        candidate = deepcopy(plan)
+        candidate["schema"] = schema
+        next(lane for lane in candidate["lanes"] if lane["engine"] == engine)[
+            "native_policy"
+        ] = policy
+        manifest.write_text(json.dumps(candidate), encoding="utf-8")
+        with pytest.raises(RuntimeAuditError):
+            load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
+
+
 def test_v2_role_tables_match_native_helper_and_report_roles():
     from factoryline.deep_audit_contract import V2_NATIVE_ROLES
     from factoryline.deep_audit_sarif import _NATIVE_REPORT_ROLES

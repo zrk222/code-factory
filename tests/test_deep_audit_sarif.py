@@ -10,6 +10,62 @@ from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
 ANALYZER = {"id": "scanner", "driver": "Example", "version": "1"}
 
 
+@pytest.mark.parametrize("kind", ["positive", "negative", "mutation"])
+def test_trivy_signed_policy_keeps_binary_and_control_config_distinct(kind):
+    from factoryline.deep_audit_sarif import _challenge_execution_config_valid_v2
+
+    lane = {
+        "engine": "trivy",
+        "ruleset_sha256": "a" * 64,
+        "native_policy": {
+            "config_sha256": "b" * 64,
+            "baseline_ignore_sha256": "c" * 64,
+        },
+        "rule_ids": ["DS001", "DS002"],
+        "mutation_config_sha256": {"DS001": "d" * 64},
+    }
+    execution = {
+        "baseline_config_sha256": "c" * 64,
+        "effective_config_sha256": "d" * 64 if kind == "mutation" else "c" * 64,
+        "mutation": {
+            "disabled_rule_id": "DS001",
+            "remaining_rule_inventory_sha256": digest(["DS002"]),
+        }
+        if kind == "mutation"
+        else None,
+    }
+    obligation = {"detector_rule_id": "DS001"}
+    identity = ("test-control", kind)
+    assert _challenge_execution_config_valid_v2(execution, obligation, identity, lane)
+    assert not _challenge_execution_config_valid_v2(
+        {**execution, "baseline_config_sha256": lane["ruleset_sha256"]},
+        obligation,
+        identity,
+        lane,
+    )
+    del lane["native_policy"]
+    assert not _challenge_execution_config_valid_v2(
+        execution, obligation, identity, lane
+    )
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        {},
+        {"config_sha256": "b" * 64},
+        {"config_sha256": "b" * 64, "baseline_ignore_sha256": "invalid"},
+    ],
+)
+def test_trivy_missing_or_invalid_control_policy_is_incomplete(policy):
+    from factoryline.deep_audit_sarif import _challenge_baseline_config_sha256
+
+    assert (
+        _challenge_baseline_config_sha256({"engine": "trivy", "native_policy": policy})
+        is None
+    )
+
+
 def test_semgrep_negative_challenge_rejects_unrelated_detector_findings():
     from factoryline.deep_audit_sarif import _challenge_findings_valid
 
