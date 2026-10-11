@@ -157,6 +157,10 @@ class EvidenceStore:
                   decided_at TEXT, approver TEXT, decision_reason TEXT
                 );
                 CREATE INDEX IF NOT EXISTS approvals_tenant_status ON approvals(tenant_id, status, requested_at, approval_id);
+                CREATE TABLE IF NOT EXISTS workflow_approval_uses (
+                  approval_id TEXT PRIMARY KEY REFERENCES approvals(approval_id),
+                  tenant_id TEXT NOT NULL, fingerprint TEXT NOT NULL, consumed_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS audit_events (
                   sequence INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id TEXT NOT NULL,
                   action TEXT NOT NULL, actor TEXT NOT NULL, resource_id TEXT NOT NULL,
@@ -436,6 +440,76 @@ class EvidenceStore:
                 ).fetchone()
             )
 
+    def workflow_approval_verifier(
+        self,
+        principal: Principal,
+        tenant_id: str,
+        approval_id: str,
+        *,
+        resolve_principal,
+    ):
+        """Build a host-registered phase verifier from a durable approval.
+
+        The host must authenticate the caller and resolve current approver roles;
+        constructing Principal objects does not authenticate anyone. Exact retries
+        reuse the same approval fingerprint, never a different source/run/plan.
+        """
+        authorize(principal, "evidence.read", tenant_id)
+        if not callable(resolve_principal):
+            raise ControlPlaneError(
+                "E_IDENTITY_REQUIRED", "current identity resolver required"
+            )
+
+        def verify(expected):
+            approval = self.get_approval(principal, tenant_id, approval_id)
+            _workflow_approver(approval, tenant_id, resolve_principal)
+            return self._consume_workflow_approval(
+                principal, tenant_id, approval, expected
+            )
+
+        return verify
+
+    def _consume_workflow_approval(self, principal, tenant_id, approval, expected):
+        fingerprint = sha256(canonical_json(expected))
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = db.execute(
+                "SELECT * FROM approvals WHERE approval_id=? AND tenant_id=?",
+                (approval["approval_id"], tenant_id),
+            ).fetchone()
+            if not current or dict(current) != approval:
+                raise ControlPlaneError(
+                    "E_APPROVAL_CHANGED", "approval changed during identity check"
+                )
+            row = db.execute(
+                "SELECT * FROM evidence WHERE evidence_id=? AND tenant_id=?",
+                (approval["evidence_id"], tenant_id),
+            ).fetchone()
+            _workflow_approval_evidence(row, tenant_id, expected)
+            prior = db.execute(
+                "SELECT fingerprint,tenant_id FROM workflow_approval_uses WHERE approval_id=?",
+                (approval["approval_id"],),
+            ).fetchone()
+            if prior:
+                if tuple(prior) != (fingerprint, tenant_id):
+                    raise ControlPlaneError(
+                        "E_APPROVAL_REPLAY", "approval is bound to another action"
+                    )
+                return dict(expected)
+            db.execute(
+                "INSERT INTO workflow_approval_uses VALUES (?,?,?,?)",
+                (approval["approval_id"], tenant_id, fingerprint, _now()),
+            )
+            self._audit(
+                db,
+                tenant_id=tenant_id,
+                action="approval.workflow.consume",
+                actor=principal.subject,
+                resource_id=approval["approval_id"],
+                payload={"fingerprint": fingerprint, "approver": approval["approver"]},
+            )
+        return dict(expected)
+
     def verify_audit(self, principal: Principal, tenant_id: str) -> dict[str, Any]:
         """Verify all hash links in one authorized tenant audit trail."""
         authorize(principal, "audit.verify", tenant_id)
@@ -476,6 +550,44 @@ class EvidenceStore:
             "valid": not errors,
             "errors": errors,
         }
+
+
+def _workflow_approver(approval, tenant_id, resolve_principal):
+    if (
+        approval["status"] != "approved"
+        or approval["approver"] == approval["requester"]
+    ):
+        raise ControlPlaneError(
+            "E_APPROVAL_REQUIRED", "independent approved decision required"
+        )
+    current = resolve_principal(approval["approver"], tenant_id)
+    if not isinstance(current, Principal) or current.subject != approval["approver"]:
+        raise ControlPlaneError("E_IDENTITY_REQUIRED", "approver identity differs")
+    authorize(current, "approval.decide", tenant_id)
+
+
+def _workflow_approval_evidence(row, tenant_id, expected):
+    if row is None:
+        raise ControlPlaneError("E_NOT_FOUND", "approval evidence not found")
+    try:
+        payload = json.loads(row["payload_json"])
+        expiry = datetime.fromisoformat(payload["expires_at"])
+        valid = (
+            payload["schema"] == "factory.workflow-approval.v1"
+            and payload["tenant_id"] == tenant_id
+            and payload["phase_evidence"] == expected
+            and sha256(canonical_json(payload)) == row["payload_sha256"]
+            and expiry.tzinfo is not None
+            and expiry > datetime.now(timezone.utc)
+        )
+    except (ValueError, KeyError, TypeError) as error:
+        raise ControlPlaneError(
+            "E_APPROVAL_EVIDENCE", "invalid approval evidence"
+        ) from error
+    if not valid:
+        raise ControlPlaneError(
+            "E_APPROVAL_EVIDENCE", "expired or mismatched approval evidence"
+        )
 
 
 def principal_from_args(

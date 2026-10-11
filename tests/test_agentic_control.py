@@ -1681,3 +1681,54 @@ def test_runtime_history_rejects_corrupt_current_item(
     with pytest.raises(AgenticControlError) as caught:
         store.history(key)
     assert caught.value.code == "E_WORKFLOW_INTEGRITY"
+
+
+def test_runtime_phase_uses_durable_control_plane_approval_after_restart(
+    tmp_path, workflow_source
+):
+    from factoryline.control_plane import EvidenceStore, Principal
+
+    store = workflow_store(
+        tmp_path,
+        phase_verifiers={"trusted-host": lambda v: v},
+        source_observer=lambda s: s,
+    )
+    key = store.intake("first", workflow_source)["item"]["source_key"]
+    triage = finish_workflow_phase(store, key)
+    store.advance(key, "planning", triage)
+    plan = finish_workflow_phase(store, key)
+    controls = EvidenceStore(tmp_path / "approval.sqlite3")
+    operator = Principal("operator", "tenant", ("operator",))
+    approver = Principal("reviewer", "tenant", ("approver",))
+    record = controls.put(
+        operator,
+        dict(
+            schema="factory.workflow-approval.v1",
+            tenant_id="tenant",
+            expires_at="2099-01-01T00:00:00+00:00",
+            phase_evidence=plan,
+        ),
+    )
+    request = controls.request_approval(
+        operator, "tenant", record["evidence_id"], "Review plan"
+    )
+    controls.decide_approval(
+        approver, "tenant", request["approval_id"], "approved", "Reviewed bound plan"
+    )
+    reopened = EvidenceStore(controls.path)
+    verifier = reopened.workflow_approval_verifier(
+        operator,
+        "tenant",
+        request["approval_id"],
+        resolve_principal=lambda subject, tenant: approver,
+    )
+    restarted = workflow_store(
+        tmp_path,
+        phase_verifiers={"trusted-host": verifier},
+        source_observer=lambda s: s,
+    )
+    assert restarted.advance(key, "building", plan)["item"]["phase"] == "building"
+    assert workflow_store(tmp_path).get(key)["last_run"] is None
+    with pytest.raises(AgenticControlError):
+        restarted.advance(key, "building", plan)
+    assert reopened.verify_audit(operator, "tenant")["valid"]

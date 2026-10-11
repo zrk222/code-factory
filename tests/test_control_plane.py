@@ -255,3 +255,266 @@ def test_rest_adapter_requires_identity_and_supports_approval_flow(tmp_path):
         app, "GET", "/v1/audit", subject="audit", tenant="tenant-a", roles="viewer"
     )
     assert status == "200 OK" and audit["valid"] is True
+
+
+def workflow_approval_setup(
+    tmp_path, *, decision="approved", expires_at="2099-01-01T00:00:00+00:00"
+):
+    expected = dict(
+        source_sha256="a" * 64,
+        run_id="run-1",
+        phase="planning",
+        kind="approved_plan",
+        artifact_sha256="b" * 64,
+        verifier_id="approval-host",
+    )
+    store = EvidenceStore(tmp_path / "approvals.sqlite3")
+    record = store.put(
+        _operator(),
+        dict(
+            schema="factory.workflow-approval.v1",
+            tenant_id="tenant-a",
+            expires_at=expires_at,
+            phase_evidence=expected,
+        ),
+    )
+    approval = store.request_approval(
+        _operator(), "tenant-a", record["evidence_id"], "Review bound plan"
+    )
+    if decision != "pending":
+        store.decide_approval(
+            _approver(),
+            "tenant-a",
+            approval["approval_id"],
+            decision,
+            "Independent review",
+        )
+    return store, approval["approval_id"], expected
+
+
+def test_workflow_approval_verifier_survives_restart_and_exact_retry(tmp_path):
+    store, approval_id, expected = workflow_approval_setup(tmp_path)
+
+    def resolver(subject, tenant):
+        return _approver(tenant, subject)
+
+    verifier = EvidenceStore(store.path).workflow_approval_verifier(
+        _operator(), "tenant-a", approval_id, resolve_principal=resolver
+    )
+    assert verifier(expected) == expected
+    assert verifier(expected) == expected
+    with sqlite3.connect(store.path) as db:
+        assert (
+            db.execute("SELECT count(*) FROM workflow_approval_uses").fetchone()[0] == 1
+        )
+        assert (
+            db.execute(
+                "SELECT count(*) FROM audit_events WHERE action='approval.workflow.consume'"
+            ).fetchone()[0]
+            == 1
+        )
+    assert store.verify_audit(_operator(), "tenant-a")["valid"]
+
+
+@pytest.mark.parametrize("decision", ["pending", "rejected"])
+def test_workflow_approval_requires_approved_decision(tmp_path, decision):
+    store, approval_id, expected = workflow_approval_setup(tmp_path, decision=decision)
+    verifier = store.workflow_approval_verifier(
+        _operator(),
+        "tenant-a",
+        approval_id,
+        resolve_principal=lambda s, t: _approver(t, s),
+    )
+    with pytest.raises(ControlPlaneError) as caught:
+        verifier(expected)
+    assert caught.value.code == "E_APPROVAL_REQUIRED"
+
+
+@pytest.mark.parametrize(
+    "expiry", ["2000-01-01T00:00:00+00:00", "2099-01-01", "invalid"]
+)
+def test_workflow_approval_rejects_expired_or_invalid_expiry(tmp_path, expiry):
+    store, approval_id, expected = workflow_approval_setup(tmp_path, expires_at=expiry)
+    verifier = store.workflow_approval_verifier(
+        _operator(),
+        "tenant-a",
+        approval_id,
+        resolve_principal=lambda s, t: _approver(t, s),
+    )
+    with pytest.raises(ControlPlaneError) as caught:
+        verifier(expected)
+    assert caught.value.code == "E_APPROVAL_EVIDENCE"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("source_sha256", "c" * 64),
+        ("run_id", "other-run"),
+        ("artifact_sha256", "d" * 64),
+        ("phase", "building"),
+    ],
+)
+def test_workflow_approval_rejects_different_binding(tmp_path, field, value):
+    store, approval_id, expected = workflow_approval_setup(tmp_path)
+    verifier = store.workflow_approval_verifier(
+        _operator(),
+        "tenant-a",
+        approval_id,
+        resolve_principal=lambda s, t: _approver(t, s),
+    )
+    with pytest.raises(ControlPlaneError):
+        verifier({**expected, field: value})
+    with sqlite3.connect(store.path) as db:
+        assert (
+            db.execute("SELECT count(*) FROM workflow_approval_uses").fetchone()[0] == 0
+        )
+
+
+@pytest.mark.parametrize(
+    "resolver",
+    [
+        lambda s, t: _operator(t, s),
+        lambda s, t: _approver(t, "imposter"),
+        lambda s, t: _approver("tenant-b", s),
+        lambda s, t: None,
+    ],
+)
+def test_workflow_approval_rechecks_current_identity_and_role(tmp_path, resolver):
+    store, approval_id, expected = workflow_approval_setup(tmp_path)
+    verifier = store.workflow_approval_verifier(
+        _operator(), "tenant-a", approval_id, resolve_principal=resolver
+    )
+    with pytest.raises(ControlPlaneError):
+        verifier(expected)
+
+
+def test_workflow_approval_rejects_cross_tenant_and_missing_resolver(tmp_path):
+    store, approval_id, expected = workflow_approval_setup(tmp_path)
+    with pytest.raises(ControlPlaneError):
+        store.workflow_approval_verifier(
+            _operator(),
+            "tenant-b",
+            approval_id,
+            resolve_principal=lambda s, t: _approver(t, s),
+        )
+    with pytest.raises(ControlPlaneError):
+        store.workflow_approval_verifier(
+            _operator(), "tenant-a", approval_id, resolve_principal=None
+        )
+
+
+def test_workflow_approval_corrupt_evidence_is_not_consumed(tmp_path):
+    store, approval_id, expected = workflow_approval_setup(tmp_path)
+    with sqlite3.connect(store.path) as db:
+        db.execute("UPDATE evidence SET payload_json='null'")
+    verifier = store.workflow_approval_verifier(
+        _operator(),
+        "tenant-a",
+        approval_id,
+        resolve_principal=lambda s, t: _approver(t, s),
+    )
+    with pytest.raises(ControlPlaneError) as caught:
+        verifier(expected)
+    assert caught.value.code == "E_APPROVAL_EVIDENCE"
+
+
+def test_workflow_approval_concurrent_retry_records_one_consumption(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    store, approval_id, expected = workflow_approval_setup(tmp_path)
+
+    def consume():
+        reopened = EvidenceStore(store.path)
+        verify = reopened.workflow_approval_verifier(
+            _operator(),
+            "tenant-a",
+            approval_id,
+            resolve_principal=lambda s, t: _approver(t, s),
+        )
+        return verify(expected)
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        assert list(workers.map(lambda _: consume(), range(2))) == [expected, expected]
+    with sqlite3.connect(store.path) as db:
+        assert (
+            db.execute("SELECT count(*) FROM workflow_approval_uses").fetchone()[0] == 1
+        )
+        assert (
+            db.execute(
+                "SELECT count(*) FROM audit_events WHERE action='approval.workflow.consume'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_workflow_approval_failed_audit_rolls_back_consumption(tmp_path, monkeypatch):
+    store, approval_id, expected = workflow_approval_setup(tmp_path)
+    original = store._audit
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("interruption")
+
+    monkeypatch.setattr(store, "_audit", fail)
+    verify = store.workflow_approval_verifier(
+        _operator(),
+        "tenant-a",
+        approval_id,
+        resolve_principal=lambda s, t: _approver(t, s),
+    )
+    with pytest.raises(RuntimeError, match="interruption"):
+        verify(expected)
+    with sqlite3.connect(store.path) as db:
+        assert (
+            db.execute("SELECT count(*) FROM workflow_approval_uses").fetchone()[0] == 0
+        )
+    monkeypatch.setattr(store, "_audit", original)
+    assert verify(expected) == expected
+
+
+def test_workflow_approval_rejects_reused_fingerprint_and_revoked_role(tmp_path):
+    store, approval_id, expected = workflow_approval_setup(tmp_path)
+    verify = store.workflow_approval_verifier(
+        _operator(),
+        "tenant-a",
+        approval_id,
+        resolve_principal=lambda s, t: _approver(t, s),
+    )
+    assert verify(expected) == expected
+    revoked = store.workflow_approval_verifier(
+        _operator(),
+        "tenant-a",
+        approval_id,
+        resolve_principal=lambda s, t: _operator(t, s),
+    )
+    with pytest.raises(ControlPlaneError) as caught:
+        revoked(expected)
+    assert caught.value.code == "E_ACTION_DENIED"
+    with sqlite3.connect(store.path) as db:
+        db.execute("UPDATE workflow_approval_uses SET fingerprint=?", ("c" * 64,))
+    with pytest.raises(ControlPlaneError) as caught:
+        verify(expected)
+    assert caught.value.code == "E_APPROVAL_REPLAY"
+
+
+def test_workflow_approval_changed_during_identity_resolution_is_fenced(tmp_path):
+    store, approval_id, expected = workflow_approval_setup(tmp_path)
+
+    def resolve(subject, tenant):
+        with sqlite3.connect(store.path) as db:
+            db.execute(
+                "UPDATE approvals SET status='rejected' WHERE approval_id=?",
+                (approval_id,),
+            )
+        return _approver(tenant, subject)
+
+    verify = store.workflow_approval_verifier(
+        _operator(), "tenant-a", approval_id, resolve_principal=resolve
+    )
+    with pytest.raises(ControlPlaneError) as caught:
+        verify(expected)
+    assert caught.value.code == "E_APPROVAL_CHANGED"
+    with sqlite3.connect(store.path) as db:
+        assert (
+            db.execute("SELECT count(*) FROM workflow_approval_uses").fetchone()[0] == 0
+        )
