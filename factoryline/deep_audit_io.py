@@ -1833,14 +1833,17 @@ def _retained_fuzz_corpus(report, sources):
         ) from error
 
 
-def _fuzz_replay_expected(request):
-    exact_keys(request, {"lane", "inventory", "coverage", "report"})
+def _fuzz_replay_expected(request, validated_controls=None):
+    keys = {"lane", "inventory", "coverage", "report"}
+    if isinstance(request, dict) and {"challenges", "obligations"} <= set(request):
+        keys |= {"challenges", "obligations"}
+    exact_keys(request, keys)
     lane, inventory, report = request["lane"], request["inventory"], request["report"]
     if lane["engine"] != "atheris" or lane["family"] != "fuzz":
         raise RuntimeAuditError("E_FUZZ_REPLAY", "fuzz lane required")
     sources = {item["path"]: item["sha256"] for item in inventory["files"]}
     corpus = _retained_fuzz_corpus(report, sources)
-    return {
+    expected = {
         "schema": "factory.fuzz-native-replay.v1",
         "state": "VERIFIED",
         "candidate_sha256": require_digest(inventory["candidate_sha256"], "candidate"),
@@ -1852,6 +1855,17 @@ def _fuzz_replay_expected(request):
         "replayed_inputs": len(corpus["inputs"]),
         "failure_inputs": sorted({item["input_sha256"] for item in report["findings"]}),
     }
+    if "obligations" in request:
+        controls = validated_controls or verify_fuzz_retained_evidence(
+            request["challenges"],
+            request["obligations"],
+            lane,
+            sources,
+            inventory["candidate_sha256"],
+            request["coverage"],
+        )
+        expected.update(controls[0])
+    return expected
 
 
 def _fuzz_replay_inputs_main(request_path, source):
@@ -1861,7 +1875,17 @@ def _fuzz_replay_inputs_main(request_path, source):
 
     with Path(request_path).open("rb") as stream:
         request = strict_json(stream.read(LIMIT + 1))
-    expected = _fuzz_replay_expected(request)
+    retained_controls = None
+    if "obligations" in request:
+        retained_controls = verify_fuzz_retained_evidence(
+            request["challenges"],
+            request["obligations"],
+            request["lane"],
+            {item["path"]: item["sha256"] for item in request["inventory"]["files"]},
+            request["inventory"]["candidate_sha256"],
+            request["coverage"],
+        )
+    expected = _fuzz_replay_expected(request, retained_controls)
     sources = {item["path"]: item["sha256"] for item in request["inventory"]["files"]}
     corpus = _retained_fuzz_corpus(request["report"], sources)
     path = local_file(Path(source), corpus["harness"]["path"])
@@ -1869,19 +1893,65 @@ def _fuzz_replay_inputs_main(request_path, source):
     spec = importlib.util.spec_from_file_location("factory_fuzz_replay_target", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    failures = []
-    for entry in corpus["inputs"]:
-        try:
-            module.TestOneInput(base64.b64decode(entry["data_base64"], validate=True))
-        except Exception:
-            failures.append(entry["sha256"])
-    return {
+    failures = _fuzz_replay_harness(module, corpus["inputs"], base64)
+    result = {
         "schema": "factory.fuzz-input-replay.v1",
         "harness": expected["harness"],
         "corpus_sha256": expected["corpus_sha256"],
         "replayed_inputs": len(corpus["inputs"]),
         "failure_inputs": sorted(failures),
     }
+    if "obligations" in request:
+        result["controls"] = _fuzz_replay_controls(retained_controls[1], source, base64)
+    return result
+
+
+def _fuzz_replay_harness(module, inputs, base64):
+    failures = []
+    for entry in inputs:
+        try:
+            module.TestOneInput(base64.b64decode(entry["data_base64"], validate=True))
+        except Exception:
+            failures.append(entry["sha256"])
+    return failures
+
+
+def _fuzz_replay_controls(controls, source, base64):
+    results = []
+    for control in controls:
+        module = _fuzz_replay_module(source, control)
+        failures = _fuzz_replay_harness(module, control["corpus"]["inputs"], base64)
+        reported = sorted(
+            {item["input_sha256"] for item in control["report"]["findings"]}
+        )
+        enabled = _fuzz_control_ids(control["config"]) == ["FUZZ_EXCEPTION"]
+        detected = failures if enabled else []
+        results.append(
+            {
+                "obligation_id": control["obligation_id"],
+                "kind": control["kind"],
+                "failure_inputs": sorted(failures),
+                "detector_inputs": sorted(detected),
+                "retained_failure_inputs": reported,
+            }
+        )
+    return results
+
+
+def _fuzz_replay_module(source, control):
+    import importlib.util
+
+    path = local_file(source, control["harness"]["path"])
+    bound_bytes(source, control["harness"])
+    module_name = "factory_fuzz_control_" + control["obligation_id"]
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeAuditError("E_FUZZ_REPLAY", "control harness cannot be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if not callable(getattr(module, "TestOneInput", None)):
+        raise RuntimeAuditError("E_FUZZ_REPLAY", "control callback is missing")
+    return module
 
 
 def _fuzz_replay_profile(request):
@@ -1902,7 +1972,8 @@ def execute_fuzz_native_replay(request, source, scratch, timeout):
     """Re-execute retained fuzz inputs under a bounded isolated worker lifecycle."""
     from .runtime_audit_process import run_bounded_command
 
-    expected = _fuzz_replay_expected(request)
+    retained_controls = _fuzz_replay_control_evidence(request)
+    expected = _fuzz_replay_expected(request, retained_controls)
     timeout = require_int(timeout, "fuzz replay timeout", minimum=1, maximum=3600)
     deadline = time.monotonic() + timeout
     _fuzz_replay_profile(request)
@@ -1933,10 +2004,26 @@ def execute_fuzz_native_replay(request, source, scratch, timeout):
     )
     with capture.open("rb") as stream:
         raw = stream.read(LIMIT + 1)
-    _validate_fuzz_replay_observation(raw, facts, expected)
+    _validate_fuzz_replay_observation(
+        raw, facts, expected, retained_controls[1] if retained_controls else None
+    )
     _adapter_sources(source, request["inventory"])
     _fuzz_replay_remaining(deadline)
     return {**expected, "native_execution_sha256": digest(facts)}
+
+
+def _fuzz_replay_control_evidence(request):
+    if "obligations" not in request:
+        return None
+    inventory = request["inventory"]
+    return verify_fuzz_retained_evidence(
+        request["challenges"],
+        request["obligations"],
+        request["lane"],
+        {item["path"]: item["sha256"] for item in inventory["files"]},
+        inventory["candidate_sha256"],
+        request["coverage"],
+    )
 
 
 def _fuzz_replay_remaining(deadline):
@@ -1946,7 +2033,7 @@ def _fuzz_replay_remaining(deadline):
     return remaining
 
 
-def _validate_fuzz_replay_observation(raw, facts, expected):
+def _validate_fuzz_replay_observation(raw, facts, expected, controls=None):
     from .runtime_audit_common import _validate_runner_facts
 
     _validate_runner_facts(facts, facts["timeout_seconds"])
@@ -1962,8 +2049,62 @@ def _validate_fuzz_replay_observation(raw, facts, expected):
         key: expected[key]
         for key in ("harness", "corpus_sha256", "replayed_inputs", "failure_inputs")
     }
-    if observed != {"schema": "factory.fuzz-input-replay.v1", **fields}:
+    expected_observation = {"schema": "factory.fuzz-input-replay.v1", **fields}
+    if controls is not None:
+        expected_observation["controls"] = observed.get("controls")
+        _validate_fuzz_replayed_controls(observed.get("controls"), controls)
+    if observed != expected_observation:
         raise RuntimeAuditError("E_FUZZ_REPLAY", "retained input outcomes differ")
+
+
+def _validate_fuzz_replayed_controls(observed, controls):
+    if not isinstance(observed, list) or len(observed) != len(controls):
+        raise RuntimeAuditError("E_FUZZ_REPLAY", "retained controls are incomplete")
+    for actual, expected in zip(observed, controls):
+        if not isinstance(actual, dict) or set(actual) != {
+            "obligation_id",
+            "kind",
+            "failure_inputs",
+            "detector_inputs",
+            "retained_failure_inputs",
+        }:
+            raise RuntimeAuditError("E_FUZZ_REPLAY", "control replay shape differs")
+        _validate_fuzz_replayed_control(actual, expected)
+
+
+def _validate_fuzz_replayed_control(actual, expected):
+    kind = expected["kind"]
+    failures = actual["failure_inputs"]
+    retained = expected["retained_failure_inputs"]
+    if (
+        actual["obligation_id"] != expected["obligation_id"]
+        or kind != actual["kind"]
+        or actual["retained_failure_inputs"] != retained
+        or not _fuzz_replayed_failure_inputs_valid(failures, expected)
+    ):
+        raise RuntimeAuditError("E_FUZZ_REPLAY", "control exception replay differs")
+    detected = failures if expected["detector_enabled"] else []
+    if actual["detector_inputs"] != detected:
+        raise RuntimeAuditError("E_FUZZ_REPLAY", "control detector result differs")
+
+
+def _fuzz_replayed_failure_inputs_valid(failures, expected):
+    if not isinstance(failures, list) or any(not _is_digest(item) for item in failures):
+        return False
+    if failures != sorted(set(failures)):
+        return False
+    if not set(failures) <= expected["corpus_hashes"]:
+        return False
+    kind = expected["kind"]
+    if kind == "positive":
+        return failures == expected["retained_failure_inputs"]
+    if kind == "negative":
+        return not failures
+    return kind == "mutation" and bool(failures)
+
+
+def _is_digest(value):
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
 
 def _finalize_fuzz_report(raw, invocations):
@@ -2706,6 +2847,273 @@ def _atheris_challenge_retained_budget(observations):
             )
     if total > NATIVE_COVERAGE_LIMIT:
         raise RuntimeAuditError("E_FUZZ_ARTIFACT", "retained controls exceed budget")
+
+
+def verify_fuzz_retained_evidence(
+    challenges, obligations, lane, sources, candidate_sha256, coverage
+):
+    """Validate retained signed Atheris controls without granting coverage."""
+    try:
+        _fuzz_retained_bundle_shape(challenges)
+        candidate_sha256 = require_digest(candidate_sha256, "candidate_sha256")
+        expected = _fuzz_retained_expected(obligations, lane, sources)
+        observed = _fuzz_retained_observations(
+            challenges, expected, lane, sources, candidate_sha256, coverage
+        )
+        _fuzz_retained_gaps(challenges["gaps"], expected)
+        _atheris_challenge_retained_budget(challenges["observations"])
+        controls = [observed[key] for key in sorted(expected)]
+    except RuntimeAuditError:
+        raise
+    except (ValueError, TypeError, KeyError, AttributeError, OSError) as exc:
+        raise RuntimeAuditError(
+            "E_FUZZ_ARTIFACT", "retained Atheris controls invalid"
+        ) from exc
+    control_bindings = [
+        {
+            "obligation_id": item["obligation_id"],
+            "kind": item["kind"],
+            "evidence": item["native_evidence"],
+        }
+        for item in controls
+    ]
+    return (
+        {
+            "challenge_sha256": digest(challenges),
+            "obligations_sha256": digest(obligations),
+            "covered_obligations": sorted({key[0] for key in expected}),
+            "controls_sha256": digest(control_bindings),
+            "control_count": len(controls),
+        },
+        controls,
+    )
+
+
+def _fuzz_retained_bundle_shape(challenges):
+    exact_keys(challenges, {"schema", "observations", "gaps"})
+    if (
+        challenges["schema"] != "factory.deep-challenges.v1"
+        or not isinstance(challenges["observations"], list)
+        or not isinstance(challenges["gaps"], list)
+    ):
+        raise RuntimeAuditError("E_FUZZ_ARTIFACT", "challenge bundle shape differs")
+
+
+def _fuzz_retained_expected(obligations, lane, sources):
+    if (
+        lane.get("engine") != "atheris"
+        or lane.get("family") != "fuzz"
+        or not isinstance(obligations, list)
+        or not isinstance(sources, dict)
+    ):
+        raise RuntimeAuditError(
+            "E_FUZZ_ARTIFACT", "signed Atheris obligations required"
+        )
+    obligations = [
+        item
+        for item in obligations
+        if isinstance(item, dict)
+        and item.get("engine") == "atheris"
+        and item.get("family") == "fuzz"
+        and isinstance(item.get("paths"), list)
+        and set(item["paths"]) <= set(sources)
+    ]
+    if not obligations or len(obligations) > 64:
+        raise RuntimeAuditError("E_FUZZ_ARTIFACT", "applicable obligations required")
+    expected = {}
+    for obligation in obligations:
+        _fuzz_retained_obligation_valid(obligation, sources)
+        identity = require_str(obligation.get("id"), "obligation id", maximum=128)
+        if identity in {key[0] for key in expected}:
+            raise RuntimeAuditError("E_FUZZ_ARTIFACT", "duplicate obligation")
+        by_kind = _fuzz_retained_control_kinds(obligation)
+        for kind, challenge in by_kind.items():
+            key = (identity, kind)
+            if key in expected:
+                raise RuntimeAuditError("E_FUZZ_ARTIFACT", "duplicate signed control")
+            expected[key] = (challenge, obligation)
+    if len(expected) > 192:
+        raise RuntimeAuditError("E_FUZZ_ARTIFACT", "control count exceeds budget")
+    return expected
+
+
+def _fuzz_retained_obligation_valid(obligation, sources):
+    if not isinstance(obligation, dict):
+        raise RuntimeAuditError("E_FUZZ_ARTIFACT", "obligation object required")
+    valid = (
+        obligation.get("engine") == "atheris"
+        and obligation.get("family") == "fuzz"
+        and obligation.get("detector_rule_id") == "FUZZ_EXCEPTION"
+        and isinstance(obligation.get("paths"), list)
+        and set(obligation["paths"]) <= set(sources)
+    )
+    if not valid:
+        raise RuntimeAuditError("E_FUZZ_ARTIFACT", "obligation binding differs")
+
+
+def _fuzz_retained_control_kinds(obligation):
+    controls = obligation.get("challenges")
+    if not isinstance(controls, list) or len(controls) != 3:
+        raise RuntimeAuditError("E_FUZZ_ARTIFACT", "three signed controls required")
+    by_kind = {item.get("kind"): item for item in controls if isinstance(item, dict)}
+    if set(by_kind) != {"positive", "negative", "mutation"} or len(by_kind) != 3:
+        raise RuntimeAuditError("E_FUZZ_ARTIFACT", "signed control triplet differs")
+    return by_kind
+
+
+def _fuzz_retained_observations(
+    challenges, expected, lane, sources, candidate_sha256, coverage
+):
+    from .deep_audit_sarif import _challenge_execution_gap, _challenge_gap
+
+    approved = {key: value for key, value in expected.items()}
+    observed = {}
+    for observation in challenges["observations"]:
+        if not isinstance(observation, dict):
+            raise RuntimeAuditError("E_FUZZ_ARTIFACT", "challenge observation required")
+        key = (observation.get("obligation_id"), observation.get("kind"))
+        if key not in expected or key in observed:
+            raise RuntimeAuditError("E_FUZZ_ARTIFACT", "unknown or duplicate control")
+        challenge, obligation = expected[key]
+        challenge_gap = _challenge_gap(observation, key, approved, lane, sources)
+        execution_gap = _challenge_execution_gap(
+            observation,
+            challenge,
+            obligation,
+            key,
+            lane,
+            coverage,
+            candidate_sha256,
+        )
+        if challenge_gap or execution_gap:
+            raise RuntimeAuditError(
+                "E_FUZZ_ARTIFACT", "signed challenge validation failed"
+            )
+        observed[key] = _fuzz_retained_control_evidence(
+            observation, challenge, obligation, lane, sources
+        )
+    if set(observed) != set(expected):
+        raise RuntimeAuditError("E_FUZZ_ARTIFACT", "signed control triplet incomplete")
+    return observed
+
+
+def _fuzz_retained_control_evidence(observation, challenge, obligation, lane, sources):
+    evidence = observation.get("atheris_native_evidence")
+    exact_keys(
+        evidence,
+        {
+            "schema",
+            "source_manifest",
+            "source_manifest_sha256",
+            "raw_report",
+            "corpus_manifest",
+            "effective_config",
+        },
+    )
+    manifest = evidence["source_manifest"]
+    if (
+        evidence["schema"] != "factory.atheris-retained-challenge.v1"
+        or manifest != challenge.get("fixture_manifest")
+        or evidence["source_manifest_sha256"] != digest(manifest)
+    ):
+        raise RuntimeAuditError("E_FUZZ_ARTIFACT", "retained source manifest differs")
+    _fuzz_fixture_manifest_binding(
+        manifest, obligation, sources, challenge["fixture_path"]
+    )
+    raw_report = _codeql_blob_bytes(evidence["raw_report"], LIMIT)
+    corpus_raw = _codeql_blob_bytes(evidence["corpus_manifest"], LIMIT)
+    config = _codeql_blob_bytes(evidence["effective_config"], 4096)
+    _fuzz_retained_execution_artifacts(observation, raw_report, corpus_raw, config)
+    raw = strict_json(raw_report)
+    normalized = _atheris_challenge_report(
+        raw_report, corpus_raw, config, challenge, lane, manifest
+    )
+    report = observation.get("report")
+    if not isinstance(report, dict) or normalized != report.get("native_report"):
+        raise RuntimeAuditError("E_FUZZ_ARTIFACT", "retained report differs")
+    corpus = _validate_fuzz_corpus(corpus_raw, raw, manifest)
+    return {
+        "obligation_id": obligation["id"],
+        "kind": challenge["kind"],
+        "harness": {
+            "path": challenge["fixture_path"],
+            "sha256": manifest[challenge["fixture_path"]],
+        },
+        "report": raw,
+        "corpus": corpus,
+        "config": config,
+        "native_evidence": evidence,
+        "detector_enabled": _fuzz_control_ids(config) == ["FUZZ_EXCEPTION"],
+        "corpus_hashes": {item["sha256"] for item in corpus["inputs"]},
+        "retained_failure_inputs": sorted(
+            {item["input_sha256"] for item in raw["findings"]}
+        ),
+    }
+
+
+def _fuzz_fixture_manifest_binding(manifest, obligation, sources, fixture_path):
+    paths = set(obligation["paths"])
+    if (
+        not isinstance(manifest, dict)
+        or not manifest
+        or fixture_path not in paths
+        or fixture_path not in manifest
+        or not set(manifest) <= paths
+    ):
+        raise RuntimeAuditError("E_CHALLENGE_BINDING", "fixture manifest differs")
+    for path, source_sha in manifest.items():
+        relative_path(path)
+        require_digest(source_sha, "fixture_sha256")
+        if sources.get(path) != source_sha:
+            raise RuntimeAuditError("E_CHALLENGE_BINDING", "fixture source differs")
+
+
+def _fuzz_retained_execution_artifacts(observation, raw_report, corpus_raw, config):
+    execution = observation["execution"]
+    expected = sorted(
+        [
+            {
+                "kind": "fuzz_result",
+                "bytes": len(raw_report),
+                "sha256": sha256_bytes(raw_report),
+            },
+            {
+                "kind": "corpus_manifest",
+                "bytes": len(corpus_raw),
+                "sha256": sha256_bytes(corpus_raw),
+            },
+        ],
+        key=lambda item: item["kind"],
+    )
+    if (
+        execution.get("native_artifacts") != expected
+        or execution.get("raw_report_sha256") != sha256_bytes(raw_report)
+        or execution.get("effective_config_sha256") != sha256_bytes(config)
+    ):
+        raise RuntimeAuditError(
+            "E_FUZZ_ARTIFACT", "retained control execution artifacts differ"
+        )
+
+
+def _fuzz_retained_gaps(gaps, expected):
+    if not isinstance(gaps, list) or len(gaps) != len(expected):
+        raise RuntimeAuditError("E_FUZZ_ARTIFACT", "unexpected challenge gaps")
+    actual = set()
+    for gap in gaps:
+        if (
+            not isinstance(gap, dict)
+            or set(gap) != {"obligation_id", "kind", "reason"}
+            or gap.get("reason") != "FUZZ_CHALLENGE_REPLAY_REQUIRED"
+        ):
+            raise RuntimeAuditError(
+                "E_FUZZ_ARTIFACT", "challenge gap is not replay-only"
+            )
+        key = (gap["obligation_id"], gap["kind"])
+        if key not in expected or key in actual:
+            raise RuntimeAuditError("E_FUZZ_ARTIFACT", "challenge gap identity differs")
+        actual.add(key)
+    if actual != set(expected):
+        raise RuntimeAuditError("E_FUZZ_ARTIFACT", "replay gaps are incomplete")
 
 
 def _osv_suppression_bytes(aliases):

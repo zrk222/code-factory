@@ -598,8 +598,35 @@ def _challenge_semantics(
     if lane["engine"] == "osv" and "fixture_manifest" in bound:
         _osv_challenge_rows(native, lane, bound["fixture_manifest"], obligation, kind)
         return
+    if lane["engine"] == "atheris" and "fixture_manifest" in bound:
+        _atheris_challenge_semantics(native, lane, bound, obligation, kind)
+        return
     findings = _native_execution_report(native, lane, sources)
     _challenge_findings_valid(findings, native, lane, obligation, kind)
+
+
+def _atheris_challenge_semantics(native, lane, bound, obligation, kind):
+    rule = obligation["detector_rule_id"]
+    config_sha = (
+        lane["mutation_config_sha256"][rule]
+        if kind == "mutation"
+        else lane["ruleset_sha256"]
+    )
+    expected = {
+        "schema": "factory.atheris-challenge-observation.v1",
+        "kind": kind,
+        "control_sha256": config_sha,
+        "harness": {"path": bound["fixture_path"], "sha256": bound["fixture_sha256"]},
+        "findings": (
+            [{"rule_id": rule, "path": bound["fixture_path"], "severity": "high"}]
+            if kind == "positive"
+            else []
+        ),
+    }
+    if rule != "FUZZ_EXCEPTION" or native != expected:
+        raise RuntimeAuditError(
+            "E_CHALLENGE_SEMANTICS", "signed fuzz control result differs"
+        )
 
 
 def _challenge_findings_valid(findings, native, lane, obligation, kind):
