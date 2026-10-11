@@ -13,6 +13,7 @@ import re
 from .deep_audit_io import bound_bytes, digest, relative_path, sha256_bytes, strict_json
 from .runtime_audit_common import (
     RuntimeAuditError,
+    canonical_bytes,
     require_digest,
     require_int,
     require_str,
@@ -450,7 +451,7 @@ def _challenge_findings_valid(findings, native, lane, obligation, kind):
         rules = {item["id"] for item in native["artifacts"]}
     detected = obligation["detector_rule_id"] in rules
     clean_negative_failed = (
-        lane["engine"] == "gitleaks" and kind == "negative" and bool(rules)
+        lane["engine"] in {"gitleaks", "semgrep"} and kind == "negative" and bool(rules)
     )
     if detected != (kind == "positive") or clean_negative_failed:
         raise RuntimeAuditError(
@@ -1276,7 +1277,24 @@ def _challenge_v2_artifact_bindings(execution, lane, by_role):
         return (
             execution.get("ledger_sha256") == by_role["gitleaks_rule_ledger"]["sha256"]
         )
+    if lane["engine"] == "semgrep" and not _semgrep_config_inventory_valid(
+        execution, lane, by_role["rule_inventory"]
+    ):
+        return False
     return execution.get("ledger_sha256") is None
+
+
+def _semgrep_config_inventory_valid(execution, lane, artifact):
+    """Bind adapter-derived config inventory; it is not independent scanner evidence."""
+    mutation = execution.get("mutation")
+    disabled = mutation.get("disabled_rule_id") if isinstance(mutation, dict) else None
+    rules = [rule for rule in lane["rule_ids"] if rule != disabled]
+    inventory = {
+        "ruleset_sha256": execution.get("effective_config_sha256"),
+        "rule_ids": rules,
+    }
+    raw = canonical_bytes(inventory)
+    return artifact["sha256"] == sha256_bytes(raw) and artifact["bytes"] == len(raw)
 
 
 def _challenge_execution_v2_binding(

@@ -1898,6 +1898,10 @@ def execute_native_profile(
         challenges, covered_obligations = _gitleaks_challenges(
             profile, contract, Path(source), lane, execution, started
         )
+    elif lane["engine"] == "semgrep" and "native_artifact_roles" in lane:
+        challenges, covered_obligations = _semgrep_challenges(
+            profile, contract, Path(source), lane, execution, started
+        )
     elif lane["engine"] == "runtime" and profile["report_format"] == "runtime-junit":
         challenges, covered_obligations = _runtime_challenges(
             profile, contract, Path(source), lane, execution, started
@@ -2382,7 +2386,12 @@ def _native_profile_coverage(
         complete = not errors
     elif execution.get("semgrep_rule_execution") is not None:
         _semgrep_source_accounting(execution, inventory, lane)
-        errors = ["NATIVE_CHALLENGES_REQUIRED"]
+        errors = (
+            []
+            if _gitleaks_challenges_complete(challenges, covered_obligations)
+            else ["NATIVE_CHALLENGES_REQUIRED"]
+        )
+        complete = not errors
     coverage = {
         "profile_sha256": digest(profile),
         "image_binding_sha256": sha256_bytes(
@@ -2670,6 +2679,354 @@ def _runtime_challenges(profile, contract, source, lane, execution, started):
         "observations": observations,
         "gaps": gaps,
     }, [item["id"] for item in obligations]
+
+
+def _semgrep_challenges(profile, contract, source, lane, execution, started):
+    from .runtime_audit_process import run_bounded_command
+
+    command = _semgrep_challenge_command(profile)
+    baseline_path = Path("/opt/factory/rules/semgrep-pattern-limited.yml")
+    baseline = baseline_path.read_bytes()
+    _semgrep_rule_inventory(baseline, lane)
+    source_bindings = {
+        item["path"]: item["sha256"] for item in contract["inventory"]["files"]
+    }
+    obligations = _semgrep_obligations(contract, lane)
+    observations, gaps = [], []
+    if len(obligations) > 64:
+        gaps = [
+            _challenge_gap_record(obligation, challenge, "E_SEMGREP_CHALLENGE_BUDGET")
+            for obligation in obligations
+            for challenge in obligation["challenges"]
+        ]
+        return {
+            "schema": "factory.deep-challenges.v1",
+            "observations": observations,
+            "gaps": gaps,
+        }, [item["id"] for item in obligations]
+    deadline = started + lane["timeout_seconds"]
+    with tempfile.TemporaryDirectory(prefix="factory-semgrep-challenges-") as root:
+        for index, obligation in enumerate(obligations):
+            for challenge in obligation["challenges"]:
+                _semgrep_challenge_result(
+                    execute_native_challenge=_native_challenge_executor(),
+                    runner=run_bounded_command,
+                    profile=profile,
+                    contract=contract,
+                    source=source,
+                    lane=lane,
+                    execution=execution,
+                    command=command,
+                    baseline_path=baseline_path,
+                    baseline=baseline,
+                    source_bindings=source_bindings,
+                    obligation=obligation,
+                    challenge=challenge,
+                    case=Path(root) / f"control-{index}-{challenge['kind']}",
+                    deadline=deadline,
+                    observations=observations,
+                    gaps=gaps,
+                )
+    return {
+        "schema": "factory.deep-challenges.v1",
+        "observations": observations,
+        "gaps": gaps,
+    }, [item["id"] for item in obligations]
+
+
+def _native_challenge_executor():
+    from .runtime_audit_common import execute_native_challenge
+
+    return execute_native_challenge
+
+
+def _semgrep_obligations(contract, lane):
+    return [
+        item
+        for item in contract["obligations"]
+        if item["engine"] == "semgrep" and item["family"] == lane["family"]
+    ]
+
+
+def _semgrep_challenge_result(
+    *,
+    execute_native_challenge,
+    runner,
+    profile,
+    contract,
+    source,
+    lane,
+    execution,
+    command,
+    baseline_path,
+    baseline,
+    source_bindings,
+    obligation,
+    challenge,
+    case,
+    deadline,
+    observations,
+    gaps,
+):
+    remaining = int(deadline - time.monotonic())
+    if remaining < 1:
+        gaps.append(_challenge_gap_record(obligation, challenge, "E_ADAPTER_TIMEOUT"))
+        return
+    if not _gitleaks_challenge_allowed(
+        challenge, obligation, source_bindings, command, lane
+    ):
+        gaps.append(_challenge_gap_record(obligation, challenge, "E_CHALLENGE_BINDING"))
+        return
+    try:
+        observations.append(
+            _run_semgrep_challenge(
+                execute_native_challenge,
+                runner,
+                profile,
+                contract,
+                source,
+                lane,
+                execution,
+                command,
+                baseline_path,
+                baseline,
+                obligation,
+                challenge,
+                case,
+                remaining,
+            )
+        )
+    except (OSError, RuntimeAuditError, ValueError, TypeError, KeyError) as exc:
+        gaps.append(
+            _challenge_gap_record(obligation, challenge, _challenge_error_code(exc))
+        )
+
+
+def _semgrep_challenge_command(profile):
+    if profile.get("engine") != "semgrep" or len(profile.get("commands", [])) != 1:
+        raise RuntimeAuditError(
+            "E_SEMGREP_PROFILE", "one pinned Semgrep command required"
+        )
+    argv = profile["commands"][0].get("argv")
+    expected = [
+        "/usr/bin/semgrep",
+        "scan",
+        "--metrics=off",
+        "--disable-version-check",
+        "--no-git-ignore",
+        "--disable-nosem",
+        "--dataflow-traces",
+        "--config",
+        "/opt/factory/rules/semgrep-pattern-limited.yml",
+        "--sarif-output",
+        "{report}",
+        "{source}",
+    ]
+    if argv != expected:
+        raise RuntimeAuditError("E_SEMGREP_PROFILE", "pinned command differs")
+    result = list(argv)
+    result[8] = "{config}"
+    result.insert(7, "--no-rewrite-rule-ids")
+    return {
+        "argv": result,
+        "accepted_exit_codes": profile["commands"][0]["accepted_exit_codes"],
+    }
+
+
+def _run_semgrep_challenge(
+    execute,
+    runner,
+    profile,
+    contract,
+    source,
+    lane,
+    execution,
+    command,
+    baseline_path,
+    baseline,
+    obligation,
+    challenge,
+    case,
+    timeout,
+):
+    from .runtime_audit_common import sha256_bytes as common_sha256
+
+    fixture_path = relative_path(challenge["fixture_path"])
+    fixture_manifest = dict(
+        sorted(
+            challenge.get(
+                "fixture_manifest", {fixture_path: challenge["fixture_sha256"]}
+            ).items()
+        )
+    )
+    _semgrep_fixture_binding(fixture_manifest, obligation, source, fixture_path)
+    case.mkdir()
+    challenge_root = case / "source"
+    for path, source_sha in fixture_manifest.items():
+        target = challenge_root.joinpath(*path.split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(bound_bytes(source, {"path": path, "sha256": source_sha}))
+    challenge_sha = digest(fixture_manifest)
+    config_path = baseline_path
+    if challenge["kind"] == "mutation":
+        config_path = _semgrep_mutation_file(case, baseline, lane, obligation)
+    scratch = case / "run"
+    report_path = scratch / "report.sarif"
+    inventory_path = scratch / "rule-inventory.json"
+    ledger_path = scratch / "unused-ledger.json"
+    bindings = _semgrep_challenge_bindings(
+        challenge_root, scratch, report_path, ledger_path, config_path, challenge_sha
+    )
+    effective = config_path.read_bytes()
+    effective_ids = _semgrep_rule_ids(effective)
+    inventory_bytes = canonical_bytes(
+        {"ruleset_sha256": sha256_bytes(effective), "rule_ids": effective_ids}
+    )
+
+    def challenge_runner(argv, cwd, budget, run_scratch):
+        inventory_path.write_bytes(inventory_bytes)
+        return runner(argv, cwd, budget, run_scratch)
+
+    def report_parser(raw):
+        return _semgrep_challenge_report(raw, profile, challenge_root, fixture_manifest)
+
+    image = lane["image"]
+    execution_bindings = {
+        "candidate_sha256": contract["inventory"]["candidate_sha256"],
+        "challenge_source_sha256": challenge_sha,
+        "profile_sha256": digest(profile),
+        "image_sha256": common_sha256(image.encode("utf-8")),
+        "tool_version": profile["tool_version"],
+        "version_probe_sha256": digest(execution["version_probe"]),
+        "version_probe_facts": execution["version_probe"],
+    }
+    return execute(
+        challenge,
+        obligation_id=obligation["id"],
+        engine="semgrep",
+        detector_rule_id=obligation["detector_rule_id"],
+        detector_enabled=challenge["kind"] != "mutation",
+        profile_argv=command["argv"],
+        bindings=bindings,
+        source_root=challenge_root,
+        baseline_config_path=baseline_path,
+        effective_config_path=config_path,
+        report_path=report_path,
+        ledger_path=ledger_path,
+        scratch=scratch,
+        scratch_parent=case,
+        timeout_seconds=timeout,
+        expected_ruleset_sha256=lane["ruleset_sha256"],
+        execution_bindings=execution_bindings,
+        runner=challenge_runner,
+        report_parser=report_parser,
+        config_rule_ids=_semgrep_rule_ids,
+        verify_mutation=_semgrep_mutation_valid,
+        native_artifact_roles=lane["native_artifact_roles"],
+        native_artifacts={
+            "sarif_report": report_path,
+            "rule_inventory": inventory_path,
+        },
+        rule_ids=lane["rule_ids"],
+        mutation_ruleset_sha256=lane["mutation_config_sha256"],
+    )
+
+
+def _semgrep_fixture_binding(manifest, obligation, source, fixture_path):
+    obligation_paths = set(obligation.get("paths", []))
+    if (
+        not isinstance(manifest, dict)
+        or not manifest
+        or fixture_path not in obligation_paths
+        or fixture_path not in manifest
+        or not set(manifest) <= obligation_paths
+    ):
+        raise RuntimeAuditError(
+            "E_CHALLENGE_BINDING",
+            "fixture paths must be a bound subset of obligation paths",
+        )
+    for path, source_sha in manifest.items():
+        bound_bytes(source, {"path": relative_path(path), "sha256": source_sha})
+
+
+def _semgrep_challenge_bindings(source, scratch, report, ledger, config, candidate_sha):
+    return {
+        "source": str(source),
+        "output": str(scratch),
+        "report": str(report),
+        "scratch": str(scratch),
+        "candidate_sha256": candidate_sha,
+        "factory_ledger": str(ledger),
+        "config": str(config),
+    }
+
+
+def _semgrep_challenge_report(raw, profile, source_root, sources):
+    report = strict_json(raw)
+    if not isinstance(report, dict):
+        raise RuntimeAuditError("E_CHALLENGE_REPORT", "native SARIF object required")
+    report = _native_sarif_metadata(report, profile, [])
+    _normalize_challenge_sarif_paths(report, source_root)
+    return _native_sarif_paths(report, sources)
+
+
+def _semgrep_rule_ids(config):
+    import yaml
+
+    try:
+        rules = yaml.safe_load(config)["rules"]
+    except (yaml.YAMLError, KeyError, TypeError) as exc:
+        raise RuntimeAuditError("E_SEMGREP_RULESET", "invalid Semgrep rules") from exc
+    if not isinstance(rules, list) or not 1 <= len(rules) <= 64:
+        raise RuntimeAuditError("E_SEMGREP_RULESET", "bounded Semgrep rules required")
+    ids = [
+        require_str(rule.get("id"), "rule id", maximum=256)
+        for rule in rules
+        if isinstance(rule, dict)
+    ]
+    if len(ids) != len(rules) or len(set(ids)) != len(ids):
+        raise RuntimeAuditError("E_SEMGREP_RULESET", "invalid Semgrep rule IDs")
+    return sorted(ids)
+
+
+def _semgrep_mutation_file(case, baseline, lane, obligation):
+    mutation = _semgrep_disable_rule(baseline, obligation["detector_rule_id"])
+    expected = lane.get("mutation_config_sha256", {}).get(
+        obligation["detector_rule_id"]
+    )
+    if sha256_bytes(mutation) != expected:
+        raise RuntimeAuditError("E_SEMGREP_MUTATION", "signed target removal differs")
+    path = case / "mutation.yml"
+    path.write_bytes(mutation)
+    return path
+
+
+def _semgrep_disable_rule(config, rule_id):
+    import yaml
+
+    try:
+        document = yaml.safe_load(config)
+        rules = document["rules"]
+    except (yaml.YAMLError, KeyError, TypeError) as exc:
+        raise RuntimeAuditError(
+            "E_SEMGREP_MUTATION", "pinned ruleset malformed"
+        ) from exc
+    before = _semgrep_rule_ids(config)
+    if before.count(rule_id) != 1:
+        raise RuntimeAuditError("E_SEMGREP_MUTATION", "target rule not unique")
+    document["rules"] = [item for item in rules if item.get("id") != rule_id]
+    mutated = yaml.safe_dump(document, sort_keys=True).encode("utf-8")
+    expected = [item for item in before if item != rule_id]
+    if _semgrep_rule_ids(mutated) != expected:
+        raise RuntimeAuditError("E_SEMGREP_MUTATION", "mutation removed extra rules")
+    return mutated
+
+
+def _semgrep_mutation_valid(baseline, effective, rule_id):
+    try:
+        return _semgrep_disable_rule(baseline, rule_id) == effective
+    except RuntimeAuditError:
+        return False
 
 
 def _runtime_obligations(contract, lane):

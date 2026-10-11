@@ -17,6 +17,59 @@ from factoryline.deep_audit_io import digest
 from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
 
 
+def test_semgrep_signed_mutation_preserves_every_other_rule(tmp_path):
+    import yaml
+    from factoryline.deep_audit_io import (
+        _semgrep_disable_rule,
+        _semgrep_mutation_file,
+        _semgrep_mutation_valid,
+    )
+
+    baseline = Path(
+        "deploy/deep-adapters/rules/semgrep-pattern-limited.yml"
+    ).read_bytes()
+    original = yaml.safe_load(baseline)
+    for rule in original["rules"]:
+        target = rule["id"]
+        effective = _semgrep_disable_rule(baseline, target)
+        expected = deepcopy(original)
+        expected["rules"] = [r for r in expected["rules"] if r["id"] != target]
+        assert yaml.safe_load(effective) == expected
+        assert _semgrep_mutation_valid(baseline, effective, target)
+        assert not _semgrep_mutation_valid(baseline, baseline, target)
+        lane = {"mutation_config_sha256": {target: sha256_bytes(effective)}}
+        assert (
+            _semgrep_mutation_file(
+                tmp_path, baseline, lane, {"detector_rule_id": target}
+            ).read_bytes()
+            == effective
+        )
+        lane["mutation_config_sha256"][target] = "0" * 64
+        with pytest.raises(RuntimeAuditError, match="E_SEMGREP_MUTATION"):
+            _semgrep_mutation_file(
+                tmp_path, baseline, lane, {"detector_rule_id": target}
+            )
+    with pytest.raises(RuntimeAuditError, match="E_SEMGREP_MUTATION"):
+        _semgrep_disable_rule(baseline, "unknown-detector")
+
+
+@pytest.mark.parametrize(
+    "option", ["--disable-nosem", "--no-git-ignore", "--dataflow-traces"]
+)
+def test_semgrep_challenge_rejects_weakened_profile(option):
+    from factoryline.deep_audit_io import _semgrep_challenge_command
+
+    profile = json.loads(
+        Path("deploy/deep-adapters/profiles/semgrep-pattern-limited.json").read_text()
+    )
+    command = _semgrep_challenge_command(profile)
+    assert "--no-rewrite-rule-ids" in command["argv"]
+    assert "{config}" in command["argv"]
+    profile["commands"][0]["argv"].remove(option)
+    with pytest.raises(RuntimeAuditError, match="E_SEMGREP_PROFILE"):
+        _semgrep_challenge_command(profile)
+
+
 def adapter_inputs(tmp_path):
     import sys
 
@@ -2233,3 +2286,43 @@ def test_native_runtime_accounting_distinguishes_measured_and_missing_sources():
     report["source_coverage"]["app.py"]["sha256"] = "c" * 64
     with pytest.raises(RuntimeAuditError, match="hash differs"):
         _native_runtime_accounting(report, inventory, lane)
+
+
+def test_semgrep_challenge_fixture_may_bind_one_obligation_path(tmp_path):
+    from factoryline.deep_audit_io import _semgrep_fixture_binding
+
+    (tmp_path / "app.py").write_text("unsafe()\n", encoding="utf-8")
+    (tmp_path / "clean.py").write_text("safe()\n", encoding="utf-8")
+    source = {
+        "app.py": sha256_bytes((tmp_path / "app.py").read_bytes()),
+        "clean.py": sha256_bytes((tmp_path / "clean.py").read_bytes()),
+    }
+
+    _semgrep_fixture_binding(
+        {"app.py": source["app.py"]},
+        {"paths": ["app.py", "clean.py"]},
+        tmp_path,
+        "app.py",
+    )
+
+
+@pytest.mark.parametrize(
+    ("manifest", "fixture_path"),
+    [
+        ({"clean.py": "b" * 64}, "app.py"),
+        ({"outside.py": "c" * 64}, "outside.py"),
+        ({}, "app.py"),
+    ],
+)
+def test_semgrep_challenge_fixture_rejects_missing_or_unbound_anchor(
+    tmp_path, manifest, fixture_path
+):
+    from factoryline.deep_audit_io import _semgrep_fixture_binding
+
+    with pytest.raises(RuntimeAuditError, match="E_CHALLENGE_BINDING"):
+        _semgrep_fixture_binding(
+            manifest,
+            {"paths": ["app.py", "clean.py"]},
+            tmp_path,
+            fixture_path,
+        )

@@ -366,7 +366,13 @@ def _validate_lane_languages(lane: dict) -> None:
 
 def _validate_lane_mode(lane: dict) -> None:
     require_str(lane["mode"], "mode", maximum=64)
-    if lane["family"] == "static" and lane["mode"] != "interprocedural-full":
+    full_static = lane["mode"] == "interprocedural-full"
+    semgrep_supplemental = (
+        lane["engine"] == "semgrep"
+        and lane["family"] == "static"
+        and lane["mode"] == "pattern-limited"
+    )
+    if lane["family"] == "static" and not (full_static or semgrep_supplemental):
         raise RuntimeAuditError(
             "E_ANALYSIS_MODE",
             "full-depth static analysis requires interprocedural full scan",
@@ -518,6 +524,14 @@ def _execution_lanes(value: object, version: int) -> list[dict]:
     if families != EXECUTION_FAMILIES:
         raise RuntimeAuditError(
             "E_EXECUTION_SCOPE", "all six full-depth analysis families must be declared"
+        )
+    if not any(
+        lane["family"] == "static" and lane["mode"] == "interprocedural-full"
+        for lane in lanes
+    ):
+        raise RuntimeAuditError(
+            "E_EXECUTION_DEPTH",
+            "at least one full interprocedural static lane is required",
         )
     return lanes
 

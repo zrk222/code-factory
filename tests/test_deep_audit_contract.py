@@ -581,6 +581,81 @@ def test_v2_role_tables_match_native_helper_and_report_roles():
     assert _NATIVE_REPORT_ROLES == NATIVE_REPORT_ROLE
 
 
+def test_semgrep_pattern_limited_is_supplemental_to_full_static_lane(tmp_path):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import _execution_lanes
+
+    _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    supplemental = deepcopy(plan["lanes"][0])
+    supplemental.update(
+        id="semgrep",
+        engine="semgrep",
+        mode="pattern-limited",
+        argv=[
+            "/opt/factory/bin/audit-adapter",
+            "semgrep",
+            "--mode",
+            "pattern-limited",
+        ],
+    )
+    plan["lanes"].append(supplemental)
+    _v2_execution_plan(plan, inventory)
+
+    accepted = _execution_lanes(plan["lanes"], 2)
+
+    assert any(
+        lane["engine"] == "semgrep" and lane["mode"] == "pattern-limited"
+        for lane in accepted
+    )
+    assert any(
+        lane["family"] == "static" and lane["mode"] == "interprocedural-full"
+        for lane in accepted
+    )
+
+
+def test_semgrep_pattern_limited_cannot_replace_full_static_lane(tmp_path):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import _execution_lanes
+
+    _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    supplemental = deepcopy(plan["lanes"][0])
+    supplemental.update(
+        id="semgrep",
+        engine="semgrep",
+        mode="pattern-limited",
+        argv=[
+            "/opt/factory/bin/audit-adapter",
+            "semgrep",
+            "--mode",
+            "pattern-limited",
+        ],
+    )
+    plan["lanes"].append(supplemental)
+    _v2_execution_plan(plan, inventory)
+    plan["lanes"] = [lane for lane in plan["lanes"] if lane["engine"] != "codeql"]
+
+    with pytest.raises(RuntimeAuditError, match="E_EXECUTION_DEPTH"):
+        _execution_lanes(plan["lanes"], 2)
+
+
+def test_pattern_limited_mode_remains_rejected_for_other_static_engines():
+    from factoryline.deep_audit_contract import _validate_lane_mode
+
+    lane = {
+        "engine": "codeql",
+        "family": "static",
+        "mode": "pattern-limited",
+        "argv": [
+            "/opt/factory/bin/audit-adapter",
+            "codeql",
+            "--mode",
+            "pattern-limited",
+        ],
+    }
+    with pytest.raises(RuntimeAuditError, match="E_ANALYSIS_MODE"):
+        _validate_lane_mode(lane)
+
+
 def test_execution_manifest_v2_rejects_fixture_drift_and_syft_detector(tmp_path):
     from factoryline.deep_audit_contract import load_execution_manifest
 

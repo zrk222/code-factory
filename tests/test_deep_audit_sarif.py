@@ -10,6 +10,28 @@ from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
 ANALYZER = {"id": "scanner", "driver": "Example", "version": "1"}
 
 
+def test_semgrep_negative_challenge_rejects_unrelated_detector_findings():
+    from factoryline.deep_audit_sarif import _challenge_findings_valid
+
+    with pytest.raises(RuntimeAuditError, match="signed oracle"):
+        _challenge_findings_valid(
+            [{"rule_id": "other-rule", "suppressed": False}],
+            {},
+            {"engine": "semgrep"},
+            {"detector_rule_id": "target-rule"},
+            "negative",
+        )
+
+
+@pytest.mark.parametrize("kind", ["negative", "mutation"])
+def test_semgrep_clean_challenge_has_no_target_finding(kind):
+    from factoryline.deep_audit_sarif import _challenge_findings_valid
+
+    _challenge_findings_valid(
+        [], {}, {"engine": "semgrep"}, {"detector_rule_id": "target-rule"}, kind
+    )
+
+
 @pytest.mark.parametrize("missing", [True, False])
 def test_signed_semgrep_requires_rederived_native_rule_execution(missing):
     from factoryline.deep_audit_sarif import _rule_accounting_gaps
@@ -238,3 +260,29 @@ def test_reordering_nested_flow_changes_trace_not_identity(tmp_path):
     after = ingest(tmp_path, payload)["findings"][0]
     assert before["finding_id"] == after["finding_id"]
     assert before["trace_sha256"] != after["trace_sha256"]
+
+
+@pytest.mark.parametrize("disabled", [None, "rule-a"])
+def test_semgrep_config_inventory_is_derived_from_signed_config(disabled):
+    from factoryline.deep_audit_io import canonical_bytes, sha256_bytes
+    from factoryline.deep_audit_sarif import _semgrep_config_inventory_valid
+
+    execution = {
+        "effective_config_sha256": "a" * 64,
+        "mutation": None if disabled is None else {"disabled_rule_id": disabled},
+    }
+    lane = {"rule_ids": ["rule-a", "rule-b"]}
+    raw = canonical_bytes(
+        {
+            "ruleset_sha256": "a" * 64,
+            "rule_ids": [r for r in lane["rule_ids"] if r != disabled],
+        }
+    )
+    artifact = {"sha256": sha256_bytes(raw), "bytes": len(raw)}
+    assert _semgrep_config_inventory_valid(execution, lane, artifact)
+    assert not _semgrep_config_inventory_valid(
+        execution, lane, {**artifact, "sha256": "b" * 64}
+    )
+    assert not _semgrep_config_inventory_valid(
+        execution, lane, {**artifact, "bytes": len(raw) + 1}
+    )
