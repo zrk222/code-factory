@@ -15,7 +15,7 @@ COPY deploy/deep-adapters/requirements-bootstrap.txt /tmp/requirements-bootstrap
 RUN ldconfig && python -m pip uninstall -y setuptools wheel \
     && python -m pip install --no-cache-dir --disable-pip-version-check --require-hashes --only-binary=:all: -r /tmp/requirements-bootstrap.txt \
     && python -c 'import ssl,sqlite3,ctypes,bz2,lzma,readline,curses,uuid; print(ssl.OPENSSL_VERSION,sqlite3.sqlite_version)'
-COPY factoryline/__init__.py factoryline/deep_audit_io.py factoryline/runtime_audit_common.py factoryline/runtime_audit_process.py /usr/local/lib/python3.11/site-packages/factoryline/
+COPY factoryline/__init__.py factoryline/deep_audit_io.py factoryline/deep_audit_sarif.py factoryline/runtime_audit_common.py factoryline/runtime_audit_process.py /usr/local/lib/python3.11/site-packages/factoryline/
 COPY --chmod=0555 deploy/deep-adapters/entrypoint /opt/factory/bin/audit-adapter
 RUN mkdir -p /src /out /opt/factory/rules
 LABEL io.code-factory.protocol="factory.deep-worker.v1"

@@ -2949,6 +2949,13 @@ def _native_profile_coverage(
             else ["NATIVE_CHALLENGES_REQUIRED"]
         )
         complete = not errors
+    elif lane["engine"] == "osv":
+        errors = ["NATIVE_CHALLENGES_REQUIRED"]
+        if (
+            _native_source_accounting(execution, report, inventory, lane)["state"]
+            != "COMPLETE"
+        ):
+            errors.insert(0, "NATIVE_SOURCE_ACCOUNTING_REQUIRED")
     coverage = {
         "profile_sha256": digest(profile),
         "image_binding_sha256": sha256_bytes(
@@ -4472,6 +4479,12 @@ def _codeql_telemetry_notification(item):
 
 
 def _native_source_accounting(execution, report, inventory, lane):
+    if lane.get("engine") == "osv":
+        from .deep_audit_sarif import _osv_source_accounting
+
+        return _osv_source_accounting(
+            report, _trivy_source_map(inventory, lane), lane.get("mode")
+        )
     if execution.get("codeql_source_execution") is not None:
         return _codeql_source_accounting(
             execution["codeql_source_execution"], inventory, lane

@@ -252,7 +252,8 @@ def _execution_osv(report: dict, lane: dict, sources: dict) -> list:
         path = relative_path(_object(result.get("source")).get("path"))
         if path not in sources:
             raise RuntimeAuditError("E_TRACE_UNBOUND", "dependency manifest is unbound")
-        for package in _list(result.get("packages"), 1, 20_000):
+        minimum = 0 if lane.get("mode") == "offline-pypi-snapshot" else 1
+        for package in _list(result.get("packages"), minimum, 20_000):
             identity = _object(package.get("package"))
             for key in ("name", "version", "ecosystem"):
                 require_str(identity.get(key), f"package.{key}", maximum=256)
@@ -375,6 +376,77 @@ def _native_osv_accounting(report, required):
         )
 
 
+def _osv_source_accounting(report, required, mode):
+    """Bind observed manifest/package reporting, not undisclosed dependency completeness."""
+    report = _object(report)
+    if report.get("errors") or report.get("error"):
+        raise RuntimeAuditError("E_DEPENDENCY_ERRORS", "OSV analysis errors remain")
+    sources = {}
+    errors = set()
+    for result in _list(report.get("results"), 0, 20_000):
+        result = _object(result)
+        path = relative_path(_object(result.get("source")).get("path"))
+        if path not in required or path in sources:
+            raise RuntimeAuditError(
+                "E_DEPENDENCY_COVERAGE", "OSV manifest is duplicate or unbound"
+            )
+        packages = _osv_accounting_packages(result)
+        errors.update(_osv_package_scope_errors(packages, mode))
+        sources[path] = {
+            "sha256": require_digest(required[path], "manifest hash"),
+            "package_count": len(packages),
+            "packages_sha256": digest(packages),
+            "packages": packages,
+        }
+    return _osv_accounting_result(report, required, sources, errors)
+
+
+def _osv_accounting_packages(result):
+    packages = []
+    for row in _list(result.get("packages"), 0, 20_000):
+        identity = _object(_object(row).get("package"))
+        packages.append(
+            {
+                key: require_str(identity.get(key), f"package.{key}", maximum=256)
+                for key in ("name", "version", "ecosystem")
+            }
+        )
+    return sorted(packages, key=lambda item: canonical_bytes(item))
+
+
+def _osv_package_scope_errors(packages, mode):
+    errors = set()
+    if not packages:
+        errors.add("EMPTY_PACKAGE_INVENTORY")
+    if mode == "offline-pypi-snapshot" and any(
+        item["ecosystem"] != "PyPI" for item in packages
+    ):
+        errors.add("UNSUPPORTED_ECOSYSTEM")
+    return errors
+
+
+def _osv_accounting_result(report, required, sources, errors):
+    missing = sorted(set(required) - set(sources))
+    if missing:
+        errors.add("MISSING_MANIFESTS")
+    state = "INCOMPLETE" if errors else "COMPLETE"
+    if not sources:
+        state = "UNAVAILABLE"
+    elif missing:
+        state = "PARTIAL"
+    return {
+        "schema": "factory.osv-source-accounting.v1",
+        "scope": "native_manifest_package_reporting",
+        "state": state,
+        "required_paths": sorted(required),
+        "measured_paths": sorted(sources),
+        "missing_paths": missing,
+        "sources": sources,
+        "report_sha256": digest(report),
+        "errors": sorted(errors),
+    }
+
+
 def _native_syft_accounting(report, required):
     paths = {
         item["path"].removeprefix("/src/")
@@ -420,6 +492,9 @@ def _runtime_source_accounting(item, source_hash):
 
 def _native_accounting(report: dict, lane: dict, required: dict) -> None:
     if lane["engine"] == "osv":
+        if lane["mode"] == "offline-pypi-snapshot":
+            _osv_source_accounting(report, required, lane["mode"])
+            return
         return _native_osv_accounting(report, required)
     if lane["engine"] == "syft":
         return _native_syft_accounting(report, required)
@@ -571,6 +646,14 @@ def _coverage_source_gaps(report, coverage, lane, required):
         gaps.append("ANALYSIS_MODE_DOWNGRADE")
     if coverage.get("report_sha256") != digest(report):
         gaps.append("COVERAGE_REPORT_DRIFT")
+    if lane["engine"] == "osv" and lane["mode"] == "offline-pypi-snapshot":
+        expected = _osv_source_accounting(report, required, lane["mode"])
+        if expected["state"] != "COMPLETE":
+            gaps.append("OSV_SOURCE_ACCOUNTING_INCOMPLETE")
+        if canonical_bytes(coverage.get("source_accounting")) != canonical_bytes(
+            expected
+        ):
+            gaps.append("OSV_SOURCE_ACCOUNTING_DRIFT")
     return gaps
 
 
@@ -1701,6 +1784,11 @@ def normalize_execution_bundle(
     )
     required = _required_sources(inventory, lane)
     findings = _native_execution_report(report, lane, sources)
+    dependency_accounting = (
+        _osv_source_accounting(report, required, lane["mode"])
+        if lane["engine"] == "osv" and lane["mode"] == "offline-pypi-snapshot"
+        else None
+    )
     gaps, expected, observed = _coverage_gaps(
         report, coverage, lane, required, obligations
     )
@@ -1739,7 +1827,16 @@ def normalize_execution_bundle(
             else None
         ),
         "challenge_sha256": digest(challenges),
-        "covered_paths": sorted(required),
+        "covered_paths": (
+            dependency_accounting["measured_paths"]
+            if dependency_accounting is not None
+            else sorted(required)
+        ),
+        **(
+            {"source_accounting": dependency_accounting}
+            if dependency_accounting is not None
+            else {}
+        ),
         "obligations": observed,
         "findings": findings,
         "metrics": metrics,

@@ -1414,6 +1414,265 @@ def test_osv_worker_copies_existing_empty_policy_asset():
         "COPY --chown=1000:1000 deploy/deep-adapters/rules/empty-ignore.txt "
         "/opt/factory/rules/osv-scanner.toml"
     ) in dockerfile
+    sdk_copy = next(
+        line
+        for line in dockerfile.splitlines()
+        if line.startswith("COPY factoryline/__init__.py")
+    )
+    assert "factoryline/deep_audit_sarif.py" in sdk_copy
+
+
+def _osv_package_accounting_fixture(
+    path="requirements.txt", name="werkzeug", version="0.1", ecosystem="PyPI"
+):
+    return {
+        "results": [
+            {
+                "source": {"path": path},
+                "packages": [
+                    {
+                        "package": {
+                            "name": name,
+                            "version": version,
+                            "ecosystem": ecosystem,
+                        },
+                        "vulnerabilities": [],
+                    }
+                ],
+            }
+        ]
+    }
+
+
+def test_osv_source_accounting_binds_and_sorts_duplicate_package_rows():
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    report = _osv_package_accounting_fixture()
+    duplicate = deepcopy(report["results"][0]["packages"][0])
+    report["results"][0]["packages"].extend(
+        [
+            deepcopy(duplicate),
+            {
+                "package": {
+                    "name": "requests",
+                    "version": "2.31.0",
+                    "ecosystem": "PyPI",
+                },
+                "vulnerabilities": [],
+            },
+        ]
+    )
+    required = {"requirements.txt": "a" * 64}
+    observed = _osv_source_accounting(report, required, "offline-pypi-snapshot")
+    source = observed["sources"]["requirements.txt"]
+    assert observed["schema"] == "factory.osv-source-accounting.v1"
+    assert observed["scope"] == "native_manifest_package_reporting"
+    assert observed["state"] == "COMPLETE"
+    assert (
+        observed["required_paths"] == observed["measured_paths"] == ["requirements.txt"]
+    )
+    assert observed["missing_paths"] == []
+    assert source["sha256"] == required["requirements.txt"]
+    assert source["package_count"] == 3
+    werkzeug = {"name": "werkzeug", "version": "0.1", "ecosystem": "PyPI"}
+    assert source["packages"].count(werkzeug) == 2
+    from factoryline.runtime_audit_common import canonical_bytes
+
+    assert source["packages"] == sorted(source["packages"], key=canonical_bytes)
+    assert source["packages_sha256"] == digest(source["packages"])
+    assert observed["report_sha256"] == digest(report)
+    assert observed["errors"] == []
+
+
+@pytest.mark.parametrize(
+    "report,expected_state,expected_error",
+    [
+        ({"results": []}, "UNAVAILABLE", None),
+        (
+            {"results": [_osv_package_accounting_fixture()["results"][0]] + []},
+            "PARTIAL",
+            "MISSING_MANIFESTS",
+        ),
+        (
+            {
+                "results": [
+                    {"source": {"path": "requirements.txt"}, "packages": []},
+                    _osv_package_accounting_fixture("constraints.txt")["results"][0],
+                ]
+            },
+            "INCOMPLETE",
+            "EMPTY_PACKAGE_INVENTORY",
+        ),
+        (
+            {
+                "results": [
+                    _osv_package_accounting_fixture(ecosystem="npm")["results"][0],
+                    _osv_package_accounting_fixture("constraints.txt")["results"][0],
+                ]
+            },
+            "INCOMPLETE",
+            "UNSUPPORTED_ECOSYSTEM",
+        ),
+    ],
+)
+def test_osv_source_accounting_distinguishes_missing_empty_and_unsupported(
+    report, expected_state, expected_error
+):
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    observed = _osv_source_accounting(
+        report,
+        {"requirements.txt": "a" * 64, "constraints.txt": "b" * 64},
+        "offline-pypi-snapshot",
+    )
+    assert observed["state"] == expected_state
+    expected_missing = (
+        ["constraints.txt"]
+        if expected_error == "MISSING_MANIFESTS"
+        else ["constraints.txt", "requirements.txt"]
+        if expected_state == "UNAVAILABLE"
+        else []
+    )
+    assert observed["missing_paths"] == expected_missing
+    if expected_error:
+        assert expected_error in observed["errors"]
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda report: report["results"].append(deepcopy(report["results"][0])),
+        lambda report: report["results"][0]["source"].update(path="outside.txt"),
+        lambda report: report["results"][0]["packages"][0]["package"].pop("version"),
+        lambda report: report.update(errors=["analysis failed"]),
+        lambda report: report.update(results="malformed"),
+    ],
+)
+def test_osv_source_accounting_rejects_duplicate_unbound_and_malformed(mutate):
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    report = _osv_package_accounting_fixture()
+    mutate(report)
+    with pytest.raises(RuntimeAuditError):
+        _osv_source_accounting(
+            report, {"requirements.txt": "a" * 64}, "offline-pypi-snapshot"
+        )
+
+
+def test_osv_source_accounting_hashes_identity_and_required_source_changes():
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    report = _osv_package_accounting_fixture()
+    required = {"requirements.txt": "a" * 64}
+    initial = _osv_source_accounting(report, required, "offline-pypi-snapshot")
+    changed_identity = _osv_source_accounting(
+        _osv_package_accounting_fixture(version="0.2"),
+        required,
+        "offline-pypi-snapshot",
+    )
+    changed_source = _osv_source_accounting(
+        report, {"requirements.txt": "b" * 64}, "offline-pypi-snapshot"
+    )
+    assert (
+        initial["sources"]["requirements.txt"]["packages_sha256"]
+        != changed_identity["sources"]["requirements.txt"]["packages_sha256"]
+    )
+    assert initial["report_sha256"] == changed_source["report_sha256"]
+    assert (
+        initial["sources"]["requirements.txt"]["sha256"]
+        != changed_source["sources"]["requirements.txt"]["sha256"]
+    )
+
+
+def test_osv_native_worker_dispatch_and_coverage_keep_challenge_gap():
+    from factoryline.deep_audit_io import (
+        _native_profile_coverage,
+        _native_source_accounting,
+    )
+
+    report = _osv_package_accounting_fixture()
+    inventory = {
+        "files": [
+            {
+                "path": "requirements.txt",
+                "language": "python",
+                "sha256": "a" * 64,
+            }
+        ]
+    }
+    lane = {
+        "engine": "osv",
+        "mode": "offline-pypi-snapshot",
+        "languages": ["python"],
+        "timeout_seconds": 30,
+        "tool_version": "2.2.0",
+        "ruleset_sha256": "b" * 64,
+    }
+    direct = _native_source_accounting({}, report, inventory, lane)
+    coverage = _native_profile_coverage(
+        {
+            "ledger": None,
+            "ledger_sha256": None,
+            "raw_report": report,
+            "invocations": [],
+            "version_probe": {},
+            "rule_inventory": None,
+        },
+        report,
+        inventory,
+        lane,
+        {"tool_version": "2.2.0", "ruleset_sha256": "b" * 64},
+        {"observations": []},
+        [],
+    )
+    assert coverage["source_accounting"] == direct
+    assert coverage["complete"] is False
+    assert coverage["errors"] == ["NATIVE_CHALLENGES_REQUIRED"]
+
+
+def test_osv_empty_native_accounting_keeps_both_worker_gaps():
+    from factoryline.deep_audit_io import _native_profile_coverage
+
+    report = {"results": []}
+    inventory = {
+        "files": [
+            {
+                "path": "requirements.txt",
+                "language": "python",
+                "sha256": "a" * 64,
+            }
+        ]
+    }
+    lane = {
+        "engine": "osv",
+        "mode": "offline-pypi-snapshot",
+        "languages": ["python"],
+        "timeout_seconds": 30,
+        "tool_version": "2.2.0",
+        "ruleset_sha256": "b" * 64,
+    }
+    coverage = _native_profile_coverage(
+        {
+            "ledger": None,
+            "ledger_sha256": None,
+            "raw_report": report,
+            "invocations": [],
+            "version_probe": {},
+            "rule_inventory": None,
+        },
+        report,
+        inventory,
+        lane,
+        {"tool_version": "2.2.0", "ruleset_sha256": "b" * 64},
+        {"observations": []},
+        [],
+    )
+    assert coverage["source_accounting"]["state"] == "UNAVAILABLE"
+    assert coverage["complete"] is False
+    assert coverage["errors"] == [
+        "NATIVE_SOURCE_ACCOUNTING_REQUIRED",
+        "NATIVE_CHALLENGES_REQUIRED",
+    ]
 
 
 def test_semgrep_native_rejects_resealed_wrong_rule_config_path():

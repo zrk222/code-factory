@@ -501,6 +501,155 @@ def execution_bundle(lane, inventory, run_id):
     }
 
 
+def test_osv_coordinator_recomputes_native_accounting_and_rejects_drift():
+    from factoryline.deep_audit_sarif import (
+        _coverage_source_gaps,
+        _osv_source_accounting,
+    )
+
+    report = {
+        "results": [
+            {
+                "source": {"path": "requirements.txt"},
+                "packages": [
+                    {
+                        "package": {
+                            "name": "requests",
+                            "version": "2.31.0",
+                            "ecosystem": "PyPI",
+                        },
+                        "vulnerabilities": [],
+                    },
+                    {
+                        "package": {
+                            "name": "werkzeug",
+                            "version": "0.1",
+                            "ecosystem": "PyPI",
+                        },
+                        "vulnerabilities": [],
+                    },
+                ],
+            }
+        ]
+    }
+    required = {"requirements.txt": "a" * 64}
+    lane = {"engine": "osv", "mode": "offline-pypi-snapshot"}
+    coverage = {
+        "schema": "factory.deep-coverage.v1",
+        "sources": required,
+        "complete": True,
+        "errors": [],
+        "mode": lane["mode"],
+        "fallback": False,
+        "report_sha256": digest(report),
+        "source_accounting": _osv_source_accounting(report, required, lane["mode"]),
+    }
+    assert "OSV_SOURCE_ACCOUNTING_DRIFT" not in _coverage_source_gaps(
+        report, coverage, lane, required
+    )
+
+    sabotages = []
+    forged = json.loads(json.dumps(coverage))
+    forged["source_accounting"]["state"] = "COMPLETE_WITH_AUTHORITY"
+    sabotages.append((report, forged, required))
+    reordered = json.loads(json.dumps(coverage))
+    reordered["source_accounting"]["sources"]["requirements.txt"]["packages"].reverse()
+    sabotages.append((report, reordered, required))
+    count_changed = json.loads(json.dumps(coverage))
+    count_changed["source_accounting"]["sources"]["requirements.txt"][
+        "package_count"
+    ] += 1
+    sabotages.append((report, count_changed, required))
+    identity_report = json.loads(json.dumps(report))
+    identity_report["results"][0]["packages"][0]["package"]["version"] = "9.9"
+    identity_coverage = json.loads(json.dumps(coverage))
+    identity_coverage["report_sha256"] = digest(identity_report)
+    sabotages.append((identity_report, identity_coverage, required))
+    changed_required = {"requirements.txt": "b" * 64}
+    hash_coverage = json.loads(json.dumps(coverage))
+    hash_coverage["sources"] = changed_required
+    hash_coverage["report_sha256"] = digest(report)
+    sabotages.append((report, hash_coverage, changed_required))
+
+    for altered_report, altered_coverage, altered_required in sabotages:
+        gaps = _coverage_source_gaps(
+            altered_report, altered_coverage, lane, altered_required
+        )
+        assert "OSV_SOURCE_ACCOUNTING_DRIFT" in gaps
+
+
+def test_osv_coordinator_keeps_synthetic_empty_result_incomplete():
+    from factoryline.deep_audit_sarif import (
+        _coverage_source_gaps,
+        _osv_source_accounting,
+    )
+
+    report = {"results": []}
+    required = {"requirements.txt": "a" * 64}
+    lane = {"engine": "osv", "mode": "offline-pypi-snapshot"}
+    coverage = {
+        "schema": "factory.deep-coverage.v1",
+        "sources": required,
+        "complete": False,
+        "errors": [
+            "NATIVE_SOURCE_ACCOUNTING_REQUIRED",
+            "NATIVE_CHALLENGES_REQUIRED",
+        ],
+        "mode": lane["mode"],
+        "fallback": False,
+        "report_sha256": digest(report),
+        "source_accounting": _osv_source_accounting(report, required, lane["mode"]),
+    }
+    gaps = _coverage_source_gaps(report, coverage, lane, required)
+    assert "OSV_SOURCE_ACCOUNTING_DRIFT" not in gaps
+    assert "ANALYZER_INCOMPLETE" in gaps
+    assert coverage["source_accounting"]["state"] == "UNAVAILABLE"
+
+
+def test_osv_coordinator_rejects_boolean_and_float_package_counts():
+    from factoryline.deep_audit_sarif import (
+        _coverage_source_gaps,
+        _osv_source_accounting,
+    )
+
+    report = {
+        "results": [
+            {
+                "source": {"path": "requirements.txt"},
+                "packages": [
+                    {
+                        "package": {
+                            "name": "requests",
+                            "version": "2.31.0",
+                            "ecosystem": "PyPI",
+                        },
+                        "vulnerabilities": [],
+                    }
+                ],
+            }
+        ]
+    }
+    required = {"requirements.txt": "a" * 64}
+    lane = {"engine": "osv", "mode": "offline-pypi-snapshot"}
+    account = _osv_source_accounting(report, required, lane["mode"])
+    for forged_count in (True, 1.0):
+        forged = json.loads(json.dumps(account))
+        forged["sources"]["requirements.txt"]["package_count"] = forged_count
+        coverage = {
+            "schema": "factory.deep-coverage.v1",
+            "sources": required,
+            "complete": True,
+            "errors": [],
+            "mode": lane["mode"],
+            "fallback": False,
+            "report_sha256": digest(report),
+            "source_accounting": forged,
+        }
+        assert "OSV_SOURCE_ACCOUNTING_DRIFT" in _coverage_source_gaps(
+            report, coverage, lane, required
+        )
+
+
 def test_execution_manifest_and_signed_authorization(tmp_path):
     from factoryline.deep_audit_contract import load_execution_manifest
     from factoryline.deep_audit_attestation import verify_execution_authorization
@@ -1454,7 +1603,10 @@ def test_execution_role_trust_cannot_be_self_declared(tmp_path):
 
 @pytest.mark.parametrize("engine", ["syft", "osv"])
 def test_native_dependency_reports_cannot_omit_declared_input(tmp_path, engine):
-    from factoryline.deep_audit_sarif import normalize_execution_bundle
+    from factoryline.deep_audit_sarif import (
+        _osv_source_accounting,
+        normalize_execution_bundle,
+    )
 
     _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
     lane = next(item for item in plan["lanes"] if item["engine"] == engine)
@@ -1464,11 +1616,72 @@ def test_native_dependency_reports_cannot_omit_declared_input(tmp_path, engine):
         report["artifacts"][0]["locations"].pop()
     else:
         report["results"].pop()
-    bundle["artifacts"]["coverage.json"]["report_sha256"] = digest(report)
-    with pytest.raises(RuntimeAuditError, match="E_DEPENDENCY_COVERAGE"):
-        normalize_execution_bundle(
+        lane["mode"] = "offline-pypi-snapshot"
+        coverage = bundle["artifacts"]["coverage.json"]
+        coverage["mode"] = lane["mode"]
+        coverage["complete"] = False
+        coverage["errors"] = ["NATIVE_SOURCE_ACCOUNTING_REQUIRED"]
+        coverage["report_sha256"] = digest(report)
+        expected_accounting = _osv_source_accounting(
+            report,
+            {item["path"]: item["sha256"] for item in inventory["files"]},
+            lane["mode"],
+        )
+        coverage["source_accounting"] = expected_accounting
+    if engine == "syft":
+        bundle["artifacts"]["coverage.json"]["report_sha256"] = digest(report)
+        with pytest.raises(RuntimeAuditError, match="E_DEPENDENCY_COVERAGE"):
+            normalize_execution_bundle(
+                bundle, lane, inventory, "0" * 32, plan["obligations"]
+            )
+    else:
+        observed = normalize_execution_bundle(
             bundle, lane, inventory, "0" * 32, plan["obligations"]
         )
+        assert observed["state"] == "INCOMPLETE"
+        assert "OSV_SOURCE_ACCOUNTING_INCOMPLETE" in observed["gaps"]
+        assert observed["covered_paths"] == expected_accounting["measured_paths"]
+        assert observed["covered_paths"] != sorted(
+            item["path"] for item in inventory["files"]
+        )
+        assert observed["source_accounting"] == expected_accounting
+
+
+def test_osv_normalization_exposes_empty_packages_despite_forged_complete_flag(
+    tmp_path,
+):
+    from factoryline.deep_audit_sarif import (
+        _osv_source_accounting,
+        normalize_execution_bundle,
+    )
+
+    _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    lane = next(item for item in plan["lanes"] if item["engine"] == "osv")
+    lane["mode"] = "offline-pypi-snapshot"
+    bundle = execution_bundle(lane, inventory, "0" * 32)
+    report = bundle["artifacts"]["report.json"]
+    report["results"][0]["packages"] = []
+    required = {item["path"]: item["sha256"] for item in inventory["files"]}
+    account = _osv_source_accounting(report, required, lane["mode"])
+    coverage = bundle["artifacts"]["coverage.json"]
+    coverage.update(
+        {
+            "complete": True,
+            "errors": [],
+            "mode": lane["mode"],
+            "report_sha256": digest(report),
+            "source_accounting": account,
+        }
+    )
+
+    observed = normalize_execution_bundle(
+        bundle, lane, inventory, "0" * 32, plan["obligations"]
+    )
+    assert observed["state"] == "INCOMPLETE"
+    assert "OSV_SOURCE_ACCOUNTING_INCOMPLETE" in observed["gaps"]
+    assert observed["source_accounting"] == account
+    assert observed["covered_paths"] == account["measured_paths"]
+    assert observed["findings"] == []
 
 
 def test_execution_osv_preserves_package_advisory_and_fixed_version(tmp_path):
