@@ -224,6 +224,82 @@ def _native_challenge_args(tmp_path, challenge_kind="positive"):
     return execute_native_challenge, args
 
 
+def _native_challenge_v2(tmp_path, engine="gitleaks"):
+    execute, args = _native_challenge_args(tmp_path)
+    from factoryline.runtime_audit_common import canonical_bytes
+
+    nested = args["source_root"] / "src" / "second.txt"
+    nested.parent.mkdir()
+    nested.write_bytes(b"second-fixture")
+    manifest = {
+        "fixture.txt": sha256_bytes(b"fixture-data"),
+        "src/second.txt": sha256_bytes(b"second-fixture"),
+    }
+    manifest_sha = sha256_bytes(canonical_bytes(manifest))
+    args["challenge"].update(
+        fixture_manifest=manifest,
+        fixture_manifest_sha256=manifest_sha,
+    )
+    source_sha = manifest_sha
+    args["execution_bindings"]["challenge_source_sha256"] = source_sha
+    args["bindings"]["candidate_sha256"] = source_sha
+    args["engine"] = engine
+    report = {
+        "schema": "factory.deep-challenge-observation.v1",
+        "engine": engine,
+        "fixture_sha256": args["challenge"]["fixture_sha256"],
+        "detector_rule_id": args["detector_rule_id"],
+        "detector_enabled": True,
+        "native_report": {"runs": [{"results": []}]},
+    }
+    args["challenge"]["expected_report_sha256"] = sha256_bytes(canonical_bytes(report))
+    args["native_artifact_roles"] = sorted(
+        {
+            "gitleaks": {"sarif_report", "gitleaks_rule_ledger"},
+            "semgrep": {"sarif_report", "rule_inventory"},
+        }[engine]
+    )
+    report_path = args["report_path"]
+    ledger_path = args["ledger_path"]
+    inventory_path = args["scratch"] / "inventory.json"
+    args["native_artifacts"] = {
+        "sarif_report": report_path,
+        **(
+            {"gitleaks_rule_ledger": ledger_path}
+            if engine == "gitleaks"
+            else {"rule_inventory": inventory_path}
+        ),
+    }
+    args["rule_ids"] = ["rule-a", "rule-b"]
+    args["mutation_ruleset_sha256"] = {
+        "rule-a": "a" * 64,
+        "rule-b": "b" * 64,
+    }
+
+    def runner(argv, cwd, timeout, scratch):
+        report_path.write_bytes(canonical_bytes(report["native_report"]))
+        if engine == "gitleaks":
+            ledger_path.write_bytes(b'{"ledger":"safe"}')
+        else:
+            inventory_path.write_bytes(b'{"rules":["rule-a","rule-b"]}')
+        return {
+            "exit_code": 0,
+            "timed_out": False,
+            "timeout_seconds": timeout,
+            "duration_ms": 12,
+            "launch_error": False,
+            "output_limit_exceeded": False,
+            "cleanup_confirmed": True,
+            "stdout_sha256": "1" * 64,
+            "stderr_sha256": "2" * 64,
+            "stdout_bytes": 0,
+            "stderr_bytes": 0,
+        }
+
+    args["runner"] = runner
+    return execute, args
+
+
 def test_native_challenge_separates_report_and_execution_evidence(tmp_path):
     execute, args = _native_challenge_args(tmp_path)
     observation = execute(**args)
@@ -351,6 +427,181 @@ def test_native_challenge_rejects_extra_source_and_unresolved_profile_argument(
     with pytest.raises(RuntimeAuditError, match="E_CHALLENGE_PROFILE"):
         execute(**args)
     assert called == []
+
+
+def test_native_v2_multi_file_source_and_gitleaks_artifacts_are_bound(tmp_path):
+    execute, args = _native_challenge_v2(tmp_path)
+    observed = execute(**args)
+    execution = observed["execution"]
+    assert execution["schema"] == "factory.native-challenge-execution.v2"
+    assert execution["status"] == "VERIFIED"
+    assert (
+        execution["fixture_manifest_sha256"]
+        == args["challenge"]["fixture_manifest_sha256"]
+    )
+    assert {item["kind"] for item in execution["native_artifacts"]} == {
+        "sarif_report",
+        "gitleaks_rule_ledger",
+    }
+    ledger = next(
+        item
+        for item in execution["native_artifacts"]
+        if item["kind"] == "gitleaks_rule_ledger"
+    )
+    assert execution["ledger_sha256"] == ledger["sha256"]
+    hashable = {
+        key: value for key, value in execution.items() if key != "execution_sha256"
+    }
+    assert sha256_bytes(canonical_bytes(hashable)) == execution["execution_sha256"]
+
+
+def test_native_v2_non_gitleaks_requires_exact_roles_and_null_ledger(tmp_path):
+    execute, args = _native_challenge_v2(tmp_path, engine="semgrep")
+    observed = execute(**args)
+    execution = observed["execution"]
+    assert execution["status"] == "VERIFIED"
+    assert execution["ledger_sha256"] is None
+    assert {item["kind"] for item in execution["native_artifacts"]} == {
+        "sarif_report",
+        "rule_inventory",
+    }
+
+    execute, args = _native_challenge_v2(tmp_path / "wrong-role", engine="semgrep")
+    args["native_artifact_roles"] = ["sarif_report"]
+    called = []
+    args["runner"] = lambda *values: called.append(values)
+    with pytest.raises(RuntimeAuditError, match="E_NATIVE_ROLE"):
+        execute(**args)
+    assert called == []
+
+
+@pytest.mark.parametrize(
+    ("engine", "roles"),
+    [
+        ("codeql", {"sarif_report", "query_inventory"}),
+        ("semgrep", {"sarif_report", "rule_inventory"}),
+        ("trivy", {"sarif_report", "policy_inventory"}),
+        ("osv", {"osv_json_report", "advisory_db_identity"}),
+        ("runtime", {"junit_xml", "coverage_json"}),
+        ("atheris", {"fuzz_result", "corpus_manifest"}),
+        ("jazzer", {"fuzz_result", "corpus_manifest"}),
+        ("zap", {"zap_report"}),
+    ],
+)
+def test_native_v2_role_allowlist_is_exact(engine, roles, tmp_path):
+    from factoryline.runtime_audit_common import _native_artifact_paths
+
+    paths = {role: tmp_path / f"{role}.json" for role in roles}
+    assert set(_native_artifact_paths(engine, sorted(roles), paths)) == roles
+
+
+def test_native_v2_syft_is_inventory_only(tmp_path):
+    from factoryline.runtime_audit_common import _native_artifact_paths
+
+    with pytest.raises(RuntimeAuditError, match="E_NATIVE_ROLE"):
+        _native_artifact_paths(
+            "syft", ["sbom_json"], {"sbom_json": tmp_path / "sbom.json"}
+        )
+
+
+def test_native_v2_rejects_unsigned_manifest_drift_and_missing_artifacts(tmp_path):
+    execute, args = _native_challenge_v2(tmp_path)
+    args["challenge"]["fixture_manifest_sha256"] = "0" * 64
+    called = []
+    args["runner"] = lambda *values: called.append(values)
+    with pytest.raises(RuntimeAuditError, match="E_CHALLENGE_MANIFEST"):
+        execute(**args)
+    assert called == []
+
+    execute, args = _native_challenge_v2(tmp_path / "missing")
+    args["native_artifacts"].pop("gitleaks_rule_ledger")
+    with pytest.raises(RuntimeAuditError, match="E_NATIVE_ROLE"):
+        execute(**args)
+
+
+@pytest.mark.parametrize("path", ["../escape.txt", "nested//file.txt", "CON", "name."])
+def test_native_v2_rejects_nonportable_manifest_paths(tmp_path, path):
+    execute, args = _native_challenge_v2(tmp_path)
+    args["challenge"]["fixture_manifest"] = {
+        "fixture.txt": sha256_bytes(b"fixture-data"),
+        path: "a" * 64,
+    }
+    args["challenge"]["fixture_manifest_sha256"] = sha256_bytes(
+        canonical_bytes(args["challenge"]["fixture_manifest"])
+    )
+    called = []
+    args["runner"] = lambda *values: called.append(values)
+    with pytest.raises(RuntimeAuditError, match="E_CHALLENGE_PATH"):
+        execute(**args)
+    assert called == []
+
+
+def test_native_v2_rechecks_all_fixture_files_after_runner(tmp_path):
+    execute, args = _native_challenge_v2(tmp_path)
+    original_runner = args["runner"]
+
+    def add_unsigned_source(*values):
+        facts = original_runner(*values)
+        (args["source_root"] / "unsigned.txt").write_bytes(b"not signed")
+        return facts
+
+    args["runner"] = add_unsigned_source
+    observed = execute(**args)
+    assert observed["execution"]["status"] == "INCOMPLETE"
+    assert observed["report"] is None
+
+
+def test_native_v2_rejects_manifest_over_file_limit(tmp_path):
+    execute, args = _native_challenge_v2(tmp_path)
+    manifest = {
+        "fixture.txt": sha256_bytes(b"fixture-data"),
+        **{f"extra/{index}.txt": "a" * 64 for index in range(64)},
+    }
+    args["challenge"]["fixture_manifest"] = manifest
+    args["challenge"]["fixture_manifest_sha256"] = sha256_bytes(
+        canonical_bytes(manifest)
+    )
+    called = []
+    args["runner"] = lambda *values: called.append(values)
+    with pytest.raises(RuntimeAuditError, match="E_CHALLENGE_MANIFEST"):
+        execute(**args)
+    assert called == []
+
+
+def test_native_v2_rejects_oversized_native_artifact(tmp_path):
+    execute, args = _native_challenge_v2(tmp_path, engine="semgrep")
+    original_runner = args["runner"]
+
+    def oversized(*values):
+        facts = original_runner(*values)
+        args["native_artifacts"]["rule_inventory"].write_bytes(b"x" * (1_048_576 + 1))
+        return facts
+
+    args["runner"] = oversized
+    observed = execute(**args)
+    assert observed["execution"]["status"] == "INCOMPLETE"
+    assert observed["report"] is None
+
+
+def test_native_v2_rechecks_artifacts_before_scratch_cleanup(tmp_path, monkeypatch):
+    import factoryline.runtime_audit_common as common
+
+    execute, args = _native_challenge_v2(tmp_path, engine="semgrep")
+    original = common._native_artifact_records
+    calls = 0
+
+    def mutate_after_first_read(paths):
+        nonlocal calls
+        records = original(paths)
+        calls += 1
+        if calls == 1:
+            args["native_artifacts"]["rule_inventory"].write_bytes(b"changed")
+        return records
+
+    monkeypatch.setattr(common, "_native_artifact_records", mutate_after_first_read)
+    observed = execute(**args)
+    assert observed["execution"]["status"] == "INCOMPLETE"
+    assert observed["report"] is None
 
 
 def test_native_challenge_does_not_delete_replaced_scratch_directory(tmp_path):

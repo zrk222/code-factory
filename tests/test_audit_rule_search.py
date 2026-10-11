@@ -143,7 +143,9 @@ def test_lexical_mode_preserves_legacy_substring_search():
 def test_search_inventory_matches_the_six_lane_source_count():
     payload = search_audit_rules({"query": "code factory", "limit": 20})
 
-    assert payload["totalMatched"] == 156
+    from scripts.audit_condition_inventory import inventory
+
+    assert payload["totalMatched"] == inventory()["total_coded_rejection_conditions"]
     assert payload["returned"] == 20
 
 

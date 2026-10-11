@@ -10,10 +10,37 @@ import re
 import shutil
 import stat
 from functools import wraps
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 MAX_ARTIFACT_BYTES = 1_048_576
+MAX_CHALLENGE_FILES = 64
+MAX_CHALLENGE_SOURCE_BYTES = 8 * 1_048_576
+MAX_NATIVE_ARTIFACTS = 16
+MAX_NATIVE_ARTIFACT_BYTES = 8 * 1_048_576
+NATIVE_ARTIFACT_ROLES = {
+    "codeql": {"sarif_report", "query_inventory"},
+    "semgrep": {"sarif_report", "rule_inventory"},
+    "trivy": {"sarif_report", "policy_inventory"},
+    "osv": {"osv_json_report", "advisory_db_identity"},
+    "gitleaks": {"sarif_report", "gitleaks_rule_ledger"},
+    "runtime": {"junit_xml", "coverage_json"},
+    "atheris": {"fuzz_result", "corpus_manifest"},
+    "jazzer": {"fuzz_result", "corpus_manifest"},
+    "zap": {"zap_report"},
+    "syft": {"sbom_json"},
+}
+NATIVE_REPORT_ROLE = {
+    "codeql": "sarif_report",
+    "semgrep": "sarif_report",
+    "trivy": "sarif_report",
+    "osv": "osv_json_report",
+    "gitleaks": "sarif_report",
+    "runtime": "junit_xml",
+    "atheris": "fuzz_result",
+    "jazzer": "fuzz_result",
+    "zap": "zap_report",
+}
 IGNORED_VERDICT_FIELDS = {"passed", "ok", "verdict", "decision"}
 FORBIDDEN_SECRET_FIELDS = {"body", "headers", "token", "password", "secret"}
 
@@ -534,20 +561,175 @@ def _challenge_report(
     return report, sha256_bytes(raw)
 
 
-def _challenge_source(root: Path, relative: Path) -> bytes:
-    """Require the isolated scanner source tree to contain only the single signed fixture."""
+def _challenge_manifest(
+    value: object, anchor_path: str, anchor_sha: str
+) -> dict[str, str]:
+    """Validate a canonical signed path-to-digest map and preserve v1 singleton controls."""
+    if value is None:
+        return {anchor_path: anchor_sha}
+    if not isinstance(value, dict) or not 1 <= len(value) <= MAX_CHALLENGE_FILES:
+        raise RuntimeAuditError(
+            "E_CHALLENGE_MANIFEST", "bounded source manifest required"
+        )
+    result = {}
+    for raw_path, raw_sha in value.items():
+        path = require_str(raw_path, "manifest path", maximum=2048)
+        parsed = PurePosixPath(path)
+        if (
+            "\\" in path
+            or ":" in path
+            or not parsed.parts
+            or path == "."
+            or parsed.is_absolute()
+            or parsed.as_posix() != path
+            or any(part in {".", ".."} for part in parsed.parts)
+            or any(_unsafe_manifest_component(part) for part in parsed.parts)
+        ):
+            raise RuntimeAuditError(
+                "E_CHALLENGE_PATH", "manifest path is not canonical"
+            )
+        result[path] = require_digest(raw_sha, "manifest source digest")
+    if len(result) != len(value) or result.get(anchor_path) != anchor_sha:
+        raise RuntimeAuditError(
+            "E_CHALLENGE_MANIFEST", "anchor must match one unique manifest entry"
+        )
+    return dict(sorted(result.items()))
+
+
+def _unsafe_manifest_component(part: str) -> bool:
+    """Reject Windows path aliases that could resolve differently on the host."""
+    reserved = r"(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?"
+    return (
+        part.endswith((".", " "))
+        or re.fullmatch(reserved, part, re.IGNORECASE) is not None
+    )
+
+
+def _native_artifact_paths(
+    engine: str, roles: object, paths: object
+) -> dict[str, Path]:
+    """Require the signed engine role set and one distinct direct scratch output per role."""
+    allowed = NATIVE_ARTIFACT_ROLES.get(engine)
+    if engine == "syft" or allowed is None:
+        raise RuntimeAuditError(
+            "E_NATIVE_ROLE", "engine has no challenge artifact profile"
+        )
+    if not isinstance(roles, list) or any(not isinstance(item, str) for item in roles):
+        raise RuntimeAuditError("E_NATIVE_ROLE", "signed roles must be strings")
+    if roles != sorted(set(roles)) or set(roles) != allowed:
+        raise RuntimeAuditError(
+            "E_NATIVE_ROLE", "signed artifact roles do not match engine"
+        )
+    if not isinstance(paths, dict) or set(paths) != allowed:
+        raise RuntimeAuditError(
+            "E_NATIVE_ROLE", "signed artifact roles do not match engine"
+        )
+    converted = {}
+    for role, raw_path in paths.items():
+        if not isinstance(role, str) or not isinstance(raw_path, Path):
+            raise RuntimeAuditError(
+                "E_NATIVE_ROLE", "artifact role paths must be typed"
+            )
+        converted[role] = raw_path
+    if len(set(path.absolute() for path in converted.values())) != len(allowed):
+        raise RuntimeAuditError("E_NATIVE_ROLE", "artifact paths must be distinct")
+    return converted
+
+
+def _validate_native_artifact_paths(
+    engine: str, paths: dict[str, Path], scratch: Path, report: Path, ledger: Path
+) -> None:
+    """Bind each profile output to one direct scratch child and the expected report path."""
+    root = scratch.absolute()
+    for path in paths.values():
+        if (
+            path.is_absolute() is False
+            or path.parent != root
+            or path.name in {"", ".", ".."}
+        ):
+            raise RuntimeAuditError(
+                "E_NATIVE_PATH", "native artifacts must be scratch children"
+            )
+    report_role = NATIVE_REPORT_ROLE[engine]
+    if paths[report_role] != report.absolute():
+        raise RuntimeAuditError(
+            "E_NATIVE_PATH", "report path differs from role binding"
+        )
+    if engine == "gitleaks" and paths["gitleaks_rule_ledger"] != ledger.absolute():
+        raise RuntimeAuditError(
+            "E_NATIVE_PATH", "Gitleaks ledger path differs from role binding"
+        )
+
+
+def _native_artifact_records(paths: dict[str, Path]) -> list[dict[str, Any]]:
+    """Hash exact bounded native outputs without retaining report or tool output bytes."""
+    records = []
+    total = 0
+    for role, path in sorted(paths.items()):
+        raw = _bounded_file(path)
+        total += len(raw)
+        if total > MAX_NATIVE_ARTIFACT_BYTES:
+            raise RuntimeAuditError(
+                "E_NATIVE_LIMIT", "native artifacts exceed aggregate budget"
+            )
+        records.append({"kind": role, "sha256": sha256_bytes(raw), "bytes": len(raw)})
+    return records
+
+
+def _validate_v2_lane(
+    engine: str,
+    kind: str,
+    detector_rule_id: str,
+    baseline_ids: list[str],
+    effective_sha: str,
+    rule_ids: object,
+    mutation_hashes: object,
+) -> None:
+    """Bind the signed rule inventory and exact target-removal digest for v2 controls."""
+    if not isinstance(rule_ids, list):
+        raise RuntimeAuditError(
+            "E_CHALLENGE_RULES", "signed rule inventory must be a list"
+        )
+    normalized_ids = require_unique_strings(
+        rule_ids, "signed rule ids", minimum=1, maximum=4096
+    )
+    if normalized_ids != sorted(normalized_ids):
+        raise RuntimeAuditError(
+            "E_CHALLENGE_RULES", "signed rule inventory must be sorted and unique"
+        )
+    if sorted(baseline_ids) != normalized_ids or not isinstance(mutation_hashes, dict):
+        raise RuntimeAuditError(
+            "E_CHALLENGE_RULES", "baseline differs from signed rule inventory"
+        )
+    if set(mutation_hashes) != set(normalized_ids):
+        raise RuntimeAuditError(
+            "E_CHALLENGE_RULES", "mutation digest map keys differ from rule inventory"
+        )
+    for value in mutation_hashes.values():
+        require_digest(value, "mutation ruleset digest")
+    if kind == "mutation":
+        if engine == "syft" or detector_rule_id not in mutation_hashes:
+            raise RuntimeAuditError(
+                "E_CHALLENGE_RULES", "mutation target is not authorized"
+            )
+        if effective_sha != mutation_hashes[detector_rule_id]:
+            raise RuntimeAuditError(
+                "E_CHALLENGE_RULES", "effective ruleset digest differs from signed map"
+            )
+
+
+def _source_tree_entries(root: Path) -> tuple[Path, set[str], set[str]]:
+    """Enumerate a bounded source tree while rejecting links and traversal errors."""
     if _linked_entry(root.lstat()) or not root.is_dir():
         raise RuntimeAuditError(
             "E_CHALLENGE_SOURCE", "isolated source directory required"
         )
     root = root.resolve(strict=True)
-    expected = relative.as_posix()
-    expected_dirs = {
-        Path(*relative.parts[:index]).as_posix()
-        for index in range(1, len(relative.parts))
-    }
     actual_dirs, actual_files, count = set(), set(), 0
-    for current, dirs, files in os.walk(root, followlinks=False):
+    walk_errors = []
+    for current, dirs, files in os.walk(
+        root, followlinks=False, onerror=walk_errors.append
+    ):
         base = Path(current)
         for name in dirs:
             path = base / name
@@ -565,15 +747,66 @@ def _challenge_source(root: Path, relative: Path) -> bytes:
                     "E_CHALLENGE_SOURCE", "non-regular source entry forbidden"
                 )
             actual_files.add(path.relative_to(root).as_posix())
-        if count > 256:
+        if count > 256 or len(actual_files) > MAX_CHALLENGE_FILES:
             raise RuntimeAuditError(
                 "E_CHALLENGE_SOURCE", "source tree exceeds entry budget"
             )
-    if actual_files != {expected} or actual_dirs != expected_dirs:
+    if walk_errors:
         raise RuntimeAuditError(
-            "E_CHALLENGE_SOURCE", "source tree must contain only the bound fixture"
+            "E_CHALLENGE_SOURCE", "source tree traversal was incomplete"
         )
-    return _bounded_file(relative, root=root)
+    return root, actual_dirs, actual_files
+
+
+def _manifest_directories(manifest: dict[str, str]) -> set[str]:
+    """Return the exact parent directory set implied by canonical manifest paths."""
+    expected_dirs = set()
+    for name in manifest:
+        parts = PurePosixPath(name).parts
+        expected_dirs.update(
+            PurePosixPath(*parts[:index]).as_posix() for index in range(1, len(parts))
+        )
+    return expected_dirs
+
+
+def _read_manifest_files(root: Path, manifest: dict[str, str]) -> dict[str, bytes]:
+    """Read each signed file once within per-file and aggregate source limits."""
+    collected = {}
+    total = 0
+    for name, expected_sha in manifest.items():
+        raw = _bounded_file(Path(name), root=root)
+        total += len(raw)
+        if total > MAX_CHALLENGE_SOURCE_BYTES:
+            raise RuntimeAuditError(
+                "E_CHALLENGE_SOURCE", "source tree exceeds byte budget"
+            )
+        if sha256_bytes(raw) != expected_sha:
+            raise RuntimeAuditError("E_CHALLENGE_SOURCE", "source file digest differs")
+        collected[name] = raw
+    return collected
+
+
+def _challenge_source_files(root: Path, manifest: dict[str, str]) -> dict[str, bytes]:
+    """Require the bounded scanner source tree to match every signed file and no others."""
+    root, actual_dirs, actual_files = _source_tree_entries(root)
+    expected_dirs = _manifest_directories(manifest)
+    if actual_files != set(manifest) or actual_dirs != expected_dirs:
+        raise RuntimeAuditError(
+            "E_CHALLENGE_SOURCE", "source tree must contain only signed manifest files"
+        )
+    return _read_manifest_files(root, manifest)
+
+
+def _challenge_source(root: Path, relative: Path) -> bytes:
+    """Require the isolated scanner tree to contain only one signed v1 fixture."""
+    if relative.is_absolute() or ".." in relative.parts:
+        raise RuntimeAuditError("E_CHALLENGE_PATH", "fixture must be relative")
+    name = relative.as_posix()
+    if name in {"", "."} or "\\" in name or ":" in name:
+        raise RuntimeAuditError("E_CHALLENGE_PATH", "fixture path is not canonical")
+    expected = _bounded_file(relative, root=root)
+    files = _challenge_source_files(root, {name: sha256_bytes(expected)})
+    return files[name]
 
 
 def _owned_scratch(scratch: Path, parent: Path) -> tuple[Path, tuple[int, int]]:
@@ -616,16 +849,19 @@ def _validate_challenge(
     verify_mutation: Callable[[bytes, bytes, str], bool],
 ) -> dict[str, Any]:
     """Bind signed fixture/config inputs and prove mutation is the exact authorized rule removal."""
-    exact_keys(
-        challenge,
-        {
-            "kind",
-            "fixture_path",
-            "fixture_sha256",
-            "expected_report_sha256",
-            "expected_exit_code",
-        },
-    )
+    required = {
+        "kind",
+        "fixture_path",
+        "fixture_sha256",
+        "expected_report_sha256",
+        "expected_exit_code",
+    }
+    exact_keys(challenge, required, {"fixture_manifest", "fixture_manifest_sha256"})
+    has_manifest = "fixture_manifest" in challenge
+    if has_manifest != ("fixture_manifest_sha256" in challenge):
+        raise RuntimeAuditError(
+            "E_CHALLENGE_MANIFEST", "manifest and digest must appear together"
+        )
     fixture_path = Path(
         require_str(challenge["fixture_path"], "fixture path", maximum=2048)
     )
@@ -637,9 +873,23 @@ def _validate_challenge(
         raise RuntimeAuditError(
             "E_CHALLENGE_PATH", "fixture must be relative to isolated source"
         )
-    fixture = _challenge_source(source_root, fixture_path)
-    fixture_sha = sha256_bytes(fixture)
-    if fixture_sha != require_digest(challenge["fixture_sha256"], "fixture_sha256"):
+    fixture_sha = require_digest(challenge["fixture_sha256"], "fixture_sha256")
+    manifest = _challenge_manifest(
+        challenge.get("fixture_manifest"), fixture_path.as_posix(), fixture_sha
+    )
+    manifest_sha = sha256_bytes(canonical_bytes(manifest))
+    if has_manifest and manifest_sha != require_digest(
+        challenge["fixture_manifest_sha256"], "fixture_manifest_sha256"
+    ):
+        raise RuntimeAuditError("E_CHALLENGE_MANIFEST", "manifest digest differs")
+    fixture = _bounded_file(fixture_path, root=source_root)
+    if sha256_bytes(fixture) != fixture_sha:
+        raise RuntimeAuditError(
+            "E_CHALLENGE_FIXTURE", "fixture digest differs from signed contract"
+        )
+    fixture_files = _challenge_source_files(source_root, manifest)
+    fixture = fixture_files[fixture_path.as_posix()]
+    if sha256_bytes(fixture) != fixture_sha:
         raise RuntimeAuditError(
             "E_CHALLENGE_FIXTURE", "fixture digest differs from signed contract"
         )
@@ -673,6 +923,10 @@ def _validate_challenge(
     return {
         "fixture": fixture,
         "fixture_sha": fixture_sha,
+        "fixture_manifest": manifest,
+        "fixture_manifest_sha": manifest_sha,
+        "fixture_files": fixture_files,
+        "challenge_v2": has_manifest,
         "baseline": baseline,
         "effective": effective,
         "baseline_sha": baseline_sha,
@@ -697,6 +951,7 @@ def _run_native_challenge(
     fixture_sha: str,
     rule_id: str,
     enabled: bool,
+    ledger_required: bool = True,
 ) -> dict[str, Any]:
     """Execute once, then derive report evidence only from bounded native output files."""
     raw_facts = runner(argv, source_root, timeout, scratch)
@@ -720,7 +975,8 @@ def _run_native_challenge(
     if state != "INCOMPLETE":
         try:
             raw = _bounded_file(report_path, root=scratch)
-            ledger_sha = sha256_bytes(_bounded_file(ledger_path, root=scratch))
+            if ledger_required:
+                ledger_sha = sha256_bytes(_bounded_file(ledger_path, root=scratch))
             report, raw_sha = _challenge_report(
                 raw,
                 report_parser,
@@ -807,6 +1063,73 @@ def _native_execution(
     return result
 
 
+def _native_execution_v2(
+    state,
+    facts,
+    expected_exit,
+    argv_sha,
+    data,
+    bindings,
+    ledger_sha,
+    scratch_clean,
+    cleanup,
+    kind,
+    rule_id,
+    timeout,
+    artifacts,
+):
+    """Seal v2 execution facts, multi-file source identity, and typed output digests."""
+    mutation = None
+    if kind == "mutation":
+        mutation = {
+            "disabled_rule_id": rule_id,
+            "remaining_rule_inventory_sha256": sha256_bytes(
+                canonical_bytes(sorted(data["effective_ids"]))
+            ),
+        }
+    result = {
+        "schema": "factory.native-challenge-execution.v2",
+        "status": {"PASS": "VERIFIED", "FAIL": "FAILED", "INCOMPLETE": "INCOMPLETE"}[
+            state
+        ],
+        "launched": not facts.get("launch_error")
+        if type(facts.get("launch_error")) is bool
+        else None,
+        "completed": facts.get("exit_code") is not None and not facts.get("timed_out")
+        if type(facts.get("timed_out")) is bool
+        else None,
+        "timed_out": facts.get("timed_out")
+        if type(facts.get("timed_out")) is bool
+        else None,
+        "cleanup_confirmed": cleanup,
+        "scratch_cleanup_verified": scratch_clean,
+        "timeout_seconds": timeout,
+        "duration_ms": facts.get("duration_ms"),
+        "exit_code": facts.get("exit_code"),
+        "argv_sha256": argv_sha,
+        "raw_report_sha256": data.get("raw_report_sha"),
+        "stdout_sha256": facts.get("stdout_sha256"),
+        "stdout_bytes": facts.get("stdout_bytes"),
+        "stderr_sha256": facts.get("stderr_sha256"),
+        "stderr_bytes": facts.get("stderr_bytes"),
+        "fixture_sha256": data["fixture_sha"],
+        "fixture_manifest_sha256": data["fixture_manifest_sha"],
+        "candidate_binding_sha256": bindings["candidate_sha256"],
+        "challenge_source_sha256": bindings["challenge_source_sha256"],
+        "profile_binding_sha256": bindings["profile_sha256"],
+        "image_binding_sha256": bindings["image_sha256"],
+        "tool_version": bindings["tool_version"],
+        "version_probe_sha256": bindings["version_probe_sha256"],
+        "baseline_config_sha256": data["baseline_sha"],
+        "effective_config_sha256": data["effective_sha"],
+        "ledger_sha256": ledger_sha,
+        "native_artifacts": artifacts,
+        "mutation": mutation,
+    }
+    result["execution_sha256"] = sha256_bytes(canonical_bytes(result))
+    return result
+
+
 def _challenge_kind(challenge: dict[str, Any]) -> str:
     """Require one of the signed positive, negative or detector-disabled controls."""
     kind = require_str(
@@ -870,11 +1193,7 @@ def _validate_execution_bindings(
         raise RuntimeAuditError(
             "E_TOOLCHAIN_PROBE", "version probe facts digest differs"
         )
-    expected_source = sha256_bytes(
-        canonical_bytes(
-            {Path(challenge["fixture_path"]).as_posix(): data["fixture_sha"]}
-        )
-    )
+    expected_source = sha256_bytes(canonical_bytes(data["fixture_manifest"]))
     if bindings["challenge_source_sha256"] != expected_source:
         raise RuntimeAuditError(
             "E_CHALLENGE_BINDING", "challenge-only source manifest differs"
@@ -901,6 +1220,10 @@ def _prepare_native_challenge(
     execution_bindings,
     config_rule_ids,
     verify_mutation,
+    native_artifact_roles,
+    native_artifacts,
+    rule_ids,
+    mutation_ruleset_sha256,
 ):
     """Validate all signed inputs and prepare the closed native command and evidence context."""
     kind = _challenge_kind(challenge)
@@ -919,6 +1242,33 @@ def _prepare_native_challenge(
         config_rule_ids,
         verify_mutation,
     )
+    if data["challenge_v2"]:
+        roles = _native_artifact_paths(engine, native_artifact_roles, native_artifacts)
+        _validate_native_artifact_paths(
+            engine, roles, scratch, report_path, ledger_path
+        )
+        _validate_v2_lane(
+            engine,
+            kind,
+            rule_id,
+            data["baseline_ids"],
+            data["effective_sha"],
+            rule_ids,
+            mutation_ruleset_sha256,
+        )
+        data["native_artifact_paths"] = roles
+    elif any(
+        value is not None
+        for value in (
+            native_artifact_roles,
+            native_artifacts,
+            rule_ids,
+            mutation_ruleset_sha256,
+        )
+    ):
+        raise RuntimeAuditError(
+            "E_NATIVE_ROLE", "v2 lane bindings supplied for v1 challenge"
+        )
     _validate_execution_bindings(challenge, data, execution_bindings)
     scratch_parent, scratch_identity = _owned_scratch(scratch, scratch_parent)
     _validate_native_bindings(
@@ -950,6 +1300,7 @@ def _finish_native_challenge(context, *, runner, report_parser) -> dict[str, Any
         "report": None,
         "raw_report_sha": None,
         "ledger_sha": None,
+        "native_artifacts": None,
     }
     try:
         run = _run_native_challenge(
@@ -967,12 +1318,23 @@ def _finish_native_challenge(context, *, runner, report_parser) -> dict[str, Any
             data["fixture_sha"],
             context["rule_id"],
             context["detector_enabled"],
+            ledger_required=(
+                context["engine"] == "gitleaks" or not context["data"]["challenge_v2"]
+            ),
         )
         facts, cleanup = run["facts"], run["cleanup_confirmed"]
+        if facts and run["state"] != "INCOMPLETE" and context["data"]["challenge_v2"]:
+            run["native_artifacts"] = _native_artifact_records(
+                context["data"]["native_artifact_paths"]
+            )
+            _verify_artifact_anchor(context, run)
     except (RuntimeAuditError, OSError, ValueError, TypeError):
-        run["state"] = "INCOMPLETE"
+        run["state"], run["report"] = "INCOMPLETE", None
+        run.setdefault("native_artifacts", None)
     if facts is not None:
         _recheck_challenge_inputs(context, run)
+        if context["data"]["challenge_v2"]:
+            _recheck_native_artifacts(context, run)
     scratch_clean = _clean_challenge_scratch(
         context["scratch"],
         context["scratch_parent"],
@@ -982,7 +1344,10 @@ def _finish_native_challenge(context, *, runner, report_parser) -> dict[str, Any
     if not scratch_clean:
         run["state"] = "INCOMPLETE"
     data["raw_report_sha"] = run["raw_report_sha"]
-    execution = _native_execution(
+    execution_builder = (
+        _native_execution_v2 if data["challenge_v2"] else _native_execution
+    )
+    execution = execution_builder(
         run["state"],
         facts or {},
         context["expected_exit"],
@@ -995,6 +1360,7 @@ def _finish_native_challenge(context, *, runner, report_parser) -> dict[str, Any
         context["kind"],
         context["rule_id"],
         context["timeout"],
+        *([run["native_artifacts"]] if data["challenge_v2"] else []),
     )
     report = run["report"]
     return {
@@ -1011,16 +1377,44 @@ def _finish_native_challenge(context, *, runner, report_parser) -> dict[str, Any
 def _recheck_challenge_inputs(context, run):
     """Mark results incomplete when the fixture tree or either config changed during execution."""
     try:
+        current = _challenge_source_files(
+            context["source_root"], context["data"]["fixture_manifest"]
+        )
+        same = current == context["data"]["fixture_files"]
         same = (
-            _challenge_source(
-                context["source_root"], Path(context["challenge"]["fixture_path"])
-            )
-            == context["data"]["fixture"]
+            same
             and _bounded_file(context["baseline_config_path"])
             == context["data"]["baseline"]
+        )
+        same = (
+            same
             and _bounded_file(context["effective_config_path"])
             == context["data"]["effective"]
         )
+    except (RuntimeAuditError, OSError):
+        same = False
+    if not same:
+        run["state"], run["report"] = "INCOMPLETE", None
+
+
+def _verify_artifact_anchor(context, run):
+    """Ensure the parsed primary report and mandatory Gitleaks ledger match typed artifacts."""
+    records = {item["kind"]: item for item in run["native_artifacts"]}
+    engine = context["engine"]
+    report_role = NATIVE_REPORT_ROLE[engine]
+    if records[report_role]["sha256"] != run["raw_report_sha"]:
+        run["state"], run["report"] = "INCOMPLETE", None
+    if engine == "gitleaks":
+        ledger = records["gitleaks_rule_ledger"]["sha256"]
+        if ledger != run["ledger_sha"]:
+            run["state"], run["report"] = "INCOMPLETE", None
+
+
+def _recheck_native_artifacts(context, run):
+    """Re-read all typed output artifacts before cleanup and reject post-parse drift."""
+    try:
+        current = _native_artifact_records(context["data"]["native_artifact_paths"])
+        same = current == run["native_artifacts"]
     except (RuntimeAuditError, OSError):
         same = False
     if not same:
@@ -1077,6 +1471,10 @@ def execute_native_challenge(
     report_parser: Callable[[bytes], dict[str, Any]],
     config_rule_ids: Callable[[bytes], list[str]],
     verify_mutation: Callable[[bytes, bytes, str], bool],
+    native_artifact_roles: list[str] | None = None,
+    native_artifacts: dict[str, Path] | None = None,
+    rule_ids: list[str] | None = None,
+    mutation_ruleset_sha256: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run one profile-bound challenge and separate its report from execution facts."""
     context = _prepare_native_challenge(
@@ -1099,5 +1497,9 @@ def execute_native_challenge(
         execution_bindings,
         config_rule_ids,
         verify_mutation,
+        native_artifact_roles,
+        native_artifacts,
+        rule_ids,
+        mutation_ruleset_sha256,
     )
     return _finish_native_challenge(context, runner=runner, report_parser=report_parser)
