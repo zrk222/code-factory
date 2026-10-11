@@ -1,5 +1,16 @@
 deploy/deep-adapters/entrypoint text eol=lf
 deploy/deep-adapters/gitleaks-rule-ledger.patch text eol=lf
 deploy/deep-adapters/bin/* text eol=lf
+deploy/deep-adapters/Dockerfile text eol=lf
+deploy/deep-adapters/README.md text eol=lf
+deploy/deep-adapters/requirements-*.txt text eol=lf
+deploy/deep-adapters/profiles/*.json text eol=lf
+deploy/deep-adapters/rules/*.toml text eol=lf
+deploy/deep-adapters/rules/*.yaml text eol=lf
+deploy/deep-adapters/rules/*.yml text eol=lf
+deploy/deep-adapters/rules/*.txt text eol=lf
+deploy/deep-adapters/rules/tests/**/*.js text eol=lf
+deploy/deep-adapters/rules/tests/**/*.txt text eol=lf
+deploy/deep-adapters/rules/tests/**/*.fixture text eol=lf
 .factory/independent-ai/* text eol=lf
 deploy/deep-adapters/rules/semgrep-pattern-limited.yml text eol=lf
