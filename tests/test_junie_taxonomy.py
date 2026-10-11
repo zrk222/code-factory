@@ -1056,3 +1056,27 @@ def test_all_agents_and_junie_receive_source_bound_context_evidence(tmp_path):
     )
     for content in (_guidance(), _junie_proof_agent_bytes()):
         assert "## Source-bound context evidence" in content.decode()
+
+
+def test_shared_deep_evidence_requires_execution_and_failure_facts(tmp_path):
+    """Every agent receives execution evidence boundaries without extra authority."""
+    from factoryline.junie_taxonomy import _guidance, _junie_proof_agent_bytes
+
+    evidence = audit_taxonomy()["agent_usage_contract"]["six_lane_review"][
+        "deep_evidence"
+    ]
+    assert "Caller-supplied identity alone" in evidence["identity"]
+    assert "raw matches, retained findings" in evidence["execution"]
+    assert "exit zero do not prove" in evidence["execution"]
+    assert "normalization failures" in evidence["failures"]
+    assert "INCOMPLETE" in evidence["failures"]
+    assert "exact-candidate-rerun" in evidence["lineage"]
+    assert "never grants approval" in evidence["authority"]
+    assert (
+        junie_manifest(tmp_path)["agent_usage_contract"]["six_lane_review"][
+            "deep_evidence"
+        ]
+        == evidence
+    )
+    for content in (_guidance(), _junie_proof_agent_bytes()):
+        assert "## Deep execution evidence" in content.decode()
