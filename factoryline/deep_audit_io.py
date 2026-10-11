@@ -2082,6 +2082,7 @@ def native_fuzz_main(argv: list[str]) -> int:
     rule_ids, control_sha, native_args = _fuzz_control_args(argv)
     cov = coverage.Coverage(branch=True, data_file=None, source=[str(root)])
     cov.start()
+    sys.dont_write_bytecode = True
     with atheris.instrument_imports():
         spec = importlib.util.spec_from_file_location(
             "factory_fuzz_target", harness_path
@@ -2345,7 +2346,366 @@ def _native_profile_challenges(profile, contract, source, lane, execution, start
         challenges, covered_obligations = _osv_challenges(
             profile, contract, source, lane, execution, started
         )
+    elif lane["engine"] == "atheris" and "native_artifact_roles" in lane:
+        challenges, covered_obligations = _atheris_challenges(
+            profile, contract, source, lane, execution, started
+        )
     return challenges, covered_obligations
+
+
+def _atheris_obligations(contract, lane):
+    return [
+        item
+        for item in contract["obligations"]
+        if item["engine"] == "atheris" and item["family"] == lane["family"]
+    ]
+
+
+def _atheris_challenge_gaps(obligations, code):
+    return _challenge_bundle(
+        [],
+        [
+            _challenge_gap_record(item, challenge, code)
+            for item in obligations
+            for challenge in item["challenges"]
+        ],
+    )
+
+
+def _atheris_challenge_command(profile):
+    if profile.get("engine") != "atheris" or len(profile.get("commands", [])) != 1:
+        raise RuntimeAuditError("E_FUZZ_PROFILE", "one pinned Atheris command required")
+    command = profile["commands"][0]
+    argv = list(command.get("argv", []))
+    prefix = [
+        "/usr/local/bin/python",
+        "-I",
+        "-m",
+        "factoryline.deep_audit_io",
+        "native-fuzz",
+        "{fixture}",
+        "{report}",
+        "--factory-control={config}",
+        "--",
+    ]
+    if (
+        argv[: len(prefix)] != prefix
+        or argv[len(prefix) :] != ["-runs=1000", "-artifact_prefix={scratch}/"]
+        or command.get("accepted_exit_codes") != [0, 77]
+    ):
+        raise RuntimeAuditError("E_FUZZ_PROFILE", "pinned Atheris argv differs")
+    return {"argv": argv, "accepted_exit_codes": command["accepted_exit_codes"]}
+
+
+def _atheris_challenges(profile, contract, source, lane, execution, started):
+    from .runtime_audit_process import run_bounded_command
+
+    obligations = _atheris_obligations(contract, lane)
+    if (
+        len(obligations) > 64
+        or sum(len(item["challenges"]) for item in obligations) > 192
+    ):
+        return _atheris_challenge_gaps(obligations, "E_FUZZ_CHALLENGE_BUDGET"), []
+    if not obligations:
+        return _challenge_bundle([], []), []
+    try:
+        baseline_path = local_file(Path("/opt/factory/rules"), "fuzz-control.json")
+        baseline = baseline_path.read_bytes()
+        if (
+            lane.get("rule_ids") != ["FUZZ_EXCEPTION"]
+            or lane.get("ruleset_sha256") != profile.get("ruleset_sha256")
+            or sha256_bytes(baseline) != lane["ruleset_sha256"]
+            or _fuzz_control_ids(baseline) != ["FUZZ_EXCEPTION"]
+        ):
+            raise RuntimeAuditError("E_FUZZ_CONTROL", "signed fuzz baseline differs")
+        command = _atheris_challenge_command(profile)
+    except (OSError, RuntimeAuditError, ValueError, TypeError, KeyError) as exc:
+        return _atheris_challenge_gaps(obligations, _challenge_error_code(exc)), []
+
+    observations, gaps = [], []
+    deadline = started + lane["timeout_seconds"]
+    with tempfile.TemporaryDirectory(prefix="factory-atheris-challenges-") as root:
+        for index, obligation in enumerate(obligations):
+            for challenge in obligation["challenges"]:
+                _atheris_challenge_control(
+                    run_bounded_command,
+                    profile,
+                    contract,
+                    source,
+                    lane,
+                    execution,
+                    command,
+                    baseline_path,
+                    baseline,
+                    obligation,
+                    challenge,
+                    Path(root) / f"control-{index}-{challenge['kind']}",
+                    deadline,
+                    observations,
+                    gaps,
+                )
+    return _challenge_bundle(observations, gaps), []
+
+
+def _atheris_challenge_control(
+    runner,
+    profile,
+    contract,
+    source,
+    lane,
+    execution,
+    command,
+    baseline_path,
+    baseline,
+    obligation,
+    challenge,
+    case,
+    deadline,
+    observations,
+    gaps,
+):
+    expected_exit = {"positive": 77, "negative": 0, "mutation": 0}.get(
+        challenge.get("kind")
+    )
+    if expected_exit is None or challenge.get("expected_exit_code") != expected_exit:
+        gaps.append(_challenge_gap_record(obligation, challenge, "E_FUZZ_PROFILE"))
+        return
+    if expected_exit not in command["accepted_exit_codes"]:
+        gaps.append(_challenge_gap_record(obligation, challenge, "E_FUZZ_PROFILE"))
+        return
+    try:
+        observation = _run_atheris_challenge(
+            _native_challenge_executor(),
+            runner,
+            profile,
+            contract,
+            source,
+            lane,
+            execution,
+            command,
+            baseline_path,
+            baseline,
+            obligation,
+            challenge,
+            case,
+            deadline,
+        )
+        observations.append(observation)
+        try:
+            _atheris_challenge_retained_budget(observations)
+        except RuntimeAuditError:
+            observations.pop()
+            raise
+        if observation.get("execution", {}).get("status") != "VERIFIED":
+            gaps.append(
+                _challenge_gap_record(
+                    obligation, challenge, "E_FUZZ_CHALLENGE_EXECUTION"
+                )
+            )
+        gaps.append(
+            _challenge_gap_record(
+                obligation, challenge, "FUZZ_CHALLENGE_REPLAY_REQUIRED"
+            )
+        )
+    except (OSError, RuntimeAuditError, ValueError, TypeError, KeyError) as exc:
+        gaps.append(
+            _challenge_gap_record(obligation, challenge, _challenge_error_code(exc))
+        )
+
+
+def _run_atheris_challenge(
+    execute,
+    runner,
+    profile,
+    contract,
+    source,
+    lane,
+    execution,
+    command,
+    baseline_path,
+    baseline,
+    obligation,
+    challenge,
+    case,
+    deadline,
+):
+    manifest = challenge.get("fixture_manifest")
+    if not isinstance(manifest, dict) or not manifest:
+        raise RuntimeAuditError(
+            "E_CHALLENGE_MANIFEST", "signed fixture manifest required"
+        )
+    manifest = dict(sorted(manifest.items()))
+    _semgrep_fixture_binding(manifest, obligation, source, challenge["fixture_path"])
+    case.mkdir()
+    challenge_root = case / "source"
+    for path, source_sha in manifest.items():
+        target = challenge_root.joinpath(*relative_path(path).split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(bound_bytes(source, {"path": path, "sha256": source_sha}))
+    challenge_sha = digest(manifest)
+    config_path = baseline_path
+    if challenge["kind"] == "mutation":
+        config_path = case / "fuzz-control.json"
+        config_path.write_bytes(
+            _fuzz_disable_rule(baseline, obligation["detector_rule_id"])
+        )
+    scratch = case / "run"
+    report_path = scratch / "report.json"
+    corpus_path = report_path.with_suffix(".corpus.json")
+    ledger_path = scratch / "unused-ledger.json"
+    bindings = {
+        "source": str(challenge_root),
+        "output": str(scratch),
+        "report": str(report_path),
+        "scratch": str(scratch),
+        "candidate_sha256": challenge_sha,
+        "factory_ledger": str(ledger_path),
+        "config": str(config_path),
+        "fixture": str(challenge_root / challenge["fixture_path"]),
+    }
+    retained = {}
+
+    def report_parser(raw):
+        with local_file(scratch, corpus_path.name).open("rb") as stream:
+            corpus_raw = stream.read(LIMIT + 1)
+        if len(corpus_raw) > LIMIT:
+            raise RuntimeAuditError("E_FUZZ_CORPUS", "retained corpus exceeds budget")
+        with local_file(config_path.parent, config_path.name).open("rb") as stream:
+            effective = stream.read(4097)
+        if len(effective) > 4096:
+            raise RuntimeAuditError("E_FUZZ_CONTROL", "control config exceeds budget")
+        normalized = _atheris_challenge_report(
+            raw, corpus_raw, effective, challenge, lane, manifest
+        )
+        retained.update(
+            {
+                "schema": "factory.atheris-retained-challenge.v1",
+                "source_manifest": manifest,
+                "source_manifest_sha256": digest(manifest),
+                "raw_report": _codeql_native_blob(raw, LIMIT),
+                "corpus_manifest": _codeql_native_blob(corpus_raw, LIMIT),
+                "effective_config": _codeql_native_blob(effective, 4096),
+            }
+        )
+        return normalized
+
+    timeout = int(deadline - time.monotonic())
+    if timeout < 1:
+        raise RuntimeAuditError(
+            "E_ADAPTER_TIMEOUT", "shared challenge deadline expired"
+        )
+    observation = execute(
+        challenge,
+        obligation_id=obligation["id"],
+        engine="atheris",
+        detector_rule_id=obligation["detector_rule_id"],
+        detector_enabled=challenge["kind"] != "mutation",
+        profile_argv=command["argv"],
+        bindings=bindings,
+        source_root=challenge_root,
+        baseline_config_path=baseline_path,
+        effective_config_path=config_path,
+        report_path=report_path,
+        ledger_path=ledger_path,
+        scratch=scratch,
+        scratch_parent=case,
+        timeout_seconds=timeout,
+        expected_ruleset_sha256=lane["ruleset_sha256"],
+        execution_bindings={
+            "candidate_sha256": contract["inventory"]["candidate_sha256"],
+            "challenge_source_sha256": challenge_sha,
+            "profile_sha256": digest(profile),
+            "image_sha256": sha256_bytes(lane["image"].encode("utf-8")),
+            "tool_version": profile["tool_version"],
+            "version_probe_sha256": digest(execution["version_probe"]),
+            "version_probe_facts": execution["version_probe"],
+        },
+        runner=runner,
+        report_parser=report_parser,
+        config_rule_ids=_fuzz_control_ids,
+        verify_mutation=lambda old, new, rule: _fuzz_disable_rule(old, rule) == new,
+        native_artifact_roles=lane["native_artifact_roles"],
+        native_artifacts={"fuzz_result": report_path, "corpus_manifest": corpus_path},
+        rule_ids=lane["rule_ids"],
+        mutation_ruleset_sha256=lane["mutation_config_sha256"],
+    )
+    observation["atheris_native_evidence"] = retained
+    _osv_check_deadline(deadline)
+    return observation
+
+
+def _atheris_challenge_report(
+    raw, corpus_raw, effective_config, challenge, lane, manifest
+):
+    report = strict_json(raw)
+    if (
+        canonical_bytes(report) != raw
+        or report.get("schema") != "factory.deep-atheris-observations.v1"
+        or report.get("engine") != "atheris"
+        or report.get("tool_version") != lane["tool_version"]
+        or type(report.get("completed")) is not bool
+        or (challenge["kind"] == "positive" and report["completed"] is not True)
+        or report.get("errors") != []
+        or report.get("control_sha256") != sha256_bytes(effective_config)
+    ):
+        raise RuntimeAuditError("E_FUZZ_REPORT", "native control report differs")
+    harness_path = challenge["fixture_path"]
+    harness = {"path": harness_path, "sha256": manifest[harness_path]}
+    sources = dict(manifest)
+    if report.get("harness") != harness:
+        raise RuntimeAuditError("E_FUZZ_REPORT", "native harness binding differs")
+    corpus = _validate_fuzz_corpus(corpus_raw, report, sources)
+    findings = report.get("findings")
+    if not isinstance(findings, list):
+        raise RuntimeAuditError("E_FUZZ_REPORT", "native findings list required")
+    for finding in findings:
+        if (
+            not isinstance(finding, dict)
+            or set(finding) != {"rule_id", "path", "line", "severity", "input_sha256"}
+            or finding.get("rule_id") != "FUZZ_EXCEPTION"
+            or finding.get("path") != harness_path
+            or type(finding.get("line")) is not int
+            or finding.get("line") != 1
+            or finding.get("severity") != "high"
+        ):
+            raise RuntimeAuditError("E_FUZZ_REPORT", "unknown or unbound fuzz finding")
+        input_sha = require_digest(finding.get("input_sha256"), "input_sha256")
+        if input_sha not in {item["sha256"] for item in corpus["inputs"]}:
+            raise RuntimeAuditError("E_FUZZ_REPORT", "finding input is not retained")
+    expected_count = 1 if challenge["kind"] == "positive" else 0
+    if len(findings) != expected_count:
+        raise RuntimeAuditError("E_FUZZ_REPORT", "fuzz control semantics differ")
+    if _fuzz_control_ids(effective_config) != (
+        ["FUZZ_EXCEPTION"] if challenge["kind"] != "mutation" else []
+    ):
+        raise RuntimeAuditError("E_FUZZ_CONTROL", "effective detector state differs")
+    normalized_findings = (
+        [{"rule_id": "FUZZ_EXCEPTION", "path": harness_path, "severity": "high"}]
+        if findings
+        else []
+    )
+    return {
+        "schema": "factory.atheris-challenge-observation.v1",
+        "kind": challenge["kind"],
+        "control_sha256": sha256_bytes(effective_config),
+        "harness": harness,
+        "findings": normalized_findings,
+    }
+
+
+def _atheris_challenge_retained_budget(observations):
+    total = 0
+    for observation in observations:
+        evidence = observation.get("atheris_native_evidence", {})
+        for key in ("raw_report", "corpus_manifest", "effective_config"):
+            total += require_int(
+                evidence.get(key, {}).get("bytes"),
+                "Atheris retained bytes",
+                minimum=0,
+                maximum=LIMIT,
+            )
+    if total > NATIVE_COVERAGE_LIMIT:
+        raise RuntimeAuditError("E_FUZZ_ARTIFACT", "retained controls exceed budget")
 
 
 def _osv_suppression_bytes(aliases):

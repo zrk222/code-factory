@@ -6783,3 +6783,216 @@ def test_fuzz_replay_result_failure_keeps_required_gap(tmp_path, monkeypatch, fa
     assert result["state"] == "INCOMPLETE"
     assert "FUZZ_NATIVE_REPLAY_REQUIRED" in result["gaps"]
     assert "FUZZ_NATIVE_REPLAY_FAILED" in result["gaps"]
+
+
+@pytest.mark.parametrize("kind", ["positive", "negative", "mutation"])
+def test_atheris_challenge_report_binds_native_corpus_config_and_semantics(kind):
+    from factoryline.deep_audit_io import (
+        _atheris_challenge_report,
+        _codeql_blob_bytes,
+        canonical_bytes,
+        _fuzz_disable_rule,
+    )
+
+    request = _fuzz_replay_request_fixture()
+    request["lane"]["tool_version"] = "3.0.0"
+    raw = deepcopy(request["report"])
+    raw.update(
+        schema="factory.deep-atheris-observations.v1",
+        engine="atheris",
+        tool_version="3.0.0",
+        completed=True,
+        errors=[],
+    )
+    raw["findings"][0].update(
+        rule_id="FUZZ_EXCEPTION", path="fuzz.py", line=1, severity="high"
+    )
+    corpus = _codeql_blob_bytes(raw.pop("fuzz_corpus"))
+    baseline = Path("deploy/deep-adapters/rules/fuzz-control.json").read_bytes()
+    config = (
+        _fuzz_disable_rule(baseline, "FUZZ_EXCEPTION")
+        if kind == "mutation"
+        else baseline
+    )
+    raw["control_sha256"] = sha256_bytes(config)
+    if kind != "positive":
+        raw["findings"] = []
+        raw["completed"] = False  # Native -runs termination is sealed by process facts.
+    manifest = {item["path"]: item["sha256"] for item in request["inventory"]["files"]}
+    challenge = {"kind": kind, "fixture_path": raw["harness"]["path"]}
+    result = _atheris_challenge_report(
+        canonical_bytes(raw), corpus, config, challenge, request["lane"], manifest
+    )
+    assert result["control_sha256"] == sha256_bytes(config)
+    assert result["harness"] == raw["harness"]
+    assert len(result["findings"]) == (1 if kind == "positive" else 0)
+    assert "corpus" not in result and "fuzz_corpus" not in result
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "config",
+        "harness",
+        "input",
+        "corpus",
+        "missing_positive",
+        "unexpected_safe",
+        "completion_missing",
+        "completion_type",
+        "positive_incomplete",
+    ],
+)
+def test_atheris_challenge_report_rejects_forged_control_evidence(tamper):
+    from factoryline.deep_audit_io import (
+        _atheris_challenge_report,
+        _codeql_blob_bytes,
+        canonical_bytes,
+    )
+
+    request = _fuzz_replay_request_fixture()
+    request["lane"]["tool_version"] = "3.0.0"
+    raw = deepcopy(request["report"])
+    raw.update(
+        schema="factory.deep-atheris-observations.v1",
+        engine="atheris",
+        tool_version="3.0.0",
+        completed=True,
+        errors=[],
+    )
+    raw["findings"][0].update(
+        rule_id="FUZZ_EXCEPTION", path="fuzz.py", line=1, severity="high"
+    )
+    corpus = _codeql_blob_bytes(raw.pop("fuzz_corpus"))
+    config = Path("deploy/deep-adapters/rules/fuzz-control.json").read_bytes()
+    raw["control_sha256"] = sha256_bytes(config)
+    manifest = {item["path"]: item["sha256"] for item in request["inventory"]["files"]}
+    challenge = {"kind": "positive", "fixture_path": raw["harness"]["path"]}
+    if tamper == "config":
+        raw["control_sha256"] = "0" * 64
+    elif tamper == "harness":
+        raw["harness"]["sha256"] = "0" * 64
+    elif tamper == "input":
+        raw["findings"][0]["input_sha256"] = "0" * 64
+    elif tamper == "corpus":
+        corpus = b"{}"
+    elif tamper == "missing_positive":
+        raw["findings"] = []
+    elif tamper == "completion_missing":
+        raw.pop("completed")
+    elif tamper == "completion_type":
+        raw["completed"] = 1
+    elif tamper == "positive_incomplete":
+        raw["completed"] = False
+    else:
+        challenge["kind"] = "negative"
+    with pytest.raises(RuntimeAuditError):
+        _atheris_challenge_report(
+            canonical_bytes(raw), corpus, config, challenge, request["lane"], manifest
+        )
+
+
+@pytest.mark.parametrize("tamper", ["fixture", "config", "extra_command"])
+def test_atheris_challenge_command_rejects_unbound_profile(tamper):
+    from factoryline.deep_audit_io import _atheris_challenge_command
+
+    profile = json.loads(Path("deploy/deep-adapters/profiles/atheris.json").read_text())
+    command = _atheris_challenge_command(profile)
+    assert (
+        "{fixture}" in command["argv"]
+        and "--factory-control={config}" in command["argv"]
+    )
+    if tamper == "extra_command":
+        profile["commands"].append(deepcopy(command))
+    elif tamper == "fixture":
+        profile["commands"][0]["argv"][command["argv"].index("{fixture}")] = (
+            "/unbound.py"
+        )
+    else:
+        profile["commands"][0]["argv"].remove("--factory-control={config}")
+    with pytest.raises(RuntimeAuditError):
+        _atheris_challenge_command(profile)
+
+
+def test_atheris_dispatcher_preserves_replay_gap_and_never_claims_coverage(
+    tmp_path, monkeypatch
+):
+    from factoryline import deep_audit_io as module
+
+    baseline = tmp_path / "fuzz-control.json"
+    baseline.write_bytes(
+        Path("deploy/deep-adapters/rules/fuzz-control.json").read_bytes()
+    )
+    profile = json.loads(Path("deploy/deep-adapters/profiles/atheris.json").read_text())
+    lane = {
+        "engine": "atheris",
+        "family": "fuzz",
+        "rule_ids": ["FUZZ_EXCEPTION"],
+        "ruleset_sha256": sha256_bytes(baseline.read_bytes()),
+        "timeout_seconds": 10,
+    }
+    challenges = [
+        {
+            "kind": kind,
+            "fixture_path": "fuzz.py",
+            "fixture_sha256": "a" * 64,
+            "expected_exit_code": code,
+        }
+        for kind, code in [("positive", 77), ("negative", 0), ("mutation", 0)]
+    ]
+    contract = {
+        "obligations": [
+            {
+                "id": "fuzz-rule",
+                "engine": "atheris",
+                "family": "fuzz",
+                "challenges": challenges,
+            }
+        ]
+    }
+    monkeypatch.setattr(module, "local_file", lambda *_: baseline)
+    calls = []
+
+    def execute(*args):
+        challenge = args[11]
+        calls.append(challenge["kind"])
+        blob = {"bytes": 1}
+        return {
+            "kind": challenge["kind"],
+            "execution": {"status": "VERIFIED"},
+            "atheris_native_evidence": {
+                key: blob
+                for key in ["raw_report", "corpus_manifest", "effective_config"]
+            },
+        }
+
+    monkeypatch.setattr(module, "_run_atheris_challenge", execute)
+    result, covered = module._atheris_challenges(
+        profile, contract, tmp_path, lane, {}, time.monotonic()
+    )
+    assert calls == ["positive", "negative", "mutation"]
+    assert len(result["observations"]) == 3 and covered == []
+    assert {gap["reason"] for gap in result["gaps"]} == {
+        "FUZZ_CHALLENGE_REPLAY_REQUIRED"
+    }
+
+
+@pytest.mark.parametrize("count", [65, 193])
+def test_atheris_dispatcher_rejects_unbounded_obligations_before_execution(count):
+    from factoryline.deep_audit_io import _atheris_challenges
+
+    item = {
+        "id": "fuzz-rule",
+        "engine": "atheris",
+        "family": "fuzz",
+        "challenges": [
+            {"kind": "positive", "fixture_path": "fuzz.py", "fixture_sha256": "a" * 64}
+        ],
+    }
+    contract = {"obligations": [deepcopy(item) for _ in range(count)]}
+    result, covered = _atheris_challenges(
+        {}, contract, Path("."), {"family": "fuzz"}, {}, time.monotonic()
+    )
+    assert not result["observations"] and covered == []
+    assert len(result["gaps"]) == count
+    assert {gap["reason"] for gap in result["gaps"]} == {"E_FUZZ_CHALLENGE_BUDGET"}
