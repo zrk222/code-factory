@@ -2100,29 +2100,9 @@ def _semgrep_rule_runs(profile, lane, source, scratch, rules, started):
 
 def verify_semgrep_rule_execution(evidence, lane, sources, report):
     """Re-derive execution and findings from exact pinned rules plus per-rule native JSON."""
-    import base64
     from .runtime_audit_common import _validate_runner_facts
 
-    if (
-        not isinstance(evidence, dict)
-        or set(evidence) != {"schema", "ruleset_base64", "observations"}
-        or evidence["schema"] != "factory.semgrep-rule-execution.v1"
-    ):
-        raise RuntimeAuditError("E_SEMGREP_EXECUTION", "native rule evidence missing")
-    try:
-        config = base64.b64decode(evidence["ruleset_base64"], validate=True)
-    except (ValueError, TypeError) as exc:
-        raise RuntimeAuditError("E_SEMGREP_RULESET", "invalid native ruleset") from exc
-    rules, _inventory = _semgrep_rule_inventory(config, lane)
-    observations = evidence["observations"]
-    if not isinstance(observations, list) or len(observations) != len(rules):
-        raise RuntimeAuditError(
-            "E_SEMGREP_EXECUTION", "rule observation inventory differs"
-        )
-    if len(sources) > 64:
-        raise RuntimeAuditError(
-            "E_SEMGREP_EXECUTION", "bounded source inventory required"
-        )
+    rules, observations = _semgrep_evidence_inputs(evidence, lane, sources)
     findings, dispositions = [], []
     for index, (rule, observation) in enumerate(zip(rules, observations)):
         _semgrep_observation_identity(rule, observation, index)
@@ -2156,6 +2136,32 @@ def verify_semgrep_rule_execution(evidence, lane, sources, report):
             "E_SEMGREP_EXECUTION", "per-rule findings contradict baseline"
         )
     return {"state": "VERIFIED", "rules": dispositions, "findings": len(findings)}
+
+
+def _semgrep_evidence_inputs(evidence, lane, sources):
+    import base64
+
+    if (
+        not isinstance(evidence, dict)
+        or set(evidence) != {"schema", "ruleset_base64", "observations"}
+        or evidence["schema"] != "factory.semgrep-rule-execution.v1"
+    ):
+        raise RuntimeAuditError("E_SEMGREP_EXECUTION", "native rule evidence missing")
+    try:
+        config = base64.b64decode(evidence["ruleset_base64"], validate=True)
+    except (ValueError, TypeError) as exc:
+        raise RuntimeAuditError("E_SEMGREP_RULESET", "invalid native ruleset") from exc
+    rules, _inventory = _semgrep_rule_inventory(config, lane)
+    observations = evidence["observations"]
+    if not isinstance(observations, list) or len(observations) != len(rules):
+        raise RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "rule observation inventory differs"
+        )
+    if len(sources) > 64:
+        raise RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "bounded source inventory required"
+        )
+    return rules, observations
 
 
 def _semgrep_observation_identity(rule, observation, index):
