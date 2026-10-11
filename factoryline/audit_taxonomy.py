@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from hashlib import sha256
+from importlib.resources import files
 import json
 from typing import Any
 
@@ -637,6 +638,11 @@ def domain_definition(measurement_id: str) -> dict[str, str] | None:
         if row["measurement_id"] == measurement_id:
             return dict(row)
     return None
+
+
+_AGENT_USAGE_CONTRACT["six_lane_review"] = json.loads(
+    files("factoryline").joinpath("data", "junie_pack.json").read_text(encoding="utf-8")
+)["agent_six_lane_review"]
 
 
 _ACTION_REFERENCE_FIELDS = {

@@ -10,7 +10,7 @@ timeouts, memory limits, challenge outcomes, and report completeness.
 | `codeql-python-worker` | CodeQL 2.27.1 Python bundle | SARIF | Full interprocedural Python query suite; this target covers Python only. |
 | `codeql-javascript-worker` | CodeQL 2.27.1, JavaScript queries 2.4.6 | SARIF with source-bound code flows | Full JavaScript/TypeScript security-extended suite, including modeled cross-module flows. Candidate extraction and framework models determine coverage. |
 | `codeql-actions-worker` | CodeQL 2.27.1, Actions queries 0.6.36 | SARIF with workflow source-to-sink flows | Full GitHub Actions security-extended suite; workflow injection and trust-boundary models depend on extracted YAML. This does not execute workflows or prove external actions safe. |
-| `semgrep-worker` | Semgrep 1.141.0, eight local Python/JavaScript/TypeScript rules | SARIF | Tracks declared request sources through local aliases into SQL, command and HTML sinks; also checks unsafe Python deserialization and disabled TLS. Pattern-limited only: it cannot satisfy the `interprocedural-full` static gate. Candidate `.semgrepignore` still requires native source accounting. |
+| `semgrep-worker` | Semgrep 1.141.0, ten local Python/JavaScript/TypeScript rules | SARIF | Tracks declared request sources through local aliases into SQL, command, HTML and filesystem-path sinks; also checks unsafe Python deserialization and disabled TLS. Pattern-limited only: it cannot satisfy the `interprocedural-full` static gate. Candidate `.semgrepignore` still requires native source accounting. |
 | `osv-worker` | OSV-Scanner 2.2.0 + immutable PyPI database snapshot | OSV JSON | Offline PyPI dependency scanning only; the pinned database snapshot ages and does not cover other ecosystems. |
 | `syft-worker` | Syft 1.33.0 | Syft JSON | Inventory only; this is not a vulnerability scan. |
 | `gitleaks-worker` | Gitleaks 8.28.0 | SARIF | Built-in rules are pinned with the image; native accounting limitations remain. |
@@ -119,7 +119,7 @@ This refresh does not establish vulnerability-free images or full audit coverage
 The Semgrep profile disables inline `nosemgrep` suppression and requests
 data-flow traces. The pinned community engine did not emit SARIF code-flow
 traces in native controls, so trace coverage is recorded as `NOT_MEASURED`.
-Its ruleset hash binds eight rules to the image profile.
+Its ruleset hash binds ten rules to the image profile.
 Request-to-sink rules follow assignments and concatenations within supported
 local flows. Parameterized SQL, argv execution without a shell, static HTML,
 safe YAML loading, enabled TLS, and values rebound to constants have negative

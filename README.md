@@ -256,7 +256,7 @@ configured native workers selected for the project's languages and risks.
 JavaScript/Actions workers verify bundled compiled queries rather than rebuilding
 them, and receipt discovery skips explicit file checks for unrelated logs.
 **Added:** CodeQL JavaScript/TypeScript interprocedural analysis, GitHub Actions
-security-extended analysis, and eight Python/JavaScript/TypeScript Semgrep
+security-extended analysis, and ten Python/JavaScript/TypeScript Semgrep
 rules including local taint tracking. CodeQL controls require native flow
 evidence; Semgrep community output does not establish cross-file coverage.
 The external-source regression corpus now includes 31 upstream cases from
