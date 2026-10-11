@@ -421,7 +421,12 @@ def _validate_runtime_metrics(metrics, lane):
         else ("tests",)
     )
     for key in keys:
-        require_int(metrics.get(key), key, minimum=1, maximum=10**12)
+        require_int(
+            metrics.get(key),
+            key,
+            minimum=0 if key == "coverage_edges" else 1,
+            maximum=10**12,
+        )
 
 
 def _execution_runtime(report: dict, lane: dict, sources: dict) -> list:

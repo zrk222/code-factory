@@ -5938,3 +5938,144 @@ def test_osv_replay_container_success_clears_required_gap_only(tmp_path, monkeyp
     assert result["gaps"] == ["UNRELATED_GAP"]
     assert result["state"] == "INCOMPLETE"
     assert result["osv_replay"]["state"] == "VERIFIED"
+
+
+@pytest.mark.parametrize("completed", [False, True])
+def test_fuzz_snapshot_completion_is_explicit(tmp_path, completed):
+    from factoryline.deep_audit_io import _fuzz_snapshot
+
+    class Coverage:
+        def json_report(self, outfile):
+            Path(outfile).write_text(json.dumps({"files": {}}))
+
+    output = tmp_path / "fuzz.json"
+    _fuzz_snapshot(
+        Coverage(),
+        {
+            "lane": {"tool_version": "3.0.0"},
+            "inventory": {"files": [{"path": "fuzz.py", "sha256": "a" * 64}]},
+        },
+        "fuzz.py",
+        output,
+        {
+            "executions": 1,
+            "inputs": {"hash"},
+            "findings": [],
+            "completed": completed,
+            "errors": [],
+        },
+    )
+    assert json.loads(output.read_text())["completed"] is completed
+
+
+@pytest.mark.parametrize("limit", ["bytes", "executions", "distinct"])
+def test_fuzz_input_budget_retains_incomplete_state(limit):
+    from factoryline.deep_audit_io import _fuzz_record_input
+
+    state = {
+        "executions": 1_000_000 if limit == "executions" else 0,
+        "inputs": {str(i) for i in range(4096)} if limit == "distinct" else set(),
+        "findings": [],
+        "completed": False,
+    }
+    before = (state["executions"], set(state["inputs"]))
+    data = b"x" * 1_048_577 if limit == "bytes" else b"x"
+    with pytest.raises(RuntimeAuditError, match="E_FUZZ_BUDGET"):
+        _fuzz_record_input(state, data)
+    assert (state["executions"], state["inputs"]) == before
+    assert state["completed"] is False
+    assert state["errors"] == ["E_FUZZ_BUDGET"]
+    assert state["findings"] == []
+
+
+def test_fuzz_repeat_input_at_distinct_limit_remains_counted():
+    from factoryline.deep_audit_io import _fuzz_record_input, sha256_bytes
+
+    state = {
+        "executions": 4096,
+        "inputs": {str(i) for i in range(4095)} | {sha256_bytes(b"x")},
+    }
+    _fuzz_record_input(state, b"x")
+    assert state["executions"] == 4097
+    assert len(state["inputs"]) == 4096
+
+
+@pytest.mark.parametrize("finding", [False, True])
+def test_fuzz_finalization_requires_matching_native_terminal_exit(finding):
+    from factoryline.deep_audit_io import _finalize_fuzz_report
+
+    raw = {
+        "completed": False,
+        "errors": [],
+        "findings": [{"rule_id": "FUZZ_EXCEPTION"}] if finding else [],
+    }
+    facts = _codeql_process_facts(30, b"", b"", exit_code=77 if finding else 0)
+    result = _finalize_fuzz_report(raw, [{"execution": facts}])
+    assert result["completed"] is True
+    assert result["findings"] == raw["findings"]
+    assert raw["completed"] is False
+    assert result["lifecycle_execution_sha256"] == digest(facts)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"timed_out": True},
+        {"cancelled": True},
+        {"cleanup_confirmed": False},
+        {"exit_code": 77},
+        {"output_limit_exceeded": True},
+    ],
+)
+def test_fuzz_finalization_never_promotes_failed_process(change):
+    from factoryline.deep_audit_io import _finalize_fuzz_report
+
+    facts = _codeql_process_facts(30, b"", b"", **change)
+    with pytest.raises(RuntimeAuditError):
+        _finalize_fuzz_report(
+            {"completed": False, "errors": [], "findings": []}, [{"execution": facts}]
+        )
+
+
+def test_fuzz_budget_error_cannot_be_cleared_by_success_exit():
+    from factoryline.deep_audit_io import _finalize_fuzz_report
+
+    with pytest.raises(RuntimeAuditError, match="E_FUZZ_REPORT"):
+        _finalize_fuzz_report(
+            {"completed": False, "errors": ["E_FUZZ_BUDGET"], "findings": []},
+            [{"execution": _codeql_process_facts(30, b"", b"")}],
+        )
+
+
+def test_fuzz_zero_branch_exception_remains_a_finding():
+    from factoryline.deep_audit_sarif import _execution_runtime
+
+    report = {
+        "schema": "factory.deep-atheris-observations.v1",
+        "engine": "atheris",
+        "tool_version": "3.0.0",
+        "completed": True,
+        "errors": [],
+        "harness": {"path": "fuzz.py", "sha256": "a" * 64},
+        "metrics": {"executions": 1, "coverage_edges": 0, "corpus_size": 1},
+        "findings": [
+            {
+                "rule_id": "FUZZ_EXCEPTION",
+                "path": "fuzz.py",
+                "line": 1,
+                "severity": "high",
+            }
+        ],
+    }
+    lane = {
+        "id": "fuzz",
+        "engine": "atheris",
+        "family": "fuzz",
+        "tool_version": "3.0.0",
+    }
+    findings = _execution_runtime(report, lane, {"fuzz.py": "a" * 64})
+    assert len(findings) == 1
+    assert findings[0]["rule_id"] == "FUZZ_EXCEPTION"
+    report["metrics"]["executions"] = 0
+    with pytest.raises(RuntimeAuditError):
+        _execution_runtime(report, lane, {"fuzz.py": "a" * 64})

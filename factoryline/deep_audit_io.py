@@ -1689,8 +1689,8 @@ def _fuzz_snapshot(
         "schema": "factory.deep-atheris-observations.v1",
         "engine": "atheris",
         "tool_version": contract["lane"]["tool_version"],
-        "completed": True,
-        "errors": [],
+        "completed": state.get("completed", False),
+        "errors": state.get("errors", []),
         "harness": {"path": harness, "sha256": sources[harness]},
         "metrics": {
             "executions": state["executions"],
@@ -1707,6 +1707,49 @@ def _fuzz_snapshot(
         "coverage_native_sha256": digest(raw),
     }
     output.write_bytes(canonical_bytes(report))
+
+
+def _fuzz_record_input(state, data):
+    fingerprint = sha256_bytes(data)
+    limits = (
+        len(data) > 1_048_576,
+        state["executions"] >= 1_000_000,
+        fingerprint not in state["inputs"] and len(state["inputs"]) >= 4096,
+    )
+    if any(limits):
+        state.update(completed=False, errors=["E_FUZZ_BUDGET"])
+        raise RuntimeAuditError(
+            "E_FUZZ_BUDGET", "bounded fuzz observation budget exhausted"
+        )
+    state["executions"] += 1
+    state["inputs"].add(fingerprint)
+
+
+def _finalize_fuzz_report(raw, invocations):
+    from .runtime_audit_common import _validate_runner_facts
+
+    if len(invocations) != 1 or raw.get("errors") != []:
+        raise RuntimeAuditError(
+            "E_FUZZ_REPORT", "one successful bounded fuzz lifecycle required"
+        )
+    facts = invocations[0]["execution"]
+    _validate_runner_facts(facts, facts["timeout_seconds"])
+    expected = 77 if raw.get("findings") else 0
+    failures = (
+        facts.get(key)
+        for key in ("timed_out", "launch_error", "output_limit_exceeded", "cancelled")
+    )
+    if (
+        any(failures)
+        or not facts["cleanup_confirmed"]
+        or facts["exit_code"] != expected
+    ):
+        raise RuntimeAuditError(
+            "E_FUZZ_REPORT", "fuzz result and process termination differ"
+        )
+    report = dict(raw)
+    report.update(completed=True, lifecycle_execution_sha256=digest(facts))
+    return report
 
 
 def native_fuzz_main(argv: list[str]) -> int:
@@ -1730,14 +1773,18 @@ def native_fuzz_main(argv: list[str]) -> int:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
     target = module.TestOneInput
-    state = {"executions": 0, "inputs": set(), "findings": []}
+    state = {"executions": 0, "inputs": set(), "findings": [], "completed": False}
 
     def callback(data):
-        state["executions"] += 1
-        state["inputs"].add(sha256_bytes(data))
+        try:
+            _fuzz_record_input(state, data)
+        except RuntimeAuditError:
+            _fuzz_snapshot(cov, contract, harness, output, state)
+            raise
         try:
             target(data)
         except Exception:
+            state["completed"] = True
             state["findings"].append(
                 {
                     "rule_id": "FUZZ_EXCEPTION",
@@ -1753,6 +1800,7 @@ def native_fuzz_main(argv: list[str]) -> int:
 
     atheris.Setup([sys.argv[0], *argv[3:]], atheris.instrument_func(callback))
     atheris.Fuzz()
+    state["completed"] = True
     _fuzz_snapshot(cov, contract, harness, output, state)
     return 0
 
@@ -1779,6 +1827,8 @@ def _native_report(
             contract["inventory"],
             output,
         )
+    if profile["engine"] == "atheris":
+        return _finalize_fuzz_report(raw, invocations)
     report = copy.deepcopy(raw)
     _native_dependency_paths(report, profile["report_format"], sources)
     return report
