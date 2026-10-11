@@ -323,6 +323,16 @@ def _stat_identity(info: os.stat_result) -> tuple[int, int, int, int, int]:
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
 
 
+def _stable_read_identity(before, opened, after, current, *, windows: bool) -> bool:
+    """Compare ctime within each API because Windows path/handle semantics differ."""
+    path_before, path_after = _stat_identity(before), _stat_identity(current)
+    fd_before, fd_after = _stat_identity(opened), _stat_identity(after)
+    cross_api = (
+        path_before[:4] == fd_before[:4] if windows else path_before == fd_before
+    )
+    return path_before == path_after and fd_before == fd_after and cross_api
+
+
 def _linked_entry(info: os.stat_result) -> bool:
     """Reject symbolic links and Windows reparse-point entries such as junctions."""
     reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
@@ -389,9 +399,9 @@ def _bounded_file(path: Path, *, root: Path | None = None) -> bytes:
         ) from exc
     if (
         len(raw) > MAX_ARTIFACT_BYTES
-        or _stat_identity(before) != _stat_identity(opened)
-        or _stat_identity(opened) != _stat_identity(after)
-        or _stat_identity(after) != _stat_identity(current)
+        or not _stable_read_identity(
+            before, opened, after, current, windows=os.name == "nt"
+        )
         or after.st_size != len(raw)
     ):
         raise RuntimeAuditError(

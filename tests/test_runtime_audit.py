@@ -1819,3 +1819,39 @@ def test_matching_local_receipt_reports_source_hash_match_but_not_authenticity(
     assert changed["candidate_binding"] == "UNBOUND"
     assert changed["receipt_status"] == "MISMATCHED"
     assert "current Python source" in changed["receipt_reason"]
+
+
+@pytest.mark.parametrize("windows", [True, False])
+def test_bounded_read_identity_preserves_same_api_drift_checks(windows):
+    from types import SimpleNamespace
+    from factoryline.runtime_audit_common import _stable_read_identity
+
+    def info(**changes):
+        values = dict(st_dev=1, st_ino=2, st_size=3, st_mtime_ns=4, st_ctime_ns=5)
+        values.update(changes)
+        return SimpleNamespace(**values)
+
+    assert _stable_read_identity(info(), info(), info(), info(), windows=windows)
+    for field in ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns"):
+        changed = info(**{field: 99})
+        assert not _stable_read_identity(
+            info(), info(), changed, info(), windows=windows
+        )
+        assert not _stable_read_identity(
+            info(), info(), info(), changed, windows=windows
+        )
+
+
+def test_windows_path_handle_ctime_difference_is_not_file_drift():
+    from types import SimpleNamespace
+    from factoryline.runtime_audit_common import _stable_read_identity
+
+    path = SimpleNamespace(st_dev=1, st_ino=2, st_size=3, st_mtime_ns=4, st_ctime_ns=5)
+    handle = SimpleNamespace(
+        st_dev=1, st_ino=2, st_size=3, st_mtime_ns=4, st_ctime_ns=6
+    )
+    assert _stable_read_identity(path, handle, handle, path, windows=True)
+    assert not _stable_read_identity(path, handle, handle, path, windows=False)
+    for field in ("st_dev", "st_ino", "st_size", "st_mtime_ns"):
+        changed = SimpleNamespace(**{**vars(handle), field: 99})
+        assert not _stable_read_identity(path, changed, changed, path, windows=True)
