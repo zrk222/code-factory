@@ -769,6 +769,252 @@ def test_v2_trivy_native_policy_identity_is_optional_and_strict(tmp_path):
             load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
 
 
+def _signed_osv_v2_plan(tmp_path):
+    from factoryline.deep_audit_contract import _osv_suppression_bytes
+
+    _, manifest, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    _v2_execution_plan(plan, inventory)
+    lane = next(item for item in plan["lanes"] if item["engine"] == "osv")
+    lane["mode"] = "offline-pypi-snapshot"
+    lane["argv"] = [
+        "/opt/factory/bin/audit-adapter",
+        "osv",
+        "--mode",
+        "offline-pypi-snapshot",
+    ]
+    detector = lane["rule_ids"][0]
+    aliases = sorted([detector, "CVE-2026-0001", "GHSA-abcd-1234-efgh"])
+    lane["native_policy"] = {
+        "database_path": "/opt/factory/osv-db/osv-scanner/PyPI/all.zip",
+        "database_sha256": lane["ruleset_sha256"],
+        "baseline_config_sha256": sha256_bytes(b"\n"),
+        "advisory_aliases": {detector: aliases},
+    }
+    lane["mutation_config_sha256"] = {
+        detector: sha256_bytes(_osv_suppression_bytes(aliases))
+    }
+    target = {
+        "package": "werkzeug",
+        "ecosystem": "PyPI",
+        "vulnerable_version": "0.16.1",
+        "fixed_version": "0.16.2",
+        "aliases": aliases,
+    }
+    next(item for item in plan["obligations"] if item["engine"] == "osv")[
+        "osv_target"
+    ] = target
+    return manifest, plan, lane, target
+
+
+def _write_and_load_signed_osv_plan(manifest, plan):
+    from factoryline.deep_audit_contract import load_execution_manifest
+
+    manifest.write_text(json.dumps(plan), encoding="utf-8")
+    return load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
+
+
+def test_v2_signed_osv_policy_and_target_load_from_pinned_manifest(tmp_path):
+    from factoryline.deep_audit_contract import _osv_suppression_bytes
+
+    manifest, plan, lane, target = _signed_osv_v2_plan(tmp_path)
+    loaded = _write_and_load_signed_osv_plan(manifest, plan)
+    loaded_lane = next(item for item in loaded["lanes"] if item["engine"] == "osv")
+    loaded_obligation = next(
+        item for item in loaded["obligations"] if item["engine"] == "osv"
+    )
+    assert loaded_lane["native_policy"] == lane["native_policy"]
+    assert loaded_lane["mutation_config_sha256"] == lane["mutation_config_sha256"]
+    assert loaded_obligation["osv_target"] == target
+    assert _osv_suppression_bytes(target["aliases"]) == (
+        b'[[IgnoredVulns]]\nid = "CVE-2026-0001"\n\n'
+        b'[[IgnoredVulns]]\nid = "GHSA-abcd-1234-efgh"\n\n'
+        b'[[IgnoredVulns]]\nid = "fixture-detection"\n\n'
+    )
+
+
+def test_v1_osv_manifest_remains_valid_without_native_policy_or_target(tmp_path):
+    from factoryline.deep_audit_contract import load_execution_manifest
+
+    _, manifest, _, _, _, plan, _, _ = execution_fixture(tmp_path)
+    osv = next(item for item in plan["lanes"] if item["engine"] == "osv")
+    obligation = next(item for item in plan["obligations"] if item["engine"] == "osv")
+    assert "native_policy" not in osv
+    assert "osv_target" not in obligation
+    manifest.write_text(json.dumps(plan), encoding="utf-8")
+    loaded = load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
+    assert loaded == plan
+
+
+def test_v2_osv_policy_rejects_native_policy_and_target_sabotage(tmp_path):
+    from copy import deepcopy
+
+    from factoryline.deep_audit_contract import _osv_suppression_bytes
+
+    manifest, plan, lane, target = _signed_osv_v2_plan(tmp_path)
+    detector = lane["rule_ids"][0]
+
+    mutations = []
+    malformed_keys = deepcopy(plan)
+    malformed_keys["lanes"][[item["engine"] for item in plan["lanes"]].index("osv")][
+        "native_policy"
+    ]["unexpected"] = True
+    mutations.append(malformed_keys)
+
+    for key, invalid in (
+        ("database_path", "/src/osv-db/all.zip"),
+        ("database_sha256", "0" * 64),
+        ("baseline_config_sha256", "0" * 64),
+    ):
+        candidate = deepcopy(plan)
+        osv = next(item for item in candidate["lanes"] if item["engine"] == "osv")
+        osv["native_policy"][key] = invalid
+        mutations.append(candidate)
+
+    candidate = deepcopy(plan)
+    osv = next(item for item in candidate["lanes"] if item["engine"] == "osv")
+    osv["native_policy"].pop("database_path")
+    mutations.append(candidate)
+
+    candidate = deepcopy(plan)
+    osv = next(item for item in candidate["lanes"] if item["engine"] == "osv")
+    osv["native_policy"].pop("baseline_config_sha256")
+    mutations.append(candidate)
+
+    candidate = deepcopy(plan)
+    osv = next(item for item in candidate["lanes"] if item["engine"] == "osv")
+    osv["native_policy"]["advisory_aliases"] = {"another-rule": ["another-rule"]}
+    mutations.append(candidate)
+
+    candidate = deepcopy(plan)
+    osv = next(item for item in candidate["lanes"] if item["engine"] == "osv")
+    osv["mode"] = "online-pypi"
+    mutations.append(candidate)
+
+    target_mutations = []
+    target_missing = deepcopy(plan)
+    next(item for item in target_missing["obligations"] if item["engine"] == "osv").pop(
+        "osv_target"
+    )
+    target_mutations.append(target_missing)
+    policy_missing = deepcopy(plan)
+    next(item for item in policy_missing["lanes"] if item["engine"] == "osv").pop(
+        "native_policy"
+    )
+    target_mutations.append(policy_missing)
+
+    for field, invalid in (
+        ("ecosystem", "npm"),
+        ("package", "Werkzeug"),
+        ("package", "a--b"),
+        ("package", "../werkzeug"),
+        ("vulnerable_version", "0.16.1\n--config"),
+        ("fixed_version", "0.16.1"),
+        ("aliases", sorted(["CVE-2026-0002", detector, "GHSA-abcd-1234-efgh"])),
+    ):
+        candidate = deepcopy(plan)
+        osv_target = next(
+            item for item in candidate["obligations"] if item["engine"] == "osv"
+        )["osv_target"]
+        osv_target[field] = invalid
+        target_mutations.append(candidate)
+
+    for candidate in mutations + target_mutations:
+        with pytest.raises(RuntimeAuditError):
+            _write_and_load_signed_osv_plan(manifest, candidate)
+
+    # Recomputed suppression hashes are required for every exact alias set.
+    for aliases in (
+        ["CVE-2026-0001", detector, "GHSA-abcd-1234-efgh"],
+        ["CVE-2026-0001", "CVE-2026-0001", detector],
+        ["CVE-2026-0001", "GHSA-abcd-1234-efgh"],
+    ):
+        candidate = deepcopy(plan)
+        osv = next(item for item in candidate["lanes"] if item["engine"] == "osv")
+        osv["native_policy"]["advisory_aliases"][detector] = aliases
+        with pytest.raises(RuntimeAuditError):
+            _write_and_load_signed_osv_plan(manifest, candidate)
+
+    for mutation in (
+        {},
+        {"another-rule": "a" * 64},
+        {detector: sha256_bytes(_osv_suppression_bytes(["CVE-2026-0002", detector]))},
+        {detector: "not-a-digest"},
+    ):
+        candidate = deepcopy(plan)
+        osv = next(item for item in candidate["lanes"] if item["engine"] == "osv")
+        osv["mutation_config_sha256"] = mutation
+        with pytest.raises(RuntimeAuditError):
+            _write_and_load_signed_osv_plan(manifest, candidate)
+
+
+def test_v2_osv_policy_rejects_cross_target_advisory_alias_overlap(tmp_path):
+    from copy import deepcopy
+
+    from factoryline.deep_audit_contract import _osv_suppression_bytes
+
+    manifest, plan, _, _ = _signed_osv_v2_plan(tmp_path)
+    candidate = deepcopy(plan)
+    lane = next(item for item in candidate["lanes"] if item["engine"] == "osv")
+    first, second = sorted(["fixture-detection", "osv-secondary"])
+    aliases_one = sorted([first, "CVE-2026-0001"])
+    aliases_two = sorted([second, "CVE-2026-0001"])
+    lane["rule_ids"] = [first, second]
+    lane["native_policy"]["advisory_aliases"] = {
+        first: aliases_one,
+        second: aliases_two,
+    }
+    lane["mutation_config_sha256"] = {
+        first: sha256_bytes(_osv_suppression_bytes(aliases_one)),
+        second: sha256_bytes(_osv_suppression_bytes(aliases_two)),
+    }
+    target_obligation = next(
+        item for item in candidate["obligations"] if item["engine"] == "osv"
+    )
+    target_obligation["detector_rule_id"] = first
+    target_obligation["osv_target"]["aliases"] = aliases_one
+    with pytest.raises(RuntimeAuditError, match="E_OSV_TARGET"):
+        _write_and_load_signed_osv_plan(manifest, candidate)
+
+
+@pytest.mark.parametrize("malformed", [None, [], 7])
+def test_v2_osv_manifest_rejects_malformed_obligation_without_crashing(
+    tmp_path, malformed
+):
+    from copy import deepcopy
+
+    manifest, plan, _, _ = _signed_osv_v2_plan(tmp_path)
+    candidate = deepcopy(plan)
+    index = next(
+        index
+        for index, item in enumerate(candidate["obligations"])
+        if item["engine"] == "osv"
+    )
+    candidate["obligations"][index] = malformed
+    with pytest.raises(RuntimeAuditError):
+        _write_and_load_signed_osv_plan(manifest, candidate)
+
+
+@pytest.mark.parametrize("policy_enabled", [False, True])
+def test_v2_osv_signed_policy_metadata_never_verifies_native_challenge(
+    policy_enabled,
+):
+    from factoryline.deep_audit_sarif import _challenge_execution_v2_valid
+
+    lane = {"engine": "osv"}
+    if policy_enabled:
+        lane["native_policy"] = {"database_path": "pinned"}
+    assert not _challenge_execution_v2_valid(
+        {"status": "VERIFIED", "native_artifacts": {}},
+        {"report": {"native_report": {}}},
+        {},
+        {},
+        ("obligation-osv", "positive"),
+        lane,
+        {"source_accounting": {"state": "COMPLETE"}},
+        "a" * 64,
+    )
+
+
 def test_v2_role_tables_match_native_helper_and_report_roles():
     from factoryline.deep_audit_contract import V2_NATIVE_ROLES
     from factoryline.deep_audit_sarif import _NATIVE_REPORT_ROLES

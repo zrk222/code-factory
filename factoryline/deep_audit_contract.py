@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -441,7 +442,7 @@ def _execution_lane_fields(lane: dict, version: int) -> set[str]:
         fields.add("native_artifact_roles")
         if lane.get("engine") != "syft":
             fields.update({"rule_ids", "mutation_config_sha256"})
-        if lane.get("engine") == "trivy" and "native_policy" in lane:
+        if lane.get("engine") in {"trivy", "osv"} and "native_policy" in lane:
             fields.add("native_policy")
     if lane.get("engine") == "gitleaks" and "rule_ids" in lane:
         fields.add("rule_ids")
@@ -482,11 +483,14 @@ def _validate_execution_identity(plan: dict) -> None:
 
 def _validate_v2_lane(lane: dict) -> None:
     _validate_v2_roles(lane)
-    if "native_policy" in lane:
-        _validate_v2_trivy_policy(lane)
     if lane["engine"] == "syft":
         return
     _validate_v2_rule_inventory(lane)
+    if "native_policy" in lane:
+        if lane["engine"] == "osv":
+            _validate_v2_osv_policy(lane)
+        else:
+            _validate_v2_trivy_policy(lane)
 
 
 def _validate_v2_trivy_policy(lane: dict) -> None:
@@ -499,6 +503,65 @@ def _validate_v2_trivy_policy(lane: dict) -> None:
     require_digest(
         policy["baseline_ignore_sha256"], "native_policy.baseline_ignore_sha256"
     )
+
+
+def _osv_aliases(value: object, detector: str) -> list[str]:
+    aliases = _items(value, 64)
+    for alias in aliases:
+        text = require_str(alias, "OSV advisory identity", maximum=256)
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", text) is None:
+            raise RuntimeAuditError("E_OSV_TARGET", "invalid advisory identity")
+    _unique(aliases)
+    if aliases != sorted(aliases) or detector not in aliases:
+        raise RuntimeAuditError("E_OSV_TARGET", "sorted target aliases required")
+    return aliases
+
+
+def _osv_suppression_bytes(aliases: list[str]) -> bytes:
+    return "".join(
+        "[[IgnoredVulns]]\nid = " + json.dumps(alias, ensure_ascii=True) + "\n\n"
+        for alias in aliases
+    ).encode("ascii")
+
+
+def _validate_v2_osv_policy(lane: dict) -> None:
+    policy = _keys(
+        lane["native_policy"],
+        "database_path database_sha256 baseline_config_sha256 advisory_aliases",
+    )
+    if lane["mode"] != "offline-pypi-snapshot" or policy["database_path"] != (
+        "/opt/factory/osv-db/osv-scanner/PyPI/all.zip"
+    ):
+        raise RuntimeAuditError(
+            "E_NATIVE_POLICY", "pinned offline PyPI database required"
+        )
+    if (
+        require_digest(policy["database_sha256"], "database_sha256")
+        != lane["ruleset_sha256"]
+    ):
+        raise RuntimeAuditError("E_NATIVE_POLICY", "OSV database ruleset differs")
+    if require_digest(policy["baseline_config_sha256"], "baseline_config_sha256") != (
+        sha256_bytes(b"\n")
+    ):
+        raise RuntimeAuditError(
+            "E_NATIVE_POLICY", "OSV baseline must be exactly one LF"
+        )
+    _validate_osv_policy_targets(lane, policy["advisory_aliases"])
+
+
+def _validate_osv_policy_targets(lane: dict, targets: object) -> None:
+    rules = lane["rule_ids"]
+    if not isinstance(targets, dict) or set(targets) != set(rules):
+        raise RuntimeAuditError("E_OSV_TARGET", "exact per-target alias sets required")
+    seen = set()
+    for detector in rules:
+        aliases = _osv_aliases(targets[detector], detector)
+        if seen.intersection(aliases):
+            raise RuntimeAuditError("E_OSV_TARGET", "advisory target families overlap")
+        seen.update(aliases)
+        expected = sha256_bytes(_osv_suppression_bytes(aliases))
+        if lane["mutation_config_sha256"].get(detector) != expected:
+            raise RuntimeAuditError("E_OSV_TARGET", "exact suppression digest differs")
 
 
 def _validate_v2_roles(lane: dict) -> None:
@@ -653,10 +716,17 @@ def _obligation_challenges(value: object, version: int) -> None:
 
 
 def _validate_obligation(obligation: dict, lanes: list[dict], version: int) -> None:
-    _keys(
-        obligation,
-        "id engine family detector_rule_id paths requirements remediation challenges",
+    fields = (
+        "id engine family detector_rule_id paths requirements remediation challenges"
     )
+    if (
+        version == 2
+        and isinstance(obligation, dict)
+        and obligation.get("engine") == "osv"
+        and "osv_target" in obligation
+    ):
+        fields += " osv_target"
+    _keys(obligation, fields)
     require_str(obligation["id"], "obligation.id", maximum=128)
     require_str(obligation["detector_rule_id"], "detector_rule_id", maximum=256)
     _obligation_engine(obligation, lanes)
@@ -682,6 +752,35 @@ def _validate_v2_obligation(obligation: dict, lanes: list[dict]) -> None:
         raise RuntimeAuditError(
             "E_CHALLENGE_RULE", "detector rule is absent from signed inventory"
         )
+    if lane["engine"] == "osv":
+        _validate_osv_obligation(obligation, lane)
+
+
+def _validate_osv_obligation(obligation: dict, lane: dict) -> None:
+    policy = lane.get("native_policy")
+    target = obligation.get("osv_target")
+    if policy is None and target is None:
+        return
+    if policy is None or target is None:
+        raise RuntimeAuditError("E_OSV_TARGET", "OSV policy and target must be paired")
+    target = _keys(target, "package ecosystem vulnerable_version fixed_version aliases")
+    name = require_str(target["package"], "OSV package", maximum=256)
+    if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name) is None:
+        raise RuntimeAuditError("E_OSV_TARGET", "normalized PyPI package required")
+    if target["ecosystem"] != "PyPI":
+        raise RuntimeAuditError("E_OSV_TARGET", "only PyPI controls are supported")
+    for field in ("vulnerable_version", "fixed_version"):
+        value = require_str(target[field], field, maximum=128)
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.!+_-]{0,127}", value) is None:
+            raise RuntimeAuditError("E_OSV_TARGET", "literal package version required")
+    if target["vulnerable_version"] == target["fixed_version"]:
+        raise RuntimeAuditError(
+            "E_OSV_TARGET", "distinct vulnerable/fixed versions required"
+        )
+    detector = obligation["detector_rule_id"]
+    aliases = _osv_aliases(target["aliases"], detector)
+    if aliases != policy["advisory_aliases"][detector]:
+        raise RuntimeAuditError("E_OSV_TARGET", "obligation aliases differ from policy")
 
 
 def _execution_obligations(value: object, lanes: list[dict], version: int) -> None:

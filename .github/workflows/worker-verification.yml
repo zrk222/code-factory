@@ -6,6 +6,7 @@ on:
       - .dockerignore
       - factoryline/__init__.py
       - factoryline/deep_audit_io.py
+      - factoryline/deep_audit_sarif.py
       - factoryline/runtime_audit_common.py
       - factoryline/runtime_audit_process.py
       - scripts/verify_worker_cves*.mjs
@@ -21,6 +22,7 @@ on:
       - .dockerignore
       - factoryline/__init__.py
       - factoryline/deep_audit_io.py
+      - factoryline/deep_audit_sarif.py
       - factoryline/runtime_audit_common.py
       - factoryline/runtime_audit_process.py
       - scripts/verify_worker_cves*.mjs

@@ -1303,6 +1303,9 @@ def _challenge_execution_v2_fields():
 def _challenge_execution_v2_valid(
     execution, challenge, bound, obligation, identity, lane, coverage, candidate_sha
 ):
+    # Signed policy metadata is not native OSV execution or coordinator replay proof.
+    if lane["engine"] == "osv":
+        return False
     if not _challenge_execution_v2_control(execution, bound):
         return False
     if not _challenge_execution_v2_artifacts(execution, lane):
