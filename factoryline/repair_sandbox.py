@@ -1731,6 +1731,36 @@ def _valid_approval_authority(approval: dict[str, Any]) -> bool:
     )
 
 
+def _verify_approval_origin_fields(approval: dict[str, Any]) -> None:
+    if approval.get("schema") == REPAIR_APPROVAL_SCHEMA:
+        origin = approval.get("origin_audit")
+        if not _digest(approval.get("confirmation_sha256")):
+            raise RepairSandboxError(
+                "REPAIR_APPROVAL_TAMPERED", "confirmation digest is malformed"
+            )
+        if origin is not None and (
+            not isinstance(origin, dict)
+            or set(origin)
+            != {
+                "run_id",
+                "candidate_sha256",
+                "manifest_sha256",
+                "event_sha256",
+                "sequence",
+            }
+            or not all(
+                _digest(origin.get(key))
+                for key in ("candidate_sha256", "manifest_sha256", "event_sha256")
+            )
+            or type(origin.get("sequence")) is not int
+            or origin["sequence"] < 1
+            or not isinstance(origin.get("run_id"), str)
+        ):
+            raise RepairSandboxError(
+                "REPAIR_APPROVAL_TAMPERED", "origin audit binding is malformed"
+            )
+
+
 def _verify_approval(approval: dict[str, Any]) -> str:
     supplied = approval.get("approval_sha256")
     core = {key: value for key, value in approval.items() if key != "approval_sha256"}
@@ -1771,33 +1801,7 @@ def _verify_approval(approval: dict[str, Any]) -> str:
         raise RepairSandboxError(
             "REPAIR_APPROVAL_TAMPERED", "approval fields are unsupported"
         )
-    if approval.get("schema") == REPAIR_APPROVAL_SCHEMA:
-        origin = approval.get("origin_audit")
-        if not _digest(approval.get("confirmation_sha256")):
-            raise RepairSandboxError(
-                "REPAIR_APPROVAL_TAMPERED", "confirmation digest is malformed"
-            )
-        if origin is not None and (
-            not isinstance(origin, dict)
-            or set(origin)
-            != {
-                "run_id",
-                "candidate_sha256",
-                "manifest_sha256",
-                "event_sha256",
-                "sequence",
-            }
-            or not all(
-                _digest(origin.get(key))
-                for key in ("candidate_sha256", "manifest_sha256", "event_sha256")
-            )
-            or type(origin.get("sequence")) is not int
-            or origin["sequence"] < 1
-            or not isinstance(origin.get("run_id"), str)
-        ):
-            raise RepairSandboxError(
-                "REPAIR_APPROVAL_TAMPERED", "origin audit binding is malformed"
-            )
+    _verify_approval_origin_fields(approval)
     contract = approval.get("tool_contract")
     if not _valid_tool_contract(contract) or _sha(contract) != approval.get(
         "tool_contract_sha256"

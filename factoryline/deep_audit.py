@@ -1004,149 +1004,129 @@ def _playback_verified_page(
     }
 
 
-def _lineage_run(root: Path, run_id: str) -> tuple[dict, list[dict], list[dict]]:
-    from .deep_audit_io import read_run_json, run_directory
+def _lineage_accounting(coverage, result, definition, lane_id, item, gaps):
+    accounting = coverage.get("rule_accounting")
+    if not isinstance(accounting, dict):
+        gaps.append(f"RULE_ACCOUNTING_MISSING:{lane_id}")
+    else:
+        digest_core = {
+            key: value
+            for key, value in accounting.items()
+            if key != "accounting_sha256"
+        }
+        accounting_sha = accounting.get("accounting_sha256")
+        if accounting_sha != digest(digest_core) or accounting_sha != result.get(
+            "rule_accounting_sha256"
+        ):
+            gaps.append(f"RULE_ACCOUNTING_DIGEST_MISMATCH:{lane_id}")
+        expected_ids = sorted(definition.get("rule_ids", []))
+        observed_ids = sorted(
+            row.get("rule_id", "")
+            for row in accounting.get("rules", [])
+            if isinstance(row, dict)
+        )
+        if expected_ids != observed_ids:
+            gaps.append(f"RULE_INVENTORY_MISMATCH:{lane_id}")
+        for row in accounting.get("rules", []):
+            if not isinstance(row, dict):
+                continue
+            sources = row.get("sources", [])
+            for source in sources if isinstance(sources, list) else []:
+                if not isinstance(source, dict):
+                    continue
+                disposition = source.get("disposition", "unknown")
+                if disposition != "executed":
+                    gaps.append(
+                        f"RULE_SOURCE_NOT_EXECUTED:{lane_id}:{row.get('rule_id')}:{source.get('path')}"
+                    )
+        # Keep the exact bounded digest-bearing ledger so lineage can
+        # independently recompute its native accounting digest.
+        item["rule_accounting"] = accounting
+
+
+def _lineage_normalization(
+    bundle, definition, inventory, run_id, result, lane_id, gaps, plan
+):
     from .deep_audit_sarif import normalize_execution_bundle
 
-    status = deep_run_status(root, run_id)
-    directory = run_directory(root, run_id)
     try:
-        plan = read_run_json(directory, "manifest.json")
-        inventory = read_run_json(directory, "inventory.json")
-    except (OSError, ValueError, KeyError, TypeError, RuntimeAuditError):
-        plan, inventory = {}, {"files": []}
-        gaps = ["RUN_PLAN_OR_INVENTORY_MISSING"]
-    else:
-        gaps = []
-    plan_lanes = {item["id"]: item for item in plan.get("lanes", [])}
-    from .deep_audit_contract import EXECUTION_FAMILIES
-
-    families = {item.get("family") for item in plan.get("lanes", [])}
-    if families != set(EXECUTION_FAMILIES):
-        gaps.append("SIX_LANE_FAMILY_SET_MISMATCH")
-    results = {item["lane_id"]: item for item in status.get("lanes", [])}
-    lanes = []
-    if (
-        digest(plan) != status.get("manifest_content_sha256")
-        or plan.get("candidate_sha256") != status.get("candidate_sha256")
-        or inventory.get("candidate_sha256") != status.get("candidate_sha256")
-    ):
-        gaps.append("RUN_PLAN_OR_CANDIDATE_BINDING_MISMATCH")
-    try:
-        authorization = read_run_json(directory, "authorization.json")
-        if digest(authorization) != status.get("authorization_sha256"):
-            gaps.append("RUN_AUTHORIZATION_BINDING_MISMATCH")
-    except (OSError, ValueError, KeyError, TypeError, RuntimeAuditError):
-        gaps.append("RUN_AUTHORIZATION_MISSING")
-    for lane_id, definition in plan_lanes.items():
-        result = results.get(lane_id)
-        if result is None:
-            gaps.append(f"LANE_NOT_RECORDED:{lane_id}")
-            lanes.append({"lane_id": lane_id, "state": "NOT_RUN"})
-            continue
-        item = {
-            "lane_id": lane_id,
-            "engine": definition.get("engine"),
-            "family": definition.get("family"),
-            "state": result.get("state", "INCOMPLETE"),
-            "gaps": sorted(result.get("gaps", [])),
-            "finding_ids": sorted(
-                finding.get("finding_id", "") for finding in result.get("findings", [])
-            ),
-            "findings_sha256": digest(result.get("findings", [])),
-            "report_sha256": result.get("report_sha256"),
-            "coverage_sha256": result.get("coverage_sha256"),
-            "challenge_sha256": result.get("challenge_sha256"),
-            "rule_accounting_sha256": result.get("rule_accounting_sha256"),
-            "native_execution": result.get("native_execution"),
-            "execution": result.get("execution"),
-            "expected_rule_ids": sorted(definition.get("rule_ids", [])),
-            "source_paths": sorted(result.get("covered_paths", [])),
-            "rule_accounting": None,
-        }
-        try:
-            bundle = read_run_json(directory, f"bundle-{lane_id}.json")
-            coverage = bundle["artifacts"][definition["coverage"]]
-            if digest(coverage) != result.get("coverage_sha256"):
-                raise ValueError("coverage digest mismatch")
-            accounting = coverage.get("rule_accounting")
-            if not isinstance(accounting, dict):
-                gaps.append(f"RULE_ACCOUNTING_MISSING:{lane_id}")
-            else:
-                digest_core = {
-                    key: value
-                    for key, value in accounting.items()
-                    if key != "accounting_sha256"
-                }
-                accounting_sha = accounting.get("accounting_sha256")
-                if accounting_sha != digest(
-                    digest_core
-                ) or accounting_sha != result.get("rule_accounting_sha256"):
-                    gaps.append(f"RULE_ACCOUNTING_DIGEST_MISMATCH:{lane_id}")
-                expected_ids = sorted(definition.get("rule_ids", []))
-                observed_ids = sorted(
-                    row.get("rule_id", "")
-                    for row in accounting.get("rules", [])
-                    if isinstance(row, dict)
+        normalized = normalize_execution_bundle(
+            bundle,
+            definition,
+            inventory,
+            run_id,
+            plan.get("obligations", []),
+        )
+        saved_findings = [
+            {key: value for key, value in finding.items() if key != "rerun"}
+            for finding in result.get("findings", [])
+        ]
+        if (
+            any(
+                normalized.get(key) != result.get(key)
+                for key in (
+                    "state",
+                    "gaps",
+                    "report_sha256",
+                    "coverage_sha256",
+                    "rule_accounting_sha256",
+                    "challenge_sha256",
                 )
-                if expected_ids != observed_ids:
-                    gaps.append(f"RULE_INVENTORY_MISMATCH:{lane_id}")
-                for row in accounting.get("rules", []):
-                    if not isinstance(row, dict):
-                        continue
-                    sources = row.get("sources", [])
-                    for source in sources if isinstance(sources, list) else []:
-                        if not isinstance(source, dict):
-                            continue
-                        disposition = source.get("disposition", "unknown")
-                        if disposition != "executed":
-                            gaps.append(
-                                f"RULE_SOURCE_NOT_EXECUTED:{lane_id}:{row.get('rule_id')}:{source.get('path')}"
-                            )
-                # Keep the exact bounded digest-bearing ledger so lineage can
-                # independently recompute its native accounting digest.
-                item["rule_accounting"] = accounting
-            try:
-                normalized = normalize_execution_bundle(
-                    bundle,
-                    definition,
-                    inventory,
-                    run_id,
-                    plan.get("obligations", []),
-                )
-                saved_findings = [
-                    {key: value for key, value in finding.items() if key != "rerun"}
-                    for finding in result.get("findings", [])
-                ]
-                if (
-                    any(
-                        normalized.get(key) != result.get(key)
-                        for key in (
-                            "state",
-                            "gaps",
-                            "report_sha256",
-                            "coverage_sha256",
-                            "rule_accounting_sha256",
-                            "challenge_sha256",
-                        )
-                    )
-                    or normalized.get("findings") != saved_findings
-                ):
-                    gaps.append(f"NORMALIZED_LANE_BINDING_MISMATCH:{lane_id}")
-            except (OSError, ValueError, KeyError, TypeError, RuntimeAuditError):
-                gaps.append(f"LANE_NORMALIZATION_FAILED:{lane_id}")
-        except (OSError, ValueError, KeyError, TypeError, RuntimeAuditError):
-            gap = (
-                "LANE_NORMALIZATION_INCOMPLETE"
-                if item.get("native_execution")
-                else "LANE_ARTIFACT_UNAVAILABLE"
             )
-            gaps.append(f"{gap}:{lane_id}")
-        if item["state"] != "OBSERVED" or item["gaps"]:
-            gaps.append(f"LANE_INCOMPLETE:{lane_id}")
-        lanes.append(item)
-    if set(results) != set(plan_lanes):
-        gaps.append("LANE_SET_MISMATCH")
+            or normalized.get("findings") != saved_findings
+        ):
+            gaps.append(f"NORMALIZED_LANE_BINDING_MISMATCH:{lane_id}")
+    except (OSError, ValueError, KeyError, TypeError, RuntimeAuditError):
+        gaps.append(f"LANE_NORMALIZATION_FAILED:{lane_id}")
+
+
+def _lineage_lane(directory, lane_id, definition, result, inventory, run_id, plan):
+    from .deep_audit_io import read_run_json
+
+    gaps = []
+    item = {
+        "lane_id": lane_id,
+        "engine": definition.get("engine"),
+        "family": definition.get("family"),
+        "state": result.get("state", "INCOMPLETE"),
+        "gaps": sorted(result.get("gaps", [])),
+        "finding_ids": sorted(
+            finding.get("finding_id", "") for finding in result.get("findings", [])
+        ),
+        "findings_sha256": digest(result.get("findings", [])),
+        "report_sha256": result.get("report_sha256"),
+        "coverage_sha256": result.get("coverage_sha256"),
+        "challenge_sha256": result.get("challenge_sha256"),
+        "rule_accounting_sha256": result.get("rule_accounting_sha256"),
+        "native_execution": result.get("native_execution"),
+        "execution": result.get("execution"),
+        "expected_rule_ids": sorted(definition.get("rule_ids", [])),
+        "source_paths": sorted(result.get("covered_paths", [])),
+        "rule_accounting": None,
+    }
+    try:
+        bundle = read_run_json(directory, f"bundle-{lane_id}.json")
+        coverage = bundle["artifacts"][definition["coverage"]]
+        if digest(coverage) != result.get("coverage_sha256"):
+            raise ValueError("coverage digest mismatch")
+        _lineage_accounting(coverage, result, definition, lane_id, item, gaps)
+        _lineage_normalization(
+            bundle, definition, inventory, run_id, result, lane_id, gaps, plan
+        )
+    except (OSError, ValueError, KeyError, TypeError, RuntimeAuditError):
+        gap = (
+            "LANE_NORMALIZATION_INCOMPLETE"
+            if item.get("native_execution")
+            else "LANE_ARTIFACT_UNAVAILABLE"
+        )
+        gaps.append(f"{gap}:{lane_id}")
+    if item["state"] != "OBSERVED" or item["gaps"]:
+        gaps.append(f"LANE_INCOMPLETE:{lane_id}")
+    return item, gaps
+
+
+def _lineage_request(root, directory, status, gaps):
+    from .deep_audit_io import read_run_json
 
     request_reference = None
     request_fields = (
@@ -1174,6 +1154,10 @@ def _lineage_run(root: Path, run_id: str) -> tuple[dict, list[dict], list[dict]]
         except (OSError, ValueError, KeyError, TypeError, RuntimeAuditError):
             gaps.append("REQUEST_ARTIFACT_UNAVAILABLE")
 
+    return request_reference
+
+
+def _lineage_playback(root, run_id, status, gaps):
     event_rows = []
     cursor = 0
     while cursor < status["sequence"]:
@@ -1199,6 +1183,71 @@ def _lineage_run(root: Path, run_id: str) -> tuple[dict, list[dict], list[dict]]
         "events_sha256": digest(event_rows),
         "head_sha256": status["event_sha256"],
     }
+    return event_rows, playback
+
+
+def _lineage_authorization(directory, status, gaps):
+    from .deep_audit_io import read_run_json
+
+    try:
+        authorization = read_run_json(directory, "authorization.json")
+        if digest(authorization) != status.get("authorization_sha256"):
+            gaps.append("RUN_AUTHORIZATION_BINDING_MISMATCH")
+    except (OSError, ValueError, KeyError, TypeError, RuntimeAuditError):
+        gaps.append("RUN_AUTHORIZATION_MISSING")
+
+
+def _lineage_inputs(directory):
+    from .deep_audit_io import read_run_json
+
+    try:
+        plan = read_run_json(directory, "manifest.json")
+        inventory = read_run_json(directory, "inventory.json")
+    except (OSError, ValueError, KeyError, TypeError, RuntimeAuditError):
+        plan, inventory = {}, {"files": []}
+        gaps = ["RUN_PLAN_OR_INVENTORY_MISSING"]
+    else:
+        gaps = []
+    return plan, inventory, gaps
+
+
+def _lineage_run(root: Path, run_id: str) -> tuple[dict, list[dict], list[dict]]:
+    from .deep_audit_io import read_run_json, run_directory
+
+    status = deep_run_status(root, run_id)
+    directory = run_directory(root, run_id)
+    plan, inventory, gaps = _lineage_inputs(directory)
+    plan_lanes = {item["id"]: item for item in plan.get("lanes", [])}
+    from .deep_audit_contract import EXECUTION_FAMILIES
+
+    families = {item.get("family") for item in plan.get("lanes", [])}
+    if families != set(EXECUTION_FAMILIES):
+        gaps.append("SIX_LANE_FAMILY_SET_MISMATCH")
+    results = {item["lane_id"]: item for item in status.get("lanes", [])}
+    lanes = []
+    if (
+        digest(plan) != status.get("manifest_content_sha256")
+        or plan.get("candidate_sha256") != status.get("candidate_sha256")
+        or inventory.get("candidate_sha256") != status.get("candidate_sha256")
+    ):
+        gaps.append("RUN_PLAN_OR_CANDIDATE_BINDING_MISMATCH")
+    _lineage_authorization(directory, status, gaps)
+    for lane_id, definition in plan_lanes.items():
+        result = results.get(lane_id)
+        if result is None:
+            gaps.append(f"LANE_NOT_RECORDED:{lane_id}")
+            lanes.append({"lane_id": lane_id, "state": "NOT_RUN"})
+            continue
+        item, lane_gaps = _lineage_lane(
+            directory, lane_id, definition, result, inventory, run_id, plan
+        )
+        lanes.append(item)
+        gaps.extend(lane_gaps)
+    if set(results) != set(plan_lanes):
+        gaps.append("LANE_SET_MISMATCH")
+
+    request_reference = _lineage_request(root, directory, status, gaps)
+    event_rows, playback = _lineage_playback(root, run_id, status, gaps)
     pause_file = directory / "pause.json"
     pause_ref = None
     if pause_file.is_file():
