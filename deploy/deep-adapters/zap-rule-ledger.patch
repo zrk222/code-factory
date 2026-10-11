@@ -16,7 +16,7 @@ index 44b9a23..6c6e096 100644
              notifyPluginCompleted(getParent());
              this.finished = new Date();
 diff --git a/zap/src/main/java/org/parosproxy/paros/core/scanner/HostProcess.java b/zap/src/main/java/org/parosproxy/paros/core/scanner/HostProcess.java
-index aeecba8..d54ca63 100644
+index aeecba8..4a5d149 100644
 --- a/zap/src/main/java/org/parosproxy/paros/core/scanner/HostProcess.java
 +++ b/zap/src/main/java/org/parosproxy/paros/core/scanner/HostProcess.java
 @@ -109,6 +109,16 @@
@@ -74,15 +74,22 @@ index aeecba8..d54ca63 100644
              hostProcessStartTime = System.currentTimeMillis();
  
              // Initialise plugin factory to report the state of the plugins ASAP.
-@@ -412,6 +439,7 @@ public class HostProcess implements Runnable {
+@@ -412,8 +439,12 @@ public class HostProcess implements Runnable {
              LOGGER.error("An error occurred while active scanning:", e);
              stop();
          } finally {
-+            recordUnscheduledNativePlugins();
-             notifyHostProgress(null);
-             notifyHostComplete();
+-            notifyHostProgress(null);
+-            notifyHostComplete();
++            try {
++                recordUnscheduledNativePlugins();
++            } finally {
++                notifyHostProgress(null);
++                notifyHostComplete();
++            }
          }
-@@ -635,6 +663,7 @@ public class HostProcess implements Runnable {
+     }
+ 
+@@ -635,6 +666,7 @@ public class HostProcess implements Runnable {
          } catch (HttpMalformedHeaderException | DatabaseException e) {
              LOGGER.warn(
                      "Failed to read message with ID [{}], cause: {}", messageId, e.getMessage());
@@ -90,7 +97,7 @@ index aeecba8..d54ca63 100644
              return false;
          }
  
-@@ -645,6 +674,7 @@ public class HostProcess implements Runnable {
+@@ -645,6 +677,7 @@ public class HostProcess implements Runnable {
              if (msg.getResponseHeader().isEmpty()) {
                  msg = msg.cloneRequest();
                  if (!obtainResponse(historyReference, msg)) {
@@ -98,7 +105,7 @@ index aeecba8..d54ca63 100644
                      return false;
                  }
              }
-@@ -672,15 +702,19 @@ public class HostProcess implements Runnable {
+@@ -672,15 +705,19 @@ public class HostProcess implements Runnable {
  
          } catch (Exception e) {
              LOGGER.error("{} {}", e.getMessage(), historyReference.getURI(), e);
@@ -119,7 +126,7 @@ index aeecba8..d54ca63 100644
              if (thread == null) {
                  Util.sleep(200);
              }
-@@ -691,6 +725,127 @@ public class HostProcess implements Runnable {
+@@ -691,6 +728,127 @@ public class HostProcess implements Runnable {
          return true;
      }
  
@@ -247,7 +254,7 @@ index aeecba8..d54ca63 100644
      @SuppressWarnings("removal")
      private static void applyDeprecatedProperties(ScannerParam source, Plugin dest) {
          dest.setDelayInMs(source.getDelayInMs());
-@@ -1142,6 +1297,7 @@ public class HostProcess implements Runnable {
+@@ -1142,6 +1300,7 @@ public class HostProcess implements Runnable {
              // Plugin was not processed
              return;
          }
@@ -255,7 +262,7 @@ index aeecba8..d54ca63 100644
          pluginStats.stopped();
  
          StringBuilder sb = new StringBuilder();
-@@ -1173,6 +1329,7 @@ public class HostProcess implements Runnable {
+@@ -1173,6 +1332,7 @@ public class HostProcess implements Runnable {
  
          // ZAP: update progress as finished
          pluginStats.setProgress(nodeInScopeCount);
@@ -263,7 +270,7 @@ index aeecba8..d54ca63 100644
      }
  
      /**
-@@ -1388,4 +1545,178 @@ public class HostProcess implements Runnable {
+@@ -1388,4 +1548,178 @@ public class HostProcess implements Runnable {
           */
          void apply(StructuralNode node);
      }

@@ -138,7 +138,7 @@ ADD --checksum=sha256:774a41e0f7089332656a8b222fc07e96fe29b390a6432719b775957757
 ADD --checksum=sha256:25ecec9175591616f0c38e7209476723aedc4bbae716308038a5687cf69c29e4 https://raw.githubusercontent.com/zaproxy/zaproxy/8a1bff313f4d183dba5aa154ecbe89ad751c9153/zap/src/main/java/org/parosproxy/paros/core/scanner/AbstractPlugin.java /tmp/zap-source/zap/src/main/java/org/parosproxy/paros/core/scanner/AbstractPlugin.java
 COPY deploy/deep-adapters/zap-rule-ledger.patch /tmp/zap-rule-ledger.patch
 WORKDIR /tmp/zap-source
-RUN echo '2730f8ae000c8a84e6c29202bbee853080721f18447e59345d5aed78572801c8  /tmp/zap-rule-ledger.patch' | sha256sum -c - \
+RUN echo '91b0fbd609dc1ac88319ec5b718c586e0f33014b24221e9d055673c49695b74f  /tmp/zap-rule-ledger.patch' | sha256sum -c - \
     && git apply --check /tmp/zap-rule-ledger.patch \
     && git apply /tmp/zap-rule-ledger.patch \
     && mkdir -p /tmp/zap-classes \
