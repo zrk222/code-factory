@@ -8488,8 +8488,12 @@ def _zap_enabled_inventory(raw):
 def _zap_select_rules(rule_ids, deadline, watch):
     _zap_api("ascan", "action", "disableAllScanners", deadline, watch=watch)
     _zap_api(
-        "ascan", "action", "enableScanners", deadline, watch=watch,
-        ids=",".join(rule_ids)
+        "ascan",
+        "action",
+        "enableScanners",
+        deadline,
+        watch=watch,
+        ids=",".join(rule_ids),
     )
     raw = _zap_api("ascan", "view", "scanners", deadline, watch=watch)
     if _zap_enabled_inventory(raw) != rule_ids:
@@ -8502,8 +8506,13 @@ def _zap_start_scan(child, deadline, watch):
 
     target = "http://127.0.0.1:8765/?input=seed"
     access = _zap_api(
-        "core", "action", "accessUrl", deadline, watch=watch,
-        url=target, followRedirects="false"
+        "core",
+        "action",
+        "accessUrl",
+        deadline,
+        watch=watch,
+        url=target,
+        followRedirects="false",
     )
     while True:
         _zap_check_daemon(watch)
@@ -8565,8 +8574,7 @@ def _zap_measure_scan(request, bindings, child, deadline, watch):
     if _zap_enabled_inventory(after) != request["rule_ids"]:
         raise RuntimeAuditError("E_ZAP_INVENTORY", "effective enabled rules drifted")
     alerts = _zap_api(
-        "core", "view", "alerts", deadline, watch=watch,
-        baseurl="http://127.0.0.1:8765"
+        "core", "view", "alerts", deadline, watch=watch, baseurl="http://127.0.0.1:8765"
     )
     _zap_check_daemon(watch)
     ledger = _zap_retained_ledger(Path("/out"))
@@ -8670,7 +8678,9 @@ def _run_zap_native_scan(request):
             child, started, streams, cleanup, streams_closed
         )
         if overflow.is_set():
-            raise RuntimeAuditError("E_ZAP_OUTPUT", "native daemon output budget exceeded")
+            raise RuntimeAuditError(
+                "E_ZAP_OUTPUT", "native daemon output budget exceeded"
+            )
         if not process_facts["cleanup_confirmed"] or child.poll() is None:
             raise RuntimeAuditError(
                 "E_ZAP_CLEANUP", "native process cleanup unconfirmed"

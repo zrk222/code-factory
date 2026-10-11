@@ -7283,7 +7283,11 @@ def test_zap_native_api_rejects_unapproved_action_before_network():
 
 @pytest.mark.parametrize(
     "state,code",
-    [("overflow", "E_ZAP_OUTPUT"), ("deadline", "E_ZAP_TIMEOUT"), ("dead", "E_ZAP_PROCESS")],
+    [
+        ("overflow", "E_ZAP_OUTPUT"),
+        ("deadline", "E_ZAP_TIMEOUT"),
+        ("dead", "E_ZAP_PROCESS"),
+    ],
 )
 def test_zap_daemon_watch_fails_closed_before_api_use(state, code, monkeypatch):
     import threading
