@@ -579,3 +579,18 @@ def test_trivy_ignore_rejects_ambiguous_or_extra_policy(ignore):
 
     with pytest.raises(RuntimeAuditError):
         _trivy_ignore_ids(ignore)
+
+
+def test_verify_trivy_rule_execution_rederives_native_pass_matrix():
+    from factoryline.deep_audit_io import verify_trivy_rule_execution
+
+    evidence, lane, sources, report = trivy_execution_evidence()
+    result = verify_trivy_rule_execution(evidence, lane, sources, report)
+    assert result == {
+        "state": "VERIFIED",
+        "checks": {"Dockerfile": {"DS001": "PASS", "DS002": "PASS"}},
+        "findings": 0,
+    }
+    evidence["observations"][1]["raw_report_sha256"] = "0" * 64
+    with pytest.raises(RuntimeAuditError, match="report bytes differ"):
+        verify_trivy_rule_execution(evidence, lane, sources, report)

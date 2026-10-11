@@ -1892,24 +1892,9 @@ def execute_native_profile(
         Path(output),
         execution["invocations"],
     )
-    challenges = {"schema": "factory.deep-challenges.v1", "observations": []}
-    covered_obligations = []
-    if lane["engine"] == "gitleaks":
-        challenges, covered_obligations = _gitleaks_challenges(
-            profile, contract, Path(source), lane, execution, started
-        )
-    elif lane["engine"] == "trivy":
-        challenges, covered_obligations = _trivy_challenges(
-            profile, contract, Path(source), lane, execution, started
-        )
-    elif lane["engine"] == "semgrep" and "native_artifact_roles" in lane:
-        challenges, covered_obligations = _semgrep_challenges(
-            profile, contract, Path(source), lane, execution, started
-        )
-    elif lane["engine"] == "runtime" and profile["report_format"] == "runtime-junit":
-        challenges, covered_obligations = _runtime_challenges(
-            profile, contract, Path(source), lane, execution, started
-        )
+    challenges, covered_obligations = _native_profile_challenges(
+        profile, contract, Path(source), lane, execution, started
+    )
     coverage = _native_profile_coverage(
         execution, report, inventory, lane, profile, challenges, covered_obligations
     )
@@ -1934,6 +1919,28 @@ def execute_native_profile(
     for path in paths[1:]:
         (output / path).write_bytes(canonical_bytes(artifacts[path]))
     return bundle
+
+
+def _native_profile_challenges(profile, contract, source, lane, execution, started):
+    challenges = {"schema": "factory.deep-challenges.v1", "observations": []}
+    covered_obligations = []
+    if lane["engine"] == "gitleaks":
+        challenges, covered_obligations = _gitleaks_challenges(
+            profile, contract, source, lane, execution, started
+        )
+    elif lane["engine"] == "trivy":
+        challenges, covered_obligations = _trivy_challenges(
+            profile, contract, source, lane, execution, started
+        )
+    elif lane["engine"] == "semgrep" and "native_artifact_roles" in lane:
+        challenges, covered_obligations = _semgrep_challenges(
+            profile, contract, source, lane, execution, started
+        )
+    elif lane["engine"] == "runtime" and profile["report_format"] == "runtime-junit":
+        challenges, covered_obligations = _runtime_challenges(
+            profile, contract, source, lane, execution, started
+        )
+    return challenges, covered_obligations
 
 
 def _run_native_profile(profile, contract, source, output, inventory, lane, paths):

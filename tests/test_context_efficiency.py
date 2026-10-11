@@ -391,3 +391,21 @@ def test_live_source_growth_is_bounded_while_reading(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "open", growing_open)
     with pytest.raises(ContextEfficiencyError, match="E_SOURCE_BOUNDARY"):
         _stable_file(source)
+
+
+def test_select_context_request_returns_only_explicit_bound_sources(tmp_path):
+    from factoryline.context_efficiency import select_context_request
+
+    (tmp_path / "README.md").write_text("approved guide", encoding="utf-8")
+    (tmp_path / "unlisted.py").write_text("never selected", encoding="utf-8")
+    manifest = _selection_manifest(
+        candidates=[{"path": "README.md", "role": "guide"}],
+        changed_paths=["README.md"],
+        required_paths=["README.md"],
+        required_evidence_roles=["guide"],
+        max_sources=1,
+    )
+    request, selection = select_context_request(tmp_path, manifest)
+    assert [item["path"] for item in request["sources"]] == ["README.md"]
+    assert selection["candidate_count"] == 1
+    assert not (tmp_path / ".factory").exists()

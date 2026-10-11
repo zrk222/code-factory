@@ -946,3 +946,311 @@ def test_agent_card_private_stages_respect_complexity_limit():
             elif isinstance(node, ast.BoolOp):
                 count += len(node.values) - 1
         assert count <= 10, (name, count)
+
+
+@pytest.fixture
+def workflow_source():
+    return {
+        "provider": "github",
+        "account": "account-1",
+        "repository": "owner/repo",
+        "kind": "issue",
+        "external_id": "17",
+        "revision": 1,
+        "head_sha": None,
+        "state": "open",
+        "title": "Fix boundary",
+    }
+
+
+def workflow_store(root, clock=None):
+    from factoryline.agentic_control import WorkflowEventStore
+
+    return WorkflowEventStore(
+        root, [("github", "account-1", "owner/repo")], clock=clock
+    )
+
+
+def test_runtime_source_events_survive_store_restart_and_duplicate(
+    tmp_path, workflow_source
+):
+    store = workflow_store(tmp_path)
+    first = store.intake("delivery-one", workflow_source)
+    restarted = workflow_store(tmp_path)
+    duplicate = restarted.intake("delivery-one", workflow_source)
+    assert first["status"] == "created"
+    assert duplicate["status"] == "duplicate"
+    assert duplicate["item"] == first["item"]
+    assert not any(duplicate["authority"].values())
+    assert duplicate["item"]["phase"] == "intake"
+
+
+def test_runtime_duplicate_event_cannot_change_source_bytes(tmp_path, workflow_source):
+    store = workflow_store(tmp_path)
+    store.intake("delivery-one", workflow_source)
+    with pytest.raises(AgenticControlError) as error:
+        store.intake("delivery-one", {**workflow_source, "title": "different"})
+    assert error.value.code == "E_WORKFLOW_EVENT_REUSE"
+
+
+def test_runtime_source_revisions_do_not_roll_back(tmp_path, workflow_source):
+    store = workflow_store(tmp_path)
+    newer = store.intake("delivery-two", {**workflow_source, "revision": 2})
+    stale = store.intake("delivery-old", workflow_source)
+    assert stale["status"] == "stale"
+    assert stale["item"] == newer["item"]
+    with pytest.raises(AgenticControlError) as error:
+        store.intake(
+            "delivery-conflict", {**workflow_source, "revision": 2, "title": "changed"}
+        )
+    assert error.value.code == "E_WORKFLOW_REVISION"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"account": "another"},
+        {"repository": "other/repo"},
+        {"provider": "gitlab"},
+        {"revision": True},
+        {"revision": -1},
+        {"head_sha": "bad"},
+        {"state": "approved"},
+        {"kind": "comment"},
+        {"state": "merged"},
+        {"token": "must-not-store"},
+    ],
+)
+def test_runtime_source_requires_scoped_exact_adapter_observation(
+    tmp_path, workflow_source, change
+):
+    with pytest.raises(AgenticControlError):
+        workflow_store(tmp_path).intake("delivery-one", {**workflow_source, **change})
+
+
+def test_runtime_account_switch_needs_explicit_migration(tmp_path):
+    from factoryline.agentic_control import WorkflowEventStore
+
+    workflow_store(tmp_path)
+    with pytest.raises(AgenticControlError) as error:
+        WorkflowEventStore(tmp_path, [("github", "another", "owner/repo")])
+    assert error.value.code == "E_WORKFLOW_SCOPE"
+
+
+def test_runtime_owner_expiry_is_not_proof_of_termination(tmp_path, workflow_source):
+    clock = [100.0]
+    store = workflow_store(tmp_path, lambda: clock[0])
+    key = store.intake("delivery-one", workflow_source)["item"]["source_key"]
+    claimed = store.claim(key, "worker-a", ttl=1)["item"]
+    clock[0] = 200.0
+    with pytest.raises(AgenticControlError) as error:
+        workflow_store(tmp_path, lambda: clock[0]).claim(key, "worker-b")
+    assert error.value.code == "E_WORKFLOW_RECOVERY_REQUIRED"
+    with pytest.raises(AgenticControlError):
+        store.heartbeat(key, "worker-a", claimed["epoch"])
+    for state in ("live", "unknown"):
+        result = store.reconcile_run(
+            key,
+            lambda run: {"run_id": run["id"], "handle": run["handle"], "state": state},
+        )
+        assert result["item"]["run"]["id"] == claimed["run"]["id"]
+        assert result["status"] == state
+
+
+@pytest.mark.parametrize("state", ["terminal", "missing"])
+def test_runtime_authoritative_terminal_observation_retires_owner(
+    tmp_path, workflow_source, state
+):
+    store = workflow_store(tmp_path)
+    key = store.intake("delivery-one", workflow_source)["item"]["source_key"]
+    first = store.claim(key, "worker-a")["item"]
+    retired = store.reconcile_run(
+        key, lambda run: {"run_id": run["id"], "handle": run["handle"], "state": state}
+    )
+    assert retired["item"]["run"] is None
+    assert retired["item"]["phase"] == "triage"
+    second = store.claim(key, "worker-b")["item"]
+    assert second["epoch"] > first["epoch"]
+    with pytest.raises(AgenticControlError) as error:
+        store.heartbeat(key, "worker-a", first["epoch"])
+    assert error.value.code == "E_WORKFLOW_FENCED"
+
+
+def test_runtime_new_head_fences_owner_until_retirement(tmp_path, workflow_source):
+    store = workflow_store(tmp_path)
+    source = {**workflow_source, "kind": "pull_request", "head_sha": "a" * 40}
+    key = store.intake("delivery-one", source)["item"]["source_key"]
+    first = store.claim(key, "worker-a")["item"]
+    store.heartbeat(key, "worker-a", first["epoch"], handle="provider-run-1")
+    changed = store.intake(
+        "delivery-two", {**source, "revision": 2, "head_sha": "b" * 40}
+    )
+    assert changed["item"]["phase"] == "retirement_required"
+    with pytest.raises(AgenticControlError):
+        store.claim(key, "worker-b")
+    with pytest.raises(AgenticControlError):
+        store.heartbeat(key, "worker-a", first["epoch"])
+    store.reconcile_run(
+        key,
+        lambda run: {"run_id": run["id"], "handle": run["handle"], "state": "terminal"},
+    )
+    assert store.get(key)["phase"] == "intake"
+    assert store.claim(key, "worker-b")["item"]["source"]["head_sha"] == "b" * 40
+
+
+def test_runtime_reconciliation_rechecks_ownership_after_probe(
+    tmp_path, workflow_source
+):
+    store = workflow_store(tmp_path)
+    key = store.intake("delivery-one", workflow_source)["item"]["source_key"]
+    store.claim(key, "worker-a")
+
+    def observer(run):
+        workflow_store(tmp_path).intake(
+            "delivery-two", {**workflow_source, "revision": 2}
+        )
+        return {"run_id": run["id"], "handle": run["handle"], "state": "terminal"}
+
+    with pytest.raises(AgenticControlError) as error:
+        store.reconcile_run(key, observer)
+    assert error.value.code == "E_WORKFLOW_FENCED"
+    assert store.get(key)["run"] is not None
+
+
+@pytest.mark.parametrize("state", ["closed", "merged", "missing"])
+def test_runtime_external_state_never_certifies_cf_completion(
+    tmp_path, workflow_source, state
+):
+    source = {
+        **workflow_source,
+        "kind": "pull_request",
+        "head_sha": "a" * 40,
+        "state": state,
+    }
+    store = workflow_store(tmp_path)
+    item = store.intake("delivery-one", source)["item"]
+    assert item["phase"] != "completed"
+    with pytest.raises(AgenticControlError):
+        store.claim(item["source_key"], "worker-a")
+
+
+def test_runtime_handle_cannot_be_replaced(tmp_path, workflow_source):
+    store = workflow_store(tmp_path)
+    key = store.intake("delivery-one", workflow_source)["item"]["source_key"]
+    item = store.claim(key, "worker-a")["item"]
+    store.heartbeat(key, "worker-a", item["epoch"], handle="run-1")
+    with pytest.raises(AgenticControlError):
+        store.heartbeat(key, "worker-a", item["epoch"], handle="run-2")
+    with pytest.raises(AgenticControlError):
+        store.reconcile_run(
+            key,
+            lambda run: {"run_id": run["id"], "handle": "other", "state": "terminal"},
+        )
+
+
+def test_runtime_retry_budget_cannot_be_bypassed_by_reopening_store(
+    tmp_path, workflow_source
+):
+    key = workflow_store(tmp_path).intake("delivery-one", workflow_source)["item"][
+        "source_key"
+    ]
+    for _ in range(3):
+        store = workflow_store(tmp_path)
+        store.claim(key, "worker-a")
+        store.reconcile_run(
+            key,
+            lambda run: {
+                "run_id": run["id"],
+                "handle": run["handle"],
+                "state": "missing",
+            },
+        )
+    with pytest.raises(AgenticControlError) as error:
+        workflow_store(tmp_path).claim(key, "worker-b")
+    assert error.value.code == "E_WORKFLOW_RETRY"
+
+
+def test_runtime_stored_hash_drift_is_rejected(tmp_path, workflow_source):
+    import sqlite3
+
+    store = workflow_store(tmp_path)
+    key = store.intake("delivery-one", workflow_source)["item"]["source_key"]
+    with sqlite3.connect(store.path) as db:
+        db.execute("UPDATE items SET sha=? WHERE key=?", ("0" * 64, key))
+    with pytest.raises(AgenticControlError) as error:
+        store.get(key)
+    assert error.value.code == "E_WORKFLOW_INTEGRITY"
+
+
+def test_runtime_two_processes_cannot_claim_same_item(tmp_path, workflow_source):
+    import sys
+
+    store = workflow_store(tmp_path)
+    key = store.intake("delivery-one", workflow_source)["item"]["source_key"]
+    script = """import json,sys
+from factoryline.agentic_control import WorkflowEventStore,AgenticControlError
+store=WorkflowEventStore(sys.argv[1], [('github','account-1','owner/repo')])
+try:
+ store.claim(sys.argv[2],sys.argv[3]); print('CLAIMED')
+except AgenticControlError as e:
+ print(e.code)
+"""
+    workers = [
+        subprocess.Popen(
+            [sys.executable, "-c", script, str(tmp_path), key, owner],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for owner in ("worker-a", "worker-b")
+    ]
+    outputs = [worker.communicate(timeout=15) for worker in workers]
+    assert all(worker.returncode == 0 for worker in workers), outputs
+    assert sorted(out.strip() for out, _ in outputs) == [
+        "CLAIMED",
+        "E_WORKFLOW_RECOVERY_REQUIRED",
+    ]
+    assert workflow_store(tmp_path).get(key)["run"]["owner"] in {"worker-a", "worker-b"}
+
+
+def test_runtime_interrupted_event_write_rolls_back_atomically(
+    tmp_path, workflow_source, monkeypatch
+):
+    import sqlite3
+
+    store = workflow_store(tmp_path)
+    original = store._write
+
+    def fail_after_write(db, item, action):
+        original(db, item, action)
+        raise RuntimeError("simulated interruption")
+
+    monkeypatch.setattr(store, "_write", fail_after_write)
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        store.intake("delivery-one", workflow_source)
+    with sqlite3.connect(store.path) as db:
+        assert db.execute("SELECT count(*) FROM items").fetchone()[0] == 0
+        assert db.execute("SELECT count(*) FROM ingress").fetchone()[0] == 0
+        assert db.execute("SELECT count(*) FROM journal").fetchone()[0] == 0
+    monkeypatch.setattr(store, "_write", original)
+    assert store.intake("delivery-one", workflow_source)["status"] == "created"
+
+
+def test_runtime_linked_storage_is_rejected(tmp_path, monkeypatch):
+    import stat
+    from types import SimpleNamespace
+    from factoryline.agentic_control import _runtime_path
+
+    directory = tmp_path / ".factory"
+    directory.mkdir()
+    original = Path.lstat
+
+    def fake_junction(path, *args, **kwargs):
+        if path == directory:
+            return SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=0x400)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "lstat", fake_junction)
+    with pytest.raises(AgenticControlError) as error:
+        _runtime_path(tmp_path)
+    assert error.value.code == "E_WORKFLOW_PATH"
