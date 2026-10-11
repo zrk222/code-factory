@@ -2158,11 +2158,38 @@ def _performance_benchmark_test(
         == "pytest.mark.benchmark"
         for decorator in node.decorator_list
     )
-    return (typed_fixture or marked_fixture) and any(
-        isinstance(child, ast.Call)
-        and _call_name(child).split(".", 1)[0] == "benchmark"
-        for statement in node.body
-        for child in _body_nodes(statement)
+    return (typed_fixture or marked_fixture) and _benchmark_fixture_used(node)
+
+
+def _benchmark_fixture_used(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """A later rebinding does not erase an earlier genuine fixture use."""
+    for statement in node.body:
+        for child in _body_nodes(statement):
+            if (
+                isinstance(child, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
+                and child.value is not None
+                and any(
+                    _benchmark_fixture_use(value) for value in _body_nodes(child.value)
+                )
+            ):
+                return True
+            if _benchmark_fixture_use(child):
+                return True
+            if _binding_name(child) == "benchmark" or (
+                isinstance(child, (ast.Import, ast.ImportFrom))
+                and "benchmark" in _bound_names(child)
+            ):
+                return False
+    return False
+
+
+def _benchmark_fixture_use(node: ast.AST) -> bool:
+    """Match ``benchmark(...)`` calls and ``@benchmark`` on a nested function."""
+    if isinstance(node, ast.Call):
+        return _call_name(node).split(".", 1)[0] == "benchmark"
+    return isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+        isinstance(decorator, ast.Name) and decorator.id == "benchmark"
+        for decorator in node.decorator_list
     )
 
 

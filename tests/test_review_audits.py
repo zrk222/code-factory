@@ -1709,6 +1709,119 @@ def test_security_scan_ignores_pedantic_benchmark_fixture(tmp_path):
     assert security_scan(tmp_path)["findings"] == []
 
 
+def test_security_scan_ignores_decorator_form_benchmark_with_marker(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "import pytest\n"
+        "@pytest.mark.benchmark(group='throughput')\n"
+        "def test_speed(benchmark):\n"
+        "    @benchmark\n"
+        "    def run():\n"
+        "        compute_value()\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_ignores_decorator_form_benchmark_with_typed_fixture(tmp_path):
+    (tmp_path / "case.py").write_text(
+        "from pytest_benchmark.fixture import BenchmarkFixture\n"
+        "def test_speed(benchmark: BenchmarkFixture):\n"
+        "    @benchmark\n"
+        "    async def run():\n"
+        "        await compute_value()\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # No marker or typed fixture: the untyped parameter alone never exempts.
+        "def test_security_invariant(benchmark):\n"
+        "    @benchmark\n"
+        "    def run():\n"
+        "        dangerous_operation()\n",
+        # Marked, but the nested decorator is not the benchmark fixture.
+        "import pytest\n"
+        "@pytest.mark.benchmark\n"
+        "def test_security_invariant(benchmark):\n"
+        "    @other_decorator\n"
+        "    def run():\n"
+        "        dangerous_operation()\n",
+        # Marked, but the decorator is a call to something that only looks similar.
+        "import pytest\n"
+        "@pytest.mark.benchmark\n"
+        "def test_security_invariant(benchmark):\n"
+        "    @benchmarks\n"
+        "    def run():\n"
+        "        dangerous_operation()\n",
+        # Marked, but no fixture parameter exists for the decorator to name.
+        "import pytest\n"
+        "@pytest.mark.benchmark\n"
+        "def test_security_invariant():\n"
+        "    @benchmark\n"
+        "    def run():\n"
+        "        dangerous_operation()\n",
+        # Marked and decorated, but the decorated function is never the nested one.
+        "import pytest\n"
+        "@pytest.mark.benchmark\n"
+        "def test_security_invariant(benchmark):\n"
+        "    def run():\n"
+        "        dangerous_operation()\n",
+    ],
+)
+def test_security_scan_rejects_lookalike_decorator_form_benchmarks(tmp_path, source):
+    (tmp_path / "case.py").write_text(source, encoding="utf-8")
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "benchmark = other_decorator",
+        "import other_decorator as benchmark",
+        "if flag:\n        benchmark = other_decorator",
+    ],
+)
+def test_security_scan_rejects_rebound_benchmark_decorator(tmp_path, binding):
+    (tmp_path / "case.py").write_text(
+        "import pytest\n@pytest.mark.benchmark\ndef test_speed(benchmark):\n"
+        f"    {binding}\n    @benchmark\n    def run():\n        compute_value()\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_security_scan_preserves_benchmark_use_before_rebinding(tmp_path, nested):
+    body = "    @benchmark\n    def run():\n        compute_value()\n    benchmark = other_decorator\n"
+    if nested:
+        body = "    if flag:\n" + "".join(
+            "    " + line for line in body.splitlines(keepends=True)
+        )
+    (tmp_path / "case.py").write_text(
+        "import pytest\n@pytest.mark.benchmark\ndef test_speed(benchmark):\n" + body,
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "    scratch: int\n    @benchmark\n    def run():\n        compute_value()\n",
+        "    benchmark = benchmark(compute_value)\n",
+    ],
+)
+def test_security_scan_preserves_benchmark_evaluation_order(tmp_path, body):
+    (tmp_path / "case.py").write_text(
+        "import pytest\n@pytest.mark.benchmark\ndef test_speed(benchmark):\n" + body,
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
 def test_security_scan_does_not_skip_untyped_benchmark_named_security_test(tmp_path):
     (tmp_path / "case.py").write_text(
         "def test_security_invariant(benchmark):\n"
