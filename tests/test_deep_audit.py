@@ -1191,6 +1191,59 @@ def test_runtime_mutation_report_requires_a_passing_sentinel(tmp_path):
         )
 
 
+def test_bundled_runtime_profile_preserves_sealed_source_tree():
+    profile = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "deploy/deep-adapters/profiles/runtime-coverage.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert profile["commands"][0]["argv"][:3] == ["/usr/local/bin/python", "-B", "-I"]
+
+
+def test_runtime_challenge_oracle_ignores_volatile_metadata_not_coverage(tmp_path):
+    from factoryline.deep_audit_io import _runtime_challenge_report, digest
+
+    path = "tests/test_target.py"
+    manifest = {path: "a" * 64}
+    coverage = {
+        "meta": {"branch_coverage": True, "timestamp": "first"},
+        "files": {
+            path: {
+                "summary": {
+                    "num_statements": 2,
+                    "covered_lines": 2,
+                    "num_branches": 2,
+                    "covered_branches": 1,
+                }
+            }
+        },
+    }
+    artifact = tmp_path / "coverage.json"
+    challenge = {"kind": "positive", "fixture_path": path}
+    reports = []
+    for timestamp in ("first", "second"):
+        coverage["meta"]["timestamp"] = timestamp
+        artifact.write_text(json.dumps(coverage))
+        junit = (
+            f'<testsuite tests="1" failures="1" timestamp="{timestamp}">'
+            f'<testcase file="{path}" name="target" time="{len(timestamp)}">'
+            "<failure/></testcase></testsuite>"
+        ).encode()
+        reports.append(
+            _runtime_challenge_report(
+                junit, artifact, manifest, {"tool_version": "runtime-test"}, challenge
+            )
+        )
+    assert digest(reports[0]) == digest(reports[1])
+    coverage["files"][path]["summary"]["covered_branches"] = 2
+    artifact.write_text(json.dumps(coverage))
+    changed = _runtime_challenge_report(
+        junit, artifact, manifest, {"tool_version": "runtime-test"}, challenge
+    )
+    assert digest(changed) != digest(reports[0])
+
+
 def test_runtime_positive_control_rejects_unrelated_test_failure(tmp_path):
     from factoryline.deep_audit_io import _runtime_challenge_report
 

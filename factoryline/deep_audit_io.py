@@ -2452,7 +2452,7 @@ def _runtime_challenge_report(junit, coverage_path, manifest, lane, challenge):
         or b"<!ENTITY" in junit.upper()
     ):
         raise RuntimeAuditError("E_RUNTIME_REPORT", "unsafe or oversized JUnit")
-    tests, findings, harness, junit_hash = _parse_runtime_junit(junit, manifest)
+    tests, findings, harness, _junit_hash = _parse_runtime_junit(junit, manifest)
     if challenge["kind"] == "positive" and not any(
         finding["path"] == challenge["fixture_path"] for finding in findings
     ):
@@ -2481,9 +2481,7 @@ def _runtime_challenge_report(junit, coverage_path, manifest, lane, challenge):
         "harness": harness,
         "metrics": {"tests": tests},
         "findings": findings,
-        "source_coverage": {},
-        "coverage_native_sha256": digest(coverage),
-        "junit_sha256": junit_hash,
+        "source_coverage": _native_source_counts(coverage, manifest),
     }
     return native
 
