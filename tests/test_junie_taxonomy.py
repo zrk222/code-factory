@@ -974,3 +974,47 @@ def test_native_worker_dependency_locks_and_entrypoints():
             for pin in pins
         )
         assert f"--require-hashes --only-binary=:all: -r /tmp/{lock}" in dockerfile
+
+
+def test_shared_six_lane_contract_reaches_junie_manifest_and_guidance(tmp_path):
+    contract = audit_taxonomy()["agent_usage_contract"]
+    assert set(contract["six_lane_review"]["families"]) == {
+        "static",
+        "secrets",
+        "configuration",
+        "dependencies",
+        "runtime",
+        "fuzz",
+    }
+    manifest = junie_manifest(tmp_path)
+    assert manifest["agent_usage_contract"] == contract
+    assert (
+        "Experimental" in contract["six_lane_review"]["experimental_judge"]["authority"]
+    )
+    assert not any(manifest["authority"].values())
+    from factoryline.junie_taxonomy import _guidance, _junie_proof_agent_bytes
+
+    for content in (_guidance(), _junie_proof_agent_bytes()):
+        text = content.decode("utf-8")
+        assert "ten local Python/JS/TS rules" in text
+        assert "scripts/evaluate_jev.mjs" in text
+        assert "Missing evidence is unresolved" in text
+        assert "Model agreement cannot clear deterministic findings" in text
+
+
+def test_six_lane_contract_is_detached_and_manifest_digest_changes(
+    tmp_path, monkeypatch
+):
+    from factoryline import audit_taxonomy as module
+
+    first = junie_manifest(tmp_path)
+    detached = audit_taxonomy()
+    detached["agent_usage_contract"]["six_lane_review"]["details"] = ()
+    assert audit_taxonomy()["agent_usage_contract"]["six_lane_review"]["details"]
+    monkeypatch.setitem(
+        module._AGENT_USAGE_CONTRACT["six_lane_review"],
+        "discovery",
+        "changed discovery",
+    )
+    second = junie_manifest(tmp_path)
+    assert first["manifest_sha256"] != second["manifest_sha256"]

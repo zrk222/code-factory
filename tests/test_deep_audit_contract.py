@@ -927,6 +927,62 @@ def test_native_dependency_reports_cannot_omit_declared_input(tmp_path, engine):
         )
 
 
+def test_execution_osv_preserves_package_advisory_and_fixed_version(tmp_path):
+    from factoryline.deep_audit_sarif import normalize_execution_bundle
+
+    _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    lane = next(item for item in plan["lanes"] if item["engine"] == "osv")
+    bundle = execution_bundle(lane, inventory, "0" * 32)
+    report = bundle["artifacts"]["report.json"]
+    package = report["results"][0]["packages"][0]
+    package["vulnerabilities"] = [
+        {
+            "id": "OSV-TEST-1",
+            "affected": [
+                {
+                    "package": {"name": "fixture", "ecosystem": "PyPI"},
+                    "ranges": [{"events": [{"introduced": "0"}, {"fixed": "2.4.6"}]}],
+                }
+            ],
+        }
+    ]
+    bundle["artifacts"]["coverage.json"]["report_sha256"] = digest(report)
+
+    result = normalize_execution_bundle(
+        bundle, lane, inventory, "0" * 32, plan["obligations"]
+    )
+
+    finding = result["findings"][0]
+    assert finding["dependency"] == {
+        "package": {"name": "fixture", "version": "1.0", "ecosystem": "PyPI"},
+        "advisory_id": "OSV-TEST-1",
+        "fixed_versions": ["2.4.6"],
+        "aliases": [],
+    }
+    assert "2.4.6" in finding["remediation"]
+    assert result["authority"] == "none"
+
+
+@pytest.mark.parametrize(
+    "bad_affected", ["not-a-list", [{"ranges": [{"events": [{"fixed": 42}]}]}]]
+)
+def test_execution_osv_rejects_malformed_fixed_version_evidence(tmp_path, bad_affected):
+    from factoryline.deep_audit_sarif import normalize_execution_bundle
+
+    _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    lane = next(item for item in plan["lanes"] if item["engine"] == "osv")
+    bundle = execution_bundle(lane, inventory, "0" * 32)
+    report = bundle["artifacts"]["report.json"]
+    package = report["results"][0]["packages"][0]
+    package["vulnerabilities"] = [{"id": "OSV-TEST-1", "affected": bad_affected}]
+    bundle["artifacts"]["coverage.json"]["report_sha256"] = digest(report)
+
+    with pytest.raises(RuntimeAuditError):
+        normalize_execution_bundle(
+            bundle, lane, inventory, "0" * 32, plan["obligations"]
+        )
+
+
 @pytest.mark.parametrize("engine", ["runtime", "atheris"])
 @pytest.mark.parametrize("failure", ["generic", "zero", "coverage"])
 def test_runtime_evidence_requires_engine_execution_and_source_depth(
@@ -949,6 +1005,93 @@ def test_runtime_evidence_requires_engine_execution_and_source_depth(
         normalize_execution_bundle(
             bundle, lane, inventory, "0" * 32, plan["obligations"]
         )
+
+
+@pytest.mark.parametrize(
+    "engine, expected_metrics",
+    [
+        ("runtime", {"tests": 1}),
+        ("atheris", {"executions": 1000, "coverage_edges": 10, "corpus_size": 5}),
+    ],
+)
+def test_runtime_and_fuzz_metrics_survive_normalized_projection(
+    tmp_path, engine, expected_metrics
+):
+    from factoryline.deep_audit_sarif import normalize_execution_bundle
+
+    _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    lane = next(item for item in plan["lanes"] if item["engine"] == engine)
+    bundle = execution_bundle(lane, inventory, "0" * 32)
+
+    result = normalize_execution_bundle(
+        bundle, lane, inventory, "0" * 32, plan["obligations"]
+    )
+
+    assert result["state"] == "OBSERVED"
+    assert result["metrics"] == expected_metrics
+    assert result["authority"] == "none"
+
+
+def test_execution_sarif_trace_details_survive_projection(tmp_path):
+    from factoryline.deep_audit_sarif import normalize_execution_bundle
+
+    _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    lane = next(item for item in plan["lanes"] if item["engine"] == "codeql")
+    bundle = execution_bundle(lane, inventory, "0" * 32)
+    report = bundle["artifacts"]["report.json"]
+    report["runs"][0]["results"] = execution_native(lane, inventory, detected=True)[
+        "runs"
+    ][0]["results"]
+    report["runs"][0]["results"][0]["codeFlows"] = [
+        {
+            "threadFlows": [
+                {
+                    "locations": [
+                        {
+                            "location": {
+                                "physicalLocation": {
+                                    "artifactLocation": {"uri": "app.py"},
+                                    "region": {
+                                        "startLine": 2,
+                                        "endLine": 2,
+                                        "startColumn": 4,
+                                        "endColumn": 9,
+                                    },
+                                }
+                            },
+                            "kinds": ["source"],
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+    bundle["artifacts"]["coverage.json"]["report_sha256"] = digest(report)
+    source_hash = next(
+        item["sha256"] for item in inventory["files"] if item["path"] == "app.py"
+    )
+
+    result = normalize_execution_bundle(
+        bundle, lane, inventory, "0" * 32, plan["obligations"]
+    )
+
+    assert result["findings"][0]["flows"] == [
+        [
+            {
+                "path": "app.py",
+                "source_sha256": source_hash,
+                "start_line": 2,
+                "end_line": 2,
+                "start_column": 4,
+                "end_column": 9,
+                "kinds": ["source"],
+            }
+        ]
+    ]
+    assert result["findings"][0]["trace_depth"] == 1
+    assert len(result["findings"][0]["trace_sha256"]) == 64
+    assert result["findings"][0]["native_identity_state"] == "NOT_MEASURED"
+    assert result["authority"] == "none"
 
 
 def test_signed_golden_cannot_replace_positive_detection_semantics(tmp_path):
@@ -1160,3 +1303,20 @@ def test_playback_rejects_invalid_bounds(tmp_path, after, limit):
     )
     with pytest.raises(RuntimeAuditError, match="E_PLAYBACK_RANGE"):
         module.playback_deep_run(tmp_path, run_id, after=after, limit=limit)
+
+
+def test_osv_fixed_versions_do_not_cross_package_boundaries():
+    from factoryline.deep_audit_sarif import _osv_fixed_versions
+
+    identity = {"name": "target", "ecosystem": "PyPI"}
+    vulnerability = {
+        "affected": [
+            {
+                "package": {"name": "other", "ecosystem": "PyPI"},
+                "ranges": [{"events": [{"fixed": "9"}]}],
+            },
+            {"ranges": [{"events": [{"fixed": "8"}]}]},
+            {"package": identity, "ranges": [{"events": [{"fixed": "2"}]}]},
+        ]
+    }
+    assert _osv_fixed_versions(vulnerability, identity) == ["2"]

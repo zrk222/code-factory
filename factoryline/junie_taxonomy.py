@@ -640,6 +640,7 @@ def junie_manifest(root: Path | str) -> dict[str, object]:
         },
         "native_workers": audit_taxonomy()["native_workers"],
         "native_worker_contract": audit_taxonomy()["native_worker_contract"],
+        "agent_usage_contract": audit_taxonomy()["agent_usage_contract"],
         "operating_profile": {
             "version": "4",
             "mode": "supervised",

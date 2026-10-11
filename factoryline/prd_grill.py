@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from hashlib import sha256
+from importlib.resources import files
 import json
 import os
 from pathlib import Path
@@ -32,7 +33,7 @@ _QUESTION_SPECS = {
         "section": "Requirements",
         "title": "What must the first release demonstrably do?",
         "prompt": "List the smallest set of observable system or user behaviours needed for the first release.",
-        "recommendation": "Write one to three EARS requirements, each with one observable outcome and no implementation guess.",
+        "recommendation": "Start with one to three things the app must do. For each, say who acts, what happens, and what they can see afterward.",
         "depends_on": [],
     },
     "ACTORS_MISSING": {
@@ -68,7 +69,7 @@ _QUESTION_SPECS = {
         "section": "Acceptance",
         "title": "How will the team know the requirement works?",
         "prompt": "Provide a Given/When/Then scenario for the most important requirement.",
-        "recommendation": "Cover the primary journey first, with an externally observable Then clause.",
+        "recommendation": "Describe the starting situation, the user's action, and the visible result. Include what the app should do when the action fails.",
         "depends_on": ["Q-REQUIREMENTS"],
     },
     "DATA_OWNERSHIP_MISSING": {
@@ -247,6 +248,8 @@ def _markdown(receipt: dict[str, Any]) -> str:
         "",
         "This is a clarification sheet. It does not modify the source PRD, approve implementation, or authorize external effects.",
         "",
+        "Work with your agent one question at a time. Its recommendation is a starting point; you decide. Update the PRD with your answer before moving to dependent questions.",
+        "",
     ]
     if receipt["questions"]:
         lines.extend(["## Current question frontier", ""])
@@ -373,6 +376,15 @@ def grill_prd(
         "observed_gaps": analysis["gaps"],
         "questions": questions,
         "deferred_questions": deferred,
+        "interview": {
+            **json.loads(
+                files("factoryline")
+                .joinpath("data", "junie_pack.json")
+                .read_text(encoding="utf-8")
+            )["prd_interview"],
+            "next_question_id": questions[0]["id"] if questions else None,
+            "unresolved_gap_codes": [item["code"] for item in analysis["gaps"]],
+        },
         "markers": [
             "PRD_GRILL_SOURCE_BOUND",
             "PRD_GRILL_FACTS_LOCAL",
