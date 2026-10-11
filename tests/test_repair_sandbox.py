@@ -702,6 +702,7 @@ def test_repair_execution_runs_only_in_digest_pinned_docker(
     )
     result = execute_approved_repair(tmp_path, tmp_path / approval["path"])
     assert result["status"] == "VERIFIED", result
+    assert result["schema"] == "factory.repair_attempt.v1"
     assert result["cleanup_confirmed"] is True
     assert result["primary_checkout_unchanged"] is True
     assert [item["stage"] for item in result["checks"]] == [

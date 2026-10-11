@@ -2283,6 +2283,7 @@ def execute_approved_repair(root: Path, approval_path: Path) -> dict[str, Any]:
         _finish_attempt(workspace, attempt, state, base, worktree, temporary)
     state = _read_attempt_state(attempt)
     return {
+        "schema": REPAIR_ATTEMPT_SCHEMA,
         "attempt_path": (attempt / "state.json").relative_to(workspace).as_posix(),
         "approval_sha256": approval_sha,
         "status": state["status"],
