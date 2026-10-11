@@ -22,6 +22,12 @@ from factoryline.benchmark_lab import (
     validate_benchmark_manifest,
     run_public_benchmark,
 )
+from factoryline.context_efficiency import (
+    EXPERIMENT_SCHEMA,
+    context_efficiency_status,
+    evaluate_context_experiment,
+    record_context_experiment,
+)
 
 
 def _digest(seed: str) -> str:
@@ -134,6 +140,83 @@ def test_public_seeded_corpus_executes_real_scanner_and_declared_tenant_contract
     assert receipt["corpus_sha256"] and receipt["scanner_version"]
     assert len(receipt["source_bindings"]) == 16
     assert "not independently held out" in receipt["claim_boundary"]
+
+
+def _paired_context_observation():
+    return {
+        "schema": EXPERIMENT_SCHEMA,
+        "task_sha256": _digest("task"),
+        "revision_sha256": _digest("revision"),
+        "model_id": "operator-recorded-model",
+        "tools_sha256": _digest("tools"),
+        "budget_sha256": _digest("budgets"),
+        "rubric_sha256": _digest("rubric"),
+        "cost_unit": "USD",
+        "evidence_level": "operator_supplied_unverified",
+        "samples": [
+            {
+                "id": f"pair-{index}",
+                "baseline": {
+                    "phases_seconds": {
+                        "context_gathering": 1,
+                        "coding": 7,
+                        "repair": 2,
+                    },
+                    "quality": 90,
+                    "cost": 1.0,
+                    "tokens": 1000,
+                },
+                "context": {
+                    "phases_seconds": {
+                        "context_gathering": 1,
+                        "coding": 2,
+                        "repair": 1,
+                    },
+                    "quality": 90,
+                    "cost": 0.8,
+                    "tokens": 800,
+                },
+            }
+            for index in range(3)
+        ],
+    }
+
+
+def test_context_engine_pair_counts_all_phases_and_ui_is_explicitly_unverified(
+    tmp_path,
+):
+    observed = _paired_context_observation()
+    result = evaluate_context_experiment(observed)
+    assert result["state"] == "TARGET_MET"
+    assert result["observed_latency_reduction"] == pytest.approx(0.6)
+    assert result["observed_cost_delta"] == pytest.approx(-0.2)
+    assert result["observed_cost_delta_unit"] == "USD"
+    assert result["observed_token_delta"] == pytest.approx(-200)
+    assert result["observed_token_delta_unit"] == "tokens"
+    assert result["evidence_level"] == "operator_supplied_unverified"
+    assert record_context_experiment(tmp_path, observed)["state"] == "TARGET_MET"
+    status = context_efficiency_status(tmp_path)
+    assert status["paired_sample_count"] == 3
+    assert status["experiment_status"] == "TARGET_MET"
+    assert status["experiment_freshness"] == "UNVERIFIED"
+    assert status["observed_latency_reduction"] == pytest.approx(0.6)
+
+
+def test_context_engine_pair_rejects_incomplete_or_tampered_evidence(tmp_path):
+    malformed = _paired_context_observation()
+    del malformed["samples"][0]["context"]["phases_seconds"]["repair"]
+    with pytest.raises(ValueError, match="E_EXPERIMENT_PHASES"):
+        evaluate_context_experiment(malformed)
+    unpaired = _paired_context_observation()
+    del unpaired["samples"][0]["context"]["cost"]
+    with pytest.raises(ValueError, match="E_EXPERIMENT_METRIC"):
+        evaluate_context_experiment(unpaired)
+    record_context_experiment(tmp_path, _paired_context_observation())
+    path = tmp_path / ".factory" / "context-efficiency" / "experiment.json"
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    stored["results"][-1]["result"]["observed_latency_reduction"] = 0.99
+    path.write_text(json.dumps(stored), encoding="utf-8")
+    assert context_efficiency_status(tmp_path)["experiment_status"] == "BLOCKED"
 
 
 def test_public_benchmark_hashes_and_parses_one_corpus_snapshot(tmp_path, monkeypatch):

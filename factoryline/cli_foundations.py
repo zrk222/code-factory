@@ -162,6 +162,23 @@ def add_parser(sub: Any) -> None:
     efficiency_pack.add_argument("--root", default=".")
     efficiency_pack.add_argument("--out")
     efficiency_pack.add_argument("--json", action="store_true")
+    efficiency_select = efficiency_sub.add_parser(
+        "select", help="rank explicit task candidates and build progressive context"
+    )
+    efficiency_select.add_argument(
+        "--manifest", required=True, help="bounded candidate-selection JSON manifest"
+    )
+    efficiency_select.add_argument("--root", default=".")
+    efficiency_select.add_argument("--out")
+    efficiency_select.add_argument("--json", action="store_true")
+    efficiency_record = efficiency_sub.add_parser(
+        "record", help="evaluate and store operator-supplied paired observations"
+    )
+    efficiency_record.add_argument(
+        "--manifest", required=True, help="paired observation JSON"
+    )
+    efficiency_record.add_argument("--root", default=".")
+    efficiency_record.add_argument("--json", action="store_true")
     efficiency_verify = efficiency_sub.add_parser(
         "verify", help="verify packet and source hashes"
     )
@@ -313,16 +330,34 @@ def _run_journey(args: Any) -> int:
 def _efficiency_result(args: Any, root: Path) -> tuple[dict[str, Any], int]:
     from .context_efficiency import (
         build_context_packet,
+        build_selected_context_packet,
         context_efficiency_status,
+        record_context_experiment,
         verify_context_packet,
     )
 
+    if args.efficiency_cmd in {"pack", "select", "record"}:
+        with Path(args.manifest).open("rb") as stream:
+            raw = stream.read(1_000_001)
+        if len(raw) > 1_000_000:
+            from .context_efficiency import ContextEfficiencyError
+
+            raise ContextEfficiencyError("E_INPUT_BOUNDARY", "manifest exceeds 1 MB")
+        manifest = json.loads(raw.decode("utf-8-sig"))
     if args.efficiency_cmd == "pack":
-        request = json.loads(Path(args.manifest).read_text(encoding="utf-8-sig"))
         return (
-            build_context_packet(root, request, Path(args.out) if args.out else None),
+            build_context_packet(root, manifest, Path(args.out) if args.out else None),
             0,
         )
+    if args.efficiency_cmd == "select":
+        return (
+            build_selected_context_packet(
+                root, manifest, Path(args.out) if args.out else None
+            ),
+            0,
+        )
+    if args.efficiency_cmd == "record":
+        return record_context_experiment(root, manifest), 0
     if args.efficiency_cmd == "verify":
         result = verify_context_packet(root, Path(args.packet))
         return result, 0 if result.get("valid") is True else 1

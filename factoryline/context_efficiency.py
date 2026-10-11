@@ -9,41 +9,54 @@ claim.
 
 from __future__ import annotations
 
-from copy import deepcopy
-from datetime import datetime, timezone
+import ast
 import hashlib
 import json
+import re
+from copy import deepcopy
+from datetime import datetime, timezone
 from math import ceil
 from pathlib import Path
-import re
+from statistics import median
 from typing import Any
-
 
 REQUEST_SCHEMA = "factory.context-efficiency-request.v1"
 PACKET_SCHEMA = "factory.context-efficiency-packet.v1"
 VERIFICATION_SCHEMA = "factory.context-efficiency-verification.v1"
 STATUS_SCHEMA = "factory.context-efficiency-status.v1"
+SELECTION_SCHEMA = "factory.context-efficiency-selection.v1"
+EXPERIMENT_SCHEMA = "factory.context-efficiency-paired.v1"
 MODULE_VERSION = "1"
 MAX_SOURCES = 128
 MAX_CHANGED_PATHS = 128
 MAX_CACHE_FILES = 100
+MAX_CANDIDATES = 64
+MAX_SELECTED_SOURCES = 64
+MAX_EXPERIMENT_SAMPLES = 100
+MAX_EXPERIMENT_HISTORY = 20
+MAX_AST_NODES = 20_000
+MAX_AST_SOURCE_BYTES = 65_536
 MAX_SOURCE_BYTES = 1_048_576
 MIN_TOKENS = 256
 MAX_TOKENS = 12_000
 MIN_FILE_TOKENS = 32
 MAX_FILE_TOKENS = 2_000
 _SECRET_NAME = re.compile(
-    r"(?:^|[._-])(secret|token|password|passwd|credential|credentials|private[-_]?key|api[-_]?key)(?:$|[._-])",
+    r"(?:^|[._-])(secret|token|password|passwd|credential|credentials|private[-_]?key|api[-_]?key)(?:$|[._-])|(?:^|[/\\])\.env(?:\.[^/\\]*)?$|(?:^|[/\\])(?:id_rsa|id_ed25519|known_hosts|credentials\.json|service[-_]?account[^/\\]*|kubeconfig)$",
     re.I,
 )
 _SECRET_BYTES = (
     re.compile(rb"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"),
     re.compile(rb"(?:ghp_|github_pat_|pypi-|vsce[_-]?pat)[A-Za-z0-9_-]{8,}"),
     re.compile(rb"(?:AKIA|ASIA)[0-9A-Z]{16}"),
+    re.compile(rb"AIza[0-9A-Za-z_-]{30,}"),
+    re.compile(
+        rb"(?:sk-(?:live|proj|ant|test)-|xox[baprs]-|ya29\.)[A-Za-z0-9._-]{12,}"
+    ),
 )
 _REDACT = (
     re.compile(
-        r"(?i)(\b(?:token|password|passwd|secret|api[_-]?key|authorization)\s*[:=]\s*)([^\s,;]+)"
+        r"(?i)(\b(?:token|password|passwd|secret|(?:[a-z0-9]+_)?api[_-]?key|authorization)\s*[:=]\s*)([^\s,;]+)"
     ),
     re.compile(r"(?i)(\b(?:bearer)\s+)([^\s]+)"),
 )
@@ -168,11 +181,18 @@ def _stable_file(path: Path) -> tuple[bytes, str, dict[str, int]]:
             )
         digest = hashlib.sha256()
         chunks: list[bytes] = []
+        total = 0
         with path.open("rb") as stream:
             while True:
                 chunk = stream.read(64 * 1024)
                 if not chunk:
                     break
+                total += len(chunk)
+                if total > MAX_SOURCE_BYTES:
+                    raise ContextEfficiencyError(
+                        "E_SOURCE_BOUNDARY",
+                        f"source exceeds {MAX_SOURCE_BYTES} bytes while reading",
+                    )
                 digest.update(chunk)
                 chunks.append(chunk)
         after = path.stat()
@@ -269,6 +289,404 @@ def _normalize_request_sources(root: Path, raw_sources: Any) -> list[dict[str, A
     return sources
 
 
+def select_context_request(
+    root: Path, manifest: Any
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Rank only explicitly supplied candidates; never scan the workspace."""
+    request, selection, _ = _select_context_request(root, manifest)
+    return request, selection
+
+
+def _select_context_request(
+    root: Path, manifest: Any
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+    task, changed, candidates, required, required_roles, max_sources = (
+        _selection_inputs(root, manifest)
+    )
+    task_terms = set(re.findall(r"[a-z0-9]+", task.lower()))
+    rows = [
+        _score_candidate(root, item, index, task_terms, changed, required)
+        for index, item in enumerate(candidates)
+    ]
+    if len({row["path"] for row in rows}) != len(rows):
+        raise ContextEfficiencyError("E_DUPLICATE_PATH", "duplicate candidate path")
+    if not required.issubset({row["path"] for row in rows}):
+        raise ContextEfficiencyError(
+            "E_REQUIRED_EVIDENCE", "required path is absent from candidates"
+        )
+    rows.sort(key=lambda row: (-row["score"], row["path"]))
+    role_required = _required_role_paths(rows, required_roles)
+    required.update(role_required)
+    _order_selection_rows(rows, changed, required)
+    selected = rows[:max_sources]
+    if any(row["required"] for row in rows[len(selected) :]):
+        raise ContextEfficiencyError(
+            "E_REQUIRED_EVIDENCE", "max_sources would omit required evidence"
+        )
+    request, selection = _selection_outputs(
+        root, manifest, task, changed, rows, selected, required, required_roles
+    )
+    return request, selection, rows
+
+
+def _selection_inputs(
+    root: Path, manifest: Any
+) -> tuple[str, list[str], list[Any], set[str], list[str], int]:
+    fields = {
+        "schema",
+        "task",
+        "mission_id",
+        "contract_digest",
+        "changed_paths",
+        "candidates",
+        "required_paths",
+        "required_evidence_roles",
+        "max_sources",
+        "max_tokens",
+        "per_file_tokens",
+    }
+    if (
+        not isinstance(manifest, dict)
+        or set(manifest) != fields
+        or manifest.get("schema") != SELECTION_SCHEMA
+    ):
+        raise ContextEfficiencyError(
+            "E_SELECTION_FIELDS", "selection manifest has missing or unknown fields"
+        )
+    task = _safe_text(manifest["task"], "task", 2000)
+    changed = _normalize_changed_paths(root, manifest["changed_paths"])
+    candidates = manifest["candidates"]
+    if not isinstance(candidates, list) or not 1 <= len(candidates) <= MAX_CANDIDATES:
+        raise ContextEfficiencyError(
+            "E_FIELD", f"candidates must contain 1..{MAX_CANDIDATES} entries"
+        )
+    max_sources = _bounded_int(
+        manifest["max_sources"], "max_sources", 1, MAX_SELECTED_SOURCES
+    )
+    required_raw = manifest["required_paths"]
+    if not isinstance(required_raw, list) or len(required_raw) > MAX_CANDIDATES:
+        raise ContextEfficiencyError("E_FIELD", "required_paths must be a bounded list")
+    required = {
+        _relative_path(root, item, "required_paths[]")[1] for item in required_raw
+    }
+    required_roles = manifest["required_evidence_roles"]
+    if not isinstance(required_roles, list) or len(required_roles) > 16:
+        raise ContextEfficiencyError(
+            "E_FIELD", "required_evidence_roles must be a bounded list"
+        )
+    required_roles = sorted(
+        {
+            _safe_text(role, "required_evidence_roles[]", 80).lower()
+            for role in required_roles
+        }
+    )
+    return task, changed, candidates, required, required_roles, max_sources
+
+
+def _score_candidate(
+    root: Path,
+    item: Any,
+    index: int,
+    task_terms: set[str],
+    changed: list[str],
+    required: set[str],
+) -> dict[str, Any]:
+    if not isinstance(item, dict) or set(item) != {"path", "role"}:
+        raise ContextEfficiencyError(
+            "E_CANDIDATE_FIELDS", f"candidates[{index}] must contain path and role"
+        )
+    _, path = _relative_path(root, item["path"], f"candidates[{index}].path")
+    role = _safe_text(item["role"], f"candidates[{index}].role", 80)
+    raw, digest, identity = _stable_file(root / path)
+    try:
+        source_text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        source_text = ""
+    if _SECRET_NAME.search(path) or any(
+        pattern.search(raw) for pattern in _SECRET_BYTES
+    ):
+        source_text = ""
+    path_terms = set(re.findall(r"[a-z0-9]+", path.lower()))
+    role_terms = set(re.findall(r"[a-z0-9]+", role.lower()))
+    content_terms = set(re.findall(r"[a-z0-9]+", source_text.lower()))
+    matched_terms = sorted(task_terms & (path_terms | role_terms | content_terms))[:32]
+    score = (
+        len(task_terms & path_terms) * 10
+        + len(task_terms & role_terms) * 3
+        + len(task_terms & content_terms) * 2
+        + (20 if path in changed else 0)
+    )
+    return {
+        "path": path,
+        "role": role,
+        "score": score,
+        "priority": 0,
+        "stage": 3,
+        "required": path in required,
+        "sha256": digest,
+        "identity": identity,
+        "matched_terms": matched_terms,
+        "why_selected": "",
+        "raw": raw,
+        "structure": _structural_evidence(path, raw),
+    }
+
+
+class _EvidenceVisitor(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.visited = 0
+        self.identifiers: set[str] = set()
+        self.definitions: list[dict[str, Any]] = []
+        self.imports: set[str] = set()
+        self.calls: set[str] = set()
+
+    def _count_node(self) -> None:
+        self.visited += 1
+        if self.visited > MAX_AST_NODES:
+            raise ContextEfficiencyError(
+                "E_AST_BOUNDARY", "source structure exceeds node limit"
+            )
+
+    def _add_bounded(self, target: set[str], value: str) -> None:
+        if len(target) >= 2048 and value not in target:
+            raise ContextEfficiencyError(
+                "E_AST_BOUNDARY", "source identifiers exceed collection limit"
+            )
+        target.add(value)
+
+    def generic_visit(self, node: ast.AST) -> None:
+        self._count_node()
+        if isinstance(node, ast.Name):
+            self._add_bounded(self.identifiers, node.id)
+        super().generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self.definitions.append(
+            {
+                "name": node.name,
+                "kind": "function",
+                "start": node.lineno,
+                "end": node.end_lineno or node.lineno,
+            }
+        )
+        self.generic_visit(node)
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.definitions.append(
+            {
+                "name": node.name,
+                "kind": "class",
+                "start": node.lineno,
+                "end": node.end_lineno or node.lineno,
+            }
+        )
+        self.generic_visit(node)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        self._count_node()
+        for item in node.names:
+            self._add_bounded(self.imports, item.name)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        self._count_node()
+        self._add_bounded(self.imports, "." * node.level + (node.module or ""))
+        for item in node.names:
+            self._add_bounded(self.imports, item.name)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        name = (
+            node.func.id
+            if isinstance(node.func, ast.Name)
+            else node.func.attr
+            if isinstance(node.func, ast.Attribute)
+            else ""
+        )
+        if name:
+            self._add_bounded(self.calls, name)
+        self.generic_visit(node)
+
+
+def _structural_evidence(path: str, raw: bytes) -> dict[str, Any]:
+    if (
+        not path.endswith(".py")
+        or _SECRET_NAME.search(path)
+        or any(pattern.search(raw) for pattern in _SECRET_BYTES)
+        or len(raw) > MAX_AST_SOURCE_BYTES
+    ):
+        return {
+            "status": "PARSE_LIMIT"
+            if path.endswith(".py") and len(raw) > MAX_AST_SOURCE_BYTES
+            else "NOT_PARSED",
+            "definitions": [],
+            "imports": [],
+            "calls": [],
+            "identifiers": [],
+        }
+    try:
+        tree = ast.parse(raw.decode("utf-8"), filename=path)
+        visitor = _EvidenceVisitor()
+        visitor.visit(tree)
+    except (SyntaxError, UnicodeError, RecursionError, ContextEfficiencyError):
+        return {
+            "status": "PARSE_LIMIT_OR_ERROR",
+            "definitions": [],
+            "imports": [],
+            "calls": [],
+            "identifiers": [],
+        }
+    return {
+        "status": "SYNTACTIC_ONLY",
+        "node_count": visitor.visited,
+        "definitions": sorted(
+            visitor.definitions, key=lambda row: (row["start"], row["name"])
+        )[:256],
+        "imports": sorted(visitor.imports)[:256],
+        "calls": sorted(visitor.calls)[:256],
+        "identifiers": sorted(visitor.identifiers)[:512],
+    }
+
+
+def _required_role_paths(
+    rows: list[dict[str, Any]], required_roles: list[str]
+) -> set[str]:
+    available = {row["role"].lower() for row in rows}
+    missing = sorted(set(required_roles) - available)
+    if missing:
+        raise ContextEfficiencyError(
+            "E_REQUIRED_EVIDENCE",
+            "missing candidate evidence roles: " + ", ".join(missing),
+        )
+    return {
+        next(row["path"] for row in rows if row["role"].lower() == role)
+        for role in required_roles
+    }
+
+
+def _order_selection_rows(
+    rows: list[dict[str, Any]], changed: list[str], required: set[str]
+) -> None:
+    for row in rows:
+        row["required"] = row["path"] in required
+        row["stage"] = (
+            0
+            if row["required"]
+            else 1
+            if row["path"] in changed
+            else 2
+            if row["score"]
+            else 3
+        )
+        row["priority"] = (
+            100
+            if row["stage"] == 0
+            else 80 + min(row["score"], 19)
+            if row["stage"] == 1
+            else 50 + min(row["score"], 29)
+            if row["stage"] == 2
+            else 0
+        )
+        row["why_selected"] = (
+            "required_evidence"
+            if row["required"]
+            else "changed_path"
+            if row["path"] in changed
+            else "task_terms:" + ",".join(row["matched_terms"])
+            if row["matched_terms"]
+            else "bounded_fallback"
+        )
+    rows.sort(key=lambda row: (row["stage"], -row["score"], row["path"]))
+
+
+def _selection_outputs(
+    root: Path,
+    manifest: dict[str, Any],
+    task: str,
+    changed: list[str],
+    rows: list[dict[str, Any]],
+    selected: list[dict[str, Any]],
+    required: set[str],
+    required_roles: list[str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    request = {
+        "schema": REQUEST_SCHEMA,
+        "mission_id": manifest["mission_id"],
+        "contract_digest": manifest["contract_digest"],
+        "changed_paths": changed,
+        "sources": [
+            {"path": row["path"], "role": row["role"], "priority": row["priority"]}
+            for row in selected
+        ],
+        "max_tokens": manifest["max_tokens"],
+        "per_file_tokens": manifest["per_file_tokens"],
+    }
+    selection = {
+        "schema": SELECTION_SCHEMA,
+        "task_sha256": hashlib.sha256(task.encode("utf-8")).hexdigest(),
+        "candidate_count": len(rows),
+        "candidates": [
+            {
+                "path": row["path"],
+                "role": row["role"],
+                "sha256": row["sha256"],
+                "identity": row["identity"],
+                "score": row["score"],
+                "matched_terms": row["matched_terms"],
+                "structure": row["structure"],
+                "related_paths": _related_candidate_paths(row, rows),
+            }
+            for row in rows
+        ],
+        "selected": [
+            {
+                "path": row["path"],
+                "score": row["score"],
+                "stage": row["stage"],
+                "required": row["required"],
+                "why_selected": row["why_selected"],
+            }
+            for row in selected
+        ],
+        "omitted": [
+            {
+                "path": row["path"],
+                "role": row["role"],
+                "sha256": row["sha256"],
+                "reason": "lower_task_relevance",
+                "score": row["score"],
+            }
+            for row in rows[len(selected) :]
+        ],
+        "required_paths": sorted(required),
+        "required_evidence_roles": required_roles,
+        "present_evidence_roles": sorted({row["role"].lower() for row in selected}),
+        "missing_evidence_roles": sorted(
+            set(required_roles) - {row["role"].lower() for row in selected}
+        ),
+        "ranking": "UNVERIFIED_HEURISTIC_task_terms_path_and_declared_role_v1",
+    }
+    return request, selection
+
+
+def _related_candidate_paths(
+    candidate: dict[str, Any], rows: list[dict[str, Any]]
+) -> list[str]:
+    names = set(candidate["structure"].get("identifiers", []))
+    if not names:
+        return []
+    related = []
+    for row in rows:
+        if row["path"] == candidate["path"]:
+            continue
+        overlap = names & set(row["structure"].get("identifiers", []))
+        if overlap:
+            related.append((len(overlap), row["path"]))
+    return [
+        path for _, path in sorted(related, key=lambda item: (-item[0], item[1]))[:16]
+    ]
+
+
 def _validate_request(root: Path, request: Any) -> dict[str, Any]:
     _validate_request_fields(request)
     mission_id = _safe_text(request["mission_id"], "mission_id", 120)
@@ -345,6 +763,14 @@ def _cache_dir(root: Path) -> Path:
     return Path(root) / ".factory" / "context-efficiency"
 
 
+def _read_bounded(path: Path, limit: int = 1_000_000) -> bytes:
+    with path.open("rb") as stream:
+        raw = stream.read(limit + 1)
+    if len(raw) > limit:
+        raise ContextEfficiencyError("E_INPUT_BOUNDARY", f"input exceeds {limit} bytes")
+    return raw
+
+
 def _read_source_rows(
     workspace: Path, normalized: dict[str, Any]
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -362,15 +788,27 @@ def _read_source_rows(
     return rows, source_digests
 
 
-def _load_cached_packet(cache_path: Path) -> dict[str, Any] | None:
+def _load_cached_packet(
+    cache_path: Path,
+    request: dict[str, Any],
+    rows: list[dict[str, Any]],
+    selection: dict[str, Any] | None,
+) -> dict[str, Any] | None:
     try:
-        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        cached = json.loads(_read_bounded(cache_path).decode("utf-8"))
         if (
             not isinstance(cached, dict)
             or cached.get("schema") != PACKET_SCHEMA
             or _packet_digest(cached) != cached.get("packet_sha256")
+            or cached.get("request") != request
+            or cached.get("selection") != selection
         ):
             return None
+        packet_sources = _validate_source_rows(
+            cached.get("sources"), request["sources"]
+        )
+        _validate_packet_cache(cached, request, _source_identity_rows(packet_sources))
+        _validate_packet_snapshot(cached, request, rows, packet_sources)
         cache = cached.get("cache", {})
         cached["cache"] = {
             **cache,
@@ -407,6 +845,7 @@ def _assemble_packet(
     rows: list[dict[str, Any]],
     cache_key: str,
     cache_path: Path,
+    selection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     max_bytes = normalized["max_tokens"] * 4
     remaining = max_bytes
@@ -439,15 +878,42 @@ def _assemble_packet(
             "inclusion": inclusion,
             "identity": row["identity"],
         }
+        if selection is not None:
+            selected_metadata = next(
+                selected
+                for selected in selection["selected"]
+                if selected["path"] == row["source"]["path"]
+            )
+            item["stage"] = selected_metadata["stage"]
+            item["why_selected"] = selected_metadata["why_selected"]
+            candidate_metadata = next(
+                candidate
+                for candidate in selection["candidates"]
+                if candidate["path"] == row["source"]["path"]
+            )
+            item["structural_evidence"] = candidate_metadata["structure"]
         if excerpt is not None:
             item["excerpt"] = excerpt
         selected_rows.append(item)
+    if selection is not None:
+        required = set(selection["required_paths"])
+        missing = [
+            row["path"]
+            for row in selected_rows
+            if row["path"] in required and row["inclusion"] != "full"
+        ]
+        if missing:
+            raise ContextEfficiencyError(
+                "E_REQUIRED_EVIDENCE",
+                "required sources must be fully included: " + ", ".join(missing),
+            )
     packet: dict[str, Any] = {
         "schema": PACKET_SCHEMA,
         "module_version": MODULE_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "request": normalized,
         "sources": selected_rows,
+        "selection": selection,
         "budget": {
             "max_tokens": normalized["max_tokens"],
             "max_bytes": max_bytes,
@@ -461,6 +927,31 @@ def _assemble_packet(
             "truncated_files": truncated,
             "digest_only_files": digest_only,
             "token_quality": "estimated_from_utf8_bytes_not_provider_usage",
+            "progression": [
+                {
+                    "stage": stage,
+                    "selected_sources": sum(
+                        row.get("stage") == stage for row in selected_rows
+                    ),
+                    "selected_bytes": sum(
+                        row["selected_bytes"]
+                        for row in selected_rows
+                        if row.get("stage") == stage
+                    ),
+                    "meaning": (
+                        "required"
+                        if stage == 0
+                        else "changed"
+                        if stage == 1
+                        else "task_relevant"
+                        if stage == 2
+                        else "bounded_fallback"
+                    ),
+                }
+                for stage in range(4)
+            ]
+            if selection is not None
+            else [],
         },
         "cache": {
             "key": cache_key,
@@ -482,22 +973,33 @@ def _assemble_packet(
 
 
 def build_context_packet(
-    root: Path, request: dict[str, Any], out: Path | None = None
+    root: Path,
+    request: dict[str, Any],
+    out: Path | None = None,
+    *,
+    selection: dict[str, Any] | None = None,
+    source_snapshot: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build or exactly reuse one bounded packet; never executes a source."""
     workspace = Path(root).resolve()
     normalized = _validate_request(workspace, request)
-    rows, source_digests = _read_source_rows(workspace, normalized)
+    if source_snapshot is None:
+        rows, source_digests = _read_source_rows(workspace, normalized)
+    else:
+        rows, source_digests = _rows_from_selection_snapshot(
+            normalized, selection, source_snapshot
+        )
     cache_key = _sha(
         {
             "module_version": MODULE_VERSION,
             "request": normalized,
             "sources": source_digests,
+            "selection": selection,
         }
     )
     cache_path = _cache_dir(workspace) / f"{cache_key}.json"
     if cache_path.is_file():
-        cached = _load_cached_packet(cache_path)
+        cached = _load_cached_packet(cache_path, normalized, rows, selection)
         if cached is not None:
             result = deepcopy(cached)
             result["cache"] = {**result.get("cache", {}), "hit": True}
@@ -505,11 +1007,318 @@ def build_context_packet(
             if out is not None:
                 _write_packet(Path(out), result)
             return result
-    packet = _assemble_packet(normalized, rows, cache_key, cache_path)
+    packet = _assemble_packet(normalized, rows, cache_key, cache_path, selection)
     _write_packet(cache_path, packet)
     if out is not None:
         _write_packet(Path(out), packet)
     return packet
+
+
+def build_selected_context_packet(
+    root: Path, manifest: Any, out: Path | None = None
+) -> dict[str, Any]:
+    request, selection, candidates = _select_context_request(root, manifest)
+    return build_context_packet(
+        root,
+        request,
+        out,
+        selection=selection,
+        source_snapshot=candidates,
+    )
+
+
+def _rows_from_selection_snapshot(
+    request: dict[str, Any],
+    selection: dict[str, Any] | None,
+    candidates: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if selection is None:
+        raise ContextEfficiencyError("E_SELECTION_FIELDS", "selection is required")
+    candidates_by_path = {row["path"]: row for row in candidates}
+    rows = []
+    digests = []
+    for source in request["sources"]:
+        candidate = candidates_by_path.get(source["path"])
+        if candidate is None or candidate["role"] != source["role"]:
+            raise ContextEfficiencyError(
+                "E_SELECTION_FIELDS", "selected source is not in snapshot"
+            )
+        raw = candidate["raw"]
+        rows.append(
+            {
+                "source": source,
+                "raw": raw,
+                "sha256": candidate["sha256"],
+                "identity": candidate["identity"],
+            }
+        )
+        digests.append(
+            {
+                "path": source["path"],
+                "sha256": candidate["sha256"],
+                "identity": candidate["identity"],
+            }
+        )
+    return rows, digests
+
+
+def _metric(value: Any, field: str, *, maximum: float = 1_000_000) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ContextEfficiencyError("E_EXPERIMENT_METRIC", f"{field} must be numeric")
+    result = float(value)
+    if not 0 <= result <= maximum:
+        raise ContextEfficiencyError(
+            "E_EXPERIMENT_METRIC", f"{field} is outside bounds"
+        )
+    return result
+
+
+def _experiment_header(observation: Any) -> tuple[str, list[Any]]:
+    fields = {
+        "schema",
+        "task_sha256",
+        "revision_sha256",
+        "model_id",
+        "tools_sha256",
+        "budget_sha256",
+        "rubric_sha256",
+        "cost_unit",
+        "evidence_level",
+        "samples",
+    }
+    if not isinstance(observation, dict) or set(observation) != fields:
+        raise ContextEfficiencyError(
+            "E_EXPERIMENT_FIELDS", "paired observation has missing or unknown fields"
+        )
+    if (
+        observation["schema"] != EXPERIMENT_SCHEMA
+        or observation["evidence_level"] != "operator_supplied_unverified"
+    ):
+        raise ContextEfficiencyError(
+            "E_EXPERIMENT_SCHEMA", "unsupported experiment schema or evidence level"
+        )
+    if observation["cost_unit"] not in {"USD", "not_recorded"}:
+        raise ContextEfficiencyError(
+            "E_EXPERIMENT_METRIC", "cost_unit must be USD or not_recorded"
+        )
+    for key in (
+        "task_sha256",
+        "revision_sha256",
+        "tools_sha256",
+        "budget_sha256",
+        "rubric_sha256",
+    ):
+        _digest(observation[key], key)
+    samples = observation["samples"]
+    if not isinstance(samples, list) or not 1 <= len(samples) <= MAX_EXPERIMENT_SAMPLES:
+        raise ContextEfficiencyError(
+            "E_EXPERIMENT_SAMPLES", "samples must contain 1..100 paired observations"
+        )
+    return _safe_text(observation["model_id"], "model_id", 160), samples
+
+
+def _arm_measurement(
+    row: Any, arm: str
+) -> tuple[float, float, float | None, float | None]:
+    optional = {"phases_seconds", "quality", "cost", "tokens"}
+    if (
+        not isinstance(row, dict)
+        or set(row) - optional
+        or not {"phases_seconds", "quality"}.issubset(row)
+    ):
+        raise ContextEfficiencyError(
+            "E_EXPERIMENT_SAMPLE", f"{arm} sample requires phase timings and quality"
+        )
+    phases = row["phases_seconds"]
+    names = {"context_gathering", "coding", "repair"}
+    if not isinstance(phases, dict) or set(phases) != names:
+        raise ContextEfficiencyError(
+            "E_EXPERIMENT_PHASES",
+            "all context_gathering, coding, and repair timings are required",
+        )
+    seconds = sum(_metric(phases[name], f"{arm}.{name}") for name in names)
+    quality = _metric(row["quality"], f"{arm}.quality", maximum=100)
+    cost = _metric(row["cost"], f"{arm}.cost") if "cost" in row else None
+    tokens = _metric(row["tokens"], f"{arm}.tokens") if "tokens" in row else None
+    return seconds, quality, cost, tokens
+
+
+def _collect_experiment_metrics(
+    samples: list[Any],
+) -> dict[str, dict[str, list[float]]]:
+    metrics = {
+        name: {arm: [] for arm in ("baseline", "context")}
+        for name in ("seconds", "quality", "cost", "tokens")
+    }
+    seen: set[str] = set()
+    for index, sample in enumerate(samples):
+        if not isinstance(sample, dict) or set(sample) != {"id", "baseline", "context"}:
+            raise ContextEfficiencyError(
+                "E_EXPERIMENT_SAMPLE", f"samples[{index}] is malformed"
+            )
+        sample_id = _safe_text(sample["id"], f"samples[{index}].id", 120)
+        if sample_id in seen:
+            raise ContextEfficiencyError(
+                "E_EXPERIMENT_SAMPLE", "sample ids must be unique"
+            )
+        seen.add(sample_id)
+        for arm in ("baseline", "context"):
+            seconds, quality, cost, tokens = _arm_measurement(sample[arm], arm)
+            for key, value in (
+                ("seconds", seconds),
+                ("quality", quality),
+                ("cost", cost),
+                ("tokens", tokens),
+            ):
+                if value is not None:
+                    metrics[key][arm].append(value)
+        for key in ("cost", "tokens"):
+            if (key in sample["baseline"]) != (key in sample["context"]):
+                raise ContextEfficiencyError(
+                    "E_EXPERIMENT_METRIC",
+                    f"{key} must be measured for both arms or neither",
+                )
+    return metrics
+
+
+def _experiment_projection(
+    observation: dict[str, Any],
+    model: str,
+    samples: list[Any],
+    metrics: dict[str, dict[str, list[float]]],
+) -> dict[str, Any]:
+    if (
+        median(metrics["seconds"]["baseline"]) <= 0
+        or median(metrics["seconds"]["context"]) <= 0
+    ):
+        raise ContextEfficiencyError(
+            "E_EXPERIMENT_METRIC", "median elapsed time must be positive"
+        )
+    count = len(samples)
+    for key in ("cost", "tokens"):
+        values = metrics[key]["baseline"]
+        if values and len(values) != count:
+            raise ContextEfficiencyError(
+                "E_EXPERIMENT_METRIC", f"{key} must be present in every pair or omitted"
+            )
+    has_cost = bool(metrics["cost"]["baseline"])
+    if has_cost != (observation["cost_unit"] == "USD"):
+        raise ContextEfficiencyError(
+            "E_EXPERIMENT_METRIC", "cost_unit does not match cost observations"
+        )
+    baseline_time = median(metrics["seconds"]["baseline"])
+    context_time = median(metrics["seconds"]["context"])
+    baseline_quality = median(metrics["quality"]["baseline"])
+    context_quality = median(metrics["quality"]["context"])
+    reduction = 1 - context_time / baseline_time
+    nonregressed = context_quality >= baseline_quality
+    sufficient = count >= 3
+    cost = metrics["cost"]
+    tokens = metrics["tokens"]
+    return {
+        "schema": "factory.context-efficiency-experiment-result.v1",
+        "state": "TARGET_MET"
+        if sufficient and reduction >= 0.5 and nonregressed
+        else "TARGET_NOT_MET"
+        if sufficient
+        else "INSUFFICIENT_SAMPLES",
+        "evidence_level": "operator_supplied_unverified",
+        "model_id": model,
+        "paired_sample_count": count,
+        "baseline_median_seconds": baseline_time,
+        "context_median_seconds": context_time,
+        "observed_latency_reduction": reduction,
+        "quality_nonregression": nonregressed,
+        "baseline_median_quality": baseline_quality,
+        "context_median_quality": context_quality,
+        "observed_cost_delta": median(cost["context"]) - median(cost["baseline"])
+        if cost["baseline"]
+        else None,
+        "observed_cost_delta_unit": "USD" if cost["baseline"] else None,
+        "observed_token_delta": median(tokens["context"]) - median(tokens["baseline"])
+        if tokens["baseline"]
+        else None,
+        "observed_token_delta_unit": "tokens" if tokens["baseline"] else None,
+        "claim_boundary": "Operator-supplied observations are not independently verified. Result applies only to this paired sample set; it is not a global performance claim.",
+    }
+
+
+def evaluate_context_experiment(observation: Any) -> dict[str, Any]:
+    """Evaluate operator-supplied paired observations; never execute a model."""
+    model, samples = _experiment_header(observation)
+    return _experiment_projection(
+        observation, model, samples, _collect_experiment_metrics(samples)
+    )
+
+
+def _read_experiment_history(path: Path) -> list[dict[str, Any]]:
+    try:
+        stored = json.loads(_read_bounded(path).decode("utf-8"))
+    except FileNotFoundError:
+        return []
+    except (OSError, UnicodeError, json.JSONDecodeError, ContextEfficiencyError) as exc:
+        raise ContextEfficiencyError(
+            "E_EXPERIMENT_STORE", "stored experiment history cannot be read"
+        ) from exc
+    if (
+        not isinstance(stored, dict)
+        or stored.get("schema") != "factory.context-efficiency-experiments.v1"
+    ):
+        raise ContextEfficiencyError(
+            "E_EXPERIMENT_STORE", "stored experiment history is malformed"
+        )
+    entries = stored.get("results")
+    if not isinstance(entries, list) or len(entries) > MAX_EXPERIMENT_HISTORY:
+        raise ContextEfficiencyError(
+            "E_EXPERIMENT_STORE", "stored experiment history is malformed"
+        )
+    history = []
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {
+            "observation",
+            "observation_sha256",
+            "result",
+        }:
+            raise ContextEfficiencyError(
+                "E_EXPERIMENT_STORE", "stored experiment record is malformed"
+            )
+        if _sha(entry["observation"]) != entry["observation_sha256"]:
+            raise ContextEfficiencyError(
+                "E_EXPERIMENT_STORE", "stored observation hash does not match"
+            )
+        result = evaluate_context_experiment(entry["observation"])
+        if entry["result"] != result:
+            raise ContextEfficiencyError(
+                "E_EXPERIMENT_STORE", "stored aggregate does not match observations"
+            )
+        history.append(result)
+    return history
+
+
+def record_context_experiment(root: Path, observation: Any) -> dict[str, Any]:
+    result = evaluate_context_experiment(observation)
+    directory = _cache_dir(Path(root).resolve())
+    path = directory / "experiment.json"
+    _read_experiment_history(path)
+    # Keep records in the file; history is used as a bounded sanity check only.
+    entries: list[dict[str, Any]] = []
+    if path.is_file():
+        stored = json.loads(_read_bounded(path).decode("utf-8"))
+        entries = stored["results"]
+    directory.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "observation": observation,
+        "observation_sha256": _sha(observation),
+        "result": result,
+    }
+    payload = {
+        "schema": "factory.context-efficiency-experiments.v1",
+        "results": [*entries[-(MAX_EXPERIMENT_HISTORY - 1) :], entry],
+    }
+    path.write_text(
+        json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+    )
+    return result
 
 
 def _validate_source_row_binding(
@@ -566,12 +1375,65 @@ def _validate_source_rows(
         "omitted_bytes",
         "inclusion",
         "identity",
+        "stage",
+        "why_selected",
         "excerpt",
+        "structural_evidence",
     }
     for row, expected in zip(packet_sources, expected_sources):
         _validate_source_row_binding(row, expected, allowed)
         _validate_source_row_accounting(row)
     return packet_sources
+
+
+def _validate_packet_snapshot(
+    packet: dict[str, Any],
+    request: dict[str, Any],
+    rows: list[dict[str, Any]],
+    packet_sources: list[dict[str, Any]],
+) -> None:
+    if packet.get("request") != request:
+        raise ContextEfficiencyError(
+            "E_REQUEST_MISMATCH", "packet request is not normalized"
+        )
+    expected_sources = []
+    by_path = {row["source"]["path"]: row for row in rows}
+    for source in request["sources"]:
+        row = by_path[source["path"]]
+        expected_sources.append(
+            {
+                "path": source["path"],
+                "sha256": row["sha256"],
+                "identity": row["identity"],
+            }
+        )
+    if _source_identity_rows(packet_sources) != expected_sources:
+        raise ContextEfficiencyError(
+            "E_SOURCE_ROWS", "cached source identity does not match snapshot"
+        )
+    remaining = request["max_tokens"] * 4
+    for source, item in zip(request["sources"], packet_sources):
+        raw = by_path[source["path"]]["raw"]
+        excerpt, inclusion, selected, omitted = _selection(
+            raw,
+            request["per_file_tokens"],
+            remaining,
+            sensitive_name=bool(_SECRET_NAME.search(source["path"])),
+        )
+        remaining -= selected
+        if (
+            item["source_bytes"] != len(raw)
+            or item["selected_bytes"] != selected
+            or item["omitted_bytes"] != omitted
+            or item["inclusion"] != inclusion
+            or ("excerpt" in item) != (excerpt is not None)
+            or item.get("excerpt") != excerpt
+        ):
+            raise ContextEfficiencyError(
+                "E_EXCERPT_MISMATCH",
+                f"cached excerpt does not match source: {source['path']}",
+            )
+    _verify_packet_budget(packet)
 
 
 def _source_identity_rows(
@@ -598,11 +1460,242 @@ def _validate_packet_cache(
             "module_version": MODULE_VERSION,
             "request": request,
             "sources": source_identities,
+            "selection": packet.get("selection"),
         }
     )
     if not isinstance(cache, dict) or cache.get("key") != expected_key:
         raise ContextEfficiencyError(
             "E_CACHE_KEY", "cache key does not match request and source identities"
+        )
+
+
+def _verify_selection_evidence(
+    workspace: Path, selection: Any, packet_sources: list[dict[str, Any]]
+) -> None:
+    if selection is None:
+        return
+    expected_keys = {
+        "schema",
+        "task_sha256",
+        "candidate_count",
+        "candidates",
+        "selected",
+        "omitted",
+        "required_paths",
+        "required_evidence_roles",
+        "present_evidence_roles",
+        "missing_evidence_roles",
+        "ranking",
+    }
+    if not isinstance(selection, dict) or set(selection) != expected_keys:
+        raise ContextEfficiencyError(
+            "E_SELECTION_FIELDS", "selection metadata has missing or unknown fields"
+        )
+    candidates, selected, omitted = _selection_rows(selection)
+    candidate_paths = _verify_candidates(workspace, candidates)
+    _verify_selection_partition(
+        selection, candidates, selected, omitted, packet_sources, candidate_paths
+    )
+
+
+def _selection_rows(
+    selection: dict[str, Any],
+) -> tuple[list[Any], list[Any], list[Any]]:
+    candidates = selection.get("candidates")
+    selected = selection.get("selected")
+    omitted = selection.get("omitted")
+    if (
+        not isinstance(candidates, list)
+        or not 1 <= len(candidates) <= MAX_CANDIDATES
+        or not isinstance(selected, list)
+        or not isinstance(omitted, list)
+        or len(candidates) != len(selected) + len(omitted)
+    ):
+        raise ContextEfficiencyError(
+            "E_SELECTION_FIELDS", "candidate evidence rows are malformed"
+        )
+    if selection.get("candidate_count") != len(candidates):
+        raise ContextEfficiencyError(
+            "E_SELECTION_FIELDS", "candidate count does not match rows"
+        )
+    return candidates, selected, omitted
+
+
+def _verify_candidates(workspace: Path, candidates: list[Any]) -> set[str]:
+    candidate_paths: set[str] = set()
+    for row in candidates:
+        if not isinstance(row, dict) or set(row) != {
+            "path",
+            "role",
+            "sha256",
+            "identity",
+            "score",
+            "matched_terms",
+            "structure",
+            "related_paths",
+        }:
+            raise ContextEfficiencyError(
+                "E_SELECTION_FIELDS", "candidate evidence row is malformed"
+            )
+        path, relative = _relative_path(
+            workspace, row["path"], "selection.candidates.path"
+        )
+        if (
+            relative in candidate_paths
+            or _digest(row["sha256"], "selection.candidates.sha256") != row["sha256"]
+        ):
+            raise ContextEfficiencyError(
+                "E_SELECTION_FIELDS", "candidate evidence identity is invalid"
+            )
+        candidate_paths.add(relative)
+        _validate_structure(row["structure"])
+        if not isinstance(row["related_paths"], list) or len(row["related_paths"]) > 16:
+            raise ContextEfficiencyError(
+                "E_SELECTION_FIELDS", "related candidate list is malformed"
+            )
+        raw, digest, identity = _stable_file(path)
+        structural = _structural_evidence(relative, raw)
+        if (
+            digest != row["sha256"]
+            or identity != row["identity"]
+            or structural != row["structure"]
+        ):
+            raise ContextEfficiencyError(
+                "E_SELECTION_DRIFT", f"candidate changed: {relative}"
+            )
+    return candidate_paths
+
+
+def _verify_selection_partition(
+    selection: dict[str, Any],
+    candidates: list[Any],
+    selected: list[Any],
+    omitted: list[Any],
+    packet_sources: list[dict[str, Any]],
+    candidate_paths: set[str],
+) -> None:
+    source_paths = {row["path"] for row in packet_sources}
+    selected_paths = {row.get("path") for row in selected if isinstance(row, dict)}
+    omitted_paths = {row.get("path") for row in omitted if isinstance(row, dict)}
+    if (
+        selected_paths != source_paths
+        or selected_paths & omitted_paths
+        or selected_paths | omitted_paths != candidate_paths
+    ):
+        raise ContextEfficiencyError(
+            "E_SELECTION_FIELDS", "selected, omitted, and candidate paths do not match"
+        )
+    _validate_selection_rows(selected, omitted)
+    candidate_by_path = {row["path"]: row for row in candidates}
+    packet_by_path = {row["path"]: row for row in packet_sources}
+    _validate_selected_bindings(selected, candidate_by_path, packet_by_path)
+    omitted_by_path = {row.get("path"): row for row in omitted if isinstance(row, dict)}
+    for path, row in omitted_by_path.items():
+        if (
+            path not in candidate_by_path
+            or row.get("sha256") != candidate_by_path[path]["sha256"]
+        ):
+            raise ContextEfficiencyError(
+                "E_SELECTION_FIELDS",
+                "omitted source is not bound to candidate evidence",
+            )
+    candidate_rows = list(candidate_by_path.values())
+    for row in candidates:
+        if row["related_paths"] != _related_candidate_paths(row, candidate_rows):
+            raise ContextEfficiencyError(
+                "E_SELECTION_FIELDS", "related candidate references do not match"
+            )
+    _verify_required_selection(selection, packet_sources, selected_paths)
+
+
+def _validate_selection_rows(selected: list[Any], omitted: list[Any]) -> None:
+    if any(
+        not isinstance(row, dict)
+        or row.get("stage") not in {0, 1, 2, 3}
+        or not isinstance(row.get("why_selected"), str)
+        for row in selected
+    ):
+        raise ContextEfficiencyError(
+            "E_SELECTION_FIELDS", "selection rationale is malformed"
+        )
+    if any(
+        not isinstance(row, dict)
+        or set(row) != {"path", "role", "sha256", "reason", "score"}
+        for row in omitted
+    ):
+        raise ContextEfficiencyError(
+            "E_SELECTION_FIELDS", "omitted candidate evidence is malformed"
+        )
+
+
+def _validate_selected_bindings(
+    selected: list[Any],
+    candidate_by_path: dict[str, Any],
+    packet_by_path: dict[str, Any],
+) -> None:
+    for row in selected:
+        candidate = candidate_by_path[row["path"]]
+        source = packet_by_path[row["path"]]
+        if (
+            candidate["sha256"] != source["source_sha256"]
+            or candidate["role"] != source["role"]
+        ):
+            raise ContextEfficiencyError(
+                "E_SELECTION_FIELDS",
+                "selected source is not bound to candidate evidence",
+            )
+
+
+def _verify_required_selection(
+    selection: dict[str, Any],
+    packet_sources: list[dict[str, Any]],
+    selected_paths: set[str],
+) -> None:
+    required = selection.get("required_paths")
+    missing_roles = selection.get("missing_evidence_roles")
+    required_roles = selection.get("required_evidence_roles")
+    full_roles = {
+        row["role"].lower() for row in packet_sources if row["inclusion"] == "full"
+    }
+    if (
+        not isinstance(required, list)
+        or not set(required).issubset(selected_paths)
+        or not isinstance(missing_roles, list)
+        or missing_roles
+        or not isinstance(required_roles, list)
+        or not set(required_roles).issubset(full_roles)
+        or selection.get("present_evidence_roles")
+        != sorted({row["role"].lower() for row in packet_sources})
+    ):
+        raise ContextEfficiencyError(
+            "E_REQUIRED_EVIDENCE", "required paths or evidence roles are missing"
+        )
+
+
+def _validate_structure(value: Any) -> None:
+    if not isinstance(value, dict) or value.get("status") not in {
+        "SYNTACTIC_ONLY",
+        "NOT_PARSED",
+        "PARSE_LIMIT",
+        "PARSE_LIMIT_OR_ERROR",
+    }:
+        raise ContextEfficiencyError(
+            "E_SELECTION_FIELDS", "structural evidence is malformed"
+        )
+    common = {"status", "definitions", "imports", "calls", "identifiers"}
+    expected = (
+        common | {"node_count"} if value["status"] == "SYNTACTIC_ONLY" else common
+    )
+    if set(value) != expected:
+        raise ContextEfficiencyError(
+            "E_SELECTION_FIELDS", "structural evidence fields are malformed"
+        )
+    if value["status"] == "SYNTACTIC_ONLY" and (
+        type(value["node_count"]) is not int
+        or not 1 <= value["node_count"] <= MAX_AST_NODES
+    ):
+        raise ContextEfficiencyError(
+            "E_SELECTION_FIELDS", "structural node count is invalid"
         )
 
 
@@ -617,6 +1710,40 @@ def _verify_packet_header(
         )
     request = _validate_request(workspace, packet.get("request"))
     packet_sources = _validate_source_rows(packet.get("sources"), request["sources"])
+    selection = packet.get("selection")
+    if selection is not None:
+        selected = selection.get("selected") if isinstance(selection, dict) else None
+        required_paths = (
+            selection.get("required_paths") if isinstance(selection, dict) else None
+        )
+        requested_paths = {row["path"] for row in packet_sources}
+        required_by_priority = {
+            row["path"] for row in packet_sources if row["priority"] == 100
+        }
+        if (
+            not isinstance(selection, dict)
+            or selection.get("schema") != SELECTION_SCHEMA
+            or not isinstance(selection.get("task_sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", selection["task_sha256"]) is None
+            or not isinstance(selected, list)
+            or {row.get("path") for row in selected if isinstance(row, dict)}
+            != requested_paths
+            or not isinstance(required_paths, list)
+            or set(required_paths) != required_by_priority
+            or any(
+                not isinstance(row, dict) or row.get("stage") not in {0, 1, 2, 3}
+                for row in selected
+            )
+            or any(
+                row["path"] in required_paths and row["inclusion"] != "full"
+                for row in packet_sources
+            )
+        ):
+            raise ContextEfficiencyError(
+                "E_REQUIRED_EVIDENCE",
+                "required context evidence is missing or truncated",
+            )
+        _verify_selection_evidence(workspace, selection, packet_sources)
     source_identities = _source_identity_rows(packet_sources)
     _validate_packet_cache(packet, request, source_identities)
     return request, packet_sources
@@ -624,8 +1751,8 @@ def _verify_packet_header(
 
 def _verify_packet_sources(
     workspace: Path, packet_sources: list[dict[str, Any]]
-) -> int:
-    checked = 0
+) -> list[dict[str, Any]]:
+    rows = []
     for item in packet_sources:
         source_path, relative = _relative_path(
             workspace, item.get("path"), "packet.sources.path"
@@ -640,8 +1767,19 @@ def _verify_packet_sources(
             raise ContextEfficiencyError(
                 "E_SOURCE_DRIFT", f"source changed: {relative}"
             )
-        checked += 1
-    return checked
+        rows.append(
+            {
+                "source": {
+                    "path": relative,
+                    "role": item["role"],
+                    "priority": item["priority"],
+                },
+                "raw": raw,
+                "sha256": digest,
+                "identity": identity,
+            }
+        )
+    return rows
 
 
 def _verify_packet_budget(packet: dict[str, Any]) -> None:
@@ -663,18 +1801,23 @@ def verify_context_packet(root: Path, packet_path: Path) -> dict[str, Any]:
         else workspace / packet_path
     )
     try:
-        packet = json.loads(path.read_text(encoding="utf-8"))
+        packet = json.loads(_read_bounded(path).decode("utf-8"))
         if not isinstance(packet, dict):
             raise ContextEfficiencyError("E_SCHEMA", "packet must be an object")
-        _, packet_sources = _verify_packet_header(workspace, packet)
-        checked = _verify_packet_sources(workspace, packet_sources)
-        _verify_packet_budget(packet)
+        request, packet_sources = _verify_packet_header(workspace, packet)
+        source_rows = _verify_packet_sources(workspace, packet_sources)
+        _validate_packet_snapshot(
+            packet,
+            request,
+            source_rows,
+            packet_sources,
+        )
         return {
             "schema": VERIFICATION_SCHEMA,
             "state": "READY",
             "valid": True,
             "packet_sha256": packet["packet_sha256"],
-            "source_count": checked,
+            "source_count": len(source_rows),
             "cache_key": packet["cache"]["key"],
             "claim_boundary": "Packet and source digests match; this is read-only evidence and estimated token accounting, not an approval or usage receipt.",
         }
@@ -701,15 +1844,24 @@ def context_efficiency_status(root: Path) -> dict[str, Any]:
     workspace = Path(root).resolve()
     directory = _cache_dir(workspace)
     files = (
-        sorted(directory.glob("*.json"))[:MAX_CACHE_FILES] if directory.is_dir() else []
+        sorted(
+            path for path in directory.glob("*.json") if path.name != "experiment.json"
+        )[:MAX_CACHE_FILES]
+        if directory.is_dir()
+        else []
     )
     rows: list[dict[str, Any]] = []
     invalid = 0
     cache_hits = 0
     estimated_tokens = 0
+    selection_count = 0
+    missing_selection_evidence = 0
+    structural_file_count = 0
+    evidence_roles: set[str] = set()
+    experiment_blocked = False
     for path in files:
         try:
-            packet = json.loads(path.read_text(encoding="utf-8"))
+            packet = json.loads(_read_bounded(path).decode("utf-8"))
             valid = (
                 isinstance(packet, dict)
                 and packet.get("schema") == PACKET_SCHEMA
@@ -721,6 +1873,23 @@ def context_efficiency_status(root: Path) -> dict[str, Any]:
             budget = packet.get("budget", {})
             estimated_tokens += int(budget.get("estimated_tokens", 0))
             cache_hits += int(packet.get("cache", {}).get("reuse_count", 0))
+            selection_count += int(isinstance(packet.get("selection"), dict))
+            if isinstance(packet.get("selection"), dict):
+                candidates = packet["selection"].get("candidates", [])
+                structural_file_count += sum(
+                    isinstance(row, dict)
+                    and isinstance(row.get("structure"), dict)
+                    and row["structure"].get("status") == "SYNTACTIC_ONLY"
+                    for row in candidates
+                )
+                evidence_roles.update(
+                    row.get("role", "")
+                    for row in candidates
+                    if isinstance(row, dict) and isinstance(row.get("role"), str)
+                )
+                missing_selection_evidence += len(
+                    packet["selection"].get("missing_evidence_roles", [])
+                )
             rows.append(
                 {
                     "path": path.relative_to(workspace).as_posix(),
@@ -733,6 +1902,14 @@ def context_efficiency_status(root: Path) -> dict[str, Any]:
         except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError):
             invalid += 1
     state = "BLOCKED" if invalid else "READY" if rows else "MISSING"
+    try:
+        experiment_history = _read_experiment_history(directory / "experiment.json")
+        experiment = experiment_history[-1] if experiment_history else None
+    except ContextEfficiencyError:
+        experiment = None
+        experiment_blocked = True
+        invalid += 1
+        state = "BLOCKED"
     return {
         "schema": STATUS_SCHEMA,
         "state": state,
@@ -742,6 +1919,56 @@ def context_efficiency_status(root: Path) -> dict[str, Any]:
         "cache_hits": cache_hits,
         "estimated_tokens": estimated_tokens,
         "packets": rows,
+        "source_selection_status": "CACHED_METADATA_UNVERIFIED"
+        if selection_count
+        else "MISSING",
+        "source_evidence_status": "UNVERIFIED",
+        "structural_evidence_status": "CACHED_METADATA_ONLY"
+        if selection_count
+        else "MISSING",
+        "deep_evidence_file_count": structural_file_count,
+        "evidence_role_count": len(evidence_roles),
+        "missing_evidence_role_count": missing_selection_evidence,
+        "reusable_packet_count": None,
+        "stale_packet_count": None,
+        "missing_evidence_count": invalid
+        + missing_selection_evidence
+        + int(experiment is None),
+        "experiment_status": "BLOCKED"
+        if experiment_blocked
+        else experiment.get("state", "MISSING_EVIDENCE")
+        if experiment
+        else "MISSING_EVIDENCE",
+        "experiment_quality_status": "NONREGRESSED"
+        if experiment and experiment.get("quality_nonregression") is True
+        else "REGRESSED"
+        if experiment
+        else "UNKNOWN",
+        "experiment_freshness": "UNVERIFIED" if experiment else "MISSING",
+        "quality_nonregression": experiment.get("quality_nonregression")
+        if experiment
+        else None,
+        "paired_sample_count": experiment.get("paired_sample_count", 0)
+        if experiment
+        else 0,
+        "observed_latency_reduction": experiment.get("observed_latency_reduction")
+        if experiment
+        else None,
+        "observed_cost_delta": experiment.get("observed_cost_delta")
+        if experiment
+        else None,
+        "observed_cost_delta_unit": experiment.get("observed_cost_delta_unit")
+        if experiment
+        else None,
+        "observed_token_delta": experiment.get("observed_token_delta")
+        if experiment
+        else None,
+        "observed_token_delta_unit": experiment.get("observed_token_delta_unit")
+        if experiment
+        else None,
+        "experiment_evidence_level": experiment.get("evidence_level")
+        if experiment
+        else None,
         "claim_boundary": "Bounded cache metadata only; estimated token counts are not provider usage or guaranteed savings, and no source is executed or approved.",
         "authority": {
             "execution": False,
