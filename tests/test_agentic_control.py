@@ -1254,3 +1254,143 @@ def test_runtime_linked_storage_is_rejected(tmp_path, monkeypatch):
     with pytest.raises(AgenticControlError) as error:
         _runtime_path(tmp_path)
     assert error.value.code == "E_WORKFLOW_PATH"
+
+
+def github_intake_payload():
+    return {
+        "number": 172,
+        "html_url": "https://github.com/owner/repo/pull/172",
+        "base": {"repo": {"full_name": "owner/repo"}},
+        "head": {"sha": "a" * 40},
+        "state": "open",
+        "merged": False,
+        "updated_at": "2026-10-11T09:00:00Z",
+        "title": "Review candidate",
+    }
+
+
+def test_sync_github_workflow_source_reads_bound_pr_and_deduplicates(
+    tmp_path, monkeypatch
+):
+    from factoryline.agentic_control import sync_github_workflow_source
+
+    calls = []
+
+    def read(endpoint):
+        calls.append(endpoint)
+        return {"login": "account-1"} if endpoint == "user" else github_intake_payload()
+
+    monkeypatch.setattr("factoryline.agentic_control._github_runtime_read", read)
+    store = workflow_store(tmp_path)
+    result = sync_github_workflow_source(store, "owner/repo", 172, kind="pull_request")
+    assert result["item"]["source"]["head_sha"] == "a" * 40
+    assert result["item"]["source"]["revision"] > 0
+    assert (
+        sync_github_workflow_source(store, "owner/repo", 172, kind="pull_request")[
+            "status"
+        ]
+        == "duplicate"
+    )
+    assert calls == ["user", "repos/owner/repo/pulls/172"] * 2
+    assert not any(result["authority"].values())
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"html_url": "https://github.com/other/repo/pull/172"},
+        {"number": True},
+        {"updated_at": "2026-10-11T09:00:00"},
+        {"head": None},
+        {"head": {"sha": None}},
+        {"base": {"repo": {"full_name": "other/repo"}}},
+    ],
+)
+def test_sync_github_workflow_source_rejects_provider_mismatch(
+    tmp_path, monkeypatch, change
+):
+    from factoryline.agentic_control import sync_github_workflow_source
+
+    payload = {**github_intake_payload(), **change}
+    monkeypatch.setattr(
+        "factoryline.agentic_control._github_runtime_read",
+        lambda endpoint: {"login": "account-1"} if endpoint == "user" else payload,
+    )
+    with pytest.raises(AgenticControlError):
+        sync_github_workflow_source(
+            workflow_store(tmp_path), "owner/repo", 172, kind="pull_request"
+        )
+
+
+def test_sync_github_workflow_source_rejects_account_before_repo_read(
+    tmp_path, monkeypatch
+):
+    from factoryline.agentic_control import sync_github_workflow_source
+
+    calls = []
+
+    def read(endpoint):
+        calls.append(endpoint)
+        return {"login": "other-account"}
+
+    monkeypatch.setattr("factoryline.agentic_control._github_runtime_read", read)
+    with pytest.raises(AgenticControlError):
+        sync_github_workflow_source(workflow_store(tmp_path), "owner/repo", 172)
+    assert calls == ["user"]
+
+
+def test_github_runtime_transport_forces_host_and_hides_provider_errors(monkeypatch):
+    from factoryline.agentic_control import _github_runtime_read
+    from types import SimpleNamespace
+
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return SimpleNamespace(
+            returncode=1, stdout="", stderr="sensitive provider response"
+        )
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(AgenticControlError) as error:
+        _github_runtime_read("user")
+    assert "sensitive" not in str(error.value)
+    assert calls[0][0] == ["gh", "api", "--hostname", "github.com", "user"]
+    assert calls[0][1]["timeout"] == 30
+
+
+@pytest.mark.parametrize(
+    "repository,number,kind",
+    [
+        ("../repo", 172, "issue"),
+        ("owner/repo", True, "issue"),
+        ("owner/repo", 0, "issue"),
+        ("owner/repo", 172, "merge"),
+    ],
+)
+def test_sync_github_workflow_source_bad_selector_never_reads_provider(
+    tmp_path, monkeypatch, repository, number, kind
+):
+    from factoryline.agentic_control import sync_github_workflow_source
+
+    def unexpected(endpoint):
+        pytest.fail("invalid selector must not query provider")
+
+    monkeypatch.setattr("factoryline.agentic_control._github_runtime_read", unexpected)
+    with pytest.raises(AgenticControlError):
+        sync_github_workflow_source(
+            workflow_store(tmp_path), repository, number, kind=kind
+        )
+
+
+def test_sync_github_workflow_source_malformed_account_fails_closed(
+    tmp_path, monkeypatch
+):
+    from factoryline.agentic_control import sync_github_workflow_source
+
+    monkeypatch.setattr(
+        "factoryline.agentic_control._github_runtime_read",
+        lambda endpoint: {"login": []},
+    )
+    with pytest.raises(AgenticControlError):
+        sync_github_workflow_source(workflow_store(tmp_path), "owner/repo", 172)

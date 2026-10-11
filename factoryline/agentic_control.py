@@ -3235,6 +3235,113 @@ _WORKFLOW_SOURCE_FIELDS = {
 }
 
 
+def _github_runtime_read(endpoint):
+    try:
+        result = subprocess.run(
+            ["gh", "api", "--hostname", "github.com", endpoint],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode != 0 or len(result.stdout.encode()) > 1_048_576:
+            raise ValueError("unavailable observation")
+        value = json.loads(result.stdout)
+        if not isinstance(value, dict):
+            raise ValueError("invalid observation")
+        return value
+    except (OSError, subprocess.TimeoutExpired, ValueError) as from_error:
+        raise AgenticControlError(
+            "E_WORKFLOW_PROVIDER", "GitHub observation unavailable or invalid"
+        ) from from_error
+
+
+def _github_runtime_source(account, repository, kind, number, payload):
+    expected_url = f"https://github.com/{repository}/{'pull' if kind == 'pull_request' else 'issues'}/{number}"
+    if (
+        type(payload.get("number")) is not int
+        or payload.get("number") != number
+        or payload.get("html_url") != expected_url
+    ):
+        raise AgenticControlError(
+            "E_WORKFLOW_PROVIDER", "GitHub source identity differs"
+        )
+    if kind == "pull_request":
+        base = payload.get("base")
+        head_record = payload.get("head")
+        if (
+            not isinstance(base, dict)
+            or not isinstance(base.get("repo"), dict)
+            or not isinstance(head_record, dict)
+        ):
+            raise AgenticControlError(
+                "E_WORKFLOW_PROVIDER", "PR repository identity missing"
+            )
+        if base["repo"].get("full_name") != repository:
+            raise AgenticControlError("E_WORKFLOW_PROVIDER", "PR repository differs")
+        head = head_record.get("sha")
+        if head is None:
+            raise AgenticControlError("E_WORKFLOW_PROVIDER", "PR head missing")
+    else:
+        if "pull_request" in payload:
+            raise AgenticControlError("E_WORKFLOW_PROVIDER", "issue is a pull request")
+        head = None
+    try:
+        updated = datetime.fromisoformat(payload["updated_at"].replace("Z", "+00:00"))
+        if updated.utcoffset() is None:
+            raise ValueError("timezone missing")
+        revision = int(updated.timestamp() * 1_000_000)
+    except (KeyError, TypeError, ValueError, AttributeError, OverflowError) as error:
+        raise AgenticControlError(
+            "E_WORKFLOW_PROVIDER", "provider revision invalid"
+        ) from error
+    state = (
+        "merged"
+        if kind == "pull_request" and payload.get("merged") is True
+        else payload.get("state")
+    )
+    return dict(
+        provider="github",
+        account=account,
+        repository=repository,
+        kind=kind,
+        external_id=str(number),
+        revision=revision,
+        head_sha=head,
+        state=state,
+        title=payload.get("title"),
+    )
+
+
+def sync_github_workflow_source(store, repository, number, *, kind="issue"):
+    """Read authenticated GitHub state into durable intake; never dispatch or merge."""
+    if (
+        not isinstance(repository, str)
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+", repository)
+        or repository.rsplit("/", 1)[-1] in {".", ".."}
+        or type(number) is not int
+        or not 1 <= number < 2**53
+        or kind not in {"issue", "pull_request"}
+    ):
+        raise AgenticControlError("E_WORKFLOW_SOURCE", "invalid GitHub source selector")
+    account = _bounded_text(
+        _github_runtime_read("user").get("login"), "GitHub account", 96
+    )
+    if ("github", account, repository) not in store.allowed:
+        raise AgenticControlError(
+            "E_WORKFLOW_SOURCE", "authenticated account is outside connected scope"
+        )
+    endpoint = (
+        f"repos/{repository}/{'pulls' if kind == 'pull_request' else 'issues'}/{number}"
+    )
+    payload = _github_runtime_read(endpoint)
+    source = _runtime_source(
+        _github_runtime_source(account, repository, kind, number, payload),
+        store.allowed,
+    )
+    return store.intake("github-" + _sha(source), source)
+
+
 def _runtime_source(value, allowed):
     if not isinstance(value, dict) or set(value) != _WORKFLOW_SOURCE_FIELDS:
         raise AgenticControlError(
