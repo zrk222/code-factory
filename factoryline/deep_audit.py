@@ -339,6 +339,7 @@ def _execute_lane(
     from .deep_audit_io import write_run_json
     from .runtime_audit_process import run_bounded_command
 
+    deadline = time.monotonic() + lane["timeout_seconds"]
     base = _docker_base()
     _docker_preflight(base, lane)
     name = f"factory-deep-{state['run_id']}-{lane['id']}"
@@ -437,10 +438,230 @@ def _execute_lane(
             "native_execution": native_execution,
             "execution": facts,
         }
+    result = _codeql_replay_result(
+        result,
+        base,
+        lane,
+        snapshot,
+        bundle,
+        inventory,
+        state["run_id"],
+        cancelled,
+        deadline,
+        (directory, state, emit),
+    )
     # Retain normalized native evidence for independent review, never emit raw logs/secrets.
     write_run_json(directory, f"bundle-{lane['id']}.json", bundle)
     result.update(bundle_sha256=digest(bundle), execution=facts)
     return result
+
+
+def _codeql_replay_result(
+    result,
+    base,
+    lane,
+    snapshot,
+    bundle,
+    inventory,
+    run_id,
+    cancelled,
+    deadline,
+    monitoring,
+):
+    if (
+        lane["engine"] != "codeql"
+        or "CODEQL_NATIVE_REPLAY_REQUIRED" not in result["gaps"]
+    ):
+        return result
+    directory, state, emit = monitoring
+    stop = threading.Event()
+    monitor = threading.Thread(
+        target=_monitor_lane,
+        args=(directory, state, stop, cancelled, emit),
+        daemon=True,
+    )
+    monitor.start()
+    try:
+        remaining = int(deadline - time.monotonic())
+        if remaining < 1:
+            raise RuntimeAuditError("E_CODEQL_REPLAY", "lane replay deadline exhausted")
+        replay = _replay_codeql_lane(
+            base,
+            lane,
+            snapshot,
+            bundle,
+            inventory,
+            run_id,
+            cancelled,
+            timeout_seconds=remaining,
+        )
+        if not isinstance(replay, dict) or replay.get("state") != "VERIFIED":
+            raise RuntimeAuditError(
+                "E_CODEQL_REPLAY", "independent replay is incomplete"
+            )
+        result["codeql_replay"] = replay
+        result["gaps"] = [
+            gap for gap in result["gaps"] if gap != "CODEQL_NATIVE_REPLAY_REQUIRED"
+        ]
+    except (RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as error:
+        result["codeql_replay"] = {
+            "state": "INCOMPLETE",
+            "diagnostic_code": getattr(error, "code", "E_CODEQL_REPLAY"),
+            "evidence": getattr(error, "replay_evidence", None),
+        }
+        result["gaps"].append("CODEQL_NATIVE_REPLAY_FAILED")
+    finally:
+        stop.set()
+        monitor.join(timeout=2)
+    result["gaps"] = sorted(set(result["gaps"]))
+    result["state"] = "INCOMPLETE" if result["gaps"] else "OBSERVED"
+    return result
+
+
+def _codeql_replay_runtime(scratch):
+    root = scratch / "runtime"
+    target = root / "factoryline"
+    target.mkdir(parents=True)
+    records = {}
+    for name in (
+        "__init__.py",
+        "deep_audit_io.py",
+        "deep_audit_sarif.py",
+        "runtime_audit_common.py",
+        "runtime_audit_process.py",
+    ):
+        raw = local_file(Path(__file__).parent, name).read_bytes()
+        (target / name).write_bytes(raw)
+        records[name] = sha256_bytes(raw)
+    return root, digest(records)
+
+
+def _codeql_replay_argv(
+    base, lane, snapshot, name, run_id, candidate, contract, runtime, timeout
+):
+    program = (
+        "import sys,json;from pathlib import Path;"
+        "sys.path.insert(0,'/factory-runtime');"
+        "from factoryline.deep_audit_io import execute_codeql_native_replay,strict_json;"
+        "s=Path('/tmp/codeql-replay');s.mkdir();"
+        "r=execute_codeql_native_replay(strict_json(Path('/factory-contract.json').read_bytes()),"
+        "Path('/src'),s,int(sys.argv[1]));print(json.dumps(r),flush=True)"
+    )
+    argv = _container_argv(
+        base,
+        {**lane, "argv": ["/usr/local/bin/python", "-I", "-c", program, str(timeout)]},
+        snapshot,
+        name,
+        run_id,
+        candidate,
+        contract,
+    )
+    if "," in str(runtime):
+        raise RuntimeAuditError(
+            "E_MOUNT_PATH", "Docker runtime bind path cannot contain commas"
+        )
+    index = argv.index("--entrypoint")
+    argv[index:index] = [
+        "--mount",
+        f"type=bind,source={runtime},target=/factory-runtime,readonly",
+    ]
+    return argv
+
+
+def _replay_codeql_lane(
+    base, lane, snapshot, bundle, inventory, run_id, cancelled, *, timeout_seconds=None
+):
+    from .runtime_audit_process import run_bounded_command
+
+    timeout = lane["timeout_seconds"] if timeout_seconds is None else timeout_seconds
+    _docker_preflight(base, lane)
+    name = f"factory-replay-{run_id}-{lane['id']}"
+    request = {
+        "lane": lane,
+        "inventory": inventory,
+        "coverage": bundle["artifacts"][lane["coverage"]],
+        "report": bundle["artifacts"][lane["report"]],
+    }
+    with tempfile.TemporaryDirectory(prefix="factory-replay-") as temporary:
+        scratch = Path(temporary)
+        contract = scratch / "input.json"
+        contract.write_bytes(canonical_bytes(request))
+        runtime, runtime_sha = _codeql_replay_runtime(scratch)
+        output = scratch / "replay.json"
+        argv = _codeql_replay_argv(
+            base,
+            lane,
+            snapshot,
+            name,
+            run_id,
+            inventory["candidate_sha256"],
+            contract,
+            runtime,
+            timeout,
+        )
+        try:
+            facts = run_bounded_command(
+                argv, scratch, timeout, scratch, stdout_path=output, cancelled=cancelled
+            )
+        finally:
+            cleanup = _container_cleanup(base, name)
+        try:
+            if not cleanup:
+                raise RuntimeAuditError(
+                    "E_CONTAINER_CLEANUP", "replay cleanup could not be verified"
+                )
+            raw = output.read_bytes() if output.exists() else b""
+            replay = _codeql_replay_receipt(raw, facts, request)
+        except (RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as error:
+            error.replay_evidence = {
+                "image": lane["image"],
+                "runtime_sha256": runtime_sha,
+                "command_sha256": digest(argv),
+                "execution": facts,
+                "cleanup_confirmed": cleanup,
+            }
+            raise
+    replay.update(
+        image=lane["image"],
+        runtime_sha256=runtime_sha,
+        command_sha256=digest(argv),
+        execution=facts,
+        cleanup_confirmed=True,
+    )
+    return replay
+
+
+def _codeql_replay_receipt(raw, facts, request):
+    from .runtime_audit_common import _validate_runner_facts
+
+    _validate_runner_facts(facts, facts["timeout_seconds"])
+    if (
+        facts["exit_code"] != 0
+        or facts["timed_out"]
+        or facts["launch_error"]
+        or facts["output_limit_exceeded"]
+        or not facts["cleanup_confirmed"]
+        or facts.get("cancelled")
+        or sha256_bytes(raw) != facts["stdout_sha256"]
+    ):
+        raise RuntimeAuditError("E_CODEQL_REPLAY", "native replay execution failed")
+    replay = strict_json(raw)
+    expected = {
+        "schema": "factory.codeql-native-replay.v1",
+        "state": "VERIFIED",
+        "candidate_sha256": request["inventory"]["candidate_sha256"],
+        "lane_sha256": digest(request["lane"]),
+        "coverage_sha256": digest(request["coverage"]),
+        "queries": len(request["lane"]["rule_ids"]),
+        "source_paths": sorted(
+            item["path"]
+            for item in request["inventory"]["files"]
+            if item["language"] in request["lane"]["languages"]
+        ),
+    }
+    if any(replay.get(key) != value for key, value in expected.items()):
+        raise RuntimeAuditError("E_CODEQL_REPLAY", "native replay binding differs")
+    return replay
 
 
 def _run_lanes(

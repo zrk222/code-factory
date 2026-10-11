@@ -4016,3 +4016,654 @@ def test_codeql_retained_evidence_rejects_tampering(sabotage):
 
     with pytest.raises(RuntimeAuditError, match="E_CODEQL_ARTIFACT"):
         deep_audit_io.verify_codeql_retained_evidence(coverage, lane, required)
+
+
+def _codeql_replay_values_fixture():
+    sets = [
+        {"name": "edges", "rows": 2, "columns": 2},
+        {"name": "#select", "rows": 1, "columns": 1},
+    ]
+    values = {
+        "edges": {
+            "columns": [{"kind": "Entity"}, {"kind": "String"}],
+            "tuples": [[{"label": "a"}, "edge"], [{"label": "a"}, "edge"]],
+        },
+        "#select": {
+            "columns": [{"kind": "String"}],
+            "tuples": [["finding"]],
+        },
+    }
+    return values, sets
+
+
+def test_codeql_replay_values_canonicalizes_tuple_order_and_preserves_duplicates():
+    from factoryline.deep_audit_io import _codeql_replay_values
+
+    values, sets = _codeql_replay_values_fixture()
+    reordered = deepcopy(values)
+    reordered["edges"]["tuples"].reverse()
+    canonical = _codeql_replay_values(values, sets)
+    assert _codeql_replay_values(reordered, sets) == canonical
+    assert len(canonical["edges"]["tuples"]) == 2
+    assert canonical["edges"]["tuples"][0] == canonical["edges"]["tuples"][1]
+
+
+@pytest.mark.parametrize(
+    "sabotage",
+    [
+        "missing_set",
+        "extra_set",
+        "unknown_field",
+        "bad_columns",
+        "bad_row_count",
+        "bad_tuple_width",
+    ],
+)
+def test_codeql_replay_values_rejects_shape_drift(sabotage):
+    from factoryline.deep_audit_io import _codeql_replay_values
+
+    values, sets = _codeql_replay_values_fixture()
+    if sabotage == "missing_set":
+        del values["edges"]
+    elif sabotage == "extra_set":
+        values["unexpected"] = {"columns": [], "tuples": []}
+    elif sabotage == "unknown_field":
+        values["edges"]["unexpected"] = []
+    elif sabotage == "bad_columns":
+        values["edges"]["columns"].pop()
+    elif sabotage == "bad_row_count":
+        values["edges"]["tuples"].pop()
+    else:
+        values["edges"]["tuples"][0].pop()
+
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
+        _codeql_replay_values(values, sets)
+
+
+def test_codeql_replay_values_preserves_value_drift():
+    from factoryline.deep_audit_io import _codeql_replay_values
+
+    values, sets = _codeql_replay_values_fixture()
+    actual = deepcopy(values)
+    actual["#select"]["tuples"][0][0] = "different finding"
+    assert _codeql_replay_values(values, sets) != _codeql_replay_values(actual, sets)
+
+
+@pytest.mark.parametrize(
+    "field", ["queries", "query_ids", "suite_sha256", "query_inventory_sha256"]
+)
+def test_codeql_replay_selection_binds_exact_inventory_fields(field):
+    from factoryline.deep_audit_io import _codeql_replay_selection
+
+    expected = {
+        "queries": {"a.ql": "a" * 64},
+        "query_ids": {"rule/a": "a.ql"},
+        "suite_sha256": "b" * 64,
+        "query_inventory_sha256": "c" * 64,
+    }
+    actual = deepcopy(expected)
+    actual[field] = {"drift": "0" * 64} if isinstance(actual[field], dict) else "0" * 64
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
+        _codeql_replay_selection(actual, expected)
+
+
+def _codeql_replay_source_inputs():
+    source_sha = "a" * 64
+    path = "src/a.js"
+    inventory = {
+        "files": [{"path": path, "language": "javascript", "sha256": source_sha}]
+    }
+    lane = {"languages": ["javascript"]}
+    measurement = {
+        "query_sha256": "b" * 64,
+        "package_sha256": "c" * 64,
+        "archive_sha256": "d" * 64,
+        "rows": {path: {"syntax_nodes": 3, "parse_errors": 0}},
+        "archived_sources": {path: source_sha},
+    }
+    return inventory, lane, measurement
+
+
+@pytest.mark.parametrize(
+    "field", ["query_sha256", "package_sha256", "rows", "archived_sources"]
+)
+def test_codeql_replay_sources_rejects_source_binding_drift(field):
+    from factoryline.deep_audit_io import _codeql_replay_sources
+
+    inventory, lane, expected = _codeql_replay_source_inputs()
+    actual = deepcopy(expected)
+    actual[field] = {"drift": "0" * 64} if isinstance(actual[field], dict) else "0" * 64
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
+        _codeql_replay_sources(expected, actual, inventory, lane)
+
+
+def test_codeql_replay_sources_rejects_incomplete_parse_accounting():
+    from factoryline.deep_audit_io import _codeql_replay_sources
+
+    inventory, lane, expected = _codeql_replay_source_inputs()
+    expected["rows"]["src/a.js"]["parse_errors"] = 1
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
+        _codeql_replay_sources(expected, deepcopy(expected), inventory, lane)
+
+
+def _codeql_replay_receipt_inputs():
+    from factoryline.deep_audit_io import digest
+
+    lane = {"rule_ids": ["js/security/A"], "languages": ["javascript"]}
+    inventory = {
+        "candidate_sha256": "a" * 64,
+        "files": [{"path": "src/a.js", "language": "javascript"}],
+    }
+    coverage = {"native": "coverage"}
+    request = {"lane": lane, "inventory": inventory, "coverage": coverage}
+    replay = {
+        "schema": "factory.codeql-native-replay.v1",
+        "state": "VERIFIED",
+        "candidate_sha256": inventory["candidate_sha256"],
+        "lane_sha256": digest(lane),
+        "coverage_sha256": digest(coverage),
+        "queries": 1,
+        "source_paths": ["src/a.js"],
+        "decoded_queries_sha256": "b" * 64,
+        "findings_sha256": "c" * 64,
+        "native_execution_sha256": "d" * 64,
+    }
+    raw = json.dumps(replay).encode()
+    facts = _codeql_process_facts(30, raw, b"")
+    return raw, facts, request, replay
+
+
+def test_codeql_replay_receipt_accepts_bound_success():
+    from factoryline.deep_audit import _codeql_replay_receipt
+
+    raw, facts, request, expected = _codeql_replay_receipt_inputs()
+    assert _codeql_replay_receipt(raw, facts, request) == expected
+
+
+@pytest.mark.parametrize(
+    "sabotage", ["invalid_facts", "cancelled", "stdout_hash_drift", "binding_drift"]
+)
+def test_codeql_replay_receipt_rejects_execution_or_binding_drift(sabotage):
+    from factoryline.deep_audit import _codeql_replay_receipt
+
+    raw, facts, request, _ = _codeql_replay_receipt_inputs()
+    if sabotage == "invalid_facts":
+        facts["exit_code"] = 1
+    elif sabotage == "cancelled":
+        facts["cancelled"] = True
+    elif sabotage == "stdout_hash_drift":
+        facts["stdout_sha256"] = "0" * 64
+    else:
+        request["inventory"]["candidate_sha256"] = "0" * 64
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
+        _codeql_replay_receipt(raw, facts, request)
+
+
+def test_codeql_replay_argv_keeps_same_image_and_isolation(tmp_path):
+    from factoryline.deep_audit import _codeql_replay_argv
+
+    image = "registry.example/codeql@sha256:" + "a" * 64
+    lane = {
+        "image": image,
+        "argv": ["/opt/codeql/codeql/codeql", "database", "analyze"],
+        "memory_mib": 2048,
+    }
+    argv = _codeql_replay_argv(
+        ["docker"],
+        lane,
+        tmp_path / "source",
+        "replay-test",
+        "run-id",
+        "b" * 64,
+        tmp_path / "input.json",
+        tmp_path / "runtime",
+        30,
+    )
+    for required in (
+        "--pull=never",
+        "--network=none",
+        "--read-only",
+        "--user=1000:1000",
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges=true",
+        "--pids-limit=128",
+        "--cpus=2",
+        "--log-driver=none",
+        "/tmp:rw,nosuid,nodev,size=512m,mode=1777",
+        "/out:rw,nosuid,nodev,noexec,size=64m,mode=1777",
+        image,
+    ):
+        assert required in argv
+    mounts = [
+        argv[index + 1] for index, value in enumerate(argv[:-1]) if value == "--mount"
+    ]
+    assert any(
+        "target=/src,readonly,bind-recursive=readonly" in mount for mount in mounts
+    )
+    assert any(
+        f"source={tmp_path / 'runtime'},target=/factory-runtime,readonly" in mount
+        for mount in mounts
+    )
+
+
+def test_codeql_replay_runtime_binds_exact_five_module_snapshot(tmp_path):
+    from factoryline.deep_audit import _codeql_replay_runtime
+    from factoryline.deep_audit_io import digest
+
+    runtime, seal = _codeql_replay_runtime(tmp_path)
+    names = (
+        "__init__.py",
+        "deep_audit_io.py",
+        "deep_audit_sarif.py",
+        "runtime_audit_common.py",
+        "runtime_audit_process.py",
+    )
+    records = {}
+    for name in names:
+        source = Path(__file__).parents[1] / "factoryline" / name
+        copied = runtime / "factoryline" / name
+        assert copied.read_bytes() == source.read_bytes()
+        records[name] = sha256_bytes(source.read_bytes())
+    assert sorted(path.name for path in (runtime / "factoryline").iterdir()) == sorted(
+        names
+    )
+    assert seal == digest(records)
+
+
+def _codeql_replay_decode_record():
+    from factoryline.deep_audit_io import _codeql_native_blob
+
+    sets = [{"name": "#select", "rows": 1, "columns": 2}]
+    info = json.dumps(
+        {
+            "result-sets": [
+                {
+                    "name": "#select",
+                    "rows": 1,
+                    "columns": [{"kind": "e"}, {"kind": "s"}],
+                }
+            ]
+        }
+    ).encode()
+    decoded = json.dumps(
+        {
+            "#select": {
+                "columns": [{"kind": "Entity"}, {"kind": "String"}],
+                "tuples": [
+                    [
+                        {
+                            "id": "entity-1",
+                            "label": "source",
+                            "url": {"uri": "src/a.py", "startLine": 7},
+                        },
+                        "finding",
+                    ]
+                ],
+            }
+        }
+    ).encode()
+    return (
+        {
+            "native_artifacts": {"result": _codeql_native_blob(b"fixture-bqrs")},
+            "result_sets": sets,
+        },
+        info,
+        decoded,
+    )
+
+
+def test_codeql_replay_decode_runs_info_and_unselected_json_decode(
+    tmp_path, monkeypatch
+):
+    from factoryline.deep_audit_io import _codeql_replay_decode
+
+    record, info, decoded = _codeql_replay_decode_record()
+    profile = {"version_argv": ["/opt/codeql/codeql/codeql"]}
+    source = tmp_path / "source"
+    source.mkdir()
+    directory = tmp_path / "replay"
+    directory.mkdir()
+    calls = []
+
+    def run(argv, cwd, timeout, scratch, *, stdout_path, stderr_path):
+        calls.append(argv)
+        stdout = info if argv[1:3] == ["bqrs", "info"] else decoded
+        stdout_path.write_bytes(stdout)
+        stderr_path.write_bytes(b"")
+        return _codeql_process_facts(timeout, stdout, b"")
+
+    monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
+    values = _codeql_replay_decode(
+        profile, record, source, directory, "worker", time.monotonic() + 30
+    )
+
+    assert [argv[1:3] for argv in calls] == [
+        ["bqrs", "info"],
+        ["bqrs", "decode"],
+    ]
+    assert calls[1] == [
+        "/opt/codeql/codeql/codeql",
+        "bqrs",
+        "decode",
+        "--format=json",
+        "--entities=all",
+        "--",
+        str(directory / "worker.bqrs"),
+    ]
+    assert values == {
+        "#select": {
+            "columns": [{"kind": "Entity"}, {"kind": "String"}],
+            "tuples": [
+                [
+                    {
+                        "id": "entity-1",
+                        "label": "source",
+                        "url": {"uri": "src/a.py", "startLine": 7},
+                    },
+                    "finding",
+                ]
+            ],
+        }
+    }
+
+
+def test_codeql_replay_decode_rejects_native_metadata_mismatch(tmp_path, monkeypatch):
+    from factoryline.deep_audit_io import _codeql_replay_decode
+
+    record, info, decoded = _codeql_replay_decode_record()
+    info = json.dumps(
+        {"result-sets": [{"name": "#select", "rows": 0, "columns": []}]}
+    ).encode()
+
+    def run(argv, cwd, timeout, scratch, *, stdout_path, stderr_path):
+        stdout = info if argv[1:3] == ["bqrs", "info"] else decoded
+        stdout_path.write_bytes(stdout)
+        stderr_path.write_bytes(b"")
+        return _codeql_process_facts(timeout, stdout, b"")
+
+    source = tmp_path / "source"
+    source.mkdir()
+    directory = tmp_path / "replay"
+    directory.mkdir()
+    monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
+        _codeql_replay_decode(
+            {"version_argv": ["/opt/codeql/codeql/codeql"]},
+            record,
+            source,
+            directory,
+            "worker",
+            time.monotonic() + 30,
+        )
+
+
+@pytest.mark.parametrize(
+    "drift", ["finding", "entity-id", "entity-label", "entity-url"]
+)
+def test_codeql_replay_query_orchestration_rejects_decoded_value_drift(
+    tmp_path, monkeypatch, drift
+):
+    from factoryline.deep_audit_io import (
+        _codeql_native_blob,
+        _codeql_replay_queries,
+    )
+
+    record, info, worker_decoded = _codeql_replay_decode_record()
+    record["rule_id"] = "js/security/A"
+    fresh_record = deepcopy(record)
+    fresh_record["native_artifacts"]["result"] = _codeql_native_blob(b"fresh-bqrs")
+    fresh_value = json.loads(worker_decoded)
+    entity = fresh_value["#select"]["tuples"][0][0]
+    if drift == "finding":
+        fresh_value["#select"]["tuples"][0][1] = "different finding"
+    elif drift == "entity-id":
+        entity["id"] = "entity-2"
+    elif drift == "entity-label":
+        entity["label"] = "different source"
+    else:
+        entity["url"]["startLine"] = 8
+    fresh_decoded = json.dumps(fresh_value).encode()
+
+    def run(argv, cwd, timeout, scratch, *, stdout_path, stderr_path):
+        if argv[1:3] == ["bqrs", "info"]:
+            stdout = info
+        elif Path(argv[-1]).name == "worker.bqrs":
+            stdout = worker_decoded
+        else:
+            stdout = fresh_decoded
+        stdout_path.write_bytes(stdout)
+        stderr_path.write_bytes(b"")
+        return _codeql_process_facts(timeout, stdout, b"")
+
+    source = tmp_path / "source"
+    source.mkdir()
+    scratch = tmp_path / "replay-values"
+    scratch.mkdir()
+    monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_REPLAY"):
+        _codeql_replay_queries(
+            {"version_argv": ["/opt/codeql/codeql/codeql"]},
+            {"codeql_query_execution": {"rules": [record]}},
+            {"execution": {"rules": [fresh_record]}},
+            source,
+            scratch,
+            time.monotonic() + 30,
+        )
+
+
+def test_codeql_steps_runner_defaults_to_three_steps_and_rejects_two(
+    tmp_path, monkeypatch
+):
+    from factoryline.deep_audit_io import _codeql_steps_runner
+
+    commands = [
+        {"argv": [sys.executable, "step", str(index)], "accepted_exit_codes": [0]}
+        for index in range(2)
+    ]
+
+    def run(argv, cwd, timeout, scratch, *, stdout_path, stderr_path):
+        stdout, stderr = b"stdout", b"stderr"
+        stdout_path.write_bytes(stdout)
+        stderr_path.write_bytes(stderr)
+        return _codeql_process_facts(timeout, stdout, stderr)
+
+    monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
+    scratch = tmp_path / "steps"
+    scratch.mkdir()
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_CHALLENGE"):
+        _codeql_steps_runner(commands, tmp_path, 10, scratch)
+
+
+def _codeql_replay_sarif_fixture(uri="src/a.py", base="%SRCROOT%", index=None):
+    location = (
+        {"index": index} if index is not None else {"uri": uri, "uriBaseId": base}
+    )
+    run = {
+        "originalUriBaseIds": {"%SRCROOT%": {"uri": "file:///src/"}},
+        "tool": {
+            "driver": {
+                "name": "CodeQL",
+                "rules": [{"id": "py/unsafe-shell"}],
+            }
+        },
+        "results": [
+            {
+                "ruleId": "py/unsafe-shell",
+                "ruleIndex": 0,
+                "locations": [
+                    {
+                        "physicalLocation": {
+                            "artifactLocation": location,
+                            "region": {"startLine": 7},
+                        }
+                    }
+                ],
+            }
+        ],
+    }
+    if index is not None:
+        run["artifacts"] = [{"location": {"uri": uri, "uriBaseId": base}}]
+    return {"version": "2.1.0", "runs": [run]}
+
+
+def _run_codeql_replay_fresh_with_report(tmp_path, monkeypatch, report):
+    import sys
+
+    from factoryline.deep_audit_io import _codeql_replay_fresh
+
+    source = tmp_path / "source"
+    source.mkdir()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    raw = json.dumps(report).encode()
+    profile = {
+        "schema": "factory.native-profile.v1",
+        "engine": "codeql",
+        "mode": "interprocedural-full",
+        "tool_version": "2.27.1",
+        "ruleset_sha256": "a" * 64,
+        "report_format": "sarif",
+        "version_argv": [sys.executable, "version"],
+        "commands": [
+            {
+                "argv": [
+                    sys.executable,
+                    "database",
+                    "create",
+                    "{scratch}/codeql-db",
+                    "--language=python",
+                    "--source-root={source}",
+                    "--build-mode=none",
+                ],
+                "accepted_exit_codes": [0],
+            },
+            {
+                "argv": [
+                    sys.executable,
+                    "database",
+                    "analyze",
+                    "{scratch}/codeql-db",
+                    "/opt/codeql/codeql/qlpacks/codeql/python-queries/1.8.11/codeql-suites/python-security-extended.qls",
+                    "--format=sarif-latest",
+                    "--output={report}",
+                ],
+                "accepted_exit_codes": [0],
+            },
+            {
+                "argv": [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    "pass",
+                    "{report}",
+                ],
+                "accepted_exit_codes": [0],
+            },
+        ],
+    }
+    sources = [
+        {"path": "src/a.py", "language": "python", "sha256": "b" * 64},
+        {"path": "src/b.py", "language": "python", "sha256": "c" * 64},
+    ]
+    inventory = {"candidate_sha256": "d" * 64, "files": sources}
+    lane = {
+        "id": "codeql-python",
+        "engine": "codeql",
+        "tool_version": "2.27.1",
+        "languages": ["python"],
+        "rule_ids": ["py/unsafe-shell"],
+    }
+    invocation = {
+        "argv": ["/opt/codeql/codeql/codeql", "database", "analyze"],
+        "argv_sha256": "e" * 64,
+        "execution": {"exit_code": 0},
+    }
+
+    def steps(commands, cwd, budget, run_scratch):
+        report_arg = next(
+            arg.removeprefix("--output=")
+            for arg in commands[1]["argv"]
+            if arg.startswith("--output=")
+        )
+        Path(report_arg).write_bytes(raw)
+        return {}, [invocation]
+
+    monkeypatch.setattr("factoryline.deep_audit_io._codeql_steps_runner", steps)
+    monkeypatch.setattr(
+        "factoryline.deep_audit_io._codeql_query_preflight",
+        lambda *args, **kwargs: {"queries": {}, "query_ids": {}},
+    )
+    monkeypatch.setattr(
+        "factoryline.deep_audit_io._codeql_query_execution",
+        lambda *args, **kwargs: {"rules": []},
+    )
+    monkeypatch.setattr(
+        "factoryline.deep_audit_io._codeql_source_measurement",
+        lambda *args, **kwargs: {"rows": {}, "archived_sources": {}},
+    )
+    fresh = _codeql_replay_fresh(
+        profile, source, scratch, inventory, lane, time.monotonic() + 30
+    )
+    return fresh, lane, {item["path"]: item["sha256"] for item in sources}
+
+
+def test_codeql_replay_fresh_normalizes_metadata_uri_base_and_artifact_index(
+    tmp_path, monkeypatch
+):
+    from factoryline.deep_audit_sarif import _native_execution_report
+
+    report = _codeql_replay_sarif_fixture()
+    report["runs"][0]["results"].append(
+        {
+            "ruleId": "py/unsafe-shell",
+            "ruleIndex": 0,
+            "locations": [
+                {
+                    "physicalLocation": {
+                        "artifactLocation": {"index": 0},
+                        "region": {"startLine": 9},
+                    }
+                }
+            ],
+        }
+    )
+    report["runs"][0]["artifacts"] = [
+        {"location": {"uri": "src/b.py", "uriBaseId": "%SRCROOT%"}}
+    ]
+    fresh, lane, sources = _run_codeql_replay_fresh_with_report(
+        tmp_path, monkeypatch, report
+    )
+    run = fresh["report"]["runs"][0]
+
+    assert run["tool"]["driver"]["version"] == "2.27.1"
+    assert run["invocations"][0]["executionSuccessful"] is True
+    assert run["invocations"][0]["properties"]["factory_execution_sha256"]
+    assert run["originalUriBaseIds"]["%SRCROOT%"]["uri"] == "file:///src/"
+    locations = [
+        result["locations"][0]["physicalLocation"]["artifactLocation"]
+        for result in run["results"]
+    ]
+    assert locations == [{"uri": "src/a.py"}, {"uri": "src/b.py"}]
+    findings = _native_execution_report(fresh["report"], lane, sources)
+    assert [(item["path"], item["line"]) for item in findings] == [
+        ("src/a.py", 7),
+        ("src/b.py", 9),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("report", "diagnostic"),
+    [
+        (_codeql_replay_sarif_fixture(uri="src/missing.py"), "E_TRACE_UNBOUND"),
+        (_codeql_replay_sarif_fixture(uri="../escape.py"), "E_PATH"),
+        (
+            _codeql_replay_sarif_fixture(uri="src/a.py", base="file:///elsewhere/"),
+            "E_SARIF_INDIRECTION",
+        ),
+    ],
+)
+def test_codeql_replay_fresh_rejects_off_candidate_or_malformed_paths(
+    tmp_path, monkeypatch, report, diagnostic
+):
+    with pytest.raises(RuntimeAuditError, match=diagnostic):
+        _run_codeql_replay_fresh_with_report(tmp_path, monkeypatch, report)

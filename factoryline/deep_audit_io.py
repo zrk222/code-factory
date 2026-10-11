@@ -3546,6 +3546,233 @@ def _codeql_retained_archive(raw, prefix, required):
         raise ValueError("invalid retained source archive") from error
 
 
+def execute_codeql_native_replay(request, source, scratch, timeout):
+    """Rerun the pinned suite and compare native values, never worker verdicts."""
+    from .deep_audit_sarif import _native_execution_report
+
+    lane, inventory = request["lane"], request["inventory"]
+    coverage = request["coverage"]
+    profile = strict_json(Path("/opt/factory/adapter-profile.json").read_bytes())
+    _native_profile(profile, lane)
+    _adapter_sources(source, inventory)
+    required = {
+        item["path"]: item["sha256"]
+        for item in inventory["files"]
+        if item["language"] in lane["languages"]
+    }
+    verify_codeql_retained_evidence(coverage, lane, required)
+    deadline = time.monotonic() + require_int(
+        timeout, "replay timeout", minimum=1, maximum=3600
+    )
+    _native_version(profile, source, scratch, _codeql_replay_remaining(deadline))
+    selected = _codeql_query_preflight(
+        profile, source, scratch, _codeql_replay_remaining(deadline)
+    )
+    _codeql_replay_selection(selected, coverage["codeql_query_inventory"])
+    fresh = _codeql_replay_fresh(profile, source, scratch, inventory, lane, deadline)
+    decoded = _codeql_replay_queries(
+        profile, coverage, fresh, source, scratch, deadline
+    )
+    _codeql_replay_source_values(profile, coverage, fresh, source, scratch, deadline)
+    _codeql_replay_sources(
+        coverage["codeql_source_execution"], fresh["source"], inventory, lane
+    )
+    sources = {item["path"]: item["sha256"] for item in inventory["files"]}
+    findings = _native_execution_report(fresh["report"], lane, sources)
+    if sorted(findings, key=canonical_bytes) != sorted(
+        _native_execution_report(request["report"], lane, sources), key=canonical_bytes
+    ):
+        raise RuntimeAuditError("E_CODEQL_REPLAY", "independent findings differ")
+    _adapter_sources(source, inventory)
+    return {
+        "schema": "factory.codeql-native-replay.v1",
+        "state": "VERIFIED",
+        "candidate_sha256": inventory["candidate_sha256"],
+        "lane_sha256": digest(lane),
+        "coverage_sha256": digest(coverage),
+        "queries": len(decoded),
+        "decoded_queries_sha256": digest(decoded),
+        "findings_sha256": digest(findings),
+        "source_paths": sorted(required),
+        "native_execution_sha256": digest(fresh["invocations"]),
+    }
+
+
+def _codeql_replay_remaining(deadline):
+    remaining = int(deadline - time.monotonic())
+    if remaining < 1:
+        raise RuntimeAuditError(
+            "E_CODEQL_REPLAY", "independent replay deadline exhausted"
+        )
+    return remaining
+
+
+def _codeql_replay_selection(actual, expected):
+    for field in ("queries", "query_ids", "suite_sha256", "query_inventory_sha256"):
+        if actual[field] != expected[field]:
+            raise RuntimeAuditError(
+                "E_CODEQL_REPLAY", "independent query selection differs"
+            )
+
+
+def _codeql_replay_fresh(profile, source, scratch, inventory, lane, deadline):
+    report = scratch / "replay.sarif"
+    commands = _native_argv(
+        profile["commands"], {"source": source, "scratch": scratch, "report": report}
+    )
+    _, invocations = _codeql_steps_runner(
+        commands, source, _codeql_replay_remaining(deadline), scratch
+    )
+    selected = _codeql_query_preflight(
+        profile, source, scratch, _codeql_replay_remaining(deadline)
+    )
+    execution = _codeql_query_execution(profile, selected, source, scratch, deadline)
+    measured = _codeql_source_measurement(
+        profile, source, scratch, inventory, lane, deadline
+    )
+    with local_file(scratch, report.name).open("rb") as stream:
+        native_report = strict_json(stream.read(LIMIT + 1))
+    native_report = _native_report(
+        native_report,
+        profile,
+        {"inventory": inventory, "lane": lane},
+        scratch,
+        invocations,
+    )
+    return {
+        "execution": execution,
+        "source": measured,
+        "report": native_report,
+        "invocations": invocations,
+    }
+
+
+def _codeql_replay_queries(profile, coverage, fresh, source, scratch, deadline):
+    expected = {
+        row["rule_id"]: row for row in coverage["codeql_query_execution"]["rules"]
+    }
+    actual = {row["rule_id"]: row for row in fresh["execution"]["rules"]}
+    if set(expected) != set(actual):
+        raise RuntimeAuditError("E_CODEQL_REPLAY", "independent query records differ")
+    decoded, total = {}, 0
+    for index, rule_id in enumerate(sorted(expected)):
+        old, new = expected[rule_id], actual[rule_id]
+        directory = scratch / f"replay-values-{index}"
+        directory.mkdir()
+        left = _codeql_replay_decode(
+            profile, old, source, directory, "worker", deadline
+        )
+        right = _codeql_replay_decode(
+            profile, new, source, directory, "fresh", deadline
+        )
+        if left != right:
+            raise RuntimeAuditError(
+                "E_CODEQL_REPLAY", "independent query values differ"
+            )
+        total += len(canonical_bytes(left)) + len(canonical_bytes(right))
+        if total > 536_870_912:
+            raise RuntimeAuditError("E_CODEQL_REPLAY", "decoded replay budget exceeded")
+        decoded[old["rule_id"]] = digest(left)
+    return decoded
+
+
+def _codeql_replay_source_values(profile, coverage, fresh, source, scratch, deadline):
+    directory = scratch / "replay-source-values"
+    directory.mkdir()
+    values = []
+    for label, measurement in (
+        ("worker", coverage["codeql_source_execution"]),
+        ("fresh", fresh["source"]),
+    ):
+        record = {
+            "native_artifacts": measurement["native_artifacts"],
+            "result_sets": _codeql_result_sets(
+                _codeql_blob_bytes(measurement["native_artifacts"]["info"], 65_536)
+            ),
+        }
+        values.append(
+            _codeql_replay_decode(profile, record, source, directory, label, deadline)
+        )
+    if values[0] != values[1]:
+        raise RuntimeAuditError("E_CODEQL_REPLAY", "independent source values differ")
+
+
+def _codeql_replay_decode(profile, record, source, directory, label, deadline):
+    result = directory / (label + ".bqrs")
+    result.write_bytes(_codeql_blob_bytes(record["native_artifacts"]["result"]))
+    executable = profile["version_argv"][0]
+    commands = [
+        [executable, "bqrs", "info", str(result), "--format=json"],
+        [
+            executable,
+            "bqrs",
+            "decode",
+            "--format=json",
+            "--entities=all",
+            "--",
+            str(result),
+        ],
+    ]
+    capture = directory / label
+    capture.mkdir()
+    _codeql_steps_runner(
+        [{"argv": argv, "accepted_exit_codes": [0]} for argv in commands],
+        source,
+        _codeql_replay_remaining(deadline),
+        capture,
+        expected_steps=2,
+    )
+    with local_file(capture, "step-0/stdout.log").open("rb") as stream:
+        sets = _codeql_result_sets(stream.read(65_537))
+    if sets != record["result_sets"]:
+        raise RuntimeAuditError(
+            "E_CODEQL_REPLAY", "independent result metadata differs"
+        )
+    with local_file(capture, "step-1/stdout.log").open("rb") as stream:
+        values = strict_json(stream.read(NATIVE_COVERAGE_LIMIT + 1))
+    return _codeql_replay_values(values, sets)
+
+
+def _codeql_replay_values(values, sets):
+    if set(values) != {item["name"] for item in sets}:
+        raise RuntimeAuditError("E_CODEQL_REPLAY", "decoded result sets differ")
+    canonical = {}
+    for item in sets:
+        value = values[item["name"]]
+        if set(value) != {"columns", "tuples"}:
+            raise RuntimeAuditError(
+                "E_CODEQL_REPLAY", "unexpected decoded result fields"
+            )
+        columns, rows = value["columns"], value["tuples"]
+        if not isinstance(columns, list) or len(columns) != item["columns"]:
+            raise RuntimeAuditError("E_CODEQL_REPLAY", "decoded columns differ")
+        if not isinstance(rows, list) or len(rows) != item["rows"]:
+            raise RuntimeAuditError("E_CODEQL_REPLAY", "decoded row count differs")
+        if any(not isinstance(row, list) or len(row) != len(columns) for row in rows):
+            raise RuntimeAuditError("E_CODEQL_REPLAY", "decoded tuple shape differs")
+        canonical[item["name"]] = {
+            "columns": columns,
+            "tuples": sorted(rows, key=canonical_bytes),
+        }
+    return canonical
+
+
+def _codeql_replay_sources(expected, actual, inventory, lane):
+    for field in ("query_sha256", "package_sha256", "rows", "archived_sources"):
+        if expected[field] != actual[field]:
+            raise RuntimeAuditError(
+                "E_CODEQL_REPLAY", "independent source measurement differs"
+            )
+    for measurement in (expected, actual):
+        if (
+            _codeql_source_accounting(measurement, inventory, lane)["state"]
+            != "COMPLETE"
+        ):
+            raise RuntimeAuditError(
+                "E_CODEQL_REPLAY", "source extraction is incomplete"
+            )
+
+
 def _codeql_source_measurement(profile, source, scratch, inventory, lane, deadline):
     remaining = int(deadline - time.monotonic())
     if remaining < 1:
@@ -3975,7 +4202,7 @@ def _codeql_challenge_steps(profile, bindings, suite):
     return commands
 
 
-def _codeql_steps_runner(commands, source, budget, scratch):
+def _codeql_steps_runner(commands, source, budget, scratch, *, expected_steps=3):
     from .runtime_audit_process import run_bounded_command
     from .runtime_audit_common import _validate_runner_facts
 
@@ -4013,7 +4240,10 @@ def _codeql_steps_runner(commands, source, budget, scratch):
                 "execution": facts,
             }
         )
-    return _codeql_steps_facts(invocations, streams, started, budget), invocations
+    return (
+        _codeql_steps_facts(invocations, streams, started, budget, expected_steps),
+        invocations,
+    )
 
 
 def _codeql_step_streams(facts, out, err, streams):
@@ -4029,8 +4259,8 @@ def _codeql_step_streams(facts, out, err, streams):
         streams[role].extend(raw)
 
 
-def _codeql_steps_facts(invocations, streams, started, budget):
-    if len(invocations) != 3:
+def _codeql_steps_facts(invocations, streams, started, budget, expected_steps=3):
+    if expected_steps not in (2, 3) or len(invocations) != expected_steps:
         raise RuntimeAuditError("E_CODEQL_CHALLENGE", "all native steps required")
     return dict(
         exit_code=invocations[-1]["execution"]["exit_code"],

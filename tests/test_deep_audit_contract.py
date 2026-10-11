@@ -966,6 +966,300 @@ def test_execution_native_errors_cannot_pass(tmp_path, engine):
         )
 
 
+def _execute_lane_replay_case(
+    tmp_path,
+    monkeypatch,
+    *,
+    replay_action=None,
+    cleanup_succeeds=True,
+    engine="codeql",
+    gaps=None,
+    worker_replay_claim=False,
+):
+    import factoryline.deep_audit as module
+    import factoryline.deep_audit_sarif as sarif
+
+    from factoryline.runtime_audit_common import canonical_bytes
+
+    root, _, pin, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    lane = next(item for item in plan["lanes"] if item["engine"] == engine)
+    run_id = "b" * 32
+    bundle = execution_bundle(lane, inventory, run_id)
+    if worker_replay_claim:
+        bundle["artifacts"][lane["coverage"]]["native_replay"] = {
+            "state": "VERIFIED",
+            "authority": "worker-claim",
+        }
+    raw = canonical_bytes(bundle)
+    events, replay_calls = [], []
+    directory = root / ".factory" / "test-run"
+    directory.mkdir(parents=True)
+    state = {
+        "run_id": run_id,
+        "manifest_sha256": pin,
+        "active_lane": lane["id"],
+    }
+
+    monkeypatch.setattr(module, "_docker_base", lambda: ["docker"])
+    monkeypatch.setattr(module, "_docker_preflight", lambda base, item: None)
+    monkeypatch.setattr(module, "_container_argv", lambda *args: ["docker", "run"])
+    monkeypatch.setattr(module, "_monitor_lane", lambda *args: None)
+
+    def cleanup(base, name):
+        events.append("cleanup")
+        return cleanup_succeeds
+
+    monkeypatch.setattr(module, "_container_cleanup", cleanup)
+
+    def run(argv, cwd, timeout, scratch, *, stdout_path, cancelled):
+        stdout_path.write_bytes(raw)
+        return {
+            "exit_code": 0,
+            "timed_out": False,
+            "output_limit_exceeded": False,
+            "cleanup_confirmed": True,
+            "cancelled": False,
+        }
+
+    monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
+    monkeypatch.setattr(
+        sarif,
+        "normalize_execution_bundle",
+        lambda *args: {
+            "lane_id": lane["id"],
+            "state": "INCOMPLETE" if gaps else "OBSERVED",
+            "findings": [],
+            "gaps": list(gaps or []),
+        },
+    )
+
+    def replay(*args, **kwargs):
+        events.append("replay")
+        replay_calls.append((args, kwargs))
+        if isinstance(replay_action, BaseException):
+            raise replay_action
+        if callable(replay_action):
+            return replay_action(*args, **kwargs)
+        return replay_action or {"state": "VERIFIED", "authority": "host"}
+
+    monkeypatch.setattr(module, "_replay_codeql_lane", replay, raising=False)
+    result = module._execute_lane(
+        root,
+        directory,
+        state,
+        root,
+        lane,
+        inventory,
+        {"obligations": plan["obligations"]},
+        lambda event: None,
+    )
+    return result, events, replay_calls, bundle
+
+
+def test_execute_lane_replays_codeql_only_after_container_cleanup(
+    tmp_path, monkeypatch
+):
+    result, events, calls, _ = _execute_lane_replay_case(
+        tmp_path,
+        monkeypatch,
+        gaps=["CODEQL_NATIVE_REPLAY_REQUIRED", "UNRELATED_GAP"],
+    )
+    assert events == ["cleanup", "replay"]
+    assert len(calls) == 1
+    assert result["gaps"] == ["UNRELATED_GAP"]
+    assert result["state"] == "INCOMPLETE"
+    assert result["codeql_replay"] == {"state": "VERIFIED", "authority": "host"}
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RuntimeAuditError("E_CODEQL_REPLAY_UNAVAILABLE", "missing"),
+        RuntimeAuditError("E_CODEQL_REPLAY_MALFORMED", "invalid output"),
+        RuntimeAuditError("E_ADAPTER_TIMEOUT", "expired"),
+        RuntimeAuditError("E_CODEQL_REPLAY_CLEANUP", "uncertain cleanup"),
+        {"state": "MALFORMED"},
+    ],
+)
+def test_execute_lane_replay_failure_keeps_codeql_incomplete(
+    tmp_path, monkeypatch, failure
+):
+    result, events, calls, _ = _execute_lane_replay_case(
+        tmp_path,
+        monkeypatch,
+        replay_action=failure,
+        gaps=["CODEQL_NATIVE_REPLAY_REQUIRED"],
+    )
+    assert events == ["cleanup", "replay"]
+    assert len(calls) == 1
+    assert result["state"] == "INCOMPLETE"
+    assert "CODEQL_NATIVE_REPLAY_FAILED" in result["gaps"]
+    assert result["codeql_replay"]["state"] == "INCOMPLETE"
+    assert result["codeql_replay"]["diagnostic_code"]
+
+
+@pytest.mark.parametrize(
+    "failure_kind,exit_code,cleanup_succeeds",
+    [("native_exit", 7, True), ("docker_cleanup", 0, False)],
+)
+def test_replay_failure_retains_safe_execution_receipt(
+    tmp_path, monkeypatch, failure_kind, exit_code, cleanup_succeeds
+):
+    import threading
+    import time
+
+    import factoryline.deep_audit as module
+
+    lane = {
+        "id": "codeql-replay-test",
+        "engine": "codeql",
+        "coverage": "coverage.json",
+        "report": "report.sarif",
+        "timeout_seconds": 30,
+        "image": "sha256:" + "a" * 64,
+    }
+    inventory = {"candidate_sha256": "b" * 64}
+    bundle = {"artifacts": {"coverage.json": {}, "report.sarif": {}}}
+    snapshot = tmp_path / "source snapshot private path"
+    snapshot.mkdir()
+    runtime = tmp_path / "trusted runtime"
+    runtime.mkdir()
+    stdout = b"private replay stdout"
+    stderr = b"private replay stderr"
+    facts = {
+        "exit_code": exit_code,
+        "timed_out": False,
+        "timeout_seconds": 30,
+        "duration_ms": 12,
+        "launch_error": False,
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": True,
+        "stdout_sha256": sha256_bytes(stdout),
+        "stderr_sha256": sha256_bytes(stderr),
+        "stdout_bytes": len(stdout),
+        "stderr_bytes": len(stderr),
+        "cancelled": False,
+    }
+    monkeypatch.setattr(module, "_docker_preflight", lambda *args: None)
+    monkeypatch.setattr(
+        module, "_codeql_replay_runtime", lambda scratch: (runtime, "c" * 64)
+    )
+    monkeypatch.setattr(
+        module, "_codeql_replay_argv", lambda *args: ["docker", "run", str(snapshot)]
+    )
+    monkeypatch.setattr(
+        module,
+        "_container_cleanup",
+        lambda *args: cleanup_succeeds,
+    )
+
+    def run(argv, cwd, timeout, scratch, *, stdout_path, cancelled):
+        stdout_path.write_bytes(stdout)
+        return facts
+
+    monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
+    with pytest.raises(RuntimeAuditError) as caught:
+        module._replay_codeql_lane(
+            ["docker"],
+            lane,
+            snapshot,
+            bundle,
+            inventory,
+            "d" * 32,
+            threading.Event(),
+        )
+
+    error = caught.value
+    evidence = error.replay_evidence
+    assert evidence["image"] == lane["image"]
+    assert evidence["runtime_sha256"] == "c" * 64
+    assert len(evidence["command_sha256"]) == 64
+    assert evidence["execution"] == facts
+    assert evidence["cleanup_confirmed"] is cleanup_succeeds
+    rendered = repr(evidence)
+    assert "private replay stdout" not in rendered
+    assert "private replay stderr" not in rendered
+    assert str(snapshot) not in rendered
+    assert str(runtime) not in rendered
+
+    monkeypatch.setattr(module, "_monitor_lane", lambda *args: None)
+    result = {
+        "gaps": ["CODEQL_NATIVE_REPLAY_REQUIRED"],
+        "state": "INCOMPLETE",
+    }
+    monkeypatch.setattr(
+        module,
+        "_replay_codeql_lane",
+        lambda *args, **kwargs: (_ for _ in ()).throw(error),
+    )
+    directory = tmp_path / "run"
+    directory.mkdir()
+    module._codeql_replay_result(
+        result,
+        ["docker"],
+        lane,
+        snapshot,
+        bundle,
+        inventory,
+        "d" * 32,
+        threading.Event(),
+        time.monotonic() + 60,
+        (directory, {"active_lane": lane["id"]}, lambda event: None),
+    )
+    assert result["state"] == "INCOMPLETE"
+    assert "CODEQL_NATIVE_REPLAY_REQUIRED" in result["gaps"]
+    assert "CODEQL_NATIVE_REPLAY_FAILED" in result["gaps"]
+    assert result["codeql_replay"]["evidence"] == evidence
+    rendered_result = repr(result)
+    assert "private replay stdout" not in rendered_result
+    assert "private replay stderr" not in rendered_result
+    assert str(snapshot) not in rendered_result
+    assert str(runtime) not in rendered_result
+
+
+def test_execute_lane_cleanup_failure_skips_codeql_replay(tmp_path, monkeypatch):
+    replayed = []
+    with pytest.raises(RuntimeAuditError, match="E_CONTAINER_CLEANUP"):
+        _execute_lane_replay_case(
+            tmp_path,
+            monkeypatch,
+            cleanup_succeeds=False,
+            gaps=["CODEQL_NATIVE_REPLAY_REQUIRED"],
+            replay_action=lambda *args: replayed.append(args),
+        )
+    assert replayed == []
+
+
+def test_execute_lane_ignores_worker_replay_claim_and_requires_host_replay(
+    tmp_path, monkeypatch
+):
+    result, events, calls, bundle = _execute_lane_replay_case(
+        tmp_path,
+        monkeypatch,
+        gaps=["CODEQL_NATIVE_REPLAY_REQUIRED"],
+        worker_replay_claim=True,
+    )
+    assert bundle["artifacts"]["coverage.json"]["native_replay"]["authority"] == (
+        "worker-claim"
+    )
+    assert events == ["cleanup", "replay"]
+    assert len(calls) == 1
+    assert "CODEQL_NATIVE_REPLAY_REQUIRED" not in result["gaps"]
+    assert result["codeql_replay"]["authority"] == "host"
+
+
+@pytest.mark.parametrize("engine,gaps", [("syft", ["OTHER_GAP"]), ("codeql", [])])
+def test_execute_lane_skips_replay_when_not_required(
+    tmp_path, monkeypatch, engine, gaps
+):
+    result, events, calls, _ = _execute_lane_replay_case(
+        tmp_path, monkeypatch, engine=engine, gaps=gaps
+    )
+    assert events == ["cleanup"]
+    assert calls == []
+    assert result["gaps"] == gaps
+
+
 @pytest.mark.parametrize("change", ["golden", "fixture", "exit", "boolean"])
 def test_execution_challenges_require_bound_evidence(tmp_path, change):
     from factoryline.deep_audit_sarif import normalize_execution_bundle
