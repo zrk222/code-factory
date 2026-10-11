@@ -2636,7 +2636,7 @@ def test_runtime_native_coverage_rejects_unmeasured_or_unbound_evidence(
 
 
 def test_fuzz_snapshot_reports_measured_arcs_and_observed_callbacks(tmp_path):
-    from factoryline.deep_audit_io import _fuzz_snapshot
+    from factoryline.deep_audit_io import _fuzz_snapshot, _fuzz_record_input
 
     class MeasuredCoverage:
         def json_report(self, outfile):
@@ -2663,12 +2663,15 @@ def test_fuzz_snapshot_reports_measured_arcs_and_observed_callbacks(tmp_path):
         "inventory": {"files": [{"path": "fuzz.py", "sha256": "a" * 64}]},
     }
     output = tmp_path / "fuzz.json"
+    state = {"executions": 62, "inputs": set(), "findings": []}
+    _fuzz_record_input(state, b"one")
+    _fuzz_record_input(state, b"two")
     _fuzz_snapshot(
         MeasuredCoverage(),
         contract,
         "fuzz.py",
         output,
-        {"executions": 64, "inputs": {"one", "two"}, "findings": []},
+        state,
     )
     result = json.loads(output.read_text())
     assert result["metrics"] == {
@@ -5942,13 +5945,21 @@ def test_osv_replay_container_success_clears_required_gap_only(tmp_path, monkeyp
 
 @pytest.mark.parametrize("completed", [False, True])
 def test_fuzz_snapshot_completion_is_explicit(tmp_path, completed):
-    from factoryline.deep_audit_io import _fuzz_snapshot
+    from factoryline.deep_audit_io import _fuzz_snapshot, _fuzz_record_input
 
     class Coverage:
         def json_report(self, outfile):
             Path(outfile).write_text(json.dumps({"files": {}}))
 
     output = tmp_path / "fuzz.json"
+    state = {
+        "executions": 0,
+        "inputs": set(),
+        "findings": [],
+        "completed": completed,
+        "errors": [],
+    }
+    _fuzz_record_input(state, b"x")
     _fuzz_snapshot(
         Coverage(),
         {
@@ -5957,13 +5968,7 @@ def test_fuzz_snapshot_completion_is_explicit(tmp_path, completed):
         },
         "fuzz.py",
         output,
-        {
-            "executions": 1,
-            "inputs": {"hash"},
-            "findings": [],
-            "completed": completed,
-            "errors": [],
-        },
+        state,
     )
     assert json.loads(output.read_text())["completed"] is completed
 
@@ -5998,6 +6003,133 @@ def test_fuzz_repeat_input_at_distinct_limit_remains_counted():
     _fuzz_record_input(state, b"x")
     assert state["executions"] == 4097
     assert len(state["inputs"]) == 4096
+
+
+def _retained_fuzz_fixture():
+    from factoryline.deep_audit_io import (
+        _fuzz_record_input,
+        _fuzz_corpus_document,
+        _codeql_native_blob,
+        canonical_bytes,
+        sha256_bytes,
+    )
+
+    state = {"executions": 0, "inputs": set()}
+    for data in (b"", b"failure", b"failure"):
+        _fuzz_record_input(state, data)
+    corpus = _fuzz_corpus_document(state, "fuzz.py", "a" * 64)
+    raw = canonical_bytes(corpus)
+    report = {
+        "harness": corpus["harness"],
+        "metrics": {"executions": 3, "corpus_size": 2},
+        "corpus": {"sha256": sha256_bytes(raw), "inputs": 2, "bytes": 7},
+        "findings": [{"input_sha256": sha256_bytes(b"failure")}],
+        "fuzz_corpus": _codeql_native_blob(raw),
+    }
+    return corpus, report
+
+
+def test_fuzz_retained_corpus_binds_exact_inputs_and_failure():
+    from factoryline.deep_audit_io import _retained_fuzz_corpus
+    from factoryline.deep_audit_sarif import _fuzz_retained_evidence_gaps
+
+    corpus, report = _retained_fuzz_fixture()
+    assert _retained_fuzz_corpus(report, {"fuzz.py": "a" * 64}) == corpus
+    assert _fuzz_retained_evidence_gaps(
+        report, {"engine": "atheris"}, {"fuzz.py": "a" * 64}
+    ) == ["FUZZ_NATIVE_REPLAY_REQUIRED"]
+
+
+def test_fuzz_native_report_retains_corpus_without_disclosing_payload(tmp_path):
+    from factoryline.deep_audit_io import _native_report, _codeql_blob_bytes
+    from factoryline.deep_audit_sarif import _fuzz_retained_evidence_gaps
+
+    corpus, raw = _retained_fuzz_fixture()
+    encoded = raw.pop("fuzz_corpus")
+    raw["errors"] = []
+    (tmp_path / "fuzz.corpus.json").write_bytes(_codeql_blob_bytes(encoded))
+    profile = {"engine": "atheris", "report_format": "runtime-json"}
+    contract = {
+        "lane": {"report": "fuzz.json"},
+        "inventory": {"files": [{"path": "fuzz.py", "sha256": "a" * 64}]},
+    }
+    facts = _codeql_process_facts(30, b"stdout", b"stderr", exit_code=77)
+    result = _native_report(raw, profile, contract, tmp_path, [{"execution": facts}])
+    assert result["fuzz_corpus"] == encoded
+    assert "fuzz_corpus" not in raw
+    assert result["completed"] is True
+    assert corpus["inputs"]
+    assert _fuzz_retained_evidence_gaps(raw, profile, {"fuzz.py": "a" * 64}) == [
+        "FUZZ_NATIVE_CORPUS_UNVERIFIED"
+    ]
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "data",
+        "hash",
+        "size",
+        "duplicate",
+        "order",
+        "harness",
+        "count",
+        "bytes",
+        "failure",
+        "callbacks",
+        "encoding",
+    ],
+)
+def test_fuzz_retained_corpus_rejects_tampering(tamper):
+    from factoryline.deep_audit_io import (
+        _retained_fuzz_corpus,
+        _codeql_native_blob,
+        canonical_bytes,
+        sha256_bytes,
+    )
+
+    corpus, report = _retained_fuzz_fixture()
+    if tamper in {"data", "hash", "size"}:
+        key, value = {
+            "data": ("data_base64", "eA=="),
+            "hash": ("sha256", "b" * 64),
+            "size": ("bytes", 5),
+        }[tamper]
+        corpus["inputs"][0][key] = value
+    elif tamper == "duplicate":
+        corpus["inputs"].append(corpus["inputs"][0])
+    elif tamper == "order":
+        corpus["inputs"].reverse()
+    elif tamper == "harness":
+        corpus["harness"] = {"path": "../fuzz.py", "sha256": "a" * 64}
+    elif tamper == "failure":
+        report["findings"][0]["input_sha256"] = "c" * 64
+    else:
+        target, key = {
+            "count": (report["metrics"], "corpus_size"),
+            "bytes": (report["corpus"], "bytes"),
+            "callbacks": (report["metrics"], "executions"),
+            "encoding": (corpus["inputs"][0], "data_base64"),
+        }[tamper]
+        target[key] = "!!!!" if tamper == "encoding" else 0
+    raw = canonical_bytes(corpus)
+    report["corpus"]["sha256"] = sha256_bytes(raw)
+    report["fuzz_corpus"] = _codeql_native_blob(raw)
+    with pytest.raises(RuntimeAuditError, match="E_FUZZ_CORPUS"):
+        _retained_fuzz_corpus(report, {"fuzz.py": "a" * 64})
+
+
+def test_fuzz_aggregate_input_budget_preserves_last_good_state():
+    from factoryline.deep_audit_io import _fuzz_record_input
+
+    state = {"executions": 0, "inputs": set()}
+    _fuzz_record_input(state, b"a" * 1_048_576)
+    _fuzz_record_input(state, b"b" * 1_048_576)
+    with pytest.raises(RuntimeAuditError, match="E_FUZZ_BUDGET"):
+        _fuzz_record_input(state, b"c")
+    assert state["executions"] == 2
+    assert state["corpus_bytes"] == 2_097_152
+    assert len(state["corpus"]) == 2
 
 
 @pytest.mark.parametrize("finding", [False, True])

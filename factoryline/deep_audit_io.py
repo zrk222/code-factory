@@ -1685,6 +1685,9 @@ def _fuzz_snapshot(
     edges = sum(
         len(item.get("executed_branches", [])) for item in raw["files"].values()
     )
+    corpus = _fuzz_corpus_document(state, harness, sources[harness])
+    corpus_raw = canonical_bytes(corpus)
+    output.with_suffix(".corpus.json").write_bytes(corpus_raw)
     report = {
         "schema": "factory.deep-atheris-observations.v1",
         "engine": "atheris",
@@ -1699,22 +1702,31 @@ def _fuzz_snapshot(
         },
         "metric_definitions": {
             "executions": "observed callbacks (lower bound at last snapshot)",
-            "corpus_size": "distinct executed input hashes, not retained native corpus",
+            "corpus_size": "distinct executed inputs retained in the bounded local corpus",
             "coverage_edges": "executed Python branch arcs from coverage.py",
         },
         "findings": state["findings"],
         "source_coverage": _native_source_counts(raw, sources),
         "coverage_native_sha256": digest(raw),
+        "corpus": {
+            "sha256": sha256_bytes(corpus_raw),
+            "inputs": len(corpus["inputs"]),
+            "bytes": state.get("corpus_bytes", 0),
+        },
     }
     output.write_bytes(canonical_bytes(report))
 
 
 def _fuzz_record_input(state, data):
+    import base64
+
     fingerprint = sha256_bytes(data)
+    new_bytes = len(data) if fingerprint not in state["inputs"] else 0
     limits = (
         len(data) > 1_048_576,
         state["executions"] >= 1_000_000,
         fingerprint not in state["inputs"] and len(state["inputs"]) >= 4096,
+        state.get("corpus_bytes", 0) + new_bytes > 2_097_152,
     )
     if any(limits):
         state.update(completed=False, errors=["E_FUZZ_BUDGET"])
@@ -1723,6 +1735,101 @@ def _fuzz_record_input(state, data):
         )
     state["executions"] += 1
     state["inputs"].add(fingerprint)
+    state.setdefault("corpus", {})[fingerprint] = {
+        "sha256": fingerprint,
+        "bytes": len(data),
+        "data_base64": base64.b64encode(data).decode("ascii"),
+    }
+    state["corpus_bytes"] = state.get("corpus_bytes", 0) + new_bytes
+
+
+def _fuzz_corpus_document(state, harness, source_sha):
+    corpus = state.get("corpus", {})
+    if set(corpus) != state["inputs"]:
+        raise RuntimeAuditError("E_FUZZ_CORPUS", "recorded inputs and corpus differ")
+    return {
+        "schema": "factory.fuzz-corpus.v1",
+        "harness": {"path": harness, "sha256": source_sha},
+        "inputs": [corpus[key] for key in sorted(corpus)],
+    }
+
+
+def _fuzz_corpus_entry(entry):
+    import base64
+
+    if not isinstance(entry, dict) or set(entry) != {"sha256", "bytes", "data_base64"}:
+        raise ValueError("exact corpus entry fields required")
+    size = require_int(entry["bytes"], "input bytes", minimum=0, maximum=1_048_576)
+    encoded = entry["data_base64"]
+    if not isinstance(encoded, str) or len(encoded) > 1_398_104:
+        raise ValueError("bounded input required")
+    data = base64.b64decode(encoded, validate=True)
+    if (
+        len(data) != size
+        or base64.b64encode(data).decode("ascii") != encoded
+        or sha256_bytes(data) != entry["sha256"]
+    ):
+        raise ValueError("corpus input differs")
+    return size
+
+
+def _validate_fuzz_corpus(raw, report, sources):
+    try:
+        corpus = strict_json(raw)
+        if set(corpus) != {"schema", "harness", "inputs"}:
+            raise ValueError("exact corpus fields required")
+        if (
+            corpus["schema"] != "factory.fuzz-corpus.v1"
+            or canonical_bytes(corpus) != raw
+        ):
+            raise ValueError("canonical corpus required")
+        harness = corpus["harness"]
+        if (
+            set(harness) != {"path", "sha256"}
+            or harness != report["harness"]
+            or sources[relative_path(harness["path"])] != harness["sha256"]
+        ):
+            raise ValueError("harness binding differs")
+        _validate_fuzz_corpus_inputs(corpus["inputs"], report, raw)
+        return corpus
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, UnicodeError) as error:
+        raise RuntimeAuditError(
+            "E_FUZZ_CORPUS", "invalid retained fuzz corpus"
+        ) from error
+
+
+def _validate_fuzz_corpus_inputs(inputs, report, raw):
+    if not isinstance(inputs, list) or not 1 <= len(inputs) <= 4096:
+        raise ValueError("bounded nonempty corpus required")
+    sizes = [_fuzz_corpus_entry(entry) for entry in inputs]
+    hashes = [entry["sha256"] for entry in inputs]
+    if hashes != sorted(set(hashes)) or sum(sizes) > 2_097_152:
+        raise ValueError("corpus uniqueness or budget differs")
+    expected = {"sha256": sha256_bytes(raw), "inputs": len(inputs), "bytes": sum(sizes)}
+    require_int(report["corpus"]["inputs"], "retained inputs", minimum=1, maximum=4096)
+    require_int(
+        report["corpus"]["bytes"], "retained bytes", minimum=0, maximum=2_097_152
+    )
+    require_int(
+        report["metrics"]["executions"], "callbacks", minimum=1, maximum=1_000_000
+    )
+    if report["corpus"] != expected or report["metrics"]["corpus_size"] != len(inputs):
+        raise ValueError("corpus accounting differs")
+    if report["metrics"]["executions"] < len(inputs):
+        raise ValueError("corpus exceeds observed callbacks")
+    for finding in report["findings"]:
+        if finding.get("input_sha256") not in hashes:
+            raise ValueError("failure input is not retained")
+
+
+def _retained_fuzz_corpus(report, sources):
+    try:
+        raw = _codeql_blob_bytes(report.get("fuzz_corpus"), maximum=4_194_304)
+        return _validate_fuzz_corpus(raw, report, sources)
+    except RuntimeAuditError as error:
+        raise RuntimeAuditError(
+            "E_FUZZ_CORPUS", "retained fuzz evidence rejected"
+        ) from error
 
 
 def _finalize_fuzz_report(raw, invocations):
@@ -1791,6 +1898,7 @@ def native_fuzz_main(argv: list[str]) -> int:
                     "path": harness,
                     "line": 1,
                     "severity": "high",
+                    "input_sha256": sha256_bytes(data),
                 }
             )
             _fuzz_snapshot(cov, contract, harness, output, state)
@@ -1828,7 +1936,19 @@ def _native_report(
             output,
         )
     if profile["engine"] == "atheris":
-        return _finalize_fuzz_report(raw, invocations)
+        report = _finalize_fuzz_report(raw, invocations)
+        corpus_path = output / Path(contract["lane"]["report"]).with_suffix(
+            ".corpus.json"
+        )
+        with local_file(output, corpus_path.relative_to(output).as_posix()).open(
+            "rb"
+        ) as stream:
+            corpus_raw = stream.read(4_194_305)
+        if len(corpus_raw) > 4_194_304:
+            raise RuntimeAuditError("E_FUZZ_CORPUS", "corpus artifact budget exceeded")
+        _validate_fuzz_corpus(corpus_raw, report, sources)
+        report["fuzz_corpus"] = _codeql_native_blob(corpus_raw, maximum=4_194_304)
+        return report
     report = copy.deepcopy(raw)
     _native_dependency_paths(report, profile["report_format"], sources)
     return report

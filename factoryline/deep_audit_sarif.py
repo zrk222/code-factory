@@ -1151,6 +1151,18 @@ def _osv_retained_evidence_gaps(
     return ["OSV_NATIVE_REPLAY_REQUIRED"]
 
 
+def _fuzz_retained_evidence_gaps(report, lane, sources):
+    from .deep_audit_io import _retained_fuzz_corpus
+
+    if lane["engine"] != "atheris":
+        return []
+    try:
+        _retained_fuzz_corpus(report, sources)
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
+        return ["FUZZ_NATIVE_CORPUS_UNVERIFIED"]
+    return ["FUZZ_NATIVE_REPLAY_REQUIRED"]
+
+
 def _semgrep_rule_execution_gaps(coverage, lane, required, report):
     from .deep_audit_io import verify_semgrep_rule_execution
 
@@ -1931,6 +1943,7 @@ def normalize_execution_bundle(
             coverage, lane, required, report, challenges, obligations
         )
     )
+    gaps.extend(_fuzz_retained_evidence_gaps(report, lane, sources))
     metrics = None
     if lane["family"] in {"runtime", "fuzz"}:
         metric_keys = (

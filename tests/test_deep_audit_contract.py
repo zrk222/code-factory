@@ -2033,7 +2033,9 @@ def test_runtime_and_fuzz_metrics_survive_normalized_projection(
         bundle, lane, inventory, "0" * 32, plan["obligations"]
     )
 
-    assert result["state"] == "OBSERVED"
+    assert result["state"] == ("INCOMPLETE" if engine == "atheris" else "OBSERVED")
+    if engine == "atheris":
+        assert "FUZZ_NATIVE_CORPUS_UNVERIFIED" in result["gaps"]
     assert result["metrics"] == expected_metrics
     assert result["authority"] == "none"
 
