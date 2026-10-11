@@ -3452,12 +3452,22 @@ class WorkflowEventStore:
     the database. External merged/closed states do not certify CF audit completion.
     """
 
-    def __init__(self, root, allowed_sources, *, clock=None):
+    def __init__(
+        self,
+        root,
+        allowed_sources,
+        *,
+        clock=None,
+        phase_verifiers=None,
+        source_observer=None,
+    ):
         import time
 
         self.path = _runtime_path(root)
         self.clock = clock or time.time
         self.allowed = self._scope(allowed_sources)
+        self.phase_verifiers = _workflow_verifiers(phase_verifiers)
+        self.source_observer = source_observer
         with self._connect() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -3652,6 +3662,7 @@ class WorkflowEventStore:
             item["attempts"] += 1
             item["run"] = {
                 "id": _sha([key, item["epoch"]]),
+                "source_sha256": _sha(item["source"]),
                 "owner": owner,
                 "epoch": item["epoch"],
                 "expires_at": self.clock() + ttl,
@@ -3746,6 +3757,7 @@ class WorkflowEventStore:
                     state,
                     "Keep the same run; observation timeout is not termination",
                 )
+            item["last_run"] = {**item["run"], "terminal_state": state}
             item["run"] = None
             item["epoch"] += 1
             if item["phase"] == "retirement_required":
@@ -3756,3 +3768,116 @@ class WorkflowEventStore:
                 "retired",
                 "Verify retained result evidence before phase advancement or bounded retry",
             )
+
+    def advance(self, key, target, evidence):
+        """Advance only with current-source evidence verified by a trusted host adapter.
+
+        Host-registered verifiers must authenticate approvals and inspect retained
+        artifacts. A dictionary supplied by a model is not a trusted verifier.
+        This gate does not dispatch work, publish, merge or certify remote results.
+        """
+        snapshot = self.get(key)
+        expected = _workflow_phase_evidence(snapshot, target, evidence)
+        verifier = self.phase_verifiers.get(expected["verifier_id"])
+        if verifier is None or not callable(self.source_observer):
+            raise AgenticControlError(
+                "E_WORKFLOW_TRUST",
+                "registered verifier and fresh source observer required",
+            )
+        current_source = _runtime_source(
+            self.source_observer(dict(snapshot["source"])), self.allowed
+        )
+        if current_source != snapshot["source"]:
+            self.intake("observed-" + _sha(current_source), current_source)
+            raise AgenticControlError(
+                "E_WORKFLOW_FENCED",
+                "provider source changed; reconcile before advancement",
+            )
+        verified = verifier(dict(expected))
+        if not isinstance(verified, dict) or verified != expected:
+            raise AgenticControlError(
+                "E_WORKFLOW_EVIDENCE", "host did not verify exact phase evidence"
+            )
+        with self._connect() as db:
+            item = self._read(db, key)
+            if item != snapshot:
+                raise AgenticControlError(
+                    "E_WORKFLOW_FENCED", "source or run changed during verification"
+                )
+            item["phase"] = target
+            item["phase_evidence"] = expected
+            item["last_run"] = None
+            item["attempts"] = 0
+            self._write(db, item, "phase_advanced_" + target)
+            return _runtime_result(
+                item,
+                "advanced",
+                "Run the next registered phase; merge remains external",
+            )
+
+
+def _workflow_verifiers(values):
+    if values is None:
+        return {}
+    if not isinstance(values, dict) or not 1 <= len(values) <= 32:
+        raise AgenticControlError(
+            "E_WORKFLOW_TRUST", "bounded host verifier registry required"
+        )
+    for name, callback in values.items():
+        _id(name, "verifier_id")
+        if not callable(callback):
+            raise AgenticControlError(
+                "E_WORKFLOW_TRUST", "host verifier must be callable"
+            )
+    return dict(values)
+
+
+def _workflow_phase_evidence(item, target, evidence):
+    transitions = {
+        "triage": ("planning", "triage"),
+        "planning": ("building", "approved_plan"),
+        "building": ("auditing", "isolated_build"),
+        "auditing": ("reviewing", "six_lane_audit"),
+        "reviewing": ("ready_for_merge", "independent_review"),
+    }
+    if item["phase"] not in transitions or transitions[item["phase"]][0] != target:
+        raise AgenticControlError("E_WORKFLOW_PHASE", "phase transition is not allowed")
+    run = item.get("last_run")
+    if (
+        item["run"] is not None
+        or not run
+        or run.get("terminal_state") != "terminal"
+        or run.get("handle") is None
+    ):
+        raise AgenticControlError(
+            "E_WORKFLOW_EVIDENCE",
+            "observed terminal run required; absence is insufficient",
+        )
+    required = {
+        "source_sha256",
+        "run_id",
+        "phase",
+        "kind",
+        "artifact_sha256",
+        "verifier_id",
+    }
+    if not isinstance(evidence, dict) or set(evidence) != required:
+        raise AgenticControlError(
+            "E_WORKFLOW_EVIDENCE", "exact phase evidence required"
+        )
+    expected = dict(evidence)
+    for name in ("source_sha256", "artifact_sha256"):
+        _digest(expected[name], name)
+    _id(expected["verifier_id"], "verifier_id")
+    if (
+        expected["source_sha256"] != _sha(item["source"])
+        or expected["run_id"] != run["id"]
+        or expected["phase"] != item["phase"]
+        or expected["kind"] != transitions[item["phase"]][1]
+        or run.get("source_sha256") != expected["source_sha256"]
+        or run["invalidated"]
+    ):
+        raise AgenticControlError(
+            "E_WORKFLOW_EVIDENCE", "phase evidence is stale or mismatched"
+        )
+    return expected

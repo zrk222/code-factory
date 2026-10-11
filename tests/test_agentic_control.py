@@ -963,11 +963,11 @@ def workflow_source():
     }
 
 
-def workflow_store(root, clock=None):
+def workflow_store(root, clock=None, **options):
     from factoryline.agentic_control import WorkflowEventStore
 
     return WorkflowEventStore(
-        root, [("github", "account-1", "owner/repo")], clock=clock
+        root, [("github", "account-1", "owner/repo")], clock=clock, **options
     )
 
 
@@ -1337,6 +1337,225 @@ def test_sync_github_workflow_source_rejects_account_before_repo_read(
     with pytest.raises(AgenticControlError):
         sync_github_workflow_source(workflow_store(tmp_path), "owner/repo", 172)
     assert calls == ["user"]
+
+
+def finish_workflow_phase(store, key):
+    from factoryline.agentic_control import _sha
+
+    claim = store.claim(key, "worker-a")["item"]
+    run = claim["run"]
+    store.heartbeat(key, "worker-a", run["epoch"], handle="driver:" + run["id"])
+    store.reconcile_run(
+        key,
+        lambda current: dict(
+            run_id=current["id"], handle=current["handle"], state="terminal"
+        ),
+    )
+    kind = {
+        "triage": "triage",
+        "planning": "approved_plan",
+        "building": "isolated_build",
+        "auditing": "six_lane_audit",
+        "reviewing": "independent_review",
+    }[claim["phase"]]
+    return dict(
+        source_sha256=_sha(claim["source"]),
+        run_id=run["id"],
+        phase=claim["phase"],
+        kind=kind,
+        artifact_sha256="b" * 64,
+        verifier_id="trusted-host",
+    )
+
+
+def test_runtime_advance_requires_each_verified_phase_and_never_merges(
+    tmp_path, workflow_source
+):
+    store = workflow_store(tmp_path)
+    key = store.intake("delivery-one", workflow_source)["item"]["source_key"]
+    seen = []
+
+    def verify(value):
+        seen.append(value["kind"])
+        return value
+
+    store = workflow_store(
+        tmp_path,
+        phase_verifiers={"trusted-host": verify},
+        source_observer=lambda source: source,
+    )
+    for target in ("planning", "building", "auditing", "reviewing", "ready_for_merge"):
+        evidence = finish_workflow_phase(store, key)
+        result = store.advance(key, target, evidence)
+        assert result["item"]["phase"] == target
+        assert result["item"]["attempts"] == 0
+        assert not any(result["authority"].values())
+        store = workflow_store(
+            tmp_path,
+            phase_verifiers={"trusted-host": verify},
+            source_observer=lambda source: source,
+        )
+    assert seen == [
+        "triage",
+        "approved_plan",
+        "isolated_build",
+        "six_lane_audit",
+        "independent_review",
+    ]
+    with pytest.raises(AgenticControlError):
+        store.advance(key, "merged", evidence)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("source_sha256", "c" * 64),
+        ("run_id", "wrong-run"),
+        ("phase", "planning"),
+        ("kind", "approved_plan"),
+        ("artifact_sha256", "bad"),
+    ],
+)
+def test_runtime_advance_rejects_mismatched_evidence(
+    tmp_path, workflow_source, field, value
+):
+    store = workflow_store(tmp_path)
+    key = store.intake("delivery-one", workflow_source)["item"]["source_key"]
+    evidence = {**finish_workflow_phase(store, key), field: value}
+    with pytest.raises(AgenticControlError):
+        store.advance(key, "planning", evidence)
+    assert store.get(key)["phase"] == "triage"
+
+
+def test_runtime_advance_rejects_absent_or_unverified_run(tmp_path, workflow_source):
+    store = workflow_store(
+        tmp_path,
+        phase_verifiers={"trusted-host": lambda value: {**value, "kind": "invented"}},
+        source_observer=lambda source: source,
+    )
+    key = store.intake("delivery-one", workflow_source)["item"]["source_key"]
+    evidence = finish_workflow_phase(store, key)
+    with pytest.raises(AgenticControlError):
+        store.advance(key, "planning", evidence)
+    run = store.claim(key, "worker-b")["item"]["run"]
+    store.reconcile_run(
+        key,
+        lambda current: dict(
+            run_id=current["id"], handle=current["handle"], state="missing"
+        ),
+    )
+    with pytest.raises(AgenticControlError):
+        store.advance(
+            key,
+            "planning",
+            {**evidence, "run_id": run["id"]},
+        )
+
+
+def test_runtime_advance_fences_source_change_during_verification(
+    tmp_path, workflow_source
+):
+    store = workflow_store(tmp_path)
+    key = store.intake("delivery-one", workflow_source)["item"]["source_key"]
+    evidence = finish_workflow_phase(store, key)
+
+    def verify(supplied):
+        store.intake("delivery-two", {**workflow_source, "revision": 2})
+        return supplied
+
+    store = workflow_store(
+        tmp_path,
+        phase_verifiers={"trusted-host": verify},
+        source_observer=lambda source: source,
+    )
+    with pytest.raises(AgenticControlError) as error:
+        store.advance(key, "planning", evidence)
+    assert error.value.code == "E_WORKFLOW_FENCED"
+
+
+def test_runtime_advance_without_registered_host_verifier_is_rejected(
+    tmp_path, workflow_source
+):
+    store = workflow_store(tmp_path)
+    key = store.intake("delivery-one", workflow_source)["item"]["source_key"]
+    evidence = finish_workflow_phase(store, key)
+    with pytest.raises(AgenticControlError) as error:
+        store.advance(key, "planning", evidence)
+    assert error.value.code == "E_WORKFLOW_TRUST"
+
+
+def test_runtime_advance_remote_drift_without_ingress_is_reconciled(
+    tmp_path, workflow_source
+):
+    store = workflow_store(
+        tmp_path,
+        phase_verifiers={"trusted-host": lambda value: value},
+        source_observer=lambda source: {
+            **source,
+            "revision": 2,
+            "title": "Changed remotely",
+        },
+    )
+    key = store.intake("delivery-one", workflow_source)["item"]["source_key"]
+    evidence = finish_workflow_phase(store, key)
+    with pytest.raises(AgenticControlError) as error:
+        store.advance(key, "planning", evidence)
+    assert error.value.code == "E_WORKFLOW_FENCED"
+    assert store.get(key)["source"]["revision"] == 2
+
+
+def test_runtime_advance_live_run_cannot_use_previous_phase_evidence(
+    tmp_path, workflow_source
+):
+    store = workflow_store(
+        tmp_path,
+        phase_verifiers={"trusted-host": lambda value: value},
+        source_observer=lambda source: source,
+    )
+    key = store.intake("delivery-one", workflow_source)["item"]["source_key"]
+    evidence = finish_workflow_phase(store, key)
+    store.claim(key, "worker-b")
+    with pytest.raises(AgenticControlError):
+        store.advance(key, "planning", evidence)
+    assert store.get(key)["run"]["owner"] == "worker-b"
+
+
+def test_runtime_advance_requires_bound_handle_and_run_source(
+    tmp_path, workflow_source
+):
+    from factoryline.agentic_control import _sha
+
+    store = workflow_store(
+        tmp_path,
+        phase_verifiers={"trusted-host": lambda value: value},
+        source_observer=lambda source: source,
+    )
+    key = store.intake("delivery-one", workflow_source)["item"]["source_key"]
+    item = store.claim(key, "worker-a")["item"]
+    run = item["run"]
+    assert run["source_sha256"] == _sha(workflow_source)
+    store.reconcile_run(
+        key, lambda current: dict(run_id=current["id"], handle=None, state="terminal")
+    )
+    evidence = dict(
+        source_sha256=_sha(workflow_source),
+        run_id=run["id"],
+        phase="triage",
+        kind="triage",
+        artifact_sha256="b" * 64,
+        verifier_id="trusted-host",
+    )
+    with pytest.raises(AgenticControlError):
+        store.advance(key, "planning", evidence)
+
+
+@pytest.mark.parametrize("registry", [{}, {"host": None}, []])
+def test_runtime_host_verifier_registration_rejects_invalid_registry(
+    tmp_path, registry
+):
+    with pytest.raises(AgenticControlError) as error:
+        workflow_store(tmp_path, phase_verifiers=registry)
+    assert error.value.code == "E_WORKFLOW_TRUST"
 
 
 def test_github_runtime_transport_forces_host_and_hides_provider_errors(monkeypatch):
