@@ -3240,7 +3240,12 @@ def test_security_scan_seal_is_idempotent(tmp_path):
     assert module._seal_security_scan(result.copy()) == result
 
 
-def test_signed_runtime_oracle_cli_after_observed_mutant_failure(tmp_path, capsys):
+@pytest.mark.parametrize(
+    "command_prefix", [["audit", "security"], ["scan"], ["scan", "--deep"]]
+)
+def test_signed_runtime_oracle_cli_after_observed_mutant_failure(
+    tmp_path, capsys, command_prefix
+):
     from datetime import datetime, timedelta, timezone
     from hashlib import sha256
     import os
@@ -3338,8 +3343,7 @@ def test_signed_runtime_oracle_cli_after_observed_mutant_failure(tmp_path, capsy
     )
     code = main(
         [
-            "audit",
-            "security",
+            *command_prefix,
             "--root",
             str(tmp_path),
             "--oracle-evidence",
@@ -3354,7 +3358,11 @@ def test_signed_runtime_oracle_cli_after_observed_mutant_failure(tmp_path, capsy
         ]
     )
     result = json.loads(capsys.readouterr().out)
-    assert code == 0 and result["state"] == "CLEAN"
+    assert code == 0
+    if command_prefix[0] == "scan":
+        assert result["state"] == "INCOMPLETE"
+        result = result["static_security"]
+    assert result["state"] == "CLEAN"
     assert result["runtime_oracles"]["reconciled_count"] == 1
     assert result["runtime_oracles"]["signature"]["identity"] == "test-only@example"
     assert "not established" in result["runtime_oracles"]["claim_boundary"]

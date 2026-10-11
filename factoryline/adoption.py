@@ -602,7 +602,10 @@ def _state_for_findings(
 
 
 def _python_audit_lanes(
-    workspace: Path, python_count: int, tenant_contract: str
+    workspace: Path,
+    python_count: int,
+    tenant_contract: str,
+    oracle_options: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     lanes: list[dict[str, Any]] = []
     if python_count:
@@ -621,6 +624,7 @@ def _python_audit_lanes(
                 tenant_read_calls=tuple(calls),
                 tenant_read_bindings=tuple(bindings),
                 tenant_read_scopes=contract.get("scoped_reads"),
+                **(oracle_options or {}),
             )
             security_state = _state_for_findings(
                 security,
@@ -1049,11 +1053,13 @@ def run_deep_repository_audit(
     *,
     tenant_contract: str = ".factory/tenant-read-contract.json",
     worker_config: str | None = None,
+    oracle_options: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run all applicable local audit lanes and return an evidence map."""
     workspace = Path(root).resolve()
     file_types = inventory.get("file_types", {})
     python_count = int(file_types.get("python", 0))
+    oracle_options = _validated_oracle_options(oracle_options, python_count)
     source_count = inventory.get("files_discovered", 0)
     code_count = sum(
         int(count) for name, count in file_types.items() if name not in {"docs"}
@@ -1063,7 +1069,7 @@ def run_deep_repository_audit(
         _candidate_inventory_lane(inventory, source_count),
         _architecture_health_lane(workspace),
         _pattern_guard_path_lane(workspace, source_count),
-        *_python_audit_lanes(workspace, python_count, tenant_contract),
+        *_python_audit_lanes(workspace, python_count, tenant_contract, oracle_options),
         _non_python_security_lane(workspace, languages),
         _documentation_integrity_lane(int(file_types.get("docs", 0))),
         _workflow_integrity_lane(workspace),
@@ -1079,12 +1085,16 @@ def _scan_security_and_deep_audit(
     inventory: dict[str, Any],
     deep: bool,
     worker_config: str | None,
+    oracle_options: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, str | None]:
     if not deep:
-        return _scan_static_security(workspace, inventory), None, None
+        return _scan_static_security(workspace, inventory, oracle_options), None, None
     try:
         deep_audit = run_deep_repository_audit(
-            workspace, inventory, worker_config=worker_config
+            workspace,
+            inventory,
+            worker_config=worker_config,
+            oracle_options=oracle_options,
         )
         static_security = next(
             (
@@ -1111,7 +1121,11 @@ def _scan_security_and_deep_audit(
         )
 
 
-def _scan_static_security(workspace: Path, inventory: dict[str, Any]) -> dict[str, Any]:
+def _scan_static_security(
+    workspace: Path,
+    inventory: dict[str, Any],
+    oracle_options: dict[str, str] | None = None,
+) -> dict[str, Any]:
     python_count = int(inventory.get("file_types", {}).get("python", 0))
     if not python_count:
         return {
@@ -1131,6 +1145,7 @@ def _scan_static_security(workspace: Path, inventory: dict[str, Any]) -> dict[st
             tenant_read_calls=tuple(calls),
             tenant_read_bindings=tuple(bindings),
             tenant_read_scopes=contract.get("scoped_reads"),
+            **(oracle_options or {}),
         )
     except Exception as exc:
         return {
@@ -1160,8 +1175,36 @@ def _repo_scan_state(
     return "INCOMPLETE", "INCOMPLETE"
 
 
+def _validated_oracle_options(
+    options: dict[str, str] | None,
+    python_count: int,
+) -> dict[str, str]:
+    """Reject silently unused or partial oracle evidence before orchestration."""
+    if not options:
+        return {}
+    required = {
+        "oracle_evidence",
+        "oracle_trust_root",
+        "oracle_trust_sha256",
+        "oracle_environment_sha256",
+    }
+    if set(options) != required or any(
+        not isinstance(value, str) or not value.strip() for value in options.values()
+    ):
+        raise ValueError(
+            "Runtime oracle evidence requires all four nonempty oracle options"
+        )
+    if not python_count:
+        raise ValueError("Runtime oracle evidence requires Python sources in the scan")
+    return dict(options)
+
+
 def run_repo_scan(
-    root: Path, *, deep: bool = False, worker_config: str | None = None
+    root: Path,
+    *,
+    deep: bool = False,
+    worker_config: str | None = None,
+    oracle_options: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run bounded static checks and optionally every local audit lane.
 
@@ -1174,8 +1217,11 @@ def run_repo_scan(
     workspace = Path(root).resolve()
     workspace.mkdir(parents=True, exist_ok=True)
     inventory = _workspace_inventory(workspace)
+    oracle_options = _validated_oracle_options(
+        oracle_options, int(inventory.get("file_types", {}).get("python", 0))
+    )
     static_security, deep_audit, security_error = _scan_security_and_deep_audit(
-        workspace, inventory, deep, worker_config
+        workspace, inventory, deep, worker_config, oracle_options
     )
     state, verdict = _repo_scan_state(deep_audit, static_security, deep, inventory)
     result = {

@@ -4380,11 +4380,28 @@ def security_scan(
     )
     tenant_read_scopes = _validate_tenant_scopes(workspace, tenant_read_scopes)
     cache_enabled = _validate_cache_enabled(cache_enabled)
+    evidence = (
+        oracle_evidence,
+        oracle_trust_root,
+        oracle_trust_sha256,
+        oracle_environment_sha256,
+    )
     files = _security_source_files(workspace)
     if len(files) > MAX_SECURITY_SOURCE_FILES:
-        return _blocked_security_scan_report(
+        blocked = _blocked_security_scan_report(
             workspace, files, tenant_read_calls, tenant_read_bindings
         )
+        if any(value is not None for value in evidence):
+            blocked["runtime_oracles"] = {
+                "state": "NOT_VERIFIED",
+                "reason": "SOURCE_LIMIT_EXCEEDED",
+                "requested": True,
+                "reconciled_count": 0,
+                "reconciled": [],
+                "authority": "none",
+                "claim_boundary": "Supplied runtime evidence was not evaluated because source coverage exceeds the scanner limit.",
+            }
+        return _seal_security_scan(blocked)
     bindings, findings, counts, outcomes, oracle_edges, oracle_configuration = (
         _scan_security_sources(
             workspace,
@@ -4405,12 +4422,6 @@ def security_scan(
         tenant_read_bindings,
         oracle_edges,
         oracle_configuration,
-    )
-    evidence = (
-        oracle_evidence,
-        oracle_trust_root,
-        oracle_trust_sha256,
-        oracle_environment_sha256,
     )
     return (
         _reconcile_runtime_oracles(workspace, result, evidence)
