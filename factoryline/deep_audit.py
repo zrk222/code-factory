@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from .deep_audit_contract import verify_deep_audit_plan
 from .deep_audit_io import LIMIT, digest, local_file, strict_json
 from .deep_audit_sarif import normalize_sarif
-from .runtime_audit_common import RuntimeAuditError, canonical_bytes
+from .runtime_audit_common import RuntimeAuditError, canonical_bytes, sha256_bytes
 from .audit_action_refs import audit_remediation_packet
 
 
@@ -265,7 +265,7 @@ def _container_argv(
         "nofile=256:256",
         "--log-driver=none",
         "--mount",
-        f"type=bind,source={snapshot},target=/src,readonly,bind-recursive=readonly",
+        f"type=bind,source={snapshot},target=/src,readonly,bind-recursive=readonly,bind-propagation=rprivate",
         "--tmpfs",
         "/tmp:rw,nosuid,nodev,size=512m,mode=1777",
         "--tmpfs",
@@ -350,6 +350,7 @@ def _execute_lane(
     )
     monitor.start()
     cleanup = False
+    argv = None
     try:
         with tempfile.TemporaryDirectory(prefix="factory-lane-") as temporary:
             scratch = Path(temporary)
@@ -407,11 +408,36 @@ def _execute_lane(
             "gaps": ["WORKER_FAILED"],
             "execution": facts,
         }
-    bundle = strict_json(raw)
-    result = normalize_execution_bundle(
-        bundle, lane, inventory, state["run_id"], plan["obligations"]
-    )
-    # Retain native evidence for independent review, never emit raw logs/secrets.
+    try:
+        bundle = strict_json(raw)
+        result = normalize_execution_bundle(
+            bundle, lane, inventory, state["run_id"], plan["obligations"]
+        )
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        diagnostic = getattr(exc, "code", "E_WORKER_EVIDENCE")
+        native_execution = {
+            "completion": "COMMAND_COMPLETED_NORMALIZATION_FAILED",
+            "diagnostic_code": diagnostic,
+            "command_sha256": digest(argv) if argv is not None else None,
+            "image": lane.get("image"),
+            "image_sha256": digest(lane.get("image")),
+            "source_candidate_sha256": inventory.get("candidate_sha256"),
+            "manifest_sha256": state.get("manifest_sha256"),
+            "config_sha256": lane.get("ruleset_sha256"),
+            "lane_contract_sha256": digest(lane),
+            "output_sha256": sha256_bytes(raw),
+            "cleanup_confirmed": cleanup and facts.get("cleanup_confirmed", False),
+        }
+        return {
+            "lane_id": lane["id"],
+            "state": "INCOMPLETE",
+            "findings": [],
+            "gaps": [diagnostic],
+            "worker_output_sha256": sha256_bytes(raw),
+            "native_execution": native_execution,
+            "execution": facts,
+        }
+    # Retain normalized native evidence for independent review, never emit raw logs/secrets.
     write_run_json(directory, f"bundle-{lane['id']}.json", bundle)
     result.update(bundle_sha256=digest(bundle), execution=facts)
     return result
@@ -492,7 +518,19 @@ def _run_lanes(
             directory,
             state,
             "lane_completed",
-            {"lane_id": lane["id"], "state": result["state"], "gaps": result["gaps"]},
+            {
+                "lane_id": lane["id"],
+                "state": result["state"],
+                "gaps": result["gaps"],
+                "report_sha256": result.get("report_sha256"),
+                "coverage_sha256": result.get("coverage_sha256"),
+                "rule_accounting_sha256": result.get("rule_accounting_sha256"),
+                "challenge_sha256": result.get("challenge_sha256"),
+                "findings_sha256": digest(result["findings"]),
+                "finding_ids": sorted(
+                    item.get("finding_id", "") for item in result["findings"]
+                ),
+            },
             emit,
         )
         if "E_CONTAINER_CLEANUP" in result["gaps"]:
@@ -513,6 +551,7 @@ def _check_resume(
     resume: str | None,
     manifest_sha256: str,
     plan: dict,
+    request_reference: dict | None,
     read_run_json,
     run_directory,
 ) -> None:
@@ -526,6 +565,10 @@ def _check_resume(
     if (
         previous["manifest_sha256"] != manifest_sha256
         or previous["candidate_sha256"] != plan["candidate_sha256"]
+        or previous.get("request_sha256")
+        != (request_reference.get("sha256") if request_reference else None)
+        or previous.get("request_path")
+        != (request_reference.get("path") if request_reference else None)
     ):
         raise RuntimeAuditError(
             "E_RESUME_DRIFT", "retry must bind the identical manifest and candidate"
@@ -537,7 +580,8 @@ def _initial_run_state(
     resume: str | None,
     manifest_sha256: str,
     plan: dict,
-    authorized: dict,
+    request_reference: dict | None,
+    authorization_sha256: str,
 ) -> dict:
     return {
         "schema": "factory.deep-run.v1",
@@ -547,7 +591,12 @@ def _initial_run_state(
         "manifest_sha256": manifest_sha256,
         "manifest_content_sha256": digest(plan),
         "parent_run": resume,
-        "authorization_sha256": digest(authorized),
+        "authorization_sha256": authorization_sha256,
+        "request_path": request_reference.get("path") if request_reference else None,
+        "request_sha256": request_reference.get("sha256")
+        if request_reference
+        else None,
+        "request_bytes": request_reference.get("bytes") if request_reference else None,
         "lanes": [],
         "gaps": [],
         "authority": "none",
@@ -676,6 +725,7 @@ def scan_deep_audit(
     authorization: Path,
     trust_root: Path,
     trust_root_sha256: str,
+    request_file: Path | None = None,
     resume: str | None = None,
     emit=None,
 ) -> dict:
@@ -690,23 +740,55 @@ def scan_deep_audit(
     from .deep_audit_attestation import verify_execution_authorization, _execution_bytes
 
     root = Path(root).resolve()
+    request_reference = _request_file_reference(root, request_file)
     plan = load_execution_manifest(manifest, manifest_sha256)
-    authorized = verify_execution_authorization(
-        plan, manifest_sha256, authorization, trust_root, trust_root_sha256
+    _authorized, verified_authorization_sha256 = verify_execution_authorization(
+        plan,
+        manifest_sha256,
+        authorization,
+        trust_root,
+        trust_root_sha256,
+        return_envelope_sha256=True,
     )
-    _check_resume(root, resume, manifest_sha256, plan, read_run_json, run_directory)
+    _check_resume(
+        root,
+        resume,
+        manifest_sha256,
+        plan,
+        request_reference,
+        read_run_json,
+        run_directory,
+    )
     run_id = uuid.uuid4().hex
     directory = run_directory(root, run_id, create=True)
-    state = _initial_run_state(run_id, resume, manifest_sha256, plan, authorized)
-    write_run_json(directory, "manifest.json", plan)
-    write_run_json(
-        directory, "authorization.json", strict_json(_execution_bytes(authorization))
+    authorization_document = strict_json(_execution_bytes(authorization))
+    authorization_sha256 = digest(authorization_document)
+    if authorization_sha256 != verified_authorization_sha256:
+        raise RuntimeAuditError(
+            "E_EXECUTION_AUTHORIZATION_DRIFT",
+            "authorization envelope changed after signature verification",
+        )
+    state = _initial_run_state(
+        run_id, resume, manifest_sha256, plan, request_reference, authorization_sha256
     )
+    write_run_json(directory, "manifest.json", plan)
+    write_run_json(directory, "authorization.json", authorization_document)
     _event(
         directory,
         state,
         "run_started",
-        {"candidate_sha256": plan["candidate_sha256"]},
+        {
+            "candidate_sha256": plan["candidate_sha256"],
+            "manifest_sha256": manifest_sha256,
+            "manifest_content_sha256": digest(plan),
+            "authorization_sha256": authorization_sha256,
+            "parent_run": resume,
+            "request": request_reference,
+            "lane_ids": [item["id"] for item in plan["lanes"]],
+            "rule_ids": {
+                item["id"]: list(item.get("rule_ids", [])) for item in plan["lanes"]
+            },
+        },
         emit,
     )
     try:
@@ -731,7 +813,78 @@ def scan_deep_audit(
                 "Inspect run events, restore prerequisites, and start an exact-bound retry.",
             )
         )
+    if request_reference is not None:
+        try:
+            current_request = _request_file_reference(root, request_file)
+        except (OSError, RuntimeAuditError, ValueError, TypeError):
+            current_request = None
+        if current_request != request_reference:
+            state["gaps"].append(
+                _execution_gap(
+                    "REQUEST_SOURCE_CHANGED",
+                    "Restore the exact request file and rerun with a fresh request binding.",
+                    request_reference["path"],
+                )
+            )
+            _event(
+                directory,
+                state,
+                "request_source_changed",
+                {"request": request_reference},
+                emit,
+            )
     return _finish_scan(directory, state, plan, emit, write_run_json)
+
+
+def _request_file_reference(root: Path, value: Path | None) -> dict | None:
+    """Hash a bounded operator request file from the run's reserved local evidence area."""
+    if value is None:
+        return None
+    from .deep_audit_io import local_file
+
+    raw_path = Path(value)
+    if raw_path.is_absolute():
+        raise RuntimeAuditError(
+            "E_REQUEST_PATH", "request file must use a workspace-relative path"
+        )
+    relative = raw_path.as_posix()
+    if not relative.startswith(".factory/deep-runs/requests/"):
+        raise RuntimeAuditError(
+            "E_REQUEST_PATH",
+            "request file must be stored under .factory/deep-runs/requests",
+        )
+    path = local_file(root, relative)
+    before = path.stat()
+    if before.st_size > 65_536:
+        raise RuntimeAuditError("E_REQUEST_SIZE", "request file exceeds 65536 bytes")
+    with path.open("rb") as stream:
+        raw = stream.read(65_537)
+    after = path.stat()
+    identity_before = (
+        before.st_size,
+        before.st_mtime_ns,
+        getattr(before, "st_ino", 0),
+    )
+    identity_after = (
+        after.st_size,
+        after.st_mtime_ns,
+        getattr(after, "st_ino", 0),
+    )
+    if len(raw) > 65_536 or identity_before != identity_after:
+        raise RuntimeAuditError(
+            "E_REQUEST_CHANGED", "request changed or exceeded its size limit"
+        )
+    try:
+        decoded = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeAuditError(
+            "E_REQUEST_ENCODING", "request file must be UTF-8"
+        ) from exc
+    if not decoded.strip() or "\x00" in decoded:
+        raise RuntimeAuditError(
+            "E_REQUEST_EMPTY", "request file must contain nonempty text"
+        )
+    return {"path": relative, "sha256": sha256_bytes(raw), "bytes": len(raw)}
 
 
 def deep_run_status(root: Path, run_id: str) -> dict:
@@ -817,9 +970,15 @@ def playback_deep_run(
     root: Path, run_id: str, *, after: int = 0, limit: int = 100
 ) -> dict:
     """Read a verified, bounded event page; playback never re-executes commands."""
+    state = deep_run_status(root, run_id)
+    return _playback_verified_page(root, run_id, state, after=after, limit=limit)
+
+
+def _playback_verified_page(
+    root: Path, run_id: str, state: dict, *, after: int, limit: int
+) -> dict:
     from .deep_audit_io import read_run_json, run_directory
 
-    state = deep_run_status(root, run_id)
     if type(after) is not int or not 0 <= after <= state["sequence"]:
         raise RuntimeAuditError(
             "E_PLAYBACK_RANGE", "after must be an existing event cursor"
@@ -843,6 +1002,765 @@ def playback_deep_run(
         "authority": "none",
         "release_approval": False,
     }
+
+
+def _lineage_run(root: Path, run_id: str) -> tuple[dict, list[dict], list[dict]]:
+    from .deep_audit_io import read_run_json, run_directory
+    from .deep_audit_sarif import normalize_execution_bundle
+
+    status = deep_run_status(root, run_id)
+    directory = run_directory(root, run_id)
+    try:
+        plan = read_run_json(directory, "manifest.json")
+        inventory = read_run_json(directory, "inventory.json")
+    except (OSError, ValueError, KeyError, TypeError, RuntimeAuditError):
+        plan, inventory = {}, {"files": []}
+        gaps = ["RUN_PLAN_OR_INVENTORY_MISSING"]
+    else:
+        gaps = []
+    plan_lanes = {item["id"]: item for item in plan.get("lanes", [])}
+    from .deep_audit_contract import EXECUTION_FAMILIES
+
+    families = {item.get("family") for item in plan.get("lanes", [])}
+    if families != set(EXECUTION_FAMILIES):
+        gaps.append("SIX_LANE_FAMILY_SET_MISMATCH")
+    results = {item["lane_id"]: item for item in status.get("lanes", [])}
+    lanes = []
+    if (
+        digest(plan) != status.get("manifest_content_sha256")
+        or plan.get("candidate_sha256") != status.get("candidate_sha256")
+        or inventory.get("candidate_sha256") != status.get("candidate_sha256")
+    ):
+        gaps.append("RUN_PLAN_OR_CANDIDATE_BINDING_MISMATCH")
+    try:
+        authorization = read_run_json(directory, "authorization.json")
+        if digest(authorization) != status.get("authorization_sha256"):
+            gaps.append("RUN_AUTHORIZATION_BINDING_MISMATCH")
+    except (OSError, ValueError, KeyError, TypeError, RuntimeAuditError):
+        gaps.append("RUN_AUTHORIZATION_MISSING")
+    for lane_id, definition in plan_lanes.items():
+        result = results.get(lane_id)
+        if result is None:
+            gaps.append(f"LANE_NOT_RECORDED:{lane_id}")
+            lanes.append({"lane_id": lane_id, "state": "NOT_RUN"})
+            continue
+        item = {
+            "lane_id": lane_id,
+            "engine": definition.get("engine"),
+            "family": definition.get("family"),
+            "state": result.get("state", "INCOMPLETE"),
+            "gaps": sorted(result.get("gaps", [])),
+            "finding_ids": sorted(
+                finding.get("finding_id", "") for finding in result.get("findings", [])
+            ),
+            "findings_sha256": digest(result.get("findings", [])),
+            "report_sha256": result.get("report_sha256"),
+            "coverage_sha256": result.get("coverage_sha256"),
+            "challenge_sha256": result.get("challenge_sha256"),
+            "rule_accounting_sha256": result.get("rule_accounting_sha256"),
+            "native_execution": result.get("native_execution"),
+            "execution": result.get("execution"),
+            "expected_rule_ids": sorted(definition.get("rule_ids", [])),
+            "source_paths": sorted(result.get("covered_paths", [])),
+            "rule_accounting": None,
+        }
+        try:
+            bundle = read_run_json(directory, f"bundle-{lane_id}.json")
+            coverage = bundle["artifacts"][definition["coverage"]]
+            if digest(coverage) != result.get("coverage_sha256"):
+                raise ValueError("coverage digest mismatch")
+            accounting = coverage.get("rule_accounting")
+            if not isinstance(accounting, dict):
+                gaps.append(f"RULE_ACCOUNTING_MISSING:{lane_id}")
+            else:
+                digest_core = {
+                    key: value
+                    for key, value in accounting.items()
+                    if key != "accounting_sha256"
+                }
+                accounting_sha = accounting.get("accounting_sha256")
+                if accounting_sha != digest(
+                    digest_core
+                ) or accounting_sha != result.get("rule_accounting_sha256"):
+                    gaps.append(f"RULE_ACCOUNTING_DIGEST_MISMATCH:{lane_id}")
+                expected_ids = sorted(definition.get("rule_ids", []))
+                observed_ids = sorted(
+                    row.get("rule_id", "")
+                    for row in accounting.get("rules", [])
+                    if isinstance(row, dict)
+                )
+                if expected_ids != observed_ids:
+                    gaps.append(f"RULE_INVENTORY_MISMATCH:{lane_id}")
+                for row in accounting.get("rules", []):
+                    if not isinstance(row, dict):
+                        continue
+                    sources = row.get("sources", [])
+                    for source in sources if isinstance(sources, list) else []:
+                        if not isinstance(source, dict):
+                            continue
+                        disposition = source.get("disposition", "unknown")
+                        if disposition != "executed":
+                            gaps.append(
+                                f"RULE_SOURCE_NOT_EXECUTED:{lane_id}:{row.get('rule_id')}:{source.get('path')}"
+                            )
+                # Keep the exact bounded digest-bearing ledger so lineage can
+                # independently recompute its native accounting digest.
+                item["rule_accounting"] = accounting
+            try:
+                normalized = normalize_execution_bundle(
+                    bundle,
+                    definition,
+                    inventory,
+                    run_id,
+                    plan.get("obligations", []),
+                )
+                saved_findings = [
+                    {key: value for key, value in finding.items() if key != "rerun"}
+                    for finding in result.get("findings", [])
+                ]
+                if (
+                    any(
+                        normalized.get(key) != result.get(key)
+                        for key in (
+                            "state",
+                            "gaps",
+                            "report_sha256",
+                            "coverage_sha256",
+                            "rule_accounting_sha256",
+                            "challenge_sha256",
+                        )
+                    )
+                    or normalized.get("findings") != saved_findings
+                ):
+                    gaps.append(f"NORMALIZED_LANE_BINDING_MISMATCH:{lane_id}")
+            except (OSError, ValueError, KeyError, TypeError, RuntimeAuditError):
+                gaps.append(f"LANE_NORMALIZATION_FAILED:{lane_id}")
+        except (OSError, ValueError, KeyError, TypeError, RuntimeAuditError):
+            gap = (
+                "LANE_NORMALIZATION_INCOMPLETE"
+                if item.get("native_execution")
+                else "LANE_ARTIFACT_UNAVAILABLE"
+            )
+            gaps.append(f"{gap}:{lane_id}")
+        if item["state"] != "OBSERVED" or item["gaps"]:
+            gaps.append(f"LANE_INCOMPLETE:{lane_id}")
+        lanes.append(item)
+    if set(results) != set(plan_lanes):
+        gaps.append("LANE_SET_MISMATCH")
+
+    request_reference = None
+    request_fields = (
+        status.get("request_path"),
+        status.get("request_sha256"),
+        status.get("request_bytes"),
+    )
+    if any(value is not None for value in request_fields):
+        try:
+            request_reference = _request_file_reference(
+                root, Path(status["request_path"])
+            )
+            if request_reference != {
+                "path": status.get("request_path"),
+                "sha256": status.get("request_sha256"),
+                "bytes": status.get("request_bytes"),
+            }:
+                gaps.append("REQUEST_ARTIFACT_MISMATCH")
+            started = read_run_json(directory, "event-00001.json")
+            if (
+                started.get("kind") != "run_started"
+                or started.get("details", {}).get("request") != request_reference
+            ):
+                gaps.append("REQUEST_EVENT_BINDING_MISMATCH")
+        except (OSError, ValueError, KeyError, TypeError, RuntimeAuditError):
+            gaps.append("REQUEST_ARTIFACT_UNAVAILABLE")
+
+    event_rows = []
+    cursor = 0
+    while cursor < status["sequence"]:
+        page = _playback_verified_page(root, run_id, status, after=cursor, limit=500)
+        if not page["events"] or page["next_cursor"] <= cursor:
+            gaps.append("PLAYBACK_CURSOR_DID_NOT_ADVANCE")
+            break
+        for event in page["events"]:
+            event_rows.append(
+                {
+                    "sequence": event["sequence"],
+                    "kind": event.get("kind"),
+                    "event_sha256": digest(event),
+                    "details_sha256": digest(event.get("details", {})),
+                }
+            )
+        cursor = page["next_cursor"]
+    playback = {
+        "state": "OBSERVED" if cursor == status["sequence"] else "INCOMPLETE",
+        "event_count": len(event_rows),
+        "through_sequence": cursor,
+        "has_more": cursor < status["sequence"],
+        "events_sha256": digest(event_rows),
+        "head_sha256": status["event_sha256"],
+    }
+    pause_file = directory / "pause.json"
+    pause_ref = None
+    if pause_file.is_file():
+        pause_ref = digest(read_run_json(directory, "pause.json"))
+    run = {
+        "run_id": run_id,
+        "request_sha256": status.get("request_sha256"),
+        "request_path": status.get("request_path"),
+        "request_bytes": status.get("request_bytes"),
+        "request_state": "BOUND" if request_reference else "NOT_CAPTURED",
+        "observed_state": status["observed_state"],
+        "analysis_complete": status.get("analysis_complete") is True,
+        "candidate_sha256": status.get("candidate_sha256"),
+        "manifest_sha256": status.get("manifest_sha256"),
+        "manifest_content_sha256": status.get("manifest_content_sha256"),
+        "authorization_sha256": status.get("authorization_sha256"),
+        "parent_run": status.get("parent_run"),
+        "event_sequence": status["sequence"],
+        "event_sha256": status["event_sha256"],
+        "events": event_rows,
+        "playback": playback,
+        "pause_request_sha256": pause_ref,
+        "lanes": lanes,
+        "findings_sha256": digest(
+            [
+                finding
+                for result in status.get("lanes", [])
+                for finding in result.get("findings", [])
+            ]
+        ),
+    }
+    if run["request_state"] != "BOUND":
+        gaps.append("REQUEST_NOT_CAPTURED")
+    if (
+        status.get("gaps")
+        or not run["analysis_complete"]
+        or playback["state"] != "OBSERVED"
+    ):
+        gaps.append("RUN_INCOMPLETE")
+    return run, gaps, event_rows
+
+
+def _lineage_chain(references: list[dict]) -> tuple[list[dict], str]:
+    previous = "0" * 64
+    chain = []
+    for index, reference in enumerate(references, 1):
+        core = {"sequence": index, "previous_sha256": previous, **reference}
+        row = {**core, "step_sha256": digest(core)}
+        chain.append(row)
+        previous = row["step_sha256"]
+    return chain, previous
+
+
+def _lineage_references(runs: list[dict], repair: dict | None) -> list[dict]:
+    origin = (repair or {}).get("origin_audit")
+    origin_id = origin.get("run_id") if isinstance(origin, dict) else None
+    boundary = next(
+        (index for index, run in enumerate(runs) if run["run_id"] == origin_id),
+        len(runs) - 1,
+    )
+    before, after = runs[: boundary + 1], runs[boundary + 1 :]
+    ordered_runs = [*before, *after] if repair is None else before
+    refs = [
+        {
+            "reference_id": f"deep_run_event:{run['run_id']}:{event['sequence']}",
+            "reference_sha256": event["event_sha256"],
+            "state": "OBSERVED",
+        }
+        for run in ordered_runs
+        for event in run.get("events", [])
+    ]
+    if repair is not None:
+        refs.extend(
+            {
+                "reference_id": f"repair_attempt_event:{repair['approval_sha256']}:{event['sequence']}",
+                "reference_sha256": event["event_sha256"],
+                "state": "OBSERVED",
+            }
+            for event in repair.get("events", [])
+        )
+        refs.extend(
+            {
+                "reference_id": f"deep_run_event:{run['run_id']}:{event['sequence']}",
+                "reference_sha256": event["event_sha256"],
+                "state": "OBSERVED",
+            }
+            for run in after
+            for event in run.get("events", [])
+        )
+    return refs
+
+
+def _lineage_schema_errors(value: dict) -> list[str]:
+    errors = []
+    core = {key: item for key, item in value.items() if key != "lineage_sha256"}
+    try:
+        if value.get("lineage_sha256") != digest(core):
+            errors.append("lineage receipt digest mismatch")
+    except (TypeError, ValueError, RecursionError):
+        errors.append("lineage receipt cannot be canonically encoded")
+    expected = {
+        "schema",
+        "state",
+        "runs",
+        "repair",
+        "gaps",
+        "chain",
+        "chain_head",
+        "authority",
+        "authentication",
+    }
+    if set(core) != expected:
+        errors.append("lineage receipt has missing or unknown fields")
+    return errors
+
+
+def _lineage_reference_errors(value: dict) -> list[str]:
+    try:
+        runs = value.get("runs") if isinstance(value.get("runs"), list) else []
+        repair = value.get("repair") if isinstance(value.get("repair"), dict) else None
+        chain, head = _lineage_chain(_lineage_references(runs, repair))
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return ["lineage references are malformed"]
+    if chain != value.get("chain") or head != value.get("chain_head"):
+        return ["lineage reference chain mismatch"]
+    return []
+
+
+def _lineage_boundary_errors(value: dict) -> list[str]:
+    errors = []
+    authority = {
+        "execution": False,
+        "approval": False,
+        "merge": False,
+        "deployment": False,
+        "signing": False,
+    }
+    if value.get("authority") != authority:
+        errors.append("lineage authority boundary changed")
+    if value.get("authentication") != "UNSIGNED_INTEGRITY_ONLY":
+        errors.append("lineage authentication boundary changed")
+    if value.get("state") not in {"INCOMPLETE", "LINEAGE_BOUND_UNAUTHENTICATED"}:
+        errors.append("lineage state is unsupported")
+    gaps = value.get("gaps")
+    if not isinstance(gaps, list) or any(not isinstance(gap, str) for gap in gaps):
+        errors.append("lineage gap list is malformed")
+    return errors
+
+
+def _lineage_lane_accounting_valid(lane: dict) -> bool:
+    accounting = lane.get("rule_accounting")
+    rules = accounting.get("rules") if isinstance(accounting, dict) else None
+    if (
+        not isinstance(accounting, dict)
+        or accounting.get("schema") != "factory.deep-rule-accounting.v1"
+        or not isinstance(rules, list)
+        or not rules
+    ):
+        return False
+    expected_ids = lane.get("expected_rule_ids")
+    source_paths = lane.get("source_paths")
+    if not _string_list(expected_ids) or not _string_list(source_paths):
+        return False
+    ids = [rule.get("rule_id") for rule in rules if isinstance(rule, dict)]
+    if (
+        len(ids) != len(rules)
+        or sorted(ids) != expected_ids
+        or len(set(ids)) != len(ids)
+    ):
+        return False
+    if any(not _lineage_rule_sources(rule, source_paths) for rule in rules):
+        return False
+    return _lineage_accounting_digest_valid(accounting, lane)
+
+
+def _string_list(value: object) -> bool:
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(item, str) and item for item in value)
+        and len(set(value)) == len(value)
+    )
+
+
+def _lineage_rule_sources(rule: object, expected_paths: list[str]) -> bool:
+    sources = rule.get("sources") if isinstance(rule, dict) else None
+    if not isinstance(sources, list) or not sources:
+        return False
+    paths = [source.get("path") for source in sources if isinstance(source, dict)]
+    if len(paths) != len(sources) or sorted(paths) != expected_paths:
+        return False
+    if len(set(paths)) != len(paths):
+        return False
+    return all(_lineage_source_executed(source) for source in sources)
+
+
+def _lineage_source_executed(source: dict) -> bool:
+    return (
+        isinstance(source.get("path"), str)
+        and bool(source["path"])
+        and source.get("disposition") == "executed"
+        and _valid_digest(source.get("source_sha256"))
+        and _valid_digest(source.get("evidence_sha256"))
+    )
+
+
+def _lineage_accounting_digest_valid(accounting: dict, lane: dict) -> bool:
+    core = {
+        key: value for key, value in accounting.items() if key != "accounting_sha256"
+    }
+    return (
+        accounting.get("accounting_sha256") == digest(core)
+        and accounting.get("accounting_sha256") == lane.get("rule_accounting_sha256")
+        and _valid_digest(accounting.get("ruleset_sha256"))
+        and _valid_digest(accounting.get("invocation_sha256"))
+        and _valid_digest(accounting.get("native_report_sha256"))
+    )
+
+
+def _valid_digest(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(char in "0123456789abcdef" for char in value)
+    )
+
+
+def _lineage_lane_complete(lane: object) -> bool:
+    if not isinstance(lane, dict):
+        return False
+    return lane.get("state") == "OBSERVED" and _lineage_lane_accounting_valid(lane)
+
+
+def _lineage_complete_run_errors(run: object) -> list[str]:
+    if not isinstance(run, dict):
+        return ["complete lineage contains malformed run evidence"]
+    errors = []
+    if run.get("request_state") != "BOUND" or not run.get("analysis_complete"):
+        errors.append("complete lineage lacks a bound request or six-lane result")
+    lanes = run.get("lanes") if isinstance(run.get("lanes"), list) else []
+    from .deep_audit_contract import ENGINE_FAMILIES, EXECUTION_FAMILIES
+
+    if any(not isinstance(lane, dict) for lane in lanes):
+        return ["complete lineage contains malformed lane evidence"]
+    families = {lane.get("family") for lane in lanes}
+    engines = {lane.get("engine") for lane in lanes}
+    if (
+        not lanes
+        or len(engines) != len(lanes)
+        or families != EXECUTION_FAMILIES
+        or any(
+            ENGINE_FAMILIES.get(lane.get("engine")) != lane.get("family")
+            for lane in lanes
+        )
+        or any(not _lineage_lane_complete(lane) for lane in lanes)
+    ):
+        errors.append("complete lineage lacks executed per-rule evidence")
+    return errors
+
+
+def _lineage_complete_errors(value: dict) -> list[str]:
+    if value.get("state") != "LINEAGE_BOUND_UNAUTHENTICATED":
+        return []
+    errors = []
+    runs, repair = value.get("runs"), value.get("repair")
+    if (
+        value.get("gaps")
+        or not isinstance(repair, dict)
+        or not isinstance(runs, list)
+        or len(runs) < 2
+    ):
+        errors.append("complete lineage state lacks required phase evidence")
+    if isinstance(runs, list):
+        for run in runs:
+            errors.extend(_lineage_complete_run_errors(run))
+    if isinstance(repair, dict) and (
+        repair.get("attempt_status") != "VERIFIED"
+        or repair.get("cleanup_confirmed") is not True
+        or repair.get("primary_checkout_unchanged") is not True
+        or not repair.get("candidate_after_sha256")
+        or repair.get("candidate_after_sha256") != repair.get("rerun_candidate_sha256")
+    ):
+        errors.append("complete lineage lacks an exact verified repair rerun")
+    return errors
+
+
+def verify_deep_audit_lineage(value: object) -> dict:
+    """Check lineage receipt structure, chain hashes, and unsigned authority boundary."""
+    if (
+        not isinstance(value, dict)
+        or value.get("schema") != "factory.deep-audit-lineage.v1"
+    ):
+        return {"valid": False, "errors": ["unsupported lineage schema"]}
+    try:
+        errors = _lineage_schema_errors(value)
+        errors.extend(_lineage_reference_errors(value))
+        errors.extend(_lineage_boundary_errors(value))
+        errors.extend(_lineage_complete_errors(value))
+    except (TypeError, ValueError, KeyError, AttributeError, RecursionError):
+        errors = ["lineage receipt is malformed"]
+    return {"valid": not errors, "errors": errors}
+
+
+def _ordered_lineage_runs(
+    workspace: Path, run_ids: list[str]
+) -> tuple[list[dict], list[str]]:
+    runs, gaps = [], []
+    for index, run_id in enumerate(run_ids):
+        run, run_gaps, _events = _lineage_run(workspace, run_id)
+        expected_parent = run_ids[index - 1] if index else None
+        if run.get("parent_run") and run["parent_run"] != expected_parent:
+            run_gaps.append("RESUME_PARENT_NOT_IN_ORDERED_LINEAGE")
+        runs.append(run)
+        gaps.extend(run_gaps)
+    return runs, gaps
+
+
+def _repair_origin_gaps(
+    origin: object, origin_run: dict | None, attempt: dict
+) -> list[str]:
+    gaps = []
+    if origin_run is None or not isinstance(origin, dict):
+        gaps.append("REPAIR_ORIGIN_NOT_IN_LINEAGE")
+    elif any(
+        origin.get(key) != origin_run.get(run_key)
+        for key, run_key in (
+            ("candidate_sha256", "candidate_sha256"),
+            ("manifest_sha256", "manifest_sha256"),
+            ("event_sha256", "event_sha256"),
+            ("sequence", "event_sequence"),
+        )
+    ):
+        gaps.append("REPAIR_ORIGIN_BINDING_MISMATCH")
+    if attempt.get("candidate_before_sha256") != (origin or {}).get("candidate_sha256"):
+        gaps.append("REPAIR_SOURCE_CANDIDATE_MISMATCH")
+    return gaps
+
+
+def _repair_rerun(
+    runs: list[dict], origin_run: dict | None, attempt: dict
+) -> dict | None:
+    if origin_run is None:
+        return None
+    index = next(
+        i for i, run in enumerate(runs) if run["run_id"] == origin_run["run_id"]
+    )
+    later = [run for run in runs[index + 1 :]]
+    return later[-1] if later else None
+
+
+def _repair_attempt_gaps(attempt: dict, rerun: dict | None) -> list[str]:
+    gaps = []
+    if rerun is None or rerun.get("candidate_sha256") != attempt.get(
+        "candidate_after_sha256"
+    ):
+        gaps.append("REPAIRED_CANDIDATE_RERUN_MISSING_OR_MISMATCHED")
+    checks = attempt.get("checks", [])
+    if (
+        attempt.get("status") != "VERIFIED"
+        or attempt.get("cleanup_confirmed") is not True
+        or attempt.get("primary_checkout_unchanged") is not True
+        or not checks
+        or any(check.get("result") != "PASS" for check in checks)
+    ):
+        gaps.append("REPAIR_EXECUTION_OR_CHECKS_INCOMPLETE")
+    return gaps
+
+
+def _repair_check_rows(checks: list[dict]) -> list[dict]:
+    fields = (
+        "check_id",
+        "stage",
+        "result",
+        "log_sha256",
+        "container_cleanup_confirmed",
+        "process_cleanup_confirmed",
+    )
+    return [
+        {key: item.get(key, "UNKNOWN" if key == "result" else None) for key in fields}
+        for item in checks
+    ]
+
+
+def _repair_event_rows(events: list[dict]) -> list[dict]:
+    return [
+        {key: item[key] for key in ("sequence", "event_sha256", "state_sha256")}
+        for item in events
+    ]
+
+
+def _repair_lineage_payload(
+    approval_sha: str, approval: dict, journal: dict, origin: object, rerun: dict | None
+) -> dict:
+    attempt = journal["state"]
+    return {
+        "approval_sha256": approval_sha,
+        "approval_schema": approval.get("schema"),
+        "confirmation_sha256": approval.get("confirmation_sha256"),
+        "approved_at": approval.get("approved_at"),
+        "expires_at": approval.get("expires_at"),
+        "origin_audit": origin,
+        "attempt_status": attempt.get("status"),
+        "attempt_event_sequence": attempt.get("event_sequence"),
+        "attempt_event_sha256": journal["event_sha256"],
+        "candidate_before_sha256": attempt.get("candidate_before_sha256"),
+        "candidate_after_sha256": attempt.get("candidate_after_sha256"),
+        "rerun_candidate_sha256": rerun.get("candidate_sha256") if rerun else None,
+        "events": _repair_event_rows(journal["events"]),
+        "checks": _repair_check_rows(attempt.get("checks", [])),
+        "cleanup_confirmed": attempt.get("cleanup_confirmed"),
+        "primary_checkout_unchanged": attempt.get("primary_checkout_unchanged"),
+        "rerun_run_id": rerun.get("run_id") if rerun else None,
+    }
+
+
+def _load_lineage_repair(
+    workspace: Path, runs: list[dict], run_gaps: list[str], approval_sha: str
+) -> dict | None:
+    from .repair_sandbox import (
+        RepairSandboxError,
+        _digest as valid_approval_digest,
+        _approval_paths,
+        _read_approval,
+        _verify_approval,
+        verify_repair_attempt_journal,
+    )
+    from .deep_audit_io import local_file
+
+    try:
+        if not valid_approval_digest(approval_sha):
+            raise RepairSandboxError(
+                "REPAIR_ATTEMPT_INVALID", "approval hash is invalid"
+            )
+        path, _ = _approval_paths(workspace, approval_sha)
+        approval = _read_approval(
+            local_file(workspace, path.relative_to(workspace).as_posix())
+        )
+        if _verify_approval(approval) != approval_sha:
+            raise RepairSandboxError(
+                "REPAIR_APPROVAL_TAMPERED", "approval hash mismatch"
+            )
+        origin = approval.get("origin_audit")
+        origin_run = next(
+            (
+                run
+                for run in runs
+                if isinstance(origin, dict) and run["run_id"] == origin.get("run_id")
+            ),
+            None,
+        )
+        journal = verify_repair_attempt_journal(workspace, approval_sha)
+        attempt = journal["state"]
+        run_gaps.extend(_repair_origin_gaps(origin, origin_run, attempt))
+        rerun = _repair_rerun(runs, origin_run, attempt)
+        run_gaps.extend(_repair_attempt_gaps(attempt, rerun))
+        return _repair_lineage_payload(approval_sha, approval, journal, origin, rerun)
+    except (OSError, ValueError, KeyError, TypeError, RepairSandboxError) as exc:
+        run_gaps.append(
+            f"REPAIR_EVIDENCE_UNAVAILABLE:{getattr(exc, 'code', 'INVALID')}"
+        )
+        return None
+
+
+def _lineage_receipt(runs: list[dict], repair: dict | None, gaps: list[str]) -> dict:
+    complete = not gaps and repair is not None and bool(runs)
+    references = _lineage_references(runs, repair)
+    chain, head = _lineage_chain(references)
+    body = {
+        "schema": "factory.deep-audit-lineage.v1",
+        "state": "LINEAGE_BOUND_UNAUTHENTICATED" if complete else "INCOMPLETE",
+        "runs": runs,
+        "repair": repair,
+        "gaps": sorted(set(gaps)),
+        "chain": chain,
+        "chain_head": head,
+        "authority": {
+            "execution": False,
+            "approval": False,
+            "merge": False,
+            "deployment": False,
+            "signing": False,
+        },
+        "authentication": "UNSIGNED_INTEGRITY_ONLY",
+    }
+    value = {**body, "lineage_sha256": digest(body)}
+    validation = verify_deep_audit_lineage(value)
+    if not validation["valid"]:
+        raise RuntimeAuditError("E_LINEAGE_INTEGRITY", "; ".join(validation["errors"]))
+    return value
+
+
+def build_deep_audit_lineage(
+    root: Path, run_ids: list[str], *, approval_sha256: str | None = None
+) -> dict:
+    """Bind run, repair, check and rerun references without granting authority."""
+    workspace = Path(root).resolve()
+    if not 1 <= len(run_ids) <= 20 or len(set(run_ids)) != len(run_ids):
+        raise RuntimeAuditError(
+            "E_LINEAGE_RUNS", "provide 1 to 20 unique ordered run IDs"
+        )
+    runs, gaps = _ordered_lineage_runs(workspace, run_ids)
+    repair = (
+        _load_lineage_repair(workspace, runs, gaps, approval_sha256)
+        if approval_sha256
+        else None
+    )
+    if repair is None:
+        gaps.append("REPAIR_NOT_BOUND")
+    return _lineage_receipt(runs, repair, gaps)
+
+
+def _lineage_output_directory(workspace: Path) -> Path:
+    directory = workspace
+    for part in (".factory", "deep-lineage"):
+        child = directory / part
+        if not child.exists() and not child.is_symlink():
+            child.mkdir()
+        info = child.lstat()
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or getattr(info, "st_file_attributes", 0) & 0x400
+        ):
+            raise RuntimeAuditError(
+                "E_LINEAGE_PATH", "lineage directory must not be linked"
+            )
+        directory = child
+    return directory
+
+
+def _write_lineage_file(target: Path, value: dict) -> None:
+    if target.exists() or target.is_symlink():
+        info = target.lstat()
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or getattr(info, "st_file_attributes", 0) & 0x400
+        ):
+            raise RuntimeAuditError(
+                "E_LINEAGE_PATH", "lineage receipt must be a regular file"
+            )
+    temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("xb") as stream:
+            stream.write(canonical_bytes(value))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def write_deep_audit_lineage(
+    root: Path, run_ids: list[str], *, approval_sha256: str | None = None
+) -> dict:
+    """Persist one content-addressed lineage receipt inside the workspace safely."""
+    workspace = Path(root).resolve()
+    value = build_deep_audit_lineage(
+        workspace, run_ids, approval_sha256=approval_sha256
+    )
+    directory = _lineage_output_directory(workspace)
+    target = directory / f"{value['lineage_sha256']}.json"
+    _write_lineage_file(target, value)
+    return {**value, "receipt_path": target.relative_to(workspace).as_posix()}
 
 
 def cancel_deep_run(root: Path, run_id: str) -> dict:

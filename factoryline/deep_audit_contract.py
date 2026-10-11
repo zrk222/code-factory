@@ -379,10 +379,18 @@ def _validate_lane_limits(lane: dict) -> None:
 
 
 def _execution_lane(lane: dict) -> None:
-    _keys(
-        lane,
-        "id engine family image argv report coverage challenge_report languages mode timeout_seconds memory_mib tool_version ruleset_sha256",
+    if not isinstance(lane, dict):
+        raise RuntimeAuditError("E_EXECUTION_LANE", "lane object required")
+    lane_fields = set(
+        "id engine family image argv report coverage challenge_report languages mode timeout_seconds memory_mib tool_version ruleset_sha256".split()
     )
+    if lane.get("engine") == "gitleaks" and "rule_ids" in lane:
+        lane_fields.add("rule_ids")
+        if "mutation_config_sha256" in lane:
+            lane_fields.add("mutation_config_sha256")
+    if set(lane) != lane_fields:
+        raise RuntimeAuditError("E_EXECUTION_LANE", "missing or unknown lane fields")
+    _keys(lane, " ".join(sorted(lane_fields)))
     _validate_lane_identity(lane)
     _validate_lane_image(lane)
     _validate_lane_argv(lane)
@@ -390,6 +398,19 @@ def _execution_lane(lane: dict) -> None:
     _validate_lane_languages(lane)
     _validate_lane_mode(lane)
     _validate_lane_limits(lane)
+    if lane["engine"] == "gitleaks" and "rule_ids" in lane:
+        rule_ids = _items(lane["rule_ids"], 4096)
+        for rule_id in rule_ids:
+            require_str(rule_id, "rule_id", maximum=256)
+        _unique(rule_ids)
+        if "mutation_config_sha256" in lane:
+            mutations = lane["mutation_config_sha256"]
+            if not isinstance(mutations, dict) or set(mutations) != set(rule_ids):
+                raise RuntimeAuditError(
+                    "E_EXECUTION_LANE", "exact per-rule mutation config hashes required"
+                )
+            for rule_id in rule_ids:
+                require_digest(mutations[rule_id], "mutation_config_sha256")
 
 
 def _validate_execution_identity(plan: dict) -> None:

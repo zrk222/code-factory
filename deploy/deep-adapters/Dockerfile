@@ -83,14 +83,22 @@ COPY --chown=1000:1000 deploy/deep-adapters/profiles/syft.json /opt/factory/adap
 LABEL io.code-factory.configured="true" io.code-factory.family="dependencies" io.code-factory.mode="sbom-only"
 
 ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
-FROM zricethezav/gitleaks:v8.28.0@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854 AS gitleaks-tool
+FROM golang@sha256:0b4f8c5d414756a53ba0e4d235151f9b246552e512c3feaad5f9a3251376b279 AS gitleaks-build
+ADD --checksum=sha256:ab481824ccba4e14fd61e290014d961f06c4d4a7597783ec7d22f8a1ef241322 https://github.com/zricethezav/gitleaks/archive/4fb43823ef3d152d239e92d7d5cb04783b548062.tar.gz /tmp/gitleaks.tar.gz
+RUN mkdir -p /src && tar -xzf /tmp/gitleaks.tar.gz --strip-components=1 -C /src && rm /tmp/gitleaks.tar.gz
+COPY deploy/deep-adapters/gitleaks-rule-ledger.patch /tmp/gitleaks-rule-ledger.patch
+WORKDIR /src
+RUN git -C /src init -q \
+    && git -C /src apply --check /tmp/gitleaks-rule-ledger.patch \
+    && git -C /src apply /tmp/gitleaks-rule-ledger.patch \
+    && CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w -X github.com/zricethezav/gitleaks/v8/cmd.Version=8.28.0" -o /gitleaks .
 FROM sdk AS gitleaks-worker
-COPY --from=gitleaks-tool /usr/bin/gitleaks /usr/bin/gitleaks
+COPY --from=gitleaks-build /gitleaks /usr/bin/gitleaks
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/gitleaks.json /opt/factory/adapter-profile.json
 COPY --chown=1000:1000 deploy/deep-adapters/rules/gitleaks-8.28.0.toml /opt/factory/rules/gitleaks.toml
 COPY --chown=1000:1000 deploy/deep-adapters/rules/GITLEAKS-LICENSE.txt /opt/factory/rules/GITLEAKS-LICENSE.txt
 COPY --chown=1000:1000 deploy/deep-adapters/rules/empty-ignore.txt /opt/factory/rules/empty-gitleaksignore
-LABEL io.code-factory.configured="true"
+LABEL io.code-factory.configured="true" io.code-factory.gitleaks-source="4fb43823ef3d152d239e92d7d5cb04783b548062" io.code-factory.gitleaks-ledger="gitleaks.factory-rule-ledger.v1"
 
 ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
 FROM aquasec/trivy:0.68.1@sha256:52e6fb1ff6a8232d6ec480ca9dd0b8db6728e252d092cb7712df7103ba09502e AS trivy-tool

@@ -74,6 +74,124 @@ def _git_repair_case(root: Path) -> tuple[Path, Path]:
     return scope_path, patch_path
 
 
+def test_inventory_excludes_only_untracked_generated_factory_state(
+    tmp_path: Path,
+) -> None:
+    from factoryline.deep_audit_io import inventory_candidate
+
+    scope_path, patch_path = _git_repair_case(tmp_path)
+    approval_path = tmp_path / ".factory" / "repair-approvals" / "approval.json"
+    approval_path.parent.mkdir(parents=True)
+    approval_path.write_text("{}\n", encoding="utf-8")
+    attempt_path = tmp_path / ".factory" / "repair-attempts" / "attempt" / "state.json"
+    attempt_path.parent.mkdir(parents=True)
+    attempt_path.write_text("{}\n", encoding="utf-8")
+    ignored_build = tmp_path / "build" / "cache.bin"
+    ignored_build.parent.mkdir(parents=True)
+    ignored_build.write_bytes(b"generated build input")
+    with (tmp_path / ".gitignore").open("a", encoding="utf-8") as stream:
+        stream.write("build/\n")
+    _git(tmp_path, "add", ".gitignore")
+    _git(tmp_path, "commit", "--quiet", "-m", "ignore build output")
+
+    inventory = inventory_candidate(tmp_path)
+    codes_and_paths = {(gap["code"], gap["path"]) for gap in inventory["gaps"]}
+    assert not any(
+        code == "IGNORED_INPUT_SCOPE" and path.startswith(".factory/")
+        for code, path in codes_and_paths
+    )
+    assert ("IGNORED_INPUT_SCOPE", "build/cache.bin") in codes_and_paths
+    assert scope_path.relative_to(tmp_path).as_posix() not in {
+        item["path"] for item in inventory["files"]
+    }
+    assert patch_path.relative_to(tmp_path).as_posix() not in {
+        item["path"] for item in inventory["files"]
+    }
+
+    collision = tmp_path / ".factory" / "scopes" / "collision.py"
+    collision.write_text("VALUE = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "-f", collision.relative_to(tmp_path).as_posix())
+    _git(tmp_path, "commit", "--quiet", "-m", "track generated-path collision")
+    tracked_collision = inventory_candidate(tmp_path)
+    assert any(
+        gap["code"] == "E_RESERVED_SOURCE"
+        and gap["path"] == ".factory/scopes/collision.py"
+        for gap in tracked_collision["gaps"]
+    )
+
+
+def test_deep_lane_normalization_failure_keeps_native_execution_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factoryline import deep_audit, deep_audit_sarif
+    from factoryline.deep_audit_io import digest
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    raw = b'{"deliberately":"not normalized"}'
+    facts = {
+        "exit_code": 0,
+        "cancelled": False,
+        "timed_out": False,
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": True,
+        "stdout_bytes": len(raw),
+        "stderr_bytes": 0,
+    }
+    lane = {
+        "id": "native-test",
+        "engine": "test-engine",
+        "image": "test-worker@sha256:" + "a" * 64,
+        "ruleset_sha256": "b" * 64,
+        "timeout_seconds": 30,
+    }
+    state = {"run_id": "a" * 32, "manifest_sha256": "c" * 64}
+    inventory = {"candidate_sha256": "d" * 64}
+
+    def run_command(_argv, _cwd, _timeout, _scratch, *, stdout_path, cancelled):
+        stdout_path.write_bytes(raw)
+        assert not cancelled.is_set()
+        return facts
+
+    def reject_bundle(*_args, **_kwargs):
+        raise RuntimeAuditError("E_RULE_ACCOUNTING", "details must not escape")
+
+    monkeypatch.setattr(deep_audit, "_docker_base", lambda: "docker")
+    monkeypatch.setattr(deep_audit, "_docker_preflight", lambda *_args: None)
+    monkeypatch.setattr(deep_audit, "_container_argv", lambda *_args: ["docker", "run"])
+    monkeypatch.setattr(deep_audit, "_container_cleanup", lambda *_args: True)
+    monkeypatch.setattr(deep_audit, "_monitor_lane", lambda *_args: None)
+    monkeypatch.setattr(
+        "factoryline.runtime_audit_process.run_bounded_command", run_command
+    )
+    monkeypatch.setattr(deep_audit_sarif, "normalize_execution_bundle", reject_bundle)
+
+    result = deep_audit._execute_lane(
+        tmp_path,
+        tmp_path / "run",
+        state,
+        tmp_path,
+        lane,
+        inventory,
+        {"obligations": []},
+        None,
+    )
+
+    native = result["native_execution"]
+    assert result["state"] == "INCOMPLETE"
+    assert result["gaps"] == ["E_RULE_ACCOUNTING"]
+    assert native["completion"] == "COMMAND_COMPLETED_NORMALIZATION_FAILED"
+    assert native["diagnostic_code"] == "E_RULE_ACCOUNTING"
+    assert native["command_sha256"] == digest(["docker", "run"])
+    assert native["image_sha256"] == digest(lane["image"])
+    assert native["source_candidate_sha256"] == inventory["candidate_sha256"]
+    assert native["manifest_sha256"] == state["manifest_sha256"]
+    assert native["config_sha256"] == lane["ruleset_sha256"]
+    assert native["output_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert native["cleanup_confirmed"] is True
+    assert result["execution"] is facts
+    assert "details must not escape" not in json.dumps(result)
+
+
 def _repair_checks() -> list[dict[str, object]]:
     return [
         {
@@ -508,6 +626,22 @@ def test_repair_approval_requires_exact_human_confirmation_and_bound_controls(
         "APPROVE REPAIR "
         + inspect_repair_candidate(tmp_path, scope_path, patch_path)["candidate_sha256"]
     )
+    source_candidate = "a" * 64
+    source_run = {
+        "observed_state": "INCOMPLETE",
+        "candidate_sha256": source_candidate,
+        "manifest_sha256": "b" * 64,
+        "event_sha256": "c" * 64,
+        "sequence": 3,
+    }
+    monkeypatch.setattr(
+        "factoryline.deep_audit.deep_run_status", lambda _root, _run_id: source_run
+    )
+    monkeypatch.setattr(
+        "factoryline.deep_audit_io.inventory_candidate",
+        lambda _root: {"candidate_sha256": source_candidate, "gaps": []},
+    )
+    kwargs["audit_run_id"] = "d" * 32
     approval = create_repair_approval(tmp_path, scope_path, patch_path, **kwargs)
     saved = json.loads((tmp_path / approval["path"]).read_text(encoding="utf-8"))
     assert approval["state"] == "APPROVED_NOT_EXECUTED"
@@ -518,6 +652,18 @@ def test_repair_approval_requires_exact_human_confirmation_and_bound_controls(
         == inspect_repair_candidate(tmp_path, scope_path, patch_path)["patch"]["sha256"]
     )
     assert len(saved["tool_contract_sha256"]) == 64
+    assert (
+        saved["confirmation_sha256"]
+        == hashlib.sha256(kwargs["confirmation"].encode("utf-8")).hexdigest()
+    )
+    assert saved["origin_audit"] == {
+        "run_id": "d" * 32,
+        "candidate_sha256": source_candidate,
+        "manifest_sha256": "b" * 64,
+        "event_sha256": "c" * 64,
+        "sequence": 3,
+    }
+    assert repair_sandbox._verify_approval(saved) == approval["approval_sha256"]
 
 
 def test_repair_approval_rejects_missing_controls_and_unpinned_images(
@@ -677,6 +823,309 @@ def test_repair_approval_revocation_and_stale_candidate_fail_closed(
     assert result["primary_checkout_unchanged"] is True
     with pytest.raises(RepairSandboxError, match="already been consumed"):
         execute_approved_repair(other, other / approval2["path"])
+
+
+def test_repair_attempt_journal_detects_reorder_and_missing_events(
+    tmp_path: Path,
+) -> None:
+    approval_sha = "a" * 64
+    directory = tmp_path / ".factory" / "repair-attempts" / approval_sha
+    repair_sandbox._begin_attempt(directory, approval_sha)
+    state = repair_sandbox._read_attempt_state(directory)
+    state["phase"] = "BASELINE"
+    repair_sandbox._persist_attempt(directory, state)
+    observed = repair_sandbox.verify_repair_attempt_journal(tmp_path, approval_sha)
+    assert observed["state"]["event_sequence"] == 2
+    assert observed["event_sha256"] == observed["state"]["event_sha256"]
+
+    first = directory / "event-00001.json"
+    saved = first.read_text(encoding="utf-8")
+    tampered = json.loads(saved)
+    tampered["sequence"] = 2
+    first.write_text(json.dumps(tampered), encoding="utf-8")
+    with pytest.raises(RepairSandboxError, match="event chain"):
+        repair_sandbox.verify_repair_attempt_journal(tmp_path, approval_sha)
+
+    first.write_text(saved, encoding="utf-8")
+    (directory / "event-00002.json").unlink()
+    with pytest.raises((RepairSandboxError, FileNotFoundError)):
+        repair_sandbox.verify_repair_attempt_journal(tmp_path, approval_sha)
+
+
+def test_repair_check_receipt_states_expected_result(tmp_path: Path) -> None:
+    approval_sha = "b" * 64
+    directory = tmp_path / ".factory" / "repair-attempts" / approval_sha
+    state = repair_sandbox._begin_attempt(directory, approval_sha)
+    check = _repair_checks()[0]
+    outcome = {
+        "result": {
+            "stdout": b"passed",
+            "stderr": b"",
+            "exit_code": 0,
+            "cleanup_confirmed": True,
+            "reason": None,
+        },
+        "container_cleanup_confirmed": True,
+    }
+    assert repair_sandbox._record_check(
+        directory, state, check, "repaired", outcome, True
+    )
+    assert state["checks"][-1]["result"] == "PASS"
+    outcome["result"]["exit_code"] = 1
+    assert not repair_sandbox._record_check(
+        directory, state, check, "repaired", outcome, True
+    )
+    assert state["checks"][-1]["result"] == "FAIL"
+
+
+def _write_lineage_run(
+    root: Path,
+    run_id: str,
+    parent_run: str | None = None,
+    request_path: str | None = None,
+) -> None:
+    from factoryline.deep_audit import _event
+    from factoryline.deep_audit_io import digest, run_directory, write_run_json
+    from factoryline.runtime_audit_common import sha256_bytes
+
+    candidate = "c" * 64
+    manifest_sha = "d" * 64
+    plan = {
+        "schema": "factory.deep-execution.v1",
+        "candidate_sha256": candidate,
+        "lanes": [
+            {"id": "static-python", "coverage": "coverage.json", "rule_ids": ["R1"]}
+        ],
+    }
+    directory = run_directory(root, run_id, create=True)
+    request_reference = None
+    if request_path is not None:
+        raw_request = (root / request_path).read_bytes()
+        request_reference = {
+            "path": request_path,
+            "sha256": sha256_bytes(raw_request),
+            "bytes": len(raw_request),
+        }
+    write_run_json(directory, "manifest.json", plan)
+    write_run_json(
+        directory, "inventory.json", {"candidate_sha256": candidate, "files": []}
+    )
+    coverage = {"schema": "factory.deep-coverage.v1", "complete": False}
+    write_run_json(
+        directory,
+        "bundle-static-python.json",
+        {"artifacts": {"coverage.json": coverage}},
+    )
+    state = {
+        "schema": "factory.deep-run.v1",
+        "run_id": run_id,
+        "state": "RUNNING",
+        "candidate_sha256": candidate,
+        "manifest_sha256": manifest_sha,
+        "manifest_content_sha256": digest(plan),
+        "authorization_sha256": "e" * 64,
+        "request_path": request_reference["path"] if request_reference else None,
+        "request_sha256": request_reference["sha256"] if request_reference else None,
+        "request_bytes": request_reference["bytes"] if request_reference else None,
+        "parent_run": parent_run,
+        "lanes": [
+            {
+                "lane_id": "static-python",
+                "state": "INCOMPLETE",
+                "gaps": ["RULE_ACCOUNTING_MISSING"],
+                "findings": [],
+                "report_sha256": "f" * 64,
+                "coverage_sha256": digest(coverage),
+                "challenge_sha256": "0" * 64,
+                "rule_accounting_sha256": None,
+            }
+        ],
+        "gaps": [],
+        "analysis_complete": False,
+        "authority": "none",
+        "release_approval": False,
+    }
+    _event(
+        directory,
+        state,
+        "run_started",
+        {"candidate_sha256": candidate, "request": request_reference},
+    )
+    state["state"] = "PAUSED"
+    _event(directory, state, "run_paused", {"analysis_complete": False})
+    write_run_json(directory, "state.json", state)
+
+
+def test_deep_lineage_marks_missing_rules_and_rejects_resume_reorder(
+    tmp_path: Path,
+) -> None:
+    from factoryline.deep_audit import (
+        build_deep_audit_lineage,
+        verify_deep_audit_lineage,
+        write_deep_audit_lineage,
+    )
+
+    first, resumed = "1" * 32, "2" * 32
+    _write_lineage_run(tmp_path, first)
+    _write_lineage_run(tmp_path, resumed, first)
+    ordered = build_deep_audit_lineage(tmp_path, [first, resumed])
+    assert "RULE_ACCOUNTING_MISSING:static-python" in ordered["gaps"]
+    assert ordered["state"] == "INCOMPLETE"
+    assert verify_deep_audit_lineage(ordered)["valid"]
+    assert ordered["authority"] == {
+        "execution": False,
+        "approval": False,
+        "merge": False,
+        "deployment": False,
+        "signing": False,
+    }
+    assert ordered["authentication"] == "UNSIGNED_INTEGRITY_ONLY"
+    assert "stdout" not in json.dumps(ordered)
+    assert any(event["kind"] == "run_paused" for event in ordered["runs"][0]["events"])
+    written = write_deep_audit_lineage(tmp_path, [first, resumed])
+    assert (tmp_path / written["receipt_path"]).is_file()
+    tampered = dict(ordered)
+    tampered["chain"] = list(ordered["chain"])
+    tampered["chain"][0] = {**tampered["chain"][0], "reference_sha256": "0" * 64}
+    assert not verify_deep_audit_lineage(tampered)["valid"]
+
+    reversed_lineage = build_deep_audit_lineage(tmp_path, [resumed, first])
+    assert "RESUME_PARENT_NOT_IN_ORDERED_LINEAGE" in reversed_lineage["gaps"]
+
+
+def test_lineage_complete_state_rejects_empty_or_unbound_rule_matrices(
+    tmp_path: Path,
+) -> None:
+    from factoryline.deep_audit import (
+        _lineage_chain,
+        _lineage_lane_complete,
+        _lineage_references,
+        build_deep_audit_lineage,
+        verify_deep_audit_lineage,
+    )
+    from factoryline.deep_audit_io import digest
+
+    run_id = "3" * 32
+    rerun_id = "4" * 32
+    _write_lineage_run(tmp_path, run_id, request_path=None)
+    _write_lineage_run(tmp_path, rerun_id, parent_run=run_id, request_path=None)
+    receipt = build_deep_audit_lineage(tmp_path, [run_id, rerun_id])
+    families = [
+        ("codeql", "static"),
+        ("syft", "dependencies"),
+        ("osv", "dependencies"),
+        ("gitleaks", "secrets"),
+        ("trivy", "configuration"),
+        ("runtime", "runtime"),
+        ("atheris", "fuzz"),
+    ]
+
+    def complete_lane(engine: str, family: str) -> dict:
+        source = {
+            "path": "src.py",
+            "source_sha256": "a" * 64,
+            "disposition": "executed",
+            "evidence_sha256": "b" * 64,
+        }
+        accounting = {
+            "schema": "factory.deep-rule-accounting.v1",
+            "ruleset_sha256": "c" * 64,
+            "invocation_sha256": "d" * 64,
+            "native_report_sha256": "e" * 64,
+            "rules": [{"rule_id": "R1", "sources": [source]}],
+        }
+        accounting["accounting_sha256"] = digest(accounting)
+        return {
+            "lane_id": engine,
+            "engine": engine,
+            "family": family,
+            "state": "OBSERVED",
+            "rule_accounting_sha256": accounting["accounting_sha256"],
+            "expected_rule_ids": ["R1"],
+            "source_paths": ["src.py"],
+            "rule_accounting": accounting,
+        }
+
+    def reseal(candidate: dict) -> dict:
+        candidate["gaps"] = []
+        candidate["state"] = "LINEAGE_BOUND_UNAUTHENTICATED"
+        for run in candidate["runs"]:
+            run["request_state"] = "BOUND"
+            run["analysis_complete"] = True
+            if not run["lanes"] or run["lanes"][0].get("engine") is None:
+                run["lanes"] = [complete_lane(*item) for item in families]
+        candidate["repair"] = {
+            "approval_sha256": "f" * 64,
+            "attempt_status": "VERIFIED",
+            "cleanup_confirmed": True,
+            "primary_checkout_unchanged": True,
+            "candidate_after_sha256": "1" * 64,
+            "rerun_candidate_sha256": "1" * 64,
+            "events": [],
+        }
+        candidate["chain"], candidate["chain_head"] = _lineage_chain(
+            _lineage_references(candidate["runs"], candidate["repair"])
+        )
+        candidate["lineage_sha256"] = digest(
+            {key: value for key, value in candidate.items() if key != "lineage_sha256"}
+        )
+        return candidate
+
+    valid_claim = reseal(receipt)
+    assert all(
+        _lineage_lane_complete(lane) for lane in valid_claim["runs"][0]["lanes"]
+    ), [
+        lane
+        for lane in valid_claim["runs"][0]["lanes"]
+        if not _lineage_lane_complete(lane)
+    ]
+    assert verify_deep_audit_lineage(valid_claim)["valid"], verify_deep_audit_lineage(
+        valid_claim
+    )
+
+    mutations = []
+    missing_family = json.loads(json.dumps(valid_claim))
+    missing_family["runs"][0]["lanes"].pop()
+    mutations.append(missing_family)
+    empty_rules = json.loads(json.dumps(valid_claim))
+    empty_rules["runs"][0]["lanes"][0]["rule_accounting"]["rules"] = []
+    mutations.append(empty_rules)
+    empty_sources = json.loads(json.dumps(valid_claim))
+    empty_sources["runs"][0]["lanes"][0]["rule_accounting"]["rules"][0]["sources"] = []
+    mutations.append(empty_sources)
+    wrong_ledger_hash = json.loads(json.dumps(valid_claim))
+    wrong_ledger_hash["runs"][0]["lanes"][0]["rule_accounting_sha256"] = "0" * 64
+    mutations.append(wrong_ledger_hash)
+    malformed_rule = json.loads(json.dumps(valid_claim))
+    malformed_rule["runs"][0]["lanes"][0]["rule_accounting"]["rules"][0]["rule_id"] = []
+    mutations.append(malformed_rule)
+    for index, changed in enumerate(mutations):
+        reseal(changed)
+        assert not verify_deep_audit_lineage(changed)["valid"], index
+
+
+def test_deep_lineage_binds_exact_request_file_and_detects_drift(
+    tmp_path: Path,
+) -> None:
+    from factoryline.deep_audit import build_deep_audit_lineage
+
+    request = tmp_path / ".factory" / "deep-runs" / "requests" / "operator-request.txt"
+    request.parent.mkdir(parents=True)
+    request.write_text(
+        "Run a native audit on the explicitly selected operator test repository.",
+        encoding="utf-8",
+    )
+    run_id = "a" * 32
+    relative = request.relative_to(tmp_path).as_posix()
+    _write_lineage_run(tmp_path, run_id, request_path=relative)
+    lineage = build_deep_audit_lineage(tmp_path, [run_id])
+    assert lineage["runs"][0]["request_state"] == "BOUND"
+    assert lineage["runs"][0]["request_path"] == relative
+    assert "REQUEST_ARTIFACT_MISMATCH" not in lineage["gaps"]
+
+    request.write_text("changed after the run", encoding="utf-8")
+    stale = build_deep_audit_lineage(tmp_path, [run_id])
+    assert "REQUEST_ARTIFACT_MISMATCH" in stale["gaps"]
 
 
 def test_repair_execution_runs_only_in_digest_pinned_docker(

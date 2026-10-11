@@ -209,6 +209,10 @@ def _add_execution_parsers(sub: Any) -> None:
             parser.add_argument("--manifest", required=True)
             parser.add_argument("--manifest-sha256", required=True)
             parser.add_argument("--authorization", required=True)
+            parser.add_argument(
+                "--request-file",
+                help="bounded exact operator request under .factory/deep-runs/requests",
+            )
             parser.add_argument("--resume")
             parser.add_argument(
                 "--events",
@@ -265,6 +269,7 @@ def _run_execution(args: Any) -> int:
                 authorization=Path(args.authorization),
                 trust_root=Path(args.trust_root),
                 trust_root_sha256=args.trust_root_sha256,
+                request_file=Path(args.request_file) if args.request_file else None,
                 resume=args.resume,
                 emit=event if args.events else None,
             )

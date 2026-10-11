@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import secrets
 import shutil
+import stat
 import tempfile
 import time
 from typing import Any
@@ -61,7 +62,8 @@ _ISOLATION_LEVELS = (
     "CONTAINER_BOUNDARY",
     "REMOTE_SANDBOX_VERIFIED",
 )
-REPAIR_APPROVAL_SCHEMA = "factory.repair_approval.v1"
+REPAIR_APPROVAL_SCHEMA = "factory.repair_approval.v2"
+_LEGACY_REPAIR_APPROVAL_SCHEMA = "factory.repair_approval.v1"
 REPAIR_ATTEMPT_SCHEMA = "factory.repair_attempt.v1"
 _APPROVE_PREFIX = "APPROVE REPAIR "
 _DOCKER_LIMITS = (
@@ -1456,6 +1458,59 @@ def _approval_paths(root: Path, approval_sha: str) -> tuple[Path, Path]:
     )
 
 
+def _repair_origin_binding(root: Path, run_id: str | None) -> dict[str, Any] | None:
+    if run_id is None:
+        return None
+    from .deep_audit import deep_run_status
+    from .deep_audit_io import inventory_candidate
+
+    try:
+        run = deep_run_status(root, run_id)
+        current = inventory_candidate(root)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise RepairSandboxError(
+            "REPAIR_ORIGIN_INVALID", "origin audit run could not be verified"
+        ) from exc
+    if run.get("observed_state") == "RUNNING":
+        raise RepairSandboxError(
+            "REPAIR_ORIGIN_ACTIVE", "origin audit must be paused or terminal"
+        )
+    if run.get("candidate_sha256") != current.get("candidate_sha256") or current.get(
+        "gaps"
+    ):
+        raise RepairSandboxError(
+            "REPAIR_ORIGIN_STALE", "workspace candidate differs from the origin audit"
+        )
+    return {
+        "run_id": run_id,
+        "candidate_sha256": run["candidate_sha256"],
+        "manifest_sha256": run["manifest_sha256"],
+        "event_sha256": run["event_sha256"],
+        "sequence": run["sequence"],
+    }
+
+
+def _verify_repair_origin(root: Path, origin: object) -> dict[str, Any] | None:
+    if origin is None:
+        return None
+    if not isinstance(origin, dict) or set(origin) != {
+        "run_id",
+        "candidate_sha256",
+        "manifest_sha256",
+        "event_sha256",
+        "sequence",
+    }:
+        raise RepairSandboxError(
+            "REPAIR_ORIGIN_INVALID", "approval origin binding is malformed"
+        )
+    binding = _repair_origin_binding(root, origin.get("run_id"))
+    if binding != origin:
+        raise RepairSandboxError(
+            "REPAIR_ORIGIN_STALE", "origin audit changed after approval"
+        )
+    return binding
+
+
 def create_repair_approval(
     root: Path,
     scope_path: Path,
@@ -1468,6 +1523,7 @@ def create_repair_approval(
     container_digest: str,
     checks: list[dict[str, Any]],
     protected_paths: list[str] | None = None,
+    audit_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Persist an explicit approval bound to one candidate and exact tool contract."""
     workspace = _mount_safe_workspace(root)
@@ -1496,6 +1552,7 @@ def create_repair_approval(
             "exact candidate confirmation is required",
         )
     normalized = _normalize_checks(checks)
+    origin = _repair_origin_binding(workspace, audit_run_id) if audit_run_id else None
     contract = {
         "checks": normalized,
         "docker_image": image,
@@ -1518,11 +1575,13 @@ def create_repair_approval(
         "patch_path": patch_file.relative_to(workspace).as_posix(),
         "patch_sha256": candidate["patch"]["sha256"],
         "candidate_sha256": candidate["candidate_sha256"],
+        "origin_audit": origin,
         "touched_paths": candidate["touched_paths"],
         "protected_paths": protected,
         "tool_contract": contract,
         "tool_contract_sha256": _sha(contract),
         "approved_by": signer,
+        "confirmation_sha256": sha256(confirmation.encode("utf-8")).hexdigest(),
         "approval_trust_boundary": "The filesystem owner records this explicit confirmation; approved_by is a label, not authenticated identity.",
         "approved_at": datetime.now(timezone.utc).isoformat(),
         "expires_at": expiry.isoformat(),
@@ -1703,10 +1762,42 @@ def _verify_approval(approval: dict[str, Any]) -> str:
         "single_use",
         "authority",
     }
+    if approval.get("schema") == REPAIR_APPROVAL_SCHEMA:
+        expected_keys.add("origin_audit")
+        expected_keys.add("confirmation_sha256")
+    elif approval.get("schema") != _LEGACY_REPAIR_APPROVAL_SCHEMA:
+        expected_keys.add("origin_audit")
     if set(core) != expected_keys:
         raise RepairSandboxError(
             "REPAIR_APPROVAL_TAMPERED", "approval fields are unsupported"
         )
+    if approval.get("schema") == REPAIR_APPROVAL_SCHEMA:
+        origin = approval.get("origin_audit")
+        if not _digest(approval.get("confirmation_sha256")):
+            raise RepairSandboxError(
+                "REPAIR_APPROVAL_TAMPERED", "confirmation digest is malformed"
+            )
+        if origin is not None and (
+            not isinstance(origin, dict)
+            or set(origin)
+            != {
+                "run_id",
+                "candidate_sha256",
+                "manifest_sha256",
+                "event_sha256",
+                "sequence",
+            }
+            or not all(
+                _digest(origin.get(key))
+                for key in ("candidate_sha256", "manifest_sha256", "event_sha256")
+            )
+            or type(origin.get("sequence")) is not int
+            or origin["sequence"] < 1
+            or not isinstance(origin.get("run_id"), str)
+        ):
+            raise RepairSandboxError(
+                "REPAIR_APPROVAL_TAMPERED", "origin audit binding is malformed"
+            )
     contract = approval.get("tool_contract")
     if not _valid_tool_contract(contract) or _sha(contract) != approval.get(
         "tool_contract_sha256"
@@ -1730,7 +1821,14 @@ def _verify_approval(approval: dict[str, Any]) -> str:
 def _valid_approval_envelope(
     approval: dict[str, Any], core: dict[str, Any], valid_hash: bool
 ) -> bool:
-    if approval.get("schema") != REPAIR_APPROVAL_SCHEMA or not valid_hash:
+    if (
+        approval.get("schema")
+        not in {
+            REPAIR_APPROVAL_SCHEMA,
+            _LEGACY_REPAIR_APPROVAL_SCHEMA,
+        }
+        or not valid_hash
+    ):
         return False
     expected_keys = {
         "schema",
@@ -1752,6 +1850,9 @@ def _valid_approval_envelope(
         "single_use",
         "authority",
     }
+    if approval.get("schema") == REPAIR_APPROVAL_SCHEMA:
+        expected_keys.add("origin_audit")
+        expected_keys.add("confirmation_sha256")
     return set(core) == expected_keys
 
 
@@ -1820,10 +1921,143 @@ def request_repair_stop(
 
 def _persist_attempt(directory: Path, state: dict[str, Any]) -> None:
     state["updated_at"] = datetime.now(timezone.utc).isoformat()
+    sequence = state.get("event_sequence", 0) + 1
+    previous = state.get("event_sha256")
+    snapshot = {
+        key: value
+        for key, value in state.items()
+        if key not in {"event_sequence", "event_sha256"}
+    }
+    core = {
+        "sequence": sequence,
+        "approval_sha256": state.get("approval_sha256"),
+        "at": state["updated_at"],
+        "phase": state.get("phase"),
+        "status": state.get("status"),
+        "check_count": len(state.get("checks", [])),
+        "state_sha256": _sha(snapshot),
+        "previous_sha256": previous,
+    }
+    event = {**core, "event_sha256": _sha(core)}
+    _atomic_text(
+        directory / f"event-{sequence:05d}.json",
+        json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n",
+    )
+    state["event_sequence"] = sequence
+    state["event_sha256"] = event["event_sha256"]
     _atomic_text(
         directory / "state.json",
         json.dumps(state, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
     )
+
+
+def _attempt_directory(workspace: Path, approval_sha256: str) -> Path:
+    directory = workspace / ".factory" / "repair-attempts" / approval_sha256
+    current = workspace
+    for part in (".factory", "repair-attempts", approval_sha256):
+        current = current / part
+        info = current.lstat()
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or getattr(info, "st_file_attributes", 0) & 0x400
+        ):
+            raise RepairSandboxError(
+                "REPAIR_ATTEMPT_INTEGRITY", "linked attempt directory"
+            )
+    return directory
+
+
+def _attempt_state_file(workspace: Path, approval_sha256: str) -> dict[str, Any]:
+    from .deep_audit_io import local_file
+    from .runtime_audit_common import RuntimeAuditError
+
+    try:
+        path = local_file(
+            workspace, f".factory/repair-attempts/{approval_sha256}/state.json"
+        )
+    except RuntimeAuditError as exc:
+        raise RepairSandboxError(
+            "REPAIR_ATTEMPT_INTEGRITY", "attempt state is missing or linked"
+        ) from exc
+    if path.stat().st_size > 2_000_000:
+        raise RepairSandboxError(
+            "REPAIR_ATTEMPT_INTEGRITY", "attempt state exceeds size limit"
+        )
+    state = json.loads(path.read_text(encoding="utf-8"))
+    sequence = state.get("event_sequence")
+    if type(sequence) is not int or not 1 <= sequence <= 100_000:
+        raise RepairSandboxError(
+            "REPAIR_ATTEMPT_INTEGRITY", "event sequence is invalid"
+        )
+    return state
+
+
+def _attempt_events(
+    workspace: Path, approval_sha256: str, sequence: int
+) -> tuple[list, str]:
+    from .deep_audit_io import local_file
+    from .runtime_audit_common import RuntimeAuditError
+
+    events, previous, total_bytes = [], None, 0
+    for index in range(1, sequence + 1):
+        relative = f".factory/repair-attempts/{approval_sha256}/event-{index:05d}.json"
+        try:
+            path = local_file(workspace, relative)
+        except RuntimeAuditError as exc:
+            raise RepairSandboxError(
+                "REPAIR_ATTEMPT_INTEGRITY", "attempt event is missing or linked"
+            ) from exc
+        total_bytes += path.stat().st_size
+        if path.stat().st_size > 8192 or total_bytes > 32_000_000:
+            raise RepairSandboxError(
+                "REPAIR_ATTEMPT_INTEGRITY", "attempt events exceed size limits"
+            )
+        event = json.loads(path.read_text(encoding="utf-8"))
+        core = {key: value for key, value in event.items() if key != "event_sha256"}
+        if (
+            event.get("sequence") != index
+            or event.get("approval_sha256") != approval_sha256
+            or event.get("previous_sha256") != previous
+            or event.get("event_sha256") != _sha(core)
+        ):
+            raise RepairSandboxError(
+                "REPAIR_ATTEMPT_INTEGRITY", "attempt event chain is invalid"
+            )
+        previous = event["event_sha256"]
+        events.append(event)
+    return events, previous
+
+
+def _verify_attempt_head(
+    state: dict, events: list, sequence: int, previous: str
+) -> None:
+    snapshot = {
+        key: value
+        for key, value in state.items()
+        if key not in {"event_sequence", "event_sha256"}
+    }
+    if (
+        previous != state.get("event_sha256")
+        or sequence != len(events)
+        or events[-1].get("state_sha256") != _sha(snapshot)
+    ):
+        raise RepairSandboxError(
+            "REPAIR_ATTEMPT_INTEGRITY", "attempt state does not match its event head"
+        )
+
+
+def verify_repair_attempt_journal(root: Path, approval_sha256: str) -> dict[str, Any]:
+    """Verify local attempt event ordering and current state binding; no authority."""
+    if not _digest(approval_sha256):
+        raise RepairSandboxError("REPAIR_ATTEMPT_INVALID", "approval hash is invalid")
+    workspace = _workspace(root)
+    _attempt_directory(workspace, approval_sha256)
+    state = _attempt_state_file(workspace, approval_sha256)
+    sequence = state["event_sequence"]
+    events, head = _attempt_events(workspace, approval_sha256, sequence)
+    _verify_attempt_head(state, events, sequence, head)
+    return {"state": state, "events": events, "event_sha256": head}
 
 
 def _persist_failure(
@@ -1926,6 +2160,20 @@ def _record_check(
     log_path.write_bytes(body)
     combined = (stdout + b"\n" + stderr).decode("utf-8", errors="replace")
     failing = stage == "baseline" or check["kind"] == "negative"
+    code = result.get("exit_code")
+    no_runner_failure = result.get("reason") is None
+    failure_matches = (
+        code == check["failure"]["exit_code"]
+        and check["failure"]["signature"] in combined
+    )
+    expected = failure_matches if failing else code == 0
+    passed = (
+        expected
+        and unchanged
+        and no_runner_failure
+        and bool(result.get("cleanup_confirmed"))
+        and bool(outcome["container_cleanup_confirmed"])
+    )
     record = {
         "check_id": check["id"],
         "stage": stage,
@@ -1936,23 +2184,11 @@ def _record_check(
         "log": log_path.name,
         "log_sha256": sha256(body).hexdigest(),
         "expected": "failure" if failing else "success",
+        "result": "PASS" if passed else "FAIL",
     }
     state["checks"].append(record)
     _persist_attempt(directory, state)
-    code = record["exit_code"]
-    no_runner_failure = result.get("reason") is None
-    failure_matches = (
-        code == check["failure"]["exit_code"]
-        and check["failure"]["signature"] in combined
-    )
-    expected = failure_matches if failing else code == 0
-    return (
-        expected
-        and unchanged
-        and no_runner_failure
-        and record["process_cleanup_confirmed"]
-        and record["container_cleanup_confirmed"]
-    )
+    return bool(passed)
 
 
 def _worktree_cleanup(root: Path, worktree: Path, temporary: Path) -> bool:
@@ -2107,18 +2343,25 @@ def _apply_candidate(worktree: Path, attempt: Path) -> None:
         )
 
 
-def _attempt_state(approval_sha: str) -> dict[str, Any]:
+def _attempt_state(
+    approval_sha: str, origin: dict[str, Any] | None = None
+) -> dict[str, Any]:
     return {
         "schema": REPAIR_ATTEMPT_SCHEMA,
         "approval_sha256": approval_sha,
         "status": "RUNNING",
         "phase": "VALIDATING",
         "checks": [],
+        "origin_audit": origin,
+        "candidate_before_sha256": None,
+        "candidate_after_sha256": None,
         "started_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
-def _begin_attempt(directory: Path, approval_sha: str) -> dict[str, Any]:
+def _begin_attempt(
+    directory: Path, approval_sha: str, origin: dict[str, Any] | None = None
+) -> dict[str, Any]:
     directory.parent.mkdir(parents=True, exist_ok=True)
     try:
         directory.mkdir()
@@ -2127,7 +2370,7 @@ def _begin_attempt(directory: Path, approval_sha: str) -> dict[str, Any]:
             "REPAIR_APPROVAL_ALREADY_USED",
             "single-use approval has already been consumed",
         ) from exc
-    state = _attempt_state(approval_sha)
+    state = _attempt_state(approval_sha, origin)
     _persist_attempt(directory, state)
     return state
 
@@ -2162,100 +2405,145 @@ def _finish_attempt(
     _persist_attempt(directory, state)
 
 
-def execute_approved_repair(root: Path, approval_path: Path) -> dict[str, Any]:
-    """Consume one approval and run its patch checks only in isolated Docker."""
-    workspace = _mount_safe_workspace(root)
-    approval_file = _under_workspace(workspace, approval_path, file_only=True)
-    approval = _read_approval(approval_file)
-    approval_sha = _verify_approval(approval)
-    expected_file, revoked_file = _approval_paths(workspace, approval_sha)
-    expiry = _utc(approval.get("expires_at"), "expires_at")
-    if (
-        approval_file != expected_file
-        or revoked_file.exists()
-        or expiry <= datetime.now(timezone.utc)
-    ):
+def _prepare_repair_attempt(
+    workspace: Path,
+    attempt: Path,
+    approval: dict,
+    state: dict,
+    revoked_file: Path,
+    deadline: float,
+    resources: dict,
+) -> tuple:
+    _reject_checkout_filters(workspace)
+    base = _clean_base(workspace, approval["base_commit"])
+    resources["base"] = base
+    _verify_approved_candidate(workspace, approval)
+    origin = approval.get("origin_audit")
+    if origin is not None:
+        current = _repair_origin_binding(workspace, origin["run_id"])
+        if current != origin:
+            raise RepairSandboxError(
+                "REPAIR_ORIGIN_STALE", "origin audit changed before execution"
+            )
+        state["candidate_before_sha256"] = origin["candidate_sha256"]
+        _persist_attempt(attempt, state)
+    contract = approval["tool_contract"]
+    _assert_docker_engine(workspace, contract["engine_identity"])
+    image_name, image_digest = contract["docker_image"].rsplit("@sha256:", 1)
+    image = _image_ref(
+        workspace, image_name, image_digest, contract["engine_identity"]["context"]
+    )
+    patch = (workspace / approval["patch_path"]).read_bytes()
+    if sha256(patch).hexdigest() != approval["patch_sha256"]:
         raise RepairSandboxError(
-            "REPAIR_APPROVAL_REJECTED",
-            "approval is expired, revoked, or stored unexpectedly",
+            "REPAIR_CANDIDATE_STALE", "patch changed before execution"
         )
-    attempt = workspace / ".factory" / "repair-attempts" / approval_sha
-    state = _begin_attempt(attempt, approval_sha)
+    (attempt / "candidate.patch").write_bytes(patch)
+    _reject_checkout_filters(workspace)
+    temporary = attempt / "execution"
+    resources["temporary"] = temporary
+    temporary.mkdir()
+    worktree = temporary / "checkout"
+    resources["worktree"] = worktree
+    created = _git(workspace, ["worktree", "add", "--detach", str(worktree), base], 120)
+    if not created.get("ok"):
+        raise RepairSandboxError(
+            "REPAIR_WORKTREE_CREATE_FAILED",
+            str(created.get("output", "git worktree add failed")),
+        )
+    _reject_runtime_secrets(worktree)
+
+    def heartbeat() -> bool:
+        return (
+            _approval_live(workspace, approval, revoked_file, attempt)
+            and time.monotonic() < deadline
+        )
+
+    return image, heartbeat
+
+
+def _run_repair_stages(
+    workspace: Path,
+    attempt: Path,
+    worktree: Path,
+    approval: dict,
+    image: str,
+    heartbeat,
+    deadline: float,
+    state: dict,
+) -> dict:
+    checks = approval["tool_contract"]["checks"]
+    state["phase"] = "BASELINE"
+    _persist_attempt(attempt, state)
+    _run_stage(
+        workspace,
+        attempt,
+        worktree,
+        approval,
+        image,
+        checks,
+        "baseline",
+        heartbeat,
+        deadline,
+    )
+    state = _read_attempt_state(attempt)
+    state["phase"] = "PATCH_APPLY"
+    _persist_attempt(attempt, state)
+    _require_live(heartbeat, deadline)
+    _apply_candidate(worktree, attempt)
+    if state.get("origin_audit") is not None:
+        from .deep_audit_io import inventory_candidate
+
+        inventory = inventory_candidate(worktree)
+        if inventory.get("gaps"):
+            raise RepairSandboxError(
+                "REPAIR_RESULT_INCOMPLETE",
+                "patched worktree candidate inventory has unresolved gaps",
+            )
+        state["candidate_after_sha256"] = inventory["candidate_sha256"]
+    state["phase"] = "REPAIRED_CHECKS"
+    _persist_attempt(attempt, state)
+    _run_stage(
+        workspace,
+        attempt,
+        worktree,
+        approval,
+        image,
+        checks,
+        "repaired",
+        heartbeat,
+        deadline,
+    )
+    state = _read_attempt_state(attempt)
+    state["status"], state["phase"] = "VERIFIED", "VERIFIED"
+    _persist_attempt(attempt, state)
+    return state
+
+
+def _execute_repair_lifecycle(
+    workspace: Path,
+    attempt: Path,
+    approval: dict,
+    origin: dict | None,
+    revoked_file: Path,
+    state: dict,
+) -> tuple:
     deadline = time.monotonic() + 600
-    base = None
-    temporary = None
-    worktree = None
+    resources = {"base": None, "temporary": None, "worktree": None}
     try:
-        _reject_checkout_filters(workspace)
-        base = _clean_base(workspace, approval["base_commit"])
-        _verify_approved_candidate(workspace, approval)
-        contract = approval["tool_contract"]
-        _assert_docker_engine(workspace, contract["engine_identity"])
-        image_name, image_digest = contract["docker_image"].rsplit("@sha256:", 1)
-        image = _image_ref(
-            workspace, image_name, image_digest, contract["engine_identity"]["context"]
+        image, heartbeat = _prepare_repair_attempt(
+            workspace, attempt, approval, state, revoked_file, deadline, resources
         )
-        patch_file = workspace / approval["patch_path"]
-        patch = patch_file.read_bytes()
-        if sha256(patch).hexdigest() != approval["patch_sha256"]:
-            raise RepairSandboxError(
-                "REPAIR_CANDIDATE_STALE", "patch changed before execution"
-            )
-        (attempt / "candidate.patch").write_bytes(patch)
-        _reject_checkout_filters(workspace)
-        temporary = attempt / "execution"
-        temporary.mkdir()
-        worktree = temporary / "checkout"
-        created = _git(
-            workspace, ["worktree", "add", "--detach", str(worktree), base], 120
-        )
-        if not created.get("ok"):
-            raise RepairSandboxError(
-                "REPAIR_WORKTREE_CREATE_FAILED",
-                str(created.get("output", "git worktree add failed")),
-            )
-        _reject_runtime_secrets(worktree)
-
-        def heartbeat() -> bool:
-            return (
-                _approval_live(workspace, approval, revoked_file, attempt)
-                and time.monotonic() < deadline
-            )
-
-        state["phase"] = "BASELINE"
-        _persist_attempt(attempt, state)
-        _run_stage(
+        state = _run_repair_stages(
             workspace,
             attempt,
-            worktree,
+            resources["worktree"],
             approval,
             image,
-            approval["tool_contract"]["checks"],
-            "baseline",
             heartbeat,
             deadline,
+            state,
         )
-        state = _read_attempt_state(attempt)
-        state["phase"] = "PATCH_APPLY"
-        _persist_attempt(attempt, state)
-        _require_live(heartbeat, deadline)
-        _apply_candidate(worktree, attempt)
-        state["phase"] = "REPAIRED_CHECKS"
-        _persist_attempt(attempt, state)
-        _run_stage(
-            workspace,
-            attempt,
-            worktree,
-            approval,
-            image,
-            approval["tool_contract"]["checks"],
-            "repaired",
-            heartbeat,
-            deadline,
-        )
-        state = _read_attempt_state(attempt)
-        state["status"], state["phase"] = "VERIFIED", "VERIFIED"
-        _persist_attempt(attempt, state)
     except RepairSandboxError as exc:
         state = _persist_failure(
             attempt,
@@ -2280,8 +2568,40 @@ def execute_approved_repair(root: Path, approval_path: Path) -> dict[str, Any]:
         )
         raise
     finally:
-        _finish_attempt(workspace, attempt, state, base, worktree, temporary)
-    state = _read_attempt_state(attempt)
+        _finish_attempt(
+            workspace,
+            attempt,
+            state,
+            resources["base"],
+            resources["worktree"],
+            resources["temporary"],
+        )
+    return _read_attempt_state(attempt)
+
+
+def execute_approved_repair(root: Path, approval_path: Path) -> dict[str, Any]:
+    """Consume one approval and run its patch checks only in isolated Docker."""
+    workspace = _mount_safe_workspace(root)
+    approval_file = _under_workspace(workspace, approval_path, file_only=True)
+    approval = _read_approval(approval_file)
+    approval_sha = _verify_approval(approval)
+    expected_file, revoked_file = _approval_paths(workspace, approval_sha)
+    expiry = _utc(approval.get("expires_at"), "expires_at")
+    if (
+        approval_file != expected_file
+        or revoked_file.exists()
+        or expiry <= datetime.now(timezone.utc)
+    ):
+        raise RepairSandboxError(
+            "REPAIR_APPROVAL_REJECTED",
+            "approval is expired, revoked, or stored unexpectedly",
+        )
+    attempt = workspace / ".factory" / "repair-attempts" / approval_sha
+    origin = _verify_repair_origin(workspace, approval.get("origin_audit"))
+    _begin_attempt(attempt, approval_sha, origin)
+    state = _execute_repair_lifecycle(
+        workspace, attempt, approval, origin, revoked_file, _read_attempt_state(attempt)
+    )
     return {
         "schema": REPAIR_ATTEMPT_SCHEMA,
         "attempt_path": (attempt / "state.json").relative_to(workspace).as_posix(),
@@ -2291,6 +2611,11 @@ def execute_approved_repair(root: Path, approval_path: Path) -> dict[str, Any]:
         "phase": state["phase"],
         "cleanup_confirmed": state.get("cleanup_confirmed"),
         "primary_checkout_unchanged": state.get("primary_checkout_unchanged"),
+        "origin_audit": state.get("origin_audit"),
+        "candidate_before_sha256": state.get("candidate_before_sha256"),
+        "candidate_after_sha256": state.get("candidate_after_sha256"),
+        "event_sequence": state.get("event_sequence"),
+        "event_sha256": state.get("event_sha256"),
         "checks": state["checks"],
         "error": state.get("error"),
     }

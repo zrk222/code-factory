@@ -277,6 +277,7 @@ def execution_fixture(tmp_path):
                 "memory_mib": 128,
                 "tool_version": "1.0",
                 "ruleset_sha256": "b" * 64,
+                **({"rule_ids": ["fixture-detection"]} if engine == "gitleaks" else {}),
             }
         )
     plan = {
@@ -512,6 +513,15 @@ def test_execution_manifest_and_signed_authorization(tmp_path):
         )["candidate_sha256"]
         == plan["candidate_sha256"]
     )
+    _, envelope_hash = verify_execution_authorization(
+        plan,
+        pin,
+        authorization,
+        trust,
+        plan["trust_root_sha256"],
+        return_envelope_sha256=True,
+    )
+    assert envelope_hash == digest(json.loads(authorization.read_text("utf-8")))
     with pytest.raises(RuntimeAuditError):
         verify_execution_authorization(
             plan, "0" * 64, authorization, trust, plan["trust_root_sha256"]
@@ -520,6 +530,39 @@ def test_execution_manifest_and_signed_authorization(tmp_path):
     manifest.write_text(json.dumps(plan), encoding="utf-8")
     with pytest.raises(RuntimeAuditError, match="E_ADAPTER_TEMPLATE"):
         load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
+
+
+def test_scan_rejects_authorization_changed_after_signature_verification(
+    tmp_path, monkeypatch
+):
+    import factoryline.deep_audit as module
+    import factoryline.deep_audit_attestation as attestation
+
+    root, manifest, pin, authorization, trust, plan, _, _ = execution_fixture(tmp_path)
+    original = attestation.verify_execution_authorization
+
+    def verify_then_change(*args, **kwargs):
+        result = original(*args, **kwargs)
+        document = json.loads(authorization.read_text("utf-8"))
+        document["payload"] = (
+            "A" if document["payload"][0] != "A" else "B"
+        ) + document["payload"][1:]
+        authorization.write_text(json.dumps(document), encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(
+        attestation, "verify_execution_authorization", verify_then_change
+    )
+    monkeypatch.setattr(module, "_docker_base", lambda: pytest.fail("must not launch"))
+    with pytest.raises(RuntimeAuditError, match="E_EXECUTION_AUTHORIZATION_DRIFT"):
+        module.scan_deep_audit(
+            root,
+            manifest,
+            pin,
+            authorization=authorization,
+            trust_root=trust,
+            trust_root_sha256=plan["trust_root_sha256"],
+        )
 
 
 def test_inventory_accounts_ignored_deleted_unknown_and_dirty_inputs(tmp_path):
@@ -1288,7 +1331,17 @@ def test_pause_stops_between_lanes_and_resume_revalidates(tmp_path, monkeypatch)
     assert retried["parent_run"] == result["run_id"]
     assert retried["run_id"] != result["run_id"] and len(calls) == 2
     with pytest.raises(RuntimeAuditError, match="E_RESUME_DRIFT"):
-        module._check_resume(root, result["run_id"], "0" * 64, plan, None, None)
+        from factoryline.deep_audit_io import read_run_json, run_directory
+
+        module._check_resume(
+            root,
+            result["run_id"],
+            "0" * 64,
+            plan,
+            None,
+            read_run_json,
+            run_directory,
+        )
 
 
 @pytest.mark.parametrize("after,limit", [(-1, 100), (True, 100), (0, 0), (0, 501)])

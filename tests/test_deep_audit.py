@@ -84,6 +84,634 @@ def test_adapter_joins_actual_artifacts_without_inventing_coverage(tmp_path, eng
     assert coverage["invocation_sha256"] == digest(coverage["native_invocations"])
 
 
+def test_native_counter_stderr_capture_is_bounded_and_explicit(tmp_path):
+    import sys
+
+    from factoryline.runtime_audit_process import run_bounded_command
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    stderr = scratch / "native-stderr.txt"
+    facts = run_bounded_command(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.stderr.write('SAMPLE_SECRET_VALUE scanned ~3 bytes (3 bytes)\\n')",
+        ],
+        tmp_path,
+        5,
+        scratch,
+        stderr_path=stderr,
+    )
+    assert facts["exit_code"] == 0
+    assert facts["cleanup_confirmed"] is True
+    assert facts["stderr_bytes"] == stderr.stat().st_size
+    assert "SAMPLE_SECRET_VALUE" in stderr.read_text(encoding="utf-8")
+    assert "SAMPLE_SECRET_VALUE" not in json.dumps(facts)
+    stderr.unlink()
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        b"no scan counter",
+        b"4:02AM INF scanned ~3 bytes (3 bytes) in 4ms\n"
+        b"4:02AM INF scanned ~3 bytes (3 bytes) in 5ms",
+        b"ERROR source says scanned ~3 bytes (3 bytes) in 4ms",
+        b"4:02AM INF scanned ~16777217 bytes (16 MB) in 4ms",
+    ],
+)
+def test_gitleaks_counter_rejects_missing_duplicate_and_inconsistent(stderr):
+    from factoryline.deep_audit_io import _gitleaks_scanned_bytes
+
+    with pytest.raises(RuntimeAuditError, match="E_GITLEAKS_COUNTER"):
+        _gitleaks_scanned_bytes(stderr, "8.28.0")
+
+
+def test_gitleaks_counter_reads_native_value_without_retaining_log_text():
+    from factoryline.deep_audit_io import _gitleaks_scanned_bytes
+
+    assert (
+        _gitleaks_scanned_bytes(
+            b"\x1b[90m4:02AM\x1b[0m \x1b[32mINF\x1b[0m "
+            b"\x1b[1mscanned ~5000 bytes (5 KB) in 16.3ms\x1b[0m",
+            "8.28.0",
+        )
+        == 5000
+    )
+
+
+def test_native_artifact_byte_budgets_accept_boundary_and_reject_overflow():
+    from factoryline.deep_audit_io import (
+        LIMIT,
+        NATIVE_COVERAGE_LIMIT,
+        _bounded_json_bytes,
+    )
+
+    for limit, code in (
+        (NATIVE_COVERAGE_LIMIT, "E_GITLEAKS_LEDGER_SIZE"),
+        (LIMIT, "E_WORKER_BUNDLE_SIZE"),
+    ):
+        assert len(_bounded_json_bytes("x" * (limit - 2), limit, code)) == limit
+        with pytest.raises(RuntimeAuditError, match=code):
+            _bounded_json_bytes("x" * (limit - 1), limit, code)
+
+
+def test_gitleaks_matrix_budget_preflights_without_truncating_sources_or_rules():
+    from factoryline.deep_audit_io import _gitleaks_coverage_preflight
+
+    def fixture(source_count):
+        files = [
+            {
+                "path": f"src/{index:03}.py",
+                "sha256": "a" * 64,
+                "bytes": 10,
+                "mode": 420,
+                "language": "python",
+            }
+            for index in range(source_count)
+        ]
+        return (
+            {
+                "ledger_json": "{}",
+                "invocations": [],
+                "version_probe": {},
+                "rule_inventory": None,
+            },
+            {},
+            {"files": files},
+            {"languages": ["python"], "rule_ids": [f"rule-{i:03}" for i in range(200)]},
+        )
+
+    args = fixture(50)
+    _gitleaks_coverage_preflight(*args, {}, [])
+    args = fixture(55)
+    with pytest.raises(
+        RuntimeAuditError, match=r"55 sources x 200 rules \(11000 rows\)"
+    ):
+        _gitleaks_coverage_preflight(*args, {}, [])
+
+
+def test_gitleaks_challenge_gaps_cannot_pass_complete():
+    from factoryline.deep_audit_io import _gitleaks_challenges_complete
+
+    assert not _gitleaks_challenges_complete(
+        {"observations": [], "gaps": [{"reason": "E_ADAPTER_TIMEOUT"}]},
+        ["obligation"],
+    )
+
+
+def test_challenge_gap_errors_keep_only_bounded_codes():
+    from factoryline.deep_audit_io import _challenge_error_code
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    assert _challenge_error_code(RuntimeAuditError("E_REPORT_JSON", "secret path")) == (
+        "E_REPORT_JSON"
+    )
+    assert _challenge_error_code(ValueError("secret path")) == "E_CHALLENGE_EXECUTION"
+
+
+def test_gitleaks_rule_accounting_requires_exact_executed_source_matrix():
+    from factoryline.deep_audit_sarif import _rule_accounting_gaps
+
+    lane = {
+        "engine": "gitleaks",
+        "tool_version": "8.28.0",
+        "rule_ids": ["rule-a"],
+        "ruleset_sha256": "a" * 64,
+    }
+    required = {"app.py": "b" * 64}
+    empty_report = {
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "gitleaks",
+                        "version": "8.28.0",
+                        "rules": [{"id": "rule-a"}],
+                    }
+                },
+                "invocations": [{"executionSuccessful": True}],
+                "results": [],
+            }
+        ],
+    }
+    all_sources = {**required, "notes.md": "e" * 64}
+    native_files = [
+        {
+            "path": path,
+            "sha256": source_sha,
+            "bytes": 1,
+            "mode": 420,
+            "language": language,
+        }
+        for path, source_sha, language in (
+            ("app.py", required["app.py"], "python"),
+            ("notes.md", all_sources["notes.md"], "markdown"),
+        )
+    ]
+    candidate_sha = digest(native_files)
+    source_map_sha = candidate_sha
+    coverage = {
+        "candidate_sha256": candidate_sha,
+        "invocation_sha256": "c" * 64,
+        "native_report_sha256": "d" * 64,
+    }
+    inventory_sha = digest(
+        {"ruleset_sha256": lane["ruleset_sha256"], "rule_ids": ["rule-a"]}
+    )
+    coverage["rule_inventory"] = {
+        "state": "VERIFIED",
+        "rule_ids": ["rule-a"],
+        "sha256": inventory_sha,
+    }
+    native_counts = {"attempted": 1, "regex_executed": 1}
+    ledger = {
+        "schema": "gitleaks.factory-rule-ledger.v1",
+        "root_sha256": sha256_bytes(b"/src"),
+        "source_identity_kind": "adapter_candidate_sha256",
+        "source_sha256": coverage["candidate_sha256"],
+        "config_sha256": lane["ruleset_sha256"],
+        "prefilter_bypassed": True,
+        "complete": True,
+        "overflow": False,
+        "invalid_paths": 0,
+        "rows": [
+            {"path": "app.py", "rule_id": "rule-a", "counts": native_counts},
+            {
+                "path": "notes.md",
+                "rule_id": "rule-a",
+                "counts": {"attempted": 1, "not_applicable_path_mismatch": 1},
+            },
+        ],
+    }
+    ledger_text = json.dumps(ledger, separators=(",", ":"))
+    ledger_sha = sha256_bytes(ledger_text.encode())
+    coverage["native_rule_ledger_json"] = ledger_text
+    coverage["native_rule_ledger_sha256"] = ledger_sha
+    coverage["native_source_inventory"] = native_files
+    coverage["native_source_inventory_sha256"] = source_map_sha
+    evidence = {
+        "ledger_sha256": ledger_sha,
+        "source_sha256": required["app.py"],
+        "path": "app.py",
+        "rule_id": "rule-a",
+        "counts": native_counts,
+    }
+    row = {
+        "path": "app.py",
+        "source_sha256": required["app.py"],
+        "disposition": "executed",
+        "native_counts": native_counts,
+        "evidence_sha256": digest(evidence),
+    }
+    accounting = {
+        "schema": "factory.deep-rule-accounting.v1",
+        "ruleset_sha256": lane["ruleset_sha256"],
+        "rule_inventory_sha256": inventory_sha,
+        "native_ledger_sha256": ledger_sha,
+        "native_source_inventory_sha256": source_map_sha,
+        "invocation_sha256": coverage["invocation_sha256"],
+        "native_report_sha256": coverage["native_report_sha256"],
+        "rules": [{"rule_id": "rule-a", "sources": [row]}],
+    }
+    accounting["accounting_sha256"] = digest(accounting)
+    coverage["rule_accounting"] = accounting
+    assert _rule_accounting_gaps(coverage, lane, required, empty_report) == []
+
+    missing = deepcopy(coverage)
+    missing.pop("rule_accounting")
+    assert "RULE_ACCOUNTING_MISSING" in _rule_accounting_gaps(
+        missing, lane, required, empty_report
+    )
+    assert "RULE_INVENTORY_UNVERIFIED" in _rule_accounting_gaps(
+        coverage,
+        {"engine": "gitleaks", "ruleset_sha256": "a" * 64},
+        required,
+        empty_report,
+    )
+
+    unverified = deepcopy(coverage)
+    unverified["rule_inventory"]["state"] = "UNAVAILABLE"
+    assert "RULE_INVENTORY_UNVERIFIED" in _rule_accounting_gaps(
+        unverified, lane, required, empty_report
+    )
+
+    skipped = deepcopy(coverage)
+    skipped["rule_accounting"]["rules"][0]["sources"][0]["disposition"] = "not_run"
+    body = {
+        key: value
+        for key, value in skipped["rule_accounting"].items()
+        if key != "accounting_sha256"
+    }
+    skipped["rule_accounting"]["accounting_sha256"] = digest(body)
+    assert "RULE_NATIVE_DISPOSITION_DRIFT" in _rule_accounting_gaps(
+        skipped, lane, required, empty_report
+    )
+
+    tampered = deepcopy(coverage)
+    tampered["rule_accounting"]["rules"][0]["sources"][0]["source_sha256"] = "f" * 64
+    body = {
+        key: value
+        for key, value in tampered["rule_accounting"].items()
+        if key != "accounting_sha256"
+    }
+    tampered["rule_accounting"]["accounting_sha256"] = digest(body)
+    assert "RULE_SOURCE_EVIDENCE_DRIFT" in _rule_accounting_gaps(
+        tampered, lane, required, empty_report
+    )
+
+    malformed = deepcopy(coverage)
+    malformed_ledger = json.loads(malformed["native_rule_ledger_json"])
+    malformed_ledger["rows"][0]["path"] = []
+    malformed_text = json.dumps(malformed_ledger, separators=(",", ":"))
+    malformed["native_rule_ledger_json"] = malformed_text
+    malformed["native_rule_ledger_sha256"] = sha256_bytes(malformed_text.encode())
+    assert "RULE_NATIVE_LEDGER_INVALID" in _rule_accounting_gaps(
+        malformed, lane, required, empty_report
+    )
+
+    malformed_container = deepcopy(coverage)
+    malformed_container["native_rule_ledger_json"] = "[]"
+    malformed_container["native_rule_ledger_sha256"] = sha256_bytes(b"[]")
+    assert "RULE_NATIVE_LEDGER_INVALID" in _rule_accounting_gaps(
+        malformed_container, lane, required, empty_report
+    )
+
+    altered_inventory = deepcopy(coverage)
+    altered_inventory["native_source_inventory"][1]["bytes"] = 2
+    assert "RULE_NATIVE_SOURCE_INVENTORY_INVALID" in _rule_accounting_gaps(
+        altered_inventory, lane, required, empty_report
+    )
+
+    injected_path = deepcopy(coverage)
+    injected_ledger = json.loads(injected_path["native_rule_ledger_json"])
+    injected_ledger["rows"].append(
+        {
+            "path": "unbound.py",
+            "rule_id": "rule-a",
+            "counts": native_counts,
+        }
+    )
+    injected_text = json.dumps(injected_ledger, separators=(",", ":"))
+    injected_path["native_rule_ledger_json"] = injected_text
+    injected_path["native_rule_ledger_sha256"] = sha256_bytes(injected_text.encode())
+    assert "RULE_NATIVE_LEDGER_UNBOUND" in _rule_accounting_gaps(
+        injected_path, lane, required, empty_report
+    )
+
+    mixed = deepcopy(coverage)
+    mixed_ledger = json.loads(mixed["native_rule_ledger_json"])
+    mixed_counts = {**native_counts, "not_run_size_limit": 1}
+    mixed_ledger["rows"][0]["counts"] = mixed_counts
+    mixed_text = json.dumps(mixed_ledger, separators=(",", ":"))
+    mixed_sha = sha256_bytes(mixed_text.encode())
+    mixed["native_rule_ledger_json"] = mixed_text
+    mixed["native_rule_ledger_sha256"] = mixed_sha
+    mixed_row = mixed["rule_accounting"]["rules"][0]["sources"][0]
+    mixed_row["native_counts"] = mixed_counts
+    mixed_row["evidence_sha256"] = digest(
+        {**evidence, "ledger_sha256": mixed_sha, "counts": mixed_counts}
+    )
+    mixed["rule_accounting"]["native_ledger_sha256"] = mixed_sha
+    body = {
+        key: value
+        for key, value in mixed["rule_accounting"].items()
+        if key != "accounting_sha256"
+    }
+    mixed["rule_accounting"]["accounting_sha256"] = digest(body)
+    assert "RULE_NATIVE_DISPOSITION_DRIFT" in _rule_accounting_gaps(
+        mixed, lane, required, empty_report
+    )
+
+
+def test_gitleaks_ledger_retained_findings_match_sarif_results():
+    from factoryline.deep_audit_sarif import _native_finding_counts_match
+
+    lane = {"id": "gitleaks", "engine": "gitleaks", "tool_version": "8.28.0"}
+    sources = {"app.py": "b" * 64}
+    report = {
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "gitleaks",
+                        "version": "8.28.0",
+                        "rules": [{"id": "rule-a"}],
+                    }
+                },
+                "invocations": [{"executionSuccessful": True}],
+                "results": [
+                    {
+                        "ruleId": "rule-a",
+                        "locations": [
+                            {
+                                "physicalLocation": {
+                                    "artifactLocation": {"uri": "app.py"},
+                                    "region": {"startLine": 1},
+                                }
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    assert not _native_finding_counts_match(
+        report, lane, sources, {("app.py", "rule-a"): {"finding": 0}}
+    )
+    assert _native_finding_counts_match(
+        report, lane, sources, {("app.py", "rule-a"): {"finding": 1}}
+    )
+    empty = deepcopy(report)
+    empty["runs"][0]["results"] = []
+    assert not _native_finding_counts_match(
+        empty, lane, sources, {("app.py", "rule-a"): {"finding": 1}}
+    )
+
+
+def test_native_mutation_execution_requires_signed_exact_effective_config_hash():
+    from factoryline.deep_audit_sarif import _challenge_execution_config_valid
+
+    effective = "b" * 64
+    lane = {
+        "ruleset_sha256": "a" * 64,
+        "rule_ids": ["rule-a", "rule-b"],
+        "mutation_config_sha256": {"rule-a": effective, "rule-b": "c" * 64},
+    }
+    obligation = {"detector_rule_id": "rule-a"}
+    execution = {
+        "baseline_config_sha256": "a" * 64,
+        "effective_config_sha256": effective,
+        "mutation": {
+            "disabled_rule_id": "rule-a",
+            "remaining_rule_inventory_sha256": digest(["rule-b"]),
+        },
+    }
+    assert _challenge_execution_config_valid(
+        execution, {}, obligation, ("obligation", "mutation"), lane
+    )
+    execution["effective_config_sha256"] = "d" * 64
+    assert not _challenge_execution_config_valid(
+        execution, {}, obligation, ("obligation", "mutation"), lane
+    )
+
+
+def test_gitleaks_mutation_observation_is_host_validated_without_key_errors(tmp_path):
+    from test_deep_audit_contract import execution_bundle, execution_fixture
+    from factoryline.deep_audit_sarif import normalize_execution_bundle
+
+    _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    lane = next(item for item in plan["lanes"] if item["engine"] == "gitleaks")
+    lane["mutation_config_sha256"] = {"fixture-detection": "c" * 64}
+    bundle = execution_bundle(lane, inventory, "0" * 32)
+    coverage = bundle["artifacts"]["coverage.json"]
+    coverage.update(
+        candidate_sha256=inventory["candidate_sha256"],
+        profile_sha256="c" * 64,
+        version_probe={"probe": "verified-fixture"},
+    )
+    for observation in bundle["artifacts"]["challenges.json"]["observations"]:
+        mutation = observation["kind"] == "mutation"
+        expected_source = digest(
+            {
+                "app.py"
+                if mutation or observation["kind"] == "positive"
+                else "clean.py": observation["fixture_sha256"]
+            }
+        )
+        execution = {
+            "schema": "factory.native-challenge-execution.v1",
+            "status": "VERIFIED",
+            "launched": True,
+            "completed": True,
+            "timed_out": False,
+            "cleanup_confirmed": True,
+            "scratch_cleanup_verified": True,
+            "timeout_seconds": 10,
+            "duration_ms": 2,
+            "exit_code": 0,
+            "argv_sha256": "d" * 64,
+            "raw_report_sha256": "e" * 64,
+            "stdout_sha256": "f" * 64,
+            "stdout_bytes": 0,
+            "stderr_sha256": "a" * 64,
+            "stderr_bytes": 0,
+            "fixture_sha256": observation["fixture_sha256"],
+            "candidate_binding_sha256": inventory["candidate_sha256"],
+            "challenge_source_sha256": expected_source,
+            "profile_binding_sha256": coverage["profile_sha256"],
+            "image_binding_sha256": sha256_bytes(lane["image"].encode()),
+            "tool_version": lane["tool_version"],
+            "version_probe_sha256": digest(coverage["version_probe"]),
+            "baseline_config_sha256": lane["ruleset_sha256"],
+            "effective_config_sha256": "c" * 64 if mutation else lane["ruleset_sha256"],
+            "ledger_sha256": "1" * 64,
+            "mutation": (
+                {
+                    "disabled_rule_id": "fixture-detection",
+                    "remaining_rule_inventory_sha256": digest([]),
+                }
+                if mutation
+                else None
+            ),
+        }
+        execution["execution_sha256"] = digest(execution)
+        observation["execution"] = execution
+    result = normalize_execution_bundle(
+        bundle, lane, inventory, "0" * 32, plan["obligations"]
+    )
+    assert result["state"] == "INCOMPLETE"
+    assert "CHALLENGE_FAILED" not in result["gaps"]
+
+
+def test_signed_gitleaks_mutation_digest_map_must_cover_exact_rule_inventory(tmp_path):
+    from test_deep_audit_contract import execution_fixture
+    from factoryline.deep_audit_contract import _execution_lane
+
+    _, _, _, _, _, plan, _, _ = execution_fixture(tmp_path)
+    lane = next(item for item in plan["lanes"] if item["engine"] == "gitleaks")
+    lane["mutation_config_sha256"] = {"fixture-detection": "c" * 64}
+    _execution_lane(lane)
+    lane["mutation_config_sha256"]["extra-rule"] = "d" * 64
+    with pytest.raises(RuntimeAuditError, match="E_EXECUTION_LANE"):
+        _execution_lane(lane)
+
+
+def test_gitleaks_ledger_stable_read_rejects_metadata_drift(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from factoryline import deep_audit_io
+
+    target = tmp_path / "ledger.json"
+    target.write_text("{}", encoding="utf-8")
+    actual_fstat = deep_audit_io.os.fstat
+    calls = 0
+
+    def changed_fstat(fd):
+        nonlocal calls
+        result = actual_fstat(fd)
+        calls += 1
+        if calls == 1:
+            return result
+        return SimpleNamespace(
+            st_mode=result.st_mode,
+            st_dev=result.st_dev,
+            st_ino=result.st_ino,
+            st_size=result.st_size,
+            st_mtime_ns=result.st_mtime_ns + 1,
+            st_ctime_ns=result.st_ctime_ns,
+        )
+
+    monkeypatch.setattr(deep_audit_io.os, "fstat", changed_fstat)
+    with pytest.raises(RuntimeAuditError, match="E_GITLEAKS_LEDGER_SIZE"):
+        deep_audit_io._read_gitleaks_ledger(target)
+
+
+def test_gitleaks_rule_inventory_must_match_hash_pinned_toml():
+    from factoryline.deep_audit_io import _gitleaks_rule_inventory
+
+    config = b'[[rules]]\nid = "rule-a"\n\n[[rules]]\nid = "rule-b"\n'
+    lane = {
+        "ruleset_sha256": sha256_bytes(config),
+        "rule_ids": ["rule-b", "rule-a"],
+    }
+    result = _gitleaks_rule_inventory(config, lane)
+    assert result["state"] == "VERIFIED"
+    assert result["rule_ids"] == ["rule-a", "rule-b"]
+    assert len(result["sha256"]) == 64
+    with pytest.raises(RuntimeAuditError, match="E_GITLEAKS_RULESET"):
+        _gitleaks_rule_inventory(config, {**lane, "rule_ids": ["rule-a"]})
+    with pytest.raises(RuntimeAuditError, match="E_GITLEAKS_RULESET"):
+        _gitleaks_rule_inventory(config + b"# drift\n", lane)
+
+
+def test_gitleaks_native_inventory_must_equal_authoritative_candidate(tmp_path):
+    from factoryline.deep_audit_sarif import _worker_artifacts
+
+    _, contract, _, _ = adapter_inputs(tmp_path)
+    lane = {
+        "engine": "gitleaks",
+        "report": "report.json",
+        "coverage": "coverage.json",
+        "challenge_report": "challenges.json",
+    }
+    files = contract["inventory"]["files"]
+    extra = {
+        "path": "notes.md",
+        "sha256": "d" * 64,
+        "bytes": 0,
+        "mode": 420,
+        "language": "text",
+    }
+    forged = [*files, extra]
+    coverage = {
+        "native_source_inventory": forged,
+        "candidate_sha256": digest(forged),
+        "native_source_inventory_sha256": digest(forged),
+    }
+    bundle = {
+        "schema": "factory.deep-worker.v1",
+        "run_id": "test",
+        "candidate_sha256": contract["inventory"]["candidate_sha256"],
+        "artifacts": {
+            "report.json": {},
+            "coverage.json": coverage,
+            "challenges.json": {},
+        },
+    }
+    with pytest.raises(RuntimeAuditError, match="E_WORKER_BINDING"):
+        _worker_artifacts(bundle, lane, contract["inventory"], "test")
+
+
+def test_gitleaks_mutation_removes_only_declared_rule_block():
+    from factoryline.deep_audit_io import _gitleaks_disable_rule, _gitleaks_rule_ids
+
+    config = (
+        b"[allowlist]\ndescription = 'keep'\n\n"
+        b"[[rules]]\nid = 'rule-a'\nregex = 'alpha'\n\n"
+        b"[[rules.allowlists]]\npaths = ['safe']\n\n"
+        b"[[rules]]\nid = 'rule-b'\nregex = 'beta'\n"
+    )
+    mutated = _gitleaks_disable_rule(config, "rule-b")
+    assert _gitleaks_rule_ids(mutated) == ["rule-a"]
+    assert b"description = 'keep'" in mutated
+    assert b"regex = 'alpha'" in mutated
+    assert b"paths = ['safe']" in mutated
+    assert b"regex = 'beta'" not in mutated
+    with pytest.raises(RuntimeAuditError, match="E_GITLEAKS_MUTATION"):
+        _gitleaks_disable_rule(config, "missing-rule")
+
+
+def test_gitleaks_adapter_records_only_native_counter_not_stderr(tmp_path):
+    import sys
+
+    from factoryline.deep_audit_io import _adapter_commands
+
+    source, scratch = tmp_path / "source", tmp_path / "scratch"
+    source.mkdir()
+    scratch.mkdir()
+    line = "4:02AM INF scanned ~5000 bytes (5 KB) in 16.3ms"
+    command = {
+        "argv": [
+            sys.executable,
+            "-c",
+            "import sys; sys.stderr.write(" + repr(line) + ")",
+        ],
+        "accepted_exit_codes": [0],
+    }
+    result = _adapter_commands(
+        [command],
+        {"engine": "gitleaks", "tool_version": "8.28.0", "timeout_seconds": 5},
+        source,
+        scratch,
+    )
+    assert result[0]["native_scanned_bytes"] == 5000
+    assert line not in json.dumps(result)
+
+
 @pytest.mark.parametrize(
     "failure", ["profile", "source", "stale", "missing", "exit", "drift"]
 )
@@ -160,6 +788,15 @@ def test_native_adapter_retains_execution_without_inventing_completion(tmp_path)
     assert coverage["native_invocations"][0]["execution"]["exit_code"] == 0
     assert coverage["version_probe"]["exit_code"] == 0
     assert result["artifacts"]["challenges.json"]["observations"] == []
+
+
+def test_native_adapter_rejects_uninventoried_source_files(tmp_path):
+    from factoryline.deep_audit_io import _adapter_sources
+
+    _, contract, source, _ = adapter_inputs(tmp_path)
+    (source / "untracked.py").write_text("x = 1\n", encoding="utf-8")
+    with pytest.raises(RuntimeAuditError, match="E_ADAPTER_INPUT"):
+        _adapter_sources(source, contract["inventory"])
 
 
 @pytest.mark.parametrize(

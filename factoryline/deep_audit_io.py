@@ -23,6 +23,10 @@ from .runtime_audit_common import (
 )
 
 LIMIT = 10_000_000
+NATIVE_COVERAGE_LIMIT = 8 * 1024 * 1024
+NATIVE_LEDGER_LIMIT = NATIVE_COVERAGE_LIMIT
+NATIVE_SOURCE_MAP_LIMIT = NATIVE_COVERAGE_LIMIT
+NATIVE_ACCOUNTING_LIMIT = NATIVE_COVERAGE_LIMIT
 
 
 def digest(value: object) -> str:
@@ -130,6 +134,20 @@ def strict_json(raw: bytes) -> dict:
 INVENTORY_LIMIT = 50_000
 SOURCE_LIMIT = 16 * 1024 * 1024
 SNAPSHOT_LIMIT = 1024 * 1024 * 1024
+_GENERATED_FACTORY_PREFIXES = (
+    ".factory/deep-runs/",
+    ".factory/scopes/",
+    ".factory/repair-approvals/",
+    ".factory/repair-attempts/",
+)
+
+
+def _generated_factory_path(name: str) -> bool:
+    return name == ".factory/candidate.diff" or name.startswith(
+        _GENERATED_FACTORY_PREFIXES
+    )
+
+
 LANGUAGES = {
     "python": ".py .pyi",
     "javascript": ".js .jsx .mjs .cjs",
@@ -181,7 +199,7 @@ def _git_names(root: Path, tracked: bool, *, ignored: bool = False) -> set[str]:
 def _git_paths(root: Path) -> list[str]:
     tracked, untracked = _git_names(root, True), _git_names(root, False)
     # Generated state is excluded only when untracked. Tracked files never vanish.
-    generated = {name for name in untracked if name.startswith(".factory/deep-runs/")}
+    generated = {name for name in untracked if _generated_factory_path(name)}
     return sorted(tracked | (untracked - generated))
 
 
@@ -278,7 +296,7 @@ def _candidate_paths(root: Path, gaps: list[dict]) -> tuple[list[str], list[str]
         ignored = sorted(
             name
             for name in _git_names(root, False, ignored=True)
-            if not name.startswith(".factory/deep-runs/")
+            if not _generated_factory_path(name)
         )
     except (OSError, subprocess.SubprocessError, UnicodeError, RuntimeAuditError):
         paths, ignored = [], []
@@ -320,9 +338,10 @@ def _capture_inventory_source(
     root: Path, name: str, seen: set[str], total: list[int]
 ) -> tuple[dict, bytes, int]:
     relative_path(name)
-    if name.startswith(".factory/deep-runs/"):
+    if _generated_factory_path(name):
         raise RuntimeAuditError(
-            "E_RESERVED_SOURCE", "tracked source collides with audit state"
+            "E_RESERVED_SOURCE",
+            "tracked source collides with generated FactoryLine state",
         )
     if name.casefold() in seen:
         raise RuntimeAuditError("E_CASE_COLLISION", "case-colliding source paths")
@@ -403,7 +422,7 @@ def _ignored_names(root: Path) -> list[str]:
     return sorted(
         name
         for name in _git_names(root, False, ignored=True)
-        if not name.startswith(".factory/deep-runs/")
+        if not _generated_factory_path(name)
     )
 
 
@@ -577,7 +596,11 @@ def _adapter_profile(profile: dict, lane: dict) -> list[dict]:
 def _adapter_command_shape(command: dict) -> None:
     if not isinstance(command, dict) or set(command) != {"argv", "accepted_exit_codes"}:
         raise RuntimeAuditError("E_ADAPTER_PROFILE", "invalid command fields")
-    argv, exits = command["argv"], command["accepted_exit_codes"]
+    _adapter_argv_shape(command["argv"])
+    _adapter_exit_shape(command["accepted_exit_codes"])
+
+
+def _adapter_argv_shape(argv):
     if not isinstance(argv, list) or not 1 <= len(argv) <= 128:
         raise RuntimeAuditError("E_ADAPTER_PROFILE", "bounded argv required")
     for arg in argv:
@@ -586,6 +609,9 @@ def _adapter_command_shape(command: dict) -> None:
         raise RuntimeAuditError(
             "E_ADAPTER_PROFILE", "absolute executable path required"
         )
+
+
+def _adapter_exit_shape(exits):
     if not isinstance(exits, list) or not 1 <= len(exits) <= 16:
         raise RuntimeAuditError("E_ADAPTER_PROFILE", "bounded exit codes required")
     if any(type(code) is not int or not 0 <= code <= 255 for code in exits):
@@ -605,6 +631,44 @@ def _adapter_sources(source: Path, inventory: dict) -> None:
         path = relative_path(item.get("path"))
         names.add(path)
         bound_bytes(source, {"path": path, "sha256": item.get("sha256")})
+    actual = _adapter_source_files(source)
+    if actual != names:
+        raise RuntimeAuditError(
+            "E_ADAPTER_INPUT", "source file set differs from inventory"
+        )
+
+
+def _adapter_source_files(source):
+    if source.is_symlink() or not source.is_dir():
+        raise RuntimeAuditError(
+            "E_ADAPTER_INPUT", "source root must be a real directory"
+        )
+    pending = [source]
+    names = set()
+    entries = 0
+    while pending:
+        directory = pending.pop()
+        with os.scandir(directory) as iterator:
+            for entry in iterator:
+                entries += 1
+                if entries > 100_000:
+                    raise RuntimeAuditError(
+                        "E_ADAPTER_INPUT", "source tree exceeds entry budget"
+                    )
+                if entry.is_symlink():
+                    raise RuntimeAuditError(
+                        "E_ADAPTER_INPUT", "source links are unsupported"
+                    )
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(Path(entry.path))
+                    continue
+                if not entry.is_file(follow_symlinks=False):
+                    raise RuntimeAuditError(
+                        "E_ADAPTER_INPUT", "special source entries are unsupported"
+                    )
+                relative = Path(entry.path).relative_to(source).as_posix()
+                names.add(relative_path(relative))
+    return names
 
 
 def _adapter_commands(
@@ -623,20 +687,460 @@ def _adapter_commands(
             raise RuntimeAuditError("E_ADAPTER_TIMEOUT", "adapter deadline exhausted")
         directory = scratch / str(index)
         directory.mkdir()
-        facts = run_bounded_command(command["argv"], source, remaining, directory)
+        invocations.append(
+            _adapter_invocation(
+                run_bounded_command,
+                command,
+                lane,
+                source,
+                directory,
+                remaining,
+                deadline,
+            )
+        )
+    return invocations
+
+
+def _adapter_invocation(runner, command, lane, source, directory, remaining, deadline):
+    argv = [
+        value.replace("{factory_ledger}", str(directory / "rule-ledger.json"))
+        for value in command["argv"]
+    ]
+    stderr_path = _gitleaks_stderr_path(directory, lane)
+    facts = runner(argv, source, remaining, directory, stderr_path=stderr_path)
+    if _adapter_command_failed(facts, command["accepted_exit_codes"], deadline):
+        raise RuntimeAuditError("E_ADAPTER_COMMAND", "native command did not complete")
+    invocation = {"argv_sha256": digest(command["argv"]), "execution": facts}
+    _attach_gitleaks_ledger(invocation, command, directory)
+    if stderr_path is not None:
+        invocation["native_scanned_bytes"] = _gitleaks_scanned_bytes(
+            stderr_path.read_bytes(), lane["tool_version"]
+        )
+    return invocation
+
+
+def _gitleaks_stderr_path(directory, lane):
+    if lane.get("engine") == "gitleaks" and lane.get("tool_version") == "8.28.0":
+        return directory / "stderr.log"
+    return None
+
+
+def _attach_gitleaks_ledger(invocation, command, directory):
+    if "{factory_ledger}" not in " ".join(command["argv"]):
+        return
+    try:
+        ledger, ledger_sha256, ledger_json = _read_gitleaks_ledger(
+            directory / "rule-ledger.json"
+        )
+        invocation["native_rule_ledger"] = ledger
+        invocation["native_rule_ledger_sha256"] = ledger_sha256
+        invocation["native_rule_ledger_json"] = ledger_json
+    except RuntimeAuditError as exc:
+        invocation["native_rule_ledger"] = None
+        invocation["native_rule_ledger_error"] = exc.code
+
+
+def _read_gitleaks_ledger(path: Path) -> tuple[dict, str, str]:
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeAuditError("E_GITLEAKS_LEDGER_MISSING", "native ledger missing")
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if not stat.S_ISREG(opened.st_mode) or opened.st_size > NATIVE_LEDGER_LIMIT:
+                raise RuntimeAuditError(
+                    "E_GITLEAKS_LEDGER_SIZE", "native ledger over budget"
+                )
+            raw = stream.read(NATIVE_LEDGER_LIMIT + 1)
+            after = os.fstat(stream.fileno())
+        current = path.stat(follow_symlinks=False)
+    except OSError as exc:
+        raise RuntimeAuditError(
+            "E_GITLEAKS_LEDGER_READ", "native ledger could not be read safely"
+        ) from exc
+    if not _stable_ledger_read(opened, after, current, raw):
+        raise RuntimeAuditError(
+            "E_GITLEAKS_LEDGER_SIZE", "native ledger changed while read"
+        )
+    try:
+        text = raw.decode("utf-8", errors="strict")
+    except UnicodeError as exc:
+        raise RuntimeAuditError(
+            "E_GITLEAKS_LEDGER_READ", "native ledger encoding invalid"
+        ) from exc
+    return strict_json(raw), sha256_bytes(raw), text
+
+
+def _stable_ledger_read(opened, after, current, raw):
+    if len(raw) > NATIVE_LEDGER_LIMIT or not stat.S_ISREG(current.st_mode):
+        return False
+    if (opened.st_dev, opened.st_ino) != (after.st_dev, after.st_ino):
+        return False
+    if (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
+        return False
+    return _ledger_metadata_matches(opened, after, current, raw)
+
+
+def _ledger_metadata_matches(opened, after, current, raw):
+    return (
+        opened.st_size == after.st_size
+        and opened.st_mtime_ns == after.st_mtime_ns
+        and opened.st_ctime_ns == after.st_ctime_ns
+        and opened.st_mtime_ns == current.st_mtime_ns
+        and opened.st_ctime_ns == current.st_ctime_ns
+        and len(raw) == opened.st_size
+    )
+
+
+def _gitleaks_ledger_matrix(
+    ledger, ledger_sha, lane, inventory, inventory_sha, invocations, raw_report
+):
+    required = {
+        item["path"]: item["sha256"]
+        for item in inventory["files"]
+        if item["language"] in lane["languages"]
+    }
+    if not _gitleaks_ledger_shape(ledger):
+        raise RuntimeAuditError(
+            "E_GITLEAKS_LEDGER_SHAPE", "native ledger schema differs"
+        )
+    if not _gitleaks_ledger_binding(ledger, lane, inventory):
+        raise RuntimeAuditError(
+            "E_GITLEAKS_LEDGER_BINDING", "native ledger binding incomplete"
+        )
+    source_map = _gitleaks_source_map(inventory["files"])
+    source_map_sha = inventory["candidate_sha256"]
+    counts = _gitleaks_ledger_rows(ledger["rows"], lane["rule_ids"], source_map)
+    accounting = _gitleaks_accounting(
+        ledger_sha,
+        lane,
+        required,
+        counts,
+        inventory_sha,
+        source_map_sha,
+        invocations,
+        raw_report,
+    )
+    return accounting, source_map, source_map_sha
+
+
+def _gitleaks_ledger_shape(ledger):
+    expected = {
+        "schema",
+        "root_sha256",
+        "source_identity_kind",
+        "source_sha256",
+        "config_sha256",
+        "prefilter_bypassed",
+        "complete",
+        "overflow",
+        "invalid_paths",
+        "rows",
+    }
+    return (
+        isinstance(ledger, dict)
+        and set(ledger) == expected
+        and isinstance(ledger.get("rows"), list)
+        and len(ledger["rows"]) <= 200_000
+    )
+
+
+def _gitleaks_ledger_binding(ledger, lane, inventory):
+    return _gitleaks_ledger_identity(
+        ledger, lane, inventory
+    ) and _gitleaks_ledger_status(ledger)
+
+
+def _gitleaks_ledger_identity(ledger, lane, inventory):
+    return (
+        ledger["schema"] == "gitleaks.factory-rule-ledger.v1"
+        and ledger["source_identity_kind"] == "adapter_candidate_sha256"
+        and ledger["source_sha256"] == inventory["candidate_sha256"]
+        and ledger["config_sha256"] == lane["ruleset_sha256"]
+        and ledger["root_sha256"] == sha256_bytes(b"/src")
+    )
+
+
+def _gitleaks_ledger_status(ledger):
+    return (
+        ledger["prefilter_bypassed"] is True
+        and ledger["complete"] is True
+        and ledger["overflow"] is False
+        and type(ledger["invalid_paths"]) is int
+        and ledger["invalid_paths"] == 0
+    )
+
+
+def _gitleaks_source_map(files):
+    estimate = sum(
+        len(canonical_bytes(item["path"]))
+        + len(canonical_bytes(item["language"]))
+        + 112
+        for item in files
+    )
+    if estimate > NATIVE_SOURCE_MAP_LIMIT:
+        raise RuntimeAuditError(
+            "E_GITLEAKS_LEDGER_SIZE", "native source map over budget"
+        )
+    sources = {item["path"]: item["sha256"] for item in files}
+    if _json_size_upper_bound(files) > NATIVE_SOURCE_MAP_LIMIT:
+        raise RuntimeAuditError(
+            "E_GITLEAKS_LEDGER_SIZE", "native source map over budget"
+        )
+    if len(canonical_bytes(files)) > NATIVE_SOURCE_MAP_LIMIT:
+        raise RuntimeAuditError(
+            "E_GITLEAKS_LEDGER_SIZE", "native source map over budget"
+        )
+    return sources
+
+
+def _json_size_upper_bound(value):
+    """Conservatively estimate canonical JSON bytes without materializing them."""
+    total = 0
+    pending = [value]
+    while pending:
+        total += _json_value_size(pending.pop(), pending)
+    return total
+
+
+def _json_value_size(item, pending):
+    if isinstance(item, dict):
+        pending.extend(item.values())
+        for key in item:
+            if not isinstance(key, str):
+                raise RuntimeAuditError("E_NATIVE_BUNDLE_SIZE", "JSON key is not text")
+        return 2 + max(0, len(item) - 1) + sum(_json_string_size(key) for key in item)
+    if isinstance(item, (list, tuple)):
+        pending.extend(item)
+        return 2 + max(0, len(item) - 1)
+    if isinstance(item, str):
+        return _json_string_size(item)
+    if item is None or isinstance(item, bool):
+        return 5
+    if isinstance(item, int):
+        return len(str(item))
+    if isinstance(item, float):
+        return 32
+    raise RuntimeAuditError("E_NATIVE_BUNDLE_SIZE", "unsupported JSON value")
+
+
+def _json_string_size(value):
+    size = 2
+    for char in value:
+        codepoint = ord(char)
+        if char in {'"', "\\", "\b", "\t", "\n", "\f", "\r"}:
+            size += 2
+        elif codepoint < 32:
+            size += 6
+        else:
+            size += len(char.encode("utf-8"))
+    return size
+
+
+def _native_budget_error(code, sources, rules, estimate, limit):
+    pairs = sources * rules
+    raise RuntimeAuditError(
+        code,
+        f"native budget requires {sources} sources x {rules} rules "
+        f"({pairs} rows); estimated {estimate} bytes exceeds {limit}",
+    )
+
+
+def _gitleaks_coverage_preflight(
+    execution, report, inventory, lane, challenges, obligations
+):
+    source_count = sum(
+        item["language"] in lane["languages"] for item in inventory["files"]
+    )
+    rule_count = len(lane["rule_ids"])
+    pairs = source_count * rule_count
+    per_pair = 768 + (
+        max(
+            (_json_string_size(item["path"]) - 2 for item in inventory["files"]),
+            default=0,
+        )
+        + max(
+            (_json_string_size(rule_id) - 2 for rule_id in lane["rule_ids"]),
+            default=0,
+        )
+    )
+    fixed = (
+        len(execution["ledger_json"].encode("utf-8"))
+        + _json_size_upper_bound(inventory["files"])
+        + _json_size_upper_bound(execution["invocations"])
+        + _json_size_upper_bound(execution["version_probe"])
+        + _json_size_upper_bound(execution["rule_inventory"])
+        + _json_size_upper_bound(report)
+        + _json_size_upper_bound(challenges)
+        + _json_size_upper_bound(obligations)
+        + 4096
+    )
+    estimate = fixed + pairs * per_pair
+    if pairs > 200_000 or estimate > NATIVE_COVERAGE_LIMIT:
+        _native_budget_error(
+            "E_GITLEAKS_LEDGER_SIZE",
+            source_count,
+            rule_count,
+            estimate,
+            NATIVE_COVERAGE_LIMIT,
+        )
+
+
+def _bounded_json_bytes(value, limit, code, sources=0, rules=0):
+    estimate = _json_size_upper_bound(value)
+    if estimate > limit:
+        _native_budget_error(code, sources, rules, estimate, limit)
+    raw = canonical_bytes(value)
+    if len(raw) > limit:
+        _native_budget_error(code, sources, rules, len(raw), limit)
+    return raw
+
+
+def _gitleaks_ledger_rows(rows, rule_ids, required):
+    observed = {}
+    allowed = {
+        "attempted",
+        "suppressed_skip_report",
+        "suppressed_rule_allowlist",
+        "suppressed_global_allowlist",
+        "path_evaluated",
+        "not_applicable_path_mismatch",
+        "not_applicable_no_regex",
+        "not_run_size_limit",
+        "regex_executed",
+        "regex_match",
+        "finding",
+    }
+    for row in rows:
+        path, rule_id, counts = _gitleaks_row_values(row, allowed)
         if (
-            facts["timed_out"]
-            or facts["launch_error"]
-            or facts["output_limit_exceeded"]
-            or not facts["cleanup_confirmed"]
-            or facts["exit_code"] not in command["accepted_exit_codes"]
-            or time.monotonic() > deadline
+            path not in required
+            or rule_id not in rule_ids
+            or (path, rule_id) in observed
         ):
             raise RuntimeAuditError(
-                "E_ADAPTER_COMMAND", "native command did not complete"
+                "E_GITLEAKS_LEDGER_ROW", "native ledger row unbound"
             )
-        invocations.append({"argv_sha256": digest(command["argv"]), "execution": facts})
-    return invocations
+        observed[path, rule_id] = counts
+    return observed
+
+
+def _gitleaks_row_values(row, allowed):
+    if not isinstance(row, dict) or set(row) != {"path", "rule_id", "counts"}:
+        raise RuntimeAuditError("E_GITLEAKS_LEDGER_ROW", "native ledger row malformed")
+    path, rule_id, counts = row["path"], row["rule_id"], row["counts"]
+    if not isinstance(path, str) or not isinstance(rule_id, str):
+        raise RuntimeAuditError("E_GITLEAKS_LEDGER_ROW", "native ledger row malformed")
+    if not isinstance(counts, dict) or not counts or not set(counts) <= allowed:
+        raise RuntimeAuditError("E_GITLEAKS_LEDGER_ROW", "native counters malformed")
+    _gitleaks_counter_values(counts)
+    return path, rule_id, counts
+
+
+def _gitleaks_counter_values(counts):
+    if any(
+        type(value) is not int or not 1 <= value <= 2**63 - 1
+        for value in counts.values()
+    ):
+        raise RuntimeAuditError("E_GITLEAKS_LEDGER_ROW", "native counter invalid")
+    attempted = counts.get("attempted", 0)
+    evaluated = max(counts.get("regex_executed", 0), counts.get("path_evaluated", 0))
+    if attempted < evaluated or counts.get("finding", 0) > counts.get("regex_match", 0):
+        raise RuntimeAuditError(
+            "E_GITLEAKS_LEDGER_ROW", "native counters are inconsistent"
+        )
+
+
+def _gitleaks_accounting(
+    ledger_sha,
+    lane,
+    required,
+    counts,
+    inventory_sha,
+    source_map_sha,
+    invocations,
+    raw_report,
+):
+    pairs = len(lane["rule_ids"]) * len(required)
+    estimate = 512 + pairs * 512
+    estimate += len(lane["rule_ids"]) * sum(
+        len(canonical_bytes(path)) for path in required
+    )
+    estimate += len(required) * sum(
+        len(canonical_bytes(rule_id)) for rule_id in lane["rule_ids"]
+    )
+    if pairs > 200_000 or estimate > NATIVE_ACCOUNTING_LIMIT:
+        _native_budget_error(
+            "E_GITLEAKS_LEDGER_SIZE",
+            len(required),
+            len(lane["rule_ids"]),
+            estimate,
+            NATIVE_ACCOUNTING_LIMIT,
+        )
+    rules = []
+    for rule_id in sorted(lane["rule_ids"]):
+        sources = []
+        for path, source_sha in sorted(required.items()):
+            native_counts = counts.get((path, rule_id), {})
+            disposition = _gitleaks_disposition(native_counts)
+            evidence = {
+                "ledger_sha256": ledger_sha,
+                "source_sha256": source_sha,
+                "path": path,
+                "rule_id": rule_id,
+                "counts": native_counts,
+            }
+            sources.append(
+                {
+                    "path": path,
+                    "source_sha256": source_sha,
+                    "disposition": disposition,
+                    "native_counts": native_counts,
+                    "evidence_sha256": digest(evidence),
+                }
+            )
+        rules.append({"rule_id": rule_id, "sources": sources})
+    body = {
+        "schema": "factory.deep-rule-accounting.v1",
+        "ruleset_sha256": lane["ruleset_sha256"],
+        "rule_inventory_sha256": inventory_sha,
+        "native_ledger_sha256": ledger_sha,
+        "native_source_inventory_sha256": source_map_sha,
+        "invocation_sha256": digest(invocations),
+        "native_report_sha256": digest(raw_report),
+        "rules": rules,
+    }
+    accounting = {**body, "accounting_sha256": digest(body)}
+    if len(canonical_bytes(accounting)) > NATIVE_ACCOUNTING_LIMIT:
+        raise RuntimeAuditError(
+            "E_GITLEAKS_LEDGER_SIZE", "native accounting over budget"
+        )
+    return accounting
+
+
+def _gitleaks_disposition(counts):
+    if any(key.startswith("suppressed_") for key in counts):
+        return "suppressed"
+    if counts.get("not_run_size_limit", 0) > 0:
+        return "not_run"
+    if counts.get("regex_executed", 0) > 0 or counts.get("path_evaluated", 0) > 0:
+        return "executed"
+    if (
+        counts.get("not_applicable_path_mismatch", 0) > 0
+        or counts.get("not_applicable_no_regex", 0) > 0
+    ):
+        return "not_applicable"
+    return "not_run"
+
+
+def _adapter_command_failed(facts, accepted_exit_codes, deadline):
+    if any(
+        facts[key] for key in ("timed_out", "launch_error", "output_limit_exceeded")
+    ):
+        return True
+    if not facts["cleanup_confirmed"] or facts["exit_code"] not in accepted_exit_codes:
+        return True
+    return time.monotonic() > deadline
 
 
 def _adapter_contract_parts(contract: dict) -> tuple[dict, dict]:
@@ -784,6 +1288,115 @@ def _native_argv(commands: list, bindings: dict) -> list:
     return result
 
 
+def _gitleaks_scanned_bytes(stderr: bytes, tool_version: str) -> int:
+    """Read v8.28.0's integer detector counter; the parenthesized size is display-only."""
+    import re
+
+    if tool_version != "8.28.0":
+        raise RuntimeAuditError(
+            "E_GITLEAKS_COUNTER_VERSION", "counter format is unpinned"
+        )
+    plain = re.sub(rb"\x1b\[[0-9;]*m", b"", stderr)
+    lines = [line for line in plain.splitlines() if b"scanned ~" in line]
+    if len(lines) != 1:
+        raise RuntimeAuditError(
+            "E_GITLEAKS_COUNTER", "one consistent native byte counter required"
+        )
+    match = re.fullmatch(
+        rb"[0-9]{1,2}:[0-9]{2}(?:AM|PM) INF scanned ~([0-9]+) bytes "
+        rb"\(([0-9]+(?:\.[0-9]+)?) (bytes|KB|MB|GB)\) in [0-9.]+(?:ms|s)",
+        lines[0],
+    )
+    if match is None:
+        raise RuntimeAuditError("E_GITLEAKS_COUNTER", "malformed native byte counter")
+    counter, _displayed, _unit = match.groups()
+    value = int(counter)
+    if value > SOURCE_LIMIT:
+        raise RuntimeAuditError("E_GITLEAKS_COUNTER", "native byte count is invalid")
+    return value
+
+
+def _gitleaks_rule_inventory(config: bytes, lane: dict) -> dict:
+    """Bind the signed rule IDs to the exact TOML consumed by the pinned worker."""
+    actual = _gitleaks_rule_ids(config)
+    expected = lane.get("rule_ids")
+    if not isinstance(expected, list) or not expected:
+        return {"state": "UNAVAILABLE", "rule_ids": [], "sha256": None}
+    if sha256_bytes(config) != lane["ruleset_sha256"]:
+        raise RuntimeAuditError("E_GITLEAKS_RULESET", "pinned ruleset bytes differ")
+    if len(actual) != len(set(actual)) or set(actual) != set(expected):
+        raise RuntimeAuditError("E_GITLEAKS_RULESET", "enabled rule inventory differs")
+    identity = {"ruleset_sha256": lane["ruleset_sha256"], "rule_ids": sorted(actual)}
+    return {
+        "state": "VERIFIED",
+        "rule_ids": sorted(actual),
+        "sha256": digest(identity),
+    }
+
+
+def _gitleaks_rule_ids(config: bytes) -> list[str]:
+    import tomllib
+
+    try:
+        rules = tomllib.loads(config.decode("utf-8"))["rules"]
+        actual = [item["id"] for item in rules]
+    except (UnicodeError, KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
+        raise RuntimeAuditError(
+            "E_GITLEAKS_RULESET", "pinned ruleset is malformed"
+        ) from exc
+    if not all(isinstance(rule_id, str) and rule_id for rule_id in actual):
+        raise RuntimeAuditError("E_GITLEAKS_RULESET", "enabled rule inventory differs")
+    return actual
+
+
+def _gitleaks_disable_rule(config: bytes, detector_rule_id: str) -> bytes:
+    import re
+    import tomllib
+
+    starts = [
+        item.start()
+        for item in re.finditer(rb"(?m)^\[\[rules\]\][\t ]*(?:\r?\n|$)", config)
+    ]
+    if not starts:
+        raise RuntimeAuditError("E_GITLEAKS_MUTATION", "rules section missing")
+    chunks = [config[: starts[0]]]
+    removed = 0
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else len(config)
+        chunk = config[start:end]
+        try:
+            rule_id = tomllib.loads(chunk.decode("utf-8"))["rules"][0]["id"]
+        except (
+            UnicodeError,
+            KeyError,
+            IndexError,
+            TypeError,
+            tomllib.TOMLDecodeError,
+        ) as exc:
+            raise RuntimeAuditError(
+                "E_GITLEAKS_MUTATION", "rule block malformed"
+            ) from exc
+        if rule_id == detector_rule_id:
+            removed += 1
+        else:
+            chunks.append(chunk)
+    mutated = b"".join(chunks)
+    original_ids = _gitleaks_rule_ids(config)
+    expected = [rule_id for rule_id in original_ids if rule_id != detector_rule_id]
+    if removed != 1 or _gitleaks_rule_ids(mutated) != expected:
+        raise RuntimeAuditError("E_GITLEAKS_MUTATION", "mutation must disable one rule")
+    return mutated
+
+
+def _gitleaks_mutation_valid(
+    baseline: bytes, effective: bytes, detector_rule_id: str
+) -> bool:
+    try:
+        return _gitleaks_disable_rule(baseline, detector_rule_id) == effective
+    except RuntimeAuditError:
+        return False
+
+
 def _native_sarif_metadata(report: dict, profile: dict, invocations: list) -> dict:
     """Supplement absent metadata from measured execution; preserve native bytes hash."""
     import copy
@@ -814,6 +1427,27 @@ def _native_sarif_metadata(report: dict, profile: dict, invocations: list) -> di
 def _native_junit(output: Path, sources: dict) -> tuple:
     import xml.etree.ElementTree as ET
 
+    junit = _junit_bytes(output)
+    try:
+        tree = ET.fromstring(junit)
+    except ET.ParseError as exc:
+        raise RuntimeAuditError("E_RUNTIME_REPORT", "invalid native JUnit") from exc
+    tests, findings, harness = 0, [], None
+    for case in tree.iter("testcase"):
+        result = _junit_case(case, sources)
+        if result is None:
+            continue
+        path, finding = result
+        tests += 1
+        harness = harness or {"path": path, "sha256": sources[path]}
+        if finding is not None:
+            findings.append(finding)
+    if not tests or harness is None:
+        raise RuntimeAuditError("E_RUNTIME_REPORT", "no executed source-bound tests")
+    return tests, findings, harness, sha256_bytes(junit)
+
+
+def _junit_bytes(output):
     with local_file(output, "runtime.xml").open("rb") as stream:
         junit = stream.read(LIMIT + 1)
     if (
@@ -822,31 +1456,24 @@ def _native_junit(output: Path, sources: dict) -> tuple:
         or b"<!ENTITY" in junit.upper()
     ):
         raise RuntimeAuditError("E_RUNTIME_REPORT", "unsafe or oversized JUnit")
-    try:
-        tree = ET.fromstring(junit)
-    except ET.ParseError as exc:
-        raise RuntimeAuditError("E_RUNTIME_REPORT", "invalid native JUnit") from exc
-    tests, findings, harness = 0, [], None
-    for case in tree.iter("testcase"):
-        if case.find("skipped") is not None:
-            continue
-        tests += 1
-        path = relative_path(case.get("file", ""))
-        if path not in sources:
-            raise RuntimeAuditError("E_HARNESS_BINDING", "JUnit test source is unbound")
-        harness = harness or {"path": path, "sha256": sources[path]}
-        if case.find("failure") is not None or case.find("error") is not None:
-            findings.append(
-                {
-                    "rule_id": "RUNTIME_TEST_FAILURE",
-                    "path": path,
-                    "line": int(case.get("line", "0")) + 1,
-                    "severity": "high",
-                }
-            )
-    if not tests or harness is None:
-        raise RuntimeAuditError("E_RUNTIME_REPORT", "no executed source-bound tests")
-    return tests, findings, harness, sha256_bytes(junit)
+    return junit
+
+
+def _junit_case(case, sources):
+    if case.find("skipped") is not None:
+        return None
+    path = relative_path(case.get("file", ""))
+    if path not in sources:
+        raise RuntimeAuditError("E_HARNESS_BINDING", "JUnit test source is unbound")
+    finding = None
+    if case.find("failure") is not None or case.find("error") is not None:
+        finding = {
+            "rule_id": "RUNTIME_TEST_FAILURE",
+            "path": path,
+            "line": int(case.get("line", "0")) + 1,
+            "severity": "high",
+        }
+    return path, finding
 
 
 def _native_coverage_report(
@@ -1069,32 +1696,43 @@ def _native_source_path(uri: str, sources: dict, *, scan_root: bool = False) -> 
 
 
 def _native_artifact_path(artifact: dict, run: dict, sources: dict) -> str:
-    indexed = None
-    if "index" in artifact:
-        index = require_int(
-            artifact["index"], "artifact index", minimum=0, maximum=49999
+    uri, indexed_uri = _native_artifact_uri(artifact, run)
+    path = _native_source_path(uri, sources)
+    if indexed_uri is not None and _native_source_path(indexed_uri, sources) != path:
+        raise RuntimeAuditError(
+            "E_SARIF_INDIRECTION", "native artifact reference differs"
         )
-        items = run.get("artifacts", [])
-        if index >= len(items):
-            raise RuntimeAuditError("E_SARIF_INDIRECTION", "artifact index is absent")
-        indexed = items[index]["location"]
-    value = artifact if "uri" in artifact else indexed
+    return path
+
+
+def _native_artifact_uri(artifact, run):
+    indexed_uri = None
+    if "index" in artifact:
+        indexed_uri = _indexed_artifact_uri(artifact, run)
+        if not isinstance(indexed_uri, dict):
+            raise RuntimeAuditError(
+                "E_SARIF_INDIRECTION", "indexed artifact is invalid"
+            )
+    value = artifact if "uri" in artifact else indexed_uri
     if not isinstance(value, dict):
         raise RuntimeAuditError("E_SARIF_INDIRECTION", "native source URI missing")
-    absolute_source = value.get("uri", "").startswith(("/src/", "file:///src/"))
+    uri = require_str(value.get("uri"), "native source URI", maximum=2048)
+    absolute_source = uri.startswith(("/src/", "file:///src/"))
     if "uriBaseId" in value and not absolute_source:
         base = run.get("originalUriBaseIds", {}).get(value["uriBaseId"], {})
         if base.get("uri") not in {"file:///src/", "file:///src", "/src/"}:
             raise RuntimeAuditError(
                 "E_SARIF_INDIRECTION", "untrusted native source base"
             )
-    path = _native_source_path(value["uri"], sources)
-    if indexed is not None and "uri" in artifact:
-        if _native_source_path(indexed["uri"], sources) != path:
-            raise RuntimeAuditError(
-                "E_SARIF_INDIRECTION", "native artifact reference differs"
-            )
-    return path
+    return uri, indexed_uri.get("uri") if indexed_uri is not None else None
+
+
+def _indexed_artifact_uri(artifact, run):
+    index = require_int(artifact["index"], "artifact index", minimum=0, maximum=49999)
+    items = run.get("artifacts", [])
+    if index >= len(items):
+        raise RuntimeAuditError("E_SARIF_INDIRECTION", "artifact index is absent")
+    return items[index]["location"]
 
 
 def _native_sarif_paths(report: dict, sources: dict) -> dict:
@@ -1142,7 +1780,57 @@ def execute_native_profile(
     inventory, lane = _adapter_contract_parts(contract)
     _native_profile(profile, lane)
     _adapter_sources(source, inventory)
+    if lane["engine"] == "gitleaks":
+        _gitleaks_preflight(inventory, lane, contract)
     paths = _adapter_output_paths(lane, output, create_parents=True)
+    started = time.monotonic()
+    execution = _run_native_profile(
+        profile, contract, Path(source), Path(output), inventory, lane, paths
+    )
+    report = _native_report(
+        execution["raw_report"],
+        profile,
+        contract,
+        Path(output),
+        execution["invocations"],
+    )
+    challenges = {"schema": "factory.deep-challenges.v1", "observations": []}
+    covered_obligations = []
+    if lane["engine"] == "gitleaks":
+        challenges, covered_obligations = _gitleaks_challenges(
+            profile, contract, Path(source), lane, execution, started
+        )
+    coverage = _native_profile_coverage(
+        execution, report, inventory, lane, profile, challenges, covered_obligations
+    )
+    artifacts = {
+        paths[0]: report,
+        paths[1]: coverage,
+        paths[2]: challenges,
+    }
+    bundle = {
+        "schema": "factory.deep-worker.v1",
+        "run_id": contract["run_id"],
+        "candidate_sha256": inventory["candidate_sha256"],
+        "artifacts": artifacts,
+    }
+    _bounded_json_bytes(
+        bundle,
+        LIMIT,
+        "E_WORKER_BUNDLE_SIZE",
+        len(coverage.get("sources", {})),
+        len(lane.get("rule_ids", [])),
+    )
+    for path in paths[1:]:
+        (output / path).write_bytes(canonical_bytes(artifacts[path]))
+    return bundle
+
+
+def _run_native_profile(profile, contract, source, output, inventory, lane, paths):
+    rule_inventory = None
+    if lane["engine"] == "gitleaks":
+        config = Path("/opt/factory/rules/gitleaks.toml").read_bytes()
+        rule_inventory = _gitleaks_rule_inventory(config, lane)
     timeout = require_int(
         lane.get("timeout_seconds"), "timeout", minimum=1, maximum=3600
     )
@@ -1164,18 +1852,73 @@ def execute_native_profile(
                 "output": output,
                 "report": output / paths[0],
                 "scratch": scratch,
+                "candidate_sha256": inventory["candidate_sha256"],
+                "config": "/opt/factory/rules/gitleaks.toml",
             },
         )
         invocations = _adapter_commands(
             commands, {**lane, "timeout_seconds": int(remaining)}, source, scratch
         )
+        ledger = None
+        ledger_sha256 = None
+        ledger_json = None
+        if lane["engine"] == "gitleaks" and len(invocations) == 1:
+            ledger = invocations[0].pop("native_rule_ledger", None)
+            ledger_sha256 = invocations[0].get("native_rule_ledger_sha256")
+            ledger_json = invocations[0].pop("native_rule_ledger_json", None)
     with local_file(output, paths[0]).open("rb") as stream:
         raw_report = strict_json(stream.read(LIMIT + 1))
-    report = _native_report(raw_report, profile, contract, output, invocations)
     _adapter_sources(source, inventory)
+    return {
+        "rule_inventory": rule_inventory,
+        "invocations": invocations,
+        "ledger": ledger,
+        "ledger_sha256": ledger_sha256,
+        "ledger_json": ledger_json,
+        "raw_report": raw_report,
+        "version_probe": version,
+    }
+
+
+def _native_profile_coverage(
+    execution, report, inventory, lane, profile, challenges, covered_obligations
+):
+    ledger = execution["ledger"]
+    ledger_sha256 = execution["ledger_sha256"]
+    rule_accounting = None
+    native_source_inventory = None
+    native_source_inventory_sha256 = None
+    if lane["engine"] == "gitleaks" and ledger is not None and ledger_sha256:
+        _gitleaks_coverage_preflight(
+            execution, report, inventory, lane, challenges, covered_obligations
+        )
+        (
+            rule_accounting,
+            native_source_inventory,
+            native_source_inventory_sha256,
+        ) = _gitleaks_ledger_matrix(
+            ledger,
+            ledger_sha256,
+            lane,
+            inventory,
+            execution["rule_inventory"]["sha256"],
+            execution["invocations"],
+            execution["raw_report"],
+        )
+    errors = ["NATIVE_SOURCE_ACCOUNTING_REQUIRED", "NATIVE_CHALLENGES_REQUIRED"]
+    complete = False
+    if lane["engine"] == "gitleaks":
+        errors = _gitleaks_coverage_errors(
+            rule_accounting, challenges, covered_obligations
+        )
+        complete = not errors
     coverage = {
+        "profile_sha256": digest(profile),
+        "image_binding_sha256": sha256_bytes(
+            str(lane.get("image", "")).encode("utf-8")
+        ),
         "schema": "factory.deep-coverage.v1",
-        "complete": False,
+        "complete": complete,
         "sources": {
             item["path"]: item["sha256"]
             for item in inventory["files"]
@@ -1186,27 +1929,421 @@ def execute_native_profile(
         "tool_version": profile["tool_version"],
         "ruleset_sha256": profile["ruleset_sha256"],
         "report_sha256": digest(report),
-        "native_report_sha256": digest(raw_report),
+        "native_report_sha256": digest(execution["raw_report"]),
         "source_accounting": _native_runtime_accounting(report, inventory, lane),
-        "native_invocations": invocations,
-        "invocation_sha256": digest(invocations),
-        "version_probe": version,
-        "errors": ["NATIVE_SOURCE_ACCOUNTING_REQUIRED", "NATIVE_CHALLENGES_REQUIRED"],
-        "obligations": [],
+        "native_invocations": execution["invocations"],
+        "invocation_sha256": digest(execution["invocations"]),
+        "version_probe": execution["version_probe"],
+        "errors": errors,
+        "obligations": covered_obligations,
+        **(
+            {"rule_inventory": execution["rule_inventory"]}
+            if execution["rule_inventory"] is not None
+            else {}
+        ),
+        **(
+            {
+                "candidate_sha256": inventory["candidate_sha256"],
+                "native_rule_ledger_json": execution["ledger_json"],
+                "native_rule_ledger_sha256": ledger_sha256,
+                "native_source_inventory": inventory["files"]
+                if ledger is not None
+                else None,
+                "native_source_inventory_sha256": native_source_inventory_sha256,
+            }
+            if ledger is not None
+            else {}
+        ),
+        **({"rule_accounting": rule_accounting} if rule_accounting is not None else {}),
     }
-    artifacts = {
-        paths[0]: report,
-        paths[1]: coverage,
-        paths[2]: {"schema": "factory.deep-challenges.v1", "observations": []},
+    if lane["engine"] == "gitleaks":
+        source_count = len(coverage["sources"])
+        rule_count = len(lane["rule_ids"])
+        _bounded_json_bytes(
+            coverage,
+            NATIVE_COVERAGE_LIMIT,
+            "E_GITLEAKS_LEDGER_SIZE",
+            source_count,
+            rule_count,
+        )
+    return coverage
+
+
+def _gitleaks_coverage_errors(accounting, challenges, obligations):
+    errors = []
+    if not _gitleaks_accounting_complete(accounting):
+        errors.append("NATIVE_SOURCE_ACCOUNTING_REQUIRED")
+    if not _gitleaks_challenges_complete(challenges, obligations):
+        errors.append("NATIVE_CHALLENGES_REQUIRED")
+    return errors
+
+
+def _gitleaks_challenges_complete(challenges, obligations):
+    if challenges.get("gaps"):
+        return False
+    expected = {
+        (identity, kind)
+        for identity in obligations
+        for kind in ("positive", "negative", "mutation")
     }
-    for path in paths[1:]:
-        (output / path).write_bytes(canonical_bytes(artifacts[path]))
+    observed = set()
+    all_verified = True
+    for item in challenges.get("observations", []):
+        identity = (item.get("obligation_id"), item.get("kind"))
+        if identity in observed:
+            all_verified = False
+        observed.add(identity)
+        all_verified = (
+            all_verified
+            and isinstance(item.get("execution"), dict)
+            and item["execution"].get("status") == "VERIFIED"
+            and isinstance(item.get("report"), dict)
+            and item.get("observation_sha256") == digest(item["report"])
+        )
+    return bool(expected) and observed == expected and all_verified
+
+
+def _gitleaks_accounting_complete(accounting):
+    if not isinstance(accounting, dict) or not isinstance(
+        accounting.get("rules"), list
+    ):
+        return False
+    return all(
+        isinstance(rule, dict)
+        and isinstance(rule.get("sources"), list)
+        and bool(rule["sources"])
+        and all(row.get("disposition") == "executed" for row in rule["sources"])
+        for rule in accounting["rules"]
+    )
+
+
+def _gitleaks_challenges(profile, contract, source, lane, execution, started):
+    from .runtime_audit_common import execute_native_challenge
+    from .runtime_audit_process import run_bounded_command
+
+    commands = profile["commands"]
+    if len(commands) != 1:
+        return {"schema": "factory.deep-challenges.v1", "observations": []}, []
+    command = commands[0]
+    source_bindings = {
+        item["path"]: item["sha256"] for item in contract["inventory"]["files"]
+    }
+    obligations = _gitleaks_obligations(contract, lane)
+    ids = sorted(item["id"] for item in obligations)
+    baseline_path = Path("/opt/factory/rules/gitleaks.toml")
+    baseline = baseline_path.read_bytes()
+    observations = []
+    gaps = []
+    deadline = started + lane["timeout_seconds"]
+    with tempfile.TemporaryDirectory(
+        prefix="factory-gitleaks-challenges-"
+    ) as temporary:
+        root = Path(temporary)
+        for index, obligation in enumerate(obligations):
+            for challenge in obligation["challenges"]:
+                remaining = int(deadline - time.monotonic())
+                if remaining < 1:
+                    gaps.append(
+                        _challenge_gap_record(
+                            obligation, challenge, "E_ADAPTER_TIMEOUT"
+                        )
+                    )
+                    continue
+                if not _gitleaks_challenge_allowed(
+                    challenge, obligation, source_bindings, command, lane
+                ):
+                    gaps.append(
+                        _challenge_gap_record(
+                            obligation, challenge, "E_CHALLENGE_BINDING"
+                        )
+                    )
+                    continue
+                try:
+                    observation = _run_gitleaks_challenge(
+                        execute_native_challenge,
+                        run_bounded_command,
+                        profile,
+                        contract,
+                        source,
+                        lane,
+                        execution,
+                        command,
+                        challenge,
+                        obligation,
+                        source_bindings,
+                        baseline_path,
+                        baseline,
+                        root / f"control-{index}-{challenge['kind']}",
+                        remaining,
+                    )
+                except (
+                    OSError,
+                    RuntimeAuditError,
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                ) as exc:
+                    gaps.append(
+                        _challenge_gap_record(
+                            obligation, challenge, _challenge_error_code(exc)
+                        )
+                    )
+                    continue
+                observations.append(observation)
     return {
-        "schema": "factory.deep-worker.v1",
-        "run_id": contract["run_id"],
-        "candidate_sha256": inventory["candidate_sha256"],
-        "artifacts": artifacts,
+        "schema": "factory.deep-challenges.v1",
+        "observations": observations,
+        "gaps": gaps,
+    }, ids
+
+
+def _gitleaks_obligations(contract, lane):
+    required = {
+        item["path"]
+        for item in contract["inventory"]["files"]
+        if item["language"] in lane["languages"]
     }
+    obligations = [
+        item
+        for item in contract["obligations"]
+        if item["engine"] == "gitleaks"
+        and item["family"] == lane["family"]
+        and set(item["paths"]) <= required
+    ]
+    if len(obligations) > 64:
+        _native_budget_error(
+            "E_GITLEAKS_CHALLENGE_BUDGET",
+            len(obligations),
+            3,
+            len(obligations) * 3,
+            64 * 3,
+        )
+    return obligations
+
+
+def _gitleaks_preflight(inventory, lane, contract):
+    source_count = sum(
+        item["language"] in lane["languages"] for item in inventory["files"]
+    )
+    rule_count = len(lane["rule_ids"])
+    pairs = source_count * rule_count
+    per_pair = (
+        768
+        + max(
+            (_json_string_size(item["path"]) for item in inventory["files"]),
+            default=0,
+        )
+        + max((_json_string_size(rule) for rule in lane["rule_ids"]), default=0)
+    )
+    estimate = pairs * per_pair + _json_size_upper_bound(inventory["files"])
+    if pairs > 200_000 or estimate > NATIVE_COVERAGE_LIMIT:
+        _native_budget_error(
+            "E_GITLEAKS_LEDGER_SIZE",
+            source_count,
+            rule_count,
+            estimate,
+            NATIVE_COVERAGE_LIMIT,
+        )
+    _gitleaks_obligations(contract, lane)
+
+
+def _challenge_gap_record(obligation, challenge, reason):
+    return {
+        "obligation_id": obligation["id"],
+        "kind": challenge.get("kind") if isinstance(challenge, dict) else None,
+        "reason": reason,
+    }
+
+
+def _challenge_error_code(error):
+    code = getattr(error, "code", None)
+    if (
+        isinstance(code, str)
+        and code.startswith("E_")
+        and code.replace("_", "").isalnum()
+        and code == code.upper()
+        and len(code) <= 58
+    ):
+        return code
+    return "E_CHALLENGE_EXECUTION"
+
+
+def _gitleaks_challenge_allowed(challenge, obligation, source_bindings, command, lane):
+    accepted = command["accepted_exit_codes"]
+    return (
+        challenge.get("fixture_path") in source_bindings
+        and challenge.get("fixture_sha256")
+        == source_bindings.get(challenge.get("fixture_path"))
+        and obligation["detector_rule_id"] in lane["rule_ids"]
+        and challenge.get("expected_exit_code") in accepted
+    )
+
+
+def _run_gitleaks_challenge(
+    execute,
+    runner,
+    profile,
+    contract,
+    source,
+    lane,
+    execution,
+    command,
+    challenge,
+    obligation,
+    source_bindings,
+    baseline_path,
+    baseline,
+    case,
+    timeout,
+):
+    from .runtime_audit_common import sha256_bytes as common_sha256
+
+    fixture_path = relative_path(challenge["fixture_path"])
+    fixture_sha = challenge["fixture_sha256"]
+    fixture = bound_bytes(source, {"path": fixture_path, "sha256": fixture_sha})
+    case.mkdir()
+    challenge_root = case / "source"
+    target = challenge_root.joinpath(*fixture_path.split("/"))
+    target.parent.mkdir(parents=True)
+    target.write_bytes(fixture)
+    challenge_source_sha = digest({fixture_path: fixture_sha})
+    config_path = baseline_path
+    if challenge["kind"] == "mutation":
+        mutation_hashes = lane.get("mutation_config_sha256")
+        expected_mutation = (
+            mutation_hashes.get(obligation["detector_rule_id"])
+            if isinstance(mutation_hashes, dict)
+            else None
+        )
+        mutated_config = _gitleaks_disable_rule(
+            baseline, obligation["detector_rule_id"]
+        )
+        if (
+            not isinstance(expected_mutation, str)
+            or sha256_bytes(mutated_config) != expected_mutation
+        ):
+            raise RuntimeAuditError(
+                "E_GITLEAKS_MUTATION_BINDING", "signed mutation config digest differs"
+            )
+        config_path = case / "mutation.toml"
+        config_path.write_bytes(mutated_config)
+    scratch = case / "run"
+    report_path, ledger_path = scratch / "report.sarif", scratch / "rule-ledger.json"
+    argv_bindings = {
+        "source": str(challenge_root),
+        "output": str(scratch),
+        "report": str(report_path),
+        "scratch": str(scratch),
+        "candidate_sha256": challenge_source_sha,
+        "factory_ledger": str(ledger_path),
+        "config": str(config_path),
+    }
+    challenge_inventory = {fixture_path: fixture_sha}
+
+    def report_parser(raw):
+        return _gitleaks_challenge_report(
+            raw, profile, challenge_root, challenge_inventory
+        )
+
+    image = lane["image"]
+    execution_bindings = {
+        "candidate_sha256": contract["inventory"]["candidate_sha256"],
+        "challenge_source_sha256": challenge_source_sha,
+        "profile_sha256": digest(profile),
+        "image_sha256": common_sha256(image.encode("utf-8")),
+        "tool_version": profile["tool_version"],
+        "version_probe_sha256": digest(execution["version_probe"]),
+        "version_probe_facts": execution["version_probe"],
+    }
+    return execute(
+        challenge,
+        obligation_id=obligation["id"],
+        engine="gitleaks",
+        detector_rule_id=obligation["detector_rule_id"],
+        detector_enabled=challenge["kind"] != "mutation",
+        profile_argv=command["argv"],
+        bindings=argv_bindings,
+        source_root=challenge_root,
+        baseline_config_path=baseline_path,
+        effective_config_path=config_path,
+        report_path=report_path,
+        ledger_path=ledger_path,
+        scratch=scratch,
+        scratch_parent=case,
+        timeout_seconds=timeout,
+        expected_ruleset_sha256=lane["ruleset_sha256"],
+        execution_bindings=execution_bindings,
+        runner=runner,
+        report_parser=report_parser,
+        config_rule_ids=_gitleaks_rule_ids,
+        verify_mutation=_gitleaks_mutation_valid,
+    )
+
+
+def _gitleaks_challenge_report(raw, profile, source_root, sources):
+    report = strict_json(raw)
+    if not isinstance(report, dict):
+        raise RuntimeAuditError("E_CHALLENGE_REPORT", "native report object required")
+    report = _native_sarif_metadata(report, profile, [])
+    _normalize_challenge_sarif_paths(report, source_root)
+    return _native_sarif_paths(report, sources)
+
+
+def _normalize_challenge_sarif_paths(report, source_root):
+    root = source_root.resolve().as_posix().rstrip("/")
+    for run in report.get("runs", []):
+        _normalize_challenge_run(run, root)
+
+
+def _normalize_challenge_run(run, root):
+    _normalize_challenge_bases(run, root)
+    run.pop("workingDirectory", None)
+    for invocation in run.get("invocations", []):
+        _normalize_challenge_invocation(invocation)
+    _normalize_challenge_artifact_paths(run, root)
+
+
+def _normalize_challenge_bases(run, root):
+    bases = run.get("originalUriBaseIds", {})
+    for base in bases.values():
+        uri = base.get("uri") if isinstance(base, dict) else None
+        if isinstance(uri, str) and _under_challenge_root(uri, root):
+            base["uri"] = "file:///src/"
+
+
+def _normalize_challenge_invocation(invocation):
+    if not isinstance(invocation, dict):
+        return
+    for key in ("startTimeUtc", "endTimeUtc", "processId", "workingDirectory"):
+        invocation.pop(key, None)
+
+
+def _normalize_challenge_artifact_paths(run, root):
+    stack = [run]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            artifact = item.get("artifactLocation")
+            uri = artifact.get("uri") if isinstance(artifact, dict) else None
+            if isinstance(uri, str):
+                artifact["uri"] = _challenge_source_uri(uri, root)
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+
+
+def _under_challenge_root(uri, root):
+    clean = unquote(uri).removeprefix("file://")
+    return clean == root or clean.startswith(root + "/")
+
+
+def _challenge_source_uri(uri, root):
+    clean = unquote(uri).removeprefix("file://")
+    if clean == root:
+        return "/src"
+    if clean.startswith(root + "/"):
+        return "/src/" + clean[len(root) + 1 :]
+    return uri
 
 
 def adapter_main(argv: list[str] | None = None) -> int:
@@ -1235,7 +2372,8 @@ def adapter_main(argv: list[str] | None = None) -> int:
             else execute_adapter_profile
         )
         bundle = execute(profile, contract, Path("/src"), Path("/out"))
-        print(canonical_bytes(bundle).decode("utf-8"))
+        raw = _bounded_json_bytes(bundle, LIMIT, "E_WORKER_BUNDLE_SIZE")
+        print(raw.decode("utf-8"))
         return 0
     except (OSError, ValueError, KeyError, TypeError) as exc:
         import sys
