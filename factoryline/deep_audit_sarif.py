@@ -1219,9 +1219,13 @@ def _challenge_execution_v2_valid(
     body = {key: value for key, value in execution.items() if key != "execution_sha256"}
     if execution.get("execution_sha256") != digest(body):
         return False
-    return _challenge_execution_budgets_valid_v2(
-        execution, lane
-    ) and _trivy_challenge_native_valid(execution, challenge, bound, obligation, lane)
+    return (
+        _challenge_execution_budgets_valid_v2(execution, lane)
+        and _trivy_challenge_native_valid(execution, challenge, bound, obligation, lane)
+        and _codeql_challenge_native_valid(
+            execution, challenge, bound, obligation, identity, lane, coverage
+        )
+    )
 
 
 def _trivy_challenge_native_valid(execution, challenge, bound, obligation, lane):
@@ -1243,6 +1247,49 @@ def _trivy_challenge_native_valid(execution, challenge, bound, obligation, lane)
         return _trivy_challenge_artifacts_match(execution, evidence)
     except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
         return False
+
+
+def _codeql_challenge_native_valid(
+    execution, challenge, bound, obligation, identity, lane, coverage
+):
+    if lane["engine"] != "codeql":
+        return True
+    from .deep_audit_io import verify_codeql_query_selection
+
+    try:
+        evidence = challenge.get("codeql_query_inventory")
+        baseline = coverage.get("codeql_query_inventory")
+        if not _codeql_query_inventory_artifact_matches(
+            execution, evidence, baseline, lane
+        ):
+            return False
+        verify_codeql_query_selection(
+            evidence,
+            baseline=baseline,
+            disabled_rule_id=(
+                obligation["detector_rule_id"] if identity[1] == "mutation" else None
+            ),
+        )
+        return evidence.get("suite_sha256") == execution.get("effective_config_sha256")
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
+        return False
+
+
+def _codeql_query_inventory_artifact_matches(execution, evidence, baseline, lane):
+    if not isinstance(evidence, dict) or evidence.get("schema") != (
+        "factory.codeql-query-inventory.v1"
+    ):
+        return False
+    if not isinstance(baseline, dict):
+        return False
+    artifacts = {item["kind"]: item for item in execution["native_artifacts"]}
+    artifact = artifacts["query_inventory"]
+    raw = canonical_bytes(evidence)
+    return (
+        lane.get("rule_ids") == sorted(baseline.get("query_ids", {}))
+        and artifact["sha256"] == sha256_bytes(raw)
+        and artifact["bytes"] == len(raw)
+    )
 
 
 def _trivy_challenge_artifacts_match(execution, evidence):
@@ -1362,12 +1409,16 @@ def _challenge_execution_v2_binding(
         and execution.get("tool_version") == lane["tool_version"]
         and execution.get("version_probe_sha256")
         == digest(coverage.get("version_probe"))
-        and _challenge_execution_config_valid_v2(execution, obligation, identity, lane)
+        and _challenge_execution_config_valid_v2(
+            execution, obligation, identity, lane, coverage
+        )
     )
 
 
-def _challenge_execution_config_valid_v2(execution, obligation, identity, lane):
-    baseline = _challenge_baseline_config_sha256(lane)
+def _challenge_execution_config_valid_v2(
+    execution, obligation, identity, lane, coverage=None
+):
+    baseline = _challenge_baseline_config_sha256(lane, coverage)
     if baseline is None:
         return False
     expected_mutation = None
@@ -1393,7 +1444,16 @@ def _challenge_execution_config_valid_v2(execution, obligation, identity, lane):
     )
 
 
-def _challenge_baseline_config_sha256(lane):
+def _challenge_baseline_config_sha256(lane, coverage=None):
+    if lane["engine"] == "codeql":
+        inventory = (coverage or {}).get("codeql_query_inventory")
+        if not isinstance(inventory, dict):
+            return None
+        try:
+            require_digest(inventory.get("suite_sha256"), "CodeQL suite hash")
+        except RuntimeAuditError:
+            return None
+        return inventory["suite_sha256"]
     if lane["engine"] != "trivy":
         return lane["ruleset_sha256"]
     policy = lane.get("native_policy")

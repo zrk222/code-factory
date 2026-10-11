@@ -3020,6 +3020,7 @@ def resolve_codeql_query_inventory(codeql, suite, source, scratch, timeout):
         schema="factory.codeql-query-inventory.v1",
         suite_sha256=sha256_bytes(suite_raw),
         queries=queries,
+        query_ids=_codeql_query_ids(queries),
         query_inventory_sha256=digest(queries),
         argv=argv,
         argv_sha256=digest(argv),
@@ -3076,6 +3077,89 @@ def verify_codeql_query_isolation(baseline, mutated, target_query):
     return dict(
         disabled_query=target_query, remaining_query_inventory_sha256=digest(mutated)
     )
+
+
+def _codeql_query_ids(queries):
+    import re
+
+    identifiers = {}
+    root = Path("/opt/codeql/codeql/qlpacks")
+    for path, expected in queries.items():
+        with local_file(root, path).open("rb") as stream:
+            raw = stream.read(1_048_577)
+        if sha256_bytes(raw) != expected:
+            raise RuntimeAuditError(
+                "E_CODEQL_INVENTORY", "query changed during metadata read"
+            )
+        text = raw.decode("utf-8")
+        ids = re.findall(r"(?m)^\s*\*\s*@id\s+([^\s]+)\s*$", text)
+        if len(ids) != 1 or ids[0] in identifiers:
+            raise RuntimeAuditError(
+                "E_CODEQL_INVENTORY", "unique native query ID required"
+            )
+        require_str(ids[0], "native query ID", maximum=256)
+        identifiers[ids[0]] = path
+    return dict(sorted(identifiers.items()))
+
+
+def _codeql_selection_shape(inventory):
+    if (
+        not isinstance(inventory, dict)
+        or inventory.get("schema") != "factory.codeql-query-inventory.v1"
+    ):
+        raise RuntimeAuditError("E_CODEQL_INVENTORY", "native query inventory required")
+    queries, identifiers = inventory.get("queries"), inventory.get("query_ids")
+    if not isinstance(queries, dict) or not 1 <= len(queries) <= 1024:
+        raise RuntimeAuditError("E_CODEQL_INVENTORY", "bounded query map required")
+    for path, seal in queries.items():
+        relative_path(path)
+        require_digest(seal, "query content hash")
+        if not path.startswith("codeql/") or not path.endswith(".ql"):
+            raise RuntimeAuditError("E_CODEQL_INVENTORY", "pinned query path required")
+    _codeql_selection_ids(identifiers, queries)
+    require_digest(inventory.get("suite_sha256"), "suite hash")
+    if inventory.get("query_inventory_sha256") != digest(queries):
+        raise RuntimeAuditError("E_CODEQL_INVENTORY", "query inventory hash differs")
+    return queries, identifiers
+
+
+def _codeql_selection_ids(identifiers, queries):
+    if not isinstance(identifiers, dict) or len(identifiers) != len(queries):
+        raise RuntimeAuditError("E_CODEQL_INVENTORY", "complete query ID map required")
+    for rule_id, path in identifiers.items():
+        require_str(rule_id, "native query ID", maximum=256)
+        relative_path(path)
+    if set(identifiers.values()) != set(queries):
+        raise RuntimeAuditError(
+            "E_CODEQL_INVENTORY", "one-to-one query ID mapping required"
+        )
+
+
+def verify_codeql_query_selection(inventory, *, baseline=None, disabled_rule_id=None):
+    """Validate selected query identity against a baseline, without claiming execution."""
+    queries, identifiers = _codeql_selection_shape(inventory)
+    if baseline is None:
+        if disabled_rule_id is not None:
+            raise RuntimeAuditError(
+                "E_CODEQL_MUTATION", "baseline required for mutation"
+            )
+        return
+    original, original_ids = _codeql_selection_shape(baseline)
+    if disabled_rule_id is not None:
+        if disabled_rule_id not in original_ids:
+            raise RuntimeAuditError("E_CODEQL_MUTATION", "target query ID absent")
+        verify_codeql_query_isolation(original, queries, original_ids[disabled_rule_id])
+        expected_ids = {
+            key: value for key, value in original_ids.items() if key != disabled_rule_id
+        }
+    else:
+        expected_ids = original_ids
+        if queries != original or inventory["suite_sha256"] != baseline["suite_sha256"]:
+            raise RuntimeAuditError(
+                "E_CODEQL_INVENTORY", "baseline query selection differs"
+            )
+    if identifiers != expected_ids:
+        raise RuntimeAuditError("E_CODEQL_INVENTORY", "query ID binding differs")
 
 
 def _native_source_accounting(execution, report, inventory, lane):

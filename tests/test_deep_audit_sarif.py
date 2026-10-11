@@ -5,7 +5,11 @@ import pytest
 
 from factoryline.deep_audit_io import digest, relative_path, strict_json
 from factoryline.deep_audit_sarif import normalize_sarif
-from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
+from factoryline.runtime_audit_common import (
+    RuntimeAuditError,
+    canonical_bytes,
+    sha256_bytes,
+)
 
 ANALYZER = {"id": "scanner", "driver": "Example", "version": "1"}
 
@@ -561,6 +565,131 @@ def test_trivy_plain_native_ignore_mutation_has_only_target():
     assert _trivy_ignore_ids(b"DS001\n") == ["DS001"]
     with pytest.raises(RuntimeAuditError):
         _trivy_mutation(b"DS002\n", "DS001")
+
+
+def _codeql_inventory_fixture(*, changed=False):
+    queries = {
+        "codeql/javascript-queries/2/a.ql": "a" * 64,
+        "codeql/javascript-queries/2/b.ql": "b" * 64,
+    }
+    query_ids = {"js/a": next(iter(queries)), "js/b": list(queries)[1]}
+    if changed:
+        queries["codeql/javascript-queries/2/a.ql"] = "c" * 64
+    return {
+        "schema": "factory.codeql-query-inventory.v1",
+        "suite_sha256": "d" * 64,
+        "queries": queries,
+        "query_ids": query_ids,
+        "query_inventory_sha256": digest(queries),
+        "argv": ["codeql", "resolve", "queries"],
+        "argv_sha256": "e" * 64,
+        "execution": {},
+        "raw_resolution_sha256": "f" * 64,
+        "claim_boundary": "selection only",
+    }
+
+
+def _codeql_challenge_fixture(kind="positive"):
+    from factoryline.deep_audit_sarif import _codeql_challenge_native_valid
+
+    baseline = _codeql_inventory_fixture()
+    evidence = deepcopy(baseline)
+    suite_hash = baseline["suite_sha256"]
+    if kind == "mutation":
+        target_path = evidence["query_ids"].pop("js/a")
+        evidence["queries"].pop(target_path)
+        evidence["query_inventory_sha256"] = digest(evidence["queries"])
+        suite_hash = "1" * 64
+        evidence["suite_sha256"] = suite_hash
+    raw = canonical_bytes(evidence)
+    execution = {
+        "native_artifacts": [
+            {"kind": "sarif_report", "sha256": "2" * 64, "bytes": 3},
+            {
+                "kind": "query_inventory",
+                "sha256": sha256_bytes(raw),
+                "bytes": len(raw),
+            },
+        ],
+        "mutation": (
+            {
+                "disabled_rule_id": "js/a",
+                "remaining_rule_inventory_sha256": digest(["js/b"]),
+            }
+            if kind == "mutation"
+            else None
+        ),
+        "effective_config_sha256": suite_hash,
+    }
+    challenge = {"codeql_query_inventory": evidence}
+    lane = {
+        "engine": "codeql",
+        "rule_ids": ["js/a", "js/b"],
+        "mutation_config_sha256": {"js/a": "1" * 64},
+    }
+    obligation = {"detector_rule_id": "js/a"}
+    bound = {"fixture_manifest": {"route.js": "3" * 64}}
+    coverage = {"codeql_query_inventory": baseline}
+    valid = _codeql_challenge_native_valid(
+        execution, challenge, bound, obligation, ("control", kind), lane, coverage
+    )
+    return valid, execution, challenge, lane, coverage, obligation, bound
+
+
+@pytest.mark.parametrize("kind", ["positive", "negative", "mutation"])
+def test_codeql_challenge_query_inventory_is_bound_and_exact(kind):
+    assert _codeql_challenge_fixture(kind)[0]
+
+
+@pytest.mark.parametrize("tamper", ["missing", "artifact_hash", "artifact_bytes"])
+def test_codeql_challenge_rejects_missing_or_changed_query_artifact(tamper):
+    from factoryline.deep_audit_sarif import _codeql_challenge_native_valid
+
+    valid, execution, challenge, lane, coverage, obligation, bound = (
+        _codeql_challenge_fixture()
+    )
+    assert valid
+    if tamper == "missing":
+        challenge.pop("codeql_query_inventory")
+    else:
+        artifact = execution["native_artifacts"][1]
+        artifact["sha256" if tamper == "artifact_hash" else "bytes"] = (
+            "0" * 64 if tamper == "artifact_hash" else artifact["bytes"] + 1
+        )
+    assert not _codeql_challenge_native_valid(
+        execution, challenge, bound, obligation, ("control", "positive"), lane, coverage
+    )
+
+
+@pytest.mark.parametrize("tamper", ["query_drift", "suite_mismatch", "omitted_rule"])
+def test_codeql_challenge_rejects_inventory_drift_and_omitted_rule(tamper):
+    from factoryline.deep_audit_sarif import _codeql_challenge_native_valid
+
+    valid, execution, challenge, lane, coverage, obligation, bound = (
+        _codeql_challenge_fixture("mutation")
+        if tamper == "query_drift"
+        else _codeql_challenge_fixture()
+    )
+    assert valid
+    evidence = challenge["codeql_query_inventory"]
+    if tamper == "query_drift":
+        evidence["queries"]["codeql/javascript-queries/2/b.ql"] = "9" * 64
+        evidence["query_inventory_sha256"] = digest(evidence["queries"])
+    elif tamper == "suite_mismatch":
+        execution["effective_config_sha256"] = "8" * 64
+    else:
+        lane["rule_ids"] = ["js/a"]
+    raw = canonical_bytes(evidence)
+    execution["native_artifacts"][1].update(sha256=sha256_bytes(raw), bytes=len(raw))
+    assert not _codeql_challenge_native_valid(
+        execution,
+        challenge,
+        bound,
+        obligation,
+        ("control", "mutation" if tamper == "query_drift" else "positive"),
+        lane,
+        coverage,
+    )
 
 
 @pytest.mark.parametrize(

@@ -2334,7 +2334,7 @@ def test_codeql_query_resolution_records_native_selection(tmp_path, monkeypatch)
     suite = tmp_path / "suite.qls"
     suite.write_text("- queries: .")
     query = tmp_path / "query.ql"
-    query.write_text("/** @id js/example */ select 1")
+    query.write_text("/**\n * @id js/example\n */\n select 1")
     paths = ["/opt/codeql/codeql/qlpacks/codeql/javascript-queries/1/security/query.ql"]
     original = __import__(
         "factoryline.deep_audit_io", fromlist=["local_file"]
@@ -2366,6 +2366,7 @@ def test_codeql_query_resolution_records_native_selection(tmp_path, monkeypatch)
         )
     }
     assert result["suite_sha256"] == sha256_bytes(suite.read_bytes())
+    assert result["query_ids"] == {"js/example": next(iter(result["queries"]))}
     assert result["argv"][1:3] == ["resolve", "queries"]
     assert "not execution" in result["claim_boundary"]
 
@@ -2446,6 +2447,10 @@ def test_codeql_resolution_repeated_calls_use_isolated_runtime_homes(
     monkeypatch.setattr(
         "factoryline.deep_audit_io._codeql_resolved_queries",
         lambda paths: {"sentinel.ql": "a" * 64},
+    )
+    monkeypatch.setattr(
+        "factoryline.deep_audit_io._codeql_query_ids",
+        lambda queries: {"sentinel": "sentinel.ql"},
     )
     homes = []
 
@@ -2557,3 +2562,91 @@ def test_codeql_preflight_leaves_other_engines_unchanged(tmp_path, monkeypatch):
         "factoryline.deep_audit_io.resolve_codeql_query_inventory", unexpected
     )
     assert _codeql_query_preflight({}, tmp_path, tmp_path, 0, engine="runtime") is None
+
+
+def _codeql_selection_fixture():
+    from factoryline.deep_audit_io import digest
+
+    queries = {"codeql/test/target.ql": "a" * 64, "codeql/test/sentinel.ql": "b" * 64}
+    return dict(
+        schema="factory.codeql-query-inventory.v1",
+        queries=queries,
+        query_ids={
+            "js/target": "codeql/test/target.ql",
+            "js/sentinel": "codeql/test/sentinel.ql",
+        },
+        suite_sha256="c" * 64,
+        query_inventory_sha256=digest(queries),
+    )
+
+
+def test_codeql_selection_verifier_accepts_baseline_and_exact_target_mutation():
+    from factoryline.deep_audit_io import verify_codeql_query_selection, digest
+
+    baseline = _codeql_selection_fixture()
+    verify_codeql_query_selection(baseline, baseline=baseline)
+    changed = json.loads(json.dumps(baseline))
+    del changed["queries"]["codeql/test/target.ql"]
+    del changed["query_ids"]["js/target"]
+    changed["query_inventory_sha256"] = digest(changed["queries"])
+    changed["suite_sha256"] = "d" * 64
+    verify_codeql_query_selection(
+        changed, baseline=baseline, disabled_rule_id="js/target"
+    )
+
+
+@pytest.mark.parametrize(
+    "change", ["hash", "id", "path", "duplicate", "suite", "content", "schema", "empty"]
+)
+def test_codeql_selection_verifier_rejects_drift(change):
+    from factoryline.deep_audit_io import verify_codeql_query_selection, digest
+
+    baseline = _codeql_selection_fixture()
+    changed = json.loads(json.dumps(baseline))
+    if change == "hash":
+        changed["query_inventory_sha256"] = "0" * 64
+    if change == "id":
+        changed["query_ids"]["js/unknown"] = changed["query_ids"].pop("js/target")
+    if change == "path":
+        changed["queries"]["../escape.ql"] = changed["queries"].pop(
+            "codeql/test/target.ql"
+        )
+    if change == "duplicate":
+        changed["query_ids"]["js/target"] = changed["query_ids"]["js/sentinel"]
+    if change == "suite":
+        changed["suite_sha256"] = "d" * 64
+    if change == "content":
+        changed["queries"]["codeql/test/target.ql"] = "e" * 64
+        changed["query_inventory_sha256"] = digest(changed["queries"])
+    if change == "schema":
+        changed["schema"] = "untrusted"
+    if change == "empty":
+        changed["queries"] = {}
+    with pytest.raises(RuntimeAuditError):
+        verify_codeql_query_selection(changed, baseline=baseline)
+
+
+@pytest.mark.parametrize("metadata", ["", " * @id js/one\n * @id js/two\n"])
+def test_codeql_query_metadata_requires_unique_id(tmp_path, monkeypatch, metadata):
+    from factoryline.deep_audit_io import _codeql_query_ids
+
+    query = tmp_path / "query.ql"
+    query.write_text("/**\n" + metadata + " */\nselect 1")
+    monkeypatch.setattr("factoryline.deep_audit_io.local_file", lambda *args: query)
+    with pytest.raises(RuntimeAuditError):
+        _codeql_query_ids({"codeql/test/query.ql": sha256_bytes(query.read_bytes())})
+
+
+def test_codeql_query_metadata_rejects_changed_content_and_duplicate_ids(
+    tmp_path, monkeypatch
+):
+    from factoryline.deep_audit_io import _codeql_query_ids
+
+    query = tmp_path / "query.ql"
+    query.write_text("/**\n * @id js/one\n */\nselect 1")
+    monkeypatch.setattr("factoryline.deep_audit_io.local_file", lambda *args: query)
+    with pytest.raises(RuntimeAuditError, match="changed"):
+        _codeql_query_ids({"codeql/test/one.ql": "a" * 64})
+    seal = sha256_bytes(query.read_bytes())
+    with pytest.raises(RuntimeAuditError, match="unique"):
+        _codeql_query_ids({"codeql/test/one.ql": seal, "codeql/test/two.ql": seal})
