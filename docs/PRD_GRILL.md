@@ -1,5 +1,36 @@
 # PRD Grill
 
+## Build an app when you are new to coding
+
+Tell your agent who the app helps and one thing you want those people to do.
+Ask it to capture that idea in `PRD.md`, keeping unknown choices explicit.
+You do not need to choose a framework or learn CF's internal vocabulary first.
+
+Run `factory prd grill PRD.md --root . --mode deep --json`. The agent reads
+`interview.next_question_id` and asks that ready question in everyday language,
+with a recommendation and example. You can accept, change, or reject the proposal.
+It records your answer in the PRD and reruns clarification before asking a
+dependent question. No answer is inferred from silence.
+
+For example, instead of asking you to write an "acceptance contract", it asks:
+"After someone saves a note, what should they see?" Your answer becomes a
+visible behavior the developer agent must demonstrate. Include the failure
+case too: what happens if saving fails, and how can the user recover?
+
+This adapts [Matt Pocock's Grill-Me / grilling](https://github.com/mattpocock/skills/tree/main/skills/productivity/grilling)
+decision tree to CF's saved, bounded question frontier. Upstream grilling asks
+independent questions in rounds; CF's beginner agent presents one at a time.
+Repository facts should be inspected by the agent; product choices stay yours.
+
+Before building, review the first useful journey, expected result, error
+recovery, data access and human approval boundaries with your agent. Confirm
+shared understanding explicitly. An empty detected frontier means the current
+section checks found no gaps; it does not prove the PRD is complete or correct.
+The build then follows the existing optimization, compilation, small value
+slices and CF/FL audit route below. Findings lead to repair and another check;
+missing evidence remains visible. This helps guide development but does not
+guarantee a good app or authorize deployment.
+
 PRD Grill is the local clarification pass that runs before PRD optimization,
 Product Graph compilation, or app scaffolding. It turns the deterministic gaps
 already observed in a source PRD into a small, dependency-safe question
@@ -85,3 +116,21 @@ For a first MVP, this saves a novice from discovering essential PRD decisions
 only after a scaffold exists. For an experienced team, it makes the unresolved
 product contract explicit, source-bound, and reviewable before dependent
 automation proceeds.
+
+## Working with a smaller coding agent
+
+A product mission now includes a sealed `task_packet` for its selected value
+slice. It carries exact requirements, acceptance examples, dependencies,
+source hashes and run budgets instead of asking the agent to reinterpret the
+entire product.
+
+The packet starts at `prepared_needs_candidate_binding`. File paths, commands
+and applicability across all six audit lanes require repository inspection.
+It does not start a build or grant release authority. Use the existing scoped
+proof workflow before changing code, and retain positive and negative controls.
+Changed product sources invalidate the packet. Legacy missions remain readable
+and explicitly report that their task packet is unavailable.
+
+This supplies bounded agent context. Whether a smaller model achieves the same
+app quality at lower total cost still requires the paired benchmark in
+[the upgrade plan](../plans/prd-grill.md); no equivalence result is claimed.

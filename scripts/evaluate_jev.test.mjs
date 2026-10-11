@@ -294,7 +294,7 @@ test('PRD, PR and test-oracle profiles select criteria through the operator CLI'
         assert.deepEqual(request.questions.finding.criteria, selected.rubric.criteria);
         assert.ok(request.questions.finding.instructions.includes('Test names, docstrings, comments, type annotations'));
         assert.ok(request.questions.finding.instructions.includes('exception merely possible during setup is not'));
-        assert.equal(selected.framework.version, '1.2.4');
+        assert.equal(selected.framework.version, '1.2.5');
         assert.ok(request.questions.finding.instructions.includes('ANY-effective-check rule'));
         assert.equal(request.questions.evidence_sufficient.instructions.endsWith(selected.rubric.evidence_instructions), true);
         assert.deepEqual(request.questions.evidence_sufficient.criteria, selected.rubric.evidence_criteria);
@@ -322,6 +322,119 @@ test('PRD, PR and test-oracle profiles select criteria through the operator CLI'
       await writeFile(oracleInput, JSON.stringify([invalidCase]));
       await assert.rejects(loadTrial(oracleInput, framework, 'test_oracle'), /invalid_test_oracle_evidence_binding/);
     }
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('six evidence-review profiles accept bound lane evidence and keep insufficient judgments unresolved', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cf-jev-six-lane-'));
+  try {
+    const framework = fileURLToPath(new URL('../factoryline/data/judge_framework.json', import.meta.url));
+    const makeHash = (value) => createHash('sha256').update(value, 'utf8').digest('hex');
+    const commit = 'c'.repeat(40);
+    const rawResponse = (finding, sufficiency) => JSON.stringify({ model: MODEL,
+      answers: { finding: { type: 'boolean', probability: finding }, evidence_sufficient: { type: 'boolean', probability: sufficiency } },
+      providerMetadata: { gateway: { cost: '0.00001', routing: { finalProvider: 'typesafe-ai' } } } });
+    const source = 'candidate source bytes';
+    const makeArtifact = (kind, path, content, candidateSha) => ({ kind, path, content,
+      sha256: makeHash(content), candidate_commit: commit, candidate_sha256: candidateSha });
+    const redacted = JSON.stringify({ schema: 'factory.jev-redacted-secret-report.v1', features: [
+      { kind: 'credential_assignment', location: 'src/config.py:8', fingerprint: 'a'.repeat(16), entropy_bucket: 'high', context_redacted: true },
+    ] });
+    const packages = [{ ecosystem: 'PyPI', name: 'example-package', version: '1.2.3' }];
+    const packageManifest = JSON.stringify(packages);
+    const executionFor = (engine) => ({ command: `${engine} run candidate`, engine, exit_code: 1, timed_out: false });
+    const traceFor = (execution, candidateSha) => JSON.stringify({ schema: 'factory.jev-execution-trace.v1',
+      ...execution, candidate_commit: commit, candidate_sha256: candidateSha, trace: 'observed event trace' });
+    const definitions = {
+      static: (candidate) => ({ location: { path: candidate.path, start_line: 1, end_line: 1 },
+        artifacts: [makeArtifact('source', candidate.path, source, candidate.sha256)] }),
+      secrets: (candidate) => ({ artifacts: [makeArtifact('redacted_report', candidate.path, redacted, candidate.sha256)] }),
+      configuration: (candidate) => ({ location: { path: candidate.path, start_line: 1, end_line: 1 },
+        artifacts: [makeArtifact('configuration_source', candidate.path, source, candidate.sha256)] }),
+      dependencies: (candidate) => ({ packages, artifacts: [makeArtifact('package_manifest', candidate.path, packageManifest, candidate.sha256),
+        makeArtifact('advisory', 'advisories/CVE-2026-0001.json', '{"id":"CVE-2026-0001"}', candidate.sha256)] }),
+      runtime: (candidate) => { const execution = executionFor('pytest'); return { execution, artifacts: [
+        makeArtifact('source', candidate.path, source, candidate.sha256), makeArtifact('trace', 'evidence/runtime-trace.json', traceFor(execution, candidate.sha256), candidate.sha256)] }; },
+      fuzz: (candidate) => { const execution = executionFor('atheris'); return { execution, artifacts: [
+        makeArtifact('source', candidate.path, source, candidate.sha256), makeArtifact('trace', 'evidence/fuzz-trace.json', traceFor(execution, candidate.sha256), candidate.sha256)] }; },
+    };
+    for (const profile of Object.keys(definitions)) {
+      const candidateContent = profile === 'secrets' ? redacted : profile === 'dependencies' ? packageManifest : source;
+      const candidate = { commit, path: profile === 'secrets' ? 'reports/secrets.json'
+        : profile === 'dependencies' ? 'requirements.lock' : `src/${profile}.txt`, sha256: makeHash(candidateContent) };
+      const evidence = definitions[profile](candidate);
+      const state = { requirement: profile === 'secrets' ? 'secret_pattern_detected' : `Review ${profile} criterion`, candidate, evidence };
+      const input = join(dir, `${profile}.json`);
+      await writeFile(input, JSON.stringify([{ id: profile, expected: false, state } ]));
+      const selected = await loadTrial(input, framework, profile);
+      assert.equal(selected.framework.review_profile, profile);
+      for (const [finding, sufficiency, expectedStatus, expectedPrediction] of [
+        [0.99, 0.99, 'decided', true], [0.01, 0.99, 'decided', false], [0.5, 0.5, 'abstain', null],
+      ]) {
+        const responseBody = rawResponse(finding, sufficiency);
+        let request;
+        const report = await runCli(['--cases', input, '--rubric', framework, '--profile', profile, '--live'], {
+          env: { AI_GATEWAY_API_KEY: 'mock' },
+          fetchImpl: async (_url, options) => { request = JSON.parse(options.body); return new Response(responseBody); },
+        });
+        assert.equal(request.questions.finding.type, 'boolean');
+        assert.equal(request.questions.evidence_sufficient.type, 'boolean');
+        assert.equal(report.results[0].status, expectedStatus);
+        assert.equal(report.results[0].prediction, expectedPrediction);
+        if (expectedPrediction === null) assert.equal(report.results[0].abstention_reason, 'insufficient_evidence');
+        assert.equal(report.results[0].response_sha256, makeHash(responseBody));
+        assert.equal(report.framework.full_protocol_executed, false);
+        assert.equal(report.authority.scanner_override, false);
+      }
+    }
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('six evidence-review profiles reject absent, stale, mismatched and raw-secret evidence before transport', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cf-jev-six-lane-reject-'));
+  try {
+    const framework = fileURLToPath(new URL('../factoryline/data/judge_framework.json', import.meta.url));
+    const input = join(dir, 'cases.json');
+    const content = 'candidate source';
+    const digest = (value) => createHash('sha256').update(value, 'utf8').digest('hex');
+    const commit = 'd'.repeat(40), path = 'src/candidate.py', sourceHash = digest(content);
+    const artifact = (kind, artifactPath, body, candidateSha = sourceHash) => ({ kind, path: artifactPath, content: body,
+      sha256: digest(body), candidate_commit: commit, candidate_sha256: candidateSha });
+    const baseState = { requirement: 'Review criterion', candidate: { commit, path, sha256: sourceHash },
+      evidence: { location: { path, start_line: 1, end_line: 1 }, artifacts: [artifact('source', path, content)] } };
+    const invalid = [
+      ['static', { ...baseState, evidence: { artifacts: [] } }],
+      ['static', { ...baseState, candidate: { ...baseState.candidate, commit: 'bad' } }],
+      ['static', { ...baseState, evidence: { artifacts: [artifact('source', path, content, '0'.repeat(64))] } }],
+      ['configuration', baseState],
+      ['dependencies', { ...baseState, evidence: { packages: [{ ecosystem: 'PyPI', name: 'pkg', version: '1' }], artifacts: [] } }],
+      ['runtime', baseState],
+      ['fuzz', baseState],
+      ['secrets', (() => {
+        const rawReport = JSON.stringify({ schema: 'factory.jev-redacted-secret-report.v1', features: [
+          { kind: 'credential_assignment', location: 'src/app.py:4', fingerprint: 'b'.repeat(16), context_redacted: true },
+        ],
+          raw_token: 'ghp_abcdefghijklmnopqrstuvwxyz0123456789' });
+        const rawHash = digest(rawReport);
+        const candidate = { commit, path, sha256: rawHash };
+        return { requirement: 'secret_pattern_detected', candidate,
+          evidence: { artifacts: [artifact('redacted_report', path, rawReport, rawHash)] } };
+      })()],
+      ['secrets', { ...baseState, requirement: 'Review leaked credential ghp_abcdefghijklmnopqrstuvwxyz0123456789' }],
+    ];
+    for (const [profile, state] of invalid) {
+      await writeFile(input, JSON.stringify([{ id: 'invalid', expected: true, state }]));
+      let calls = 0;
+      await assert.rejects(runCli(['--cases', input, '--rubric', framework, '--profile', profile, '--live'], {
+        env: { AI_GATEWAY_API_KEY: 'mock' }, fetchImpl: async () => { calls++; return answer(0.99); },
+      }));
+      assert.equal(calls, 0, `${profile} must block before transport`);
+    }
+    let directCalls = 0;
+    await assert.rejects(evaluateCases([{ id: 'direct-bypass', expected: true, state: baseState }], rubric, {
+      profile: 'runtime', live: true, apiKey: 'mock', fetchImpl: async () => { directCalls++; return answer(0.99); },
+    }), /missing_runtime_execution_evidence/);
+    assert.equal(directCalls, 0, 'direct evaluator calls must enforce profile preflight too');
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

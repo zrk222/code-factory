@@ -110,3 +110,29 @@ Reported problems route to the actionable support or issue path instead.
 - [Junie in JetBrains IDEs](https://junie.jetbrains.com/docs/junie-ide-plugin.html)
 - [Junie MCP configuration](https://junie.jetbrains.com/docs/junie-cli-mcp-configuration.html)
 - [Junie project guidelines](https://junie.jetbrains.com/docs/guidelines-and-memory.html)
+
+
+## Six audit families and Jev evidence review
+
+The generated Junie manifest now embeds the shared `agent_usage_contract`.
+Its `six_lane_review` contract applies to static analysis, secrets,
+configuration, dependencies, runtime and fuzzing. Read the current taxonomy
+and available tools instead of relying on a copied command list. The native
+Semgrep profile contains ten rules, including request-to-filesystem traversal.
+
+Every handoff preserves candidate and artifact hashes, inspected scope,
+exclusions, source locations, execution/timeout/cleanup facts, coverage gaps,
+remediation and exact rerun instructions. Unknown accounting and unmeasured
+traces remain explicit. Before/after reproduction and relevant regression
+checks are required to establish that a repair worked.
+
+The repository's `scripts/evaluate_jev.mjs` runner adds experimental evidence
+reviews for all six families, alongside PRD, PR and test-oracle review.
+Run its help command to inspect the exact profile contract. This repository
+runner may be unavailable in a wheel-only installation; report that state
+rather than inventing an MCP tool. Live evaluation requires private provider
+configuration and existing authorization. Secrets packets contain redacted
+features only. Retain every judgment and its input/rubric/raw-output digests
+for operator correction and calibration. Missing evidence remains unresolved;
+Jev judgments carry no scanner override, execution, merge or release authority.
+The full protocol remains unexecuted until its separate validation completes.

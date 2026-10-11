@@ -177,16 +177,31 @@ def _sarif_result_finding(result, rules, lane, sources):
     score = (
         rules.get(result["ruleId"], {}).get("properties", {}).get("security-severity")
     )
-    return _execution_finding(
+    flows = _flows(result, sources)
+    finding = _execution_finding(
         lane,
         result["ruleId"],
         location["path"],
         location["start_line"],
         _severity(score, result.get("level", "warning")),
         sources,
-        flows=_flows(result, sources),
+        flows=flows,
         suppressed=bool(result.get("suppressions")),
     )
+
+    locations = [
+        _location(item, sources) for item in _list(result.get("locations"), 1, 10)
+    ]
+    finding["trace_sha256"] = digest({"locations": locations, "flows": flows})
+    finding["trace_depth"] = max((len(flow) for flow in flows), default=0)
+    native = (
+        _native(result)
+        if result.get("partialFingerprints") or result.get("fingerprints")
+        else None
+    )
+    finding["native_fingerprint_sha256"] = digest(native) if native else None
+    finding["native_identity_state"] = "MEASURED" if native else "NOT_MEASURED"
+    return finding
 
 
 def _sarif_run_findings(run, lane, sources):
@@ -227,14 +242,62 @@ def _execution_osv(report: dict, lane: dict, sources: dict) -> list:
         for package in _list(result.get("packages"), 1, 20_000):
             identity = _object(package.get("package"))
             for key in ("name", "version", "ecosystem"):
-                require_str(identity.get(key), f"package.{key}")
+                require_str(identity.get(key), f"package.{key}", maximum=256)
             for vulnerability in _list(package.get("vulnerabilities", []), 0, 20_000):
-                findings.append(
-                    _execution_finding(
-                        lane, vulnerability.get("id"), path, 1, "high", sources
-                    )
+                vulnerability = _object(vulnerability)
+                advisory_id = _safe_text(
+                    require_str(
+                        vulnerability.get("id"), "vulnerability.id", maximum=256
+                    ),
+                    256,
                 )
+                package_facts = {
+                    key: _safe_text(identity[key], 256)
+                    for key in ("name", "version", "ecosystem")
+                }
+                fixed_versions = _osv_fixed_versions(vulnerability, identity)
+                finding = _execution_finding(
+                    lane, advisory_id, path, 1, "high", sources
+                )
+                finding["dependency"] = {
+                    "package": package_facts,
+                    "advisory_id": advisory_id,
+                    "fixed_versions": fixed_versions,
+                    "aliases": [
+                        _safe_text(
+                            require_str(alias, "advisory alias", maximum=256), 256
+                        )
+                        for alias in _list(vulnerability.get("aliases", []), 0, 256)
+                    ],
+                }
+                if fixed_versions:
+                    finding["remediation"] = (
+                        f"Upgrade {package_facts['ecosystem']} package "
+                        f"{package_facts['name']} from {package_facts['version']} "
+                        f"to a fixed version: {', '.join(fixed_versions)}."
+                    )
+                findings.append(finding)
     return findings
+
+
+def _osv_fixed_versions(vulnerability: dict, identity: dict) -> list[str]:
+    fixed = set()
+    for affected in _list(vulnerability.get("affected", []), 0, 20_000):
+        affected = _object(affected)
+        package = _object(affected.get("package", {}))
+        matches = (
+            package.get("name") == identity["name"]
+            and package.get("ecosystem") == identity["ecosystem"]
+        )
+        for range_item in _list(affected.get("ranges", []), 0, 20_000):
+            range_item = _object(range_item)
+            for event in _list(range_item.get("events", []), 0, 20_000):
+                event = _object(event)
+                if "fixed" in event:
+                    version = require_str(event["fixed"], "fixed version", maximum=256)
+                    if matches:
+                        fixed.add(_safe_text(version, 256))
+    return sorted(fixed)
 
 
 def _validate_runtime_report(report, lane):
@@ -590,6 +653,16 @@ def normalize_execution_bundle(
         report, coverage, lane, required, obligations
     )
     gaps.extend(_challenge_gaps(challenges, lane, sources, obligations, expected))
+    metrics = None
+    if lane["family"] in {"runtime", "fuzz"}:
+        metric_keys = (
+            ("executions", "coverage_edges", "corpus_size")
+            if lane["family"] == "fuzz"
+            else ("requests",)
+            if lane["engine"] == "zap"
+            else ("tests",)
+        )
+        metrics = {key: report["metrics"][key] for key in metric_keys}
     return {
         "lane_id": lane["id"],
         "engine": lane["engine"],
@@ -602,6 +675,7 @@ def normalize_execution_bundle(
         "covered_paths": sorted(required),
         "obligations": observed,
         "findings": findings,
+        "metrics": metrics,
         "authority": "none",
     }
 

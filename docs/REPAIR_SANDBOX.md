@@ -1,8 +1,8 @@
 # Verified Repair Sandbox
 
 The Verified Repair Sandbox is a local-first professional workflow for using a
-supervised repair agent without giving it an undefined working tree or an
-automatic apply path.
+supervised repair agent with an exact scope. Scope preparation and inspection
+remain read-only; explicit approval can authorize isolated patch execution.
 
 ```text
 Native Change List
@@ -82,6 +82,60 @@ binds the patch SHA-256 to that scope. The initial protocol supports unquoted,
 UTF-8 textual `diff --git a/<path> b/<path>` patches. It rejects binary,
 combined, quoted, parent-traversal, and out-of-scope paths rather than guessing
 how a patch application might behave.
+
+## Approve & Repair: one patch, isolated verification
+
+After reviewing an audit finding and its candidate patch, an operator can
+approve the exact candidate hash, expiry, pinned container image and check
+commands. The first execution protocol handles one patch per approval. It
+does not generate a patch or infer permission from a scan verdict.
+
+Save a workspace-local JSON array of checks. Each positive check must reproduce
+the known baseline failure and then pass on the repaired candidate; each
+negative check must fail on the repaired candidate with its declared exit code
+and failure signature. Infrastructure errors and timeouts are not proof.
+
+```json
+[
+  {"id":"regression","kind":"positive","argv":["python","-m","pytest","tests/test_regression.py"],"failure":{"exit_code":1,"signature":"EXPECTED_REGRESSION_FAILURE"}},
+  {"id":"negative-control","kind":"negative","argv":["python","-m","pytest","tests/test_negative_control.py"],"failure":{"exit_code":1,"signature":"EXPECTED_NEGATIVE_CONTROL_FAILURE"}}
+]
+```
+
+These signatures are examples: choose specific messages from the actual
+reviewed controls. Use the candidate hash returned by `factory repair candidate` and the inspected
+SHA-256 image identity, rather than copying example values:
+
+```powershell
+factory repair approve --root . --scope <scope.json> --patch <candidate.patch> `
+  --approved-by <operator> --confirmation "APPROVE REPAIR <candidate_sha256>" `
+  --expires-at <timezone-qualified-expiry> --container-image <local-image> `
+  --container-digest <sha256-image-id> --checks <checks.json> --json
+factory repair run --root . --approval <returned-approval-path> --json
+```
+
+`approve` records permission; it does not execute. `run` consumes it once,
+applies the patch in a disposable Git worktree, and runs only the approved
+commands in an isolated container with read-only source, no network, dropped
+capabilities and bounded resources. Commands needing scratch output must use
+the container's temporary directory; source-writing builds need a separate
+supported execution profile. The primary checkout stays unchanged.
+Source drift, protected tests or gates, failed controls and uncertain cleanup
+prevent `VERIFIED`. The result and local logs distinguish verification from
+failure. Review the retained patch before promoting it through your normal
+merge workflow.
+
+Use `factory repair revoke --approval-sha256 <hash> --requested-by <operator>
+--reason <reason>` to revoke permission, or `factory repair stop` with the same
+arguments to request termination of an active attempt. Both accept `--root`
+and `--json`. A stopped or failed single-use approval cannot be replayed;
+retry requires inspection and fresh approval.
+
+The operator name is an audit label in a local filesystem-owner trust model,
+not authenticated identity or a second reviewer's signature. Checks establish
+only their declared behavior; `VERIFIED` does not prove every audit lane,
+production safety or independent detection accuracy. IDE approval controls
+and broader automatic repair classes require their own integration.
 
 ## Non-negotiable boundary
 

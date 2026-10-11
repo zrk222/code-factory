@@ -7,7 +7,8 @@ import { pathToFileURL } from 'node:url';
 
 export const ENDPOINT = 'https://ai-gateway.vercel.sh/v1/evaluate';
 export const MODEL = 'typesafe-ai/jev';
-const USAGE = 'Usage: node scripts/evaluate_jev.mjs --cases cases.json --rubric rubric.json [--profile prd|pr|test_oracle] [--out new-report.json] [--grade] [--live] [--true-threshold 0.9] [--false-threshold 0.1] [--timeout-ms 30000]\nProfiles: prd, pr, test_oracle (requires the matching review_profiles entry in a judge framework).\nDefault is dry run. --grade enables equal-weight experimental advisory grading; unresolved criteria keep the numeric grade null. --live additionally requires AI_GATEWAY_API_KEY. No release or scanner override authority.\n';
+const REVIEW_PROFILES = ['prd', 'pr', 'test_oracle', 'static', 'secrets', 'configuration', 'dependencies', 'runtime', 'fuzz'];
+const USAGE = 'Usage: node scripts/evaluate_jev.mjs --cases cases.json --rubric rubric.json [--profile prd|pr|test_oracle|static|secrets|configuration|dependencies|runtime|fuzz] [--out new-report.json] [--grade] [--live] [--true-threshold 0.9] [--false-threshold 0.1] [--timeout-ms 30000]\nProfiles require the matching review_profiles entry in a judge framework. New evidence-review profiles require candidate-bound, hash-verified lane evidence.\nDefault is dry run. --grade enables equal-weight experimental advisory grading; unresolved criteria keep the numeric grade null. --live additionally requires AI_GATEWAY_API_KEY. No release or scanner override authority.\n';
 const MAX_INPUT_BYTES = 1_048_576;
 const MAX_RESPONSE_BYTES = 65_536;
 const MAX_CASES = 100;
@@ -111,11 +112,14 @@ async function readResponse(response) {
     void reader.cancel().catch(() => {});
     throw error;
   } finally { reader.releaseLock(); }
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
-  catch { throw new TrialError('invalid_json'); }
+  const bytes = Buffer.concat(chunks);
+  let payload;
+  try { payload = JSON.parse(bytes.toString('utf8')); }
+  catch { payload = null; }
+  return { payload, raw_sha256: sha(bytes) };
 }
 
-function parseAnswer(payload) {
+function parseAnswer(payload, rawResponseSha256) {
   const value = payload?.answers?.finding;
   const evidence = payload?.answers?.evidence_sufficient;
   requireValue(payload?.model === MODEL && value?.type === 'boolean'
@@ -132,7 +136,7 @@ function parseAnswer(payload) {
     && /^(?:\d+)(?:\.\d+)?$/.test(rawCost))) ? Number(rawCost) : NaN;
   return {
     probability: value.probability,
-    response_sha256: sha(encode(payload)),
+    response_sha256: rawResponseSha256,
     evidence_probability: evidence.probability,
     reported_cost_usd: Number.isFinite(cost) && cost >= 0 ? cost : null,
     provider_verified: finalProvider === 'typesafe-ai',
@@ -142,6 +146,7 @@ function parseAnswer(payload) {
 async function evaluateOne(item, rubric, options) {
   const started = performance.now();
   const controller = new AbortController();
+  let rawResponseSha256 = null;
   let timer;
   const timeout = new Promise((_resolve, reject) => {
     timer = setTimeout(() => {
@@ -156,7 +161,9 @@ async function evaluateOne(item, rubric, options) {
         headers: { Authorization: `Bearer ${options.apiKey}`, 'Content-Type': 'application/json' },
         body: requestFor(item, rubric),
       });
-      return parseAnswer(await readResponse(response));
+      const observed = await readResponse(response);
+      rawResponseSha256 = observed.raw_sha256;
+      return parseAnswer(observed.payload, observed.raw_sha256);
     })();
     const result = await Promise.race([operation, timeout]);
     const sufficient = result.evidence_probability >= options.trueThreshold;
@@ -169,7 +176,7 @@ async function evaluateOne(item, rubric, options) {
     return {
       status: 'error', prediction: null, probability: null, evidence_probability: null, reported_cost_usd: null,
       error: error instanceof TrialError ? error.code : 'transport_error',
-      provider_verified: false,
+      provider_verified: false, response_sha256: rawResponseSha256,
     };
   } finally {
     clearTimeout(timer);
@@ -208,6 +215,7 @@ export async function evaluateCases(cases, rubric, supplied = {}) {
     fetchImpl: globalThis.fetch, ...supplied, latencies: [],
   };
   validate(cases, rubric, options);
+  if (EVIDENCE_PROFILES.has(options.profile)) validateEvidenceReviewCases(cases, options.profile);
   const results = [];
   for (const item of cases) {
     const outcome = options.live ? await evaluateOne(item, rubric, options)
@@ -342,9 +350,137 @@ async function readBounded(path) {
 
 function selectProfile(document, profile) {
   if (profile === undefined) return document;
-  requireValue(['prd', 'pr', 'test_oracle'].includes(profile) && object(document.review_profiles)
+  requireValue(REVIEW_PROFILES.includes(profile) && object(document.review_profiles)
     && object(document.review_profiles[profile]), 'invalid_review_profile');
   return { ...document, rubric: document.review_profiles[profile] };
+}
+
+const EVIDENCE_PROFILES = new Set(['static', 'secrets', 'configuration', 'dependencies', 'runtime', 'fuzz']);
+const HASH = /^[a-f0-9]{64}$/i;
+const REVISION = /^[a-f0-9]{40}$/i;
+const SAFE_RELPATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[\w./@+-]{1,512}$/;
+const SECRET_KEY = /(?:secret|token|password|credential|private[_-]?key|authorization|api[_-]?key|raw[_-]?value)/i;
+const SECRET_VALUE = /(?:-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16})\b)/;
+
+function validateBoundArtifact(artifact, candidate) {
+  requireValue(object(artifact) && typeof artifact.kind === 'string'
+    && typeof artifact.path === 'string' && SAFE_RELPATH.test(artifact.path) && typeof artifact.content === 'string'
+    && HASH.test(artifact.sha256) && artifact.sha256.toLowerCase() === sha(Buffer.from(artifact.content, 'utf8'))
+    && artifact.candidate_commit === candidate.commit
+    && artifact.candidate_sha256 === candidate.sha256,
+  'invalid_review_artifact_binding');
+}
+
+function validateNoRawSecrets(value, key = '') {
+  if (typeof value === 'string') {
+    requireValue(!SECRET_VALUE.test(value), 'raw_secret_forbidden');
+    requireValue(!SECRET_KEY.test(key), 'raw_secret_field_forbidden');
+  } else if (Array.isArray(value)) {
+    for (const item of value) validateNoRawSecrets(item, key);
+  } else if (object(value)) {
+    for (const [childKey, child] of Object.entries(value)) {
+      requireValue(!SECRET_KEY.test(childKey), 'raw_secret_field_forbidden');
+      validateNoRawSecrets(child, childKey);
+    }
+  }
+}
+
+function validateEvidenceReviewCases(cases, profile) {
+  for (const item of cases) {
+    const state = item.state;
+    const candidate = state?.candidate;
+    const evidence = state?.evidence;
+    requireValue(object(state) && typeof state.requirement === 'string' && state.requirement.trim().length > 0
+      && Buffer.byteLength(state.requirement) <= 8192 && object(candidate) && object(evidence)
+      && REVISION.test(candidate.commit) && typeof candidate.path === 'string' && SAFE_RELPATH.test(candidate.path)
+      && HASH.test(candidate.sha256) && Array.isArray(evidence.artifacts)
+      && evidence.artifacts.length > 0 && evidence.artifacts.length <= 32,
+    'invalid_review_candidate_binding');
+    for (const artifact of evidence.artifacts) validateBoundArtifact(artifact, candidate);
+    const kinds = new Set(evidence.artifacts.map((artifact) => artifact.kind));
+    const location = evidence.location;
+    const validLocation = location => object(location) && typeof location.path === 'string'
+      && SAFE_RELPATH.test(location.path) && Number.isInteger(location.start_line) && location.start_line > 0
+      && Number.isInteger(location.end_line) && location.end_line >= location.start_line;
+    if (profile === 'static') {
+      requireValue(evidence.artifacts.some((artifact) => artifact.kind === 'source'
+        && artifact.path === candidate.path && artifact.sha256.toLowerCase() === candidate.sha256.toLowerCase())
+        && validLocation(location) && location.path === candidate.path,
+      'missing_static_source');
+    } else if (profile === 'secrets') {
+      requireValue(['secret_pattern_detected', 'credential_exposure_metadata', 'redacted_secret_finding']
+        .includes(state.requirement), 'invalid_secret_criterion');
+      requireValue(evidence.artifacts.length === 1 && evidence.artifacts[0].kind === 'redacted_report'
+        && evidence.artifacts[0].path === candidate.path && evidence.artifacts[0].sha256.toLowerCase() === candidate.sha256.toLowerCase(),
+      'invalid_redacted_report');
+      requireValue(Object.keys(state).every((key) => ['requirement', 'candidate', 'evidence'].includes(key))
+        && Object.keys(evidence).every((key) => key === 'artifacts'), 'raw_secret_field_forbidden');
+      let report;
+      try { report = JSON.parse(evidence.artifacts[0].content); }
+      catch { throw new TrialError('invalid_redacted_report'); }
+      requireValue(object(report) && report.schema === 'factory.jev-redacted-secret-report.v1'
+        && Array.isArray(report.features) && report.features.length > 0 && report.features.length <= 256
+        && Object.keys(report).every((key) => ['schema', 'features'].includes(key)), 'invalid_redacted_report');
+      for (const feature of report.features) {
+        requireValue(object(feature) && Object.keys(feature).every((key) =>
+          ['kind', 'location', 'fingerprint', 'entropy_bucket', 'context_redacted'].includes(key))
+          && ['high_entropy', 'credential_assignment', 'key_material', 'known_token_pattern'].includes(feature.kind)
+          && typeof feature.location === 'string' && /^[\w./@+-]{1,512}(?::\d+)?$/.test(feature.location)
+          && typeof feature.fingerprint === 'string' && /^[a-f0-9]{8,64}$/i.test(feature.fingerprint)
+          && (feature.entropy_bucket === undefined || ['low', 'medium', 'high'].includes(feature.entropy_bucket))
+          && (feature.context_redacted === undefined || feature.context_redacted === true), 'raw_secret_forbidden');
+      }
+      validateNoRawSecrets(state);
+    } else if (profile === 'configuration') {
+      requireValue(evidence.artifacts.some((artifact) => ['configuration_source', 'configuration_report'].includes(artifact.kind)
+        && artifact.path === candidate.path && artifact.sha256.toLowerCase() === candidate.sha256.toLowerCase())
+        && validLocation(location) && location.path === candidate.path,
+      'missing_configuration_evidence');
+    } else if (profile === 'dependencies') {
+      const packages = evidence.packages;
+      const manifest = evidence.artifacts.find((artifact) => artifact.kind === 'package_manifest');
+      let declaredPackages;
+      try { declaredPackages = JSON.parse(manifest?.content ?? 'null'); }
+      catch { throw new TrialError('invalid_dependency_manifest'); }
+      requireValue(Array.isArray(packages) && packages.length > 0 && packages.length <= 256
+        && packages.every((pkg) => object(pkg) && typeof pkg.ecosystem === 'string' && /^[\w.-]{1,64}$/.test(pkg.ecosystem)
+          && typeof pkg.name === 'string' && /^[\w.@/+:-]{1,256}$/.test(pkg.name)
+          && typeof pkg.version === 'string' && /^[\w.+-]{1,128}$/.test(pkg.version))
+        && encode(declaredPackages) === encode(packages)
+        && evidence.artifacts.some((artifact) => artifact.kind === 'package_manifest'
+          && artifact.path === candidate.path && artifact.sha256.toLowerCase() === candidate.sha256.toLowerCase())
+        && kinds.has('advisory'), 'missing_dependency_advisory_evidence');
+      for (const advisory of evidence.artifacts.filter((artifact) => artifact.kind === 'advisory')) {
+        let record;
+        try { record = JSON.parse(advisory.content); }
+        catch { throw new TrialError('invalid_advisory_evidence'); }
+        requireValue(object(record) && typeof (record.advisory_id ?? record.id) === 'string'
+          && (record.advisory_id ?? record.id).trim().length > 0
+          && Object.keys(record).every((key) => ['advisory_id', 'id', 'source', 'details'].includes(key)),
+        'invalid_advisory_evidence');
+      }
+    } else {
+      const execution = evidence.execution;
+      const trace = evidence.artifacts.find((artifact) => artifact.kind === 'trace');
+      let traceRecord;
+      try { traceRecord = JSON.parse(trace?.content ?? 'null'); }
+      catch { throw new TrialError('invalid_execution_trace'); }
+      requireValue(object(execution) && typeof execution.command === 'string' && execution.command.trim().length > 0
+        && Buffer.byteLength(execution.command) <= 8192 && typeof execution.engine === 'string'
+        && /^[\w .@/+:-]{1,128}$/.test(execution.engine)
+        && ((Number.isInteger(execution.exit_code) && execution.exit_code >= -1 && execution.exit_code <= 255)
+          || execution.timed_out === true)
+        && (execution.timed_out === undefined || typeof execution.timed_out === 'boolean')
+        && kinds.has('trace') && evidence.artifacts.some((artifact) => artifact.kind === 'source'
+          && artifact.path === candidate.path && artifact.sha256.toLowerCase() === candidate.sha256.toLowerCase())
+        && object(traceRecord) && traceRecord.schema === 'factory.jev-execution-trace.v1'
+        && traceRecord.command === execution.command && traceRecord.engine === execution.engine
+        && traceRecord.exit_code === execution.exit_code && traceRecord.timed_out === execution.timed_out
+        && traceRecord.candidate_commit === candidate.commit && traceRecord.candidate_sha256 === candidate.sha256
+        && typeof traceRecord.trace === 'string' && traceRecord.trace.length > 0,
+      profile === 'runtime' ? 'missing_runtime_execution_evidence' : 'missing_fuzz_execution_evidence');
+    }
+  }
 }
 
 function validateTestOracleCases(cases) {
@@ -397,6 +533,7 @@ export async function loadTrial(casesPath, rubricPath, profile) {
   const cases = Array.isArray(parsed) ? parsed : parsed?.cases;
   validate(cases, rubric, { live: false, grade: false, falseThreshold: 0.1, trueThreshold: 0.9, timeoutMs: 30_000 });
   if (profile === 'test_oracle') validateTestOracleCases(cases);
+  if (EVIDENCE_PROFILES.has(profile)) validateEvidenceReviewCases(cases, profile);
   return { cases, rubric, framework, hashes: { input: sha(input), rubric: sha(question) } };
 }
 
