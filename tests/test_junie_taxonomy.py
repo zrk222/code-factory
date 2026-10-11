@@ -1071,6 +1071,11 @@ def test_shared_deep_evidence_requires_execution_and_failure_facts(tmp_path):
     assert "normalization failures" in evidence["failures"]
     assert "INCOMPLETE" in evidence["failures"]
     assert "exact-candidate-rerun" in evidence["lineage"]
+    assert "positive-defect, clean-negative" in evidence["challenges"]
+    assert "target-rule-disabled mutation" in evidence["challenges"]
+    assert "authoritative source inventory" in evidence["challenges"]
+    assert "not native execution proof" in evidence["challenges"]
+    assert "budget mismatches remain INCOMPLETE" in evidence["challenges"]
     assert "never grants approval" in evidence["authority"]
     assert (
         junie_manifest(tmp_path)["agent_usage_contract"]["six_lane_review"][
