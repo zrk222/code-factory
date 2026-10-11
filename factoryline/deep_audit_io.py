@@ -1832,6 +1832,139 @@ def _retained_fuzz_corpus(report, sources):
         ) from error
 
 
+def _fuzz_replay_expected(request):
+    exact_keys(request, {"lane", "inventory", "coverage", "report"})
+    lane, inventory, report = request["lane"], request["inventory"], request["report"]
+    if lane["engine"] != "atheris" or lane["family"] != "fuzz":
+        raise RuntimeAuditError("E_FUZZ_REPLAY", "fuzz lane required")
+    sources = {item["path"]: item["sha256"] for item in inventory["files"]}
+    corpus = _retained_fuzz_corpus(report, sources)
+    return {
+        "schema": "factory.fuzz-native-replay.v1",
+        "state": "VERIFIED",
+        "candidate_sha256": require_digest(inventory["candidate_sha256"], "candidate"),
+        "lane_sha256": digest(lane),
+        "coverage_sha256": digest(request["coverage"]),
+        "report_sha256": digest(report),
+        "corpus_sha256": report["corpus"]["sha256"],
+        "harness": corpus["harness"],
+        "replayed_inputs": len(corpus["inputs"]),
+        "failure_inputs": sorted({item["input_sha256"] for item in report["findings"]}),
+    }
+
+
+def _fuzz_replay_inputs_main(request_path, source):
+    """Image-owned driver; replay unique retained inputs in canonical hash order."""
+    import base64
+    import importlib.util
+
+    with Path(request_path).open("rb") as stream:
+        request = strict_json(stream.read(LIMIT + 1))
+    expected = _fuzz_replay_expected(request)
+    sources = {item["path"]: item["sha256"] for item in request["inventory"]["files"]}
+    corpus = _retained_fuzz_corpus(request["report"], sources)
+    path = local_file(Path(source), corpus["harness"]["path"])
+    bound_bytes(Path(source), corpus["harness"])
+    spec = importlib.util.spec_from_file_location("factory_fuzz_replay_target", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    failures = []
+    for entry in corpus["inputs"]:
+        try:
+            module.TestOneInput(base64.b64decode(entry["data_base64"], validate=True))
+        except Exception:
+            failures.append(entry["sha256"])
+    return {
+        "schema": "factory.fuzz-input-replay.v1",
+        "harness": expected["harness"],
+        "corpus_sha256": expected["corpus_sha256"],
+        "replayed_inputs": len(corpus["inputs"]),
+        "failure_inputs": sorted(failures),
+    }
+
+
+def _fuzz_replay_profile(request):
+    profile = strict_json(Path("/opt/factory/adapter-profile.json").read_bytes())
+    lane, coverage = request["lane"], request["coverage"]
+    _native_profile(profile, lane)
+    expected = {
+        "profile_sha256": digest(profile),
+        "image_binding_sha256": sha256_bytes(lane["image"].encode("utf-8")),
+        "tool_version": profile["tool_version"],
+        "ruleset_sha256": profile["ruleset_sha256"],
+    }
+    if any(coverage.get(key) != value for key, value in expected.items()):
+        raise RuntimeAuditError("E_FUZZ_REPLAY", "pinned fuzz profile binding differs")
+
+
+def execute_fuzz_native_replay(request, source, scratch, timeout):
+    """Re-execute retained fuzz inputs under a bounded isolated worker lifecycle."""
+    from .runtime_audit_process import run_bounded_command
+
+    expected = _fuzz_replay_expected(request)
+    timeout = require_int(timeout, "fuzz replay timeout", minimum=1, maximum=3600)
+    deadline = time.monotonic() + timeout
+    _fuzz_replay_profile(request)
+    _adapter_sources(source, request["inventory"])
+    contract = scratch / "fuzz-replay-input.json"
+    contract.write_bytes(canonical_bytes(request))
+    capture = scratch / "fuzz-replay-output.json"
+    runtime = str(Path(__file__).resolve().parent.parent)
+    program = (
+        "import sys,json;from pathlib import Path;sys.path.insert(0,sys.argv[1]);"
+        "from factoryline.deep_audit_io import _fuzz_replay_inputs_main;"
+        "print(json.dumps(_fuzz_replay_inputs_main(sys.argv[2],Path(sys.argv[3]))),flush=True)"
+    )
+    facts = run_bounded_command(
+        [
+            "/usr/local/bin/python",
+            "-I",
+            "-c",
+            program,
+            runtime,
+            str(contract),
+            str(source),
+        ],
+        source,
+        _fuzz_replay_remaining(deadline),
+        scratch,
+        stdout_path=capture,
+    )
+    with capture.open("rb") as stream:
+        raw = stream.read(LIMIT + 1)
+    _validate_fuzz_replay_observation(raw, facts, expected)
+    _adapter_sources(source, request["inventory"])
+    _fuzz_replay_remaining(deadline)
+    return {**expected, "native_execution_sha256": digest(facts)}
+
+
+def _fuzz_replay_remaining(deadline):
+    remaining = int(deadline - time.monotonic())
+    if remaining < 1:
+        raise RuntimeAuditError("E_FUZZ_REPLAY", "fuzz replay deadline exhausted")
+    return remaining
+
+
+def _validate_fuzz_replay_observation(raw, facts, expected):
+    from .runtime_audit_common import _validate_runner_facts
+
+    _validate_runner_facts(facts, facts["timeout_seconds"])
+    if _adapter_command_failed(facts, [0], float("inf")) or facts.get("cancelled"):
+        raise RuntimeAuditError("E_FUZZ_REPLAY", "fuzz replay process failed")
+    if sha256_bytes(raw) != facts["stdout_sha256"] or len(raw) != facts["stdout_bytes"]:
+        raise RuntimeAuditError("E_FUZZ_REPLAY", "fuzz replay stream differs")
+    observed = strict_json(raw)
+    require_int(
+        observed.get("replayed_inputs"), "replayed inputs", minimum=1, maximum=4096
+    )
+    fields = {
+        key: expected[key]
+        for key in ("harness", "corpus_sha256", "replayed_inputs", "failure_inputs")
+    }
+    if observed != {"schema": "factory.fuzz-input-replay.v1", **fields}:
+        raise RuntimeAuditError("E_FUZZ_REPLAY", "retained input outcomes differ")
+
+
 def _finalize_fuzz_report(raw, invocations):
     from .runtime_audit_common import _validate_runner_facts
 

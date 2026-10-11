@@ -6211,3 +6211,296 @@ def test_fuzz_zero_branch_exception_remains_a_finding():
     report["metrics"]["executions"] = 0
     with pytest.raises(RuntimeAuditError):
         _execution_runtime(report, lane, {"fuzz.py": "a" * 64})
+
+
+def _fuzz_replay_request_fixture():
+    _, report = _retained_fuzz_fixture()
+    return {
+        "lane": {
+            "id": "fuzz-replay-test",
+            "engine": "atheris",
+            "family": "fuzz",
+            "image": "ghcr.io/example/atheris@sha256:" + "b" * 64,
+        },
+        "inventory": {
+            "candidate_sha256": "c" * 64,
+            "files": [{"path": "fuzz.py", "sha256": "a" * 64}],
+        },
+        "coverage": {"schema": "factory.coverage.v1"},
+        "report": report,
+    }
+
+
+def test_fuzz_replay_driver_executes_retained_inputs(tmp_path):
+    from factoryline.deep_audit_io import (
+        _fuzz_replay_inputs_main,
+        _codeql_blob_bytes,
+        _codeql_native_blob,
+        canonical_bytes,
+        sha256_bytes,
+    )
+
+    request = _fuzz_replay_request_fixture()
+    source = tmp_path / "source"
+    source.mkdir()
+    target = source / "fuzz.py"
+    target.write_text(
+        "def TestOneInput(data):\n    if data == b'failure': raise ValueError('seeded')\n"
+    )
+    seal = sha256_bytes(target.read_bytes())
+    corpus = json.loads(_codeql_blob_bytes(request["report"]["fuzz_corpus"]))
+    corpus["harness"]["sha256"] = seal
+    raw = canonical_bytes(corpus)
+    request["report"]["fuzz_corpus"] = _codeql_native_blob(raw)
+    request["report"]["harness"] = corpus["harness"]
+    request["report"]["corpus"]["sha256"] = sha256_bytes(raw)
+    request["inventory"]["files"][0]["sha256"] = seal
+    contract = tmp_path / "request.json"
+    contract.write_bytes(canonical_bytes(request))
+    observed = _fuzz_replay_inputs_main(contract, source)
+    assert observed["replayed_inputs"] == 2
+    assert observed["failure_inputs"] == [sha256_bytes(b"failure")]
+    target.write_text("def TestOneInput(data): return None\n")
+    with pytest.raises(RuntimeAuditError):
+        _fuzz_replay_inputs_main(contract, source)
+
+
+@pytest.mark.parametrize("tamper", ["failure", "count", "boolean", "hash", "extra"])
+def test_fuzz_replay_observation_rejects_changed_outcomes(tamper):
+    from factoryline.deep_audit_io import (
+        _validate_fuzz_replay_observation,
+        _fuzz_replay_expected,
+    )
+
+    expected = _fuzz_replay_expected(_fuzz_replay_request_fixture())
+    observed = {
+        "schema": "factory.fuzz-input-replay.v1",
+        **{
+            key: expected[key]
+            for key in ("harness", "corpus_sha256", "replayed_inputs", "failure_inputs")
+        },
+    }
+    raw = json.dumps(observed).encode()
+    _validate_fuzz_replay_observation(
+        raw, _codeql_process_facts(30, raw, b""), expected
+    )
+    if tamper == "failure":
+        observed["failure_inputs"] = []
+    elif tamper == "extra":
+        observed["unexpected"] = True
+    else:
+        key, value = {
+            "count": ("replayed_inputs", 3),
+            "boolean": ("replayed_inputs", True),
+            "hash": ("corpus_sha256", "0" * 64),
+        }[tamper]
+        observed[key] = value
+    raw = json.dumps(observed).encode()
+    with pytest.raises(RuntimeAuditError):
+        _validate_fuzz_replay_observation(
+            raw, _codeql_process_facts(30, raw, b""), expected
+        )
+
+
+def test_fuzz_replay_expected_binds_retained_corpus_and_report():
+    from factoryline.deep_audit_io import _fuzz_replay_expected, _retained_fuzz_corpus
+
+    request = _fuzz_replay_request_fixture()
+    expected = _fuzz_replay_expected(request)
+    corpus = _retained_fuzz_corpus(request["report"], {"fuzz.py": "a" * 64})
+    assert expected == {
+        "schema": "factory.fuzz-native-replay.v1",
+        "state": "VERIFIED",
+        "candidate_sha256": "c" * 64,
+        "lane_sha256": digest(request["lane"]),
+        "coverage_sha256": digest(request["coverage"]),
+        "report_sha256": digest(request["report"]),
+        "corpus_sha256": request["report"]["corpus"]["sha256"],
+        "harness": corpus["harness"],
+        "replayed_inputs": len(corpus["inputs"]),
+        "failure_inputs": sorted(
+            {finding["input_sha256"] for finding in request["report"]["findings"]}
+        ),
+    }
+
+
+@pytest.mark.parametrize("tamper", ["corpus", "request_inventory"])
+def test_fuzz_replay_expected_rejects_corpus_or_inventory_drift(tamper):
+    from factoryline.deep_audit_io import (
+        _fuzz_replay_expected,
+        _codeql_blob_bytes,
+        _codeql_native_blob,
+        canonical_bytes,
+    )
+    from factoryline.runtime_audit_common import sha256_bytes
+
+    request = _fuzz_replay_request_fixture()
+    if tamper == "corpus":
+        corpus = json.loads(_codeql_blob_bytes(request["report"]["fuzz_corpus"]))
+        corpus["inputs"][0]["sha256"] = "d" * 64
+        raw = canonical_bytes(corpus)
+        request["report"]["fuzz_corpus"] = _codeql_native_blob(raw)
+        request["report"]["corpus"]["sha256"] = sha256_bytes(raw)
+    else:
+        request["inventory"]["files"][0]["sha256"] = "e" * 64
+    with pytest.raises(RuntimeAuditError):
+        _fuzz_replay_expected(request)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        {"exit_code": 7},
+        {"timed_out": True},
+        {"cancelled": True},
+        {"cleanup_confirmed": False},
+        {"launch_error": True},
+        {"output_limit_exceeded": True},
+    ],
+)
+def test_fuzz_replay_receipt_rejects_process_and_cleanup_failures(failure):
+    from factoryline.deep_audit import _fuzz_replay_receipt
+    from factoryline.deep_audit_io import _fuzz_replay_expected
+
+    request = _fuzz_replay_request_fixture()
+    expected = _fuzz_replay_expected(request)
+    raw = json.dumps(
+        {**expected, "native_execution_sha256": "a" * 64},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    facts = _codeql_process_facts(60, raw, b"", cancelled=False)
+    facts.update(failure)
+    with pytest.raises(RuntimeAuditError):
+        _fuzz_replay_receipt(raw, facts, request)
+
+
+@pytest.mark.parametrize(
+    "field", ["corpus_sha256", "failure_inputs", "replayed_inputs"]
+)
+def test_fuzz_replay_receipt_rejects_output_binding_drift(field):
+    from factoryline.deep_audit import _fuzz_replay_receipt
+    from factoryline.deep_audit_io import _fuzz_replay_expected
+
+    request = _fuzz_replay_request_fixture()
+    expected = _fuzz_replay_expected(request)
+    receipt = {**expected, "native_execution_sha256": "a" * 64}
+    if field == "failure_inputs":
+        receipt[field] = ["0" * 64]
+    elif field == "replayed_inputs":
+        receipt[field] += 1
+    else:
+        receipt[field] = "0" * 64
+    raw = json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+    facts = _codeql_process_facts(60, raw, b"", cancelled=False)
+    with pytest.raises(RuntimeAuditError):
+        _fuzz_replay_receipt(raw, facts, request)
+
+
+def test_fuzz_replay_receipt_accepts_native_receipt_and_checks_stdout_binding():
+    from factoryline.deep_audit import _fuzz_replay_receipt
+    from factoryline.deep_audit_io import _fuzz_replay_expected
+
+    request = _fuzz_replay_request_fixture()
+    receipt = {**_fuzz_replay_expected(request), "native_execution_sha256": "a" * 64}
+    raw = json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+    facts = _codeql_process_facts(60, raw, b"", cancelled=False)
+    assert _fuzz_replay_receipt(raw, facts, request) == receipt
+    for change in ({"stdout_sha256": "0" * 64}, {"stdout_bytes": len(raw) + 1}):
+        tampered_facts = {**facts, **change}
+        with pytest.raises(RuntimeAuditError, match="E_FUZZ_REPLAY"):
+            _fuzz_replay_receipt(raw, tampered_facts, request)
+
+
+def test_fuzz_replay_result_clears_only_required_gap_after_host_receipt(
+    tmp_path, monkeypatch
+):
+    import threading
+
+    import factoryline.deep_audit as module
+
+    request = _fuzz_replay_request_fixture()
+    result = {
+        "gaps": ["FUZZ_NATIVE_REPLAY_REQUIRED", "UNRELATED_GAP"],
+        "state": "INCOMPLETE",
+    }
+    monkeypatch.setattr(module, "_monitor_lane", lambda *args: None)
+    monkeypatch.setattr(
+        module,
+        "_replay_fuzz_lane",
+        lambda *args, **kwargs: {
+            "schema": "factory.fuzz-native-replay.v1",
+            "state": "VERIFIED",
+        },
+    )
+    directory = tmp_path / "monitor"
+    directory.mkdir()
+    module._fuzz_replay_result(
+        result,
+        ["docker"],
+        request["lane"],
+        tmp_path / "snapshot",
+        {
+            "artifacts": {
+                "coverage.json": request["coverage"],
+                "report.json": request["report"],
+            }
+        },
+        request["inventory"],
+        "run-id",
+        threading.Event(),
+        time.monotonic() + 60,
+        (directory, {"active_lane": request["lane"]["id"]}, lambda event: None),
+    )
+    assert result["gaps"] == ["UNRELATED_GAP"]
+    assert result["state"] == "INCOMPLETE"
+    assert result["fuzz_replay"]["state"] == "VERIFIED"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RuntimeAuditError("E_FUZZ_REPLAY", "receipt invalid"),
+        {"state": "INCOMPLETE"},
+    ],
+)
+def test_fuzz_replay_result_failure_keeps_required_gap(tmp_path, monkeypatch, failure):
+    import threading
+
+    import factoryline.deep_audit as module
+
+    request = _fuzz_replay_request_fixture()
+    monkeypatch.setattr(module, "_monitor_lane", lambda *args: None)
+    if isinstance(failure, Exception):
+
+        def replay(*args, **kwargs):
+            raise failure
+    else:
+
+        def replay(*args, **kwargs):
+            return failure
+
+    monkeypatch.setattr(module, "_replay_fuzz_lane", replay)
+    result = {"gaps": ["FUZZ_NATIVE_REPLAY_REQUIRED"], "state": "INCOMPLETE"}
+    directory = tmp_path / "monitor"
+    directory.mkdir()
+    module._fuzz_replay_result(
+        result,
+        ["docker"],
+        request["lane"],
+        tmp_path / "snapshot",
+        {
+            "artifacts": {
+                "coverage.json": request["coverage"],
+                "report.json": request["report"],
+            }
+        },
+        request["inventory"],
+        "run-id",
+        threading.Event(),
+        time.monotonic() + 60,
+        (directory, {"active_lane": request["lane"]["id"]}, lambda event: None),
+    )
+    assert result["state"] == "INCOMPLETE"
+    assert "FUZZ_NATIVE_REPLAY_REQUIRED" in result["gaps"]
+    assert "FUZZ_NATIVE_REPLAY_FAILED" in result["gaps"]

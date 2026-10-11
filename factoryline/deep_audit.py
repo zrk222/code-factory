@@ -463,6 +463,18 @@ def _execute_lane(
         (directory, state, emit),
         plan["obligations"],
     )
+    result = _fuzz_replay_result(
+        result,
+        base,
+        lane,
+        snapshot,
+        bundle,
+        inventory,
+        state["run_id"],
+        cancelled,
+        deadline,
+        (directory, state, emit),
+    )
     # Retain normalized native evidence for independent review, never emit raw logs/secrets.
     write_run_json(directory, f"bundle-{lane['id']}.json", bundle)
     result.update(bundle_sha256=digest(bundle), execution=facts)
@@ -526,6 +538,108 @@ def _osv_replay_result(
     )
 
 
+def _fuzz_replay_result(
+    result,
+    base,
+    lane,
+    snapshot,
+    bundle,
+    inventory,
+    run_id,
+    cancelled,
+    deadline,
+    monitoring,
+):
+    return _native_replay_result(
+        result,
+        base,
+        lane,
+        snapshot,
+        bundle,
+        inventory,
+        run_id,
+        cancelled,
+        deadline,
+        monitoring,
+        "fuzz",
+        [],
+    )
+
+
+def _fuzz_replay_argv(
+    base,
+    lane,
+    snapshot,
+    name,
+    run_id,
+    candidate,
+    contract,
+    runtime,
+    timeout,
+):
+    return _codeql_replay_argv(
+        base,
+        lane,
+        snapshot,
+        name,
+        run_id,
+        candidate,
+        contract,
+        runtime,
+        timeout,
+        engine="fuzz",
+    )
+
+
+def _replay_fuzz_lane(
+    base,
+    lane,
+    snapshot,
+    bundle,
+    inventory,
+    run_id,
+    cancelled,
+    *,
+    timeout_seconds=None,
+):
+    return _replay_native_lane(
+        base,
+        lane,
+        snapshot,
+        bundle,
+        inventory,
+        run_id,
+        cancelled,
+        timeout_seconds=timeout_seconds,
+        engine="fuzz",
+        obligations=[],
+    )
+
+
+def _fuzz_replay_receipt(raw, facts, request):
+    from .deep_audit_io import _fuzz_replay_expected
+    from .runtime_audit_common import (
+        _validate_runner_facts,
+        require_digest,
+        require_int,
+    )
+
+    _validate_runner_facts(facts, facts["timeout_seconds"])
+    if not _osv_replay_process_valid(raw, facts):
+        raise RuntimeAuditError("E_FUZZ_REPLAY", "native replay execution failed")
+    replay = strict_json(raw)
+    expected = _fuzz_replay_expected(request)
+    if not isinstance(replay, dict) or set(replay) != set(expected) | {
+        "native_execution_sha256"
+    }:
+        raise RuntimeAuditError("E_FUZZ_REPLAY", "native replay fields differ")
+    if any(replay.get(key) != value for key, value in expected.items()):
+        raise RuntimeAuditError("E_FUZZ_REPLAY", "native replay binding differs")
+    require_int(replay["replayed_inputs"], "replayed inputs", minimum=1, maximum=4096)
+    require_digest(replay["native_execution_sha256"], "native replay invocation hash")
+    return replay
+
+
 def _native_replay_result(
     result,
     base,
@@ -542,7 +656,10 @@ def _native_replay_result(
 ):
     prefix = engine.upper()
     required_gap = f"{prefix}_NATIVE_REPLAY_REQUIRED"
-    if lane["engine"] != engine or required_gap not in result["gaps"]:
+    if (
+        lane["engine"] != {"fuzz": "atheris"}.get(engine, engine)
+        or required_gap not in result["gaps"]
+    ):
         return result
     directory, state, emit = monitoring
     stop = threading.Event()
@@ -558,10 +675,12 @@ def _native_replay_result(
             raise RuntimeAuditError(
                 f"E_{prefix}_REPLAY", "lane replay deadline exhausted"
             )
-        replay_function = (
-            _replay_codeql_lane if engine == "codeql" else _replay_osv_lane
-        )
-        extra = {} if engine == "codeql" else {"obligations": obligations}
+        replay_function = {
+            "codeql": _replay_codeql_lane,
+            "osv": _replay_osv_lane,
+            "fuzz": _replay_fuzz_lane,
+        }[engine]
+        extra = {"obligations": obligations} if engine == "osv" else {}
         replay = replay_function(
             base,
             lane,
@@ -629,7 +748,7 @@ def _codeql_replay_argv(
     *,
     engine="codeql",
 ):
-    if engine not in {"codeql", "osv"}:
+    if engine not in {"codeql", "osv", "fuzz"}:
         raise RuntimeAuditError("E_NATIVE_REPLAY", "unsupported replay engine")
     program = (
         "import sys,json;from pathlib import Path;"
@@ -757,7 +876,11 @@ def _replay_native_lane(
         runtime, runtime_sha = _codeql_replay_runtime(scratch)
         output = scratch / "replay.json"
         remaining = _native_replay_remaining(deadline, engine)
-        argv_function = _codeql_replay_argv if engine == "codeql" else _osv_replay_argv
+        argv_function = {
+            "codeql": _codeql_replay_argv,
+            "osv": _osv_replay_argv,
+            "fuzz": _fuzz_replay_argv,
+        }[engine]
         argv = argv_function(
             base,
             lane,
@@ -786,9 +909,11 @@ def _replay_native_lane(
                     "E_CONTAINER_CLEANUP", "replay cleanup could not be verified"
                 )
             raw = output.read_bytes() if output.exists() else b""
-            receipt = (
-                _codeql_replay_receipt if engine == "codeql" else _osv_replay_receipt
-            )
+            receipt = {
+                "codeql": _codeql_replay_receipt,
+                "osv": _osv_replay_receipt,
+                "fuzz": _fuzz_replay_receipt,
+            }[engine]
             replay = receipt(raw, facts, request)
             _native_replay_remaining(deadline, engine)
         except (RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as error:
