@@ -10,6 +10,23 @@ from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
 ANALYZER = {"id": "scanner", "driver": "Example", "version": "1"}
 
 
+@pytest.mark.parametrize("missing", [True, False])
+def test_signed_semgrep_requires_rederived_native_rule_execution(missing):
+    from factoryline.deep_audit_sarif import _rule_accounting_gaps
+    from test_deep_audit import semgrep_execution_evidence
+
+    evidence, lane, sources, baseline = semgrep_execution_evidence()
+    coverage = {"semgrep_rule_execution": evidence}
+    assert _rule_accounting_gaps(coverage, lane, sources, baseline) == []
+    if missing:
+        coverage.clear()
+    else:
+        evidence["observations"][0]["raw_report_sha256"] = "0" * 64
+    assert _rule_accounting_gaps(coverage, lane, sources, baseline) == [
+        "SEMGREP_NATIVE_RULE_EXECUTION_UNVERIFIED"
+    ]
+
+
 def location(line=1, path="app.py"):
     return {
         "physicalLocation": {

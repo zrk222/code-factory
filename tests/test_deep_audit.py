@@ -1153,6 +1153,208 @@ def test_runtime_junit_profile_normalizes_native_junit_and_coverage(tmp_path):
     assert report["source_coverage"]["app.py"]["sha256"] == "a" * 64
 
 
+def semgrep_execution_evidence():
+    import base64
+    from factoryline.deep_audit_io import canonical_bytes, sha256_bytes
+
+    rules = [
+        {
+            "id": "js-rule",
+            "languages": ["javascript"],
+            "message": "control",
+            "severity": "ERROR",
+            "pattern": "bad()",
+        },
+        {
+            "id": "py-rule",
+            "languages": ["python"],
+            "message": "control",
+            "severity": "ERROR",
+            "pattern": "bad()",
+        },
+    ]
+    config = canonical_bytes({"rules": rules})
+    lane = {
+        "engine": "semgrep",
+        "tool_version": "1.141.0",
+        "ruleset_sha256": sha256_bytes(config),
+        "rule_ids": ["js-rule", "py-rule"],
+        "native_artifact_roles": ["rule_inventory", "sarif_report"],
+        "timeout_seconds": 30,
+    }
+    sources = {"app.py": "a" * 64, "app.js": "b" * 64}
+    observations = []
+    for index, (rule, path) in enumerate(zip(rules, ("app.js", "app.py"))):
+        native = {
+            "version": lane["tool_version"],
+            "errors": [],
+            "paths": {"scanned": ["/src/" + path]},
+            "results": [],
+        }
+        observations.append(
+            {
+                "rule_id": rule["id"],
+                "rule_config_sha256": digest({"rules": [rule]}),
+                "rule_config_base64": base64.b64encode(
+                    canonical_bytes({"rules": [rule]})
+                ).decode(),
+                "argv_sha256": "c" * 64,
+                "execution": {
+                    "exit_code": 0,
+                    "timed_out": False,
+                    "timeout_seconds": 30,
+                    "duration_ms": 1,
+                    "launch_error": False,
+                    "output_limit_exceeded": False,
+                    "cleanup_confirmed": True,
+                    "stdout_sha256": "d" * 64,
+                    "stderr_sha256": "e" * 64,
+                    "stdout_bytes": 0,
+                    "stderr_bytes": 0,
+                },
+                "native_report": native,
+                "native_report_sha256": digest(native),
+                "raw_report_sha256": sha256_bytes(canonical_bytes(native)),
+                "raw_report_base64": base64.b64encode(canonical_bytes(native)).decode(),
+            }
+        )
+        argv = [
+            "/usr/bin/semgrep",
+            "scan",
+            "--json",
+            "--strict",
+            "--metrics=off",
+            "--disable-version-check",
+            "--no-git-ignore",
+            "--disable-nosem",
+            "--no-rewrite-rule-ids",
+            "--config",
+            f"/tmp/factory-native-test/semgrep-rule-{index}/rule.json",
+            "--json-output",
+            f"/tmp/factory-native-test/semgrep-rule-{index}/report.json",
+            "/src",
+        ]
+        observations[-1].update(argv=argv, argv_sha256=digest(argv))
+    evidence = {
+        "schema": "factory.semgrep-rule-execution.v1",
+        "ruleset_base64": base64.b64encode(config).decode(),
+        "observations": observations,
+    }
+    return evidence, lane, sources, {"runs": [{"results": []}]}
+
+
+def test_semgrep_native_source_budget_rejects_before_tool_execution(tmp_path):
+    from factoryline.deep_audit_io import _run_native_profile
+
+    with pytest.raises(RuntimeAuditError, match="bounded source inventory"):
+        _run_native_profile(
+            {},
+            {},
+            tmp_path,
+            tmp_path,
+            {"files": [{}] * 65},
+            {"engine": "semgrep", "native_artifact_roles": []},
+            [],
+        )
+
+
+def test_semgrep_native_rejects_resealed_wrong_rule_config_path():
+    from factoryline.deep_audit_io import verify_semgrep_rule_execution
+
+    evidence, lane, sources, baseline = semgrep_execution_evidence()
+    observation = evidence["observations"][1]
+    observation["argv"][10] = observation["argv"][10].replace("rule-1", "rule-0")
+    observation["argv"][12] = observation["argv"][12].replace("rule-1", "rule-0")
+    observation["argv_sha256"] = digest(observation["argv"])
+    with pytest.raises(RuntimeAuditError, match="native command binding differs"):
+        verify_semgrep_rule_execution(evidence, lane, sources, baseline)
+
+
+def test_semgrep_native_rules_account_for_applicable_and_other_languages():
+    from factoryline.deep_audit_io import (
+        _semgrep_source_accounting,
+        verify_semgrep_rule_execution,
+    )
+
+    evidence, lane, sources, baseline = semgrep_execution_evidence()
+    checked = verify_semgrep_rule_execution(evidence, lane, sources, baseline)
+    assert checked["state"] == "VERIFIED"
+    assert checked["rules"][0]["executed_sources"] == ["app.js"]
+    assert checked["rules"][0]["not_applicable_sources"] == ["app.py"]
+    assert checked["rules"][1]["executed_sources"] == ["app.py"]
+    lane["languages"] = ["python", "javascript"]
+    inventory = {
+        "files": [
+            {
+                "path": path,
+                "sha256": sha,
+                "language": "python" if path.endswith(".py") else "javascript",
+            }
+            for path, sha in sources.items()
+        ]
+    }
+    source_accounting = _semgrep_source_accounting(
+        {"semgrep_rule_execution": evidence, "raw_report": baseline}, inventory, lane
+    )
+    assert source_accounting["state"] == "COMPLETE"
+    assert source_accounting["missing_paths"] == []
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "missing",
+        "ruleset",
+        "config",
+        "version",
+        "error",
+        "timeout",
+        "cleanup",
+        "source",
+        "duplicate",
+        "extra-rule",
+        "finding-drift",
+        "argv",
+        "raw-digest",
+        "budget",
+    ],
+)
+def test_semgrep_native_rule_execution_rejects_incomplete_or_resealed_evidence(invalid):
+    from factoryline.deep_audit_io import verify_semgrep_rule_execution
+
+    evidence, lane, sources, baseline = semgrep_execution_evidence()
+    observed = evidence["observations"][0]
+    native = observed["native_report"]
+    mutations = {
+        "missing": lambda: evidence["observations"].pop(),
+        "ruleset": lambda: lane.update(ruleset_sha256="0" * 64),
+        "config": lambda: observed.update(rule_config_sha256="0" * 64),
+        "argv": lambda: observed.update(argv_sha256="0" * 64),
+        "raw-digest": lambda: observed.update(raw_report_sha256="0" * 64),
+        "budget": lambda: observed["execution"].update(timeout_seconds=31),
+        "version": lambda: native.update(version="old"),
+        "error": lambda: native.update(errors=[{"message": "parse failed"}]),
+        "timeout": lambda: observed["execution"].update(timed_out=True),
+        "cleanup": lambda: observed["execution"].update(cleanup_confirmed=False),
+        "source": lambda: native["paths"].update(scanned=[]),
+        "duplicate": lambda: native["paths"]["scanned"].append("/src/app.js"),
+        "extra-rule": lambda: native.update(
+            results=[
+                {"check_id": "unselected", "path": "/src/app.js", "start": {"line": 1}}
+            ]
+        ),
+        "finding-drift": lambda: native.update(
+            results=[
+                {"check_id": "js-rule", "path": "/src/app.js", "start": {"line": 1}}
+            ]
+        ),
+    }
+    mutations[invalid]()
+    observed["native_report_sha256"] = digest(native)
+    with pytest.raises(RuntimeAuditError):
+        verify_semgrep_rule_execution(evidence, lane, sources, baseline)
+
+
 def test_runtime_mutation_report_requires_a_passing_sentinel(tmp_path):
     from factoryline.deep_audit_io import _runtime_challenge_report
 

@@ -1931,6 +1931,7 @@ def execute_native_profile(
 def _run_native_profile(profile, contract, source, output, inventory, lane, paths):
     rule_inventory = None
     config_path = None
+    semgrep_rules = None
     if lane["engine"] == "gitleaks":
         config_path = Path("/opt/factory/rules/gitleaks.toml")
         config = config_path.read_bytes()
@@ -1939,6 +1940,13 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
         config_path = Path("/opt/factory/rules/runtime-control.toml")
         config = config_path.read_bytes()
         rule_inventory = _runtime_rule_inventory(config, lane)
+    elif lane["engine"] == "semgrep" and "native_artifact_roles" in lane:
+        if len(inventory["files"]) > 64:
+            raise RuntimeAuditError(
+                "E_SEMGREP_EXECUTION", "bounded source inventory required"
+            )
+        config = Path("/opt/factory/rules/semgrep-pattern-limited.yml").read_bytes()
+        semgrep_rules, rule_inventory = _semgrep_rule_inventory(config, lane)
     timeout = require_int(
         lane.get("timeout_seconds"), "timeout", minimum=1, maximum=3600
     )
@@ -1974,6 +1982,17 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
             ledger = invocations[0].pop("native_rule_ledger", None)
             ledger_sha256 = invocations[0].get("native_rule_ledger_sha256")
             ledger_json = invocations[0].pop("native_rule_ledger_json", None)
+        semgrep_execution = (
+            _semgrep_rule_runs(profile, lane, source, scratch, semgrep_rules, started)
+            if semgrep_rules is not None
+            else None
+        )
+        if semgrep_execution is not None:
+            import base64
+
+            semgrep_execution["ruleset_base64"] = base64.b64encode(config).decode(
+                "ascii"
+            )
     if profile["report_format"] == "runtime-junit":
         junit_path = local_file(output, paths[0])
         _junit_bytes(output, paths[0])
@@ -1993,7 +2012,311 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
         "ledger_json": ledger_json,
         "raw_report": raw_report,
         "version_probe": version,
+        "semgrep_rule_execution": semgrep_execution,
     }
+
+
+def _semgrep_rule_inventory(config, lane):
+    import yaml
+
+    if sha256_bytes(config) != lane["ruleset_sha256"]:
+        raise RuntimeAuditError("E_SEMGREP_RULESET", "pinned Semgrep ruleset differs")
+    try:
+        rules = yaml.safe_load(config)["rules"]
+    except (yaml.YAMLError, KeyError, TypeError) as exc:
+        raise RuntimeAuditError("E_SEMGREP_RULESET", "invalid Semgrep rules") from exc
+    if not isinstance(rules, list) or not 1 <= len(rules) <= 64:
+        raise RuntimeAuditError("E_SEMGREP_RULESET", "bounded rules required")
+    if any(not isinstance(rule, dict) for rule in rules):
+        raise RuntimeAuditError("E_SEMGREP_RULESET", "rule objects required")
+    ids = [require_str(rule.get("id"), "rule id", maximum=256) for rule in rules]
+    if len(set(ids)) != len(ids) or sorted(ids) != lane.get("rule_ids"):
+        raise RuntimeAuditError("E_SEMGREP_RULESET", "signed rule inventory differs")
+    inventory = {"ruleset_sha256": lane["ruleset_sha256"], "rule_ids": sorted(ids)}
+    return sorted(rules, key=lambda rule: rule["id"]), {
+        "state": "VERIFIED",
+        "rule_ids": sorted(ids),
+        "sha256": digest(inventory),
+    }
+
+
+def _semgrep_rule_runs(profile, lane, source, scratch, rules, started):
+    import base64
+    from .runtime_audit_process import run_bounded_command
+
+    observations = []
+    deadline = started + lane["timeout_seconds"]
+    for index, rule in enumerate(rules):
+        remaining = int(deadline - time.monotonic())
+        if remaining < 1:
+            raise RuntimeAuditError(
+                "E_ADAPTER_TIMEOUT", "Semgrep rule budget exhausted"
+            )
+        directory = scratch / f"semgrep-rule-{index}"
+        directory.mkdir()
+        config = canonical_bytes({"rules": [rule]})
+        config_path, report_path = directory / "rule.json", directory / "report.json"
+        config_path.write_bytes(config)
+        argv = [
+            profile["commands"][0]["argv"][0],
+            "scan",
+            "--json",
+            "--strict",
+            "--metrics=off",
+            "--disable-version-check",
+            "--no-git-ignore",
+            "--disable-nosem",
+            "--no-rewrite-rule-ids",
+            "--config",
+            str(config_path),
+            "--json-output",
+            str(report_path),
+            str(source),
+        ]
+        facts = run_bounded_command(argv, source, remaining, directory)
+        if _adapter_command_failed(facts, [0], deadline):
+            raise RuntimeAuditError(
+                "E_SEMGREP_EXECUTION", "native rule execution failed"
+            )
+        with local_file(directory, "report.json").open("rb") as stream:
+            raw = stream.read(LIMIT + 1)
+        report = strict_json(raw)
+        observations.append(
+            {
+                "rule_id": rule["id"],
+                "rule_config_sha256": sha256_bytes(config),
+                "rule_config_base64": base64.b64encode(config).decode("ascii"),
+                "argv_sha256": digest(argv),
+                "argv": argv,
+                "execution": facts,
+                "native_report": report,
+                "native_report_sha256": digest(report),
+                "raw_report_sha256": sha256_bytes(raw),
+                "raw_report_base64": base64.b64encode(raw).decode("ascii"),
+            }
+        )
+    return {"schema": "factory.semgrep-rule-execution.v1", "observations": observations}
+
+
+def verify_semgrep_rule_execution(evidence, lane, sources, report):
+    """Re-derive execution and findings from exact pinned rules plus per-rule native JSON."""
+    import base64
+    from .runtime_audit_common import _validate_runner_facts
+
+    if (
+        not isinstance(evidence, dict)
+        or set(evidence) != {"schema", "ruleset_base64", "observations"}
+        or evidence["schema"] != "factory.semgrep-rule-execution.v1"
+    ):
+        raise RuntimeAuditError("E_SEMGREP_EXECUTION", "native rule evidence missing")
+    try:
+        config = base64.b64decode(evidence["ruleset_base64"], validate=True)
+    except (ValueError, TypeError) as exc:
+        raise RuntimeAuditError("E_SEMGREP_RULESET", "invalid native ruleset") from exc
+    rules, _inventory = _semgrep_rule_inventory(config, lane)
+    observations = evidence["observations"]
+    if not isinstance(observations, list) or len(observations) != len(rules):
+        raise RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "rule observation inventory differs"
+        )
+    if len(sources) > 64:
+        raise RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "bounded source inventory required"
+        )
+    findings, dispositions = [], []
+    for index, (rule, observation) in enumerate(zip(rules, observations)):
+        _semgrep_observation_identity(rule, observation, index)
+        facts = observation["execution"]
+        _validate_runner_facts(facts, facts.get("timeout_seconds"))
+        if facts["timeout_seconds"] > lane["timeout_seconds"]:
+            raise RuntimeAuditError("E_SEMGREP_EXECUTION", "rule exceeds signed budget")
+        if _adapter_command_failed(facts, [0], float("inf")):
+            raise RuntimeAuditError(
+                "E_SEMGREP_EXECUTION", "native rule did not complete"
+            )
+        native = observation["native_report"]
+        expected = _semgrep_rule_sources(rule, sources)
+        scanned = _semgrep_scanned_sources(native, sources, lane)
+        if scanned != expected:
+            raise RuntimeAuditError(
+                "E_SEMGREP_EXECUTION", "native source execution differs"
+            )
+        findings.extend(_semgrep_json_findings(native, rule["id"], sources))
+        dispositions.append(
+            {
+                "rule_id": rule["id"],
+                "executed_sources": sorted(scanned),
+                "not_applicable_sources": sorted(set(sources) - scanned),
+                "native_report_sha256": observation["native_report_sha256"],
+            }
+        )
+    baseline = _semgrep_sarif_findings(report, lane["rule_ids"], sources)
+    if sorted(findings) != sorted(baseline):
+        raise RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "per-rule findings contradict baseline"
+        )
+    return {"state": "VERIFIED", "rules": dispositions, "findings": len(findings)}
+
+
+def _semgrep_observation_identity(rule, observation, index):
+    import base64
+
+    fields = {
+        "rule_id",
+        "rule_config_sha256",
+        "rule_config_base64",
+        "argv_sha256",
+        "argv",
+        "execution",
+        "native_report",
+        "native_report_sha256",
+        "raw_report_sha256",
+        "raw_report_base64",
+    }
+    if not isinstance(observation, dict) or set(observation) != fields:
+        raise RuntimeAuditError("E_SEMGREP_EXECUTION", "invalid native rule record")
+    if observation["rule_id"] != rule["id"] or observation[
+        "rule_config_sha256"
+    ] != digest({"rules": [rule]}):
+        raise RuntimeAuditError("E_SEMGREP_RULESET", "isolated native rule differs")
+    if observation["rule_config_base64"] != base64.b64encode(
+        canonical_bytes({"rules": [rule]})
+    ).decode("ascii"):
+        raise RuntimeAuditError("E_SEMGREP_RULESET", "native config bytes differ")
+    for key in ("argv_sha256", "raw_report_sha256"):
+        require_digest(observation[key], key)
+    if digest(observation["native_report"]) != observation["native_report_sha256"]:
+        raise RuntimeAuditError("E_SEMGREP_EXECUTION", "native report digest differs")
+    _semgrep_raw_bindings(observation, index)
+
+
+def _semgrep_raw_bindings(observation, index):
+    import base64
+    from pathlib import PurePosixPath
+
+    argv = observation["argv"]
+    prefix = [
+        "/usr/bin/semgrep",
+        "scan",
+        "--json",
+        "--strict",
+        "--metrics=off",
+        "--disable-version-check",
+        "--no-git-ignore",
+        "--disable-nosem",
+        "--no-rewrite-rule-ids",
+        "--config",
+    ]
+    if not isinstance(argv, list) or len(argv) != 14 or argv[:10] != prefix:
+        raise RuntimeAuditError("E_SEMGREP_EXECUTION", "isolated command differs")
+    config, report = PurePosixPath(argv[10]), PurePosixPath(argv[12])
+    if (
+        argv[11] != "--json-output"
+        or argv[13] != "/src"
+        or config.name != "rule.json"
+        or report.name != "report.json"
+        or config.parent != report.parent
+        or config.parent.name != f"semgrep-rule-{index}"
+        or not config.is_absolute()
+        or ".." in config.parts
+        or not str(config).startswith("/tmp/factory-native-")
+        or digest(argv) != observation["argv_sha256"]
+    ):
+        raise RuntimeAuditError("E_SEMGREP_EXECUTION", "native command binding differs")
+    encoded = observation["raw_report_base64"]
+    if not isinstance(encoded, str) or len(encoded) > (LIMIT + 2) // 3 * 4:
+        raise RuntimeAuditError("E_SEMGREP_EXECUTION", "bounded raw report required")
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError) as exc:
+        raise RuntimeAuditError("E_SEMGREP_EXECUTION", "invalid raw report") from exc
+    if (
+        len(raw) > LIMIT
+        or sha256_bytes(raw) != observation["raw_report_sha256"]
+        or strict_json(raw) != observation["native_report"]
+    ):
+        raise RuntimeAuditError("E_SEMGREP_EXECUTION", "raw report binding differs")
+
+
+def _semgrep_rule_sources(rule, sources):
+    languages = rule.get("languages")
+    if (
+        not isinstance(languages, list)
+        or not languages
+        or not set(languages) <= {"python", "javascript", "typescript"}
+    ):
+        raise RuntimeAuditError(
+            "E_SEMGREP_RULESET", "unsupported pinned rule languages"
+        )
+    return {path for path in sources if source_language(path, b"") in languages}
+
+
+def _semgrep_scanned_sources(native, sources, lane):
+    if (
+        not isinstance(native, dict)
+        or native.get("version") != lane["tool_version"]
+        or native.get("errors") != []
+    ):
+        raise RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "native report failed or version drifted"
+        )
+    paths = native.get("paths", {}).get("scanned")
+    if not isinstance(paths, list) or len(paths) > 64:
+        raise RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "bounded native scanned paths required"
+        )
+    observed = [_native_source_path(path, sources) for path in paths]
+    if len(set(observed)) != len(observed):
+        raise RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "duplicate native source execution"
+        )
+    return set(observed)
+
+
+def _semgrep_json_findings(native, rule_id, sources):
+    results = native.get("results")
+    if not isinstance(results, list) or len(results) > 20_000:
+        raise RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "bounded native results required"
+        )
+    findings = []
+    for result in results:
+        if not isinstance(result, dict) or result.get("check_id") != rule_id:
+            raise RuntimeAuditError(
+                "E_SEMGREP_EXECUTION", "unselected detector finding"
+            )
+        path = _native_source_path(result.get("path"), sources)
+        line = require_int(
+            result.get("start", {}).get("line"),
+            "finding line",
+            minimum=1,
+            maximum=10**9,
+        )
+        findings.append((rule_id, path, line))
+    if len(set(findings)) != len(findings):
+        raise RuntimeAuditError("E_SEMGREP_EXECUTION", "duplicate native findings")
+    return findings
+
+
+def _semgrep_sarif_findings(report, rule_ids, sources):
+    findings = []
+    for run in report["runs"]:
+        for item in run.get("results", []):
+            matches = [
+                rule
+                for rule in rule_ids
+                if item["ruleId"] == rule or item["ruleId"].endswith("." + rule)
+            ]
+            if len(matches) != 1 or len(item["locations"]) != 1:
+                raise RuntimeAuditError(
+                    "E_SEMGREP_EXECUTION", "baseline detector identity differs"
+                )
+            place = item["locations"][0]["physicalLocation"]
+            path = _native_source_path(place["artifactLocation"]["uri"], sources)
+            findings.append((matches[0], path, place["region"]["startLine"]))
+    if len(set(findings)) != len(findings):
+        raise RuntimeAuditError("E_SEMGREP_EXECUTION", "duplicate baseline findings")
+    return findings
 
 
 def _runtime_exit_consistency(report, invocations):
@@ -2051,6 +2374,9 @@ def _native_profile_coverage(
             report, inventory, lane, challenges, covered_obligations
         )
         complete = not errors
+    elif execution.get("semgrep_rule_execution") is not None:
+        _semgrep_source_accounting(execution, inventory, lane)
+        errors = ["NATIVE_CHALLENGES_REQUIRED"]
     coverage = {
         "profile_sha256": digest(profile),
         "image_binding_sha256": sha256_bytes(
@@ -2069,12 +2395,19 @@ def _native_profile_coverage(
         "ruleset_sha256": profile["ruleset_sha256"],
         "report_sha256": digest(report),
         "native_report_sha256": digest(execution["raw_report"]),
-        "source_accounting": _native_runtime_accounting(report, inventory, lane),
+        "source_accounting": _native_source_accounting(
+            execution, report, inventory, lane
+        ),
         "native_invocations": execution["invocations"],
         "invocation_sha256": digest(execution["invocations"]),
         "version_probe": execution["version_probe"],
         "errors": errors,
         "obligations": covered_obligations,
+        **(
+            {"semgrep_rule_execution": execution["semgrep_rule_execution"]}
+            if execution.get("semgrep_rule_execution") is not None
+            else {}
+        ),
         **(
             {"rule_inventory": execution["rule_inventory"]}
             if execution["rule_inventory"] is not None
@@ -2106,6 +2439,39 @@ def _native_profile_coverage(
             rule_count,
         )
     return coverage
+
+
+def _native_source_accounting(execution, report, inventory, lane):
+    if execution.get("semgrep_rule_execution") is not None:
+        return _semgrep_source_accounting(execution, inventory, lane)
+    return _native_runtime_accounting(report, inventory, lane)
+
+
+def _semgrep_source_accounting(execution, inventory, lane):
+    sources = {item["path"]: item["sha256"] for item in inventory["files"]}
+    checked = verify_semgrep_rule_execution(
+        execution["semgrep_rule_execution"], lane, sources, execution["raw_report"]
+    )
+    measured = set().union(
+        *(set(rule["executed_sources"]) for rule in checked["rules"])
+    )
+    required = {
+        item["path"]
+        for item in inventory["files"]
+        if item["language"] in lane["languages"]
+    }
+    missing = sorted(required - measured)
+    if missing:
+        raise RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "native source accounting incomplete"
+        )
+    return {
+        "state": "COMPLETE",
+        "required_paths": sorted(required),
+        "measured_paths": sorted(measured),
+        "missing_paths": missing,
+        "rule_execution_sha256": digest(checked),
+    }
 
 
 def _runtime_coverage_errors(report, inventory, lane, challenges, obligations):

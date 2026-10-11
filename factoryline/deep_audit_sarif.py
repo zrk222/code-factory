@@ -931,6 +931,8 @@ def _native_counts_disposition(counts):
 
 
 def _rule_accounting_gaps(coverage, lane, required, report=None):
+    if lane["engine"] == "semgrep" and "native_artifact_roles" in lane:
+        return _semgrep_rule_execution_gaps(coverage, lane, required, report)
     if lane["engine"] != "gitleaks":
         return []
     gaps = _rule_inventory_gaps(coverage, lane)
@@ -949,6 +951,18 @@ def _rule_accounting_gaps(coverage, lane, required, report=None):
     if gaps:
         return gaps
     return _rule_execution_matrix_gaps(accounting, lane, required)
+
+
+def _semgrep_rule_execution_gaps(coverage, lane, required, report):
+    from .deep_audit_io import verify_semgrep_rule_execution
+
+    try:
+        verify_semgrep_rule_execution(
+            coverage.get("semgrep_rule_execution"), lane, required, report
+        )
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
+        return ["SEMGREP_NATIVE_RULE_EXECUTION_UNVERIFIED"]
+    return []
 
 
 def _rule_accounting_binding_gaps(accounting, coverage, lane):
