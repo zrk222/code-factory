@@ -860,6 +860,22 @@ def test_shared_taxonomy_helpers_and_references_are_canonical_and_fail_closed():
     }
 
 
+def test_beginner_prd_guidance_requires_write_authorization_and_discovers_cf_commands():
+    from factoryline.junie_taxonomy import _guidance
+
+    guidance = _guidance().decode("utf-8")
+    assert "explicitly authorize writing the answers to the named PRD" in guidance
+    assert (
+        "A user answer or PRD confirmation is not blanket permission to edit files"
+        in guidance
+    )
+    assert "Discover actual installed commands from `--help`" in guidance
+    assert "if a command is unavailable, report the blocker" in guidance
+    assert "Do not assume `factory plan` creates a plan" in guidance
+    assert "factory plan verify --plan <plan-path> --root ." in guidance
+    assert "factory assemble <feature> --root ." in guidance
+
+
 def test_native_worker_catalog_and_junie_manifest_bind_profiles(tmp_path):
     catalog = audit_taxonomy()
     workers = catalog["native_workers"]
@@ -1033,3 +1049,55 @@ def test_junie_guidance_exposes_approved_repair_without_proof_agent_authority():
     proof_agent = _junie_proof_agent_bytes().decode("utf-8")
     assert "never edit files, execute shell commands" in proof_agent
     assert "Never approve, merge, publish, deploy" in proof_agent
+
+
+def test_all_agents_and_junie_receive_source_bound_context_evidence(tmp_path):
+    """Context handoffs retain required evidence, freshness and read-only authority."""
+    from factoryline.junie_taxonomy import _guidance, _junie_proof_agent_bytes
+
+    context = audit_taxonomy()["agent_usage_contract"]["six_lane_review"][
+        "context_evidence"
+    ]
+    assert "truncated required evidence blocks" in context["collection"]
+    assert "current source verification" in context["verification"]
+    assert "syntactic evidence only" in context["depth"]
+    assert "every enabled rule" in context["efficiency"]
+    assert "target" in context["measurement"]
+    assert "only reads" in context["authority"]
+    assert (
+        junie_manifest(tmp_path)["agent_usage_contract"]["six_lane_review"][
+            "context_evidence"
+        ]
+        == context
+    )
+    for content in (_guidance(), _junie_proof_agent_bytes()):
+        assert "## Source-bound context evidence" in content.decode()
+
+
+def test_shared_deep_evidence_requires_execution_and_failure_facts(tmp_path):
+    """Every agent receives execution evidence boundaries without extra authority."""
+    from factoryline.junie_taxonomy import _guidance, _junie_proof_agent_bytes
+
+    evidence = audit_taxonomy()["agent_usage_contract"]["six_lane_review"][
+        "deep_evidence"
+    ]
+    assert "Caller-supplied identity alone" in evidence["identity"]
+    assert "raw matches, retained findings" in evidence["execution"]
+    assert "exit zero do not prove" in evidence["execution"]
+    assert "normalization failures" in evidence["failures"]
+    assert "INCOMPLETE" in evidence["failures"]
+    assert "exact-candidate-rerun" in evidence["lineage"]
+    assert "positive-defect, clean-negative" in evidence["challenges"]
+    assert "target-rule-disabled mutation" in evidence["challenges"]
+    assert "authoritative source inventory" in evidence["challenges"]
+    assert "not native execution proof" in evidence["challenges"]
+    assert "budget mismatches remain INCOMPLETE" in evidence["challenges"]
+    assert "never grants approval" in evidence["authority"]
+    assert (
+        junie_manifest(tmp_path)["agent_usage_contract"]["six_lane_review"][
+            "deep_evidence"
+        ]
+        == evidence
+    )
+    for content in (_guidance(), _junie_proof_agent_bytes()):
+        assert "## Deep execution evidence" in content.decode()

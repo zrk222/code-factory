@@ -26,7 +26,7 @@ productivity multiplier.
 | --- | --- | --- | --- |
 | Blitzy | Codebase ingestion, Technical Specification, Agent Action Plan, generation, runtime validation, and PR creation | Approved-plan alignment, exact diff scope, hollow-test challenges, and commit-bound proof status | Export or retain the reviewed plan in the repository; run `factory plan verify`, `factory change review`, and GitHub Proof Review on the resulting PR |
 | CodeRabbit | AI review, comments, summaries, and remediation suggestions | Deterministic local evidence, Proof Debt, and the neutral FactoryLine GitHub Check | Enable both on the same PR; keep CodeRabbit output advisory and FactoryLine receipts independent |
-| Mastra | Agent logic, TypeScript tools, memory, workflow execution, and MCP client lifecycle | Read-only proof context plus independent post-run diff and validator evidence | Connect Mastra to `factory mcp serve` only when the local stdio contract fits; otherwise use CLI receipts and `factory wrap` around the approved harness |
+| TypeScript agent runtimes | Agent logic, tools, memory, workflow execution, and MCP client lifecycle | Read-only proof context plus independent post-run diff and validator evidence | Connect the runtime to `factory mcp serve` only when the local stdio contract fits; otherwise use CLI receipts and `factory wrap` around the approved harness |
 | LangGraph | Runtime graph, checkpoint persistence, streaming, and application-owned effects | Reference-versus-resume parity, duplicate-effect and parallel-write checks, incident capsules, and receipt authority | Instrument the team-owned harness with `LangGraphTransitionRecorder`, seal both runs, then run `factory langgraph replay-verify` or the included GitHub Action |
 | Codex / Claude Code / Deep Agents | Repository reasoning and implementation | Admission, scoped wrapping, independent validators, and governed-run evidence | Use `factory admission prepare`, `factory wrap`, the read-only MCP server, or the included LangGraph plugin as the task requires |
 | Cursor / OpenCode | Interactive coding and MCP tool use | Bounded local receipt, verifier, PRD, memory, and Graph Ops facts | Add the documented local stdio MCP configuration and keep all mutation or publication outside the MCP server |
@@ -48,7 +48,7 @@ Use this for Blitzy or another large-change generator:
 
 ### Agent framework to independent proof
 
-Use this for Mastra, LangGraph, or another agent runtime:
+Use this for LangGraph or another agent runtime:
 
 1. The framework owns execution, state, memory, and tool calls.
 2. FactoryLine consumes only bounded, declared artifacts or read-only MCP facts.
@@ -85,5 +85,4 @@ Official capability references used for this guide:
 
 - [Blitzy introduction](https://docs.blitzy.com/introduction)
 - [CodeRabbit GitHub Checks](https://docs.coderabbit.ai/tools/github-checks)
-- [Mastra MCP guide](https://mastra.ai/docs/agents/mcp-guide)
 - [LangGraph documentation](https://langchain-ai.github.io/langgraph/index.html)

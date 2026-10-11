@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, copyFileSync, readFileSync, writeFileSync, mkdirSync, chmodSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join, dirname } from 'node:path';
+import { verifyRuleMutation } from './semgrep_mutation_controls.mjs';
 
 const [image, output = '.factory/semgrep-surface-verification.json'] = process.argv.slice(2);
 if (!image) throw new Error('Usage: node scripts/verify_semgrep_surface.mjs IMAGE OUTPUT');
@@ -12,7 +13,7 @@ const rulesPath = 'deploy/deep-adapters/rules/semgrep-pattern-limited.yml';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const receipt = { schema: 'factory.semgrep-surface-controls.v1', state: 'BLOCKED',
   observed_at: new Date().toISOString(), image, source: {},
-  claim_boundary: 'Native controls for ten declared rules in Python, JavaScript and TypeScript; no general detection-accuracy or interprocedural-coverage claim.' };
+  claim_boundary: 'Native positive, safe and detector-removal controls for all ten bundled rules in Python, JavaScript and TypeScript; no general detection-accuracy or interprocedural-coverage claim.' };
 const temp = mkdtempSync(join(tmpdir(), 'cf-semgrep-surface-'));
 function docker(args) {
   const run = spawnSync('docker', args, { encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024 });
@@ -21,7 +22,8 @@ function docker(args) {
 }
 try {
   for (const path of [rulesPath, 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json',
-    'deploy/deep-adapters/rules/tests/python-controls.txt', 'deploy/deep-adapters/rules/tests/javascript-controls.js']) {
+    'deploy/deep-adapters/rules/tests/python-controls.txt', 'deploy/deep-adapters/rules/tests/javascript-controls.js',
+    'scripts/verify_semgrep_surface.mjs', 'scripts/semgrep_mutation_controls.mjs']) {
     receipt.source[path] = hash(readFileSync(path));
   }
   if (receipt.source[rulesPath] !== profile.ruleset_sha256) throw new Error('Ruleset hash differs from profile');
@@ -115,6 +117,22 @@ try {
   receipt.native_dataflow_findings = findings.filter(result => result.codeFlows?.length).length;
   receipt.dataflow_trace_state = receipt.native_dataflow_findings > 0 ? 'OBSERVED' : 'NOT_MEASURED';
   if (receipt.native_rule_ids.length !== 10) throw new Error('Native profile omitted rules');
+  receipt.detector_mutations = [];
+  for (const ruleId of receipt.native_rule_ids) {
+    const mutationArgv = [...argv.filter(value => value !== '{source}'),
+      '--exclude-rule', ruleId, '/cases'];
+    const raw = docker([...base, '--mount', `type=bind,source=${temp},target=/cases,readonly`,
+      '--entrypoint', profile.commands[0].argv[0], id, ...mutationArgv]);
+    const control = verifyRuleMutation(sarif, JSON.parse(raw), ruleId);
+    const path = `${output}.mutation-${receipt.detector_mutations.length}.sarif`;
+    writeFileSync(path, raw);
+    receipt.detector_mutations.push({ ...control, report: path,
+      native_sarif_sha256: hash(Buffer.from(raw)),
+      argv_sha256: hash(Buffer.from(JSON.stringify(mutationArgv))) });
+  }
+  if (receipt.detector_mutations.length !== receipt.native_rule_ids.length) {
+    throw new Error('Enabled rule mutation controls incomplete');
+  }
   receipt.state = 'PASS';
 } catch (error) {
   receipt.error = error.message;

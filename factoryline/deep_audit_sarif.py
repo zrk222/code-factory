@@ -10,13 +10,26 @@ from pathlib import Path
 from copy import deepcopy
 import re
 
-from .deep_audit_io import bound_bytes, digest, relative_path, strict_json
+from .deep_audit_io import bound_bytes, digest, relative_path, sha256_bytes, strict_json
 from .runtime_audit_common import (
     RuntimeAuditError,
+    canonical_bytes,
     require_digest,
     require_int,
     require_str,
 )
+
+_NATIVE_REPORT_ROLES = {
+    "codeql": "sarif_report",
+    "semgrep": "sarif_report",
+    "trivy": "sarif_report",
+    "osv": "osv_json_report",
+    "gitleaks": "sarif_report",
+    "runtime": "junit_xml",
+    "atheris": "fuzz_result",
+    "jazzer": "fuzz_result",
+    "zap": "zap_report",
+}
 
 
 def _safe_text(value: object, maximum: int = 2048) -> str:
@@ -239,7 +252,8 @@ def _execution_osv(report: dict, lane: dict, sources: dict) -> list:
         path = relative_path(_object(result.get("source")).get("path"))
         if path not in sources:
             raise RuntimeAuditError("E_TRACE_UNBOUND", "dependency manifest is unbound")
-        for package in _list(result.get("packages"), 1, 20_000):
+        minimum = 0 if lane.get("mode") == "offline-pypi-snapshot" else 1
+        for package in _list(result.get("packages"), minimum, 20_000):
             identity = _object(package.get("package"))
             for key in ("name", "version", "ecosystem"):
                 require_str(identity.get(key), f"package.{key}", maximum=256)
@@ -300,6 +314,80 @@ def _osv_fixed_versions(vulnerability: dict, identity: dict) -> list[str]:
     return sorted(fixed)
 
 
+def _osv_challenge_rows(report, lane, sources, obligation, kind):
+    """Check native package/advisory semantics; this is not execution authority."""
+    if kind not in {"positive", "negative", "mutation"}:
+        raise RuntimeAuditError("E_OSV_CHALLENGE", "unknown OSV control kind")
+    account = _osv_source_accounting(report, sources, lane["mode"])
+    if account["state"] != "COMPLETE":
+        raise RuntimeAuditError(
+            "E_OSV_CHALLENGE", "complete manifest reporting required"
+        )
+    _execution_osv(report, lane, sources)
+    target = obligation["osv_target"]
+    control = next(item for item in obligation["challenges"] if item["kind"] == kind)
+    anchor = relative_path(control["fixture_path"])
+    version = target["fixed_version" if kind == "negative" else "vulnerable_version"]
+    expected = {"name": target["package"], "version": version, "ecosystem": "PyPI"}
+    packages = account["sources"].get(anchor, {}).get("packages", [])
+    if sum(item == expected for item in packages) != 1:
+        raise RuntimeAuditError(
+            "E_OSV_CHALLENGE", "signed target package/version absent"
+        )
+    rows = _osv_challenge_finding_rows(report, anchor, expected, target["aliases"])
+    targeted, unrelated, observed_aliases = rows
+    if kind == "positive":
+        if not targeted or observed_aliases != set(target["aliases"]):
+            raise RuntimeAuditError(
+                "E_OSV_CHALLENGE", "positive advisory family differs"
+            )
+    elif targeted:
+        raise RuntimeAuditError("E_OSV_CHALLENGE", "target advisory survived control")
+    inventory = [
+        {"path": path, **package}
+        for path, source in sorted(account["sources"].items())
+        for package in source["packages"]
+    ]
+    return {
+        "schema": "factory.osv-challenge-rows.v1",
+        "inventory": sorted(inventory, key=canonical_bytes),
+        "target_rows": sorted(targeted, key=canonical_bytes),
+        "unrelated_rows": sorted(unrelated, key=canonical_bytes),
+        "report_sha256": digest(report),
+    }
+
+
+def _osv_challenge_finding_rows(report, anchor, expected, aliases):
+    targeted, unrelated, observed_aliases = [], [], set()
+    for result in report["results"]:
+        path = result["source"]["path"]
+        for package in result["packages"]:
+            identity = package["package"]
+            for advisory in package.get("vulnerabilities", []):
+                family = {advisory["id"], *advisory.get("aliases", [])}
+                row = {
+                    "path": path,
+                    "package": {key: identity[key] for key in expected},
+                    "advisory_id": advisory["id"],
+                    "aliases": sorted(advisory.get("aliases", [])),
+                    "advisory_sha256": digest(advisory),
+                }
+                if (
+                    path == anchor
+                    and row["package"] == expected
+                    and family.intersection(aliases)
+                ):
+                    if not family <= set(aliases):
+                        raise RuntimeAuditError(
+                            "E_OSV_CHALLENGE", "unsigned advisory alias"
+                        )
+                    targeted.append(row)
+                    observed_aliases.update(family)
+                else:
+                    unrelated.append(row)
+    return targeted, unrelated, observed_aliases
+
+
 def _validate_runtime_report(report, lane):
     if (
         report.get("schema") != f"factory.deep-{lane['engine']}-observations.v1"
@@ -333,7 +421,12 @@ def _validate_runtime_metrics(metrics, lane):
         else ("tests",)
     )
     for key in keys:
-        require_int(metrics.get(key), key, minimum=1, maximum=10**12)
+        require_int(
+            metrics.get(key),
+            key,
+            minimum=0 if key == "coverage_edges" else 1,
+            maximum=10**12,
+        )
 
 
 def _execution_runtime(report: dict, lane: dict, sources: dict) -> list:
@@ -360,6 +453,77 @@ def _native_osv_accounting(report, required):
             "E_DEPENDENCY_COVERAGE",
             "native OSV results must account for every input exactly once",
         )
+
+
+def _osv_source_accounting(report, required, mode):
+    """Bind observed manifest/package reporting, not undisclosed dependency completeness."""
+    report = _object(report)
+    if report.get("errors") or report.get("error"):
+        raise RuntimeAuditError("E_DEPENDENCY_ERRORS", "OSV analysis errors remain")
+    sources = {}
+    errors = set()
+    for result in _list(report.get("results"), 0, 20_000):
+        result = _object(result)
+        path = relative_path(_object(result.get("source")).get("path"))
+        if path not in required or path in sources:
+            raise RuntimeAuditError(
+                "E_DEPENDENCY_COVERAGE", "OSV manifest is duplicate or unbound"
+            )
+        packages = _osv_accounting_packages(result)
+        errors.update(_osv_package_scope_errors(packages, mode))
+        sources[path] = {
+            "sha256": require_digest(required[path], "manifest hash"),
+            "package_count": len(packages),
+            "packages_sha256": digest(packages),
+            "packages": packages,
+        }
+    return _osv_accounting_result(report, required, sources, errors)
+
+
+def _osv_accounting_packages(result):
+    packages = []
+    for row in _list(result.get("packages"), 0, 20_000):
+        identity = _object(_object(row).get("package"))
+        packages.append(
+            {
+                key: require_str(identity.get(key), f"package.{key}", maximum=256)
+                for key in ("name", "version", "ecosystem")
+            }
+        )
+    return sorted(packages, key=lambda item: canonical_bytes(item))
+
+
+def _osv_package_scope_errors(packages, mode):
+    errors = set()
+    if not packages:
+        errors.add("EMPTY_PACKAGE_INVENTORY")
+    if mode == "offline-pypi-snapshot" and any(
+        item["ecosystem"] != "PyPI" for item in packages
+    ):
+        errors.add("UNSUPPORTED_ECOSYSTEM")
+    return errors
+
+
+def _osv_accounting_result(report, required, sources, errors):
+    missing = sorted(set(required) - set(sources))
+    if missing:
+        errors.add("MISSING_MANIFESTS")
+    state = "INCOMPLETE" if errors else "COMPLETE"
+    if not sources:
+        state = "UNAVAILABLE"
+    elif missing:
+        state = "PARTIAL"
+    return {
+        "schema": "factory.osv-source-accounting.v1",
+        "scope": "native_manifest_package_reporting",
+        "state": state,
+        "required_paths": sorted(required),
+        "measured_paths": sorted(sources),
+        "missing_paths": missing,
+        "sources": sources,
+        "report_sha256": digest(report),
+        "errors": sorted(errors),
+    }
 
 
 def _native_syft_accounting(report, required):
@@ -407,6 +571,9 @@ def _runtime_source_accounting(item, source_hash):
 
 def _native_accounting(report: dict, lane: dict, required: dict) -> None:
     if lane["engine"] == "osv":
+        if lane["mode"] == "offline-pypi-snapshot":
+            _osv_source_accounting(report, required, lane["mode"])
+            return
         return _native_osv_accounting(report, required)
     if lane["engine"] == "syft":
         return _native_syft_accounting(report, required)
@@ -428,15 +595,27 @@ def _challenge_semantics(
             "E_CHALLENGE_SEMANTICS", "challenge identity or detector state differs"
         )
     native = _object(report.get("native_report"))
+    if lane["engine"] == "osv" and "fixture_manifest" in bound:
+        _osv_challenge_rows(native, lane, bound["fixture_manifest"], obligation, kind)
+        return
     findings = _native_execution_report(native, lane, sources)
+    _challenge_findings_valid(findings, native, lane, obligation, kind)
+
+
+def _challenge_findings_valid(findings, native, lane, obligation, kind):
     rules = {item["rule_id"] for item in findings if not item["suppressed"]}
     if lane["engine"] == "syft":
         rules = {item["id"] for item in native["artifacts"]}
     detected = obligation["detector_rule_id"] in rules
-    if detected != (kind == "positive"):
+    clean_negative_failed = (
+        lane["engine"] in {"gitleaks", "semgrep", "trivy"}
+        and kind == "negative"
+        and bool(rules)
+    )
+    if detected != (kind == "positive") or clean_negative_failed:
         raise RuntimeAuditError(
             "E_CHALLENGE_SEMANTICS",
-            "positive must detect; negative and disabled-detector mutation must not",
+            "challenge finding set differs from its signed oracle",
         )
 
 
@@ -508,8 +687,23 @@ def _worker_artifacts(bundle, lane, inventory, run_id):
     report = _object(artifacts[lane["report"]])
     coverage = _object(artifacts[lane["coverage"]])
     challenges = _object(artifacts[lane["challenge_report"]])
+    _bind_native_inventory(coverage, lane, inventory)
     sources = {item["path"]: item["sha256"] for item in inventory["files"]}
     return report, coverage, challenges, sources
+
+
+def _bind_native_inventory(coverage, lane, inventory):
+    if lane["engine"] != "gitleaks" or "native_source_inventory" not in coverage:
+        return
+    if (
+        coverage.get("native_source_inventory") != inventory.get("files")
+        or coverage.get("candidate_sha256") != inventory.get("candidate_sha256")
+        or coverage.get("native_source_inventory_sha256")
+        != inventory.get("candidate_sha256")
+    ):
+        raise RuntimeAuditError(
+            "E_WORKER_BINDING", "native source inventory differs from candidate"
+        )
 
 
 def _required_sources(inventory, lane):
@@ -521,11 +715,7 @@ def _required_sources(inventory, lane):
 
 
 def _coverage_source_gaps(report, coverage, lane, required):
-    gaps = (
-        ["SECRETS_NATIVE_ACCOUNTING_UNAVAILABLE"]
-        if lane["engine"] == "gitleaks"
-        else []
-    )
+    gaps = []
     if (
         not required
         or coverage.get("schema") != "factory.deep-coverage.v1"
@@ -538,6 +728,505 @@ def _coverage_source_gaps(report, coverage, lane, required):
         gaps.append("ANALYSIS_MODE_DOWNGRADE")
     if coverage.get("report_sha256") != digest(report):
         gaps.append("COVERAGE_REPORT_DRIFT")
+    if lane["engine"] == "osv" and lane["mode"] == "offline-pypi-snapshot":
+        expected = _osv_source_accounting(report, required, lane["mode"])
+        if expected["state"] != "COMPLETE":
+            gaps.append("OSV_SOURCE_ACCOUNTING_INCOMPLETE")
+        if canonical_bytes(coverage.get("source_accounting")) != canonical_bytes(
+            expected
+        ):
+            gaps.append("OSV_SOURCE_ACCOUNTING_DRIFT")
+    return gaps
+
+
+def _rule_accounting_shape(accounting, lane, required):
+    if not isinstance(accounting, dict) or set(accounting) != {
+        "schema",
+        "ruleset_sha256",
+        "rule_inventory_sha256",
+        "native_ledger_sha256",
+        "native_source_inventory_sha256",
+        "accounting_sha256",
+        "invocation_sha256",
+        "native_report_sha256",
+        "rules",
+    }:
+        return ["RULE_ACCOUNTING_MISSING"]
+    rule_ids = lane.get("rule_ids")
+    if not isinstance(rule_ids, list) or not rule_ids:
+        return ["RULE_INVENTORY_MISSING"]
+    if not isinstance(accounting.get("rules"), list) or len(accounting["rules"]) > 4096:
+        return ["RULE_ACCOUNTING_MISSING"]
+    if len(accounting["rules"]) != len(rule_ids):
+        return ["RULE_ACCOUNTING_INVENTORY_DRIFT"]
+    if len(rule_ids) * len(required) > 200_000:
+        return ["RULE_ACCOUNTING_BUDGET_EXCEEDED"]
+    return []
+
+
+def _rule_inventory_gaps(coverage, lane):
+    inventory = coverage.get("rule_inventory")
+    if not isinstance(inventory, dict) or set(inventory) != {
+        "state",
+        "rule_ids",
+        "sha256",
+    }:
+        return ["RULE_INVENTORY_UNVERIFIED"]
+    rule_ids = lane.get("rule_ids")
+    if (
+        inventory["state"] != "VERIFIED"
+        or not isinstance(rule_ids, list)
+        or not rule_ids
+        or inventory["rule_ids"] != sorted(rule_ids)
+    ):
+        return ["RULE_INVENTORY_UNVERIFIED"]
+    expected = digest(
+        {"ruleset_sha256": lane["ruleset_sha256"], "rule_ids": sorted(rule_ids)}
+    )
+    return [] if inventory["sha256"] == expected else ["RULE_INVENTORY_DRIFT"]
+
+
+def _rule_source_rows(rule, required):
+    if not isinstance(rule, dict) or set(rule) != {"rule_id", "sources"}:
+        return None
+    rows = rule.get("sources")
+    if not isinstance(rows, list) or len(rows) != len(required):
+        return None
+    observed = {}
+    for row in rows:
+        parsed = _rule_source_row(row, required, observed)
+        if parsed is None:
+            return None
+        observed[parsed[0]] = parsed[1]
+    return observed if set(observed) == set(required) else None
+
+
+def _rule_source_row(row, required, observed):
+    if not isinstance(row, dict) or set(row) != {
+        "path",
+        "source_sha256",
+        "disposition",
+        "native_counts",
+        "evidence_sha256",
+    }:
+        return None
+    path = row["path"]
+    if not isinstance(path, str) or path not in required or path in observed:
+        return None
+    if (
+        row["source_sha256"] != required[path]
+        or not _rule_disposition_valid(row)
+        or not _native_counts_valid(row["native_counts"])
+    ):
+        return None
+    try:
+        require_digest(row["evidence_sha256"], "rule evidence")
+    except RuntimeAuditError:
+        return None
+    return path, row["disposition"]
+
+
+def _rule_disposition_valid(row):
+    return isinstance(row["disposition"], str) and row["disposition"] in {
+        "configured",
+        "ingested",
+        "executed",
+        "suppressed",
+        "not_applicable",
+        "failed",
+        "not_run",
+    }
+
+
+def _native_counts_valid(counts):
+    allowed = {
+        "attempted",
+        "suppressed_skip_report",
+        "suppressed_rule_allowlist",
+        "suppressed_global_allowlist",
+        "path_evaluated",
+        "not_applicable_path_mismatch",
+        "not_applicable_no_regex",
+        "not_run_size_limit",
+        "regex_executed",
+        "regex_match",
+        "finding",
+    }
+    return (
+        isinstance(counts, dict)
+        and set(counts) <= allowed
+        and (
+            "attempted" not in counts
+            or (type(counts["attempted"]) is int and counts["attempted"] > 0)
+        )
+        and all(
+            type(value) is int and 0 < value <= 2**63 - 1 for value in counts.values()
+        )
+        and counts.get("attempted", 0)
+        >= max(counts.get("regex_executed", 0), counts.get("path_evaluated", 0))
+        and counts.get("finding", 0) <= counts.get("regex_match", 0)
+    )
+
+
+def _native_rule_ledger_gaps(coverage, lane, required, report):
+    native_sources = _native_source_inventory(coverage, required)
+    if native_sources is None:
+        return ["RULE_NATIVE_SOURCE_INVENTORY_INVALID"]
+    ledger, error = _parse_native_ledger(coverage)
+    if error:
+        return [error]
+    if not _native_ledger_valid(ledger, coverage, lane):
+        return ["RULE_NATIVE_LEDGER_INCOMPLETE"]
+    return _native_ledger_matrix(
+        ledger, coverage, lane, required, native_sources, report
+    )
+
+
+def _parse_native_ledger(coverage):
+    text = coverage.get("native_rule_ledger_json")
+    ledger_sha = coverage.get("native_rule_ledger_sha256")
+    if not isinstance(text, str) or not isinstance(ledger_sha, str):
+        return None, "RULE_NATIVE_LEDGER_MISSING"
+    try:
+        raw = text.encode("utf-8")
+        if len(raw) > 8 * 1024 * 1024:
+            return None, "RULE_NATIVE_LEDGER_INVALID"
+        require_digest(ledger_sha, "native ledger")
+        if sha256_bytes(raw) != ledger_sha:
+            return None, "RULE_NATIVE_LEDGER_DRIFT"
+        return strict_json(raw), None
+    except (RuntimeAuditError, UnicodeError):
+        return None, "RULE_NATIVE_LEDGER_INVALID"
+
+
+def _native_ledger_valid(ledger, coverage, lane):
+    keys = {
+        "schema",
+        "root_sha256",
+        "source_identity_kind",
+        "source_sha256",
+        "config_sha256",
+        "prefilter_bypassed",
+        "complete",
+        "overflow",
+        "invalid_paths",
+        "rows",
+    }
+    return (
+        isinstance(ledger, dict)
+        and set(ledger) == keys
+        and _native_ledger_identity(ledger, coverage, lane)
+        and _native_ledger_status(ledger)
+        and isinstance(ledger["rows"], list)
+        and len(ledger["rows"]) <= 200_000
+    )
+
+
+def _native_ledger_identity(ledger, coverage, lane):
+    return (
+        ledger["schema"] == "gitleaks.factory-rule-ledger.v1"
+        and ledger["source_identity_kind"] == "adapter_candidate_sha256"
+        and ledger["source_sha256"] == coverage.get("candidate_sha256")
+        and ledger["config_sha256"] == lane["ruleset_sha256"]
+        and ledger["root_sha256"] == sha256_bytes(b"/src")
+    )
+
+
+def _native_ledger_status(ledger):
+    return (
+        ledger["prefilter_bypassed"] is True
+        and ledger["complete"] is True
+        and ledger["overflow"] is False
+        and type(ledger["invalid_paths"]) is int
+        and ledger["invalid_paths"] == 0
+    )
+
+
+def _native_source_inventory(coverage, required):
+    files = coverage.get("native_source_inventory")
+    candidate_sha = coverage.get("candidate_sha256")
+    source_map_sha = coverage.get("native_source_inventory_sha256")
+    if not isinstance(files, list) or len(files) > 50_000:
+        return None
+    try:
+        require_digest(candidate_sha, "candidate")
+        require_digest(source_map_sha, "native source inventory")
+        if candidate_sha != source_map_sha or digest(files) != candidate_sha:
+            return None
+        sources = {}
+        for item in files:
+            parsed = _native_source_file(item)
+            if parsed is None or parsed[0] in sources:
+                return None
+            path, source_sha = parsed
+            sources[path] = source_sha
+    except (RuntimeAuditError, TypeError):
+        return None
+    if any(sources.get(path) != source_sha for path, source_sha in required.items()):
+        return None
+    return sources
+
+
+def _native_source_file(item):
+    fields = {"path", "sha256", "bytes", "mode", "language"}
+    if not isinstance(item, dict) or set(item) != fields:
+        return None
+    path = relative_path(item["path"])
+    require_digest(item["sha256"], "native source")
+    require_int(item["bytes"], "native source bytes", minimum=0, maximum=1_073_741_824)
+    require_int(item["mode"], "native source mode", minimum=0, maximum=0o777)
+    require_str(item["language"], "native source language", maximum=32)
+    return path, item["sha256"]
+
+
+def _native_ledger_matrix(ledger, coverage, lane, required, native_sources, report):
+    observed, error = _native_ledger_rows(ledger, lane, native_sources)
+    if error:
+        return [error]
+    if not _native_finding_counts_match(report, lane, native_sources, observed):
+        return ["RULE_NATIVE_FINDING_COUNT_DRIFT"]
+    return _native_accounting_gaps(coverage, observed)
+
+
+def _native_finding_counts_match(report, lane, sources, observed):
+    actual = {}
+    for finding in _execution_sarif(report, lane, sources):
+        key = (finding["path"], finding["rule_id"])
+        actual[key] = actual.get(key, 0) + 1
+    return all(
+        observed.get(key, {}).get("finding", 0) == actual.get(key, 0)
+        for key in set(observed) | set(actual)
+    )
+
+
+def _native_ledger_rows(ledger, lane, native_sources):
+    observed = {}
+    for row in ledger["rows"]:
+        key, counts, error = _native_ledger_row(row, lane, native_sources, observed)
+        if error:
+            return None, error
+        observed[key] = counts
+    return observed, None
+
+
+def _native_ledger_row(row, lane, native_sources, observed):
+    if not isinstance(row, dict) or set(row) != {"path", "rule_id", "counts"}:
+        return None, None, "RULE_NATIVE_LEDGER_INVALID"
+    if not isinstance(row["path"], str) or not isinstance(row["rule_id"], str):
+        return None, None, "RULE_NATIVE_LEDGER_INVALID"
+    key = (row["path"], row["rule_id"])
+    if (
+        key in observed
+        or row["path"] not in native_sources
+        or row["rule_id"] not in lane["rule_ids"]
+    ):
+        return None, None, "RULE_NATIVE_LEDGER_UNBOUND"
+    if not _native_counts_valid(row["counts"]):
+        return None, None, "RULE_NATIVE_LEDGER_INVALID"
+    return key, row["counts"], None
+
+
+def _native_accounting_gaps(coverage, observed):
+    account = coverage.get("rule_accounting")
+    if not isinstance(account, dict) or not isinstance(account.get("rules"), list):
+        return ["RULE_SOURCE_ACCOUNTING_MISSING"]
+    binding_error = _native_accounting_binding_error(account, coverage)
+    if binding_error:
+        return [binding_error]
+    for rule in account["rules"]:
+        error = _native_accounting_rule(rule, coverage, observed)
+        if error:
+            return [error]
+    return []
+
+
+def _native_accounting_binding_error(account, coverage):
+    if account.get("native_ledger_sha256") != coverage.get("native_rule_ledger_sha256"):
+        return "RULE_ACCOUNTING_LEDGER_DRIFT"
+    if account.get("native_source_inventory_sha256") != coverage.get(
+        "native_source_inventory_sha256"
+    ):
+        return "RULE_ACCOUNTING_SOURCE_INVENTORY_DRIFT"
+    return None
+
+
+def _native_accounting_rule(rule, coverage, observed):
+    if not isinstance(rule, dict) or not isinstance(rule.get("rule_id"), str):
+        return "RULE_SOURCE_ACCOUNTING_MISSING"
+    rows = rule.get("sources")
+    if not isinstance(rows, list):
+        return "RULE_SOURCE_ACCOUNTING_MISSING"
+    for row in rows:
+        error = _native_accounting_row(rule, row, coverage, observed)
+        if error:
+            return error
+    return None
+
+
+def _native_accounting_row(rule, row, coverage, observed):
+    if not isinstance(row, dict) or not isinstance(row.get("path"), str):
+        return "RULE_SOURCE_ACCOUNTING_MISSING"
+    key = (row["path"], rule["rule_id"])
+    native = observed.get(key, {})
+    if row.get("native_counts") != native:
+        return "RULE_NATIVE_LEDGER_ACCOUNTING_DRIFT"
+    if row.get("disposition") != _native_counts_disposition(native):
+        return "RULE_NATIVE_DISPOSITION_DRIFT"
+    evidence = {
+        "ledger_sha256": coverage["native_rule_ledger_sha256"],
+        "source_sha256": row.get("source_sha256"),
+        "path": row.get("path"),
+        "rule_id": rule.get("rule_id"),
+        "counts": native,
+    }
+    if row.get("evidence_sha256") != digest(evidence):
+        return "RULE_SOURCE_EVIDENCE_DRIFT"
+    return None
+
+
+def _native_counts_disposition(counts):
+    if any(key.startswith("suppressed_") for key in counts):
+        return "suppressed"
+    if counts.get("not_run_size_limit", 0):
+        return "not_run"
+    if counts.get("regex_executed", 0) or counts.get("path_evaluated", 0):
+        return "executed"
+    if counts.get("not_applicable_path_mismatch", 0) or counts.get(
+        "not_applicable_no_regex", 0
+    ):
+        return "not_applicable"
+    return "not_run"
+
+
+def _rule_accounting_gaps(coverage, lane, required, report=None):
+    if lane["engine"] == "codeql":
+        return _codeql_retained_evidence_gaps(coverage, lane, required)
+    if lane["engine"] == "semgrep" and "native_artifact_roles" in lane:
+        return _semgrep_rule_execution_gaps(coverage, lane, required, report)
+    if lane["engine"] == "trivy" and "native_artifact_roles" in lane:
+        return _trivy_rule_execution_gaps(coverage, lane, required, report)
+    if lane["engine"] != "gitleaks":
+        return []
+    gaps = _rule_inventory_gaps(coverage, lane)
+    if gaps:
+        return gaps
+    accounting = coverage.get("rule_accounting")
+    gaps = _rule_accounting_shape(accounting, lane, required)
+    if gaps:
+        return gaps
+    gaps = _rule_accounting_binding_gaps(accounting, coverage, lane)
+    if gaps:
+        return gaps
+    if report is None:
+        return ["RULE_NATIVE_REPORT_REQUIRED"]
+    gaps = _native_rule_ledger_gaps(coverage, lane, required, report)
+    if gaps:
+        return gaps
+    return _rule_execution_matrix_gaps(accounting, lane, required)
+
+
+def _codeql_retained_evidence_gaps(coverage, lane, required):
+    from .deep_audit_io import verify_codeql_retained_evidence
+
+    try:
+        verify_codeql_retained_evidence(coverage, lane, required)
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
+        return ["CODEQL_NATIVE_ARTIFACTS_UNVERIFIED"]
+    return ["CODEQL_NATIVE_REPLAY_REQUIRED"]
+
+
+def _osv_retained_evidence_gaps(
+    coverage, lane, required, report, challenges, obligations
+):
+    from .deep_audit_io import verify_osv_retained_evidence
+
+    if lane["engine"] != "osv":
+        return []
+    try:
+        verify_osv_retained_evidence(
+            coverage, lane, required, report, challenges, obligations
+        )
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
+        return ["OSV_NATIVE_ARTIFACTS_UNVERIFIED"]
+    return ["OSV_NATIVE_REPLAY_REQUIRED"]
+
+
+def _fuzz_retained_evidence_gaps(report, lane, sources):
+    from .deep_audit_io import _retained_fuzz_corpus
+
+    if lane["engine"] != "atheris":
+        return []
+    try:
+        _retained_fuzz_corpus(report, sources)
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
+        return ["FUZZ_NATIVE_CORPUS_UNVERIFIED"]
+    return ["FUZZ_NATIVE_REPLAY_REQUIRED"]
+
+
+def _semgrep_rule_execution_gaps(coverage, lane, required, report):
+    from .deep_audit_io import verify_semgrep_rule_execution
+
+    try:
+        verify_semgrep_rule_execution(
+            coverage.get("semgrep_rule_execution"), lane, required, report
+        )
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
+        return ["SEMGREP_NATIVE_RULE_EXECUTION_UNVERIFIED"]
+    return []
+
+
+def _trivy_rule_execution_gaps(coverage, lane, required, report):
+    from .deep_audit_io import verify_trivy_rule_execution
+
+    try:
+        verify_trivy_rule_execution(
+            coverage.get("trivy_rule_execution"), lane, required, report
+        )
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
+        return ["TRIVY_NATIVE_RULE_EXECUTION_UNVERIFIED"]
+    return []
+
+
+def _rule_accounting_binding_gaps(accounting, coverage, lane):
+    if accounting["schema"] != "factory.deep-rule-accounting.v1":
+        return ["RULE_ACCOUNTING_SCHEMA"]
+    if accounting["ruleset_sha256"] != lane["ruleset_sha256"]:
+        return ["RULESET_ACCOUNTING_DRIFT"]
+    if accounting["rule_inventory_sha256"] != coverage["rule_inventory"]["sha256"]:
+        return ["RULE_INVENTORY_ACCOUNTING_DRIFT"]
+    if accounting["native_source_inventory_sha256"] != coverage.get(
+        "native_source_inventory_sha256"
+    ):
+        return ["RULE_ACCOUNTING_SOURCE_INVENTORY_DRIFT"]
+    for key in ("invocation_sha256", "native_report_sha256"):
+        if accounting[key] != coverage.get(key):
+            return ["RULE_ACCOUNTING_BINDING_DRIFT"]
+        require_digest(accounting[key], key)
+    body = {
+        key: value for key, value in accounting.items() if key != "accounting_sha256"
+    }
+    if accounting["accounting_sha256"] != digest(body):
+        return ["RULE_ACCOUNTING_HASH_DRIFT"]
+    return []
+
+
+def _rule_execution_matrix_gaps(accounting, lane, required):
+    ids = [
+        item.get("rule_id") for item in accounting["rules"] if isinstance(item, dict)
+    ]
+    if (
+        len(ids) != len(accounting["rules"])
+        or not all(isinstance(item, str) for item in ids)
+        or set(ids) != set(lane["rule_ids"])
+    ):
+        return ["RULE_ACCOUNTING_INVENTORY_DRIFT"]
+    gaps = []
+    for rule in accounting["rules"]:
+        rows = _rule_source_rows(rule, required)
+        if rows is None:
+            return ["RULE_SOURCE_ACCOUNTING_MISSING"]
+        if any(value != "executed" for value in rows.values()):
+            gaps.append("RULE_EXECUTION_INCOMPLETE")
     return gaps
 
 
@@ -560,6 +1249,10 @@ def _coverage_gaps(report, coverage, lane, required, obligations):
     _native_accounting(report, lane, required)
     gaps = _coverage_source_gaps(report, coverage, lane, required)
     gaps.extend(_coverage_tool_gaps(coverage, lane))
+    accounting_gaps = _rule_accounting_gaps(coverage, lane, required, report)
+    if lane["engine"] == "gitleaks" and accounting_gaps:
+        gaps.append("SECRETS_NATIVE_ACCOUNTING_UNAVAILABLE")
+    gaps.extend(accounting_gaps)
     expected = _covered_obligation_ids(obligations, lane, required)
     observed = _list(coverage.get("obligations"), 0, 4096)
     if _obligation_coverage_missing(observed, expected):
@@ -595,18 +1288,22 @@ def _approved_challenges(obligations, expected):
 
 
 def _challenge_gap(challenge, identity, approved, lane, sources):
-    for key in ("fixture_sha256", "observation_sha256"):
-        require_digest(challenge.get(key), key)
-    bound_item = approved.get(identity)
-    report_evidence = _object(challenge.get("report"))
-    report_digest = digest(report_evidence)
-    if bound_item is None:
+    try:
+        for key in ("fixture_sha256", "observation_sha256"):
+            require_digest(challenge.get(key), key)
+    except RuntimeAuditError:
         return True
+    bound_item = approved.get(identity)
+    if bound_item is None or not isinstance(challenge.get("report"), dict):
+        return True
+    report_evidence = challenge["report"]
+    report_digest = digest(report_evidence)
     bound, obligation = bound_item
     _challenge_semantics(report_evidence, lane, bound, obligation, identity[1], sources)
+    source_binding_ok = _challenge_source_binding(bound, sources)
     return (
         challenge["fixture_sha256"] != bound["fixture_sha256"]
-        or sources.get(bound["fixture_path"]) != bound["fixture_sha256"]
+        or not source_binding_ok
         or report_digest != challenge["observation_sha256"]
         or report_digest != bound["expected_report_sha256"]
         or type(challenge.get("exit_code")) is not int
@@ -614,7 +1311,563 @@ def _challenge_gap(challenge, identity, approved, lane, sources):
     )
 
 
-def _challenge_gaps(challenges, lane, sources, obligations, expected):
+def _challenge_source_binding(bound, sources):
+    manifest = bound.get("fixture_manifest")
+    if manifest is None:
+        return sources.get(bound["fixture_path"]) == bound["fixture_sha256"]
+    return all(sources.get(path) == source_sha for path, source_sha in manifest.items())
+
+
+def _challenge_execution_gap(
+    challenge, bound, obligation, identity, lane, coverage, candidate_sha
+):
+    if "fixture_manifest" in bound:
+        return _challenge_execution_v2_gap(
+            challenge, bound, obligation, identity, lane, coverage, candidate_sha
+        )
+    execution = challenge.get("execution")
+    fields = {
+        "schema",
+        "status",
+        "launched",
+        "completed",
+        "timed_out",
+        "cleanup_confirmed",
+        "scratch_cleanup_verified",
+        "timeout_seconds",
+        "duration_ms",
+        "exit_code",
+        "argv_sha256",
+        "raw_report_sha256",
+        "stdout_sha256",
+        "stdout_bytes",
+        "stderr_sha256",
+        "stderr_bytes",
+        "fixture_sha256",
+        "candidate_binding_sha256",
+        "challenge_source_sha256",
+        "profile_binding_sha256",
+        "image_binding_sha256",
+        "tool_version",
+        "version_probe_sha256",
+        "baseline_config_sha256",
+        "effective_config_sha256",
+        "ledger_sha256",
+        "mutation",
+        "execution_sha256",
+    }
+    if not isinstance(execution, dict) or set(execution) != fields:
+        return True
+    return not _challenge_execution_fields_valid(
+        execution, challenge, bound, obligation, identity, lane, coverage, candidate_sha
+    )
+
+
+def _challenge_execution_v2_gap(
+    challenge, bound, obligation, identity, lane, coverage, candidate_sha
+):
+    execution = challenge.get("execution")
+    fields = _challenge_execution_v2_fields()
+    if not isinstance(execution, dict) or set(execution) != fields:
+        return True
+    return not _challenge_execution_v2_valid(
+        execution, challenge, bound, obligation, identity, lane, coverage, candidate_sha
+    )
+
+
+def _challenge_execution_v2_fields():
+    return {
+        "schema",
+        "status",
+        "launched",
+        "completed",
+        "timed_out",
+        "cleanup_confirmed",
+        "scratch_cleanup_verified",
+        "timeout_seconds",
+        "duration_ms",
+        "exit_code",
+        "argv_sha256",
+        "raw_report_sha256",
+        "stdout_sha256",
+        "stdout_bytes",
+        "stderr_sha256",
+        "stderr_bytes",
+        "fixture_sha256",
+        "fixture_manifest_sha256",
+        "candidate_binding_sha256",
+        "challenge_source_sha256",
+        "profile_binding_sha256",
+        "image_binding_sha256",
+        "tool_version",
+        "version_probe_sha256",
+        "baseline_config_sha256",
+        "effective_config_sha256",
+        "ledger_sha256",
+        "native_artifacts",
+        "mutation",
+        "execution_sha256",
+    }
+
+
+def _challenge_execution_v2_valid(
+    execution, challenge, bound, obligation, identity, lane, coverage, candidate_sha
+):
+    if not _challenge_execution_v2_control(execution, bound):
+        return False
+    if not _challenge_execution_v2_artifacts(execution, lane):
+        return False
+    if not _challenge_execution_v2_binding(
+        execution, bound, obligation, identity, lane, coverage, candidate_sha
+    ):
+        return False
+    body = {key: value for key, value in execution.items() if key != "execution_sha256"}
+    if execution.get("execution_sha256") != digest(body):
+        return False
+    return (
+        _challenge_execution_budgets_valid_v2(execution, lane)
+        and _trivy_challenge_native_valid(execution, challenge, bound, obligation, lane)
+        and _codeql_challenge_native_valid(
+            execution, challenge, bound, obligation, identity, lane, coverage
+        )
+        and _osv_challenge_native_valid(challenge, bound, obligation, identity, lane)
+    )
+
+
+def _osv_challenge_native_valid(challenge, bound, obligation, identity, lane):
+    if lane["engine"] != "osv":
+        return True
+    from .deep_audit_io import verify_osv_retained_challenge
+
+    try:
+        verify_osv_retained_challenge(challenge, lane, bound, obligation, identity[1])
+        return True
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
+        return False
+
+
+def _trivy_challenge_native_valid(execution, challenge, bound, obligation, lane):
+    if lane["engine"] != "trivy":
+        return True
+    from .deep_audit_io import verify_trivy_rule_execution
+
+    try:
+        evidence = challenge.get("trivy_rule_execution")
+        mutation = execution.get("mutation")
+        disabled = obligation["detector_rule_id"] if mutation is not None else None
+        verify_trivy_rule_execution(
+            evidence,
+            lane,
+            bound["fixture_manifest"],
+            challenge["report"]["native_report"],
+            disabled_rule_id=disabled,
+        )
+        return _trivy_challenge_artifacts_match(execution, evidence)
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
+        return False
+
+
+def _codeql_challenge_native_valid(
+    execution, challenge, bound, obligation, identity, lane, coverage
+):
+    if lane["engine"] != "codeql":
+        return True
+    from .deep_audit_io import verify_codeql_query_selection
+
+    try:
+        evidence = challenge.get("codeql_query_inventory")
+        baseline = coverage.get("codeql_query_inventory")
+        if not _codeql_query_inventory_artifact_matches(
+            execution, evidence, baseline, lane
+        ):
+            return False
+        verify_codeql_query_selection(
+            evidence,
+            baseline=baseline,
+            disabled_rule_id=(
+                obligation["detector_rule_id"] if identity[1] == "mutation" else None
+            ),
+        )
+        return evidence.get("suite_sha256") == execution.get("effective_config_sha256")
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
+        return False
+
+
+def _codeql_query_inventory_artifact_matches(execution, evidence, baseline, lane):
+    if not isinstance(evidence, dict) or evidence.get("schema") != (
+        "factory.codeql-query-inventory.v1"
+    ):
+        return False
+    if not isinstance(baseline, dict):
+        return False
+    artifacts = {item["kind"]: item for item in execution["native_artifacts"]}
+    artifact = artifacts["query_inventory"]
+    raw = canonical_bytes(evidence)
+    return (
+        lane.get("rule_ids") == sorted(baseline.get("query_ids", {}))
+        and artifact["sha256"] == sha256_bytes(raw)
+        and artifact["bytes"] == len(raw)
+    )
+
+
+def _trivy_challenge_artifacts_match(execution, evidence):
+    import base64
+
+    artifacts = {item["kind"]: item for item in execution["native_artifacts"]}
+    roles = {"sarif": "sarif_report", "json": "policy_inventory"}
+    for observation in evidence["observations"]:
+        raw = base64.b64decode(observation["raw_report_base64"], validate=True)
+        artifact = artifacts[roles[observation["format"]]]
+        if artifact["sha256"] != sha256_bytes(raw) or artifact["bytes"] != len(raw):
+            return False
+    return True
+
+
+def _challenge_execution_v2_control(execution, bound):
+    return (
+        execution.get("schema") == "factory.native-challenge-execution.v2"
+        and execution.get("status") == "VERIFIED"
+        and execution.get("launched") is True
+        and execution.get("completed") is True
+        and execution.get("timed_out") is False
+        and execution.get("cleanup_confirmed") is True
+        and execution.get("scratch_cleanup_verified") is True
+        and type(execution.get("exit_code")) is int
+        and execution["exit_code"] == bound["expected_exit_code"]
+        and execution.get("fixture_sha256") == bound["fixture_sha256"]
+        and execution.get("fixture_manifest_sha256") == bound["fixture_manifest_sha256"]
+    )
+
+
+def _challenge_execution_v2_artifacts(execution, lane):
+    artifacts = execution.get("native_artifacts")
+    roles = lane.get("native_artifact_roles")
+    by_role = _native_artifact_record_map(artifacts, roles)
+    if by_role is None:
+        return False
+    return _challenge_v2_artifact_bindings(execution, lane, by_role)
+
+
+def _native_artifact_record_map(artifacts, roles):
+    if not isinstance(artifacts, list) or not isinstance(roles, list):
+        return None
+    if len(artifacts) != len(roles):
+        return None
+    total = 0
+    by_role = {}
+    for artifact in artifacts:
+        if not _native_artifact_record_valid(artifact, by_role):
+            return None
+        role = artifact["kind"]
+        total += artifact["bytes"]
+        by_role[role] = artifact
+    if total > 8 * 1024 * 1024 or list(by_role) != sorted(roles):
+        return None
+    return by_role if set(by_role) == set(roles) else None
+
+
+def _native_artifact_record_valid(artifact, by_role):
+    if not isinstance(artifact, dict) or set(artifact) != {"kind", "sha256", "bytes"}:
+        return False
+    if not isinstance(artifact["kind"], str) or artifact["kind"] in by_role:
+        return False
+    try:
+        require_digest(artifact["sha256"], "native artifact digest")
+        require_int(
+            artifact["bytes"],
+            "native artifact bytes",
+            minimum=0,
+            maximum=8 * 1024 * 1024,
+        )
+    except RuntimeAuditError:
+        return False
+    return True
+
+
+def _challenge_v2_artifact_bindings(execution, lane, by_role):
+    report_role = _NATIVE_REPORT_ROLES.get(lane["engine"])
+    if report_role is None or by_role[report_role]["sha256"] != execution.get(
+        "raw_report_sha256"
+    ):
+        return False
+    if lane["engine"] == "gitleaks":
+        return (
+            execution.get("ledger_sha256") == by_role["gitleaks_rule_ledger"]["sha256"]
+        )
+    if lane["engine"] == "semgrep" and not _semgrep_config_inventory_valid(
+        execution, lane, by_role["rule_inventory"]
+    ):
+        return False
+    return execution.get("ledger_sha256") is None
+
+
+def _semgrep_config_inventory_valid(execution, lane, artifact):
+    """Bind adapter-derived config inventory; it is not independent scanner evidence."""
+    mutation = execution.get("mutation")
+    disabled = mutation.get("disabled_rule_id") if isinstance(mutation, dict) else None
+    rules = [rule for rule in lane["rule_ids"] if rule != disabled]
+    inventory = {
+        "ruleset_sha256": execution.get("effective_config_sha256"),
+        "rule_ids": rules,
+    }
+    raw = canonical_bytes(inventory)
+    return artifact["sha256"] == sha256_bytes(raw) and artifact["bytes"] == len(raw)
+
+
+def _challenge_execution_v2_binding(
+    execution, bound, obligation, identity, lane, coverage, candidate_sha
+):
+    expected_source = digest(bound["fixture_manifest"])
+    expected_image = sha256_bytes(lane["image"].encode("utf-8"))
+    return (
+        execution.get("candidate_binding_sha256") == candidate_sha
+        and execution.get("challenge_source_sha256") == expected_source
+        and execution.get("profile_binding_sha256") == coverage.get("profile_sha256")
+        and execution.get("image_binding_sha256") == expected_image
+        and execution.get("tool_version") == lane["tool_version"]
+        and execution.get("version_probe_sha256")
+        == digest(coverage.get("version_probe"))
+        and _challenge_execution_config_valid_v2(
+            execution, obligation, identity, lane, coverage
+        )
+    )
+
+
+def _challenge_execution_config_valid_v2(
+    execution, obligation, identity, lane, coverage=None
+):
+    baseline = _challenge_baseline_config_sha256(lane, coverage)
+    if baseline is None:
+        return False
+    expected_mutation = None
+    if identity[1] == "mutation":
+        mutation_hashes = lane.get("mutation_config_sha256")
+        rule_id = obligation["detector_rule_id"]
+        expected_effective = (
+            mutation_hashes.get(rule_id) if isinstance(mutation_hashes, dict) else None
+        )
+        remaining = [rule for rule in lane["rule_ids"] if rule != rule_id]
+        expected_mutation = {
+            "disabled_rule_id": rule_id,
+            "remaining_rule_inventory_sha256": digest(remaining),
+        }
+        if expected_effective is None:
+            return False
+    else:
+        expected_effective = baseline
+    return (
+        execution.get("effective_config_sha256") == expected_effective
+        and execution.get("baseline_config_sha256") == baseline
+        and execution.get("mutation") == expected_mutation
+    )
+
+
+def _challenge_baseline_config_sha256(lane, coverage=None):
+    if lane["engine"] == "osv":
+        return _osv_baseline_config_sha256(lane)
+    if lane["engine"] == "codeql":
+        inventory = (coverage or {}).get("codeql_query_inventory")
+        if not isinstance(inventory, dict):
+            return None
+        try:
+            require_digest(inventory.get("suite_sha256"), "CodeQL suite hash")
+        except RuntimeAuditError:
+            return None
+        return inventory["suite_sha256"]
+    if lane["engine"] != "trivy":
+        return lane["ruleset_sha256"]
+    policy = lane.get("native_policy")
+    if not isinstance(policy, dict) or set(policy) != {
+        "config_sha256",
+        "baseline_ignore_sha256",
+    }:
+        return None
+    try:
+        for value in policy.values():
+            require_digest(value, "native policy digest")
+    except RuntimeAuditError:
+        return None
+    return policy["baseline_ignore_sha256"]
+
+
+def _osv_baseline_config_sha256(lane):
+    policy = lane.get("native_policy")
+    if not isinstance(policy, dict):
+        return None
+    try:
+        return require_digest(policy.get("baseline_config_sha256"), "OSV baseline")
+    except RuntimeAuditError:
+        return None
+
+
+def _challenge_execution_budgets_valid_v2(execution, lane):
+    try:
+        for key in (
+            "argv_sha256",
+            "raw_report_sha256",
+            "stdout_sha256",
+            "stderr_sha256",
+            "fixture_sha256",
+            "fixture_manifest_sha256",
+            "candidate_binding_sha256",
+            "challenge_source_sha256",
+            "profile_binding_sha256",
+            "image_binding_sha256",
+            "version_probe_sha256",
+            "baseline_config_sha256",
+            "effective_config_sha256",
+            "execution_sha256",
+        ):
+            require_digest(execution.get(key), key)
+        if execution.get("ledger_sha256") is not None:
+            require_digest(execution["ledger_sha256"], "ledger_sha256")
+        require_int(
+            execution.get("timeout_seconds"),
+            "challenge timeout",
+            minimum=1,
+            maximum=lane["timeout_seconds"],
+        )
+        require_int(
+            execution.get("duration_ms"),
+            "challenge duration",
+            minimum=0,
+            maximum=execution["timeout_seconds"] * 1000,
+        )
+        for key in ("stdout_bytes", "stderr_bytes"):
+            require_int(execution.get(key), key, minimum=0, maximum=8 * 1024 * 1024)
+    except RuntimeAuditError:
+        return False
+    return True
+
+
+def _challenge_execution_fields_valid(
+    execution, challenge, bound, obligation, identity, lane, coverage, candidate_sha
+):
+    if not _challenge_execution_control_valid(execution, bound):
+        return False
+    if not _challenge_execution_binding_valid(
+        execution, bound, obligation, identity, lane, coverage, candidate_sha
+    ):
+        return False
+    body = {key: value for key, value in execution.items() if key != "execution_sha256"}
+    if execution.get("execution_sha256") != digest(body):
+        return False
+    return _challenge_execution_budgets_valid(execution, bound, lane, identity)
+
+
+def _challenge_execution_control_valid(execution, bound):
+    return (
+        execution.get("schema") == "factory.native-challenge-execution.v1"
+        and execution.get("status") == "VERIFIED"
+        and execution.get("launched") is True
+        and execution.get("completed") is True
+        and execution.get("timed_out") is False
+        and execution.get("cleanup_confirmed") is True
+        and execution.get("scratch_cleanup_verified") is True
+        and type(execution.get("exit_code")) is int
+        and execution["exit_code"] == bound["expected_exit_code"]
+        and execution.get("fixture_sha256") == bound["fixture_sha256"]
+    )
+
+
+def _challenge_execution_binding_valid(
+    execution, bound, obligation, identity, lane, coverage, candidate_sha
+):
+    expected_source = digest({bound["fixture_path"]: bound["fixture_sha256"]})
+    expected_image = sha256_bytes(lane["image"].encode("utf-8"))
+    return _challenge_execution_identity_valid(
+        execution, bound, lane, coverage, candidate_sha, expected_source, expected_image
+    ) and _challenge_execution_config_valid(
+        execution, bound, obligation, identity, lane
+    )
+
+
+def _challenge_execution_identity_valid(
+    execution, bound, lane, coverage, candidate_sha, expected_source, expected_image
+):
+    return (
+        execution.get("candidate_binding_sha256") == candidate_sha
+        and execution.get("challenge_source_sha256") == expected_source
+        and execution.get("profile_binding_sha256") == coverage.get("profile_sha256")
+        and execution.get("image_binding_sha256") == expected_image
+        and execution.get("tool_version") == lane["tool_version"]
+        and execution.get("version_probe_sha256")
+        == digest(coverage.get("version_probe"))
+    )
+
+
+def _challenge_execution_config_valid(execution, bound, obligation, identity, lane):
+    expected_mutation = None
+    if identity[1] == "mutation":
+        mutation_hashes = lane.get("mutation_config_sha256")
+        expected_effective = (
+            mutation_hashes.get(obligation["detector_rule_id"])
+            if isinstance(mutation_hashes, dict)
+            else None
+        )
+        remaining = sorted(
+            rule
+            for rule in lane.get("rule_ids", [])
+            if rule != obligation["detector_rule_id"]
+        )
+        expected_mutation = {
+            "disabled_rule_id": obligation["detector_rule_id"],
+            "remaining_rule_inventory_sha256": digest(remaining),
+        }
+        if expected_effective is None:
+            return False
+    else:
+        expected_effective = lane["ruleset_sha256"]
+    return (
+        execution.get("effective_config_sha256") == expected_effective
+        and execution.get("baseline_config_sha256") == lane["ruleset_sha256"]
+        and execution.get("mutation") == expected_mutation
+    )
+
+
+def _challenge_execution_budgets_valid(execution, bound, lane, identity):
+    try:
+        for key in (
+            "argv_sha256",
+            "raw_report_sha256",
+            "stdout_sha256",
+            "stderr_sha256",
+            "challenge_source_sha256",
+            "profile_binding_sha256",
+            "image_binding_sha256",
+            "version_probe_sha256",
+            "baseline_config_sha256",
+            "effective_config_sha256",
+            "ledger_sha256",
+            "execution_sha256",
+        ):
+            require_digest(execution.get(key), key)
+        require_int(
+            execution.get("timeout_seconds"),
+            "challenge timeout",
+            minimum=1,
+            maximum=lane["timeout_seconds"],
+        )
+        require_int(
+            execution.get("duration_ms"),
+            "challenge duration",
+            minimum=0,
+            maximum=execution["timeout_seconds"] * 1000,
+        )
+        for key in ("stdout_bytes", "stderr_bytes"):
+            require_int(execution.get(key), key, minimum=0, maximum=8 * 1024 * 1024)
+    except RuntimeAuditError:
+        return False
+    if identity[1] == "mutation":
+        return (
+            execution["effective_config_sha256"] != execution["baseline_config_sha256"]
+        )
+    return execution["effective_config_sha256"] == execution["baseline_config_sha256"]
+
+
+def _challenge_gaps(
+    challenges, lane, sources, obligations, expected, coverage, candidate_sha
+):
     if challenges.get("schema") != "factory.deep-challenges.v1":
         raise RuntimeAuditError("E_CHALLENGE_SCHEMA", "expected challenge observations")
     seen = set()
@@ -630,6 +1883,18 @@ def _challenge_gaps(challenges, lane, sources, obligations, expected):
         seen.add(identity)
         if _challenge_gap(challenge, identity, approved, lane, sources):
             gaps.append("CHALLENGE_FAILED")
+        elif (
+            lane["engine"] == "gitleaks" or _is_v2_obligation(identity, approved)
+        ) and _challenge_execution_gap(
+            challenge,
+            approved[identity][0],
+            approved[identity][1],
+            identity,
+            lane,
+            coverage,
+            candidate_sha,
+        ):
+            gaps.append("CHALLENGE_FAILED")
     required = {
         (identity, kind)
         for identity in expected
@@ -638,6 +1903,11 @@ def _challenge_gaps(challenges, lane, sources, obligations, expected):
     if seen != required:
         gaps.append("CHALLENGE_COVERAGE_MISSING")
     return gaps
+
+
+def _is_v2_obligation(identity, approved):
+    item = approved.get(identity)
+    return item is not None and "fixture_manifest" in item[0]
 
 
 def normalize_execution_bundle(
@@ -649,10 +1919,31 @@ def normalize_execution_bundle(
     )
     required = _required_sources(inventory, lane)
     findings = _native_execution_report(report, lane, sources)
+    dependency_accounting = (
+        _osv_source_accounting(report, required, lane["mode"])
+        if lane["engine"] == "osv" and lane["mode"] == "offline-pypi-snapshot"
+        else None
+    )
     gaps, expected, observed = _coverage_gaps(
         report, coverage, lane, required, obligations
     )
-    gaps.extend(_challenge_gaps(challenges, lane, sources, obligations, expected))
+    gaps.extend(
+        _challenge_gaps(
+            challenges,
+            lane,
+            sources,
+            obligations,
+            expected,
+            coverage,
+            inventory["candidate_sha256"],
+        )
+    )
+    gaps.extend(
+        _osv_retained_evidence_gaps(
+            coverage, lane, required, report, challenges, obligations
+        )
+    )
+    gaps.extend(_fuzz_retained_evidence_gaps(report, lane, sources))
     metrics = None
     if lane["family"] in {"runtime", "fuzz"}:
         metric_keys = (
@@ -671,8 +1962,22 @@ def normalize_execution_bundle(
         "gaps": sorted(set(gaps)),
         "report_sha256": digest(report),
         "coverage_sha256": digest(coverage),
+        "rule_accounting_sha256": (
+            coverage.get("rule_accounting", {}).get("accounting_sha256")
+            if isinstance(coverage.get("rule_accounting"), dict)
+            else None
+        ),
         "challenge_sha256": digest(challenges),
-        "covered_paths": sorted(required),
+        "covered_paths": (
+            dependency_accounting["measured_paths"]
+            if dependency_accounting is not None
+            else sorted(required)
+        ),
+        **(
+            {"source_accounting": dependency_accounting}
+            if dependency_accounting is not None
+            else {}
+        ),
         "obligations": observed,
         "findings": findings,
         "metrics": metrics,
@@ -767,7 +2072,15 @@ def _native(result: dict) -> dict:
     for group in ("partialFingerprints", "fingerprints"):
         for key, value in _object(result.get(group, {})).items():
             name = require_str(key, "fingerprint key", maximum=128)
-            native[group + ":" + name] = require_str(value, "fingerprint", maximum=1024)
+            if (
+                not isinstance(value, str)
+                or len(value) > 1024
+                or any(ord(character) < 32 for character in value)
+            ):
+                raise RuntimeAuditError(
+                    "E_FIELD", "fingerprint must be a bounded printable string"
+                )
+            native[group + ":" + name] = value
     if not 1 <= len(native) <= 16:
         raise RuntimeAuditError(
             "E_NATIVE_FINGERPRINT", "require 1..16 native fingerprints"
@@ -803,6 +2116,15 @@ def _finding(result: object, analyzer: dict, sources: dict) -> dict:
     locations = [
         _location(item, sources) for item in _list(result.get("locations"), 1, 10)
     ]
+    native_fingerprint_sha256 = digest(native)
+    identity_basis = "sarif_native_fingerprint"
+    identity_native = native
+    if not any(value.strip() for value in native.values()):
+        identity_basis = "source_location_fallback"
+        identity_native = {
+            "native_fingerprint_sha256": native_fingerprint_sha256,
+            "locations_sha256": digest(locations),
+        }
     suppressions = _suppression(result)
     return {
         "finding_id": digest(
@@ -810,10 +2132,11 @@ def _finding(result: object, analyzer: dict, sources: dict) -> dict:
                 "schema": "factory.deep-finding-identity.v1",
                 "analyzer": analyzer["id"],
                 "rule": rule,
-                "native": native,
+                "native": identity_native,
             }
         ),
-        "native_fingerprint_sha256": digest(native),
+        "native_fingerprint_sha256": native_fingerprint_sha256,
+        "finding_identity_basis": identity_basis,
         "rule_id": rule,
         "analyzer_id": analyzer["id"],
         "kind": _enum(

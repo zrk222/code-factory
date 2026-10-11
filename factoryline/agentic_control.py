@@ -3217,3 +3217,723 @@ def verify_extended_assurance_receipt(receipt: dict[str, Any]) -> dict[str, Any]
         "marker": "EXTENDED_ASSURANCE_RECEIPT_VERIFIED",
         "claim_boundary": receipt.get("claim_boundary"),
     }
+
+
+# This durable runtime stores normalized observations from authenticated host
+# adapters. It does not authenticate providers or launch models by itself.
+WORKFLOW_RUNTIME_SCHEMA = "factory.workflow-runtime.v1"
+_WORKFLOW_SOURCE_FIELDS = {
+    "provider",
+    "account",
+    "repository",
+    "kind",
+    "external_id",
+    "revision",
+    "head_sha",
+    "state",
+    "title",
+}
+
+
+def _github_runtime_read(endpoint):
+    try:
+        result = subprocess.run(
+            ["gh", "api", "--hostname", "github.com", endpoint],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode != 0 or len(result.stdout.encode()) > 1_048_576:
+            raise ValueError("unavailable observation")
+        value = json.loads(result.stdout)
+        if not isinstance(value, dict):
+            raise ValueError("invalid observation")
+        return value
+    except (OSError, subprocess.TimeoutExpired, ValueError) as from_error:
+        raise AgenticControlError(
+            "E_WORKFLOW_PROVIDER", "GitHub observation unavailable or invalid"
+        ) from from_error
+
+
+def _github_runtime_source(account, repository, kind, number, payload):
+    expected_url = f"https://github.com/{repository}/{'pull' if kind == 'pull_request' else 'issues'}/{number}"
+    if (
+        type(payload.get("number")) is not int
+        or payload.get("number") != number
+        or payload.get("html_url") != expected_url
+    ):
+        raise AgenticControlError(
+            "E_WORKFLOW_PROVIDER", "GitHub source identity differs"
+        )
+    if kind == "pull_request":
+        base = payload.get("base")
+        head_record = payload.get("head")
+        if (
+            not isinstance(base, dict)
+            or not isinstance(base.get("repo"), dict)
+            or not isinstance(head_record, dict)
+        ):
+            raise AgenticControlError(
+                "E_WORKFLOW_PROVIDER", "PR repository identity missing"
+            )
+        if base["repo"].get("full_name") != repository:
+            raise AgenticControlError("E_WORKFLOW_PROVIDER", "PR repository differs")
+        head = head_record.get("sha")
+        if head is None:
+            raise AgenticControlError("E_WORKFLOW_PROVIDER", "PR head missing")
+    else:
+        if "pull_request" in payload:
+            raise AgenticControlError("E_WORKFLOW_PROVIDER", "issue is a pull request")
+        head = None
+    try:
+        updated = datetime.fromisoformat(payload["updated_at"].replace("Z", "+00:00"))
+        if updated.utcoffset() is None:
+            raise ValueError("timezone missing")
+        revision = int(updated.timestamp() * 1_000_000)
+    except (KeyError, TypeError, ValueError, AttributeError, OverflowError) as error:
+        raise AgenticControlError(
+            "E_WORKFLOW_PROVIDER", "provider revision invalid"
+        ) from error
+    state = (
+        "merged"
+        if kind == "pull_request" and payload.get("merged") is True
+        else payload.get("state")
+    )
+    return dict(
+        provider="github",
+        account=account,
+        repository=repository,
+        kind=kind,
+        external_id=str(number),
+        revision=revision,
+        head_sha=head,
+        state=state,
+        title=payload.get("title"),
+    )
+
+
+def sync_github_workflow_source(store, repository, number, *, kind="issue"):
+    """Read authenticated GitHub state into durable intake; never dispatch or merge."""
+    if (
+        not isinstance(repository, str)
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+", repository)
+        or repository.rsplit("/", 1)[-1] in {".", ".."}
+        or type(number) is not int
+        or not 1 <= number < 2**53
+        or kind not in {"issue", "pull_request"}
+    ):
+        raise AgenticControlError("E_WORKFLOW_SOURCE", "invalid GitHub source selector")
+    account = _bounded_text(
+        _github_runtime_read("user").get("login"), "GitHub account", 96
+    )
+    if ("github", account, repository) not in store.allowed:
+        raise AgenticControlError(
+            "E_WORKFLOW_SOURCE", "authenticated account is outside connected scope"
+        )
+    endpoint = (
+        f"repos/{repository}/{'pulls' if kind == 'pull_request' else 'issues'}/{number}"
+    )
+    payload = _github_runtime_read(endpoint)
+    source = _runtime_source(
+        _github_runtime_source(account, repository, kind, number, payload),
+        store.allowed,
+    )
+    return store.intake("github-" + _sha(source), source)
+
+
+def _runtime_source(value, allowed):
+    if not isinstance(value, dict) or set(value) != _WORKFLOW_SOURCE_FIELDS:
+        raise AgenticControlError(
+            "E_WORKFLOW_SOURCE", "exact normalized source required"
+        )
+    source = dict(value)
+    for key in (
+        "provider",
+        "account",
+        "repository",
+        "kind",
+        "external_id",
+        "state",
+        "title",
+    ):
+        source[key] = _bounded_text(source[key], key, 512)
+    if (source["provider"], source["account"], source["repository"]) not in allowed:
+        raise AgenticControlError(
+            "E_WORKFLOW_SOURCE", "source is outside connected scope"
+        )
+    if source["kind"] not in {"issue", "pull_request"} or source["state"] not in {
+        "open",
+        "closed",
+        "merged",
+        "missing",
+    }:
+        raise AgenticControlError(
+            "E_WORKFLOW_SOURCE", "unsupported source state or kind"
+        )
+    if type(source["revision"]) is not int or not 0 <= source["revision"] < 2**63:
+        raise AgenticControlError(
+            "E_WORKFLOW_SOURCE", "monotonic source revision required"
+        )
+    if source["head_sha"] is not None and not _GIT_SHA.fullmatch(
+        str(source["head_sha"])
+    ):
+        raise AgenticControlError("E_WORKFLOW_SOURCE", "source head is invalid")
+    if source["state"] == "merged" and (
+        source["kind"] != "pull_request" or source["head_sha"] is None
+    ):
+        raise AgenticControlError(
+            "E_WORKFLOW_SOURCE", "merged observation requires PR head"
+        )
+    return source
+
+
+def _runtime_source_key(source):
+    return _sha(
+        {
+            key: source[key]
+            for key in ("provider", "account", "repository", "kind", "external_id")
+        }
+    )
+
+
+def _runtime_path(root):
+    import stat
+
+    base = Path(root).resolve(strict=True)
+    directory = base / ".factory" / "workflow-runtime"
+    for path in (
+        base / ".factory",
+        directory,
+        directory / "runtime.sqlite3",
+        directory / "runtime.sqlite3-wal",
+        directory / "runtime.sqlite3-shm",
+    ):
+        if path.exists() or path.is_symlink():
+            info = path.lstat()
+            if path.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400:
+                raise AgenticControlError(
+                    "E_WORKFLOW_PATH", "linked runtime storage forbidden"
+                )
+            if stat.S_ISDIR(info.st_mode) != (path in (base / ".factory", directory)):
+                raise AgenticControlError(
+                    "E_WORKFLOW_PATH", "runtime storage type differs"
+                )
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / "runtime.sqlite3"
+
+
+def _runtime_phase(source):
+    return {
+        "open": "intake",
+        "closed": "closed_external",
+        "merged": "merged_external",
+        "missing": "source_missing",
+    }[source["state"]]
+
+
+def _runtime_result(item, status, action):
+    return {
+        "schema": WORKFLOW_RUNTIME_SCHEMA,
+        "status": status,
+        "summary": action,
+        "item": item,
+        "next_actions": [action],
+        "artifacts": [],
+        "authority": dict(_AUTHORITY),
+    }
+
+
+class WorkflowEventStore:
+    """Transactional source events and fenced run ownership, without dispatch authority.
+
+    Provider authentication and live-handle observation belong to registered host
+    adapters. Local database hashes detect drift, not a hostile writer who reseals
+    the database. External merged/closed states do not certify CF audit completion.
+    """
+
+    def __init__(
+        self,
+        root,
+        allowed_sources,
+        *,
+        clock=None,
+        phase_verifiers=None,
+        source_observer=None,
+    ):
+        import time
+
+        self.path = _runtime_path(root)
+        self.clock = clock or time.time
+        self.allowed = self._scope(allowed_sources)
+        self.phase_verifiers = _workflow_verifiers(phase_verifiers)
+        self.source_observer = source_observer
+        with self._connect() as db:
+            db.executescript("""
+                CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS items (key TEXT PRIMARY KEY, payload TEXT NOT NULL, sha TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS ingress (id TEXT PRIMARY KEY, sha TEXT NOT NULL, source_key TEXT NOT NULL, outcome TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS journal (seq INTEGER PRIMARY KEY AUTOINCREMENT, source_key TEXT NOT NULL, action TEXT NOT NULL, payload TEXT NOT NULL, sha TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS journal_source_sequence ON journal(source_key,seq);
+            """)
+            scope = _sha(sorted(self.allowed))
+            db.execute("INSERT OR IGNORE INTO settings VALUES ('scope', ?)", (scope,))
+            if (
+                db.execute("SELECT value FROM settings WHERE key='scope'").fetchone()[0]
+                != scope
+            ):
+                raise AgenticControlError(
+                    "E_WORKFLOW_SCOPE",
+                    "stored account scope differs; explicit migration required",
+                )
+
+    @staticmethod
+    def _scope(values):
+        if not isinstance(values, (list, tuple)) or not 1 <= len(values) <= 100:
+            raise AgenticControlError(
+                "E_WORKFLOW_SCOPE", "bounded connected source scope required"
+            )
+        scope = set()
+        for entry in values:
+            if not isinstance(entry, (tuple, list)) or len(entry) != 3:
+                raise AgenticControlError(
+                    "E_WORKFLOW_SCOPE", "provider/account/repository tuple required"
+                )
+            normalized = tuple(
+                _bounded_text(value, "source scope", 512) for value in entry
+            )
+            if normalized[0] not in {
+                "github",
+                "gitlab",
+                "linear",
+                "jira",
+                "incidentio",
+            }:
+                raise AgenticControlError(
+                    "E_WORKFLOW_SCOPE", "unsupported source provider"
+                )
+            scope.add(normalized)
+        return scope
+
+    def _connect(self):
+        import sqlite3
+        from contextlib import contextmanager
+
+        @contextmanager
+        def transaction():
+            _runtime_path(self.path.parents[2])
+            db = sqlite3.connect(self.path, timeout=5, isolation_level=None)
+            try:
+                db.execute("PRAGMA trusted_schema=OFF")
+                db.execute("BEGIN IMMEDIATE")
+                yield db
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            finally:
+                db.close()
+
+        return transaction()
+
+    @staticmethod
+    def _read(db, key):
+        _digest(key, "source key")
+        row = db.execute("SELECT payload,sha FROM items WHERE key=?", (key,)).fetchone()
+        if row is None:
+            raise AgenticControlError("E_WORKFLOW_ITEM", "source item not found")
+        try:
+            item = json.loads(row[0])
+        except (ValueError, TypeError) as error:
+            raise AgenticControlError(
+                "E_WORKFLOW_INTEGRITY", "stored item is not valid JSON"
+            ) from error
+        if (
+            not isinstance(item, dict)
+            or _sha(item) != row[1]
+            or item.get("source_key") != key
+        ):
+            raise AgenticControlError(
+                "E_WORKFLOW_INTEGRITY", "stored item hash differs"
+            )
+        return item
+
+    @staticmethod
+    def _write(db, item, action):
+        raw, seal = _canonical(item).decode(), _sha(item)
+        db.execute(
+            "INSERT INTO items VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET payload=excluded.payload,sha=excluded.sha",
+            (item["source_key"], raw, seal),
+        )
+        db.execute(
+            "INSERT INTO journal(source_key,action,payload,sha) VALUES (?,?,?,?)",
+            (item["source_key"], action, raw, seal),
+        )
+
+    def get(self, key):
+        """Read the current hash-checked source item across process restarts."""
+        with self._connect() as db:
+            return self._read(db, key)
+
+    def history(self, key, *, after=0, limit=50):
+        """Page recorded transitions without replaying their side effects."""
+        if type(after) is not int or not 0 <= after < 2**63:
+            raise AgenticControlError("E_WORKFLOW_CURSOR", "invalid event cursor")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise AgenticControlError("E_WORKFLOW_CURSOR", "event limit must be 1-100")
+        with self._connect() as db:
+            current = self._read(db, key)
+            _runtime_source(current["source"], self.allowed)
+            rows = db.execute(
+                "SELECT seq,action,payload,sha FROM journal WHERE source_key=? AND seq>? ORDER BY seq LIMIT ?",
+                (key, after, limit + 1),
+            ).fetchall()
+            events = [self._history_event(key, row) for row in rows[:limit]]
+        return dict(
+            schema="factory.workflow-history.v1",
+            source_key=key,
+            events=events,
+            next_cursor=events[-1]["sequence"] if events else after,
+            has_more=len(rows) > limit,
+            integrity_scope="Snapshot hashes and source binding; not signed chronology or protection against a hostile database writer",
+            authority=dict(_AUTHORITY),
+            next_actions=[
+                "Inspect recorded transitions; live recovery requires a registered observer"
+            ],
+        )
+
+    def _history_event(self, key, row):
+        try:
+            item = json.loads(row[2])
+            source = _runtime_source(item["source"], self.allowed)
+            valid = (
+                _sha(item) == row[3]
+                and item["source_key"] == key
+                and _runtime_source_key(source) == key
+            )
+        except (ValueError, KeyError, TypeError) as error:
+            raise AgenticControlError(
+                "E_WORKFLOW_INTEGRITY", "invalid recorded event"
+            ) from error
+        if not valid:
+            raise AgenticControlError(
+                "E_WORKFLOW_INTEGRITY", "recorded event hash differs"
+            )
+        return dict(sequence=row[0], action=row[1], item=item)
+
+    def intake(self, event_id, source):
+        """Atomically deduplicate a scoped adapter event without launching an agent."""
+        event_id = _id(event_id, "event id")
+        source = _runtime_source(source, self.allowed)
+        key, seal = _runtime_source_key(source), _sha(source)
+        with self._connect() as db:
+            prior = db.execute(
+                "SELECT sha,source_key,outcome FROM ingress WHERE id=?", (event_id,)
+            ).fetchone()
+            if prior is not None:
+                if prior[:2] != (seal, key):
+                    raise AgenticControlError(
+                        "E_WORKFLOW_EVENT_REUSE",
+                        "event identity reused with different bytes",
+                    )
+                return _runtime_result(
+                    self._read(db, key),
+                    "duplicate",
+                    "No duplicate task or agent launch",
+                )
+            item, outcome = self._apply_source(db, key, source)
+            db.execute(
+                "INSERT INTO ingress VALUES (?,?,?,?)", (event_id, seal, key, outcome)
+            )
+            return _runtime_result(
+                item,
+                outcome,
+                "Reconcile source before selecting the next guarded phase",
+            )
+
+    def _apply_source(self, db, key, source):
+        exists = db.execute("SELECT 1 FROM items WHERE key=?", (key,)).fetchone()
+        item = self._read(db, key) if exists else None
+        if item is not None and source["revision"] < item["source"]["revision"]:
+            return item, "stale"
+        if item is not None and source["revision"] == item["source"]["revision"]:
+            if source != item["source"]:
+                raise AgenticControlError(
+                    "E_WORKFLOW_REVISION",
+                    "one revision cannot have different source bytes",
+                )
+            return item, "unchanged"
+        epoch = item["epoch"] + 1 if item is not None else 1
+        run = item["run"] if item is not None else None
+        if run is not None:
+            run["invalidated"] = True
+        item = {
+            "source_key": key,
+            "source": source,
+            "epoch": epoch,
+            "phase": "retirement_required"
+            if run is not None
+            else _runtime_phase(source),
+            "run": run,
+            "attempts": 0,
+        }
+        self._write(db, item, "source_observed")
+        return item, "updated" if exists else "created"
+
+    @staticmethod
+    def _ttl(value):
+        if type(value) is not int or not 1 <= value <= 3600:
+            raise AgenticControlError(
+                "E_WORKFLOW_LEASE", "lease duration must be 1-3600 seconds"
+            )
+        return value
+
+    def claim(self, key, owner, *, ttl=30):
+        """Fence one owner; expired or unknown existing runs require observation."""
+        owner, ttl = _id(owner, "owner"), self._ttl(ttl)
+        with self._connect() as db:
+            item = self._read(db, key)
+            if item["run"] is not None:
+                raise AgenticControlError(
+                    "E_WORKFLOW_RECOVERY_REQUIRED",
+                    "observe the existing live handle before retiring ownership",
+                )
+            if item["phase"] not in {
+                "intake",
+                "triage",
+                "planning",
+                "building",
+                "auditing",
+                "reviewing",
+            }:
+                raise AgenticControlError(
+                    "E_WORKFLOW_PHASE", "phase does not admit agent work"
+                )
+            if item["attempts"] >= 3:
+                raise AgenticControlError(
+                    "E_WORKFLOW_RETRY",
+                    "retry budget exhausted; explicit remediation required",
+                )
+            item["epoch"] += 1
+            item["attempts"] += 1
+            item["run"] = {
+                "id": _sha([key, item["epoch"]]),
+                "source_sha256": _sha(item["source"]),
+                "owner": owner,
+                "epoch": item["epoch"],
+                "expires_at": self.clock() + ttl,
+                "handle": None,
+                "invalidated": False,
+            }
+            item["phase"] = "triage" if item["phase"] == "intake" else item["phase"]
+            self._write(db, item, "run_claimed")
+            return _runtime_result(
+                item,
+                "claimed",
+                "Launch only through the registered isolated agent driver using run.id as idempotency key",
+            )
+
+    @staticmethod
+    def _owned(item, owner, epoch):
+        run = item["run"]
+        if (
+            run is None
+            or run["owner"] != owner
+            or run["epoch"] != epoch
+            or item["epoch"] != epoch
+            or run["invalidated"]
+        ):
+            raise AgenticControlError(
+                "E_WORKFLOW_FENCED", "stale owner cannot change this run"
+            )
+        return run
+
+    def heartbeat(self, key, owner, epoch, *, ttl=30, handle=None):
+        """Renew the current live owner and bind its immutable driver handle."""
+        ttl = self._ttl(ttl)
+        with self._connect() as db:
+            item = self._read(db, key)
+            run = self._owned(item, owner, epoch)
+            if run["expires_at"] <= self.clock():
+                raise AgenticControlError(
+                    "E_WORKFLOW_RECOVERY_REQUIRED",
+                    "expired lease requires live-handle observation",
+                )
+            if handle is not None:
+                handle = _bounded_text(handle, "live handle", 512)
+                if run["handle"] is not None and run["handle"] != handle:
+                    raise AgenticControlError(
+                        "E_WORKFLOW_HANDLE", "run cannot change its live handle"
+                    )
+                run["handle"] = handle
+            run["expires_at"] = self.clock() + ttl
+            self._write(db, item, "run_heartbeat")
+            return _runtime_result(item, "live", "Observe the same registered handle")
+
+    def reconcile_run(self, key, observer):
+        """Retire ownership only after a trusted driver observes termination or absence."""
+        snapshot = self.get(key)
+        run = snapshot["run"]
+        if run is None:
+            return _runtime_result(snapshot, "idle", "No owned run to reconcile")
+        # Probe outside the DB lock; atomic epoch comparison fences source changes
+        # that occur while the trusted driver is checking its authoritative handle.
+        observation = observer(dict(run))
+        if not isinstance(observation, dict) or set(observation) != {
+            "run_id",
+            "handle",
+            "state",
+        }:
+            raise AgenticControlError(
+                "E_WORKFLOW_OBSERVATION",
+                "exact authoritative handle observation required",
+            )
+        if (
+            observation["run_id"] != run["id"]
+            or observation["handle"] != run["handle"]
+            or observation["state"] not in {"live", "terminal", "missing", "unknown"}
+        ):
+            raise AgenticControlError(
+                "E_WORKFLOW_OBSERVATION", "observation identity or state differs"
+            )
+        return self._reconcile_observation(key, snapshot, observation)
+
+    def _reconcile_observation(self, key, snapshot, observation):
+        with self._connect() as db:
+            item = self._read(db, key)
+            if item != snapshot:
+                raise AgenticControlError(
+                    "E_WORKFLOW_FENCED",
+                    "source or ownership changed during observation",
+                )
+            state = observation["state"]
+            if state in {"live", "unknown"}:
+                return _runtime_result(
+                    item,
+                    state,
+                    "Keep the same run; observation timeout is not termination",
+                )
+            item["last_run"] = {**item["run"], "terminal_state": state}
+            item["run"] = None
+            item["epoch"] += 1
+            if item["phase"] == "retirement_required":
+                item["phase"] = _runtime_phase(item["source"])
+            self._write(db, item, "run_retired_" + state)
+            return _runtime_result(
+                item,
+                "retired",
+                "Verify retained result evidence before phase advancement or bounded retry",
+            )
+
+    def advance(self, key, target, evidence):
+        """Advance only with current-source evidence verified by a trusted host adapter.
+
+        Host-registered verifiers must authenticate approvals and inspect retained
+        artifacts. A dictionary supplied by a model is not a trusted verifier.
+        This gate does not dispatch work, publish, merge or certify remote results.
+        """
+        snapshot = self.get(key)
+        expected = _workflow_phase_evidence(snapshot, target, evidence)
+        verifier = self.phase_verifiers.get(expected["verifier_id"])
+        if verifier is None or not callable(self.source_observer):
+            raise AgenticControlError(
+                "E_WORKFLOW_TRUST",
+                "registered verifier and fresh source observer required",
+            )
+        current_source = _runtime_source(
+            self.source_observer(dict(snapshot["source"])), self.allowed
+        )
+        if current_source != snapshot["source"]:
+            self.intake("observed-" + _sha(current_source), current_source)
+            raise AgenticControlError(
+                "E_WORKFLOW_FENCED",
+                "provider source changed; reconcile before advancement",
+            )
+        verified = verifier(dict(expected))
+        if not isinstance(verified, dict) or verified != expected:
+            raise AgenticControlError(
+                "E_WORKFLOW_EVIDENCE", "host did not verify exact phase evidence"
+            )
+        with self._connect() as db:
+            item = self._read(db, key)
+            if item != snapshot:
+                raise AgenticControlError(
+                    "E_WORKFLOW_FENCED", "source or run changed during verification"
+                )
+            item["phase"] = target
+            item["phase_evidence"] = expected
+            item["last_run"] = None
+            item["attempts"] = 0
+            self._write(db, item, "phase_advanced_" + target)
+            return _runtime_result(
+                item,
+                "advanced",
+                "Run the next registered phase; merge remains external",
+            )
+
+
+def _workflow_verifiers(values):
+    if values is None:
+        return {}
+    if not isinstance(values, dict) or not 1 <= len(values) <= 32:
+        raise AgenticControlError(
+            "E_WORKFLOW_TRUST", "bounded host verifier registry required"
+        )
+    for name, callback in values.items():
+        _id(name, "verifier_id")
+        if not callable(callback):
+            raise AgenticControlError(
+                "E_WORKFLOW_TRUST", "host verifier must be callable"
+            )
+    return dict(values)
+
+
+def _workflow_phase_evidence(item, target, evidence):
+    transitions = {
+        "triage": ("planning", "triage"),
+        "planning": ("building", "approved_plan"),
+        "building": ("auditing", "isolated_build"),
+        "auditing": ("reviewing", "six_lane_audit"),
+        "reviewing": ("ready_for_merge", "independent_review"),
+    }
+    if item["phase"] not in transitions or transitions[item["phase"]][0] != target:
+        raise AgenticControlError("E_WORKFLOW_PHASE", "phase transition is not allowed")
+    run = item.get("last_run")
+    if (
+        item["run"] is not None
+        or not run
+        or run.get("terminal_state") != "terminal"
+        or run.get("handle") is None
+    ):
+        raise AgenticControlError(
+            "E_WORKFLOW_EVIDENCE",
+            "observed terminal run required; absence is insufficient",
+        )
+    required = {
+        "source_sha256",
+        "run_id",
+        "phase",
+        "kind",
+        "artifact_sha256",
+        "verifier_id",
+    }
+    if not isinstance(evidence, dict) or set(evidence) != required:
+        raise AgenticControlError(
+            "E_WORKFLOW_EVIDENCE", "exact phase evidence required"
+        )
+    expected = dict(evidence)
+    for name in ("source_sha256", "artifact_sha256"):
+        _digest(expected[name], name)
+    _id(expected["verifier_id"], "verifier_id")
+    if (
+        expected["source_sha256"] != _sha(item["source"])
+        or expected["run_id"] != run["id"]
+        or expected["phase"] != item["phase"]
+        or expected["kind"] != transitions[item["phase"]][1]
+        or run.get("source_sha256") != expected["source_sha256"]
+        or run["invalidated"]
+    ):
+        raise AgenticControlError(
+            "E_WORKFLOW_EVIDENCE", "phase evidence is stale or mismatched"
+        )
+    return expected

@@ -1,0 +1,511 @@
+diff --git a/cmd/root.go b/cmd/root.go
+index cddb557..39108d2 100644
+--- a/cmd/root.go
++++ b/cmd/root.go
+@@ -77,6 +77,9 @@ func init() {
+ 	rootCmd.PersistentFlags().StringP("gitleaks-ignore-path", "i", ".", "path to .gitleaksignore file or folder containing one")
+ 	rootCmd.PersistentFlags().Int("max-decode-depth", 0, "allow recursive decoding up to this depth (default \"0\", no decoding is done)")
+ 	rootCmd.PersistentFlags().Int("max-archive-depth", 0, "allow scanning into nested archives up to this depth (default \"0\", no archive traversal is done)")
++	rootCmd.PersistentFlags().String("factory-ledger", "", "write bounded secret-free Code Factory rule execution ledger")
++	rootCmd.PersistentFlags().String("factory-ledger-root", "", "source root for relative Code Factory ledger paths")
++	rootCmd.PersistentFlags().String("factory-source-sha256", "", "Code Factory candidate identity for rule ledger")
+ 
+ 	// Add diagnostics flags
+ 	rootCmd.PersistentFlags().String("diagnostics", "", "enable diagnostics (http OR comma-separated list: cpu,mem,trace). cpu=CPU prof, mem=memory prof, trace=exec tracing, http=serve via net/http/pprof")
+@@ -282,6 +285,21 @@ func Detector(cmd *cobra.Command, cfg config.Config, source string) *detect.Dete
+ 	if detector.IgnoreGitleaksAllow, err = cmd.Flags().GetBool("ignore-gitleaks-allow"); err != nil {
+ 		logging.Fatal().Err(err).Send()
+ 	}
++	ledgerPath, err := cmd.Flags().GetString("factory-ledger")
++	if err != nil {
++		logging.Fatal().Err(err).Send()
++	}
++	if ledgerPath != "" {
++		ledgerRoot, rootErr := cmd.Flags().GetString("factory-ledger-root")
++		if rootErr != nil || ledgerRoot == "" {
++			logging.Fatal().Err(rootErr).Msg("factory ledger requires source root")
++		}
++		sourceSHA, shaErr := cmd.Flags().GetString("factory-source-sha256")
++		if shaErr != nil {
++			logging.Fatal().Err(shaErr).Msg("factory ledger requires candidate identity")
++		}
++		detector.FactoryLedger = detect.NewFactoryRuleLedger(ledgerRoot, ledgerPath, sourceSHA)
++	}
+ 
+ 	gitleaksIgnorePath, err := cmd.Flags().GetString("gitleaks-ignore-path")
+ 	if err != nil {
+@@ -426,6 +444,11 @@ func findingSummaryAndExit(detector *detect.Detector, findings []report.Finding,
+ 		logging.Debug().Msg("Finalizing diagnostics...")
+ 		diagnosticsManager.StopDiagnostics()
+ 	}
++	if detector.FactoryLedger != nil {
++		if ledgerErr := detector.FactoryLedger.Write(detector.Config.Path, err == nil); ledgerErr != nil {
++			logging.Fatal().Err(ledgerErr).Msg("failed to write factory rule ledger")
++		}
++	}
+ 
+ 	totalBytes := detector.TotalBytes.Load()
+ 	bytesMsg := fmt.Sprintf("scanned ~%d bytes (%s)", totalBytes, bytesConvert(totalBytes))
+diff --git a/detect/detect.go b/detect/detect.go
+index 67e1d04..4835448 100644
+--- a/detect/detect.go
++++ b/detect/detect.go
+@@ -104,6 +104,10 @@ type Detector struct {
+ 	Reporter   report.Reporter
+ 
+ 	TotalBytes atomic.Uint64
++
++	// FactoryLedger records bounded, secret-free rule attempt telemetry when
++	// the factory-specific ledger flag is explicitly enabled by the caller.
++	FactoryLedger *FactoryRuleLedger
+ }
+ 
+ // Fragment is an alias for sources.Fragment for backwards compatibility
+@@ -288,6 +292,11 @@ func (d *Detector) Detect(fragment Fragment) []report.Finding {
+ 	}
+ 	// check if commit or filepath is allowed.
+ 	if isAllowed, event := checkCommitOrPathAllowed(logger, fragment, d.Config.Allowlists); isAllowed {
++		if d.FactoryLedger != nil {
++			for _, rule := range d.Config.Rules {
++				d.FactoryLedger.Record(fragment.FilePath, rule.RuleID, "suppressed_global_allowlist")
++			}
++		}
+ 		event.Msg("skipping file: global allowlist")
+ 		return findings
+ 	}
+@@ -308,6 +317,10 @@ func (d *Detector) Detect(fragment Fragment) []report.Finding {
+ 		}
+ 
+ 		for _, rule := range d.Config.Rules {
++			if d.FactoryLedger != nil {
++				findings = append(findings, d.detectRule(fragment, currentRaw, rule, encodedSegments)...)
++				continue
++			}
+ 			if len(rule.Keywords) == 0 {
+ 				// if no keywords are associated with the rule always scan the
+ 				// fragment using the rule
+@@ -356,13 +369,22 @@ func (d *Detector) detectRule(fragment Fragment, currentRaw string, r config.Rul
+ 			return l.Logger()
+ 		}()
+ 	)
++	if d.FactoryLedger != nil {
++		d.FactoryLedger.Record(fragment.FilePath, r.RuleID, "attempted")
++	}
+ 
+ 	if r.SkipReport == true && !fragment.InheritedFromFinding {
++		if d.FactoryLedger != nil {
++			d.FactoryLedger.Record(fragment.FilePath, r.RuleID, "suppressed_skip_report")
++		}
+ 		return findings
+ 	}
+ 
+ 	// check if commit or file is allowed for this rule.
+ 	if isAllowed, event := checkCommitOrPathAllowed(logger, fragment, r.Allowlists); isAllowed {
++		if d.FactoryLedger != nil {
++			d.FactoryLedger.Record(fragment.FilePath, r.RuleID, "suppressed_rule_allowlist")
++		}
+ 		event.Msg("skipping file: rule allowlist")
+ 		return findings
+ 	}
+@@ -370,7 +392,14 @@ func (d *Detector) detectRule(fragment Fragment, currentRaw string, r config.Rul
+ 	if r.Path != nil {
+ 		if r.Regex == nil && len(encodedSegments) == 0 {
+ 			// Path _only_ rule
+-			if r.Path.MatchString(fragment.FilePath) || (fragment.WindowsFilePath != "" && r.Path.MatchString(fragment.WindowsFilePath)) {
++			pathMatched := r.Path.MatchString(fragment.FilePath) || (fragment.WindowsFilePath != "" && r.Path.MatchString(fragment.WindowsFilePath))
++			if d.FactoryLedger != nil {
++				d.FactoryLedger.Record(fragment.FilePath, r.RuleID, "path_evaluated")
++			}
++			if pathMatched {
++				if d.FactoryLedger != nil {
++					d.FactoryLedger.Record(fragment.FilePath, r.RuleID, "finding")
++				}
+ 				finding := report.Finding{
+ 					Commit:      fragment.CommitSHA,
+ 					RuleID:      r.RuleID,
+@@ -389,11 +418,21 @@ func (d *Detector) detectRule(fragment Fragment, currentRaw string, r config.Rul
+ 				}
+ 				return append(findings, finding)
+ 			}
++			if d.FactoryLedger != nil {
++				d.FactoryLedger.Record(fragment.FilePath, r.RuleID, "not_applicable_path_mismatch")
++			}
+ 		} else {
+ 			// if path is set _and_ a regex is set, then we need to check both
+ 			// so if the path does not match, then we should return early and not
+ 			// consider the regex
+-			if !(r.Path.MatchString(fragment.FilePath) || (fragment.WindowsFilePath != "" && r.Path.MatchString(fragment.WindowsFilePath))) {
++			pathMatched := r.Path.MatchString(fragment.FilePath) || (fragment.WindowsFilePath != "" && r.Path.MatchString(fragment.WindowsFilePath))
++			if d.FactoryLedger != nil {
++				d.FactoryLedger.Record(fragment.FilePath, r.RuleID, "path_evaluated")
++			}
++			if !pathMatched {
++				if d.FactoryLedger != nil {
++					d.FactoryLedger.Record(fragment.FilePath, r.RuleID, "not_applicable_path_mismatch")
++				}
+ 				return findings
+ 			}
+ 		}
+@@ -401,6 +440,9 @@ func (d *Detector) detectRule(fragment Fragment, currentRaw string, r config.Rul
+ 
+ 	// if path only rule, skip content checks
+ 	if r.Regex == nil {
++		if d.FactoryLedger != nil {
++			d.FactoryLedger.Record(fragment.FilePath, r.RuleID, "not_applicable_no_regex")
++		}
+ 		return findings
+ 	}
+ 
+@@ -408,6 +450,9 @@ func (d *Detector) detectRule(fragment Fragment, currentRaw string, r config.Rul
+ 	if d.MaxTargetMegaBytes > 0 {
+ 		rawLength := len(currentRaw) / 1_000_000
+ 		if rawLength > d.MaxTargetMegaBytes {
++			if d.FactoryLedger != nil {
++				d.FactoryLedger.Record(fragment.FilePath, r.RuleID, "not_run_size_limit")
++			}
+ 			logger.Debug().
+ 				Int("size", rawLength).
+ 				Int("max-size", d.MaxTargetMegaBytes).
+@@ -417,6 +462,9 @@ func (d *Detector) detectRule(fragment Fragment, currentRaw string, r config.Rul
+ 	}
+ 
+ 	matches := r.Regex.FindAllStringIndex(currentRaw, -1)
++	if d.FactoryLedger != nil {
++		d.FactoryLedger.Record(fragment.FilePath, r.RuleID, "regex_executed")
++	}
+ 	if len(matches) == 0 {
+ 		return findings
+ 	}
+@@ -427,6 +475,9 @@ func (d *Detector) detectRule(fragment Fragment, currentRaw string, r config.Rul
+ 	// use currentRaw instead of fragment.Raw since this represents the current
+ 	// decoding pass on the text
+ 	for _, matchIndex := range r.Regex.FindAllStringIndex(currentRaw, -1) {
++		if d.FactoryLedger != nil {
++			d.FactoryLedger.Record(fragment.FilePath, r.RuleID, "regex_match")
++		}
+ 		// Extract secret from match
+ 		secret := strings.Trim(currentRaw[matchIndex[0]:matchIndex[1]], "\n")
+ 
+@@ -542,6 +593,9 @@ func (d *Detector) detectRule(fragment Fragment, currentRaw string, r config.Rul
+ 			continue
+ 		}
+ 		findings = append(findings, finding)
++		if d.FactoryLedger != nil {
++			d.FactoryLedger.Record(fragment.FilePath, r.RuleID, "finding")
++		}
+ 	}
+ 
+ 	// Handle required rules (multi-part rules)
+diff --git a/detect/factory_ledger.go b/detect/factory_ledger.go
+new file mode 100644
+index 0000000..747aafe
+--- /dev/null
++++ b/detect/factory_ledger.go
+@@ -0,0 +1,214 @@
++package detect
++
++import (
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"errors"
++	"math"
++	"os"
++	"path/filepath"
++	"regexp"
++	"sort"
++	"strings"
++	"sync"
++)
++
++const (
++	factoryLedgerMaxRows  = 200_000
++	factoryLedgerMaxPath  = 2048
++	factoryLedgerMaxRule  = 256
++	factoryLedgerMaxBytes = 8 << 20
++)
++
++var factoryLedgerDigest = regexp.MustCompile(`^[a-f0-9]{64}$`)
++
++var factoryLedgerDispositions = map[string]bool{
++	"attempted": true, "suppressed_skip_report": true,
++	"suppressed_rule_allowlist": true, "suppressed_global_allowlist": true,
++	"path_evaluated": true, "not_applicable_path_mismatch": true,
++	"not_applicable_no_regex": true, "not_run_size_limit": true,
++	"regex_executed": true, "regex_match": true, "finding": true,
++}
++
++// FactoryRuleLedger is optional instrumentation for the isolated Code Factory
++// worker. It records rule IDs, relative paths, and counters only; never matches.
++type FactoryRuleLedger struct {
++	Root string
++	Path string
++	// SourceSHA256 is supplied by the trusted CF adapter after inventory hashing.
++	// The native binary does not independently compute this whole-tree identity.
++	SourceSHA256 string
++	Complete     bool
++	mu           sync.Mutex
++	rows         map[string]*factoryRuleRow
++	rowBytes     int
++	overflow     bool
++	invalidPaths uint64
++}
++
++type factoryRuleRow struct {
++	Path   string            `json:"path"`
++	RuleID string            `json:"rule_id"`
++	Counts map[string]uint64 `json:"counts"`
++}
++
++type factoryRuleDocument struct {
++	Schema             string            `json:"schema"`
++	RootSHA256         string            `json:"root_sha256"`
++	SourceIdentityKind string            `json:"source_identity_kind"`
++	SourceSHA256       string            `json:"source_sha256"`
++	ConfigSHA256       string            `json:"config_sha256"`
++	PrefilterBypassed  bool              `json:"prefilter_bypassed"`
++	Complete           bool              `json:"complete"`
++	Overflow           bool              `json:"overflow"`
++	InvalidPaths       uint64            `json:"invalid_paths"`
++	Rows               []*factoryRuleRow `json:"rows"`
++}
++
++// NewFactoryRuleLedger creates an empty bounded recorder for one directory scan.
++func NewFactoryRuleLedger(root, path, sourceSHA256 string) *FactoryRuleLedger {
++	return &FactoryRuleLedger{Root: root, Path: path, SourceSHA256: sourceSHA256, rows: make(map[string]*factoryRuleRow)}
++}
++
++// Record adds one secret-free native disposition for a rule and source path.
++func (l *FactoryRuleLedger) Record(sourcePath, ruleID, disposition string) {
++	if l == nil {
++		return
++	}
++	root, err := filepath.EvalSymlinks(l.Root)
++	if err != nil {
++		l.mu.Lock()
++		l.invalidPaths++
++		l.mu.Unlock()
++		return
++	}
++	if !filepath.IsAbs(sourcePath) {
++		sourcePath = filepath.Join(root, sourcePath)
++	}
++	sourcePath, err = filepath.EvalSymlinks(sourcePath)
++	if err != nil {
++		l.mu.Lock()
++		l.invalidPaths++
++		l.mu.Unlock()
++		return
++	}
++	relative, err := filepath.Rel(root, sourcePath)
++	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
++		l.mu.Lock()
++		l.invalidPaths++
++		l.mu.Unlock()
++		return
++	}
++	relative = filepath.ToSlash(filepath.Clean(relative))
++	if ruleID == "" || len(ruleID) > factoryLedgerMaxRule || len(relative) > factoryLedgerMaxPath || strings.ContainsAny(ruleID, "\r\n\x00") || strings.ContainsAny(relative, "\r\n\x00") || !factoryLedgerDispositions[disposition] {
++		l.mu.Lock()
++		l.invalidPaths++
++		l.mu.Unlock()
++		return
++	}
++	key := relative + "\x00" + ruleID
++	l.mu.Lock()
++	defer l.mu.Unlock()
++	row := l.rows[key]
++	if row == nil {
++		rowCost := len(relative) + len(ruleID) + 96
++		if len(l.rows) >= factoryLedgerMaxRows || l.rowBytes+rowCost > factoryLedgerMaxBytes/2 {
++			l.overflow = true
++			return
++		}
++		row = &factoryRuleRow{Path: relative, RuleID: ruleID, Counts: make(map[string]uint64)}
++		l.rows[key] = row
++		l.rowBytes += rowCost
++	}
++	if row.Counts[disposition] == math.MaxUint64 {
++		l.overflow = true
++		return
++	}
++	row.Counts[disposition]++
++}
++
++// Write emits deterministic bounded ledger bytes atomically after the scan.
++func (l *FactoryRuleLedger) Write(configPath string, complete bool) error {
++	if l == nil || l.Path == "" {
++		return errors.New("factory rule ledger path missing")
++	}
++	if !factoryLedgerDigest.MatchString(l.SourceSHA256) {
++		return errors.New("factory rule ledger source identity invalid")
++	}
++	config, err := os.ReadFile(configPath)
++	if err != nil {
++		return err
++	}
++	hash := sha256.Sum256(config)
++	l.mu.Lock()
++	rows := make([]*factoryRuleRow, 0, len(l.rows))
++	for _, row := range l.rows {
++		counts := make(map[string]uint64, len(row.Counts))
++		for disposition, count := range row.Counts {
++			counts[disposition] = count
++		}
++		rows = append(rows, &factoryRuleRow{Path: row.Path, RuleID: row.RuleID, Counts: counts})
++	}
++	root, err := filepath.EvalSymlinks(l.Root)
++	if err != nil {
++		l.mu.Unlock()
++		return err
++	}
++	overflow := l.overflow
++	invalidPaths := l.invalidPaths
++	l.mu.Unlock()
++	sort.Slice(rows, func(i, j int) bool {
++		if rows[i].Path != rows[j].Path {
++			return rows[i].Path < rows[j].Path
++		}
++		return rows[i].RuleID < rows[j].RuleID
++	})
++	rootHash := sha256.Sum256([]byte(filepath.Clean(root)))
++	doc := factoryRuleDocument{Schema: "gitleaks.factory-rule-ledger.v1", RootSHA256: hex.EncodeToString(rootHash[:]), SourceIdentityKind: "adapter_candidate_sha256", SourceSHA256: l.SourceSHA256, ConfigSHA256: hex.EncodeToString(hash[:]), PrefilterBypassed: true, Complete: complete && !overflow && invalidPaths == 0, Overflow: overflow, InvalidPaths: invalidPaths, Rows: rows}
++	data, err := json.Marshal(doc)
++	if err != nil {
++		return err
++	}
++	if len(data) > factoryLedgerMaxBytes {
++		return errors.New("factory rule ledger exceeds byte budget")
++	}
++	rootAbs, err := filepath.EvalSymlinks(root)
++	if err != nil {
++		return err
++	}
++	outputParent, err := filepath.EvalSymlinks(filepath.Dir(l.Path))
++	if err != nil {
++		return err
++	}
++	outputAbs := filepath.Join(outputParent, filepath.Base(l.Path))
++	if relative, relErr := filepath.Rel(rootAbs, outputAbs); relErr != nil || relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))) {
++		return errors.New("factory rule ledger destination overlaps source root")
++	}
++	if _, err := os.Lstat(outputAbs); err == nil {
++		return errors.New("factory rule ledger destination already exists")
++	} else if !os.IsNotExist(err) {
++		return err
++	}
++	tmp, err := os.CreateTemp(filepath.Dir(l.Path), ".gitleaks-ledger-*")
++	if err != nil {
++		return err
++	}
++	name := tmp.Name()
++	defer os.Remove(name)
++	if _, err = tmp.Write(data); err != nil {
++		_ = tmp.Close()
++		return err
++	}
++	if err = tmp.Sync(); err != nil {
++		_ = tmp.Close()
++		return err
++	}
++	if err = tmp.Close(); err != nil {
++		return err
++	}
++	if err := os.Link(name, outputAbs); err != nil {
++		return err
++	}
++	return nil
++}
+diff --git a/detect/factory_ledger_test.go b/detect/factory_ledger_test.go
+new file mode 100644
+index 0000000..ece07b1
+--- /dev/null
++++ b/detect/factory_ledger_test.go
+@@ -0,0 +1,87 @@
++package detect
++
++import (
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"runtime"
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++	"github.com/zricethezav/gitleaks/v8/config"
++	"github.com/zricethezav/gitleaks/v8/regexp"
++)
++
++func TestFactoryLedgerBypassesKeywordPrefilterAndRedactsContent(t *testing.T) {
++	parent := t.TempDir()
++	root := filepath.Join(parent, "source")
++	require.NoError(t, os.Mkdir(root, 0700))
++	configPath := filepath.Join(root, "config.toml")
++	require.NoError(t, os.WriteFile(configPath, []byte("[config]\n"), 0600))
++	sourcePath := filepath.Join(root, "source.txt")
++	require.NoError(t, os.WriteFile(sourcePath, []byte("CANARYSECRET123"), 0600))
++	ledgerPath := filepath.Join(parent, "ledger.json")
++	detector := NewDetector(config.Config{Rules: map[string]config.Rule{
++		"fixture-rule": {RuleID: "fixture-rule", Regex: regexp.MustCompile("CANARYSECRET[0-9]+"), Keywords: []string{"absent-keyword"}},
++	}})
++	detector.Config.Path = configPath
++	detector.FactoryLedger = NewFactoryRuleLedger(root, ledgerPath, "a"+strings.Repeat("0", 63))
++	findings := detector.Detect(Fragment{FilePath: sourcePath, Raw: "CANARYSECRET123"})
++	require.Len(t, findings, 1)
++	require.NoError(t, detector.FactoryLedger.Write(configPath, true))
++	data, err := os.ReadFile(ledgerPath)
++	require.NoError(t, err)
++	require.NotContains(t, string(data), "CANARYSECRET123")
++	var doc factoryRuleDocument
++	require.NoError(t, json.Unmarshal(data, &doc))
++	require.False(t, doc.Overflow)
++	require.Len(t, doc.Rows, 1)
++	require.Equal(t, "source.txt", doc.Rows[0].Path)
++	require.Equal(t, "fixture-rule", doc.Rows[0].RuleID)
++	require.EqualValues(t, 1, doc.Rows[0].Counts["regex_executed"])
++	require.EqualValues(t, 1, doc.Rows[0].Counts["attempted"])
++	require.EqualValues(t, 1, doc.Rows[0].Counts["finding"])
++	require.True(t, doc.Complete)
++	require.Equal(t, "adapter_candidate_sha256", doc.SourceIdentityKind)
++}
++
++func TestFactoryLedgerRefusesDestinationInsideSourceBeforeWriting(t *testing.T) {
++	parent := t.TempDir()
++	root := filepath.Join(parent, "source")
++	require.NoError(t, os.Mkdir(root, 0700))
++	configPath := filepath.Join(parent, "config.toml")
++	require.NoError(t, os.WriteFile(configPath, []byte("[config]\n"), 0600))
++	destination := filepath.Join(root, "ledger.json")
++	ledger := NewFactoryRuleLedger(root, destination, strings.Repeat("d", 64))
++	require.Error(t, ledger.Write(configPath, true))
++	_, err := os.Lstat(destination)
++	require.Error(t, err)
++}
++
++func TestFactoryLedgerMarksOutOfRootPathInvalid(t *testing.T) {
++	parent := t.TempDir()
++	root := filepath.Join(parent, "source")
++	require.NoError(t, os.Mkdir(root, 0700))
++	ledger := NewFactoryRuleLedger(root, filepath.Join(parent, "ledger.json"), strings.Repeat("b", 64))
++	ledger.Record(filepath.Join(filepath.Dir(root), "outside.txt"), "rule", "attempted")
++	require.EqualValues(t, 1, ledger.invalidPaths)
++	require.Empty(t, ledger.rows)
++}
++
++func TestFactoryLedgerRejectsSymlinkEscape(t *testing.T) {
++	if runtime.GOOS == "windows" {
++		t.Skip("symlink creation may require elevated privileges on Windows")
++	}
++	parent := t.TempDir()
++	root := filepath.Join(parent, "source")
++	require.NoError(t, os.Mkdir(root, 0700))
++	outside := filepath.Join(parent, "outside.txt")
++	require.NoError(t, os.WriteFile(outside, []byte("x"), 0600))
++	link := filepath.Join(root, "linked.txt")
++	require.NoError(t, os.Symlink(outside, link))
++	ledger := NewFactoryRuleLedger(root, filepath.Join(parent, "ledger.json"), strings.Repeat("c", 64))
++	ledger.Record(link, "rule", "attempted")
++	require.EqualValues(t, 1, ledger.invalidPaths)
++	require.Empty(t, ledger.rows)
++}

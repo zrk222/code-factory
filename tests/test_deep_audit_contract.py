@@ -277,6 +277,7 @@ def execution_fixture(tmp_path):
                 "memory_mib": 128,
                 "tool_version": "1.0",
                 "ruleset_sha256": "b" * 64,
+                **({"rule_ids": ["fixture-detection"]} if engine == "gitleaks" else {}),
             }
         )
     plan = {
@@ -500,6 +501,155 @@ def execution_bundle(lane, inventory, run_id):
     }
 
 
+def test_osv_coordinator_recomputes_native_accounting_and_rejects_drift():
+    from factoryline.deep_audit_sarif import (
+        _coverage_source_gaps,
+        _osv_source_accounting,
+    )
+
+    report = {
+        "results": [
+            {
+                "source": {"path": "requirements.txt"},
+                "packages": [
+                    {
+                        "package": {
+                            "name": "requests",
+                            "version": "2.31.0",
+                            "ecosystem": "PyPI",
+                        },
+                        "vulnerabilities": [],
+                    },
+                    {
+                        "package": {
+                            "name": "werkzeug",
+                            "version": "0.1",
+                            "ecosystem": "PyPI",
+                        },
+                        "vulnerabilities": [],
+                    },
+                ],
+            }
+        ]
+    }
+    required = {"requirements.txt": "a" * 64}
+    lane = {"engine": "osv", "mode": "offline-pypi-snapshot"}
+    coverage = {
+        "schema": "factory.deep-coverage.v1",
+        "sources": required,
+        "complete": True,
+        "errors": [],
+        "mode": lane["mode"],
+        "fallback": False,
+        "report_sha256": digest(report),
+        "source_accounting": _osv_source_accounting(report, required, lane["mode"]),
+    }
+    assert "OSV_SOURCE_ACCOUNTING_DRIFT" not in _coverage_source_gaps(
+        report, coverage, lane, required
+    )
+
+    sabotages = []
+    forged = json.loads(json.dumps(coverage))
+    forged["source_accounting"]["state"] = "COMPLETE_WITH_AUTHORITY"
+    sabotages.append((report, forged, required))
+    reordered = json.loads(json.dumps(coverage))
+    reordered["source_accounting"]["sources"]["requirements.txt"]["packages"].reverse()
+    sabotages.append((report, reordered, required))
+    count_changed = json.loads(json.dumps(coverage))
+    count_changed["source_accounting"]["sources"]["requirements.txt"][
+        "package_count"
+    ] += 1
+    sabotages.append((report, count_changed, required))
+    identity_report = json.loads(json.dumps(report))
+    identity_report["results"][0]["packages"][0]["package"]["version"] = "9.9"
+    identity_coverage = json.loads(json.dumps(coverage))
+    identity_coverage["report_sha256"] = digest(identity_report)
+    sabotages.append((identity_report, identity_coverage, required))
+    changed_required = {"requirements.txt": "b" * 64}
+    hash_coverage = json.loads(json.dumps(coverage))
+    hash_coverage["sources"] = changed_required
+    hash_coverage["report_sha256"] = digest(report)
+    sabotages.append((report, hash_coverage, changed_required))
+
+    for altered_report, altered_coverage, altered_required in sabotages:
+        gaps = _coverage_source_gaps(
+            altered_report, altered_coverage, lane, altered_required
+        )
+        assert "OSV_SOURCE_ACCOUNTING_DRIFT" in gaps
+
+
+def test_osv_coordinator_keeps_synthetic_empty_result_incomplete():
+    from factoryline.deep_audit_sarif import (
+        _coverage_source_gaps,
+        _osv_source_accounting,
+    )
+
+    report = {"results": []}
+    required = {"requirements.txt": "a" * 64}
+    lane = {"engine": "osv", "mode": "offline-pypi-snapshot"}
+    coverage = {
+        "schema": "factory.deep-coverage.v1",
+        "sources": required,
+        "complete": False,
+        "errors": [
+            "NATIVE_SOURCE_ACCOUNTING_REQUIRED",
+            "NATIVE_CHALLENGES_REQUIRED",
+        ],
+        "mode": lane["mode"],
+        "fallback": False,
+        "report_sha256": digest(report),
+        "source_accounting": _osv_source_accounting(report, required, lane["mode"]),
+    }
+    gaps = _coverage_source_gaps(report, coverage, lane, required)
+    assert "OSV_SOURCE_ACCOUNTING_DRIFT" not in gaps
+    assert "ANALYZER_INCOMPLETE" in gaps
+    assert coverage["source_accounting"]["state"] == "UNAVAILABLE"
+
+
+def test_osv_coordinator_rejects_boolean_and_float_package_counts():
+    from factoryline.deep_audit_sarif import (
+        _coverage_source_gaps,
+        _osv_source_accounting,
+    )
+
+    report = {
+        "results": [
+            {
+                "source": {"path": "requirements.txt"},
+                "packages": [
+                    {
+                        "package": {
+                            "name": "requests",
+                            "version": "2.31.0",
+                            "ecosystem": "PyPI",
+                        },
+                        "vulnerabilities": [],
+                    }
+                ],
+            }
+        ]
+    }
+    required = {"requirements.txt": "a" * 64}
+    lane = {"engine": "osv", "mode": "offline-pypi-snapshot"}
+    account = _osv_source_accounting(report, required, lane["mode"])
+    for forged_count in (True, 1.0):
+        forged = json.loads(json.dumps(account))
+        forged["sources"]["requirements.txt"]["package_count"] = forged_count
+        coverage = {
+            "schema": "factory.deep-coverage.v1",
+            "sources": required,
+            "complete": True,
+            "errors": [],
+            "mode": lane["mode"],
+            "fallback": False,
+            "report_sha256": digest(report),
+            "source_accounting": forged,
+        }
+        assert "OSV_SOURCE_ACCOUNTING_DRIFT" in _coverage_source_gaps(
+            report, coverage, lane, required
+        )
+
+
 def test_execution_manifest_and_signed_authorization(tmp_path):
     from factoryline.deep_audit_contract import load_execution_manifest
     from factoryline.deep_audit_attestation import verify_execution_authorization
@@ -512,6 +662,15 @@ def test_execution_manifest_and_signed_authorization(tmp_path):
         )["candidate_sha256"]
         == plan["candidate_sha256"]
     )
+    _, envelope_hash = verify_execution_authorization(
+        plan,
+        pin,
+        authorization,
+        trust,
+        plan["trust_root_sha256"],
+        return_envelope_sha256=True,
+    )
+    assert envelope_hash == digest(json.loads(authorization.read_text("utf-8")))
     with pytest.raises(RuntimeAuditError):
         verify_execution_authorization(
             plan, "0" * 64, authorization, trust, plan["trust_root_sha256"]
@@ -520,6 +679,489 @@ def test_execution_manifest_and_signed_authorization(tmp_path):
     manifest.write_text(json.dumps(plan), encoding="utf-8")
     with pytest.raises(RuntimeAuditError, match="E_ADAPTER_TEMPLATE"):
         load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
+
+
+def _v2_execution_plan(plan, inventory):
+    from factoryline.deep_audit_contract import V2_NATIVE_ROLES
+
+    plan["schema"] = "factory.deep-execution.v2"
+    for lane in plan["lanes"]:
+        lane["native_artifact_roles"] = sorted(V2_NATIVE_ROLES[lane["engine"]])
+        if lane["engine"] != "syft":
+            lane["rule_ids"] = ["fixture-detection"]
+            lane["mutation_config_sha256"] = {"fixture-detection": "c" * 64}
+    plan["obligations"] = [
+        item for item in plan["obligations"] if item["engine"] != "syft"
+    ]
+    sources = {item["path"]: item["sha256"] for item in inventory["files"]}
+    for obligation in plan["obligations"]:
+        for challenge in obligation["challenges"]:
+            path = challenge["fixture_path"]
+            challenge["fixture_sha256"] = sources[path]
+            challenge["fixture_manifest"] = {path: sources[path]}
+            challenge["fixture_manifest_sha256"] = digest({path: sources[path]})
+    return plan
+
+
+def test_execution_manifest_v2_binds_roles_and_fixture_manifest(tmp_path):
+    from factoryline.deep_audit_contract import load_execution_manifest
+
+    _, manifest, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    _v2_execution_plan(plan, inventory)
+    manifest.write_text(json.dumps(plan), encoding="utf-8")
+    pin = sha256_bytes(manifest.read_bytes())
+    assert load_execution_manifest(manifest, pin) == plan
+
+    plan["lanes"][0]["native_artifact_roles"] = ["sarif_report"]
+    manifest.write_text(json.dumps(plan), encoding="utf-8")
+    with pytest.raises(RuntimeAuditError, match="E_NATIVE_ROLE"):
+        load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
+
+
+def test_v2_trivy_native_policy_identity_is_optional_and_strict(tmp_path):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import load_execution_manifest
+
+    _, manifest, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    _v2_execution_plan(plan, inventory)
+    trivy = next(lane for lane in plan["lanes"] if lane["engine"] == "trivy")
+    original_ruleset = trivy["ruleset_sha256"]
+    policy = {"config_sha256": "e" * 64, "baseline_ignore_sha256": "f" * 64}
+    trivy["native_policy"] = policy
+    manifest.write_text(json.dumps(plan), encoding="utf-8")
+    assert (
+        load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes())) == plan
+    )
+    assert trivy["ruleset_sha256"] == original_ruleset
+
+    del trivy["native_policy"]
+    manifest.write_text(json.dumps(plan), encoding="utf-8")
+    assert (
+        load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes())) == plan
+    )
+
+    invalid_policies = [
+        {"config_sha256": "e" * 64},
+        {"config_sha256": "e" * 64, "baseline_ignore_sha256": "f" * 64, "extra": "x"},
+        {"config_sha256": "bad", "baseline_ignore_sha256": "f" * 64},
+        {"config_sha256": None, "baseline_ignore_sha256": "f" * 64},
+    ]
+    for invalid_policy in invalid_policies:
+        candidate = deepcopy(plan)
+        next(lane for lane in candidate["lanes"] if lane["engine"] == "trivy")[
+            "native_policy"
+        ] = invalid_policy
+        manifest.write_text(json.dumps(candidate), encoding="utf-8")
+        with pytest.raises(RuntimeAuditError):
+            load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
+
+    for schema, engine in (
+        ("factory.deep-execution.v2", "codeql"),
+        ("factory.deep-execution.v1", "trivy"),
+    ):
+        candidate = deepcopy(plan)
+        candidate["schema"] = schema
+        next(lane for lane in candidate["lanes"] if lane["engine"] == engine)[
+            "native_policy"
+        ] = policy
+        manifest.write_text(json.dumps(candidate), encoding="utf-8")
+        with pytest.raises(RuntimeAuditError):
+            load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
+
+
+def _signed_osv_v2_plan(tmp_path):
+    from factoryline.deep_audit_contract import _osv_suppression_bytes
+
+    _, manifest, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    _v2_execution_plan(plan, inventory)
+    lane = next(item for item in plan["lanes"] if item["engine"] == "osv")
+    lane["mode"] = "offline-pypi-snapshot"
+    lane["argv"] = [
+        "/opt/factory/bin/audit-adapter",
+        "osv",
+        "--mode",
+        "offline-pypi-snapshot",
+    ]
+    detector = lane["rule_ids"][0]
+    aliases = sorted([detector, "CVE-2026-0001", "GHSA-abcd-1234-efgh"])
+    lane["native_policy"] = {
+        "database_path": "/opt/factory/osv-db/osv-scanner/PyPI/all.zip",
+        "database_sha256": lane["ruleset_sha256"],
+        "baseline_config_sha256": sha256_bytes(b"\n"),
+        "advisory_aliases": {detector: aliases},
+    }
+    lane["mutation_config_sha256"] = {
+        detector: sha256_bytes(_osv_suppression_bytes(aliases))
+    }
+    target = {
+        "package": "werkzeug",
+        "ecosystem": "PyPI",
+        "vulnerable_version": "0.16.1",
+        "fixed_version": "0.16.2",
+        "aliases": aliases,
+    }
+    next(item for item in plan["obligations"] if item["engine"] == "osv")[
+        "osv_target"
+    ] = target
+    return manifest, plan, lane, target
+
+
+def _write_and_load_signed_osv_plan(manifest, plan):
+    from factoryline.deep_audit_contract import load_execution_manifest
+
+    manifest.write_text(json.dumps(plan), encoding="utf-8")
+    return load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
+
+
+def test_v2_signed_osv_policy_and_target_load_from_pinned_manifest(tmp_path):
+    from factoryline.deep_audit_contract import _osv_suppression_bytes
+
+    manifest, plan, lane, target = _signed_osv_v2_plan(tmp_path)
+    loaded = _write_and_load_signed_osv_plan(manifest, plan)
+    loaded_lane = next(item for item in loaded["lanes"] if item["engine"] == "osv")
+    loaded_obligation = next(
+        item for item in loaded["obligations"] if item["engine"] == "osv"
+    )
+    assert loaded_lane["native_policy"] == lane["native_policy"]
+    assert loaded_lane["mutation_config_sha256"] == lane["mutation_config_sha256"]
+    assert loaded_obligation["osv_target"] == target
+    assert _osv_suppression_bytes(target["aliases"]) == (
+        b'[[IgnoredVulns]]\nid = "CVE-2026-0001"\n\n'
+        b'[[IgnoredVulns]]\nid = "GHSA-abcd-1234-efgh"\n\n'
+        b'[[IgnoredVulns]]\nid = "fixture-detection"\n\n'
+    )
+
+
+def test_v1_osv_manifest_remains_valid_without_native_policy_or_target(tmp_path):
+    from factoryline.deep_audit_contract import load_execution_manifest
+
+    _, manifest, _, _, _, plan, _, _ = execution_fixture(tmp_path)
+    osv = next(item for item in plan["lanes"] if item["engine"] == "osv")
+    obligation = next(item for item in plan["obligations"] if item["engine"] == "osv")
+    assert "native_policy" not in osv
+    assert "osv_target" not in obligation
+    manifest.write_text(json.dumps(plan), encoding="utf-8")
+    loaded = load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
+    assert loaded == plan
+
+
+def test_v2_osv_policy_rejects_native_policy_and_target_sabotage(tmp_path):
+    from copy import deepcopy
+
+    from factoryline.deep_audit_contract import _osv_suppression_bytes
+
+    manifest, plan, lane, target = _signed_osv_v2_plan(tmp_path)
+    detector = lane["rule_ids"][0]
+
+    mutations = []
+    malformed_keys = deepcopy(plan)
+    malformed_keys["lanes"][[item["engine"] for item in plan["lanes"]].index("osv")][
+        "native_policy"
+    ]["unexpected"] = True
+    mutations.append(malformed_keys)
+
+    for key, invalid in (
+        ("database_path", "/src/osv-db/all.zip"),
+        ("database_sha256", "0" * 64),
+        ("baseline_config_sha256", "0" * 64),
+    ):
+        candidate = deepcopy(plan)
+        osv = next(item for item in candidate["lanes"] if item["engine"] == "osv")
+        osv["native_policy"][key] = invalid
+        mutations.append(candidate)
+
+    candidate = deepcopy(plan)
+    osv = next(item for item in candidate["lanes"] if item["engine"] == "osv")
+    osv["native_policy"].pop("database_path")
+    mutations.append(candidate)
+
+    candidate = deepcopy(plan)
+    osv = next(item for item in candidate["lanes"] if item["engine"] == "osv")
+    osv["native_policy"].pop("baseline_config_sha256")
+    mutations.append(candidate)
+
+    candidate = deepcopy(plan)
+    osv = next(item for item in candidate["lanes"] if item["engine"] == "osv")
+    osv["native_policy"]["advisory_aliases"] = {"another-rule": ["another-rule"]}
+    mutations.append(candidate)
+
+    candidate = deepcopy(plan)
+    osv = next(item for item in candidate["lanes"] if item["engine"] == "osv")
+    osv["mode"] = "online-pypi"
+    mutations.append(candidate)
+
+    target_mutations = []
+    target_missing = deepcopy(plan)
+    next(item for item in target_missing["obligations"] if item["engine"] == "osv").pop(
+        "osv_target"
+    )
+    target_mutations.append(target_missing)
+    policy_missing = deepcopy(plan)
+    next(item for item in policy_missing["lanes"] if item["engine"] == "osv").pop(
+        "native_policy"
+    )
+    target_mutations.append(policy_missing)
+
+    for field, invalid in (
+        ("ecosystem", "npm"),
+        ("package", "Werkzeug"),
+        ("package", "a--b"),
+        ("package", "../werkzeug"),
+        ("vulnerable_version", "0.16.1\n--config"),
+        ("fixed_version", "0.16.1"),
+        ("aliases", sorted(["CVE-2026-0002", detector, "GHSA-abcd-1234-efgh"])),
+    ):
+        candidate = deepcopy(plan)
+        osv_target = next(
+            item for item in candidate["obligations"] if item["engine"] == "osv"
+        )["osv_target"]
+        osv_target[field] = invalid
+        target_mutations.append(candidate)
+
+    for candidate in mutations + target_mutations:
+        with pytest.raises(RuntimeAuditError):
+            _write_and_load_signed_osv_plan(manifest, candidate)
+
+    # Recomputed suppression hashes are required for every exact alias set.
+    for aliases in (
+        ["CVE-2026-0001", detector, "GHSA-abcd-1234-efgh"],
+        ["CVE-2026-0001", "CVE-2026-0001", detector],
+        ["CVE-2026-0001", "GHSA-abcd-1234-efgh"],
+    ):
+        candidate = deepcopy(plan)
+        osv = next(item for item in candidate["lanes"] if item["engine"] == "osv")
+        osv["native_policy"]["advisory_aliases"][detector] = aliases
+        with pytest.raises(RuntimeAuditError):
+            _write_and_load_signed_osv_plan(manifest, candidate)
+
+    for mutation in (
+        {},
+        {"another-rule": "a" * 64},
+        {detector: sha256_bytes(_osv_suppression_bytes(["CVE-2026-0002", detector]))},
+        {detector: "not-a-digest"},
+    ):
+        candidate = deepcopy(plan)
+        osv = next(item for item in candidate["lanes"] if item["engine"] == "osv")
+        osv["mutation_config_sha256"] = mutation
+        with pytest.raises(RuntimeAuditError):
+            _write_and_load_signed_osv_plan(manifest, candidate)
+
+
+def test_v2_osv_policy_rejects_cross_target_advisory_alias_overlap(tmp_path):
+    from copy import deepcopy
+
+    from factoryline.deep_audit_contract import _osv_suppression_bytes
+
+    manifest, plan, _, _ = _signed_osv_v2_plan(tmp_path)
+    candidate = deepcopy(plan)
+    lane = next(item for item in candidate["lanes"] if item["engine"] == "osv")
+    first, second = sorted(["fixture-detection", "osv-secondary"])
+    aliases_one = sorted([first, "CVE-2026-0001"])
+    aliases_two = sorted([second, "CVE-2026-0001"])
+    lane["rule_ids"] = [first, second]
+    lane["native_policy"]["advisory_aliases"] = {
+        first: aliases_one,
+        second: aliases_two,
+    }
+    lane["mutation_config_sha256"] = {
+        first: sha256_bytes(_osv_suppression_bytes(aliases_one)),
+        second: sha256_bytes(_osv_suppression_bytes(aliases_two)),
+    }
+    target_obligation = next(
+        item for item in candidate["obligations"] if item["engine"] == "osv"
+    )
+    target_obligation["detector_rule_id"] = first
+    target_obligation["osv_target"]["aliases"] = aliases_one
+    with pytest.raises(RuntimeAuditError, match="E_OSV_TARGET"):
+        _write_and_load_signed_osv_plan(manifest, candidate)
+
+
+@pytest.mark.parametrize("malformed", [None, [], 7])
+def test_v2_osv_manifest_rejects_malformed_obligation_without_crashing(
+    tmp_path, malformed
+):
+    from copy import deepcopy
+
+    manifest, plan, _, _ = _signed_osv_v2_plan(tmp_path)
+    candidate = deepcopy(plan)
+    index = next(
+        index
+        for index, item in enumerate(candidate["obligations"])
+        if item["engine"] == "osv"
+    )
+    candidate["obligations"][index] = malformed
+    with pytest.raises(RuntimeAuditError):
+        _write_and_load_signed_osv_plan(manifest, candidate)
+
+
+@pytest.mark.parametrize("policy_enabled", [False, True])
+def test_v2_osv_signed_policy_metadata_never_verifies_native_challenge(
+    policy_enabled,
+):
+    from factoryline.deep_audit_sarif import _challenge_execution_v2_valid
+
+    lane = {"engine": "osv"}
+    if policy_enabled:
+        lane["native_policy"] = {"database_path": "pinned"}
+    assert not _challenge_execution_v2_valid(
+        {"status": "VERIFIED", "native_artifacts": {}},
+        {"report": {"native_report": {}}},
+        {},
+        {},
+        ("obligation-osv", "positive"),
+        lane,
+        {"source_accounting": {"state": "COMPLETE"}},
+        "a" * 64,
+    )
+
+
+def test_v2_role_tables_match_native_helper_and_report_roles():
+    from factoryline.deep_audit_contract import V2_NATIVE_ROLES
+    from factoryline.deep_audit_sarif import _NATIVE_REPORT_ROLES
+    from factoryline.runtime_audit_common import (
+        NATIVE_ARTIFACT_ROLES,
+        NATIVE_REPORT_ROLE,
+    )
+
+    assert V2_NATIVE_ROLES == NATIVE_ARTIFACT_ROLES
+    assert _NATIVE_REPORT_ROLES == NATIVE_REPORT_ROLE
+
+
+def test_semgrep_pattern_limited_is_supplemental_to_full_static_lane(tmp_path):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import _execution_lanes
+
+    _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    supplemental = deepcopy(plan["lanes"][0])
+    supplemental.update(
+        id="semgrep",
+        engine="semgrep",
+        mode="pattern-limited",
+        argv=[
+            "/opt/factory/bin/audit-adapter",
+            "semgrep",
+            "--mode",
+            "pattern-limited",
+        ],
+    )
+    plan["lanes"].append(supplemental)
+    _v2_execution_plan(plan, inventory)
+
+    accepted = _execution_lanes(plan["lanes"], 2)
+
+    assert any(
+        lane["engine"] == "semgrep" and lane["mode"] == "pattern-limited"
+        for lane in accepted
+    )
+    assert any(
+        lane["family"] == "static" and lane["mode"] == "interprocedural-full"
+        for lane in accepted
+    )
+
+
+def test_semgrep_pattern_limited_cannot_replace_full_static_lane(tmp_path):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import _execution_lanes
+
+    _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    supplemental = deepcopy(plan["lanes"][0])
+    supplemental.update(
+        id="semgrep",
+        engine="semgrep",
+        mode="pattern-limited",
+        argv=[
+            "/opt/factory/bin/audit-adapter",
+            "semgrep",
+            "--mode",
+            "pattern-limited",
+        ],
+    )
+    plan["lanes"].append(supplemental)
+    _v2_execution_plan(plan, inventory)
+    plan["lanes"] = [lane for lane in plan["lanes"] if lane["engine"] != "codeql"]
+
+    with pytest.raises(RuntimeAuditError, match="E_EXECUTION_DEPTH"):
+        _execution_lanes(plan["lanes"], 2)
+
+
+def test_pattern_limited_mode_remains_rejected_for_other_static_engines():
+    from factoryline.deep_audit_contract import _validate_lane_mode
+
+    lane = {
+        "engine": "codeql",
+        "family": "static",
+        "mode": "pattern-limited",
+        "argv": [
+            "/opt/factory/bin/audit-adapter",
+            "codeql",
+            "--mode",
+            "pattern-limited",
+        ],
+    }
+    with pytest.raises(RuntimeAuditError, match="E_ANALYSIS_MODE"):
+        _validate_lane_mode(lane)
+
+
+def test_execution_manifest_v2_rejects_fixture_drift_and_syft_detector(tmp_path):
+    from factoryline.deep_audit_contract import load_execution_manifest
+
+    _, manifest, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    _v2_execution_plan(plan, inventory)
+    challenge = plan["obligations"][0]["challenges"][0]
+    challenge["fixture_manifest_sha256"] = "0" * 64
+    manifest.write_text(json.dumps(plan), encoding="utf-8")
+    with pytest.raises(RuntimeAuditError, match="E_CHALLENGE_MANIFEST"):
+        load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
+
+    _v2_execution_plan(plan, inventory)
+    plan["obligations"].append(
+        {
+            "id": "syft-detector",
+            "engine": "syft",
+            "family": "dependencies",
+            "detector_rule_id": "fixture-detection",
+            "paths": ["app.py"],
+            "requirements": ["app.py"],
+            "remediation": "Inventory only.",
+            "challenges": [],
+        }
+    )
+    manifest.write_text(json.dumps(plan), encoding="utf-8")
+    with pytest.raises(RuntimeAuditError, match="E_CHALLENGE_ENGINE"):
+        load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
+
+
+def test_scan_rejects_authorization_changed_after_signature_verification(
+    tmp_path, monkeypatch
+):
+    import factoryline.deep_audit as module
+    import factoryline.deep_audit_attestation as attestation
+
+    root, manifest, pin, authorization, trust, plan, _, _ = execution_fixture(tmp_path)
+    original = attestation.verify_execution_authorization
+
+    def verify_then_change(*args, **kwargs):
+        result = original(*args, **kwargs)
+        document = json.loads(authorization.read_text("utf-8"))
+        document["payload"] = (
+            "A" if document["payload"][0] != "A" else "B"
+        ) + document["payload"][1:]
+        authorization.write_text(json.dumps(document), encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(
+        attestation, "verify_execution_authorization", verify_then_change
+    )
+    monkeypatch.setattr(module, "_docker_base", lambda: pytest.fail("must not launch"))
+    with pytest.raises(RuntimeAuditError, match="E_EXECUTION_AUTHORIZATION_DRIFT"):
+        module.scan_deep_audit(
+            root,
+            manifest,
+            pin,
+            authorization=authorization,
+            trust_root=trust,
+            trust_root_sha256=plan["trust_root_sha256"],
+        )
 
 
 def test_inventory_accounts_ignored_deleted_unknown_and_dirty_inputs(tmp_path):
@@ -576,12 +1218,11 @@ def test_execution_rejects_parser_downgrade_and_missing_mutations(tmp_path):
     _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
     lane = plan["lanes"][0]
     bundle = execution_bundle(lane, inventory, "0" * 32)
-    assert (
-        normalize_execution_bundle(
-            bundle, lane, inventory, "0" * 32, plan["obligations"]
-        )["state"]
-        == "OBSERVED"
+    initial = normalize_execution_bundle(
+        bundle, lane, inventory, "0" * 32, plan["obligations"]
     )
+    assert initial["state"] == "INCOMPLETE"
+    assert initial["gaps"] == ["CODEQL_NATIVE_ARTIFACTS_UNVERIFIED"]
     bundle["artifacts"]["coverage.json"]["fallback"] = True
     bundle["artifacts"]["challenges.json"]["observations"].pop()
     result = normalize_execution_bundle(
@@ -700,7 +1341,14 @@ def test_execution_native_errors_cannot_pass(tmp_path, engine):
     result = normalize_execution_bundle(
         bundle, lane, inventory, "0" * 32, plan["obligations"]
     )
-    assert result["state"] == "OBSERVED"
+    if engine == "codeql":
+        assert result["state"] == "INCOMPLETE"
+        assert result["gaps"] == ["CODEQL_NATIVE_ARTIFACTS_UNVERIFIED"]
+    elif engine == "osv":
+        assert result["state"] == "INCOMPLETE"
+        assert "OSV_NATIVE_ARTIFACTS_UNVERIFIED" in result["gaps"]
+    else:
+        assert result["state"] == "OBSERVED"
     assert result["obligations"] == [lane["engine"]]
     report = bundle["artifacts"]["report.json"]
     if engine == "codeql":
@@ -714,6 +1362,300 @@ def test_execution_native_errors_cannot_pass(tmp_path, engine):
         normalize_execution_bundle(
             bundle, lane, inventory, "0" * 32, plan["obligations"]
         )
+
+
+def _execute_lane_replay_case(
+    tmp_path,
+    monkeypatch,
+    *,
+    replay_action=None,
+    cleanup_succeeds=True,
+    engine="codeql",
+    gaps=None,
+    worker_replay_claim=False,
+):
+    import factoryline.deep_audit as module
+    import factoryline.deep_audit_sarif as sarif
+
+    from factoryline.runtime_audit_common import canonical_bytes
+
+    root, _, pin, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    lane = next(item for item in plan["lanes"] if item["engine"] == engine)
+    run_id = "b" * 32
+    bundle = execution_bundle(lane, inventory, run_id)
+    if worker_replay_claim:
+        bundle["artifacts"][lane["coverage"]]["native_replay"] = {
+            "state": "VERIFIED",
+            "authority": "worker-claim",
+        }
+    raw = canonical_bytes(bundle)
+    events, replay_calls = [], []
+    directory = root / ".factory" / "test-run"
+    directory.mkdir(parents=True)
+    state = {
+        "run_id": run_id,
+        "manifest_sha256": pin,
+        "active_lane": lane["id"],
+    }
+
+    monkeypatch.setattr(module, "_docker_base", lambda: ["docker"])
+    monkeypatch.setattr(module, "_docker_preflight", lambda base, item: None)
+    monkeypatch.setattr(module, "_container_argv", lambda *args: ["docker", "run"])
+    monkeypatch.setattr(module, "_monitor_lane", lambda *args: None)
+
+    def cleanup(base, name):
+        events.append("cleanup")
+        return cleanup_succeeds
+
+    monkeypatch.setattr(module, "_container_cleanup", cleanup)
+
+    def run(argv, cwd, timeout, scratch, *, stdout_path, cancelled):
+        stdout_path.write_bytes(raw)
+        return {
+            "exit_code": 0,
+            "timed_out": False,
+            "output_limit_exceeded": False,
+            "cleanup_confirmed": True,
+            "cancelled": False,
+        }
+
+    monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
+    monkeypatch.setattr(
+        sarif,
+        "normalize_execution_bundle",
+        lambda *args: {
+            "lane_id": lane["id"],
+            "state": "INCOMPLETE" if gaps else "OBSERVED",
+            "findings": [],
+            "gaps": list(gaps or []),
+        },
+    )
+
+    def replay(*args, **kwargs):
+        events.append("replay")
+        replay_calls.append((args, kwargs))
+        if isinstance(replay_action, BaseException):
+            raise replay_action
+        if callable(replay_action):
+            return replay_action(*args, **kwargs)
+        return replay_action or {"state": "VERIFIED", "authority": "host"}
+
+    monkeypatch.setattr(module, "_replay_codeql_lane", replay, raising=False)
+    result = module._execute_lane(
+        root,
+        directory,
+        state,
+        root,
+        lane,
+        inventory,
+        {"obligations": plan["obligations"]},
+        lambda event: None,
+    )
+    return result, events, replay_calls, bundle
+
+
+def test_execute_lane_replays_codeql_only_after_container_cleanup(
+    tmp_path, monkeypatch
+):
+    result, events, calls, _ = _execute_lane_replay_case(
+        tmp_path,
+        monkeypatch,
+        gaps=["CODEQL_NATIVE_REPLAY_REQUIRED", "UNRELATED_GAP"],
+    )
+    assert events == ["cleanup", "replay"]
+    assert len(calls) == 1
+    assert result["gaps"] == ["UNRELATED_GAP"]
+    assert result["state"] == "INCOMPLETE"
+    assert result["codeql_replay"] == {"state": "VERIFIED", "authority": "host"}
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RuntimeAuditError("E_CODEQL_REPLAY_UNAVAILABLE", "missing"),
+        RuntimeAuditError("E_CODEQL_REPLAY_MALFORMED", "invalid output"),
+        RuntimeAuditError("E_ADAPTER_TIMEOUT", "expired"),
+        RuntimeAuditError("E_CODEQL_REPLAY_CLEANUP", "uncertain cleanup"),
+        {"state": "MALFORMED"},
+    ],
+)
+def test_execute_lane_replay_failure_keeps_codeql_incomplete(
+    tmp_path, monkeypatch, failure
+):
+    result, events, calls, _ = _execute_lane_replay_case(
+        tmp_path,
+        monkeypatch,
+        replay_action=failure,
+        gaps=["CODEQL_NATIVE_REPLAY_REQUIRED"],
+    )
+    assert events == ["cleanup", "replay"]
+    assert len(calls) == 1
+    assert result["state"] == "INCOMPLETE"
+    assert "CODEQL_NATIVE_REPLAY_FAILED" in result["gaps"]
+    assert result["codeql_replay"]["state"] == "INCOMPLETE"
+    assert result["codeql_replay"]["diagnostic_code"]
+
+
+@pytest.mark.parametrize(
+    "failure_kind,exit_code,cleanup_succeeds",
+    [("native_exit", 7, True), ("docker_cleanup", 0, False)],
+)
+def test_replay_failure_retains_safe_execution_receipt(
+    tmp_path, monkeypatch, failure_kind, exit_code, cleanup_succeeds
+):
+    import threading
+    import time
+
+    import factoryline.deep_audit as module
+
+    lane = {
+        "id": "codeql-replay-test",
+        "engine": "codeql",
+        "coverage": "coverage.json",
+        "report": "report.sarif",
+        "timeout_seconds": 30,
+        "image": "sha256:" + "a" * 64,
+    }
+    inventory = {"candidate_sha256": "b" * 64}
+    bundle = {"artifacts": {"coverage.json": {}, "report.sarif": {}}}
+    snapshot = tmp_path / "source snapshot private path"
+    snapshot.mkdir()
+    runtime = tmp_path / "trusted runtime"
+    runtime.mkdir()
+    stdout = b"private replay stdout"
+    stderr = b"private replay stderr"
+    facts = {
+        "exit_code": exit_code,
+        "timed_out": False,
+        "timeout_seconds": 30,
+        "duration_ms": 12,
+        "launch_error": False,
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": True,
+        "stdout_sha256": sha256_bytes(stdout),
+        "stderr_sha256": sha256_bytes(stderr),
+        "stdout_bytes": len(stdout),
+        "stderr_bytes": len(stderr),
+        "cancelled": False,
+    }
+    monkeypatch.setattr(module, "_docker_preflight", lambda *args: None)
+    monkeypatch.setattr(
+        module, "_codeql_replay_runtime", lambda scratch: (runtime, "c" * 64)
+    )
+    monkeypatch.setattr(
+        module, "_codeql_replay_argv", lambda *args: ["docker", "run", str(snapshot)]
+    )
+    monkeypatch.setattr(
+        module,
+        "_container_cleanup",
+        lambda *args: cleanup_succeeds,
+    )
+
+    def run(argv, cwd, timeout, scratch, *, stdout_path, cancelled):
+        stdout_path.write_bytes(stdout)
+        return facts
+
+    monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
+    with pytest.raises(RuntimeAuditError) as caught:
+        module._replay_codeql_lane(
+            ["docker"],
+            lane,
+            snapshot,
+            bundle,
+            inventory,
+            "d" * 32,
+            threading.Event(),
+        )
+
+    error = caught.value
+    evidence = error.replay_evidence
+    assert evidence["image"] == lane["image"]
+    assert evidence["runtime_sha256"] == "c" * 64
+    assert len(evidence["command_sha256"]) == 64
+    assert evidence["execution"] == facts
+    assert evidence["cleanup_confirmed"] is cleanup_succeeds
+    rendered = repr(evidence)
+    assert "private replay stdout" not in rendered
+    assert "private replay stderr" not in rendered
+    assert str(snapshot) not in rendered
+    assert str(runtime) not in rendered
+
+    monkeypatch.setattr(module, "_monitor_lane", lambda *args: None)
+    result = {
+        "gaps": ["CODEQL_NATIVE_REPLAY_REQUIRED"],
+        "state": "INCOMPLETE",
+    }
+    monkeypatch.setattr(
+        module,
+        "_replay_codeql_lane",
+        lambda *args, **kwargs: (_ for _ in ()).throw(error),
+    )
+    directory = tmp_path / "run"
+    directory.mkdir()
+    module._codeql_replay_result(
+        result,
+        ["docker"],
+        lane,
+        snapshot,
+        bundle,
+        inventory,
+        "d" * 32,
+        threading.Event(),
+        time.monotonic() + 60,
+        (directory, {"active_lane": lane["id"]}, lambda event: None),
+    )
+    assert result["state"] == "INCOMPLETE"
+    assert "CODEQL_NATIVE_REPLAY_REQUIRED" in result["gaps"]
+    assert "CODEQL_NATIVE_REPLAY_FAILED" in result["gaps"]
+    assert result["codeql_replay"]["evidence"] == evidence
+    rendered_result = repr(result)
+    assert "private replay stdout" not in rendered_result
+    assert "private replay stderr" not in rendered_result
+    assert str(snapshot) not in rendered_result
+    assert str(runtime) not in rendered_result
+
+
+def test_execute_lane_cleanup_failure_skips_codeql_replay(tmp_path, monkeypatch):
+    replayed = []
+    with pytest.raises(RuntimeAuditError, match="E_CONTAINER_CLEANUP"):
+        _execute_lane_replay_case(
+            tmp_path,
+            monkeypatch,
+            cleanup_succeeds=False,
+            gaps=["CODEQL_NATIVE_REPLAY_REQUIRED"],
+            replay_action=lambda *args: replayed.append(args),
+        )
+    assert replayed == []
+
+
+def test_execute_lane_ignores_worker_replay_claim_and_requires_host_replay(
+    tmp_path, monkeypatch
+):
+    result, events, calls, bundle = _execute_lane_replay_case(
+        tmp_path,
+        monkeypatch,
+        gaps=["CODEQL_NATIVE_REPLAY_REQUIRED"],
+        worker_replay_claim=True,
+    )
+    assert bundle["artifacts"]["coverage.json"]["native_replay"]["authority"] == (
+        "worker-claim"
+    )
+    assert events == ["cleanup", "replay"]
+    assert len(calls) == 1
+    assert "CODEQL_NATIVE_REPLAY_REQUIRED" not in result["gaps"]
+    assert result["codeql_replay"]["authority"] == "host"
+
+
+@pytest.mark.parametrize("engine,gaps", [("syft", ["OTHER_GAP"]), ("codeql", [])])
+def test_execute_lane_skips_replay_when_not_required(
+    tmp_path, monkeypatch, engine, gaps
+):
+    result, events, calls, _ = _execute_lane_replay_case(
+        tmp_path, monkeypatch, engine=engine, gaps=gaps
+    )
+    assert events == ["cleanup"]
+    assert calls == []
+    assert result["gaps"] == gaps
 
 
 @pytest.mark.parametrize("change", ["golden", "fixture", "exit", "boolean"])
@@ -910,7 +1852,10 @@ def test_execution_role_trust_cannot_be_self_declared(tmp_path):
 
 @pytest.mark.parametrize("engine", ["syft", "osv"])
 def test_native_dependency_reports_cannot_omit_declared_input(tmp_path, engine):
-    from factoryline.deep_audit_sarif import normalize_execution_bundle
+    from factoryline.deep_audit_sarif import (
+        _osv_source_accounting,
+        normalize_execution_bundle,
+    )
 
     _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
     lane = next(item for item in plan["lanes"] if item["engine"] == engine)
@@ -920,11 +1865,72 @@ def test_native_dependency_reports_cannot_omit_declared_input(tmp_path, engine):
         report["artifacts"][0]["locations"].pop()
     else:
         report["results"].pop()
-    bundle["artifacts"]["coverage.json"]["report_sha256"] = digest(report)
-    with pytest.raises(RuntimeAuditError, match="E_DEPENDENCY_COVERAGE"):
-        normalize_execution_bundle(
+        lane["mode"] = "offline-pypi-snapshot"
+        coverage = bundle["artifacts"]["coverage.json"]
+        coverage["mode"] = lane["mode"]
+        coverage["complete"] = False
+        coverage["errors"] = ["NATIVE_SOURCE_ACCOUNTING_REQUIRED"]
+        coverage["report_sha256"] = digest(report)
+        expected_accounting = _osv_source_accounting(
+            report,
+            {item["path"]: item["sha256"] for item in inventory["files"]},
+            lane["mode"],
+        )
+        coverage["source_accounting"] = expected_accounting
+    if engine == "syft":
+        bundle["artifacts"]["coverage.json"]["report_sha256"] = digest(report)
+        with pytest.raises(RuntimeAuditError, match="E_DEPENDENCY_COVERAGE"):
+            normalize_execution_bundle(
+                bundle, lane, inventory, "0" * 32, plan["obligations"]
+            )
+    else:
+        observed = normalize_execution_bundle(
             bundle, lane, inventory, "0" * 32, plan["obligations"]
         )
+        assert observed["state"] == "INCOMPLETE"
+        assert "OSV_SOURCE_ACCOUNTING_INCOMPLETE" in observed["gaps"]
+        assert observed["covered_paths"] == expected_accounting["measured_paths"]
+        assert observed["covered_paths"] != sorted(
+            item["path"] for item in inventory["files"]
+        )
+        assert observed["source_accounting"] == expected_accounting
+
+
+def test_osv_normalization_exposes_empty_packages_despite_forged_complete_flag(
+    tmp_path,
+):
+    from factoryline.deep_audit_sarif import (
+        _osv_source_accounting,
+        normalize_execution_bundle,
+    )
+
+    _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    lane = next(item for item in plan["lanes"] if item["engine"] == "osv")
+    lane["mode"] = "offline-pypi-snapshot"
+    bundle = execution_bundle(lane, inventory, "0" * 32)
+    report = bundle["artifacts"]["report.json"]
+    report["results"][0]["packages"] = []
+    required = {item["path"]: item["sha256"] for item in inventory["files"]}
+    account = _osv_source_accounting(report, required, lane["mode"])
+    coverage = bundle["artifacts"]["coverage.json"]
+    coverage.update(
+        {
+            "complete": True,
+            "errors": [],
+            "mode": lane["mode"],
+            "report_sha256": digest(report),
+            "source_accounting": account,
+        }
+    )
+
+    observed = normalize_execution_bundle(
+        bundle, lane, inventory, "0" * 32, plan["obligations"]
+    )
+    assert observed["state"] == "INCOMPLETE"
+    assert "OSV_SOURCE_ACCOUNTING_INCOMPLETE" in observed["gaps"]
+    assert observed["source_accounting"] == account
+    assert observed["covered_paths"] == account["measured_paths"]
+    assert observed["findings"] == []
 
 
 def test_execution_osv_preserves_package_advisory_and_fixed_version(tmp_path):
@@ -1027,7 +2033,9 @@ def test_runtime_and_fuzz_metrics_survive_normalized_projection(
         bundle, lane, inventory, "0" * 32, plan["obligations"]
     )
 
-    assert result["state"] == "OBSERVED"
+    assert result["state"] == ("INCOMPLETE" if engine == "atheris" else "OBSERVED")
+    if engine == "atheris":
+        assert "FUZZ_NATIVE_CORPUS_UNVERIFIED" in result["gaps"]
     assert result["metrics"] == expected_metrics
     assert result["authority"] == "none"
 
@@ -1184,7 +2192,7 @@ def test_execution_sarif_defaults_preserve_original_hashes(tmp_path, surface):
     result = normalize_execution_bundle(
         bundle, lane, inventory, "0" * 32, plan["obligations"]
     )
-    assert not result["gaps"], result["gaps"]
+    assert result["gaps"] == ["CODEQL_NATIVE_ARTIFACTS_UNVERIFIED"]
     assert bundle == original
 
 
@@ -1288,7 +2296,17 @@ def test_pause_stops_between_lanes_and_resume_revalidates(tmp_path, monkeypatch)
     assert retried["parent_run"] == result["run_id"]
     assert retried["run_id"] != result["run_id"] and len(calls) == 2
     with pytest.raises(RuntimeAuditError, match="E_RESUME_DRIFT"):
-        module._check_resume(root, result["run_id"], "0" * 64, plan, None, None)
+        from factoryline.deep_audit_io import read_run_json, run_directory
+
+        module._check_resume(
+            root,
+            result["run_id"],
+            "0" * 64,
+            plan,
+            None,
+            read_run_json,
+            run_directory,
+        )
 
 
 @pytest.mark.parametrize("after,limit", [(-1, 100), (True, 100), (0, 0), (0, 501)])

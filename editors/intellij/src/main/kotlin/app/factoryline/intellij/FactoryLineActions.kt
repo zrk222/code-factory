@@ -543,6 +543,131 @@ object FactoryLineController {
         }
     }
 
+    fun approveRepair(
+        project: Project,
+        scope: RepairScopeSummary?,
+        candidate: RepairCandidateSummary?,
+        approvedBy: String,
+        expiresAt: String,
+        image: String,
+        digest: String,
+        checks: String,
+        onCompleted: ((CommandResult) -> Unit)? = null,
+    ): Boolean {
+        val selectedScope = scope ?: run {
+            Messages.showInfoMessage(project, "Prepare a trusted scope before approving a repair.", "FactoryLine Repair Sandbox")
+            return false
+        }
+        val selectedCandidate = candidate ?: run {
+            Messages.showInfoMessage(project, "Validate a candidate patch before approving a repair.", "FactoryLine Repair Sandbox")
+            return false
+        }
+        val root = project.basePath?.let(Path::of) ?: run {
+            Messages.showErrorDialog(project, "FactoryLine needs a local project workspace path.", "FactoryLine")
+            return false
+        }
+        val scopePath = selectedScope.artifactPaths.firstOrNull { it.endsWith(".json", ignoreCase = true) }
+            ?.let { WorkspacePath.resolve(root, it) } ?: run {
+            Messages.showErrorDialog(project, "The sealed scope JSON is unavailable inside this workspace.", "FactoryLine Repair Sandbox")
+            return false
+        }
+        val checksPath = WorkspacePath.resolve(root, checks) ?: run {
+            Messages.showErrorDialog(project, "The checks file must resolve inside this workspace.", "FactoryLine Repair Sandbox")
+            return false
+        }
+        val reviewedChecks = RepairApprovalInputValidation.checks(checksPath) ?: run {
+            Messages.showErrorDialog(project, "Checks must be a regular workspace JSON file with 2–16 valid positive/negative checks and exact failure signatures.", "FactoryLine Repair Sandbox")
+            return false
+        }
+        val expiryInstant = runCatching { java.time.OffsetDateTime.parse(expiresAt.trim()).toInstant() }.getOrNull()
+        if (approvedBy.isBlank() || !RepairApprovalInputValidation.validImage(image.trim(), digest.trim()) ||
+            expiryInstant == null || !expiryInstant.isAfter(java.time.Instant.now()) ||
+            !Regex("[a-f0-9]{64}").matches(selectedCandidate.candidateSha256) || selectedCandidate.scopeSha256 != selectedScope.scopeSha256) {
+            Messages.showErrorDialog(project, "Operator, pinned image digest, future timezone expiry, and matching candidate/scope hashes are required.", "FactoryLine Repair Sandbox")
+            return false
+        }
+        val confirmation = "APPROVE REPAIR ${selectedCandidate.candidateSha256}"
+        val details = buildString {
+            appendLine("Candidate SHA-256: ${selectedCandidate.candidateSha256}")
+            appendLine("Scope SHA-256: ${selectedCandidate.scopeSha256}")
+            appendLine("Patch: ${selectedCandidate.patchPath}")
+            appendLine("Touched paths: ${selectedCandidate.touchedPaths.joinToString()}")
+            appendLine("Checks: ${checksPath.fileName}")
+            reviewedChecks.descriptions.forEach { appendLine("  $it") }
+            appendLine("Checks SHA-256: ${reviewedChecks.sha256}")
+            appendLine("Container: $image@sha256:$digest")
+            appendLine("Expires: $expiresAt")
+            appendLine("Operator: $approvedBy")
+            appendLine("Exact confirmation: $confirmation")
+            append("This records permission for one isolated repair run; it does not merge, publish, or deploy.")
+        }
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Approve exact repair candidate", details)) return false
+        val patch = WorkspacePath.resolve(root, selectedCandidate.patchPath) ?: run {
+            Messages.showErrorDialog(project, "The candidate patch must stay inside the workspace.", "FactoryLine Repair Sandbox")
+            return false
+        }
+        runBackground(project, "Approve Repair", onCompleted = onCompleted ?: { FactoryLinePanels.showRepairSandbox(project, it) }) {
+            FactoryLineRunner.repairApprove(
+                project, scopePath, patch, approvedBy.trim(), expiresAt.trim(), image.trim(), digest.trim(),
+                checksPath, reviewedChecks.sha256, selectedCandidate.candidateSha256,
+            )
+        }
+        return true
+    }
+
+    fun runApprovedRepair(project: Project, approval: RepairApprovalSummary?, candidate: RepairCandidateSummary?, onConfirmed: () -> Boolean = { true }) {
+        val selectedApproval = approval ?: run {
+            Messages.showInfoMessage(project, "Approve one exact candidate before running it.", "FactoryLine Repair Sandbox")
+            return
+        }
+        val selectedCandidate = candidate ?: run {
+            Messages.showInfoMessage(project, "A validated candidate summary is required before running.", "FactoryLine Repair Sandbox")
+            return
+        }
+        val details = "Approval SHA-256: ${selectedApproval.approvalSha256}\n" +
+            "Candidate SHA-256: ${selectedCandidate.candidateSha256}\n" +
+            "Patch: ${selectedCandidate.patchPath}\n" +
+            "This applies the approved patch in an isolated disposable worktree and runs the approved checks."
+        if (!FactoryLineExecutionConfirmation.confirm(project, "Run approved isolated repair", details)) return
+        if (!onConfirmed()) return
+        runBackground(project, "Run Approved Repair", onCompleted = { FactoryLinePanels.showRepairSandbox(project, it) }) {
+            FactoryLineRunner.repairRun(project, Path.of(selectedApproval.path))
+        }
+    }
+
+    fun revokeRepairApproval(project: Project, approval: RepairApprovalSummary?, requestedBy: String, reason: String) {
+        approvalAction(project, approval, requestedBy, reason, stop = false)
+    }
+
+    fun stopRepairAttempt(project: Project, approval: RepairApprovalSummary?, requestedBy: String, reason: String) {
+        approvalAction(project, approval, requestedBy, reason, stop = true)
+    }
+
+    private fun approvalAction(
+        project: Project,
+        approval: RepairApprovalSummary?,
+        requestedBy: String,
+        reason: String,
+        stop: Boolean,
+    ) {
+        val selected = approval ?: run {
+            Messages.showInfoMessage(project, "No verified approval is selected.", "FactoryLine Repair Sandbox")
+            return
+        }
+        val title = if (stop) "Request repair stop" else "Revoke repair approval"
+        val detail = "Approval SHA-256: ${selected.approvalSha256}\nOperator: $requestedBy\nReason: $reason\n" +
+            if (stop) "The active bounded attempt will stop at its next control boundary." else "This approval cannot be run after revocation."
+        if (!FactoryLineExecutionConfirmation.confirm(project, title, detail)) return
+        runBackground(
+            project,
+            if (stop) "Stop Repair Attempt" else "Revoke Repair Approval",
+            onCompleted = { FactoryLinePanels.showRepairSandbox(project, it) },
+        ) {
+            if (stop) FactoryLineRunner.repairStop(project, selected.approvalSha256, requestedBy.trim(), reason.trim())
+            else FactoryLineRunner.repairRevoke(project, selected.approvalSha256, requestedBy.trim(), reason.trim())
+        }
+    }
+
     fun checkLatestReceiptSignature(project: Project) {
         if (!FactoryLineExecutionConfirmation.confirm(project, "Check Receipt Signature State")) return
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "FactoryLine: Check Receipt Signature State", true) {

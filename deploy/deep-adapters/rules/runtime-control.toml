@@ -1,0 +1,7 @@
+# Pinned runtime challenge controls. The selector table survives target-rule
+# removal so the worker can deselect only that rule's marked test.
+[selectors]
+RUNTIME_TEST_FAILURE = "factory_runtime_failure"
+
+[[rules]]
+id = "RUNTIME_TEST_FAILURE"

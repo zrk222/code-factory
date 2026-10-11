@@ -80,3 +80,14 @@ Scenario: Expose only read-only status
 - Do not claim exact model token usage, guaranteed savings, or provider billing reduction.
 - Do not execute source, run tests, call a model/provider, alter a contract, or grant approval.
 - Do not replace the existing proof-reuse planner or Mission Control seven-reader timing baseline.
+
+## v1.1 extension requirements
+
+- Candidate selection shall read only explicitly supplied, bounded candidates; rank them deterministically against task terms, changed paths, and declared evidence roles; report hashes, rationale, omitted evidence, and missing required roles.
+- Required paths and roles shall be included fully or the build shall fail closed. A selected packet shall reuse the exact source bytes and identity snapshot collected for ranking. Explicit verification shall reread the candidate set and reject drift.
+- Python candidates may provide bounded AST evidence for definitions, imports, calls, identifiers, line ranges, and shared-identifier references across candidates. This is static syntax evidence, not a resolved dependency graph or runtime proof. Other files shall be marked not parsed.
+- Python AST input shall be limited to 64 KiB per candidate and bounded collections. Oversized Python sources shall be marked `PARSE_LIMIT`; syntactic ranking/rationale remains an unverified heuristic even when source integrity verifies.
+- Source screening shall suppress common credential files and recognizable key shapes as digest-only. Detection is best-effort and shall not be represented as complete secret discovery.
+- Paired measurements shall be accepted only as operator-supplied unverified observations. Both arms bind the same task, revision, model, tools, budget, and rubric; measurements include context gathering, coding, and repair time; quality non-regression, absolute USD cost delta, and absolute token delta are reported when supplied.
+- The 50% elapsed-time reduction is a sample target (two times throughput), not a global claim. Missing, malformed, regressed, or tampered evidence shall remain blocked or unknown. No provider/model execution is performed.
+- Status shall preserve existing fields and add aggregate structural-evidence and experiment fields. Cached evidence freshness remains unverified until explicit source verification succeeds.

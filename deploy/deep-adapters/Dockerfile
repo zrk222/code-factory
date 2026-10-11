@@ -15,7 +15,7 @@ COPY deploy/deep-adapters/requirements-bootstrap.txt /tmp/requirements-bootstrap
 RUN ldconfig && python -m pip uninstall -y setuptools wheel \
     && python -m pip install --no-cache-dir --disable-pip-version-check --require-hashes --only-binary=:all: -r /tmp/requirements-bootstrap.txt \
     && python -c 'import ssl,sqlite3,ctypes,bz2,lzma,readline,curses,uuid; print(ssl.OPENSSL_VERSION,sqlite3.sqlite_version)'
-COPY factoryline/__init__.py factoryline/deep_audit_io.py factoryline/runtime_audit_common.py factoryline/runtime_audit_process.py /usr/local/lib/python3.11/site-packages/factoryline/
+COPY factoryline/__init__.py factoryline/deep_audit_io.py factoryline/deep_audit_sarif.py factoryline/runtime_audit_common.py factoryline/runtime_audit_process.py /usr/local/lib/python3.11/site-packages/factoryline/
 COPY --chmod=0555 deploy/deep-adapters/entrypoint /opt/factory/bin/audit-adapter
 RUN mkdir -p /src /out /opt/factory/rules
 LABEL io.code-factory.protocol="factory.deep-worker.v1"
@@ -69,6 +69,7 @@ FROM anchore/syft:v1.33.0@sha256:cefadcf11bd9cce9e3ec5248bb1538a84e33d519486c1b4
 FROM sdk AS osv-worker
 COPY --from=osv-tool /osv-scanner /usr/local/bin/osv-scanner
 COPY --chmod=0555 deploy/deep-adapters/bin/osv-offline /opt/factory/bin/osv-offline
+COPY --chown=1000:1000 deploy/deep-adapters/rules/empty-ignore.txt /opt/factory/rules/osv-scanner.toml
 ADD --checksum=sha256:36ef7d92e174230b8c7c26b952562be23837472c2239b6752de64d5d683a800e https://osv-vulnerabilities.storage.googleapis.com/PyPI/all.zip?generation=1791370055357324 /tmp/osv-pypi-all.zip
 USER 0:0
 RUN mkdir -p /opt/factory/osv-db/osv-scanner/PyPI && mv /tmp/osv-pypi-all.zip /opt/factory/osv-db/osv-scanner/PyPI/all.zip && chmod 0444 /opt/factory/osv-db/osv-scanner/PyPI/all.zip
@@ -83,14 +84,22 @@ COPY --chown=1000:1000 deploy/deep-adapters/profiles/syft.json /opt/factory/adap
 LABEL io.code-factory.configured="true" io.code-factory.family="dependencies" io.code-factory.mode="sbom-only"
 
 ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
-FROM zricethezav/gitleaks:v8.28.0@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854 AS gitleaks-tool
+FROM golang@sha256:0b4f8c5d414756a53ba0e4d235151f9b246552e512c3feaad5f9a3251376b279 AS gitleaks-build
+ADD --checksum=sha256:ab481824ccba4e14fd61e290014d961f06c4d4a7597783ec7d22f8a1ef241322 https://github.com/zricethezav/gitleaks/archive/4fb43823ef3d152d239e92d7d5cb04783b548062.tar.gz /tmp/gitleaks.tar.gz
+RUN mkdir -p /src && tar -xzf /tmp/gitleaks.tar.gz --strip-components=1 -C /src && rm /tmp/gitleaks.tar.gz
+COPY deploy/deep-adapters/gitleaks-rule-ledger.patch /tmp/gitleaks-rule-ledger.patch
+WORKDIR /src
+RUN git -C /src init -q \
+    && git -C /src apply --check /tmp/gitleaks-rule-ledger.patch \
+    && git -C /src apply /tmp/gitleaks-rule-ledger.patch \
+    && CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w -X github.com/zricethezav/gitleaks/v8/cmd.Version=8.28.0" -o /gitleaks .
 FROM sdk AS gitleaks-worker
-COPY --from=gitleaks-tool /usr/bin/gitleaks /usr/bin/gitleaks
+COPY --from=gitleaks-build /gitleaks /usr/bin/gitleaks
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/gitleaks.json /opt/factory/adapter-profile.json
 COPY --chown=1000:1000 deploy/deep-adapters/rules/gitleaks-8.28.0.toml /opt/factory/rules/gitleaks.toml
 COPY --chown=1000:1000 deploy/deep-adapters/rules/GITLEAKS-LICENSE.txt /opt/factory/rules/GITLEAKS-LICENSE.txt
 COPY --chown=1000:1000 deploy/deep-adapters/rules/empty-ignore.txt /opt/factory/rules/empty-gitleaksignore
-LABEL io.code-factory.configured="true"
+LABEL io.code-factory.configured="true" io.code-factory.gitleaks-source="4fb43823ef3d152d239e92d7d5cb04783b548062" io.code-factory.gitleaks-ledger="gitleaks.factory-rule-ledger.v1"
 
 ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
 FROM aquasec/trivy:0.68.1@sha256:52e6fb1ff6a8232d6ec480ca9dd0b8db6728e252d092cb7712df7103ba09502e AS trivy-tool
@@ -108,6 +117,7 @@ COPY deploy/deep-adapters/requirements-runtime.txt /tmp/requirements-runtime.txt
 RUN python -m pip install --no-cache-dir --disable-pip-version-check --require-hashes --only-binary=:all: -r /tmp/requirements-runtime.txt
 USER 1000:1000
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/runtime-coverage.json /opt/factory/adapter-profile.json
+COPY --chown=1000:1000 deploy/deep-adapters/rules/runtime-control.toml /opt/factory/rules/runtime-control.toml
 LABEL io.code-factory.configured="true" io.code-factory.harness="candidate-supplied"
 
 ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
@@ -117,5 +127,6 @@ COPY deploy/deep-adapters/requirements-fuzz.txt /tmp/requirements-fuzz.txt
 RUN python -m pip install --no-cache-dir --disable-pip-version-check --require-hashes --only-binary=:all: -r /tmp/requirements-fuzz.txt
 USER 1000:1000
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/atheris.json /opt/factory/adapter-profile.json
+COPY --chown=1000:1000 deploy/deep-adapters/rules/fuzz-control.json /opt/factory/rules/fuzz-control.json
 LABEL io.code-factory.configured="true" io.code-factory.harness="candidate-supplied"
 ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]

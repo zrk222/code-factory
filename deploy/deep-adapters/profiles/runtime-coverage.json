@@ -3,18 +3,19 @@
   "engine": "runtime",
   "mode": "coverage.py+pytest",
   "tool_version": "coverage.py 7.16.1; pytest 9.1.1",
-  "ruleset_sha256": "c4dc09887f975e9f21dd6c911d8b4e581a4c3e187aac26f376eac6fc36bec1dd",
+  "ruleset_sha256": "5e26db266b50fa6f1d434619736ebf3187a227926c7855bab52ca4d7f6210072",
   "commands": [
     {
       "argv": [
         "/usr/local/bin/python",
+        "-B",
         "-I",
         "-c",
-        "exec('import sys,coverage,pytest\\ncov=coverage.Coverage(branch=True,data_file=sys.argv[2],config_file=False,source=[sys.argv[1]])\\nsys.path.insert(0,sys.argv[1])\\ncov.start()\\ntry:\\n    code=pytest.main([sys.argv[1]+\"/tests\",\"--junitxml=\"+sys.argv[4],\"-o\",\"junit_family=xunit1\",\"-p\",\"no:cacheprovider\"])\\nfinally:\\n    cov.stop()\\n    cov.save()\\n    cov.json_report(outfile=sys.argv[3])\\nsys.exit(code)\\n')",
+        "exec(\"import os\\nimport sys\\nimport coverage\\nimport pytest\\nimport tomllib\\n\\nwith open(sys.argv[4], \\\"rb\\\") as stream:\\n    control = tomllib.load(stream)\\nselectors = control.get(\\\"selectors\\\")\\nenabled = [item.get(\\\"id\\\") for item in control.get(\\\"rules\\\", [])]\\nif (\\n    selectors != {\\\"RUNTIME_TEST_FAILURE\\\": \\\"factory_runtime_failure\\\"}\\n    or len(enabled) > 1\\n    or any(rule not in selectors for rule in enabled)\\n):\\n    raise ValueError(\\\"invalid pinned runtime controls\\\")\\n\\nclass RuntimeRuleFilter:\\n    def pytest_collection_modifyitems(self, session, config, items):\\n        disabled = {\\n            marker for rule, marker in selectors.items() if rule not in enabled\\n        }\\n        keep = []\\n        deselected = []\\n        for item in items:\\n            markers = {marker.name for marker in item.iter_markers()}\\n            (deselected if markers.intersection(disabled) else keep).append(item)\\n        items[:] = keep\\n        config.hook.pytest_deselected(items=deselected)\\n\\ncov = coverage.Coverage(\\n    branch=True, data_file=sys.argv[2], config_file=False, source=[sys.argv[1]]\\n)\\nsys.path.insert(0, sys.argv[1])\\ncov.start()\\ntry:\\n    code = pytest.main(\\n        [\\n            sys.argv[1] + \\\"/tests\\\",\\n            \\\"--junitxml=\\\" + sys.argv[3],\\n            \\\"-o\\\",\\n            \\\"junit_family=xunit1\\\",\\n            \\\"-o\\\",\\n            \\\"markers=factory_runtime_failure: runtime detector control\\\",\\n            \\\"-p\\\",\\n            \\\"no:cacheprovider\\\",\\n        ],\\n        plugins=[RuntimeRuleFilter()],\\n    )\\nfinally:\\n    cov.stop()\\n    cov.save()\\n    cov.json_report(\\n        outfile=os.path.join(os.path.dirname(sys.argv[3]), \\\"coverage.json\\\")\\n    )\\nsys.exit(code)\\n\")",
         "{source}",
         "{scratch}/.coverage",
         "{report}",
-        "{output}/runtime.xml"
+        "{config}"
       ],
       "accepted_exit_codes": [
         0,
@@ -28,5 +29,5 @@
     "-c",
     "import coverage,pytest;print(f'coverage.py {coverage.__version__}; pytest {pytest.__version__}')"
   ],
-  "report_format": "coverage-json"
+  "report_format": "runtime-junit"
 }

@@ -125,3 +125,44 @@ def test_concurrency_requires_enough_observed_operations(concurrency, expected):
     assert result["state"] == expected
     if expected == "INCOMPLETE":
         assert result["finding"] == "RECOVERY_OBSERVATION_CONTRADICTION"
+
+
+def test_native_fixture_placeholder_requires_signed_path_binding(tmp_path):
+    from factoryline.runtime_audit_common import (
+        _render_profile_argv,
+        _validate_native_bindings,
+        RuntimeAuditError,
+    )
+    import pytest
+
+    source, scratch = tmp_path / "source", tmp_path / "run"
+    report, ledger = scratch / "report.json", scratch / "corpus.json"
+    config, fixture = tmp_path / "config.json", source / "positive.py"
+    values = {
+        "source": str(source),
+        "output": str(scratch),
+        "report": str(report),
+        "scratch": str(scratch),
+        "factory_ledger": str(ledger),
+        "config": str(config),
+        "candidate_sha256": "a" * 64,
+        "fixture": str(fixture),
+    }
+    evidence = {"challenge_source_sha256": "a" * 64}
+    _validate_native_bindings(
+        values, source, scratch, report, ledger, config, evidence, fixture=fixture
+    )
+    assert _render_profile_argv(["python", "{fixture}", "{config}"], values) == [
+        "python",
+        str(fixture),
+        str(config),
+    ]
+    with pytest.raises(RuntimeAuditError):
+        _validate_native_bindings(
+            values, source, scratch, report, ledger, config, evidence
+        )
+    values["fixture"] = str(source / "other.py")
+    with pytest.raises(RuntimeAuditError):
+        _validate_native_bindings(
+            values, source, scratch, report, ledger, config, evidence, fixture=fixture
+        )

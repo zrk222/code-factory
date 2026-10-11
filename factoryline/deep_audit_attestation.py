@@ -47,8 +47,15 @@ def _execution_bytes(path: Path) -> bytes:
 
 
 def _execution_document(
-    path: Path, trust_root: Path, trust_pin: str, identity: str, keyid: str, schema: str
-) -> dict:
+    path: Path,
+    trust_root: Path,
+    trust_pin: str,
+    identity: str,
+    keyid: str,
+    schema: str,
+    *,
+    return_envelope_sha256: bool = False,
+) -> dict | tuple[dict, str]:
     """Authenticate exact locally trusted identities; no implied provider endorsement."""
     raw, trust = _execution_bytes(path), _execution_bytes(trust_root)
     if sha256_bytes(trust) != trust_pin:
@@ -79,6 +86,12 @@ def _execution_document(
             "E_REVIEW_DRIFT", "signed inputs changed during verification"
         )
     _execution_freshness(parsed)
+    if return_envelope_sha256:
+        # Run artifacts add a self-integrity field outside the signed envelope.
+        signed_envelope = {
+            key: value for key, value in envelope.items() if key != "sha256"
+        }
+        return parsed, digest(signed_envelope)
     return parsed
 
 
@@ -151,20 +164,24 @@ def verify_execution_authorization(
     authorization: Path,
     trust_root: Path,
     trust_root_sha256: str,
-) -> dict:
+    *,
+    return_envelope_sha256: bool = False,
+) -> dict | tuple[dict, str]:
     """Verify coordinator authorization over the exact pinned execution contract."""
     if plan["trust_root_sha256"] != trust_root_sha256:
         raise RuntimeAuditError(
             "E_TRUST_ROOT_PIN", "operator trust pin differs from the manifest"
         )
-    payload = _execution_document(
+    verified = _execution_document(
         authorization,
         trust_root,
         trust_root_sha256,
         plan["coordinator_identity"],
         plan["coordinator_keyid"],
         "factory.deep-execution-authorization.v1",
+        return_envelope_sha256=return_envelope_sha256,
     )
+    payload, envelope_sha256 = verified if return_envelope_sha256 else (verified, None)
     _execution_keys(plan, trust_root)
     expected = {
         "manifest_sha256": manifest_sha256,
@@ -183,7 +200,7 @@ def verify_execution_authorization(
             "E_ADAPTER_AUTHORIZATION",
             "coordinator must approve every exact adapter image",
         )
-    return payload
+    return (payload, envelope_sha256) if return_envelope_sha256 else payload
 
 
 def _review_dispositions(review, coordinator, inventory):
@@ -342,14 +359,21 @@ def _review_candidate(
     _execution_keys(plan, trust_root)
     from .deep_audit import _scope_gaps
 
-    authorized = verify_execution_authorization(
+    _authorized, authorization_sha256 = verify_execution_authorization(
         plan,
         evidence["manifest_sha256"],
         directory / "authorization.json",
         trust_root,
         trust_root_sha256,
+        return_envelope_sha256=True,
     )
-    if digest(authorized) != evidence["authorization_sha256"]:
+    persisted_authorization = read_run_json(directory, "authorization.json")
+    if digest(persisted_authorization) != authorization_sha256:
+        raise RuntimeAuditError(
+            "E_REVIEW_AUTHORIZATION",
+            "persisted authorization envelope differs from the verified envelope",
+        )
+    if authorization_sha256 != evidence["authorization_sha256"]:
         raise RuntimeAuditError(
             "E_REVIEW_AUTHORIZATION",
             "execution authorization differs from the reviewed run",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -60,6 +61,13 @@ def add_parser(sub) -> None:
     )
     repair_candidate.add_argument("--json", action="store_true")
     _add_repair_execution_parsers(repair_sub)
+    lineage = repair_sub.add_parser(
+        "trace", help="bind deep-audit runs, repair evidence, and exact rerun lineage"
+    )
+    lineage.add_argument("--run-id", action="append", required=True)
+    lineage.add_argument("--approval-sha256")
+    lineage.add_argument("--root", default=".")
+    lineage.add_argument("--json", action="store_true")
 
     jetbrains = sub.add_parser(
         "jetbrains",
@@ -124,6 +132,14 @@ def _add_repair_execution_parsers(sub) -> None:
         required=True,
         help="workspace-contained JSON array of positive and negative argv checks",
     )
+    approve.add_argument(
+        "--checks-sha256",
+        help="SHA256 of the exact checks file bytes reviewed by the operator",
+    )
+    approve.add_argument(
+        "--audit-run-id",
+        help="terminal deep-audit run whose candidate this repair resolves",
+    )
     run = sub.add_parser(
         "run", help="consume approval once and verify a disposable-worktree repair"
     )
@@ -152,13 +168,23 @@ def _run_repair(args) -> int:
         result = _execute_repair_command(args, repair_sandbox)
     except repair_sandbox.RepairSandboxError as exc:
         return _repair_error(args, exc)
+    except ValueError as exc:
+        return _repair_error(args, exc)
     _render_repair_result(args, result)
     if args.repair_cmd == "run" and result.get("status") != "VERIFIED":
+        return 2
+    if args.repair_cmd == "trace" and result.get("state") == "INCOMPLETE":
         return 2
     return 0
 
 
 def _execute_repair_command(args, repair_sandbox):
+    if args.repair_cmd == "trace":
+        from .deep_audit import write_deep_audit_lineage
+
+        return write_deep_audit_lineage(
+            Path(args.root), args.run_id, approval_sha256=args.approval_sha256
+        )
     if args.repair_cmd in {"approve", "run", "revoke", "stop"}:
         return _execute_approved_command(args, repair_sandbox)
     if args.repair_cmd == "scope":
@@ -183,7 +209,7 @@ def _execute_repair_command(args, repair_sandbox):
     return result
 
 
-def _load_repair_checks(root: Path, value: str, repair_sandbox):
+def _load_repair_checks(root: Path, value: str, repair_sandbox, expected_sha256=None):
     """Read bounded local check data without granting execution authority."""
     try:
         workspace = root.resolve()
@@ -191,7 +217,14 @@ def _load_repair_checks(root: Path, value: str, repair_sandbox):
         path.relative_to(workspace)
         if not path.is_file() or path.stat().st_size > 1_000_000:
             raise ValueError("checks must be an existing file of at most 1 MB")
-        checks = json.loads(path.read_text(encoding="utf-8"))
+        with path.open("rb") as stream:
+            raw = stream.read(1_000_001)
+        if len(raw) > 1_000_000:
+            raise ValueError("checks exceed the input limit")
+        if expected_sha256 is not None:
+            if hashlib.sha256(raw).hexdigest() != expected_sha256:
+                raise ValueError("checks changed after operator review")
+        checks = json.loads(raw.decode("utf-8"))
         if not isinstance(checks, list):
             raise ValueError("checks must be a JSON array")
         return checks
@@ -215,7 +248,10 @@ def _execute_approved_command(args, repair_sandbox):
             expires_at=args.expires_at,
             container_image=args.container_image,
             container_digest=args.container_digest,
-            checks=_load_repair_checks(root, args.checks, repair_sandbox),
+            checks=_load_repair_checks(
+                root, args.checks, repair_sandbox, args.checks_sha256
+            ),
+            audit_run_id=args.audit_run_id,
         )
     if args.repair_cmd == "run":
         return repair_sandbox.execute_approved_repair(root, Path(args.approval))
@@ -263,7 +299,7 @@ def _render_repair_result(args, result) -> None:
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
         return
-    if args.repair_cmd in {"approve", "run", "revoke", "stop"}:
+    if args.repair_cmd in {"approve", "run", "revoke", "stop", "trace"}:
         print(json.dumps(result, indent=2, sort_keys=True))
         return
     print(f"factory repair {args.repair_cmd} (supervised, no patch apply)")

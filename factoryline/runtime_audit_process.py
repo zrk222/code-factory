@@ -126,6 +126,7 @@ def _start_stream_readers(
     overflow: threading.Event,
     streams: dict[str, tuple[str, int]],
     capture: BinaryIO | None = None,
+    stderr_capture: BinaryIO | None = None,
 ) -> list[threading.Thread]:
     threads = [
         threading.Thread(
@@ -135,7 +136,7 @@ def _start_stream_readers(
                 stream,
                 overflow,
                 streams,
-                capture if name == "stdout" else None,
+                capture if name == "stdout" else stderr_capture,
             ),
             daemon=True,
         )
@@ -229,13 +230,14 @@ def run_bounded_command(
     scratch: Path,
     *,
     stdout_path: Path | None = None,
+    stderr_path: Path | None = None,
     cancelled: threading.Event | None = None,
 ) -> dict:
     """Hash streams without retaining logs; terminate on timeout/output overflow."""
     facts = _facts()
     started = time.monotonic()
     facts["timeout_seconds"] = timeout_seconds
-    capture = stdout_path.open("xb") if stdout_path is not None else None
+    capture, stderr_capture = _open_capture_files(stdout_path, stderr_path)
     # Start the budget before process creation and stream setup. Those steps
     # must not create unmeasured runtime outside the signed timeout.
     execution_started = time.monotonic()
@@ -243,20 +245,65 @@ def run_bounded_command(
     try:
         child = _launch(argv, cwd, _environment(scratch))
     except OSError:
+        _close_capture_files(capture, stderr_capture)
+        return _launch_error_facts(facts, started)
+    return _run_child_bounded(
+        child,
+        facts,
+        timeout_seconds,
+        deadline,
+        execution_started,
+        capture,
+        stderr_capture,
+        cancelled,
+    )
+
+
+def _open_capture_files(stdout_path, stderr_path):
+    capture = stdout_path.open("xb") if stdout_path is not None else None
+    try:
+        stderr_capture = stderr_path.open("xb") if stderr_path is not None else None
+    except OSError:
         if capture is not None:
             capture.close()
-        facts.update(
-            launch_error=True,
-            termination_reason="launch_error",
-            duration_ms=max(0, round((time.monotonic() - started) * 1000)),
-        )
-        return facts
+        raise
+    return capture, stderr_capture
+
+
+def _close_capture_files(capture, stderr_capture):
+    if capture is not None:
+        capture.close()
+    if stderr_capture is not None:
+        stderr_capture.close()
+
+
+def _launch_error_facts(facts, started):
+    facts.update(
+        launch_error=True,
+        termination_reason="launch_error",
+        duration_ms=max(0, round((time.monotonic() - started) * 1000)),
+    )
+    return facts
+
+
+def _run_child_bounded(
+    child,
+    facts,
+    timeout_seconds,
+    deadline,
+    execution_started,
+    capture,
+    stderr_capture,
+    cancelled,
+):
     overflow = threading.Event()
     streams: dict[str, tuple[str, int]] = {}
     threads = []
     execution_duration_ms = 0
     try:
-        threads = _start_stream_readers(child, overflow, streams, capture)
+        threads = _start_stream_readers(
+            child, overflow, streams, capture, stderr_capture
+        )
         facts["timed_out"] = _wait_for_exit_or_limit(
             child, timeout_seconds, overflow, cancelled, deadline=deadline
         )
@@ -270,8 +317,29 @@ def run_bounded_command(
         _await_cleanup(child, threads)
         raise
     finally:
-        if capture is not None:
-            capture.close()
+        _close_capture_files(capture, stderr_capture)
+    return _completed_child_facts(
+        child,
+        facts,
+        overflow,
+        streams,
+        execution_duration_ms,
+        cleanup_confirmed,
+        streams_closed,
+        cancelled,
+    )
+
+
+def _completed_child_facts(
+    child,
+    facts,
+    overflow,
+    streams,
+    execution_duration_ms,
+    cleanup_confirmed,
+    streams_closed,
+    cancelled,
+):
     if cancelled is not None:
         facts["cancelled"] = cancelled.is_set()
     facts["cleanup_confirmed"] = _cleanup_is_confirmed(
@@ -281,13 +349,15 @@ def run_bounded_command(
     _stream_facts(facts, streams)
     facts["output_limit_exceeded"] = overflow.is_set()
     facts["duration_ms"] = execution_duration_ms
-    facts["termination_reason"] = (
-        "cancelled"
-        if facts.get("cancelled")
-        else "timeout"
-        if facts["timed_out"]
-        else "output_limit"
-        if facts["output_limit_exceeded"]
-        else "process_exit"
-    )
+    facts["termination_reason"] = _termination_reason(facts)
     return facts
+
+
+def _termination_reason(facts):
+    if facts.get("cancelled"):
+        return "cancelled"
+    if facts["timed_out"]:
+        return "timeout"
+    if facts["output_limit_exceeded"]:
+        return "output_limit"
+    return "process_exit"

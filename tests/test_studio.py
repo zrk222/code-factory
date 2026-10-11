@@ -1,31 +1,31 @@
 from __future__ import annotations
 
-from http.client import HTTPConnection
-from pathlib import Path
-from datetime import datetime, timedelta, timezone
 import json
 import socket
 import threading
 import time
+from datetime import datetime, timedelta, timezone
+from http.client import HTTPConnection
+from pathlib import Path
 
 import pytest
 
+from factoryline.meter import MeterLog, StageTiming
 from factoryline.studio import (
     MAX_BODY_BYTES,
     StudioRequestError,
-    developer_memory_snapshot,
+    continue_from_studio,
     create_from_studio,
     create_product_mission_from_studio,
-    decide_product_mission_from_studio,
     create_server,
+    decide_product_mission_from_studio,
+    developer_memory_snapshot,
     make_handler,
+    savings_from_studio,
     serve_studio,
     studio_dashboard,
-    continue_from_studio,
-    savings_from_studio,
     studio_status,
 )
-from factoryline.meter import MeterLog, StageTiming
 
 
 def test_studio_dual_track_defaults_to_instant_mvp_and_keeps_pro_controls_visible():
@@ -139,6 +139,46 @@ def test_dashboard_preserves_unknowns_and_exposes_control_state(tmp_path: Path):
     repeated = developer_memory_snapshot(tmp_path)
     assert repeated["cache"]["state"] == "reused"
     assert repeated["cache"]["refresh_interval_ms"] == 5000
+
+
+def test_context_value_reports_unknowns_without_promising_target(tmp_path):
+    value = studio_dashboard(tmp_path)["context_engine"]
+    assert value["schema"] == "factory.studio.context-value.v1"
+    assert value["target_latency_reduction"] == 0.5
+    assert value["observed_latency_reduction"] is None
+    assert value["observed_cost_delta"] is None
+    assert "target, not an observed result" in value["claim_boundary"]
+    assert value["next_action"]
+
+
+def test_context_value_projects_only_finite_aggregate_fields(tmp_path, monkeypatch):
+    from factoryline.studio import _context_engine_value, _studio_html
+
+    monkeypatch.setattr(
+        "factoryline.context_efficiency.context_efficiency_status",
+        lambda root: {
+            "state": "READY",
+            "packet_count": 2,
+            "cache_hits": 3,
+            "paired_sample_count": 4,
+            "observed_latency_reduction": 0.25,
+            "observed_cost_delta": -0.03,
+            "observed_token_delta": float("nan"),
+            "estimated_tokens": True,
+            "packets": [{"excerpt": "private body"}],
+        },
+    )
+    value = _context_engine_value(tmp_path)
+    assert value["observed_latency_reduction"] == 0.25
+    assert value["observed_cost_delta"] == -0.03
+    assert value["observed_token_delta"] is None
+    assert value["estimated_tokens"] is None
+    assert "private body" not in json.dumps(value)
+    page = _studio_html("local-token")
+    assert "Context engine: measured user value" in page
+    assert 'aria-live="polite"' in page
+    assert "renderContextValue(payload.context_engine)" in page
+    assert "Previous metrics have been cleared" in page
 
 
 def test_dashboard_lists_prior_measured_runs_without_inferring_success(tmp_path: Path):
@@ -564,6 +604,7 @@ def test_http_graph_ops_authorization_requires_token_and_consumes_one_reality_ch
     tmp_path: Path,
 ):
     from test_reality_check import _write
+
     from factoryline.graph_ops import graph_ops_snapshot
     from factoryline.reality_check import (
         run_reality_check,

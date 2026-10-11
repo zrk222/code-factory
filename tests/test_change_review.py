@@ -1299,6 +1299,7 @@ def test_native_fuzz_main_rejects_unbound_harness_before_instrumentation(
     def paths(value):
         return contract if str(value) == "/factory-contract.json" else real_path(value)
 
+    paths.cwd = lambda: real_path("/src")
     monkeypatch.setattr(module, "Path", paths)
     monkeypatch.setitem(sys.modules, "atheris", SimpleNamespace())
     with pytest.raises(KeyError):
