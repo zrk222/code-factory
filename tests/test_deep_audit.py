@@ -7505,6 +7505,69 @@ def test_zap_native_v2_api_watch_rejects_rewritten_target_before_network():
         _zap_api("core", "action", "accessUrl", watch["deadline"], watch=watch)
 
 
+@pytest.mark.parametrize(
+    "expected_base",
+    [
+        "http://127.0.0.1:8765",
+        "http://factory-target:8765",
+    ],
+)
+def test_zap_measurement_alerts_api_uses_worker_contract_origin(
+    expected_base, monkeypatch
+):
+    import factoryline.deep_audit_io as audit_io
+
+    captured = {}
+    monkeypatch.setattr(
+        audit_io,
+        "_zap_wait_ready",
+        lambda *_args: {"version": "2.17.0"},
+    )
+    monkeypatch.setattr(
+        audit_io,
+        "_zap_select_rules",
+        lambda *_args: {"scanners": [{"id": "40012", "enabled": "true"}]},
+    )
+    monkeypatch.setattr(
+        audit_io,
+        "_zap_start_scan",
+        lambda *_args: ("1", {"accessed": "ok"}),
+    )
+    monkeypatch.setattr(audit_io, "_zap_wait_scan", lambda *_args: {"status": "100"})
+
+    def fake_api(component, kind, name, _deadline, *, watch=None, **kwargs):
+        if (component, kind, name) == ("core", "view", "alerts"):
+            captured.update(kwargs)
+            return {"alerts": []}
+        return {"scanners": [{"id": "40012", "enabled": "true"}]}
+
+    monkeypatch.setattr(audit_io, "_zap_api", fake_api)
+    monkeypatch.setattr(audit_io, "_zap_enabled_inventory", lambda _raw: ["40012"])
+    monkeypatch.setattr(audit_io, "_zap_retained_ledger", lambda _path: b"{}\n")
+    monkeypatch.setattr(
+        "factoryline.deep_audit_sarif._verify_zap_native_rule_ledger",
+        lambda *_args: {"state": "VERIFIED"},
+    )
+    monkeypatch.setattr(audit_io, "_zap_check_daemon", lambda *_args: None)
+    watch = {
+        "base_url": expected_base,
+        "target_url": "http://127.0.0.1:8765/?input=seed",
+    }
+    request = {"rule_ids": ["40012"]}
+    bindings = {
+        "run_id": "run-123",
+        "candidate_sha256": "a" * 64,
+        "profile_sha256": "b" * 64,
+        "host_id": "c" * 64,
+    }
+
+    audit_io._zap_measure_scan(
+        request, bindings, object(), time.monotonic() + 20, watch
+    )
+
+    assert captured["baseurl"] == expected_base
+
+
 def test_native_zap_cli_rejects_operator_selected_request_path(capsys):
     from factoryline.deep_audit_io import adapter_main
 

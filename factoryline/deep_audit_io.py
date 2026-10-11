@@ -8685,7 +8685,12 @@ def _zap_measure_scan(request, bindings, child, deadline, watch):
     if _zap_enabled_inventory(after) != request["rule_ids"]:
         raise RuntimeAuditError("E_ZAP_INVENTORY", "effective enabled rules drifted")
     alerts = _zap_api(
-        "core", "view", "alerts", deadline, watch=watch, baseurl="http://127.0.0.1:8765"
+        "core",
+        "view",
+        "alerts",
+        deadline,
+        watch=watch,
+        baseurl=watch.get("base_url") or "http://127.0.0.1:8765",
     )
     _zap_check_daemon(watch)
     ledger = _zap_retained_ledger(Path("/out"))
@@ -8862,22 +8867,7 @@ def adapter_main(argv: list[str] | None = None) -> int:
     if argv and argv[0] == "native-fuzz":
         return native_fuzz_main(argv[1:])
     if argv and argv[0] == "native-zap":
-        if argv != ["native-zap", "--request", "/factory-zap-request.json"]:
-            print("E_ZAP_REQUEST", file=sys.stderr)
-            return 2
-        try:
-            with Path("/factory-zap-request.json").open("rb") as stream:
-                request = strict_json(stream.read(LIMIT + 1))
-            result = _run_zap_native_scan(request)
-            print(
-                _bounded_json_bytes(result, LIMIT, "E_WORKER_BUNDLE_SIZE").decode(
-                    "utf-8"
-                )
-            )
-            return 0
-        except (OSError, ValueError, KeyError, TypeError) as exc:
-            print(getattr(exc, "code", "E_ADAPTER_INPUT"), file=sys.stderr)
-            return 2
+        return _native_zap_main(argv[1:])
 
     parser = argparse.ArgumentParser()
     parser.add_argument("engine")
@@ -8902,6 +8892,24 @@ def adapter_main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, KeyError, TypeError) as exc:
         import sys
 
+        print(getattr(exc, "code", "E_ADAPTER_INPUT"), file=sys.stderr)
+        return 2
+
+
+def _native_zap_main(argv):
+    import sys
+
+    if argv != ["--request", "/factory-zap-request.json"]:
+        print("E_ZAP_REQUEST", file=sys.stderr)
+        return 2
+    try:
+        with Path("/factory-zap-request.json").open("rb") as stream:
+            request = strict_json(stream.read(LIMIT + 1))
+        result = _run_zap_native_scan(request)
+        raw = _bounded_json_bytes(result, LIMIT, "E_WORKER_BUNDLE_SIZE")
+        print(raw.decode("utf-8"))
+        return 0
+    except (OSError, ValueError, KeyError, TypeError) as exc:
         print(getattr(exc, "code", "E_ADAPTER_INPUT"), file=sys.stderr)
         return 2
 
