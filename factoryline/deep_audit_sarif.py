@@ -1126,6 +1126,8 @@ def _native_counts_disposition(counts):
 
 
 def _rule_accounting_gaps(coverage, lane, required, report=None):
+    if lane["engine"] == "zap":
+        return ["ZAP_NATIVE_RULE_EXECUTION_REQUIRED"]
     if lane["engine"] == "codeql":
         return _codeql_retained_evidence_gaps(coverage, lane, required)
     if lane["engine"] == "semgrep" and "native_artifact_roles" in lane:
@@ -1134,6 +1136,10 @@ def _rule_accounting_gaps(coverage, lane, required, report=None):
         return _trivy_rule_execution_gaps(coverage, lane, required, report)
     if lane["engine"] != "gitleaks":
         return []
+    return _gitleaks_rule_accounting_gaps(coverage, lane, required, report)
+
+
+def _gitleaks_rule_accounting_gaps(coverage, lane, required, report):
     gaps = _rule_inventory_gaps(coverage, lane)
     if gaps:
         return gaps
