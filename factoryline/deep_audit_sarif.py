@@ -934,6 +934,8 @@ def _native_counts_disposition(counts):
 
 
 def _rule_accounting_gaps(coverage, lane, required, report=None):
+    if lane["engine"] == "codeql":
+        return _codeql_retained_evidence_gaps(coverage, lane, required)
     if lane["engine"] == "semgrep" and "native_artifact_roles" in lane:
         return _semgrep_rule_execution_gaps(coverage, lane, required, report)
     if lane["engine"] == "trivy" and "native_artifact_roles" in lane:
@@ -956,6 +958,16 @@ def _rule_accounting_gaps(coverage, lane, required, report=None):
     if gaps:
         return gaps
     return _rule_execution_matrix_gaps(accounting, lane, required)
+
+
+def _codeql_retained_evidence_gaps(coverage, lane, required):
+    from .deep_audit_io import verify_codeql_retained_evidence
+
+    try:
+        verify_codeql_retained_evidence(coverage, lane, required)
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
+        return ["CODEQL_NATIVE_ARTIFACTS_UNVERIFIED"]
+    return ["CODEQL_NATIVE_REPLAY_REQUIRED"]
 
 
 def _semgrep_rule_execution_gaps(coverage, lane, required, report):

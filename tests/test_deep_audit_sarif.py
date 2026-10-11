@@ -109,6 +109,48 @@ def test_signed_semgrep_requires_rederived_native_rule_execution(missing):
     ]
 
 
+def test_codeql_retained_evidence_is_verified_and_stays_replay_required(monkeypatch):
+    import factoryline.deep_audit_io as deep_audit_io
+    from factoryline.deep_audit_sarif import _rule_accounting_gaps
+
+    coverage = {"codeql_retained_evidence": {"artifact": "native-bytes"}}
+    lane = {"engine": "codeql", "rule_ids": ["js/a"]}
+    required = {"src/app.js": "a" * 64}
+    received = []
+
+    def verify(observed_coverage, observed_lane, observed_required):
+        received.append((observed_coverage, observed_lane, observed_required))
+
+    monkeypatch.setattr(
+        deep_audit_io, "verify_codeql_retained_evidence", verify, raising=False
+    )
+
+    assert _rule_accounting_gaps(coverage, lane, required) == [
+        "CODEQL_NATIVE_REPLAY_REQUIRED"
+    ]
+    assert received == [(coverage, lane, required)]
+
+
+def test_codeql_retained_evidence_verifier_rejection_is_unverified(monkeypatch):
+    import factoryline.deep_audit_io as deep_audit_io
+    from factoryline.deep_audit_sarif import _rule_accounting_gaps
+
+    coverage = {"codeql_retained_evidence": {"artifact": "malformed"}}
+    lane = {"engine": "codeql", "rule_ids": ["js/a"]}
+    required = {"src/app.js": "a" * 64}
+
+    def reject(_coverage, _lane, _required):
+        raise RuntimeAuditError("E_CODEQL_RETAINED_EVIDENCE", "invalid evidence")
+
+    monkeypatch.setattr(
+        deep_audit_io, "verify_codeql_retained_evidence", reject, raising=False
+    )
+
+    assert _rule_accounting_gaps(coverage, lane, required) == [
+        "CODEQL_NATIVE_ARTIFACTS_UNVERIFIED"
+    ]
+
+
 def location(line=1, path="app.py"):
     return {
         "physicalLocation": {

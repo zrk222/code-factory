@@ -3273,6 +3273,65 @@ def _codeql_parse_rows(raw):
         ) from error
 
 
+def _codeql_native_blob(raw, maximum=67_108_864):
+    import base64
+    import zlib
+
+    if not isinstance(raw, bytes) or len(raw) > maximum:
+        raise RuntimeAuditError("E_CODEQL_ARTIFACT", "native artifact budget exceeded")
+    compressed = zlib.compress(raw)
+    if len(compressed) > NATIVE_COVERAGE_LIMIT:
+        raise RuntimeAuditError(
+            "E_CODEQL_ARTIFACT", "compressed artifact budget exceeded"
+        )
+    return {
+        "encoding": "zlib-base64",
+        "bytes": len(raw),
+        "sha256": sha256_bytes(raw),
+        "data": base64.b64encode(compressed).decode("ascii"),
+    }
+
+
+def _codeql_blob_bytes(blob, maximum=67_108_864):
+    import base64
+    import zlib
+
+    try:
+        if not isinstance(blob, dict) or set(blob) != {
+            "encoding",
+            "bytes",
+            "sha256",
+            "data",
+        }:
+            raise ValueError("exact artifact fields required")
+        size = require_int(blob["bytes"], "artifact bytes", minimum=0, maximum=maximum)
+        seal = require_digest(blob["sha256"], "artifact hash")
+        if (
+            blob["encoding"] != "zlib-base64"
+            or not isinstance(blob["data"], str)
+            or len(blob["data"]) > 4 * ((NATIVE_COVERAGE_LIMIT + 2) // 3)
+        ):
+            raise ValueError("bounded compressed artifact required")
+        compressed = base64.b64decode(blob["data"], validate=True)
+        if len(compressed) > NATIVE_COVERAGE_LIMIT:
+            raise ValueError("compressed artifact budget exceeded")
+        decoder = zlib.decompressobj()
+        raw = decoder.decompress(compressed, size + 1)
+        if (
+            len(raw) != size
+            or not decoder.eof
+            or decoder.unconsumed_tail
+            or decoder.unused_data
+            or sha256_bytes(raw) != seal
+        ):
+            raise ValueError("native artifact bytes differ")
+        return raw
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, zlib.error) as error:
+        raise RuntimeAuditError(
+            "E_CODEQL_ARTIFACT", "invalid retained native artifact"
+        ) from error
+
+
 def _codeql_source_query(profile):
     languages = {
         arg.removeprefix("--language=")
@@ -3305,6 +3364,186 @@ def _codeql_source_query(profile):
         f"count({node} n | n.getFile()=f), count({error} e | {location}=f)\n"
     ).encode("utf-8")
     return library, query
+
+
+def verify_codeql_retained_evidence(coverage, lane, required):
+    """Verify retained native bytes; opaque BQRS still requires independent replay."""
+    try:
+        inventory, records = _codeql_retained_inventory(coverage, lane)
+        seen, total = set(), 0
+        for record in records:
+            rule_id = record["rule_id"]
+            if (
+                rule_id in seen
+                or inventory["query_ids"].get(rule_id) != record["query_path"]
+            ):
+                raise ValueError("duplicate or unexpected query record")
+            seen.add(rule_id)
+            total += _codeql_verify_retained_query(record, inventory)
+            if total > 536_870_912:
+                raise ValueError("aggregate native artifact budget exceeded")
+        source = _codeql_verify_retained_source(
+            coverage["codeql_source_execution"], required
+        )
+        return {
+            "state": "REPLAY_REQUIRED",
+            "queries": len(seen),
+            "source_accounting": source,
+        }
+    except (
+        RuntimeAuditError,
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+    ) as error:
+        raise RuntimeAuditError(
+            "E_CODEQL_ARTIFACT", "retained CodeQL evidence is unverified"
+        ) from error
+
+
+def _codeql_retained_inventory(coverage, lane):
+    inventory = coverage["codeql_query_inventory"]
+    verify_codeql_query_selection(inventory)
+    execution = coverage["codeql_query_execution"]
+    if (
+        execution["schema"] != "factory.codeql-query-execution.v1"
+        or execution["query_inventory_sha256"] != inventory["query_inventory_sha256"]
+        or execution["ruleset_sha256"] != lane["ruleset_sha256"]
+        or execution["suite_sha256"] != inventory["suite_sha256"]
+    ):
+        raise ValueError("query execution inventory differs")
+    records = execution["rules"]
+    if (
+        not isinstance(records, list)
+        or len(records) != len(inventory["query_ids"])
+        or lane["rule_ids"] != sorted(inventory["query_ids"])
+    ):
+        raise ValueError("complete native query records required")
+    return inventory, records
+
+
+def _codeql_verify_retained_query(record, inventory):
+    blobs = record["native_artifacts"]
+    if set(blobs) != {"result", "info"}:
+        raise ValueError("native query artifact roles differ")
+    raw = _codeql_blob_bytes(blobs["result"])
+    info = _codeql_blob_bytes(blobs["info"], 65_536)
+    if (
+        not raw
+        or len(raw) != record["result_bytes"]
+        or sha256_bytes(raw) != record["result_sha256"]
+        or record["query_sha256"] != inventory["queries"][record["query_path"]]
+        or record["result_path"] != _codeql_result_path(record["query_path"])
+    ):
+        raise ValueError("native result binding differs")
+    invocation = record["invocation"]
+    _codeql_retained_invocation(invocation)
+    if (
+        invocation["argv_sha256"] != digest(invocation["argv"])
+        or sha256_bytes(info) != invocation["execution"]["stdout_sha256"]
+        or len(info) != invocation["execution"]["stdout_bytes"]
+        or _codeql_result_sets(info) != record["result_sets"]
+    ):
+        raise ValueError("native result metadata differs")
+    return len(raw)
+
+
+def _codeql_retained_invocation(invocation):
+    from .runtime_audit_common import _validate_runner_facts
+
+    facts = invocation["execution"]
+    _validate_runner_facts(facts, facts["timeout_seconds"])
+    if (
+        invocation["argv_sha256"] != digest(invocation["argv"])
+        or facts["exit_code"] != 0
+        or facts["timed_out"]
+        or facts["launch_error"]
+        or facts["output_limit_exceeded"]
+        or facts["cleanup_confirmed"] is not True
+        or facts.get("cancelled")
+    ):
+        raise ValueError("native invocation incomplete")
+
+
+def _codeql_verify_retained_source(measurement, required):
+    blobs = measurement["native_artifacts"]
+    if set(blobs) != {"query", "package", "result", "decoded", "archive", "info"}:
+        raise ValueError("native source artifact roles differ")
+    raw = {key: _codeql_blob_bytes(blob) for key, blob in blobs.items()}
+    invocations = measurement["native_invocations"]
+    if not isinstance(invocations, list) or len(invocations) != 3:
+        raise ValueError("all source measurement steps required")
+    for invocation in invocations:
+        _codeql_retained_invocation(invocation)
+    if invocations[-1]["execution"]["stdout_sha256"] != sha256_bytes(
+        raw["info"]
+    ) or invocations[-1]["execution"]["stdout_bytes"] != len(raw["info"]):
+        raise ValueError("source metadata stream differs")
+    for role, field in {
+        "query": "query_sha256",
+        "package": "package_sha256",
+        "result": "result_sha256",
+        "decoded": "decoded_sha256",
+        "archive": "archive_sha256",
+    }.items():
+        if sha256_bytes(raw[role]) != measurement[field]:
+            raise ValueError("source artifact binding differs")
+    rows = _codeql_parse_rows(raw["decoded"])
+    if rows != measurement["rows"] or _codeql_result_sets(raw["info"]) != [
+        {"name": "#select", "rows": len(rows), "columns": 3}
+    ]:
+        raise ValueError("native source rows differ")
+    archived = _codeql_retained_archive(
+        raw["archive"], measurement["archive_prefix"], required
+    )
+    if archived != measurement["archived_sources"]:
+        raise ValueError("archived source bindings differ")
+    inventory = {
+        "files": [
+            {"path": path, "sha256": seal, "language": "required"}
+            for path, seal in required.items()
+        ]
+    }
+    return _codeql_source_accounting(
+        measurement, inventory, {"languages": ["required"]}
+    )
+
+
+def _codeql_retained_archive(raw, prefix, required):
+    import io
+    import zipfile
+
+    if (
+        not isinstance(prefix, str)
+        or not prefix.endswith("/")
+        or prefix.startswith("/")
+        or "\\" in prefix
+        or ".." in prefix.split("/")
+    ):
+        raise ValueError("canonical archive prefix required")
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as zipped:
+            entries = zipped.infolist()
+            if (
+                len(entries) > 100_000
+                or sum(item.file_size for item in entries) > 536_870_912
+            ):
+                raise ValueError("source archive budget exceeded")
+            names = Counter(item.filename for item in entries)
+            archived = {}
+            for path in required:
+                name = prefix + relative_path(path)
+                if names[name] != 1:
+                    continue
+                with zipped.open(name) as member:
+                    captured = member.read(LIMIT + 1)
+                if len(captured) > LIMIT:
+                    raise ValueError("source member budget exceeded")
+                archived[path] = sha256_bytes(captured)
+            return archived
+    except (zipfile.BadZipFile, OSError, RuntimeError) as error:
+        raise ValueError("invalid retained source archive") from error
 
 
 def _codeql_source_measurement(profile, source, scratch, inventory, lane, deadline):
@@ -3373,6 +3612,10 @@ def _codeql_source_measurement(profile, source, scratch, inventory, lane, deadli
         if item["language"] in lane["languages"]
     }
     archived, archive_sha = _codeql_archived_sources(source, scratch, required)
+    with local_file(scratch / "codeql-db", "src.zip").open("rb") as stream:
+        archive = stream.read(67_108_865)
+    if sha256_bytes(archive) != archive_sha:
+        raise RuntimeAuditError("E_CODEQL_SOURCE", "source archive changed")
     return {
         "schema": "factory.codeql-source-execution.v1",
         "rows": rows,
@@ -3383,6 +3626,15 @@ def _codeql_source_measurement(profile, source, scratch, inventory, lane, deadli
         "decoded_sha256": sha256_bytes(raw),
         "result_sha256": sha256_bytes(binary),
         "native_invocations": invocations,
+        "archive_prefix": source.resolve().as_posix().lstrip("/") + "/",
+        "native_artifacts": {
+            "query": _codeql_native_blob(query),
+            "package": _codeql_native_blob(package),
+            "result": _codeql_native_blob(binary),
+            "decoded": _codeql_native_blob(raw),
+            "archive": _codeql_native_blob(archive),
+            "info": _codeql_native_blob(info),
+        },
     }
 
 
@@ -3511,6 +3763,7 @@ def _codeql_query_execution(profile, inventory, source, scratch, deadline):
         )
     return {
         "schema": "factory.codeql-query-execution.v1",
+        "ruleset_sha256": profile["ruleset_sha256"],
         "query_inventory_sha256": inventory["query_inventory_sha256"],
         "suite_sha256": inventory["suite_sha256"],
         "rules": records,
@@ -3565,6 +3818,10 @@ def _codeql_query_result_record(
         "result_sha256": sha256_bytes(raw),
         "result_bytes": len(raw),
         "result_sets": _codeql_result_sets(info),
+        "native_artifacts": {
+            "result": _codeql_native_blob(raw),
+            "info": _codeql_native_blob(info),
+        },
         "invocation": {"argv": argv, "argv_sha256": digest(argv), "execution": facts},
     }
 

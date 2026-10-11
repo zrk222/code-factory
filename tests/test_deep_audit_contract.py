@@ -823,12 +823,11 @@ def test_execution_rejects_parser_downgrade_and_missing_mutations(tmp_path):
     _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
     lane = plan["lanes"][0]
     bundle = execution_bundle(lane, inventory, "0" * 32)
-    assert (
-        normalize_execution_bundle(
-            bundle, lane, inventory, "0" * 32, plan["obligations"]
-        )["state"]
-        == "OBSERVED"
+    initial = normalize_execution_bundle(
+        bundle, lane, inventory, "0" * 32, plan["obligations"]
     )
+    assert initial["state"] == "INCOMPLETE"
+    assert initial["gaps"] == ["CODEQL_NATIVE_ARTIFACTS_UNVERIFIED"]
     bundle["artifacts"]["coverage.json"]["fallback"] = True
     bundle["artifacts"]["challenges.json"]["observations"].pop()
     result = normalize_execution_bundle(
@@ -947,7 +946,11 @@ def test_execution_native_errors_cannot_pass(tmp_path, engine):
     result = normalize_execution_bundle(
         bundle, lane, inventory, "0" * 32, plan["obligations"]
     )
-    assert result["state"] == "OBSERVED"
+    if engine == "codeql":
+        assert result["state"] == "INCOMPLETE"
+        assert result["gaps"] == ["CODEQL_NATIVE_ARTIFACTS_UNVERIFIED"]
+    else:
+        assert result["state"] == "OBSERVED"
     assert result["obligations"] == [lane["engine"]]
     report = bundle["artifacts"]["report.json"]
     if engine == "codeql":
@@ -1431,7 +1434,7 @@ def test_execution_sarif_defaults_preserve_original_hashes(tmp_path, surface):
     result = normalize_execution_bundle(
         bundle, lane, inventory, "0" * 32, plan["obligations"]
     )
-    assert not result["gaps"], result["gaps"]
+    assert result["gaps"] == ["CODEQL_NATIVE_ARTIFACTS_UNVERIFIED"]
     assert bundle == original
 
 

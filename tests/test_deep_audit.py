@@ -3174,7 +3174,10 @@ def _codeql_result_record_args(tmp_path):
 
 
 def test_codeql_query_result_record_accepts_zero_row_bqrs_info(tmp_path, monkeypatch):
-    from factoryline.deep_audit_io import _codeql_query_result_record
+    from factoryline.deep_audit_io import (
+        _codeql_blob_bytes,
+        _codeql_query_result_record,
+    )
 
     args = _codeql_result_record_args(tmp_path)
     stdout = json.dumps(
@@ -3198,6 +3201,8 @@ def test_codeql_query_result_record_accepts_zero_row_bqrs_info(tmp_path, monkeyp
     assert record["result_bytes"] == len(args["raw"])
     assert record["result_sets"] == [{"name": "js/security/A", "rows": 0, "columns": 0}]
     assert record["invocation"]["execution"]["stdout_sha256"] == sha256_bytes(stdout)
+    assert _codeql_blob_bytes(record["native_artifacts"]["result"]) == args["raw"]
+    assert _codeql_blob_bytes(record["native_artifacts"]["info"]) == stdout
 
 
 @pytest.mark.parametrize(
@@ -3590,6 +3595,7 @@ def test_codeql_source_measurement_runs_native_steps_and_routes_accounting(
     import zipfile
 
     from factoryline.deep_audit_io import (
+        _codeql_blob_bytes,
         _codeql_source_measurement,
         _native_source_accounting,
     )
@@ -3665,6 +3671,24 @@ def test_codeql_source_measurement_runs_native_steps_and_routes_accounting(
     assert measurement["rows"] == {"src/a.js": {"syntax_nodes": 5, "parse_errors": 0}}
     assert measurement["archived_sources"] == {"src/a.js": source_sha}
     assert measurement["result_sha256"] == sha256_bytes(bqrs)
+    blobs = measurement["native_artifacts"]
+    evidence_dir = scratch / "source-evidence"
+    assert set(blobs) == {"query", "package", "result", "decoded", "archive", "info"}
+    assert (
+        _codeql_blob_bytes(blobs["query"])
+        == (evidence_dir / "pack" / "sources.ql").read_bytes()
+    )
+    assert (
+        _codeql_blob_bytes(blobs["package"])
+        == (evidence_dir / "pack" / "qlpack.yml").read_bytes()
+    )
+    assert _codeql_blob_bytes(blobs["result"]) == bqrs
+    assert _codeql_blob_bytes(blobs["decoded"]) == decoded
+    assert _codeql_blob_bytes(blobs["archive"]) == (database / "src.zip").read_bytes()
+    assert (
+        _codeql_blob_bytes(blobs["info"])
+        == (evidence_dir / "step-2" / "stdout.log").read_bytes()
+    )
     result = _native_source_accounting(
         {"codeql_source_execution": measurement}, {}, inventory, lane
     )
@@ -3695,3 +3719,300 @@ def test_codeql_source_measurement_runs_native_steps_and_routes_accounting(
         {"codeql_source_execution": parse_error_measurement}, {}, inventory, lane
     )
     assert incomplete["state"] == "INCOMPLETE"
+
+
+def test_codeql_native_blob_round_trips_exact_bytes():
+    from base64 import b64decode
+
+    from factoryline.deep_audit_io import _codeql_blob_bytes, _codeql_native_blob
+
+    raw = b"\x00CodeQL\x00native result\n"
+    blob = _codeql_native_blob(raw)
+    assert set(blob) == {"encoding", "bytes", "sha256", "data"}
+    assert blob["encoding"] == "zlib-base64"
+    assert blob["bytes"] == len(raw)
+    assert blob["sha256"] == sha256_bytes(raw)
+    assert b64decode(blob["data"], validate=True)
+    assert _codeql_blob_bytes(blob) == raw
+
+
+@pytest.mark.parametrize(
+    "raw,maximum",
+    [(b"five!", 4), ("not bytes", 100)],
+)
+def test_codeql_native_blob_rejects_invalid_or_oversized_input(raw, maximum):
+    from factoryline.deep_audit_io import _codeql_native_blob
+
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_ARTIFACT"):
+        _codeql_native_blob(raw, maximum=maximum)
+
+
+@pytest.mark.parametrize(
+    "sabotage",
+    [
+        "extra_field",
+        "missing_field",
+        "encoding",
+        "bad_base64",
+        "hash",
+        "byte_count",
+        "trailing_compressed_data",
+        "decompression_bomb",
+    ],
+)
+def test_codeql_blob_bytes_rejects_tampered_or_unbounded_blob(sabotage, monkeypatch):
+    import base64
+
+    from factoryline.deep_audit_io import _codeql_blob_bytes, _codeql_native_blob
+
+    raw = b"small native artifact"
+    blob = _codeql_native_blob(raw)
+    if sabotage == "extra_field":
+        blob["unexpected"] = True
+    elif sabotage == "missing_field":
+        del blob["data"]
+    elif sabotage == "encoding":
+        blob["encoding"] = "raw-base64"
+    elif sabotage == "bad_base64":
+        blob["data"] = "%%%"
+    elif sabotage == "hash":
+        blob["sha256"] = "0" * 64
+    elif sabotage == "byte_count":
+        blob["bytes"] -= 1
+    elif sabotage == "trailing_compressed_data":
+        compressed = base64.b64decode(blob["data"], validate=True) + b"tail"
+        blob["data"] = base64.b64encode(compressed).decode("ascii")
+    else:
+        bomb = _codeql_native_blob(b"A" * 100_000)
+        bomb["bytes"] = 16
+        blob = bomb
+
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_ARTIFACT"):
+        _codeql_blob_bytes(blob)
+
+
+def test_codeql_blob_bytes_rejects_oversized_declared_and_compressed_payloads(
+    monkeypatch,
+):
+    import base64
+    import zlib
+
+    import factoryline.deep_audit_io as deep_audit_io
+
+    raw = b"a payload larger than the configured limit"
+    blob = deep_audit_io._codeql_native_blob(raw)
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_ARTIFACT"):
+        deep_audit_io._codeql_blob_bytes(blob, maximum=4)
+
+    monkeypatch.setattr(deep_audit_io, "NATIVE_COVERAGE_LIMIT", 8)
+    oversized_compressed = {
+        "encoding": "zlib-base64",
+        "bytes": 3,
+        "sha256": sha256_bytes(b"abc"),
+        "data": base64.b64encode(zlib.compress(b"abc")).decode("ascii"),
+    }
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_ARTIFACT"):
+        deep_audit_io._codeql_blob_bytes(oversized_compressed)
+
+
+def _codeql_retained_evidence_fixture():
+    import io
+    import zipfile
+
+    from factoryline.deep_audit_io import _codeql_native_blob, digest
+
+    source_path = "src/a.js"
+    source_sha = sha256_bytes(b"candidate source bytes")
+    required = {source_path: source_sha}
+    query_path = "codeql/javascript-queries/2.4.6/Security/A.ql"
+    query_sha = "b" * 64
+    queries = {query_path: query_sha}
+    suite_sha = "c" * 64
+    ruleset_sha = "d" * 64
+    inventory = {
+        "schema": "factory.codeql-query-inventory.v1",
+        "queries": queries,
+        "query_ids": {"js/security/A": query_path},
+        "suite_sha256": suite_sha,
+        "query_inventory_sha256": digest(queries),
+    }
+    query_info = json.dumps(
+        {"result-sets": [{"name": "query", "rows": 0, "columns": []}]}
+    ).encode()
+    query_raw = b"query bqrs bytes"
+    from factoryline.deep_audit_io import _codeql_result_path
+
+    query_argv = [sys.executable, "bqrs", "info", "query.bqrs", "--format=json"]
+    query_execution = {
+        "schema": "factory.codeql-query-execution.v1",
+        "ruleset_sha256": ruleset_sha,
+        "query_inventory_sha256": inventory["query_inventory_sha256"],
+        "suite_sha256": suite_sha,
+        "rules": [
+            {
+                "rule_id": "js/security/A",
+                "query_path": query_path,
+                "query_sha256": query_sha,
+                "result_path": _codeql_result_path(query_path),
+                "result_sha256": sha256_bytes(query_raw),
+                "result_bytes": len(query_raw),
+                "result_sets": [{"name": "query", "rows": 0, "columns": 0}],
+                "native_artifacts": {
+                    "result": _codeql_native_blob(query_raw),
+                    "info": _codeql_native_blob(query_info),
+                },
+                "invocation": {
+                    "argv": query_argv,
+                    "argv_sha256": digest(query_argv),
+                    "execution": _codeql_process_facts(20, query_info, b""),
+                },
+            }
+        ],
+    }
+
+    decoded = json.dumps(
+        {
+            "#select": {
+                "columns": _codeql_parse_column_kinds(),
+                "tuples": [[source_path, 1, 0]],
+            }
+        }
+    ).encode()
+    source_info = json.dumps(
+        {
+            "result-sets": [
+                {
+                    "name": "#select",
+                    "rows": 1,
+                    "columns": [{"kind": "s"}, {"kind": "i"}, {"kind": "i"}],
+                }
+            ]
+        }
+    ).encode()
+    source_query = b"import javascript\nselect source rows"
+    package = b"name: factory/javascript-source-accounting\n"
+    source_raw = b"source measurement bqrs"
+    archive_prefix = "workspace/"
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as zipped:
+        zipped.writestr(archive_prefix + source_path, b"candidate source bytes")
+    archive = archive_buffer.getvalue()
+    invocations = []
+    for index, stdout in enumerate((b"query step", b"decode step", source_info)):
+        argv = [sys.executable, "source-step", str(index)]
+        invocations.append(
+            {
+                "argv": argv,
+                "argv_sha256": digest(argv),
+                "execution": _codeql_process_facts(20, stdout, b""),
+            }
+        )
+    source_execution = {
+        "schema": "factory.codeql-source-execution.v1",
+        "rows": {source_path: {"syntax_nodes": 1, "parse_errors": 0}},
+        "archived_sources": {source_path: source_sha},
+        "archive_sha256": sha256_bytes(archive),
+        "archive_prefix": archive_prefix,
+        "query_sha256": sha256_bytes(source_query),
+        "package_sha256": sha256_bytes(package),
+        "decoded_sha256": sha256_bytes(decoded),
+        "result_sha256": sha256_bytes(source_raw),
+        "native_invocations": invocations,
+        "native_artifacts": {
+            "query": _codeql_native_blob(source_query),
+            "package": _codeql_native_blob(package),
+            "result": _codeql_native_blob(source_raw),
+            "decoded": _codeql_native_blob(decoded),
+            "archive": _codeql_native_blob(archive),
+            "info": _codeql_native_blob(source_info),
+        },
+    }
+    coverage = {
+        "codeql_query_inventory": inventory,
+        "codeql_query_execution": query_execution,
+        "codeql_source_execution": source_execution,
+    }
+    lane = {"ruleset_sha256": ruleset_sha, "rule_ids": ["js/security/A"]}
+    return coverage, lane, required
+
+
+def test_codeql_retained_evidence_requires_replay_for_valid_artifacts():
+    from factoryline.deep_audit_io import verify_codeql_retained_evidence
+
+    coverage, lane, required = _codeql_retained_evidence_fixture()
+    result = verify_codeql_retained_evidence(coverage, lane, required)
+    assert result["state"] == "REPLAY_REQUIRED"
+    assert result["queries"] == 1
+    assert result["source_accounting"]["state"] == "COMPLETE"
+
+
+@pytest.mark.parametrize(
+    "sabotage",
+    [
+        "missing_blob",
+        "corrupt_artifact",
+        "duplicate_query",
+        "query_binding",
+        "result_binding",
+        "ruleset_binding",
+        "archive_mismatch",
+        "source_rows",
+        "failed_facts",
+    ],
+)
+def test_codeql_retained_evidence_rejects_tampering(sabotage):
+    import io
+    import zipfile
+
+    import factoryline.deep_audit_io as deep_audit_io
+
+    coverage, lane, required = _codeql_retained_evidence_fixture()
+    if sabotage == "missing_blob":
+        del coverage["codeql_query_execution"]["rules"][0]["native_artifacts"]["info"]
+    elif sabotage == "corrupt_artifact":
+        coverage["codeql_query_execution"]["rules"][0]["native_artifacts"]["result"][
+            "data"
+        ] = "%%%"
+    elif sabotage == "duplicate_query":
+        coverage["codeql_query_execution"]["rules"].append(
+            deepcopy(coverage["codeql_query_execution"]["rules"][0])
+        )
+        lane["rule_ids"].append("js/security/A")
+    elif sabotage == "query_binding":
+        coverage["codeql_query_execution"]["rules"][0]["query_sha256"] = "d" * 64
+    elif sabotage == "result_binding":
+        coverage["codeql_query_execution"]["rules"][0]["result_path"] = (
+            "results/other.bqrs"
+        )
+    elif sabotage == "ruleset_binding":
+        coverage["codeql_query_execution"]["ruleset_sha256"] = "e" * 64
+    elif sabotage == "archive_mismatch":
+        measurement = coverage["codeql_source_execution"]
+        archive_buffer = io.BytesIO()
+        with zipfile.ZipFile(archive_buffer, "w") as zipped:
+            zipped.writestr("workspace/src/a.js", b"different archived bytes")
+        archive = archive_buffer.getvalue()
+        measurement["native_artifacts"]["archive"] = deep_audit_io._codeql_native_blob(
+            archive
+        )
+        measurement["archive_sha256"] = sha256_bytes(archive)
+    elif sabotage == "source_rows":
+        measurement = coverage["codeql_source_execution"]
+        raw = json.dumps(
+            {
+                "#select": {
+                    "columns": _codeql_parse_column_kinds(),
+                    "tuples": [["src/a.js", 99, 0]],
+                }
+            }
+        ).encode()
+        measurement["native_artifacts"]["decoded"] = deep_audit_io._codeql_native_blob(
+            raw
+        )
+        measurement["decoded_sha256"] = sha256_bytes(raw)
+    else:
+        invocation = coverage["codeql_query_execution"]["rules"][0]["invocation"]
+        invocation["execution"]["cleanup_confirmed"] = False
+
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_ARTIFACT"):
+        deep_audit_io.verify_codeql_retained_evidence(coverage, lane, required)
