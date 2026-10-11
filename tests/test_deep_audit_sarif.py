@@ -1887,6 +1887,7 @@ def test_host_zap_rechecks_native_ledger_and_exact_route_identity(tamper):
     _, raw, _, _ = _zap_ledger_fixture()
     rows = [{**json.loads(line), **bindings} for line in raw.splitlines()]
     observation = {
+        "schema": "factory.zap-native-observation.v1",
         **bindings,
         "target_sha256": digest(target),
         "route_sha256": digest(route),
