@@ -342,3 +342,240 @@ def test_semgrep_config_inventory_is_derived_from_signed_config(disabled):
     assert not _semgrep_config_inventory_valid(
         execution, lane, {**artifact, "bytes": len(raw) + 1}
     )
+
+
+def trivy_execution_evidence():
+    import base64
+    from factoryline.deep_audit_io import canonical_bytes, _trivy_observation
+
+    config, ignore = b"# pinned config\n", b"\n"
+    lane = {
+        "engine": "trivy",
+        "tool_version": "0.68.1",
+        "timeout_seconds": 30,
+        "ruleset_sha256": "a" * 64,
+        "rule_ids": ["DS001", "DS002"],
+        "native_artifact_roles": ["policy_inventory", "sarif_report"],
+        "native_policy": {
+            "config_sha256": sha256_bytes(config),
+            "baseline_ignore_sha256": sha256_bytes(ignore),
+        },
+    }
+    sources = {"Dockerfile": "b" * 64}
+    sarif = {"runs": [{"results": []}]}
+    native = {
+        "SchemaVersion": 2,
+        "Results": [
+            {
+                "Target": "Dockerfile",
+                "Class": "config",
+                "Type": "dockerfile",
+                "Misconfigurations": [
+                    {"ID": rule, "Status": "PASS"} for rule in lane["rule_ids"]
+                ],
+                "MisconfSummary": {"Successes": 2, "Failures": 0},
+            }
+        ],
+    }
+    argv = [
+        "/usr/local/bin/trivy",
+        "config",
+        "--config",
+        "/opt/factory/rules/trivy.yaml",
+        "--skip-check-update",
+        "--skip-version-check",
+        "--disable-telemetry",
+        "--ignorefile",
+        "/tmp/control.ignore",
+        "--format",
+        "sarif",
+        "--output",
+        "/tmp/report.sarif",
+        "/src",
+    ]
+    json_argv = list(argv)
+    json_argv[10] = "json"
+    json_argv[12] = "/tmp/policy.json"
+    json_argv.insert(2, "--include-non-failures")
+    facts = {
+        "exit_code": 0,
+        "timed_out": False,
+        "timeout_seconds": 30,
+        "duration_ms": 1,
+        "launch_error": False,
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": True,
+        "stdout_sha256": "c" * 64,
+        "stderr_sha256": "d" * 64,
+        "stdout_bytes": 0,
+        "stderr_bytes": 0,
+    }
+    evidence = {
+        "schema": "factory.trivy-rule-execution.v1",
+        "config_base64": base64.b64encode(config).decode(),
+        "ignore_base64": base64.b64encode(ignore).decode(),
+        "sources": sources,
+        "observations": [
+            _trivy_observation("sarif", argv, dict(facts), canonical_bytes(sarif)),
+            _trivy_observation("json", json_argv, dict(facts), canonical_bytes(native)),
+        ],
+    }
+    return evidence, lane, sources, sarif
+
+
+def test_trivy_host_rederives_explicit_native_statuses():
+    from factoryline.deep_audit_sarif import _rule_accounting_gaps
+
+    evidence, lane, sources, report = trivy_execution_evidence()
+    assert (
+        _rule_accounting_gaps({"trivy_rule_execution": evidence}, lane, sources, report)
+        == []
+    )
+    assert _rule_accounting_gaps({}, lane, sources, report) == [
+        "TRIVY_NATIVE_RULE_EXECUTION_UNVERIFIED"
+    ]
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "null",
+        "missing_rule",
+        "duplicate_rule",
+        "unsupported_status",
+        "summary",
+        "missing_source",
+        "extra_source",
+    ],
+)
+def test_trivy_host_rejects_resealed_incomplete_native_checks(tamper):
+    import base64
+    from factoryline.deep_audit_io import canonical_bytes
+    from factoryline.deep_audit_sarif import _rule_accounting_gaps
+
+    evidence, lane, sources, report = trivy_execution_evidence()
+    observation = evidence["observations"][1]
+    native = json.loads(base64.b64decode(observation["raw_report_base64"]))
+    result = native["Results"][0]
+    if tamper == "null":
+        native["Results"] = None
+    elif tamper == "missing_rule":
+        result["Misconfigurations"].pop()
+        result["MisconfSummary"]["Successes"] = 1
+    elif tamper == "duplicate_rule":
+        result["Misconfigurations"].append(dict(result["Misconfigurations"][0]))
+    elif tamper == "unsupported_status":
+        result["Misconfigurations"][0]["Status"] = "SKIPPED"
+    elif tamper == "summary":
+        result["MisconfSummary"]["Successes"] = 3
+    elif tamper == "missing_source":
+        sources["nested/Dockerfile"] = "e" * 64
+    else:
+        result["Target"] = "unbound/Dockerfile"
+    raw = canonical_bytes(native)
+    observation.update(
+        raw_report_base64=base64.b64encode(raw).decode(),
+        raw_report_sha256=sha256_bytes(raw),
+    )
+    assert _rule_accounting_gaps(
+        {"trivy_rule_execution": evidence}, lane, sources, report
+    ) == ["TRIVY_NATIVE_RULE_EXECUTION_UNVERIFIED"]
+
+
+@pytest.mark.parametrize(
+    "tamper", ["timeout", "duration", "extra_option", "raw_hash", "config"]
+)
+def test_trivy_host_rejects_process_or_policy_tampering(tamper):
+    from factoryline.deep_audit_sarif import _rule_accounting_gaps
+
+    evidence, lane, sources, report = trivy_execution_evidence()
+    observation = evidence["observations"][1]
+    if tamper == "timeout":
+        observation["execution"]["timeout_seconds"] = 31
+    elif tamper == "duration":
+        observation["execution"]["duration_ms"] = 30001
+    elif tamper == "extra_option":
+        for item in evidence["observations"]:
+            item["argv"].insert(-1, "--skip-files=Dockerfile")
+    elif tamper == "raw_hash":
+        observation["raw_report_sha256"] = "0" * 64
+    else:
+        lane["native_policy"]["config_sha256"] = "0" * 64
+    assert _rule_accounting_gaps(
+        {"trivy_rule_execution": evidence}, lane, sources, report
+    ) == ["TRIVY_NATIVE_RULE_EXECUTION_UNVERIFIED"]
+
+
+def test_trivy_challenge_artifacts_bind_actual_native_json_bytes():
+    import base64
+    from factoryline.deep_audit_sarif import _trivy_challenge_native_valid
+
+    evidence, lane, sources, report = trivy_execution_evidence()
+    artifacts = [
+        {
+            "kind": role,
+            "sha256": item["raw_report_sha256"],
+            "bytes": len(base64.b64decode(item["raw_report_base64"])),
+        }
+        for item, role in zip(
+            evidence["observations"], ("sarif_report", "policy_inventory")
+        )
+    ]
+    execution = {"mutation": None, "native_artifacts": artifacts}
+    challenge = {"trivy_rule_execution": evidence, "report": {"native_report": report}}
+    assert _trivy_challenge_native_valid(
+        execution,
+        challenge,
+        {"fixture_manifest": sources},
+        {"detector_rule_id": "DS001"},
+        lane,
+    )
+    artifacts[1]["bytes"] += 1
+    assert not _trivy_challenge_native_valid(
+        execution,
+        challenge,
+        {"fixture_manifest": sources},
+        {"detector_rule_id": "DS001"},
+        lane,
+    )
+
+
+def test_trivy_clean_negative_rejects_unrelated_failure():
+    from factoryline.deep_audit_sarif import _challenge_findings_valid
+
+    with pytest.raises(RuntimeAuditError, match="signed oracle"):
+        _challenge_findings_valid(
+            [{"rule_id": "DS002", "suppressed": False}],
+            {},
+            {"engine": "trivy"},
+            {"detector_rule_id": "DS001"},
+            "negative",
+        )
+
+
+def test_trivy_plain_native_ignore_mutation_has_only_target():
+    from factoryline.deep_audit_io import _trivy_mutation, _trivy_ignore_ids
+
+    assert _trivy_mutation(b"\n", "DS001") == b"DS001\n"
+    assert _trivy_ignore_ids(b"\n") == []
+    assert _trivy_ignore_ids(b"DS001\n") == ["DS001"]
+    with pytest.raises(RuntimeAuditError):
+        _trivy_mutation(b"DS002\n", "DS001")
+
+
+@pytest.mark.parametrize(
+    "ignore",
+    [
+        b"DS001\nDS001\n",
+        b"DS002\nDS001\n",
+        b"misconfigurations: []",
+        b"# ignored",
+        b"DS001 ",
+        b"\xff",
+    ],
+)
+def test_trivy_ignore_rejects_ambiguous_or_extra_policy(ignore):
+    from factoryline.deep_audit_io import _trivy_ignore_ids
+
+    with pytest.raises(RuntimeAuditError):
+        _trivy_ignore_ids(ignore)

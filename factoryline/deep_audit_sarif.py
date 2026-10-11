@@ -451,7 +451,9 @@ def _challenge_findings_valid(findings, native, lane, obligation, kind):
         rules = {item["id"] for item in native["artifacts"]}
     detected = obligation["detector_rule_id"] in rules
     clean_negative_failed = (
-        lane["engine"] in {"gitleaks", "semgrep"} and kind == "negative" and bool(rules)
+        lane["engine"] in {"gitleaks", "semgrep", "trivy"}
+        and kind == "negative"
+        and bool(rules)
     )
     if detected != (kind == "positive") or clean_negative_failed:
         raise RuntimeAuditError(
@@ -934,6 +936,8 @@ def _native_counts_disposition(counts):
 def _rule_accounting_gaps(coverage, lane, required, report=None):
     if lane["engine"] == "semgrep" and "native_artifact_roles" in lane:
         return _semgrep_rule_execution_gaps(coverage, lane, required, report)
+    if lane["engine"] == "trivy" and "native_artifact_roles" in lane:
+        return _trivy_rule_execution_gaps(coverage, lane, required, report)
     if lane["engine"] != "gitleaks":
         return []
     gaps = _rule_inventory_gaps(coverage, lane)
@@ -963,6 +967,18 @@ def _semgrep_rule_execution_gaps(coverage, lane, required, report):
         )
     except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
         return ["SEMGREP_NATIVE_RULE_EXECUTION_UNVERIFIED"]
+    return []
+
+
+def _trivy_rule_execution_gaps(coverage, lane, required, report):
+    from .deep_audit_io import verify_trivy_rule_execution
+
+    try:
+        verify_trivy_rule_execution(
+            coverage.get("trivy_rule_execution"), lane, required, report
+        )
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
+        return ["TRIVY_NATIVE_RULE_EXECUTION_UNVERIFIED"]
     return []
 
 
@@ -1203,7 +1219,43 @@ def _challenge_execution_v2_valid(
     body = {key: value for key, value in execution.items() if key != "execution_sha256"}
     if execution.get("execution_sha256") != digest(body):
         return False
-    return _challenge_execution_budgets_valid_v2(execution, lane)
+    return _challenge_execution_budgets_valid_v2(
+        execution, lane
+    ) and _trivy_challenge_native_valid(execution, challenge, bound, obligation, lane)
+
+
+def _trivy_challenge_native_valid(execution, challenge, bound, obligation, lane):
+    if lane["engine"] != "trivy":
+        return True
+    from .deep_audit_io import verify_trivy_rule_execution
+
+    try:
+        evidence = challenge.get("trivy_rule_execution")
+        mutation = execution.get("mutation")
+        disabled = obligation["detector_rule_id"] if mutation is not None else None
+        verify_trivy_rule_execution(
+            evidence,
+            lane,
+            bound["fixture_manifest"],
+            challenge["report"]["native_report"],
+            disabled_rule_id=disabled,
+        )
+        return _trivy_challenge_artifacts_match(execution, evidence)
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
+        return False
+
+
+def _trivy_challenge_artifacts_match(execution, evidence):
+    import base64
+
+    artifacts = {item["kind"]: item for item in execution["native_artifacts"]}
+    roles = {"sarif": "sarif_report", "json": "policy_inventory"}
+    for observation in evidence["observations"]:
+        raw = base64.b64decode(observation["raw_report_base64"], validate=True)
+        artifact = artifacts[roles[observation["format"]]]
+        if artifact["sha256"] != sha256_bytes(raw) or artifact["bytes"] != len(raw):
+            return False
+    return True
 
 
 def _challenge_execution_v2_control(execution, bound):

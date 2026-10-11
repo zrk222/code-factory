@@ -682,7 +682,7 @@ def _adapter_commands(
     deadline = time.monotonic() + timeout
     invocations = []
     for index, command in enumerate(commands):
-        remaining = deadline - time.monotonic()
+        remaining = int(deadline - time.monotonic())
         if remaining <= 0:
             raise RuntimeAuditError("E_ADAPTER_TIMEOUT", "adapter deadline exhausted")
         directory = scratch / str(index)
@@ -1898,6 +1898,10 @@ def execute_native_profile(
         challenges, covered_obligations = _gitleaks_challenges(
             profile, contract, Path(source), lane, execution, started
         )
+    elif lane["engine"] == "trivy":
+        challenges, covered_obligations = _trivy_challenges(
+            profile, contract, Path(source), lane, execution, started
+        )
     elif lane["engine"] == "semgrep" and "native_artifact_roles" in lane:
         challenges, covered_obligations = _semgrep_challenges(
             profile, contract, Path(source), lane, execution, started
@@ -1936,6 +1940,8 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
     rule_inventory = None
     config_path = None
     semgrep_rules = None
+    trivy_config = None
+    trivy_ignore = None
     if lane["engine"] == "gitleaks":
         config_path = Path("/opt/factory/rules/gitleaks.toml")
         config = config_path.read_bytes()
@@ -1951,6 +1957,10 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
             )
         config = Path("/opt/factory/rules/semgrep-pattern-limited.yml").read_bytes()
         semgrep_rules, rule_inventory = _semgrep_rule_inventory(config, lane)
+    elif lane["engine"] == "trivy":
+        trivy_config = Path("/opt/factory/rules/trivy.yaml").read_bytes()
+        trivy_ignore = Path("/opt/factory/rules/empty-trivyignore").read_bytes()
+        _trivy_policy_inputs(trivy_config, trivy_ignore, lane)
     timeout = require_int(
         lane.get("timeout_seconds"), "timeout", minimum=1, maximum=3600
     )
@@ -1979,6 +1989,23 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
         invocations = _adapter_commands(
             commands, {**lane, "timeout_seconds": int(remaining)}, source, scratch
         )
+        trivy_execution = None
+        if lane["engine"] == "trivy" and lane.get("native_policy"):
+            trivy_execution = _trivy_full_source_execution(
+                profile,
+                lane,
+                inventory,
+                source,
+                output,
+                paths,
+                commands[0]["argv"],
+                invocations[0],
+                trivy_config,
+                trivy_ignore,
+                started,
+                timeout,
+                scratch,
+            )
         ledger = None
         ledger_sha256 = None
         ledger_json = None
@@ -1997,16 +2024,7 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
             semgrep_execution["ruleset_base64"] = base64.b64encode(config).decode(
                 "ascii"
             )
-    if profile["report_format"] == "runtime-junit":
-        junit_path = local_file(output, paths[0])
-        _junit_bytes(output, paths[0])
-        with local_file(output, paths[1]).open("rb") as stream:
-            raw_report = strict_json(stream.read(LIMIT + 1))
-        if not junit_path.is_file():
-            raise RuntimeAuditError("E_RUNTIME_REPORT", "native JUnit missing")
-    else:
-        with local_file(output, paths[0]).open("rb") as stream:
-            raw_report = strict_json(stream.read(LIMIT + 1))
+    raw_report, raw_report_bytes = _native_profile_report(profile, output, paths)
     _adapter_sources(source, inventory)
     return {
         "rule_inventory": rule_inventory,
@@ -2017,7 +2035,462 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
         "raw_report": raw_report,
         "version_probe": version,
         "semgrep_rule_execution": semgrep_execution,
+        "trivy_rule_execution": trivy_execution,
+        "raw_report_bytes": (
+            raw_report_bytes if profile["report_format"] != "runtime-junit" else None
+        ),
     }
+
+
+def _native_profile_report(profile, output, paths):
+    if profile["report_format"] == "runtime-junit":
+        junit_path = local_file(output, paths[0])
+        _junit_bytes(output, paths[0])
+        with local_file(output, paths[1]).open("rb") as stream:
+            raw_report = strict_json(stream.read(LIMIT + 1))
+        if not junit_path.is_file():
+            raise RuntimeAuditError("E_RUNTIME_REPORT", "native JUnit missing")
+    else:
+        with local_file(output, paths[0]).open("rb") as stream:
+            raw_report_bytes = stream.read(LIMIT + 1)
+        if len(raw_report_bytes) > LIMIT:
+            raise RuntimeAuditError("E_REPORT_SIZE", "native report exceeds budget")
+        raw_report = strict_json(raw_report_bytes)
+    return raw_report, (
+        raw_report_bytes if profile["report_format"] != "runtime-junit" else None
+    )
+
+
+def _trivy_policy_inputs(config, ignore, lane):
+    policy = lane.get("native_policy")
+    if policy is None:
+        return
+    if sha256_bytes(config) != policy.get("config_sha256") or sha256_bytes(
+        ignore
+    ) != policy.get("baseline_ignore_sha256"):
+        raise RuntimeAuditError("E_TRIVY_POLICY", "pinned Trivy policy bytes differ")
+    if _trivy_ignore_ids(ignore):
+        raise RuntimeAuditError("E_TRIVY_POLICY", "baseline ignorefile must be empty")
+
+
+def _trivy_ignore_ids(config):
+    import re
+
+    try:
+        text = config.decode("ascii")
+    except (AttributeError, UnicodeDecodeError) as exc:
+        raise RuntimeAuditError(
+            "E_TRIVY_POLICY", "Trivy ignorefile is malformed"
+        ) from exc
+    ids = text.splitlines()
+    if not text.strip():
+        return []
+    if ids != sorted(set(ids)) or any(
+        re.fullmatch(r"DS[0-9]{3}", item) is None for item in ids
+    ):
+        raise RuntimeAuditError("E_TRIVY_POLICY", "Trivy ignore IDs are invalid")
+    return ids
+
+
+def _trivy_mutation(ignore, rule_id):
+    import re
+
+    if _trivy_ignore_ids(ignore):
+        raise RuntimeAuditError("E_TRIVY_MUTATION", "baseline ignorefile is not empty")
+    if not isinstance(rule_id, str) or re.fullmatch(r"DS[0-9]{3}", rule_id) is None:
+        raise RuntimeAuditError("E_TRIVY_MUTATION", "unsupported Trivy check ID")
+    return f"{rule_id}\n".encode("ascii")
+
+
+def _trivy_mutation_valid(baseline, effective, rule_id):
+    try:
+        return _trivy_mutation(baseline, rule_id) == effective
+    except (RuntimeAuditError, ValueError, TypeError):
+        return False
+
+
+def _trivy_json_argv(sarif_argv, output_path):
+    result = list(sarif_argv)
+    try:
+        format_index = result.index("--format") + 1
+        output_index = result.index("--output") + 1
+        if result[format_index] != "sarif":
+            raise ValueError
+        result[format_index] = "json"
+        result[output_index] = str(output_path)
+        result.insert(result.index("config") + 1, "--include-non-failures")
+    except (ValueError, IndexError) as exc:
+        raise RuntimeAuditError(
+            "E_TRIVY_PROFILE", "pinned Trivy command differs"
+        ) from exc
+    return result
+
+
+def _trivy_full_source_execution(
+    profile,
+    lane,
+    inventory,
+    source,
+    output,
+    paths,
+    sarif_argv,
+    invocation,
+    config,
+    ignore,
+    started,
+    timeout,
+    scratch,
+):
+    import base64
+    from .runtime_audit_process import run_bounded_command
+
+    remaining = int(timeout - (time.monotonic() - started))
+    if remaining < 1:
+        raise RuntimeAuditError("E_ADAPTER_TIMEOUT", "Trivy inventory budget exhausted")
+    raw_sarif = _trivy_read_raw(local_file(output, paths[0]))
+    json_path = scratch / "trivy-full.json"
+    json_run = scratch / "trivy-full-run"
+    json_run.mkdir()
+    argv = _trivy_json_argv(sarif_argv, json_path)
+    deadline = time.monotonic() + remaining
+    facts = run_bounded_command(argv, source, remaining, json_run)
+    if _adapter_command_failed(facts, [0], deadline):
+        raise RuntimeAuditError("E_TRIVY_EXECUTION", "Trivy JSON inventory failed")
+    raw_json = _trivy_read_raw(local_file(scratch, "trivy-full.json"))
+    _trivy_native_checks(strict_json(raw_json), _trivy_source_map(inventory, lane))
+    return {
+        "schema": "factory.trivy-rule-execution.v1",
+        "config_base64": base64.b64encode(config).decode("ascii"),
+        "ignore_base64": base64.b64encode(ignore).decode("ascii"),
+        "sources": _trivy_source_map(inventory, lane),
+        "observations": [
+            _trivy_observation("sarif", sarif_argv, invocation["execution"], raw_sarif),
+            _trivy_observation("json", argv, facts, raw_json),
+        ],
+    }
+
+
+def _trivy_read_raw(path):
+    raw = path.read_bytes()
+    if len(raw) > LIMIT:
+        raise RuntimeAuditError("E_TRIVY_REPORT", "Trivy report exceeds byte budget")
+    return raw
+
+
+def _trivy_observation(report_format, argv, facts, raw):
+    import base64
+
+    return {
+        "format": report_format,
+        "argv": argv,
+        "execution": facts,
+        "raw_report_base64": base64.b64encode(raw).decode("ascii"),
+        "raw_report_sha256": sha256_bytes(raw),
+    }
+
+
+def _trivy_source_map(inventory, lane):
+    return {
+        item["path"]: item["sha256"]
+        for item in inventory["files"]
+        if item["language"] in lane["languages"]
+    }
+
+
+def _trivy_native_checks(report, sources):
+    if not isinstance(report, dict) or report.get("SchemaVersion") != 2:
+        raise RuntimeAuditError("E_TRIVY_REPORT", "Trivy JSON schema version differs")
+    results = report.get("Results")
+    if not isinstance(results, list) or not results:
+        raise RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "Trivy reported no applicable sources"
+        )
+    matrix = {}
+    for result in results:
+        if not isinstance(result, dict) or result.get("Class") != "config":
+            raise RuntimeAuditError("E_TRIVY_REPORT", "Trivy config result malformed")
+        path = relative_path(result.get("Target"))
+        if path not in sources:
+            raise RuntimeAuditError("E_TRIVY_APPLICABILITY", "Trivy source is unbound")
+        rows = result.get("Misconfigurations")
+        if not isinstance(rows, list) or not rows:
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Trivy check inventory missing"
+            )
+        statuses = _trivy_check_statuses(result, rows)
+        if path in matrix:
+            raise RuntimeAuditError("E_TRIVY_REPORT", "duplicate Trivy source result")
+        matrix[path] = statuses
+    if set(matrix) != set(sources):
+        raise RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "Trivy omitted a required source"
+        )
+    return matrix
+
+
+def _trivy_check_statuses(result, rows):
+    statuses = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            raise RuntimeAuditError("E_TRIVY_REPORT", "Trivy check row malformed")
+        rule_id = require_str(row.get("ID"), "Trivy check ID", maximum=256)
+        status = row.get("Status")
+        if (
+            not isinstance(status, str)
+            or status not in {"PASS", "FAIL"}
+            or rule_id in statuses
+        ):
+            raise RuntimeAuditError(
+                "E_TRIVY_REPORT", "Trivy check status is unsupported"
+            )
+        statuses[rule_id] = status
+    summary = result.get("MisconfSummary")
+    if (
+        not isinstance(summary, dict)
+        or type(summary.get("Successes")) is not int
+        or type(summary.get("Failures")) is not int
+        or summary.get("Successes")
+        != sum(status == "PASS" for status in statuses.values())
+        or summary.get("Failures")
+        != sum(status == "FAIL" for status in statuses.values())
+    ):
+        raise RuntimeAuditError("E_TRIVY_REPORT", "Trivy status summary differs")
+    return statuses
+
+
+def verify_trivy_rule_execution(
+    evidence, lane, sources, report, *, disabled_rule_id=None
+):
+    """Re-derive Trivy applicability and outcomes from paired native JSON/SARIF bytes."""
+    from .runtime_audit_common import _validate_runner_facts
+
+    config, ignore, observations = _trivy_evidence_inputs(
+        evidence, lane, sources, disabled_rule_id
+    )
+    expected_ids = _trivy_expected_ids(lane, disabled_rule_id)
+    decoded = [_trivy_observation_bytes(item) for item in observations]
+    _trivy_pair_identity(observations[0]["argv"], observations[1]["argv"])
+    for item in observations:
+        facts = item["execution"]
+        _validate_runner_facts(facts, facts.get("timeout_seconds"))
+        budget = require_int(
+            facts["timeout_seconds"],
+            "Trivy timeout",
+            minimum=1,
+            maximum=lane["timeout_seconds"],
+        )
+        require_int(
+            facts["duration_ms"], "Trivy duration", minimum=0, maximum=budget * 1000
+        )
+        if _adapter_command_failed(facts, [0], float("inf")):
+            raise RuntimeAuditError(
+                "E_TRIVY_EXECUTION", "paired Trivy command did not complete"
+            )
+    matrix = _trivy_native_checks(strict_json(decoded[1]), sources)
+    _trivy_matrix_ids(matrix, expected_ids)
+    fail_rows = {
+        (path, rule)
+        for path, rows in matrix.items()
+        for rule, status in rows.items()
+        if status == "FAIL"
+    }
+    sarif = strict_json(decoded[0])
+    if _trivy_sarif_failures(sarif, sources, observations[0]["argv"][-1]) != fail_rows:
+        raise RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "native JSON and SARIF findings differ"
+        )
+    if _trivy_sarif_failures(report, sources) != fail_rows:
+        raise RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "normalized report differs from native status"
+        )
+    return {"state": "VERIFIED", "checks": matrix, "findings": len(fail_rows)}
+
+
+def _trivy_evidence_inputs(evidence, lane, sources, disabled_rule_id):
+    import base64
+
+    if (
+        not isinstance(evidence, dict)
+        or set(evidence)
+        != {"schema", "config_base64", "ignore_base64", "sources", "observations"}
+        or evidence["schema"] != "factory.trivy-rule-execution.v1"
+        or evidence["sources"] != sources
+        or not isinstance(lane.get("native_policy"), dict)
+    ):
+        raise RuntimeAuditError("E_TRIVY_EXECUTION", "signed Trivy evidence is missing")
+    try:
+        config = base64.b64decode(evidence["config_base64"], validate=True)
+        ignore = base64.b64decode(evidence["ignore_base64"], validate=True)
+    except (ValueError, TypeError) as exc:
+        raise RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "Trivy policy bytes are malformed"
+        ) from exc
+    if sha256_bytes(config) != lane["native_policy"]["config_sha256"]:
+        raise RuntimeAuditError("E_TRIVY_POLICY", "Trivy config identity differs")
+    observations = evidence["observations"]
+    if (
+        not isinstance(observations, list)
+        or len(observations) != 2
+        or any(not isinstance(item, dict) for item in observations)
+        or [item.get("format") for item in observations] != ["sarif", "json"]
+    ):
+        raise RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "paired Trivy observations are missing"
+        )
+    expected_ignore = lane["native_policy"]["baseline_ignore_sha256"]
+    if disabled_rule_id is not None:
+        expected_ignore = lane.get("mutation_config_sha256", {}).get(disabled_rule_id)
+    if not expected_ignore or sha256_bytes(ignore) != expected_ignore:
+        raise RuntimeAuditError("E_TRIVY_POLICY", "Trivy ignorefile identity differs")
+    if disabled_rule_id is not None and not _trivy_mutation_valid(
+        b"", ignore, disabled_rule_id
+    ):
+        raise RuntimeAuditError("E_TRIVY_MUTATION", "Trivy target ignore differs")
+    return config, ignore, observations
+
+
+def _trivy_expected_ids(lane, disabled_rule_id):
+    ids = lane.get("rule_ids")
+    if not isinstance(ids, list) or not ids or ids != sorted(set(ids)):
+        raise RuntimeAuditError(
+            "E_TRIVY_RULES", "signed Trivy check inventory is missing"
+        )
+    if disabled_rule_id is not None:
+        if disabled_rule_id not in ids:
+            raise RuntimeAuditError(
+                "E_TRIVY_MUTATION", "target is not a signed Trivy check"
+            )
+        ids = [item for item in ids if item != disabled_rule_id]
+    return ids
+
+
+def _trivy_observation_bytes(item):
+    import base64
+
+    fields = {"format", "argv", "execution", "raw_report_base64", "raw_report_sha256"}
+    if not isinstance(item, dict) or set(item) != fields:
+        raise RuntimeAuditError("E_TRIVY_EXECUTION", "Trivy observation shape differs")
+    try:
+        raw = base64.b64decode(item["raw_report_base64"], validate=True)
+    except (ValueError, TypeError) as exc:
+        raise RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "Trivy report bytes are malformed"
+        ) from exc
+    if len(raw) > LIMIT or sha256_bytes(raw) != item["raw_report_sha256"]:
+        raise RuntimeAuditError("E_TRIVY_EXECUTION", "Trivy report bytes differ")
+    return raw
+
+
+def _trivy_pair_identity(sarif_argv, json_argv):
+    if not isinstance(sarif_argv, list) or not isinstance(json_argv, list):
+        raise RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "Trivy command vectors are missing"
+        )
+    _trivy_closed_argv(sarif_argv)
+    expected = list(sarif_argv)
+    try:
+        expected[expected.index("--format") + 1] = "json"
+        expected[expected.index("--output") + 1] = json_argv[
+            json_argv.index("--output") + 1
+        ]
+        expected.insert(expected.index("config") + 1, "--include-non-failures")
+    except (ValueError, IndexError) as exc:
+        raise RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "Trivy command pair is malformed"
+        ) from exc
+    try:
+        first_output = sarif_argv[sarif_argv.index("--output") + 1]
+        second_output = json_argv[json_argv.index("--output") + 1]
+        formats_match = (
+            sarif_argv[sarif_argv.index("--format") + 1] == "sarif"
+            and json_argv[json_argv.index("--format") + 1] == "json"
+        )
+        input_match = sarif_argv[-1] == json_argv[-1]
+        fixed = (
+            sarif_argv[0:2] == ["/usr/local/bin/trivy", "config"]
+            and sarif_argv[sarif_argv.index("--config") + 1]
+            == "/opt/factory/rules/trivy.yaml"
+            and sarif_argv[sarif_argv.index("--ignorefile") + 1]
+            == json_argv[json_argv.index("--ignorefile") + 1]
+        )
+    except (ValueError, IndexError) as exc:
+        raise RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "Trivy command pair is incomplete"
+        ) from exc
+    if (
+        json_argv != expected
+        or first_output == second_output
+        or not formats_match
+        or not input_match
+        or not fixed
+    ):
+        raise RuntimeAuditError("E_TRIVY_EXECUTION", "Trivy command pair differs")
+
+
+def _trivy_closed_argv(argv):
+    if len(argv) != 14:
+        raise RuntimeAuditError("E_TRIVY_EXECUTION", "Trivy command is not closed")
+    expected = [
+        "/usr/local/bin/trivy",
+        "config",
+        "--config",
+        "/opt/factory/rules/trivy.yaml",
+        "--skip-check-update",
+        "--skip-version-check",
+        "--disable-telemetry",
+        "--ignorefile",
+        argv[8],
+        "--format",
+        "sarif",
+        "--output",
+        argv[12],
+        argv[13],
+    ]
+    if argv != expected or any(
+        not value.startswith("/") for value in (argv[8], argv[12], argv[13])
+    ):
+        raise RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "Trivy command permits unbound options"
+        )
+
+
+def _trivy_matrix_ids(matrix, expected_ids):
+    for rows in matrix.values():
+        if sorted(rows) != expected_ids:
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "signed Trivy check IDs differ"
+            )
+
+
+def _trivy_sarif_failures(report, sources, source_root=None):
+    import copy
+
+    if not isinstance(report, dict) or not isinstance(report.get("runs"), list):
+        raise RuntimeAuditError("E_TRIVY_REPORT", "Trivy SARIF is malformed")
+    normalized = copy.deepcopy(report)
+    if source_root is not None:
+        for run in normalized["runs"]:
+            _normalize_challenge_run(run, source_root.rstrip("/"))
+    normalized = _native_sarif_paths(normalized, sources)
+    failures = set()
+    for run in normalized["runs"]:
+        for result in run.get("results", []):
+            rule = require_str(result.get("ruleId"), "Trivy SARIF rule ID", maximum=256)
+            locations = result.get("locations", [])
+            if len(locations) != 1:
+                raise RuntimeAuditError(
+                    "E_TRIVY_REPORT", "Trivy finding location is ambiguous"
+                )
+            location = (
+                locations[0].get("physicalLocation", {}).get("artifactLocation", {})
+            )
+            path = relative_path(location.get("uri"))
+            if path not in sources or (path, rule) in failures:
+                raise RuntimeAuditError(
+                    "E_TRIVY_REPORT", "Trivy SARIF finding is unbound"
+                )
+            failures.add((path, rule))
+    return failures
 
 
 def _semgrep_rule_inventory(config, lane):
@@ -2379,6 +2852,11 @@ def _native_profile_coverage(
             rule_accounting, challenges, covered_obligations
         )
         complete = not errors
+    elif lane["engine"] == "trivy":
+        errors = _trivy_coverage_errors(
+            execution, report, inventory, lane, challenges, covered_obligations
+        )
+        complete = not errors
     elif lane["engine"] == "runtime" and profile["report_format"] == "runtime-junit":
         errors = _runtime_coverage_errors(
             report, inventory, lane, challenges, covered_obligations
@@ -2424,6 +2902,11 @@ def _native_profile_coverage(
             else {}
         ),
         **(
+            {"trivy_rule_execution": execution["trivy_rule_execution"]}
+            if execution.get("trivy_rule_execution") is not None
+            else {}
+        ),
+        **(
             {"rule_inventory": execution["rule_inventory"]}
             if execution["rule_inventory"] is not None
             else {}
@@ -2459,6 +2942,16 @@ def _native_profile_coverage(
 def _native_source_accounting(execution, report, inventory, lane):
     if execution.get("semgrep_rule_execution") is not None:
         return _semgrep_source_accounting(execution, inventory, lane)
+    if lane.get("engine") == "trivy":
+        try:
+            return verify_trivy_rule_execution(
+                execution["trivy_rule_execution"],
+                lane,
+                _trivy_source_map(inventory, lane),
+                report,
+            )
+        except (KeyError, RuntimeAuditError, TypeError, ValueError):
+            return {"state": "INCOMPLETE", "checks": {}, "findings": 0}
     return _native_runtime_accounting(report, inventory, lane)
 
 
@@ -2497,6 +2990,422 @@ def _runtime_coverage_errors(report, inventory, lane, challenges, obligations):
     if not _gitleaks_challenges_complete(challenges, obligations):
         errors.append("NATIVE_CHALLENGES_REQUIRED")
     return errors
+
+
+def _trivy_coverage_errors(execution, report, inventory, lane, challenges, obligations):
+    errors = []
+    evidence = execution.get("trivy_rule_execution")
+    if evidence is None or not lane.get("native_policy"):
+        errors.append("NATIVE_SOURCE_ACCOUNTING_REQUIRED")
+    else:
+        try:
+            verify_trivy_rule_execution(
+                evidence, lane, _trivy_source_map(inventory, lane), report
+            )
+        except (RuntimeAuditError, ValueError, TypeError, KeyError):
+            errors.append("NATIVE_SOURCE_ACCOUNTING_INVALID")
+    if not _gitleaks_challenges_complete(challenges, obligations):
+        errors.append("NATIVE_CHALLENGES_REQUIRED")
+    return errors
+
+
+def _trivy_challenges(profile, contract, source, lane, execution, started):
+    from .runtime_audit_process import run_bounded_command
+
+    obligations = _trivy_obligations(contract, lane)
+    observations, gaps = [], []
+    if not lane.get("native_policy"):
+        gaps = [
+            _challenge_gap_record(item, control, "E_TRIVY_POLICY")
+            for item in obligations
+            for control in item["challenges"]
+        ]
+        return _challenge_bundle(observations, gaps), [
+            item["id"] for item in obligations
+        ]
+    if len(obligations) > 64:
+        gaps = [
+            _challenge_gap_record(item, control, "E_TRIVY_CHALLENGE_BUDGET")
+            for item in obligations
+            for control in item["challenges"]
+        ]
+        return _challenge_bundle(observations, gaps), [
+            item["id"] for item in obligations
+        ]
+    config = Path("/opt/factory/rules/trivy.yaml").read_bytes()
+    baseline_path = Path("/opt/factory/rules/empty-trivyignore")
+    baseline = baseline_path.read_bytes()
+    _trivy_policy_inputs(config, baseline, lane)
+    command = _trivy_challenge_command(profile)
+    source_bindings = {
+        item["path"]: item["sha256"] for item in contract["inventory"]["files"]
+    }
+    deadline = started + lane["timeout_seconds"]
+    with tempfile.TemporaryDirectory(prefix="factory-trivy-challenges-") as root:
+        for index, obligation in enumerate(obligations):
+            for challenge in obligation["challenges"]:
+                _trivy_challenge_control(
+                    run_bounded_command,
+                    profile,
+                    contract,
+                    source,
+                    lane,
+                    execution,
+                    command,
+                    config,
+                    baseline_path,
+                    baseline,
+                    source_bindings,
+                    obligation,
+                    challenge,
+                    Path(root) / f"control-{index}-{challenge['kind']}",
+                    deadline,
+                    observations,
+                    gaps,
+                )
+    return _challenge_bundle(observations, gaps), [item["id"] for item in obligations]
+
+
+def _challenge_bundle(observations, gaps):
+    return {
+        "schema": "factory.deep-challenges.v1",
+        "observations": observations,
+        "gaps": gaps,
+    }
+
+
+def _trivy_obligations(contract, lane):
+    return [
+        item
+        for item in contract["obligations"]
+        if item["engine"] == "trivy" and item["family"] == lane["family"]
+    ]
+
+
+def _trivy_challenge_command(profile):
+    if profile.get("engine") != "trivy" or len(profile.get("commands", [])) != 1:
+        raise RuntimeAuditError("E_TRIVY_PROFILE", "one pinned Trivy command required")
+    argv = list(profile["commands"][0].get("argv", []))
+    try:
+        if argv[argv.index("--format") + 1] != "sarif":
+            raise ValueError
+        argv[argv.index("--output") + 1] = "{report}"
+        argv[argv.index("--ignorefile") + 1] = "{config}"
+        if argv[-1] != "{source}":
+            raise ValueError
+    except (ValueError, IndexError) as exc:
+        raise RuntimeAuditError(
+            "E_TRIVY_PROFILE", "pinned command template differs"
+        ) from exc
+    return {
+        "argv": argv,
+        "accepted_exit_codes": profile["commands"][0]["accepted_exit_codes"],
+    }
+
+
+def _trivy_challenge_control(
+    runner,
+    profile,
+    contract,
+    source,
+    lane,
+    execution,
+    command,
+    config,
+    baseline_path,
+    baseline,
+    source_bindings,
+    obligation,
+    challenge,
+    case,
+    deadline,
+    observations,
+    gaps,
+):
+    remaining = int(deadline - time.monotonic())
+    fixture_path = challenge.get("fixture_path")
+    fixture_map = challenge.get(
+        "fixture_manifest", {fixture_path: challenge.get("fixture_sha256")}
+    )
+    if remaining < 1:
+        gaps.append(_challenge_gap_record(obligation, challenge, "E_ADAPTER_TIMEOUT"))
+        return
+    if not _gitleaks_challenge_allowed(
+        challenge, obligation, source_bindings, command, lane
+    ):
+        gaps.append(_challenge_gap_record(obligation, challenge, "E_CHALLENGE_BINDING"))
+        return
+    if (
+        not isinstance(fixture_map, dict)
+        or not set(obligation.get("paths", [])) <= set(source_bindings)
+        or not set(fixture_map) <= set(obligation["paths"])
+    ):
+        gaps.append(_challenge_gap_record(obligation, challenge, "E_CHALLENGE_BINDING"))
+        return
+    try:
+        observations.append(
+            _run_trivy_challenge(
+                _native_challenge_executor(),
+                runner,
+                profile,
+                contract,
+                source,
+                lane,
+                execution,
+                command,
+                config,
+                baseline_path,
+                baseline,
+                obligation,
+                challenge,
+                fixture_map,
+                case,
+                remaining,
+            )
+        )
+    except (OSError, RuntimeAuditError, ValueError, TypeError, KeyError) as exc:
+        gaps.append(
+            _challenge_gap_record(obligation, challenge, _challenge_error_code(exc))
+        )
+
+
+def _run_trivy_challenge(
+    execute,
+    runner,
+    profile,
+    contract,
+    source,
+    lane,
+    execution,
+    command,
+    config,
+    baseline_path,
+    baseline,
+    obligation,
+    challenge,
+    fixture_map,
+    case,
+    timeout,
+):
+    from .runtime_audit_common import sha256_bytes as common_sha256
+
+    case.mkdir()
+    challenge_root = case / "source"
+    fixture_map = dict(sorted(fixture_map.items()))
+    for path, source_sha in fixture_map.items():
+        target = challenge_root.joinpath(*relative_path(path).split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(bound_bytes(source, {"path": path, "sha256": source_sha}))
+    challenge_sha = digest(fixture_map)
+    effective = baseline_path
+    if challenge["kind"] == "mutation":
+        effective = _trivy_mutation_path(case, baseline, lane, obligation)
+    scratch = case / "run"
+    report_path, policy_path = scratch / "report.sarif", scratch / "policy.json"
+    argv = dict(
+        source=str(challenge_root),
+        output=str(scratch),
+        report=str(report_path),
+        scratch=str(scratch),
+        candidate_sha256=challenge_sha,
+        factory_ledger=str(scratch / "unused-ledger.json"),
+        config=str(effective),
+    )
+    paired = {}
+
+    def challenge_runner(rendered, cwd, budget, run_scratch):
+        return _trivy_paired_runner(
+            runner, rendered, cwd, budget, run_scratch, policy_path, paired
+        )
+
+    def report_parser(raw):
+        paired["sarif_raw"] = raw
+        matrix = _trivy_native_checks(strict_json(paired["json_raw"]), fixture_map)
+        return _trivy_challenge_report(
+            raw, profile, challenge_root, fixture_map, matrix
+        )
+
+    image = lane["image"]
+    bindings = {
+        "candidate_sha256": contract["inventory"]["candidate_sha256"],
+        "challenge_source_sha256": challenge_sha,
+        "profile_sha256": digest(profile),
+        "image_sha256": common_sha256(image.encode("utf-8")),
+        "tool_version": profile["tool_version"],
+        "version_probe_sha256": digest(execution["version_probe"]),
+        "version_probe_facts": execution["version_probe"],
+    }
+    observation = execute(
+        challenge,
+        obligation_id=obligation["id"],
+        engine="trivy",
+        detector_rule_id=obligation["detector_rule_id"],
+        detector_enabled=challenge["kind"] != "mutation",
+        profile_argv=command["argv"],
+        bindings=argv,
+        source_root=challenge_root,
+        baseline_config_path=baseline_path,
+        effective_config_path=effective,
+        report_path=report_path,
+        ledger_path=scratch / "unused-ledger.json",
+        scratch=scratch,
+        scratch_parent=case,
+        timeout_seconds=timeout,
+        expected_ruleset_sha256=lane["native_policy"]["baseline_ignore_sha256"],
+        execution_bindings=bindings,
+        runner=challenge_runner,
+        report_parser=report_parser,
+        config_rule_ids=lambda raw: _trivy_effective_ids(raw, lane),
+        verify_mutation=_trivy_mutation_valid,
+        native_artifact_roles=lane["native_artifact_roles"],
+        native_artifacts={"sarif_report": report_path, "policy_inventory": policy_path},
+        rule_ids=lane["rule_ids"],
+        mutation_ruleset_sha256=lane["mutation_config_sha256"],
+    )
+    observation["trivy_rule_execution"] = _trivy_challenge_evidence(
+        config, effective.read_bytes(), fixture_map, paired, observation
+    )
+    checked = verify_trivy_rule_execution(
+        observation["trivy_rule_execution"],
+        lane,
+        fixture_map,
+        observation["report"]["native_report"],
+        disabled_rule_id=obligation["detector_rule_id"]
+        if challenge["kind"] == "mutation"
+        else None,
+    )
+    if checked["state"] != "VERIFIED":
+        raise RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "paired native evidence did not verify"
+        )
+    return observation
+
+
+def _trivy_paired_runner(runner, argv, cwd, budget, scratch, policy_path, paired):
+    started = time.monotonic()
+    deadline = started + budget
+    sarif_facts = runner(argv, cwd, budget, scratch)
+    json_facts = None
+    if not _adapter_command_failed(sarif_facts, [0], deadline):
+        remaining = int(deadline - time.monotonic())
+        if remaining > 0:
+            json_scratch = scratch / "json-run"
+            json_scratch.mkdir()
+            json_argv = _trivy_json_argv(argv, policy_path)
+            json_facts = runner(json_argv, cwd, remaining, json_scratch)
+            paired.update(json_argv=json_argv, json_facts=json_facts)
+            if not _adapter_command_failed(json_facts, [0], deadline):
+                paired["json_raw"] = local_file(scratch, "policy.json").read_bytes()
+    paired.update(sarif_argv=argv, sarif_facts=sarif_facts)
+    return _trivy_pair_facts(sarif_facts, json_facts, budget)
+
+
+def _trivy_pair_facts(sarif, native, budget):
+    facts = dict(sarif)
+    other = native or {}
+    facts.update(
+        timeout_seconds=budget,
+        duration_ms=min(
+            3_600_000, sarif.get("duration_ms", 0) + other.get("duration_ms", 0)
+        ),
+        exit_code=(
+            sarif.get("exit_code")
+            if sarif.get("exit_code") != 0 or native is None
+            else other.get("exit_code")
+        ),
+        timed_out=sarif.get("timed_out", False) or other.get("timed_out", False),
+        launch_error=sarif.get("launch_error", False)
+        or other.get("launch_error", False),
+        output_limit_exceeded=sarif.get("output_limit_exceeded", False)
+        or other.get("output_limit_exceeded", False),
+        cleanup_confirmed=sarif.get("cleanup_confirmed", False)
+        and (native is None or other.get("cleanup_confirmed", False)),
+        stdout_sha256=digest([sarif.get("stdout_sha256"), other.get("stdout_sha256")]),
+        stderr_sha256=digest([sarif.get("stderr_sha256"), other.get("stderr_sha256")]),
+        stdout_bytes=sarif.get("stdout_bytes", 0) + other.get("stdout_bytes", 0),
+        stderr_bytes=sarif.get("stderr_bytes", 0) + other.get("stderr_bytes", 0),
+    )
+    return facts
+
+
+def _trivy_mutation_path(case, baseline, lane, obligation):
+    rule_id = obligation["detector_rule_id"]
+    effective = _trivy_mutation(baseline, rule_id)
+    expected = lane.get("mutation_config_sha256", {}).get(rule_id)
+    if sha256_bytes(effective) != expected:
+        raise RuntimeAuditError(
+            "E_TRIVY_MUTATION_BINDING", "signed ignorefile digest differs"
+        )
+    path = case / "mutation-trivyignore"
+    path.write_bytes(effective)
+    return path
+
+
+def _trivy_effective_ids(ignore, lane):
+    excluded = set(_trivy_ignore_ids(ignore))
+    ids = lane.get("rule_ids")
+    if not isinstance(ids, list) or not excluded <= set(ids):
+        raise RuntimeAuditError("E_TRIVY_POLICY", "ignore IDs exceed signed checks")
+    return [rule for rule in ids if rule not in excluded]
+
+
+def _trivy_challenge_report(raw, profile, source_root, sources, matrix):
+    report = strict_json(raw)
+    if not isinstance(report, dict):
+        raise RuntimeAuditError("E_CHALLENGE_REPORT", "native SARIF object required")
+    report = _native_sarif_metadata(report, profile, [])
+    _normalize_challenge_sarif_paths(report, source_root)
+    report = _native_sarif_paths(report, sources)
+    status_rows = [
+        {
+            "source": path,
+            "checks": [
+                {"id": rule, "status": status} for rule, status in sorted(rows.items())
+            ],
+        }
+        for path, rows in sorted(matrix.items())
+    ]
+    for run in report["runs"]:
+        properties = run.setdefault("properties", {})
+        if not isinstance(properties, dict):
+            raise RuntimeAuditError("E_CHALLENGE_REPORT", "SARIF properties malformed")
+        properties["factory_trivy_checks"] = status_rows
+    return report
+
+
+def _trivy_challenge_evidence(config, ignore, sources, paired, observation):
+    import base64
+
+    sarif_raw = paired.get("sarif_raw")
+    json_raw = paired.get("json_raw")
+    if not isinstance(sarif_raw, bytes) or not isinstance(json_raw, bytes):
+        raise RuntimeAuditError("E_TRIVY_EXECUTION", "paired native output is missing")
+    artifact_rows = observation.get("execution", {}).get("native_artifacts", [])
+    policy = next(
+        (item for item in artifact_rows if item.get("kind") == "policy_inventory"), None
+    )
+    if (
+        not isinstance(policy, dict)
+        or policy.get("sha256") != sha256_bytes(json_raw)
+        or policy.get("bytes") != len(json_raw)
+    ):
+        raise RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "native policy artifact binding differs"
+        )
+    return {
+        "schema": "factory.trivy-rule-execution.v1",
+        "config_base64": base64.b64encode(config).decode("ascii"),
+        "ignore_base64": base64.b64encode(ignore).decode("ascii"),
+        "sources": sources,
+        "observations": [
+            _trivy_observation(
+                "sarif", paired["sarif_argv"], paired["sarif_facts"], sarif_raw
+            ),
+            _trivy_observation(
+                "json", paired["json_argv"], paired["json_facts"], json_raw
+            ),
+        ],
+    }
 
 
 def _gitleaks_coverage_errors(accounting, challenges, obligations):
