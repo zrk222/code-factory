@@ -166,6 +166,24 @@ data class RepairAttemptSummary(
         fun fromJson(rawJson: String, expectedApprovalSha256: String): RepairAttemptSummary? = runCatching {
             val json = JsonParser.parseString(rawJson).asJsonObject
             fun string(name: String) = json.get(name)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
+            fun nullableDigest(name: String): String? {
+                val value = json.get(name) ?: return null
+                if (value.isJsonNull) return null
+                return value.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }
+                    ?.asString?.takeIf { digest.matches(it) }
+                    ?: throw IllegalArgumentException("invalid $name")
+            }
+            fun nullableSequence(name: String): Long? {
+                val value = json.get(name) ?: return null
+                if (value.isJsonNull) return null
+                val primitive = value.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
+                    ?.asJsonPrimitive ?: throw IllegalArgumentException("invalid $name")
+                val text = primitive.asString
+                if (!Regex("0|[1-9][0-9]*").matches(text)) throw IllegalArgumentException("invalid $name")
+                val sequence = text.toLongOrNull() ?: throw IllegalArgumentException("invalid $name")
+                if (sequence !in 1L..100_000L) throw IllegalArgumentException("invalid $name")
+                return sequence
+            }
             fun boolean(name: String): Boolean? {
                 val value = json.get(name) ?: return null
                 if (value.isJsonNull) return false
@@ -177,14 +195,50 @@ data class RepairAttemptSummary(
             val phase = string("phase") ?: return null
             val cleanup = boolean("cleanup_confirmed") ?: return null
             val unchanged = boolean("primary_checkout_unchanged") ?: return null
+            val origin = json.get("origin_audit") ?: return null
+            var originCandidate: String? = null
+            if (!origin.isJsonNull) {
+                val binding = origin.takeIf { it.isJsonObject }?.asJsonObject
+                    ?: return null
+                val fields = setOf("run_id", "candidate_sha256", "manifest_sha256", "event_sha256", "sequence")
+                if (binding.entrySet().map { it.key }.toSet() != fields) return null
+                val runId = binding.get("run_id")?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
+                    ?: return null
+                if (runId.isBlank() || runId.length > 128) return null
+                for (field in listOf("candidate_sha256", "manifest_sha256", "event_sha256")) {
+                    val value = binding.get(field)
+                    if (value == null || !value.isJsonPrimitive || !value.asJsonPrimitive.isString ||
+                        !digest.matches(value.asString)) return null
+                }
+                originCandidate = binding.get("candidate_sha256").asString
+                val originSequence = binding.get("sequence")
+                    ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }?.asJsonPrimitive?.asString
+                    ?: return null
+                if (!Regex("0|[1-9][0-9]*").matches(originSequence) || originSequence.toLongOrNull() == null) return null
+            }
+            val candidateBefore = nullableDigest("candidate_before_sha256")
+            val candidateAfter = nullableDigest("candidate_after_sha256")
+            val eventSequence = nullableSequence("event_sequence")
+            val eventDigest = nullableDigest("event_sha256")
+            if ((candidateBefore != null && candidateBefore != originCandidate) ||
+                (candidateAfter != null && candidateBefore == null) ||
+                ((eventSequence == null) != (eventDigest == null))) return null
+            if (json.get("checks")?.isJsonArray != true) return null
+            val error = json.get("error") ?: return null
+            if (!error.isJsonNull && !error.isJsonObject) return null
             if (json.entrySet().map { it.key }.toSet() != setOf(
                     "schema", "attempt_path", "approval_sha256", "status", "state", "phase",
-                    "cleanup_confirmed", "primary_checkout_unchanged", "checks", "error",
+                    "cleanup_confirmed", "primary_checkout_unchanged", "origin_audit",
+                    "candidate_before_sha256", "candidate_after_sha256", "event_sequence",
+                    "event_sha256", "checks", "error",
                 ) || string("schema") != "factory.repair_attempt.v1" || string("state") != status ||
                 !digest.matches(hash) || hash != expectedApprovalSha256 ||
                 path != ".factory/repair-attempts/$hash/state.json" ||
                 status !in setOf("VERIFIED", "FAILED", "STOPPED")) return null
-            val code = json.get("error")?.takeIf { it.isJsonObject }?.asJsonObject?.get("code")
+            if (status == "VERIFIED" &&
+                (eventSequence == null || eventDigest == null ||
+                    (!origin.isJsonNull && (candidateBefore == null || candidateAfter == null || candidateBefore != originCandidate)))) return null
+            val code = error.takeIf { it.isJsonObject }?.asJsonObject?.get("code")
                 ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
             RepairAttemptSummary(hash, path, status, phase, cleanup, unchanged, code, rawJson)
         }.getOrNull()

@@ -377,14 +377,57 @@ class FactoryLineCoreTest {
         assertNull(RepairApprovalSummary.fromJson("""{"approval_sha256":"$hash","path":".factory/repair-approvals/$hash.json","state":"REVOKED"}"""))
         assertNull(RepairApprovalSummary.fromJson("""{"approval_sha256":"$hash","path":"../$hash.json","state":"APPROVED_NOT_EXECUTED"}"""))
         assertNull(RepairApprovalSummary.fromJson("""{"approval_sha256":"$hash","path":".factory/repair-approvals/$hash.json","state":"APPROVED_NOT_EXECUTED","unexpected":true}"""))
-        val verified = RepairAttemptSummary.fromJson("""{"schema":"factory.repair_attempt.v1","approval_sha256":"$hash","attempt_path":".factory/repair-attempts/$hash/state.json","status":"VERIFIED","state":"VERIFIED","phase":"VERIFIED","cleanup_confirmed":true,"primary_checkout_unchanged":true,"checks":[],"error":null}""", hash)
+        val origin = """{"run_id":"run-123","candidate_sha256":"${"a".repeat(64)}","manifest_sha256":"${"b".repeat(64)}","event_sha256":"${"c".repeat(64)}","sequence":4}"""
+        val verifiedJson = """{"schema":"factory.repair_attempt.v1","approval_sha256":"$hash","attempt_path":".factory/repair-attempts/$hash/state.json","status":"VERIFIED","state":"VERIFIED","phase":"VERIFIED","cleanup_confirmed":true,"primary_checkout_unchanged":true,"origin_audit":$origin,"candidate_before_sha256":"${"a".repeat(64)}","candidate_after_sha256":"${"d".repeat(64)}","event_sequence":12,"event_sha256":"${"e".repeat(64)}","checks":[],"error":null}"""
+        val verified = RepairAttemptSummary.fromJson(verifiedJson, hash)
         assertNotNull(verified)
         assertTrue(verified.verified)
-        assertNull(RepairAttemptSummary.fromJson("""{"schema":"factory.repair_attempt.v1","approval_sha256":"${"c".repeat(64)}","attempt_path":".factory/repair-attempts/$hash/state.json","status":"VERIFIED","state":"VERIFIED","phase":"VERIFIED","cleanup_confirmed":true,"primary_checkout_unchanged":true,"checks":[],"error":null}""", hash))
-        val unsafe = RepairAttemptSummary.fromJson("""{"schema":"factory.repair_attempt.v1","approval_sha256":"$hash","attempt_path":".factory/repair-attempts/$hash/state.json","status":"VERIFIED","state":"VERIFIED","phase":"VERIFIED","cleanup_confirmed":false,"primary_checkout_unchanged":true,"checks":[],"error":null}""", hash)
+        val currentWithoutOrigin = verifiedJson
+            .replace("\"origin_audit\":$origin", "\"origin_audit\":null")
+            .replace("\"candidate_before_sha256\":\"${"a".repeat(64)}\"", "\"candidate_before_sha256\":null")
+            .replace("\"candidate_after_sha256\":\"${"d".repeat(64)}\"", "\"candidate_after_sha256\":null")
+        assertNotNull(RepairAttemptSummary.fromJson(currentWithoutOrigin, hash))
+        assertNull(RepairAttemptSummary.fromJson(verifiedJson.dropLast(1) + ",\"unexpected\":true}", hash))
+        assertNull(RepairAttemptSummary.fromJson(verifiedJson.replace(origin, origin.replace("\"candidate_sha256\":\"${"a".repeat(64)}\"", "\"candidate_sha256\":\"bad\"")), hash))
+        assertNull(RepairAttemptSummary.fromJson(verifiedJson.replace("\"event_sequence\":12", "\"event_sequence\":-1"), hash))
+        assertNull(RepairAttemptSummary.fromJson(verifiedJson.replace("\"event_sequence\":12", "\"event_sequence\":0"), hash))
+        assertNull(RepairAttemptSummary.fromJson(verifiedJson.replace("\"event_sequence\":12", "\"event_sequence\":100001"), hash))
+        assertNotNull(RepairAttemptSummary.fromJson(verifiedJson.replace("\"event_sequence\":12", "\"event_sequence\":1"), hash))
+        assertNotNull(RepairAttemptSummary.fromJson(verifiedJson.replace("\"event_sequence\":12", "\"event_sequence\":100000"), hash))
+        assertNull(RepairAttemptSummary.fromJson(verifiedJson.replace("\"event_sha256\":\"${"e".repeat(64)}\"", "\"event_sha256\":\"bad\""), hash))
+        assertNull(RepairAttemptSummary.fromJson(verifiedJson.replace("\"event_sequence\":12", "\"event_sequence\":1.5"), hash))
+        assertNull(RepairAttemptSummary.fromJson(
+            verifiedJson.replace("\"event_sequence\":12", "\"event_sequence\":null")
+                .replace("\"event_sha256\":\"${"e".repeat(64)}\"", "\"event_sha256\":null"), hash,
+        ))
+        assertNull(RepairAttemptSummary.fromJson(
+            verifiedJson.replace("\"candidate_before_sha256\":\"${"a".repeat(64)}\"", "\"candidate_before_sha256\":null")
+                .replace("\"candidate_after_sha256\":\"${"d".repeat(64)}\"", "\"candidate_after_sha256\":null"), hash,
+        ))
+        assertNull(RepairAttemptSummary.fromJson(
+            verifiedJson.replace("\"candidate_after_sha256\":\"${"d".repeat(64)}\"", "\"candidate_after_sha256\":null"), hash,
+        ))
+        assertNull(RepairAttemptSummary.fromJson(
+            verifiedJson.replace("\"candidate_before_sha256\":\"${"a".repeat(64)}\"", "\"candidate_before_sha256\":\"${"f".repeat(64)}\""), hash,
+        ))
+        val wrongHashJson = verifiedJson.replace("\"approval_sha256\":\"$hash\"", "\"approval_sha256\":\"${"c".repeat(64)}\"")
+        assertNull(RepairAttemptSummary.fromJson(wrongHashJson, hash))
+        val unsafe = RepairAttemptSummary.fromJson(
+            verifiedJson.replace("\"cleanup_confirmed\":true", "\"cleanup_confirmed\":false"), hash,
+        )
         assertNotNull(unsafe)
         assertFalse(unsafe.verified)
-        val failed = RepairAttemptSummary.fromJson("""{"schema":"factory.repair_attempt.v1","approval_sha256":"$hash","attempt_path":".factory/repair-attempts/$hash/state.json","status":"FAILED","state":"FAILED","phase":"BASELINE","cleanup_confirmed":null,"primary_checkout_unchanged":null,"checks":[],"error":null}""", hash)
+        val failedJson = verifiedJson
+            .replace("\"status\":\"VERIFIED\"", "\"status\":\"FAILED\"")
+            .replace("\"state\":\"VERIFIED\"", "\"state\":\"FAILED\"")
+            .replace("\"phase\":\"VERIFIED\"", "\"phase\":\"BASELINE\"")
+            .replace("\"cleanup_confirmed\":true", "\"cleanup_confirmed\":null")
+            .replace("\"primary_checkout_unchanged\":true", "\"primary_checkout_unchanged\":null")
+            .replace("\"candidate_after_sha256\":\"${"d".repeat(64)}\"", "\"candidate_after_sha256\":null")
+            .replace("\"event_sequence\":12", "\"event_sequence\":null")
+            .replace("\"event_sha256\":\"${"e".repeat(64)}\"", "\"event_sha256\":null")
+            .replace("\"error\":null", "\"error\":{\"code\":\"REPAIR_TEST_FAILED\",\"message\":\"failed\"}")
+        val failed = RepairAttemptSummary.fromJson(failedJson, hash)
         assertNotNull(failed)
         assertFalse(failed.verified)
         val recovery = RepairSandboxActionState()
@@ -397,6 +440,27 @@ class FactoryLineCoreTest {
         assertEquals(RepairSandboxActionState.Attempt.UNKNOWN, recovery.attempt)
         assertTrue(recovery.canStop())
         assertNull(RepairApprovalActionSummary.fromJson("""{"approval_sha256":"$hash","state":"REVOKED","extra":true}""", hash, "REVOKED"))
+    }
+
+    @Test
+    fun repairCheckSummaryEscapesMultilineAndInvisibleCommandText() {
+        val checks = Files.createTempFile("factoryline-checks-display", ".json")
+        try {
+            Files.writeString(
+                checks,
+                """[{"id":"positive","kind":"positive","argv":["python","-c","print(1)\nprint(2)\u2028\u001b"],"failure":{"exit_code":1,"signature":"line one\nline two\u001b"}},{"id":"negative","kind":"negative","argv":["python","-c","pass"],"failure":{"exit_code":1,"signature":"EXPECTED_FAIL"}}]""",
+            )
+            val review = RepairApprovalInputValidation.checks(checks)
+            assertNotNull(review)
+            val description = review.descriptions.first()
+            assertFalse(description.contains('\n'))
+            assertFalse(description.contains('\r'))
+            assertTrue(description.contains("\\n"))
+            assertTrue(description.contains("\\u2028"))
+            assertTrue(description.contains("\\u001b"))
+        } finally {
+            Files.deleteIfExists(checks)
+        }
     }
 
     @Test

@@ -36,6 +36,27 @@ internal object RepairApprovalInputValidation {
 
     data class ChecksReview(val sha256: String, val descriptions: List<String>)
 
+    private fun quoteForDisplay(value: String): String = buildString {
+        append('"')
+        value.forEach { char ->
+            when {
+                char == '\\' -> append("\\\\")
+                char == '"' -> append("\\\"")
+                char == '\n' -> append("\\n")
+                char == '\r' -> append("\\r")
+                char == '\t' -> append("\\t")
+                Character.getType(char) in setOf(
+                    Character.CONTROL.toInt(),
+                    Character.FORMAT.toInt(),
+                    Character.LINE_SEPARATOR.toInt(),
+                    Character.PARAGRAPH_SEPARATOR.toInt(),
+                ) -> append("\\u${char.code.toString(16).padStart(4, '0')}")
+                else -> append(char)
+            }
+        }
+        append('"')
+    }
+
     fun checks(path: Path): ChecksReview? = runCatching {
         if (!Files.isRegularFile(path) || Files.size(path) !in 2..1_000_000) return null
         val bytes = Files.newInputStream(path).use { it.readNBytes(1_000_001) }
@@ -58,7 +79,8 @@ internal object RepairApprovalInputValidation {
                 argv.size() !in 1..64 || argv.any { !it.isJsonPrimitive || !it.asJsonPrimitive.isString || it.asString.isEmpty() || it.asString.length > 4096 } ||
                 exit !in 1..255 || exit in setOf(125, 126, 127) || signature.isBlank() || signature.length > 512) return null
             kinds += kind
-            descriptions += "$id [$kind]: ${argv.joinToString(" ") { it.asString }} (expected failure: exit $exit, signature '$signature')"
+            val displayArgv = argv.joinToString(" ") { quoteForDisplay(it.asString) }
+            descriptions += "$id [$kind]: $displayArgv (expected failure: exit $exit, signature ${quoteForDisplay(signature)})"
         }
         if (kinds != setOf("positive", "negative")) return null
         ChecksReview(java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }, descriptions)
