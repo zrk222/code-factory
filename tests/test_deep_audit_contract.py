@@ -1061,6 +1061,102 @@ def test_zap_target_contract_binds_sorted_routes_and_inventory_sources(tmp_path)
     )
 
 
+def _python_trace_target(inventory):
+    target = _zap_target_fixture(inventory)
+    source = next(iter(target["routes"][0]["source_bindings"]))
+    target["argv"] = ["/usr/bin/python3.11", f"/src/{source}", "--serve"]
+    target["source_trace"] = {
+        "schema": "factory.zap-source-trace.config.v1",
+        "provider": "python-stdlib-http.v1",
+        "max_events": 1000,
+    }
+    return target
+
+
+def test_zap_source_trace_is_opt_in_and_accepts_bound_python_script(tmp_path):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import _validate_zap_target
+
+    _, _, _, _, _, _, inventory, _ = execution_fixture(tmp_path)
+    legacy = _zap_target_fixture(inventory)
+    assert _validate_zap_target(legacy, inventory) is None
+    assert _validate_zap_target(_python_trace_target(inventory), inventory) is None
+
+    duplicate = deepcopy(legacy)
+    duplicate_route = deepcopy(duplicate["routes"][0])
+    duplicate_route["id"] = "health_copy"
+    duplicate_route["query"] = {"probe": "different"}
+    duplicate["routes"].append(duplicate_route)
+    duplicate["routes"].sort(key=lambda route: route["id"])
+    assert _validate_zap_target(duplicate, inventory) is None
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda config: config.update(extra=True),
+        lambda config: config.update(schema="factory.zap-source-trace.config.v2"),
+        lambda config: config.update(provider="python-framework.v1"),
+        lambda config: config.update(max_events=0),
+        lambda config: config.update(max_events=50_001),
+        lambda config: config.update(max_events=True),
+    ],
+)
+def test_zap_source_trace_rejects_invalid_exact_config(tmp_path, mutate):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import _validate_zap_target
+
+    _, _, _, _, _, _, inventory, _ = execution_fixture(tmp_path)
+    target = deepcopy(_python_trace_target(inventory))
+    mutate(target["source_trace"])
+
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_SOURCE_TRACE|E_FIELD"):
+        _validate_zap_target(target, inventory)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["/usr/bin/node", "/src/app.py"],
+        ["python3", "/src/app.py"],
+        ["/usr/bin/python2", "/src/app.py"],
+        ["/usr/bin/python3", "-m", "app"],
+        ["/usr/bin/python3", "/src/../app.py"],
+        ["/usr/bin/python3", "/src/app.txt"],
+    ],
+)
+def test_zap_source_trace_rejects_noncanonical_python_argv(tmp_path, argv):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import _validate_zap_target
+
+    _, _, _, _, _, _, inventory, _ = execution_fixture(tmp_path)
+    target = deepcopy(_python_trace_target(inventory))
+    target["argv"] = argv
+
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_SOURCE_TRACE|E_ZAP_TARGET"):
+        _validate_zap_target(target, inventory)
+
+
+def test_zap_source_trace_script_must_be_route_bound_and_routes_unique(tmp_path):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import _validate_zap_target
+
+    _, _, _, _, _, _, inventory, _ = execution_fixture(tmp_path)
+    target = _python_trace_target(inventory)
+    target["argv"][1] = "/src/clean.py"
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_SOURCE_TRACE"):
+        _validate_zap_target(target, inventory)
+
+    target = deepcopy(_python_trace_target(inventory))
+    duplicate_route = deepcopy(target["routes"][0])
+    duplicate_route["id"] = "health_copy"
+    duplicate_route["query"] = {"probe": "different"}
+    target["routes"].append(duplicate_route)
+    target["routes"].sort(key=lambda route: route["id"])
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_SOURCE_TRACE"):
+        _validate_zap_target(target, inventory)
+
+
 @pytest.mark.parametrize(
     "mutate,code",
     [

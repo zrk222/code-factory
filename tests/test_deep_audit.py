@@ -19,6 +19,116 @@ from factoryline.deep_audit_io import digest
 from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
 
 
+def test_zap_source_trace_mount_preserves_isolation_and_signed_python(tmp_path):
+    from factoryline.deep_audit import _zap_app_argv
+    from test_deep_audit_sarif import _host_zap_lane_fixture
+
+    lane = _host_zap_lane_fixture()
+    lane["native_target"]["argv"] = ["/usr/local/bin/python", "/src/app.py", "arg"]
+    bootstrap = tmp_path / "bootstrap.txt"
+    argv = _zap_app_argv(["docker"], lane, tmp_path, "app", "internal", bootstrap)
+    assert argv[-2:] == ["-I", "/factory-source-trace.py"]
+    assert argv[argv.index("--entrypoint") + 1] == "/usr/local/bin/python"
+    assert any(item.endswith("/factory-source-trace.py,readonly") for item in argv)
+    assert "/trace:rw,nosuid,nodev,noexec,size=4m,mode=1777" in argv
+    assert "--read-only" in argv and "--network=internal" in argv
+    assert not any("target=/out" in item or "docker.sock" in item for item in argv)
+
+
+@pytest.mark.parametrize("mode", ["valid", "missing", "replay", "unmeasured"])
+def test_zap_source_trace_cannot_clear_unobserved_or_unreplayed_sources(mode):
+    from copy import deepcopy
+    from factoryline.deep_audit import _zap_source_trace_gaps
+    from test_deep_audit_sarif import _host_zap_lane_fixture
+
+    trace = {"observations": [{"route_id": "home", "path": "app.py", "lines": [3]}]}
+    primary = {"native_execution": {"source_trace": trace}}
+    replay = deepcopy(primary)
+    if mode == "missing":
+        primary["native_execution"]["source_trace"] = None
+    if mode == "replay":
+        replay["native_execution"]["source_trace"]["observations"][0]["lines"] = [4]
+    lane = _host_zap_lane_fixture()
+    if mode == "unmeasured":
+        lane["native_target"]["routes"][0]["source_bindings"]["other.py"] = "d" * 64
+    gaps = _zap_source_trace_gaps(primary, replay, lane)
+    assert bool(gaps) == (mode != "valid")
+    if mode == "unmeasured":
+        assert primary["native_execution"]["source_trace_missing"] == [
+            {"route_id": "home", "path": "other.py"}
+        ]
+
+
+@pytest.mark.parametrize("unsafe", ["symlink", "oversize"])
+def test_zap_source_trace_capture_rejects_unsafe_copied_artifact(tmp_path, unsafe):
+    from factoryline.deep_audit import _zap_read_trace
+
+    path = tmp_path / "trace.jsonl"
+    if unsafe == "oversize":
+        with path.open("wb") as stream:
+            stream.truncate(4 * 1024 * 1024 + 1)
+    else:
+        target = tmp_path / "real"
+        target.write_text("{}\n")
+        try:
+            path.symlink_to(target)
+        except OSError:
+            pytest.skip("symlink privilege unavailable")
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_SOURCE_TRACE"):
+        _zap_read_trace(path)
+
+
+def test_zap_invalid_trace_becomes_actionable_gap_without_discarding_reports(
+    tmp_path, monkeypatch
+):
+    import factoryline.deep_audit as host
+
+    def failed_capture(*args):
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "private host path must not leak")
+
+    monkeypatch.setattr(host, "_zap_capture_trace", failed_capture)
+    trace, code = host._zap_capture_trace_or_gap([], "app", tmp_path)
+    assert trace is None and code == "E_ZAP_SOURCE_TRACE"
+    from factoryline.deep_audit_io import read_run_json
+
+    retained = read_run_json(tmp_path, "zap-source-trace-failure.json")
+    assert retained["code"] == "E_ZAP_SOURCE_TRACE"
+    assert "private" not in json.dumps(retained)
+
+
+def test_zap_trace_capture_streams_fixed_tmpfs_path_with_signed_interpreter(
+    tmp_path, monkeypatch
+):
+    import factoryline.deep_audit as host
+    import factoryline.deep_audit_io as io
+
+    calls = []
+
+    def control(base, args, deadline):
+        calls.append((args, deadline))
+        return {"exit_code": 0}, b'{"sample":1}\n'
+
+    monkeypatch.setattr(host, "_zap_docker_control", control)
+    monkeypatch.setattr(
+        io, "zap_validate_source_trace", lambda *args: {"observations": []}
+    )
+    request = {"target": {"argv": ["/usr/local/bin/python", "/src/app.py"]}}
+    result = host._zap_capture_trace(
+        ["docker"],
+        "app",
+        tmp_path,
+        (tmp_path / "bootstrap", request),
+        {},
+        tmp_path,
+        123,
+    )
+    args, deadline = calls[0]
+    assert args[:5] == ["exec", "app", "/usr/local/bin/python", "-I", "-c"]
+    assert "os.O_NOFOLLOW" in args[-1] and "/trace/events.jsonl" in args[-1]
+    assert deadline == 123
+    assert (tmp_path / result["artifact"]).read_bytes() == b'{"sample":1}\n'
+
+
 def test_semgrep_signed_mutation_preserves_every_other_rule(tmp_path):
     import yaml
     from factoryline.deep_audit_io import (

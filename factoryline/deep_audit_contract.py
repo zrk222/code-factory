@@ -609,9 +609,7 @@ def _validate_v2_rule_inventory(lane: dict) -> None:
 
 def _validate_zap_target(target: dict, inventory: dict | None = None) -> None:
     """Validate the signed ZAP app target, exact routes, and optional source inventory binding."""
-    fields = {"schema", "image", "argv", "port", "readiness_path", "routes"}
-    if not isinstance(target, dict) or set(target) != fields:
-        raise RuntimeAuditError("E_ZAP_TARGET", "target fields differ")
+    _validate_zap_target_fields(target)
     if target["schema"] != "factory.zap-target.v1":
         raise RuntimeAuditError("E_ZAP_TARGET", "unsupported target schema")
     _validate_lane_image({"image": target["image"]})
@@ -637,6 +635,61 @@ def _validate_zap_target(target: dict, inventory: dict | None = None) -> None:
     _unique(identities)
     if identities != sorted(identities):
         raise RuntimeAuditError("E_ZAP_TARGET", "routes must be sorted by ID")
+    if "source_trace" in target:
+        _validate_zap_source_trace(target["source_trace"], argv, routes)
+
+
+def _validate_zap_target_fields(target: object) -> None:
+    """Allow only the base target fields and the opt-in trace field."""
+    fields = {"schema", "image", "argv", "port", "readiness_path", "routes"}
+    if not isinstance(target, dict):
+        raise RuntimeAuditError("E_ZAP_TARGET", "target fields differ")
+    if "source_trace" in target:
+        fields.add("source_trace")
+    if set(target) != fields:
+        raise RuntimeAuditError("E_ZAP_TARGET", "target fields differ")
+
+
+def _validate_zap_source_trace(config: object, argv: list, routes: list) -> None:
+    """Validate the opt-in Python HTTP trace contract without asserting its truth."""
+    fields = {"schema", "provider", "max_events"}
+    if not isinstance(config, dict) or set(config) != fields:
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "trace config fields differ")
+    if (
+        config["schema"] != "factory.zap-source-trace.config.v1"
+        or config["provider"] != "python-stdlib-http.v1"
+    ):
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "unsupported trace provider")
+    require_int(config["max_events"], "max_events", minimum=1, maximum=50_000)
+
+    executable = PurePosixPath(argv[0])
+    if (
+        not executable.is_absolute()
+        or str(executable) != argv[0]
+        or any(part in {".", ".."} for part in executable.parts)
+        or re.fullmatch(r"python(?:3(?:\.\d+)?)?", executable.name) is None
+        or len(argv) < 2
+    ):
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "Python script argv required")
+    script = argv[1]
+    if not script.startswith("/src/"):
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "script must be under /src")
+    try:
+        source_path = relative_path(script.removeprefix("/src/"))
+    except RuntimeAuditError as error:
+        raise RuntimeAuditError(
+            "E_ZAP_SOURCE_TRACE", "canonical Python source required"
+        ) from error
+    if script != "/src/" + source_path or not source_path.endswith(".py"):
+        raise RuntimeAuditError(
+            "E_ZAP_SOURCE_TRACE", "canonical Python source required"
+        )
+    bound_sources = {path for route in routes for path in route["source_bindings"]}
+    if source_path not in bound_sources:
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "trace script is not route-bound")
+    identities = [(route["method"], route["path"]) for route in routes]
+    if len(identities) != len(set(identities)):
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "duplicate HTTP route identity")
 
 
 def _zap_inventory_sources(inventory: dict) -> dict[str, str]:

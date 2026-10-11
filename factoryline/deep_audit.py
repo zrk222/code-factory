@@ -524,7 +524,7 @@ def _zap_network_cleanup(base, name):
         return False
 
 
-def _zap_app_argv(base, lane, snapshot, name, network):
+def _zap_app_argv(base, lane, snapshot, name, network, trace_bootstrap=None):
     """Isolate the pinned candidate service from worker output and contracts."""
     target = lane["native_target"]
     argv = _container_argv(
@@ -546,7 +546,109 @@ def _zap_app_argv(base, lane, snapshot, name, network):
         del argv[position - 1 : position + 1]
     position = argv.index("--pull=never")
     argv[position:position] = ["--detach", "--network-alias=factory-target"]
+    if trace_bootstrap is not None:
+        argv = _zap_trace_app_argv(argv, target, trace_bootstrap)
     return argv
+
+
+def _zap_trace_app_argv(argv, target, bootstrap):
+    """Mount trusted instrumentation without sharing writable host output."""
+    if "," in str(bootstrap):
+        raise RuntimeAuditError("E_MOUNT_PATH", "trace mount path contains comma")
+    position = argv.index("--entrypoint")
+    argv[position:position] = [
+        "--mount",
+        f"type=bind,source={bootstrap},target=/factory-source-trace.py,readonly",
+        "--tmpfs",
+        "/trace:rw,nosuid,nodev,noexec,size=4m,mode=1777",
+    ]
+    # The signed Python executable remains the entrypoint. The host bootstrap
+    # restores the original script argv; isolated mode ignores host user modules.
+    tail = argv.index("--entrypoint") + 3
+    argv[tail:] = ["-I", "/factory-source-trace.py"]
+    return argv
+
+
+def _zap_prepare_trace(directory, state, inventory, lane, deadline):
+    target = lane["native_target"]
+    if "source_trace" not in target:
+        return None
+    from .deep_audit_io import zap_source_trace_bootstrap
+
+    request = _zap_target_request(state, inventory, lane, target["routes"][0], deadline)
+    path = directory / ("zap-source-bootstrap-" + uuid.uuid4().hex + ".txt")
+    with path.open("x", encoding="utf-8", newline="\n") as stream:
+        stream.write(zap_source_trace_bootstrap(request, inventory))
+    return path, request
+
+
+def _zap_capture_trace(base, app, directory, prepared, inventory, snapshot, deadline):
+    """Capture bounded instrumentation before container removal and retain bytes."""
+    if prepared is None:
+        return None
+    from .deep_audit_io import zap_validate_source_trace, write_run_json
+
+    _, request = prepared
+    destination = directory / ("zap-source-raw-" + uuid.uuid4().hex + ".jsonl")
+    # Docker's archive API cannot reliably read tmpfs mounts. Use the signed
+    # interpreter to stream only this fixed, bounded, no-follow trace artifact.
+    capture = (
+        "import os,stat,sys; "
+        "fd=os.open('/trace/events.jsonl',os.O_RDONLY|os.O_NOFOLLOW); "
+        "s=os.fstat(fd); "
+        "assert stat.S_ISREG(s.st_mode) and s.st_size<=4194304; "
+        "f=os.fdopen(fd,'rb'); b=f.read(4194305); "
+        "assert len(b)<=4194304; sys.stdout.buffer.write(b)"
+    )
+    facts, raw = _zap_docker_control(
+        base,
+        ["exec", app, request["target"]["argv"][0], "-I", "-c", capture],
+        deadline,
+    )
+    if facts["exit_code"] != 0:
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "source trace capture failed")
+    with destination.open("xb") as stream:
+        stream.write(raw)
+    raw = _zap_read_trace(destination)
+    trace = zap_validate_source_trace(raw, request, inventory, snapshot)
+    trace["artifact"] = destination.name
+    write_run_json(directory, "zap-source-trace.json", trace)
+    return trace
+
+
+def _zap_read_trace(path):
+    """Reject copied links, devices, oversized files and replacement during read."""
+    before = path.lstat()
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_size > 4 * 1024 * 1024
+        or getattr(before, "st_file_attributes", 0) & 0x400
+    ):
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "unsafe source trace artifact")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(descriptor, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        raw = stream.read(4 * 1024 * 1024 + 1)
+        after = os.fstat(stream.fileno())
+
+    def identity(item):
+        return item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns
+
+    if identity(before) != identity(opened) or identity(opened) != identity(after):
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "source trace artifact changed")
+    return raw
+
+
+def _zap_capture_trace_or_gap(*args):
+    """Keep scanner findings available when optional instrumentation is invalid."""
+    try:
+        return _zap_capture_trace(*args), None
+    except (OSError, ValueError) as error:
+        from .deep_audit_io import write_run_json
+
+        code = getattr(error, "code", "E_ZAP_SOURCE_TRACE")
+        write_run_json(args[2], "zap-source-trace-failure.json", {"code": code})
+        return None, code
 
 
 def _zap_worker_argv(
@@ -1002,9 +1104,40 @@ def _zap_finish_controls(
     result["native_execution"]["controls"] = receipts
     result["native_execution"]["candidate_replay"] = replay["native_execution"]
     result["obligations"] = [item["id"] for item in controls]
-    # Native controls do not establish source-line execution coverage.
-    result["gaps"] = ["ZAP_SOURCE_ROUTE_COVERAGE_REQUIRED"]
+    result["gaps"] = _zap_source_trace_gaps(result, replay, lane)
+    result["state"] = "INCOMPLETE" if result["gaps"] else "OBSERVED"
     return result
+
+
+def _zap_source_trace_gaps(result, replay, lane):
+    """Require actual, replayed line hits for every declared route/source pair."""
+    primary = result["native_execution"].get("source_trace")
+    repeated = replay["native_execution"].get("source_trace")
+    if not primary or not repeated:
+        return list(
+            dict.fromkeys(
+                item["native_execution"].get("source_trace_error")
+                or "ZAP_SOURCE_ROUTE_COVERAGE_REQUIRED"
+                for item in (result, replay)
+            )
+        )
+    if primary["observations"] != repeated["observations"]:
+        return ["ZAP_SOURCE_TRACE_REPLAY_MISMATCH"]
+    measured = {
+        (item["route_id"], item["path"])
+        for item in primary["observations"]
+        if item["lines"]
+    }
+    required = {
+        (route["id"], path)
+        for route in lane["native_target"]["routes"]
+        for path in route["source_bindings"]
+    }
+    missing = sorted(required - measured)
+    result["native_execution"]["source_trace_missing"] = [
+        {"route_id": route_id, "path": path} for route_id, path in missing
+    ]
+    return ["ZAP_SOURCE_ROUTE_COVERAGE_REQUIRED"] if missing else []
 
 
 def _zap_candidate_report(directory, lane):
@@ -1081,11 +1214,21 @@ def _execute_zap_target(
         daemon=True,
     )
     observations = []
+    prepared_trace = _zap_prepare_trace(directory, state, inventory, lane, deadline)
+    source_trace = None
+    source_trace_error = None
     try:
         _zap_internal_network(base, network, deadline)
         facts, _ = _zap_docker_control(
             base,
-            _zap_app_argv(base, lane, snapshot, app, network)[len(base) :],
+            _zap_app_argv(
+                base,
+                lane,
+                snapshot,
+                app,
+                network,
+                prepared_trace[0] if prepared_trace else None,
+            )[len(base) :],
             deadline,
         )
         if facts["exit_code"] != 0:
@@ -1123,6 +1266,9 @@ def _execute_zap_target(
                     disabled_rule_id,
                 )
             )
+        source_trace, source_trace_error = _zap_capture_trace_or_gap(
+            base, app, directory, prepared_trace, inventory, snapshot, deadline
+        )
     finally:
         stop.set()
         if monitor.ident is not None:
@@ -1143,7 +1289,13 @@ def _execute_zap_target(
             "target_sha256": digest(target),
             "routes": observations,
             "cleanup_confirmed": True,
-            "claim_boundary": "DAST route evidence is not source-line coverage.",
+            "source_trace": source_trace,
+            "source_trace_error": source_trace_error,
+            "claim_boundary": (
+                "DAST alone is route evidence. Optional source_trace records "
+                "observed request-associated lines, not complete branches or "
+                "tamperproof execution."
+            ),
         },
     }
 

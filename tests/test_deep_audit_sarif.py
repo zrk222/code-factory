@@ -1048,6 +1048,152 @@ def ingest(tmp_path, payload):
     )
 
 
+def _zap_source_trace_fixture(tmp_path):
+    from factoryline.deep_audit_io import digest
+
+    source = b"def handler():\n    return 'ok'\n"
+    (tmp_path / "app.py").write_bytes(source)
+    source_sha = sha256_bytes(source)
+    target = {
+        "schema": "factory.zap-target.v1",
+        "image": "sha256:" + "a" * 64,
+        "argv": ["/usr/local/bin/python", "/src/app.py"],
+        "port": 8765,
+        "readiness_path": "/health",
+        "routes": [
+            {
+                "id": "home",
+                "method": "GET",
+                "path": "/",
+                "query": {},
+                "source_bindings": {"app.py": source_sha},
+            }
+        ],
+        "source_trace": {
+            "schema": "factory.zap-source-trace.config.v1",
+            "provider": "python-stdlib-http.v1",
+            "max_events": 100,
+        },
+    }
+    request = {
+        "schema": "factory.zap-native-request.v2",
+        "run_id": "run-1",
+        "candidate_sha256": "b" * 64,
+        "profile_sha256": "c" * 64,
+        "rule_ids": ["40012"],
+        "timeout_seconds": 30,
+        "target": target,
+        "route_id": "home",
+    }
+    inventory = {"files": [{"path": "app.py", "sha256": source_sha}]}
+    header = {
+        "kind": "header",
+        "schema": "factory.zap-source-trace.v1",
+        "run_id": request["run_id"],
+        "candidate_sha256": request["candidate_sha256"],
+        "profile_sha256": request["profile_sha256"],
+        "target_sha256": digest(target),
+        "provider": "python-stdlib-http.v1",
+        "route_ids": ["home"],
+        "max_events": 100,
+    }
+    event = {
+        "route_id": "home",
+        "path": "app.py",
+        "source_sha256": source_sha,
+        "line": 2,
+    }
+    raw = canonical_bytes(header) + b"\n" + canonical_bytes(event) + b"\n"
+    return request, inventory, raw, source_sha
+
+
+def test_zap_source_trace_bootstrap_compiles_and_binds_routes(tmp_path):
+    from factoryline.deep_audit_io import zap_source_trace_bootstrap
+
+    request, inventory, _, _ = _zap_source_trace_fixture(tmp_path)
+    bootstrap = zap_source_trace_bootstrap(request, inventory)
+    compile(bootstrap, "<zap-source-trace-bootstrap>", "exec")
+    assert "runpy.run_path" in bootstrap
+    assert "threading.settrace" in bootstrap
+    assert "routes.get((self.command, urlsplit(self.path).path))" in bootstrap
+    assert "sys.path.insert(0, os.path.dirname(script))" in bootstrap
+    assert '"/trace/events.jsonl"' in bootstrap
+
+
+def test_zap_source_trace_validator_returns_bound_normalized_observations(tmp_path):
+    from factoryline.deep_audit_io import zap_validate_source_trace
+
+    request, inventory, raw, source_sha = _zap_source_trace_fixture(tmp_path)
+    result = zap_validate_source_trace(raw, request, inventory, tmp_path)
+    assert result["schema"] == "factory.zap-source-trace.normalized.v1"
+    assert result["raw_sha256"] == sha256_bytes(raw)
+    assert result["observations"] == [
+        {
+            "route_id": "home",
+            "path": "app.py",
+            "source_sha256": source_sha,
+            "lines": [2],
+        }
+    ]
+    assert result["claim_boundary"].startswith("in-process observed")
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "header",
+        "overflow",
+        "duplicate",
+        "line",
+        "noncanonical",
+        "route_type",
+        "event_budget",
+    ],
+)
+def test_zap_source_trace_validator_rejects_tampered_rows(tmp_path, mutation):
+    from factoryline.deep_audit_io import zap_validate_source_trace
+
+    request, inventory, raw, _ = _zap_source_trace_fixture(tmp_path)
+    header, event = [json.loads(line) for line in raw.splitlines()]
+    if mutation == "header":
+        header["candidate_sha256"] = "d" * 64
+        rows = [canonical_bytes(header), canonical_bytes(event)]
+    elif mutation == "overflow":
+        rows = [
+            raw.splitlines()[0],
+            canonical_bytes({"overflow": True, "reason": "test"}),
+        ]
+    elif mutation == "duplicate":
+        rows = [raw.splitlines()[0], raw.splitlines()[1], raw.splitlines()[1]]
+    elif mutation == "line":
+        event["line"] = 99
+        rows = [raw.splitlines()[0], canonical_bytes(event)]
+    elif mutation == "route_type":
+        event["route_id"] = []
+        rows = [raw.splitlines()[0], canonical_bytes(event)]
+    elif mutation == "event_budget":
+        request["target"]["source_trace"]["max_events"] = 1
+        header["target_sha256"] = digest(request["target"])
+        header["max_events"] = 1
+        event["line"] = 1
+        second = dict(event, line=2)
+        rows = [
+            canonical_bytes(header),
+            canonical_bytes(event),
+            canonical_bytes(second),
+        ]
+    else:
+        rows = [
+            raw.splitlines()[0],
+            b'{ "line":2,"path":"app.py","route_id":"home","source_sha256":"'
+            + event["source_sha256"].encode()
+            + b'"}',
+        ]
+    tampered = b"\n".join(rows) + b"\n"
+    with pytest.raises(RuntimeAuditError):
+        zap_validate_source_trace(tampered, request, inventory, tmp_path)
+
+
 def test_trace_native_identity_and_hashes(tmp_path):
     before = ingest(tmp_path, report())
     changed = report()

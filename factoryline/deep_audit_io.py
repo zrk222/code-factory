@@ -12,6 +12,7 @@ import threading
 import uuid
 import tempfile
 import time
+import tokenize
 from collections import Counter
 from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote
@@ -9005,6 +9006,320 @@ def _native_zap_main(argv):
     except (OSError, ValueError, KeyError, TypeError) as exc:
         print(getattr(exc, "code", "E_ADAPTER_INPUT"), file=sys.stderr)
         return 2
+
+
+def zap_source_trace_bootstrap(request: dict, inventory: dict) -> str:
+    """Build the bounded in-process Python HTTP trace runner for a signed target."""
+    from .deep_audit_contract import _validate_zap_target
+
+    fields = {
+        "schema",
+        "run_id",
+        "candidate_sha256",
+        "profile_sha256",
+        "rule_ids",
+        "timeout_seconds",
+        "target",
+        "route_id",
+    }
+    exact_keys(request, fields, {"disabled_rule_id"})
+    if not fields <= set(request) or set(request) - fields - {"disabled_rule_id"}:
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "native request fields differ")
+    target = request["target"]
+    _validate_zap_target(target, inventory)
+    config = target.get("source_trace")
+    if not isinstance(config, dict):
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "signed trace config required")
+    sources = _zap_trace_sources(inventory)
+    routes = _zap_trace_routes(target, sources)
+    argv = target["argv"]
+    script = argv[1]
+    script_path = relative_path(script.removeprefix("/src/"))
+    if script != "/src/" + script_path or script_path not in sources:
+        raise RuntimeAuditError(
+            "E_ZAP_SOURCE_TRACE", "bound Python entrypoint required"
+        )
+    body = {
+        "run_id": request["run_id"],
+        "candidate_sha256": request["candidate_sha256"],
+        "profile_sha256": request["profile_sha256"],
+        "target_sha256": digest(target),
+        "provider": config["provider"],
+        "max_events": config["max_events"],
+        "routes": routes,
+        "script": script,
+        "argv": argv[2:],
+    }
+    embedded = repr(json.dumps(body, sort_keys=True, separators=(",", ":")))
+    return _ZAP_TRACE_BOOTSTRAP.replace("__TRACE_CONFIG__", embedded)
+
+
+def _zap_trace_sources(inventory: dict) -> dict[str, str]:
+    from .deep_audit_contract import _zap_inventory_sources
+
+    return _zap_inventory_sources(inventory)
+
+
+def _zap_trace_routes(target: dict, sources: dict[str, str]) -> list[dict]:
+    routes = []
+    seen = set()
+    for route in target["routes"]:
+        identity = (route["method"], route["path"])
+        if identity in seen:
+            raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "duplicate method and path")
+        seen.add(identity)
+        bindings = route["source_bindings"]
+        if any(
+            path not in sources or sources[path] != sha
+            for path, sha in bindings.items()
+        ):
+            raise RuntimeAuditError(
+                "E_ZAP_SOURCE_TRACE", "route source binding differs"
+            )
+        routes.append(
+            {
+                "id": route["id"],
+                "method": route["method"],
+                "path": route["path"],
+                "bindings": bindings,
+            }
+        )
+    return routes
+
+
+def zap_validate_source_trace(
+    raw: bytes, request: dict, inventory: dict, snapshot: Path
+) -> dict:
+    """Validate bounded request-associated trace lines against retained candidate bytes."""
+    target, config, routes, parsed = _zap_trace_document(raw, request, inventory)
+    observations = _zap_trace_observations(parsed, routes, inventory, snapshot)
+    if not observations:
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "nonempty trace required")
+    normalized = [
+        {
+            "route_id": route,
+            "path": path,
+            "source_sha256": sha,
+            "lines": sorted(numbers),
+        }
+        for (route, path, sha), numbers in sorted(observations.items())
+    ]
+    return {
+        "schema": "factory.zap-source-trace.normalized.v1",
+        "run_id": request["run_id"],
+        "candidate_sha256": request["candidate_sha256"],
+        "profile_sha256": request["profile_sha256"],
+        "target_sha256": digest(target),
+        "provider": config["provider"],
+        "raw_sha256": sha256_bytes(raw),
+        "observations": normalized,
+        "claim_boundary": "in-process observed request-associated lines, not authenticity/full branches",
+    }
+
+
+def _zap_trace_document(raw: bytes, request: dict, inventory: dict):
+    from .deep_audit_contract import _validate_zap_target
+
+    if not isinstance(raw, bytes) or not 1 <= len(raw) <= 4 * 1024 * 1024:
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "trace byte budget exceeded")
+    if not raw.endswith(b"\n") or not isinstance(request, dict):
+        raise RuntimeAuditError(
+            "E_ZAP_SOURCE_TRACE", "complete trace and request required"
+        )
+    target = request.get("target")
+    _validate_zap_target(target, inventory)
+    config = target.get("source_trace", {})
+    sources = _zap_trace_sources(inventory)
+    routes = _zap_trace_routes(target, sources)
+    lines = raw.splitlines()
+    if not lines or len(lines) > config["max_events"] + 1:
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "trace row budget exceeded")
+    parsed = []
+    for line in lines:
+        row = strict_json(line)
+        if canonical_bytes(row) != line:
+            raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "noncanonical trace row")
+        parsed.append(row)
+    expected = {
+        "kind": "header",
+        "schema": "factory.zap-source-trace.v1",
+        "run_id": request["run_id"],
+        "candidate_sha256": request["candidate_sha256"],
+        "profile_sha256": request["profile_sha256"],
+        "target_sha256": digest(target),
+        "provider": config["provider"],
+        "route_ids": sorted(r["id"] for r in routes),
+        "max_events": config["max_events"],
+    }
+    if parsed[0] != expected:
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "trace header binding differs")
+    return target, config, routes, parsed[1:]
+
+
+def _zap_trace_observations(rows, routes, inventory, snapshot):
+    sources = _zap_trace_sources(inventory)
+    route_map = {route["id"]: route for route in routes}
+    source_lines = {}
+    seen = set()
+    observations = {}
+    for row in rows:
+        if row.get("overflow") is True:
+            raise RuntimeAuditError(
+                "E_ZAP_SOURCE_TRACE", "trace overflow marker present"
+            )
+        exact_keys(row, {"route_id", "path", "source_sha256", "line"})
+        route_id = require_str(row["route_id"], "route_id", maximum=64)
+        path = relative_path(row["path"])
+        source_hash = require_digest(row["source_sha256"], "source_sha256")
+        line_no = row["line"]
+        route = route_map.get(route_id)
+        if (
+            route is None
+            or route["bindings"].get(path) != source_hash
+            or sources.get(path) != source_hash
+            or type(line_no) is not int
+            or line_no < 1
+        ):
+            raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "trace event binding differs")
+        key = (route_id, path, source_hash, line_no)
+        if key in seen:
+            raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "duplicate trace event")
+        seen.add(key)
+        binding = (path, source_hash)
+        if binding not in source_lines:
+            source = bound_bytes(snapshot, {"path": path, "sha256": source_hash})
+            try:
+                encoding, _ = tokenize.detect_encoding(
+                    iter(source.splitlines(keepends=True)).__next__
+                )
+                source_lines[binding] = len(source.decode(encoding).splitlines())
+            except (SyntaxError, UnicodeError, StopIteration) as exc:
+                raise RuntimeAuditError(
+                    "E_ZAP_SOURCE_TRACE", "invalid bound Python source"
+                ) from exc
+        if line_no > source_lines[binding]:
+            raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "trace line exceeds source")
+        observations.setdefault((route_id, path, source_hash), set()).add(line_no)
+    return observations
+
+
+_ZAP_TRACE_BOOTSTRAP = r"""import json, os, runpy, sys, threading
+from http.server import BaseHTTPRequestHandler
+from urllib.parse import urlsplit
+
+CONFIG = json.loads(__TRACE_CONFIG__)
+LIMIT = 4 * 1024 * 1024
+TRACE_PATH = "/trace/events.jsonl"
+if os.path.islink("/trace") or not os.path.isdir("/trace"):
+    raise RuntimeError("trace directory unavailable")
+fd = os.open(TRACE_PATH, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+if not __import__("stat").S_ISREG(os.fstat(fd).st_mode):
+    raise RuntimeError("trace file is not regular")
+routes = {(r["method"], r["path"]): r for r in CONFIG["routes"]}
+route_by_id = {r["id"]: r for r in CONFIG["routes"]}
+header = {"kind":"header", "schema":"factory.zap-source-trace.v1", "run_id":CONFIG["run_id"],
+ "candidate_sha256":CONFIG["candidate_sha256"], "profile_sha256":CONFIG["profile_sha256"],
+ "target_sha256":CONFIG["target_sha256"], "provider":CONFIG["provider"],
+ "route_ids":sorted(route_by_id), "max_events":CONFIG["max_events"]}
+lock = threading.Lock()
+context = threading.local()
+seen = set()
+path_cache = {}
+size = 0
+count = 0
+failed = False
+
+def encoded(row):
+    return json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8") + b"\n"
+
+def invalidate(reason):
+    global failed
+    failed = True
+    try:
+        marker = encoded({"overflow": True, "reason": reason})
+        if size + len(marker) <= LIMIT:
+            os.write(fd, marker)
+    finally:
+        os._exit(70)
+
+def write_row(row, counted):
+    global size, count
+    raw = encoded(row)
+    with lock:
+        if failed:
+            return
+        if (counted and count >= CONFIG["max_events"]) or size + len(raw) > LIMIT - 256:
+            invalidate("event_budget")
+        try:
+            written = os.write(fd, raw)
+            if written != len(raw):
+                invalidate("short_write")
+        except BaseException:
+            invalidate("write_failure")
+        size += len(raw)
+        if counted:
+            count += 1
+
+write_row(header, False)
+local = threading.local()
+original_parse = BaseHTTPRequestHandler.parse_request
+original_handle = BaseHTTPRequestHandler.handle_one_request
+
+def parse_request(self):
+    ok = original_parse(self)
+    if ok:
+        route = routes.get((self.command, urlsplit(self.path).path))
+        local.route_id = route["id"] if route else None
+    return ok
+
+def handle_one_request(self):
+    try:
+        return original_handle(self)
+    finally:
+        local.route_id = None
+
+BaseHTTPRequestHandler.parse_request = parse_request
+BaseHTTPRequestHandler.handle_one_request = handle_one_request
+
+def trace(frame, event, arg):
+    route_id = getattr(local, "route_id", None)
+    if event == "call":
+        if not route_id:
+            return None
+        filename = frame.f_code.co_filename
+        path = path_cache.get(filename)
+        if path is None:
+            canonical = os.path.realpath(filename)
+            path = canonical[5:] if canonical.startswith("/src/") else ""
+            path_cache[filename] = path
+        return trace if path in route_by_id[route_id]["bindings"] else None
+    if event == "line" and route_id:
+        filename = frame.f_code.co_filename
+        path = path_cache.get(filename)
+        if path is None:
+            canonical = os.path.realpath(filename)
+            path = canonical[5:] if canonical.startswith("/src/") else ""
+            path_cache[filename] = path
+        sha = route_by_id[route_id]["bindings"].get(path)
+        if sha:
+            key = (route_id, path, frame.f_lineno)
+            with lock:
+                fresh = key not in seen
+                if fresh:
+                    seen.add(key)
+            if fresh:
+                write_row({"route_id":route_id, "path":path, "source_sha256":sha, "line":frame.f_lineno}, True)
+    return trace
+
+script = CONFIG["script"]
+if os.path.realpath(script) != script or not script.startswith("/src/"):
+    raise RuntimeError("entrypoint path differs")
+sys.path.insert(0, os.path.dirname(script))
+sys.argv = [script] + CONFIG["argv"]
+sys.settrace(trace)
+threading.settrace(trace)
+runpy.run_path(script, run_name="__main__")
+"""
 
 
 if __name__ == "__main__":
