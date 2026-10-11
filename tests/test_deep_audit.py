@@ -1298,7 +1298,11 @@ def test_runtime_v2_challenge_executes_and_binds_junit_and_coverage(tmp_path, ki
     config_sha = sha256_bytes(changed)
     coverage_json = '{"meta":{"branch_coverage":true},"files":{}}'
     script = (
-        """import pathlib,sys,tomllib
+        """import pathlib,sys
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 source, report, config = sys.argv[1:]
 enabled = bool(tomllib.loads(pathlib.Path(config).read_text()).get("rules", []))
 target = pathlib.Path(source, "tests/test_target.py")
