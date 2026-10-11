@@ -2733,6 +2733,7 @@ def _osv_normalize_result_source(item, root, manifest):
 
 
 def verify_osv_retained_challenge(observation, lane, bound, obligation, kind):
+    """Validate bounded retained OSV control artifacts against approved bindings."""
     from .deep_audit_sarif import _osv_challenge_rows
 
     try:
@@ -2854,6 +2855,7 @@ def _osv_challenge_artifacts_valid(records, roles, raw, evidence):
 def verify_osv_retained_evidence(
     coverage, lane, required, report, challenges, obligations
 ):
+    """Validate primary and control artifacts without granting replay authority."""
     try:
         accounting = _osv_primary_retained(coverage, lane, required, report)
         observed = _osv_retained_observations(challenges, obligations, lane, required)
