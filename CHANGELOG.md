@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Recognize the decorator form of the pytest-benchmark and pytest-codspeed
+  fixture (`@benchmark` on a nested function) in tests that already carry a
+  typed fixture or `pytest.mark.benchmark`. Untyped, unmarked, lookalike and
+  parameterless cases remain findings. Rebinding the fixture before use cannot
+  grant an exemption; a later rebinding preserves an earlier genuine use.
+  Regression cases are sabotage-checked.
+
 ## 0.48.1 / editor plugins 1.1.4 (release candidate; publication gated)
 
 - Recognize mock argument/await assertions and `pytest.fail` exception-expectation
