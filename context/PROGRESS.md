@@ -828,3 +828,5 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-10-06 04:20] GATE spec loop-runtime-budget-admission approver=human strict=True sha=5b29ee2936c93c86
 - [2026-10-06 04:20] GATE plan loop-runtime-budget-admission approver=human tasks=5 sha=5b29ee2936c93c86
 - [2026-10-06 07:23] GATE plan openvsx-cadence-exception approver=human tasks=4 sha=d7df0b8af2794ed8
+- [2026-10-11 03:41] GATE spec jetbrains-repair-sandbox approver=human strict=True sha=8bfcaeeea4ed5768
+- [2026-10-11 03:41] GATE plan jetbrains-repair-sandbox approver=human tasks=5 sha=8bfcaeeea4ed5768

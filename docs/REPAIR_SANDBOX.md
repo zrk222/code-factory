@@ -110,14 +110,17 @@ SHA-256 image identity, rather than copying example values:
 factory repair approve --root . --scope <scope.json> --patch <candidate.patch> `
   --approved-by <operator> --confirmation "APPROVE REPAIR <candidate_sha256>" `
   --expires-at <timezone-qualified-expiry> --container-image <local-image> `
-  --container-digest <sha256-image-id> --checks <checks.json> --json
+  --container-digest <sha256-image-id> --checks <checks.json> `
+  --checks-sha256 <reviewed-checks-file-sha256> --json
 factory repair run --root . --approval <returned-approval-path> --json
 ```
 
 `approve` records permission; it does not execute. `run` consumes it once,
 applies the patch in a disposable Git worktree, and runs only the approved
 commands in an isolated container with read-only source, no network, dropped
-capabilities and bounded resources. Commands needing scratch output must use
+capabilities and bounded resources. `--checks-sha256` binds the approval to the
+exact bounded JSON bytes the operator reviewed; the CLI rejects a mismatch.
+Commands needing scratch output must use
 the container's temporary directory; source-writing builds need a separate
 supported execution profile. The primary checkout stays unchanged.
 Source drift, protected tests or gates, failed controls and uncertain cleanup
@@ -131,11 +134,27 @@ arguments to request termination of an active attempt. Both accept `--root`
 and `--json`. A stopped or failed single-use approval cannot be replayed;
 retry requires inspection and fresh approval.
 
-The operator name is an audit label in a local filesystem-owner trust model,
-not authenticated identity or a second reviewer's signature. Checks establish
-only their declared behavior; `VERIFIED` does not prove every audit lane,
-production safety or independent detection accuracy. IDE approval controls
-and broader automatic repair classes require their own integration.
+The JetBrains Repair Sandbox exposes an **Approve & Repair** tab with explicit
+operator, expiry, container image, image digest, checks path and revoke/stop
+reason fields. Approval displays the exact candidate and scope hashes, patch,
+touched paths, parsed check commands and failure signatures, reviewed checks
+hash, image digest, expiry, and confirmation phrase before recording a
+single-use approval. Separate buttons run the approved attempt, revoke an
+approval, or request a stop. The UI requires a positive and negative check and
+binds the reviewed checks bytes by SHA-256. The CLI's `--checks-sha256` is
+optional for direct use; the UI always supplies it.
+
+The UI uses the configured FactoryLine executable and the existing explicit
+IDE confirmation flow. A runner timeout or malformed run response leaves
+cleanup unknown, blocks retries, and directs the operator to request stop and
+inspect durable attempt evidence. No success is shown unless the CLI response
+matches the approved hash and reports `VERIFIED` with cleanup confirmed and
+the primary checkout unchanged. The operator name is an audit label in a local
+filesystem-owner trust model, not authenticated identity or a second
+reviewer's signature. Checks establish only their declared behavior;
+`VERIFIED` does not prove every audit lane, production safety or independent
+detection accuracy. The UI source and focused tests are present; a rendered
+IDE interaction has not been verified here.
 
 ## Non-negotiable boundary
 

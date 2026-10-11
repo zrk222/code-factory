@@ -1,6 +1,7 @@
 package app.factoryline.intellij
 
 import com.intellij.execution.configurations.GeneralCommandLine
+import com.google.gson.JsonParser
 import com.intellij.execution.process.CapturingProcessHandler
 import com.intellij.execution.process.OSProcessHandler
 import com.intellij.execution.process.ProcessEvent
@@ -29,10 +30,47 @@ import javax.swing.JComponent
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
+internal object RepairApprovalInputValidation {
+    private val digest = Regex("[a-f0-9]{64}")
+    private val image = Regex("[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,254}")
+
+    data class ChecksReview(val sha256: String, val descriptions: List<String>)
+
+    fun checks(path: Path): ChecksReview? = runCatching {
+        if (!Files.isRegularFile(path) || Files.size(path) !in 2..1_000_000) return null
+        val bytes = Files.newInputStream(path).use { it.readNBytes(1_000_001) }
+        if (bytes.size !in 2..1_000_000) return null
+        val root = JsonParser.parseString(String(bytes, StandardCharsets.UTF_8)).asJsonArray
+        if (root.size() !in 2..16) return null
+        val ids = mutableSetOf<String>()
+        val kinds = mutableSetOf<String>()
+        val descriptions = mutableListOf<String>()
+        for (item in root) {
+            if (!item.isJsonObject) return null
+            val obj = item.asJsonObject
+            val id = obj.get("id")?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString ?: return null
+            val kind = obj.get("kind")?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString ?: return null
+            val argv = obj.get("argv")?.takeIf { it.isJsonArray }?.asJsonArray ?: return null
+            val failure = obj.get("failure")?.takeIf { it.isJsonObject }?.asJsonObject ?: return null
+            val exit = failure.get("exit_code")?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }?.asInt ?: return null
+            val signature = failure.get("signature")?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString ?: return null
+            if (!Regex("[a-z][a-z0-9_-]{0,47}").matches(id) || !ids.add(id) || kind !in setOf("positive", "negative") ||
+                argv.size() !in 1..64 || argv.any { !it.isJsonPrimitive || !it.asJsonPrimitive.isString || it.asString.isEmpty() || it.asString.length > 4096 } ||
+                exit !in 1..255 || exit in setOf(125, 126, 127) || signature.isBlank() || signature.length > 512) return null
+            kinds += kind
+            descriptions += "$id [$kind]: ${argv.joinToString(" ") { it.asString }} (expected failure: exit $exit, signature '$signature')"
+        }
+        if (kinds != setOf("positive", "negative")) return null
+        ChecksReview(java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }, descriptions)
+    }.getOrNull()
+
+    fun validImage(image: String, digest: String): Boolean = this.image.matches(image) && this.digest.matches(digest)
+}
 object FactoryLineIds {
     const val TOOL_WINDOW = "FactoryLine"
     const val OUTPUT_LIMIT = 1_000_000
     const val TIMEOUT_MS = 300_000
+    const val REPAIR_RUN_TIMEOUT_MS = 900_000
 }
 
 object FeatureName {
@@ -138,6 +176,39 @@ object FactoryLineCommands {
     fun repairCandidate(root: Path, scope: Path, patch: Path, outDir: Path): List<String> = listOf(
         "repair", "candidate", "--root", root.toString(), "--scope", scope.toString(),
         "--patch", patch.toString(), "--out-dir", outDir.toString(), "--json",
+    )
+
+    fun repairApprove(
+        root: Path,
+        scope: Path,
+        patch: Path,
+        approvedBy: String,
+        confirmation: String,
+        expiresAt: String,
+        containerImage: String,
+        containerDigest: String,
+        checks: Path,
+        checksSha256: String,
+    ): List<String> = listOf(
+        "repair", "approve", "--root", root.toString(), "--scope", scope.toString(),
+        "--patch", patch.toString(), "--approved-by", approvedBy,
+        "--confirmation", confirmation, "--expires-at", expiresAt,
+        "--container-image", containerImage, "--container-digest", containerDigest,
+        "--checks", checks.toString(), "--checks-sha256", checksSha256, "--json",
+    )
+
+    fun repairRun(root: Path, approval: Path): List<String> = listOf(
+        "repair", "run", "--root", root.toString(), "--approval", approval.toString(), "--json",
+    )
+
+    fun repairRevoke(root: Path, approvalSha256: String, requestedBy: String, reason: String): List<String> = listOf(
+        "repair", "revoke", "--root", root.toString(), "--approval-sha256", approvalSha256,
+        "--requested-by", requestedBy, "--reason", reason, "--json",
+    )
+
+    fun repairStop(root: Path, approvalSha256: String, requestedBy: String, reason: String): List<String> = listOf(
+        "repair", "stop", "--root", root.toString(), "--approval-sha256", approvalSha256,
+        "--requested-by", requestedBy, "--reason", reason, "--json",
     )
 
     fun intentCapture(
@@ -533,6 +604,94 @@ object FactoryLineRunner {
         return execute(project, "Validate Repair Candidate", FactoryLineCommands.repairCandidate(root, boundedScope, boundedPatch, boundedOutDir))
     }
 
+    fun repairApprove(
+        project: Project,
+        scope: Path,
+        patch: Path,
+        approvedBy: String,
+        expiresAt: String,
+        containerImage: String,
+        containerDigest: String,
+        checks: Path,
+        checksSha256: String,
+        candidateSha256: String,
+    ): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return blocked("Approve Repair", "Blocked: the project has no local workspace path.")
+        val boundedScope = WorkspacePath.resolve(root, scope.toString())
+            ?: return blocked("Approve Repair", "Blocked: the scope packet must stay inside the project.")
+        val boundedPatch = WorkspacePath.resolve(root, patch.toString())
+            ?: return blocked("Approve Repair", "Blocked: the candidate patch must stay inside the project.")
+        val boundedChecks = WorkspacePath.resolve(root, checks.toString())
+            ?: return blocked("Approve Repair", "Blocked: the checks file must stay inside the project.")
+        if (!Files.isRegularFile(boundedScope) || !Files.isRegularFile(boundedPatch) || !Files.isRegularFile(boundedChecks)) {
+            return blocked("Approve Repair", "Blocked: scope, patch, and checks must be existing regular files.")
+        }
+        if (!Regex("[a-f0-9]{64}").matches(checksSha256)) {
+            return blocked("Approve Repair", "Blocked: the reviewed checks hash is malformed.")
+        }
+        val currentChecksSha256 = runCatching {
+            if (Files.size(boundedChecks) !in 2..1_000_000) return blocked("Approve Repair", "Blocked: checks must remain within the 1 MB review limit.")
+            val bytes = Files.newInputStream(boundedChecks).use { it.readNBytes(1_000_001) }
+            if (bytes.size !in 2..1_000_000) return blocked("Approve Repair", "Blocked: checks changed or exceed the 1 MB review limit.")
+            java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+        }.getOrNull()
+        if (currentChecksSha256 != checksSha256) return blocked("Approve Repair", "Blocked: checks changed after review; reopen and approve the current checks file.")
+        if (!Regex("[a-f0-9]{64}").matches(candidateSha256)) {
+            return blocked("Approve Repair", "Blocked: the candidate hash is malformed.")
+        }
+        val expiry = runCatching { java.time.OffsetDateTime.parse(expiresAt).toInstant() }.getOrNull()
+            ?: return blocked("Approve Repair", "Blocked: expiry must be ISO-8601 with a timezone.")
+        if (!expiry.isAfter(java.time.Instant.now())) {
+            return blocked("Approve Repair", "Blocked: approval expiry must be in the future.")
+        }
+        if (approvedBy.isBlank() || containerImage.isBlank() || !Regex("[a-f0-9]{64}").matches(containerDigest)) {
+            return blocked("Approve Repair", "Blocked: operator, image, and SHA-256 image digest are required.")
+        }
+        val confirmation = "APPROVE REPAIR $candidateSha256"
+        return execute(project, "Approve Repair", FactoryLineCommands.repairApprove(
+            root, boundedScope, boundedPatch, approvedBy, confirmation, expiresAt,
+            containerImage, containerDigest, boundedChecks, checksSha256,
+        ))
+    }
+
+    fun repairRun(project: Project, approval: Path): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return blocked("Run Approved Repair", "Blocked: the project has no local workspace path.")
+        val boundedApproval = WorkspacePath.resolve(root, approval.toString())
+            ?: return blocked("Run Approved Repair", "Blocked: the approval packet must stay inside the project.")
+        if (!Files.isRegularFile(boundedApproval)) {
+            return blocked("Run Approved Repair", "Blocked: approval packet is not an existing regular file.")
+        }
+        return execute(project, "Run Approved Repair", FactoryLineCommands.repairRun(root, boundedApproval), FactoryLineIds.REPAIR_RUN_TIMEOUT_MS)
+    }
+
+    fun repairRevoke(project: Project, approvalSha256: String, requestedBy: String, reason: String): CommandResult =
+        repairApprovalAction(project, "Revoke Repair Approval", approvalSha256, requestedBy, reason, false)
+
+    fun repairStop(project: Project, approvalSha256: String, requestedBy: String, reason: String): CommandResult =
+        repairApprovalAction(project, "Stop Repair Attempt", approvalSha256, requestedBy, reason, true)
+
+    private fun repairApprovalAction(
+        project: Project,
+        title: String,
+        approvalSha256: String,
+        requestedBy: String,
+        reason: String,
+        stop: Boolean,
+    ): CommandResult {
+        val root = project.basePath?.let(Path::of)
+            ?: return blocked(title, "Blocked: the project has no local workspace path.")
+        if (!Regex("[a-f0-9]{64}").matches(approvalSha256) || requestedBy.isBlank() || reason.isBlank()) {
+            return blocked(title, "Blocked: approval hash, operator, and reason are required.")
+        }
+        val args = if (stop) FactoryLineCommands.repairStop(root, approvalSha256, requestedBy, reason)
+            else FactoryLineCommands.repairRevoke(root, approvalSha256, requestedBy, reason)
+        return execute(project, title, args)
+    }
+
+    private fun blocked(title: String, message: String) = CommandResult(title, emptyList(), null, false, message)
+
     fun captureIntentLedger(
         project: Project,
         changeList: String,
@@ -773,7 +932,7 @@ object FactoryLineRunner {
         return listOf("--root", root.toString())
     }
 
-    private fun execute(project: Project, title: String, arguments: List<String>): CommandResult {
+    private fun execute(project: Project, title: String, arguments: List<String>, timeoutMs: Int = FactoryLineIds.TIMEOUT_MS): CommandResult {
         val root = project.basePath?.let(Path::of)
             ?: return CommandResult(title, emptyList(), null, false, "Blocked: the project has no local workspace path.")
         if (arguments.isEmpty() || (arguments.contains("--root") && arguments.last() == "--root")) {
@@ -784,7 +943,7 @@ object FactoryLineRunner {
             .withParameters(arguments)
             .withWorkDirectory(root.toFile())
         return try {
-            val output = CapturingProcessHandler(commandLine).runProcess(FactoryLineIds.TIMEOUT_MS)
+            val output = CapturingProcessHandler(commandLine).runProcess(timeoutMs)
             val combined = OutputRedactor.redact((output.stdout + output.stderr).take(FactoryLineIds.OUTPUT_LIMIT))
             CommandResult(title, listOf(executable) + arguments, output.exitCode, output.isTimeout, combined)
         } catch (error: Exception) {

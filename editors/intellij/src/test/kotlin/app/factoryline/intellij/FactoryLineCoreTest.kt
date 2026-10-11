@@ -2,11 +2,14 @@ package app.factoryline.intellij
 
 import java.nio.file.Files
 import java.nio.file.attribute.FileTime
+import com.intellij.ui.components.JBTextField
+import javax.swing.JLabel
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class FactoryLineCoreTest {
@@ -324,6 +327,160 @@ class FactoryLineCoreTest {
     }
 
     @Test
+    fun repairApprovalCommandsBindExactFilesHashesAndActions() {
+        val root = Files.createTempDirectory("factoryline-repair-approval")
+        val scope = root.resolve("scope.json")
+        val patch = root.resolve("candidate.patch")
+        val checks = root.resolve("checks.json")
+        val sha = "a".repeat(64)
+        assertEquals(
+            listOf("repair", "approve", "--root", root.toString(), "--scope", scope.toString(), "--patch", patch.toString(),
+                "--approved-by", "Ada", "--confirmation", "APPROVE REPAIR $sha", "--expires-at", "2030-01-01T00:00:00Z",
+                "--container-image", "registry.example/test", "--container-digest", sha, "--checks", checks.toString(), "--checks-sha256", sha, "--json"),
+            FactoryLineCommands.repairApprove(root, scope, patch, "Ada", "APPROVE REPAIR $sha", "2030-01-01T00:00:00Z", "registry.example/test", sha, checks, sha),
+        )
+        assertEquals(listOf("repair", "run", "--root", root.toString(), "--approval", scope.toString(), "--json"), FactoryLineCommands.repairRun(root, scope))
+        assertEquals(listOf("repair", "revoke", "--root", root.toString(), "--approval-sha256", sha, "--requested-by", "Ada", "--reason", "stop", "--json"), FactoryLineCommands.repairRevoke(root, sha, "Ada", "stop"))
+        assertEquals(listOf("repair", "stop", "--root", root.toString(), "--approval-sha256", sha, "--requested-by", "Ada", "--reason", "stop", "--json"), FactoryLineCommands.repairStop(root, sha, "Ada", "stop"))
+        assertEquals(900_000, FactoryLineIds.REPAIR_RUN_TIMEOUT_MS)
+        assertEquals(300_000, FactoryLineIds.TIMEOUT_MS)
+    }
+
+    @Test
+    fun repairApprovalInputValidationRejectsMalformedChecksAndUnpinnedImage() {
+        val checks = Files.createTempFile("factoryline-checks", ".json")
+        try {
+            Files.writeString(checks, """[{"id":"positive","kind":"positive","argv":["pytest"],"failure":{"exit_code":1,"signature":"FAIL"}},{"id":"negative","kind":"negative","argv":["pytest","--negative"],"failure":{"exit_code":1,"signature":"EXPECTED_FAIL"}}]""")
+            val reviewed = RepairApprovalInputValidation.checks(checks)
+            assertNotNull(reviewed)
+            assertEquals(java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(checks)).joinToString("") { "%02x".format(it) }, reviewed.sha256)
+            Files.writeString(checks, "[]")
+            assertFalse(java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(checks)).joinToString("") { "%02x".format(it) } == reviewed.sha256)
+            Files.write(checks, ByteArray(1_000_001))
+            assertNull(RepairApprovalInputValidation.checks(checks))
+            assertTrue(RepairApprovalInputValidation.validImage("registry.example/image", "a".repeat(64)))
+            assertFalse(RepairApprovalInputValidation.validImage("registry.example/image:latest", "short"))
+            Files.writeString(checks, "[]")
+            assertNull(RepairApprovalInputValidation.checks(checks))
+            Files.writeString(checks, """[{"id":"x","kind":"positive","argv":["pytest"],"failure":{"exit_code":1,"signature":"FAIL"}},{"id":"x","kind":"negative","argv":["pytest"],"failure":{"exit_code":1,"signature":"FAIL"}}]""")
+            assertNull(RepairApprovalInputValidation.checks(checks))
+        } finally {
+            Files.deleteIfExists(checks)
+        }
+    }
+
+    @Test
+    fun repairApprovalAndAttemptParsersBindPathStateHashAndVerificationSignals() {
+        val hash = "b".repeat(64)
+        val approval = RepairApprovalSummary.fromJson("""{"approval_sha256":"$hash","path":".factory/repair-approvals/$hash.json","state":"APPROVED_NOT_EXECUTED"}""")
+        assertNotNull(approval)
+        assertNull(RepairApprovalSummary.fromJson("""{"approval_sha256":"$hash","path":".factory/repair-approvals/$hash.json","state":"REVOKED"}"""))
+        assertNull(RepairApprovalSummary.fromJson("""{"approval_sha256":"$hash","path":"../$hash.json","state":"APPROVED_NOT_EXECUTED"}"""))
+        assertNull(RepairApprovalSummary.fromJson("""{"approval_sha256":"$hash","path":".factory/repair-approvals/$hash.json","state":"APPROVED_NOT_EXECUTED","unexpected":true}"""))
+        val verified = RepairAttemptSummary.fromJson("""{"schema":"factory.repair_attempt.v1","approval_sha256":"$hash","attempt_path":".factory/repair-attempts/$hash/state.json","status":"VERIFIED","state":"VERIFIED","phase":"VERIFIED","cleanup_confirmed":true,"primary_checkout_unchanged":true,"checks":[],"error":null}""", hash)
+        assertNotNull(verified)
+        assertTrue(verified.verified)
+        assertNull(RepairAttemptSummary.fromJson("""{"schema":"factory.repair_attempt.v1","approval_sha256":"${"c".repeat(64)}","attempt_path":".factory/repair-attempts/$hash/state.json","status":"VERIFIED","state":"VERIFIED","phase":"VERIFIED","cleanup_confirmed":true,"primary_checkout_unchanged":true,"checks":[],"error":null}""", hash))
+        val unsafe = RepairAttemptSummary.fromJson("""{"schema":"factory.repair_attempt.v1","approval_sha256":"$hash","attempt_path":".factory/repair-attempts/$hash/state.json","status":"VERIFIED","state":"VERIFIED","phase":"VERIFIED","cleanup_confirmed":false,"primary_checkout_unchanged":true,"checks":[],"error":null}""", hash)
+        assertNotNull(unsafe)
+        assertFalse(unsafe.verified)
+        val failed = RepairAttemptSummary.fromJson("""{"schema":"factory.repair_attempt.v1","approval_sha256":"$hash","attempt_path":".factory/repair-attempts/$hash/state.json","status":"FAILED","state":"FAILED","phase":"BASELINE","cleanup_confirmed":null,"primary_checkout_unchanged":null,"checks":[],"error":null}""", hash)
+        assertNotNull(failed)
+        assertFalse(failed.verified)
+        val recovery = RepairSandboxActionState()
+        recovery.selectScope("scope-a")
+        recovery.selectCandidate("scope-a", "candidate-a")
+        val approvalRequest = requireNotNull(recovery.beginApproval())
+        assertTrue(recovery.completeApproval(approvalRequest, hash))
+        assertTrue(recovery.beginRun())
+        recovery.finishRun(failed.approvalSha256, resultKnown = failed.cleanupConfirmed)
+        assertEquals(RepairSandboxActionState.Attempt.UNKNOWN, recovery.attempt)
+        assertTrue(recovery.canStop())
+        assertNull(RepairApprovalActionSummary.fromJson("""{"approval_sha256":"$hash","state":"REVOKED","extra":true}""", hash, "REVOKED"))
+    }
+
+    @Test
+    fun repairSandboxStateRejectsLateApprovalAfterSelectionChanges() {
+        val state = RepairSandboxActionState()
+        state.selectScope("scope-a")
+        state.selectCandidate("scope-a", "candidate-a")
+        val request = requireNotNull(state.beginApproval())
+        state.selectScope("scope-b")
+        state.selectCandidate("scope-b", "candidate-b")
+        assertNull(state.beginApproval())
+
+        assertFalse(state.completeApproval(request, "approval-a"))
+        assertNull(state.approvalSha256)
+        assertEquals("approval-a", state.orphanApprovalSha256)
+        assertTrue(state.pendingApproval == null)
+        assertFalse(state.canRun())
+        assertTrue(state.canRevoke())
+        state.revoke("approval-a", succeeded = false)
+        assertEquals("approval-a", state.orphanApprovalSha256)
+        state.revoke("approval-a", succeeded = true)
+        assertNull(state.orphanApprovalSha256)
+        val nextRequest = requireNotNull(state.beginApproval())
+        assertEquals("scope-b", nextRequest.scopeSha256)
+        assertEquals("candidate-b", nextRequest.candidateSha256)
+        assertTrue(state.completeApproval(nextRequest, "approval-b"))
+        assertEquals("approval-b", state.approvalSha256)
+        assertNull(state.orphanApprovalSha256)
+    }
+
+    @Test
+    fun repairApprovalFieldsExposeProgrammaticLabelAssociations() {
+        val field = JBTextField()
+        val row = repairFieldRow("Container image", field)
+        val label = row.components.filterIsInstance<JLabel>().single()
+
+        assertSame(field, label.labelFor)
+        assertEquals("Container image", label.accessibleContext.accessibleName)
+        assertEquals("Container image", field.accessibleContext.accessibleName)
+    }
+
+    @Test
+    fun repairSandboxSelectionChangeDuringRunPreservesStopAuthority() {
+        val state = RepairSandboxActionState()
+        state.selectScope("scope-a")
+        state.selectCandidate("scope-a", "candidate-a")
+        val request = requireNotNull(state.beginApproval())
+        assertTrue(state.completeApproval(request, "approval-a"))
+        assertTrue(state.canRun())
+        assertTrue(state.beginRun())
+
+        state.selectScope("scope-b")
+        state.selectCandidate("scope-b", "candidate-b")
+
+        assertEquals("approval-a", state.approvalSha256)
+        assertFalse(state.canRun())
+        assertTrue(state.canStop())
+        assertEquals(RepairSandboxActionState.Attempt.RUNNING, state.attempt)
+    }
+
+    @Test
+    fun failedRepairStopPreservesUnknownAttemptRecovery() {
+        val state = RepairSandboxActionState()
+        state.selectScope("scope-a")
+        state.selectCandidate("scope-a", "candidate-a")
+        val request = requireNotNull(state.beginApproval())
+        assertTrue(state.completeApproval(request, "approval-a"))
+        assertTrue(state.beginRun())
+        state.finishRun("approval-a", resultKnown = false)
+
+        state.stopResponse("approval-a", succeeded = false)
+
+        assertEquals("approval-a", state.approvalSha256)
+        assertEquals(RepairSandboxActionState.Attempt.UNKNOWN, state.attempt)
+        assertTrue(state.canStop())
+        state.stopResponse("approval-a", succeeded = true)
+        assertEquals(RepairSandboxActionState.Attempt.STOP_REQUESTED, state.attempt)
+        assertTrue(state.canStop())
+        state.finishRun("approval-a", resultKnown = true)
+        assertEquals(RepairSandboxActionState.Attempt.CONSUMED, state.attempt)
+        assertFalse(state.canStop())
+    }
+
+    @Test
     fun proofAdapterAndHandshakeCommandsAreExplicitWorkspaceBoundAndSecretFree() {
         val root = Files.createTempDirectory("factoryline-proof-adapter")
         val scope = root.resolve(".factory/repair-sandboxes/scope.json")
@@ -494,7 +651,7 @@ class FactoryLineCoreTest {
         assertEquals("128", scope.contextMeasuredBytes)
         assertEquals("262144", scope.contextLimitBytes)
         assertEquals(3, scope.artifactPaths.size)
-        assertTrue(scope.brief().contains("no candidate runner"))
+        assertTrue(scope.brief().contains("separate exact-candidate approval"))
         assertNotNull(candidate)
         assertEquals("candidate.patch", candidate.patchPath)
         assertEquals(listOf("src/service.py"), candidate.touchedPaths)
