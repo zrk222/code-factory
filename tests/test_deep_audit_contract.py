@@ -1125,6 +1125,8 @@ def test_pause_stops_between_lanes_and_resume_revalidates(tmp_path, monkeypatch)
         trust_root_sha256=plan["trust_root_sha256"],
     )
     assert result["state"] == "PAUSED" and not result["analysis_complete"]
+    assert result["lanes"][0]["family"] == plan["lanes"][0]["family"]
+    assert result["lanes"][0]["engine"] == plan["lanes"][0]["engine"]
     assert len(calls) == 1
     assert (
         module.playback_deep_run(root, result["run_id"])["events"][-1]["kind"]

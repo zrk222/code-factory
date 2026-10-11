@@ -459,6 +459,7 @@ def _run_lanes(
                 "findings": [],
                 "gaps": [code],
             }
+        result.update(engine=lane["engine"], family=lane["family"])
         state["lanes"].append(result)
         _record_failures(
             directory,

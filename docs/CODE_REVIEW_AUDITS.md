@@ -218,3 +218,21 @@ Source-limit blocks explicitly record requested evidence as `NOT_VERIFIED`, with
 `SOURCE_LIMIT_EXCEEDED` and zero reconciled findings. The 460-file ceiling is unchanged.
 Unmeasured lanes still keep the overall verdict incomplete. Store generated observations and reports
 outside tracked source, for example as private CI artifacts.
+
+### Native worker observations across audit domains
+
+With explicitly authorized `scan --deep --worker-config`, the unified report
+projects freshly validated worker output into six `native_domains.domains`:
+static security, secrets, configuration, dependencies, runtime and fuzzing.
+Each retains the engine, covered paths, obligations, findings and report,
+coverage and challenge digests. `native_domains.findings` provides source-bound
+locations and remediation actions across those families. Workers execute once.
+
+Observed workers require specialty review. Failed challenges or coverage gaps
+remain incomplete; source drift invalidates current observation status. Missing
+families remain not run. Dependency and runtime summaries also expose their
+matching native observations, without replacing their existing coverage checks.
+An SBOM inventory is not a complete supply-chain audit, and observations on
+declared paths are not coverage of every language or requirement. Receipt files
+found on disk alone never qualify for this projection. This reporting integration
+adds neither scanner rules nor measured precision/recall or release authority.

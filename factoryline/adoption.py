@@ -996,6 +996,90 @@ def _supply_chain_lane(workspace: Path) -> dict[str, Any]:
     )
 
 
+def _native_domain_projection(lanes: list[dict[str, Any]]) -> dict[str, Any]:
+    """Project fresh engine output, never receipt filenames, into bounded domains."""
+    execution = next(
+        row.get("result") or {}
+        for row in lanes
+        if row["measurement_id"] == "native_worker_execution"
+    )
+    domains = []
+    findings = []
+    for family in (
+        "static",
+        "secrets",
+        "configuration",
+        "dependencies",
+        "runtime",
+        "fuzz",
+    ):
+        workers = [
+            row for row in execution.get("lanes", []) if row.get("family") == family
+        ]
+        observed = [
+            row
+            for row in workers
+            if row.get("state") == "OBSERVED" and not row.get("gaps")
+        ]
+        current = bool(execution.get("candidate_sha256")) and not any(
+            row.get("code")
+            in {"SOURCE_CHANGED_DURING_RUN", "CANDIDATE_DRIFT", "SNAPSHOT_DRIFT"}
+            for row in execution.get("gaps", [])
+        )
+        state = (
+            "REVIEW_REQUIRED"
+            if observed and len(observed) == len(workers) and current
+            else "INCOMPLETE"
+            if workers
+            else "NOT_RUN"
+        )
+        domains.append(
+            _lane(
+                "native_" + family,
+                state=state,
+                applicable=True,
+                result={
+                    "workers": workers,
+                    "observed_workers": len(observed) if current else 0,
+                    "run_id": execution.get("run_id"),
+                    "candidate_sha256": execution.get("candidate_sha256"),
+                    "manifest_sha256": execution.get("manifest_sha256"),
+                    "execution_gaps": execution.get("gaps", []),
+                    "source_current": current,
+                    "authority": "none",
+                },
+                basis="Validated native execution observations cover only the recorded paths and obligations; not whole-domain approval.",
+                next_action="Review findings and worker coverage/challenge gaps; supply missing source-bound obligations and rerun affected workers.",
+                denominator_state="SCOPED" if observed and current else "UNMEASURED",
+            )
+        )
+        for worker in workers:
+            findings.extend(
+                {
+                    **finding,
+                    "family": family,
+                    "engine": worker["engine"],
+                    "candidate_sha256": execution.get("candidate_sha256"),
+                    "run_id": execution.get("run_id"),
+                    "source_current": current,
+                    "worker_state": worker["state"],
+                    "report_sha256": worker.get("report_sha256"),
+                }
+                for finding in worker.get("findings", [])
+            )
+    targets = {
+        "dependencies": "dependencies_and_supply_chain",
+        "runtime": "runtime_coverage",
+    }
+    for family, target in targets.items():
+        lane = next(row for row in lanes if row["measurement_id"] == target)
+        domain = next(
+            row for row in domains if row["measurement_id"] == "native_" + family
+        )
+        lane["result"]["native_observations"] = domain
+    return {"domains": domains, "findings": findings, "authority": "none"}
+
+
 def _deep_audit_report(
     lanes: list[dict[str, Any]], python_count: int, languages: list[str]
 ) -> dict[str, Any]:
@@ -1025,6 +1109,7 @@ def _deep_audit_report(
             "languages": languages,
         },
         "lanes": lanes,
+        "native_domains": _native_domain_projection(lanes),
         "coverage": {
             "applicable": len(applicable),
             "measured": len(measured),
