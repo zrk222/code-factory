@@ -982,3 +982,48 @@ def test_cli_overview_uses_bounded_adapter_and_signals_partial_state(
     assert calls == [(tmp_path.resolve(), 7)]
     assert payload["state"] == "PARTIAL"
     assert code == 3
+
+
+def test_cli_workflow_history_reads_persisted_events_offline(
+    tmp_path, monkeypatch, capsys
+):
+    from factoryline.agentic_control import (
+        WorkflowEventStore,
+        sync_github_workflow_source,
+    )
+    from factoryline.cli import _dispatch
+
+    monkeypatch.setattr(
+        "factoryline.agentic_control._github_runtime_read", workflow_cli_observation
+    )
+    store = WorkflowEventStore(tmp_path, [("github", "operator", "owner/repo")])
+    key = sync_github_workflow_source(store, "owner/repo", 172, kind="pull_request")[
+        "item"
+    ]["source_key"]
+
+    def network_forbidden(*args):
+        raise AssertionError("history must not call GitHub")
+
+    monkeypatch.setattr(
+        "factoryline.agentic_control._github_runtime_read", network_forbidden
+    )
+    args = [
+        "github",
+        "workflow-history",
+        "--root",
+        str(tmp_path),
+        "--account",
+        "operator",
+        "--repository",
+        "owner/repo",
+        "--source-key",
+        key,
+    ]
+    assert _dispatch([*args, "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["events"][0]["item"]["source"]["head_sha"] == HEAD_SHA
+    assert not any(payload["authority"].values())
+    assert _dispatch(args) == 0
+    assert "no network, replay" in capsys.readouterr().out
+    assert _dispatch([*args, "--after", "-1", "--json"]) == 2
+    assert json.loads(capsys.readouterr().out)["code"] == "E_WORKFLOW_CURSOR"

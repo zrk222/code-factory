@@ -1613,3 +1613,71 @@ def test_sync_github_workflow_source_malformed_account_fails_closed(
     )
     with pytest.raises(AgenticControlError):
         sync_github_workflow_source(workflow_store(tmp_path), "owner/repo", 172)
+
+
+def test_runtime_history_pages_across_restart_without_replay(tmp_path, workflow_source):
+    store = workflow_store(tmp_path)
+    key = store.intake("first", workflow_source)["item"]["source_key"]
+    store.intake("second", {**workflow_source, "revision": 2, "title": "Updated"})
+    first = workflow_store(tmp_path).history(key, limit=1)
+    second = workflow_store(tmp_path).history(key, after=first["next_cursor"], limit=1)
+    assert first["has_more"] and not second["has_more"]
+    assert first["events"][0]["item"]["source"]["revision"] == 1
+    assert second["events"][0]["item"]["source"]["revision"] == 2
+    assert second["next_cursor"] > first["next_cursor"]
+    assert not any(first["authority"].values())
+    assert store.get(key)["run"] is None
+    assert store.history(key, after=second["next_cursor"])["events"] == []
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"limit": 0},
+        {"limit": 101},
+        {"limit": True},
+        {"after": -1},
+        {"after": True},
+        {"after": 2**63},
+    ],
+)
+def test_runtime_history_rejects_invalid_pagination(tmp_path, workflow_source, options):
+    store = workflow_store(tmp_path)
+    key = store.intake("first", workflow_source)["item"]["source_key"]
+    with pytest.raises(AgenticControlError, match="cursor|limit"):
+        store.history(key, **options)
+
+
+@pytest.mark.parametrize("payload", ["{}", "not json"])
+def test_runtime_history_rejects_corrupt_snapshot(tmp_path, workflow_source, payload):
+    import sqlite3
+
+    store = workflow_store(tmp_path)
+    key = store.intake("first", workflow_source)["item"]["source_key"]
+    with sqlite3.connect(store.path) as db:
+        db.execute("UPDATE journal SET payload=?", (payload,))
+    with pytest.raises(AgenticControlError) as caught:
+        store.history(key)
+    assert caught.value.code == "E_WORKFLOW_INTEGRITY"
+
+
+def test_runtime_history_does_not_include_other_items(tmp_path, workflow_source):
+    store = workflow_store(tmp_path)
+    key = store.intake("first", workflow_source)["item"]["source_key"]
+    store.intake("other", {**workflow_source, "external_id": "18"})
+    assert len(store.history(key)["events"]) == 1
+
+
+@pytest.mark.parametrize("payload", ["not json", "[]", "null"])
+def test_runtime_history_rejects_corrupt_current_item(
+    tmp_path, workflow_source, payload
+):
+    import sqlite3
+
+    store = workflow_store(tmp_path)
+    key = store.intake("first", workflow_source)["item"]["source_key"]
+    with sqlite3.connect(store.path) as db:
+        db.execute("UPDATE items SET payload=?", (payload,))
+    with pytest.raises(AgenticControlError) as caught:
+        store.history(key)
+    assert caught.value.code == "E_WORKFLOW_INTEGRITY"

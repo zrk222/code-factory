@@ -30,6 +30,17 @@ def add_parser(sub) -> None:
         "--kind", choices=["issue", "pull_request"], default="issue"
     )
     workflow_sync.add_argument("--json", action="store_true")
+    history = github_sub.add_parser(
+        "workflow-history",
+        help="inspect persisted local transitions; no network or replay",
+    )
+    history.add_argument("--root", default=".")
+    history.add_argument("--account", required=True)
+    history.add_argument("--repository", required=True)
+    history.add_argument("--source-key", required=True)
+    history.add_argument("--after", type=int, default=0)
+    history.add_argument("--limit", type=int, default=50)
+    history.add_argument("--json", action="store_true")
     github_overview = github_sub.add_parser(
         "overview",
         help="read a bounded overview for this workspace's connected GitHub repository",
@@ -342,7 +353,7 @@ def _success_exit_code(a, payload: dict) -> int:
 
 def run(a) -> int:
     """Run bounded GitHub reads/local intake or compile advisory proof."""
-    if a.github_cmd == "workflow-sync":
+    if a.github_cmd in {"workflow-sync", "workflow-history"}:
         return _run_workflow_sync(a)
     from .github_assurance_dossier import GitHubAssuranceDossierError
     from .github_plan_proof_review import GitHubPlanProofReviewError
@@ -378,8 +389,10 @@ def _run_workflow_sync(a) -> int:
 
     try:
         store = WorkflowEventStore(Path(a.root), [("github", a.account, a.repository)])
-        payload = sync_github_workflow_source(
-            store, a.repository, a.number, kind=a.kind
+        payload = (
+            store.history(a.source_key, after=a.after, limit=a.limit)
+            if a.github_cmd == "workflow-history"
+            else sync_github_workflow_source(store, a.repository, a.number, kind=a.kind)
         )
     except (AgenticControlError, OSError, sqlite3.Error) as error:
         code = getattr(error, "code", "E_WORKFLOW_STORAGE")
@@ -387,7 +400,7 @@ def _run_workflow_sync(a) -> int:
             schema="factory.workflow-runtime.error.v1",
             status="error",
             code=code,
-            summary="Workflow sync failed; no dispatch or remote write occurred",
+            summary="Workflow operation failed; no dispatch or remote write occurred",
             next_actions=[
                 "Check the connected account, repository scope and local storage; retry only this read"
             ],
@@ -401,6 +414,12 @@ def _run_workflow_sync(a) -> int:
         return 2
     if a.json:
         print(json.dumps(payload, sort_keys=True))
+    elif a.github_cmd == "workflow-history":
+        print(
+            f"recorded transitions: {len(payload['events'])}; more: {payload['has_more']}"
+        )
+        print(f"next cursor: {payload['next_cursor']}")
+        print("Local history only; no network, replay, dispatch or approval")
     else:
         print(f"workflow {payload['status']}: {payload['item']['phase']}")
         print(f"source key: {payload['item']['source_key']}")

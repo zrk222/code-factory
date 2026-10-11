@@ -3474,6 +3474,7 @@ class WorkflowEventStore:
                 CREATE TABLE IF NOT EXISTS items (key TEXT PRIMARY KEY, payload TEXT NOT NULL, sha TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS ingress (id TEXT PRIMARY KEY, sha TEXT NOT NULL, source_key TEXT NOT NULL, outcome TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS journal (seq INTEGER PRIMARY KEY AUTOINCREMENT, source_key TEXT NOT NULL, action TEXT NOT NULL, payload TEXT NOT NULL, sha TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS journal_source_sequence ON journal(source_key,seq);
             """)
             scope = _sha(sorted(self.allowed))
             db.execute("INSERT OR IGNORE INTO settings VALUES ('scope', ?)", (scope,))
@@ -3541,8 +3542,17 @@ class WorkflowEventStore:
         row = db.execute("SELECT payload,sha FROM items WHERE key=?", (key,)).fetchone()
         if row is None:
             raise AgenticControlError("E_WORKFLOW_ITEM", "source item not found")
-        item = json.loads(row[0])
-        if _sha(item) != row[1] or item.get("source_key") != key:
+        try:
+            item = json.loads(row[0])
+        except (ValueError, TypeError) as error:
+            raise AgenticControlError(
+                "E_WORKFLOW_INTEGRITY", "stored item is not valid JSON"
+            ) from error
+        if (
+            not isinstance(item, dict)
+            or _sha(item) != row[1]
+            or item.get("source_key") != key
+        ):
             raise AgenticControlError(
                 "E_WORKFLOW_INTEGRITY", "stored item hash differs"
             )
@@ -3564,6 +3574,52 @@ class WorkflowEventStore:
         """Read the current hash-checked source item across process restarts."""
         with self._connect() as db:
             return self._read(db, key)
+
+    def history(self, key, *, after=0, limit=50):
+        """Page recorded transitions without replaying their side effects."""
+        if type(after) is not int or not 0 <= after < 2**63:
+            raise AgenticControlError("E_WORKFLOW_CURSOR", "invalid event cursor")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise AgenticControlError("E_WORKFLOW_CURSOR", "event limit must be 1-100")
+        with self._connect() as db:
+            current = self._read(db, key)
+            _runtime_source(current["source"], self.allowed)
+            rows = db.execute(
+                "SELECT seq,action,payload,sha FROM journal WHERE source_key=? AND seq>? ORDER BY seq LIMIT ?",
+                (key, after, limit + 1),
+            ).fetchall()
+            events = [self._history_event(key, row) for row in rows[:limit]]
+        return dict(
+            schema="factory.workflow-history.v1",
+            source_key=key,
+            events=events,
+            next_cursor=events[-1]["sequence"] if events else after,
+            has_more=len(rows) > limit,
+            integrity_scope="Snapshot hashes and source binding; not signed chronology or protection against a hostile database writer",
+            authority=dict(_AUTHORITY),
+            next_actions=[
+                "Inspect recorded transitions; live recovery requires a registered observer"
+            ],
+        )
+
+    def _history_event(self, key, row):
+        try:
+            item = json.loads(row[2])
+            source = _runtime_source(item["source"], self.allowed)
+            valid = (
+                _sha(item) == row[3]
+                and item["source_key"] == key
+                and _runtime_source_key(source) == key
+            )
+        except (ValueError, KeyError, TypeError) as error:
+            raise AgenticControlError(
+                "E_WORKFLOW_INTEGRITY", "invalid recorded event"
+            ) from error
+        if not valid:
+            raise AgenticControlError(
+                "E_WORKFLOW_INTEGRITY", "recorded event hash differs"
+            )
+        return dict(sequence=row[0], action=row[1], item=item)
 
     def intake(self, event_id, source):
         """Atomically deduplicate a scoped adapter event without launching an agent."""
