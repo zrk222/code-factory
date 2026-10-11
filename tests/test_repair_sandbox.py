@@ -118,6 +118,7 @@ def _approval(root: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
         "factoryline.repair_sandbox._image_ref",
         lambda _root, _image, _digest, _context=None: f"test-runtime@sha256:{digest}",
     )
+    _mock_docker_tool_lookup(monkeypatch)
     return create_repair_approval(
         root,
         scope_path,
@@ -129,6 +130,15 @@ def _approval(root: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
         container_image="test-runtime",
         container_digest=digest,
         checks=_repair_checks(),
+    )
+
+
+def _mock_docker_tool_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = repair_sandbox._tool_path
+    monkeypatch.setattr(
+        repair_sandbox,
+        "_tool_path",
+        lambda name: "docker-test-executable" if name == "docker" else original(name),
     )
 
 
@@ -482,6 +492,7 @@ def test_repair_approval_requires_exact_human_confirmation_and_bound_controls(
             "docker_root": "/var/lib/docker",
         },
     )
+    _mock_docker_tool_lookup(monkeypatch)
     kwargs = {
         "approved_by": "maintainer",
         "confirmation": "APPROVE REPAIR wrong-candidate",
@@ -535,6 +546,52 @@ def test_repair_approval_rejects_missing_controls_and_unpinned_images(
         )
 
 
+def test_repair_approval_fails_closed_when_docker_executable_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scope_path, patch_path = _git_repair_case(tmp_path)
+    monkeypatch.setattr(
+        repair_sandbox,
+        "_docker_identity",
+        lambda _root, _context=None: {
+            "context": "desktop-linux",
+            "endpoint": "npipe:////./pipe/dockerDesktopLinuxEngine",
+            "engine_id": "test-engine",
+            "docker_root": "/var/lib/docker",
+        },
+    )
+    monkeypatch.setattr(
+        repair_sandbox,
+        "_image_ref",
+        lambda _root, _image, digest, _context=None: f"runtime@sha256:{digest}",
+    )
+    original_which = repair_sandbox.shutil.which
+    monkeypatch.setattr(
+        repair_sandbox.shutil,
+        "which",
+        lambda name: None if name == "docker" else original_which(name),
+    )
+    with pytest.raises(RepairSandboxError) as caught:
+        create_repair_approval(
+            tmp_path,
+            scope_path,
+            patch_path,
+            approved_by="maintainer",
+            confirmation=(
+                "APPROVE REPAIR "
+                + inspect_repair_candidate(tmp_path, scope_path, patch_path)[
+                    "candidate_sha256"
+                ]
+            ),
+            expires_at=(datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat(),
+            container_image="runtime",
+            container_digest="f" * 64,
+            checks=_repair_checks(),
+        )
+    assert caught.value.code == "REPAIR_TOOL_UNAVAILABLE"
+    assert not list((tmp_path / ".factory" / "repair-approvals").glob("*.json"))
+
+
 def test_repair_approval_rejects_protected_test_edits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -572,6 +629,7 @@ def test_repair_approval_rejects_protected_test_edits(
             "docker_root": "/var/lib/docker",
         },
     )
+    _mock_docker_tool_lookup(monkeypatch)
     with pytest.raises(RepairSandboxError, match="protected paths"):
         create_repair_approval(
             tmp_path,
@@ -672,7 +730,12 @@ def test_repair_git_worktree_disables_configured_checkout_hook(tmp_path: Path) -
     hook.write_text(
         f"#!/bin/sh\nprintf ran > '{marker.as_posix()}'\n", encoding="utf-8"
     )
-    os.chmod(hook, 0o755)
+    os.chmod(hook, 0o700)
+    if os.name != "nt":
+        assert hook.stat().st_mode & 0o100
+        subprocess.run(["sh", str(hook)], cwd=tmp_path, check=True)
+        assert marker.is_file()
+        marker.unlink()
     _git(tmp_path, "config", "core.hooksPath", str(hooks))
     target = tmp_path / ".factory" / "hook-checkout"
     result = repair_sandbox._git(

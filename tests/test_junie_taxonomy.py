@@ -1018,3 +1018,18 @@ def test_six_lane_contract_is_detached_and_manifest_digest_changes(
     )
     second = junie_manifest(tmp_path)
     assert first["manifest_sha256"] != second["manifest_sha256"]
+
+
+def test_junie_guidance_exposes_approved_repair_without_proof_agent_authority():
+    """Repair discovery preserves explicit operator approval and read-only proof."""
+    from factoryline.junie_taxonomy import _guidance, _junie_proof_agent_bytes
+
+    guidance = _guidance().decode("utf-8")
+    assert guidance.count("## Small-agent product task packets") == 1
+    assert "factory repair approve|run|revoke|stop" in guidance
+    assert "single-use" in guidance
+    assert "primary checkout is unchanged" in guidance
+    assert "never call repair approval or execution" in guidance
+    proof_agent = _junie_proof_agent_bytes().decode("utf-8")
+    assert "never edit files, execute shell commands" in proof_agent
+    assert "Never approve, merge, publish, deploy" in proof_agent
