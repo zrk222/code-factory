@@ -11,7 +11,7 @@ def add_parser(sub) -> None:
     """Register repair-sandbox and JetBrains handshake commands."""
     repair = sub.add_parser(
         "repair",
-        help="prepare a sealed Change List scope and inspect a candidate patch without applying it",
+        help="inspect, explicitly approve, and verify an isolated candidate repair",
     )
     repair_sub = repair.add_subparsers(required=True, dest="repair_cmd")
     repair_scope = repair_sub.add_parser(
@@ -59,6 +59,7 @@ def add_parser(sub) -> None:
         help="explicit workspace-contained directory for local candidate artifacts",
     )
     repair_candidate.add_argument("--json", action="store_true")
+    _add_repair_execution_parsers(repair_sub)
 
     jetbrains = sub.add_parser(
         "jetbrains",
@@ -106,8 +107,39 @@ def add_parser(sub) -> None:
     jetbrains_status.add_argument("--json", action="store_true")
 
 
+def _add_repair_execution_parsers(sub) -> None:
+    """Expose explicit one-patch approval, execution, revocation and stop commands."""
+    approve = sub.add_parser(
+        "approve", help="approve one exact candidate and container check contract"
+    )
+    approve.add_argument("--scope", required=True)
+    approve.add_argument("--patch", required=True)
+    approve.add_argument("--approved-by", required=True)
+    approve.add_argument("--confirmation", required=True)
+    approve.add_argument("--expires-at", required=True)
+    approve.add_argument("--container-image", required=True)
+    approve.add_argument("--container-digest", required=True)
+    approve.add_argument(
+        "--checks",
+        required=True,
+        help="workspace-contained JSON array of positive and negative argv checks",
+    )
+    run = sub.add_parser(
+        "run", help="consume approval once and verify a disposable-worktree repair"
+    )
+    run.add_argument("--approval", required=True)
+    for name in ("revoke", "stop"):
+        parser = sub.add_parser(name, help=f"{name} an explicitly approved repair")
+        parser.add_argument("--approval-sha256", required=True)
+        parser.add_argument("--requested-by", required=True)
+        parser.add_argument("--reason", required=True)
+    for parser in (approve, run, *[sub.choices[name] for name in ("revoke", "stop")]):
+        parser.add_argument("--root", default=".")
+        parser.add_argument("--json", action="store_true")
+
+
 def run(a) -> int:
-    """Dispatch supervised repair or JetBrains proof work without applying changes."""
+    """Dispatch repair commands with explicit authority or JetBrains proof work."""
     if a.cmd == "repair":
         return _run_repair(a)
     return _run_jetbrains(a)
@@ -121,10 +153,14 @@ def _run_repair(args) -> int:
     except repair_sandbox.RepairSandboxError as exc:
         return _repair_error(args, exc)
     _render_repair_result(args, result)
+    if args.repair_cmd == "run" and result.get("status") != "VERIFIED":
+        return 2
     return 0
 
 
 def _execute_repair_command(args, repair_sandbox):
+    if args.repair_cmd in {"approve", "run", "revoke", "stop"}:
+        return _execute_approved_command(args, repair_sandbox)
     if args.repair_cmd == "scope":
         result = repair_sandbox.create_repair_scope(
             Path(args.root),
@@ -147,12 +183,62 @@ def _execute_repair_command(args, repair_sandbox):
     return result
 
 
-def _repair_error(args, exc) -> int:
-    schema = (
-        "factory.repair_scope.error.v1"
-        if args.repair_cmd == "scope"
-        else "factory.repair_candidate.error.v1"
+def _load_repair_checks(root: Path, value: str, repair_sandbox):
+    """Read bounded local check data without granting execution authority."""
+    try:
+        workspace = root.resolve()
+        path = (workspace / value).resolve()
+        path.relative_to(workspace)
+        if not path.is_file() or path.stat().st_size > 1_000_000:
+            raise ValueError("checks must be an existing file of at most 1 MB")
+        checks = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(checks, list):
+            raise ValueError("checks must be a JSON array")
+        return checks
+    except (OSError, ValueError) as exc:
+        raise repair_sandbox.RepairSandboxError(
+            "REPAIR_CHECKS_INPUT_INVALID",
+            "checks must be a bounded workspace-contained JSON array",
+        ) from exc
+
+
+def _execute_approved_command(args, repair_sandbox):
+    """Route explicit operator commands to the sealed repair controller."""
+    root = Path(args.root)
+    if args.repair_cmd == "approve":
+        return repair_sandbox.create_repair_approval(
+            root,
+            Path(args.scope),
+            Path(args.patch),
+            approved_by=args.approved_by,
+            confirmation=args.confirmation,
+            expires_at=args.expires_at,
+            container_image=args.container_image,
+            container_digest=args.container_digest,
+            checks=_load_repair_checks(root, args.checks, repair_sandbox),
+        )
+    if args.repair_cmd == "run":
+        return repair_sandbox.execute_approved_repair(root, Path(args.approval))
+    if args.repair_cmd == "revoke":
+        return repair_sandbox.revoke_repair_approval(
+            root, args.approval_sha256, revoked_by=args.requested_by, reason=args.reason
+        )
+    return repair_sandbox.request_repair_stop(
+        root, args.approval_sha256, requested_by=args.requested_by, reason=args.reason
     )
+
+
+def _repair_error(args, exc) -> int:
+    message = str(exc)
+    if args.repair_cmd in {"approve", "run", "revoke", "stop"}:
+        schema = "factory.repair_approval.error.v1"
+        message = "repair command rejected; use the error code to correct the approval or inspect local attempt evidence"
+    else:
+        schema = (
+            "factory.repair_scope.error.v1"
+            if args.repair_cmd == "scope"
+            else "factory.repair_candidate.error.v1"
+        )
     marker = (
         "REPAIR_SANDBOX_PATH_REJECTED"
         if "PATH" in exc.code or exc.code == "REPAIR_CANDIDATE_OUT_OF_SCOPE"
@@ -162,12 +248,12 @@ def _repair_error(args, exc) -> int:
         "schema": schema,
         "marker": marker,
         "code": exc.code,
-        "message": str(exc),
+        "message": message,
     }
     print(
         json.dumps(payload, indent=2, sort_keys=True)
         if args.json
-        else f"repair {args.repair_cmd} failed: {exc.code}: {exc}",
+        else f"repair {args.repair_cmd} failed: {exc.code}: {message}",
         file=sys.stderr,
     )
     return 2
@@ -175,6 +261,9 @@ def _repair_error(args, exc) -> int:
 
 def _render_repair_result(args, result) -> None:
     if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+    if args.repair_cmd in {"approve", "run", "revoke", "stop"}:
         print(json.dumps(result, indent=2, sort_keys=True))
         return
     print(f"factory repair {args.repair_cmd} (supervised, no patch apply)")
