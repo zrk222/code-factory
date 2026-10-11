@@ -10,6 +10,7 @@ on:
       - factoryline/runtime_audit_process.py
       - scripts/verify_worker_cves*.mjs
       - scripts/verify_semgrep_surface.mjs
+      - scripts/semgrep_mutation_controls*.mjs
       - scripts/verify_codeql_cross_file.mjs
       - scripts/select_worker_targets*.mjs
       - .github/workflows/worker-verification.yml
@@ -24,6 +25,7 @@ on:
       - factoryline/runtime_audit_process.py
       - scripts/verify_worker_cves*.mjs
       - scripts/verify_semgrep_surface.mjs
+      - scripts/semgrep_mutation_controls*.mjs
       - scripts/verify_codeql_cross_file.mjs
       - scripts/select_worker_targets*.mjs
       - .github/workflows/worker-verification.yml
@@ -93,7 +95,7 @@ jobs:
         with:
           node-version: "22"
       - name: Check candidate worker regression and target selector controls
-        run: node --test scripts/select_worker_targets.test.mjs scripts/verify_worker_cves.test.mjs
+        run: node --test scripts/select_worker_targets.test.mjs scripts/verify_worker_cves.test.mjs scripts/semgrep_mutation_controls.test.mjs
   semgrep-surface:
     runs-on: ubuntu-latest
     timeout-minutes: 15
