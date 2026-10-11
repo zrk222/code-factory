@@ -116,3 +116,21 @@ For a first MVP, this saves a novice from discovering essential PRD decisions
 only after a scaffold exists. For an experienced team, it makes the unresolved
 product contract explicit, source-bound, and reviewable before dependent
 automation proceeds.
+
+## Working with a smaller coding agent
+
+A product mission now includes a sealed `task_packet` for its selected value
+slice. It carries exact requirements, acceptance examples, dependencies,
+source hashes and run budgets instead of asking the agent to reinterpret the
+entire product.
+
+The packet starts at `prepared_needs_candidate_binding`. File paths, commands
+and applicability across all six audit lanes require repository inspection.
+It does not start a build or grant release authority. Use the existing scoped
+proof workflow before changing code, and retain positive and negative controls.
+Changed product sources invalidate the packet. Legacy missions remain readable
+and explicitly report that their task packet is unavailable.
+
+This supplies bounded agent context. Whether a smaller model achieves the same
+app quality at lower total cost still requires the paired benchmark in
+[the upgrade plan](../plans/prd-grill.md); no equivalence result is claimed.

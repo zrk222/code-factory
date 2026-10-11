@@ -288,3 +288,11 @@ evidence; Semgrep community output does not establish cross-file coverage.
 Code Factory is a robust code audit factory with Production/Stable package
 metadata. This source preview does not establish new marketplace publication,
 runtime verification of every repository, or measured detection accuracy.
+
+## Smaller models, stronger quality workflows
+
+CF/FL is designed to guide smaller LLMs toward frontier-like coding performance
+through deterministic workflows, independent audits and evidence-driven repair.
+Sealed task packets keep requirements, scope and acceptance checks explicit.
+This is the design objective; model parity and cost savings require a paired
+benchmark and are not established by the current attribution metric.

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -125,3 +125,42 @@ test('CLI reads GitHub event name separately and writes GitHub outputs', () => {
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+function trustedWorkflowProgram() {
+  const workflow = readFileSync(new URL('../.github/workflows/worker-verification.yml', import.meta.url), 'utf8');
+  const program = workflow.match(/node --input-type=module <<'NODE'\r?\n([\s\S]*?)          NODE/)[1];
+  assert.ok(!workflow.slice(workflow.indexOf('  plan-worker-targets:'), workflow.indexOf('  selector-controls:')).includes('node --test'));
+  return program.replace(/^          /gm, '');
+}
+
+for (const scenario of ['candidate sabotage', 'missing baseline', 'manual']) {
+  test(`trusted workflow selector: ${scenario} runs all SDK workers`, () => {
+    const root = mkdtempSync(join(tmpdir(), 'factory-trusted-selector-'));
+    const git = (...args) => {
+      const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+      return result.stdout.trim();
+    };
+    try {
+      git('init'); git('config', 'user.name', 'Control'); git('config', 'user.email', 'control@example.invalid');
+      mkdirSync(join(root, 'scripts'));
+      writeFileSync(join(root, 'README.md'), 'baseline');
+      if (scenario === 'candidate sabotage') writeFileSync(join(root, 'scripts/select_worker_targets.mjs'), readFileSync(new URL('./select_worker_targets.mjs', import.meta.url)));
+      git('add', '.'); git('commit', '-m', 'baseline');
+      const baseline = git('rev-parse', 'HEAD');
+      writeFileSync(join(root, 'scripts/select_worker_targets.mjs'), 'console.log(JSON.stringify({sdk:"false",matrix:"[]",reason:"forged"}));');
+      git('add', '.'); git('commit', '-m', 'candidate');
+      const candidate = git('rev-parse', 'HEAD');
+      const output = join(root, 'output.txt');
+      const result = spawnSync(process.execPath, ['--input-type=module', '-e', trustedWorkflowProgram()], {
+        cwd: root, encoding: 'utf8', env: { ...process.env, RUNNER_TEMP: root, GITHUB_OUTPUT: output,
+          GITHUB_EVENT_NAME: scenario === 'manual' ? 'workflow_dispatch' : 'push', GITHUB_EVENT_JSON: JSON.stringify({before: baseline, after: candidate}) },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const lines = readFileSync(output, 'utf8');
+      assert.ok(lines.includes('sdk=true\n'));
+      assert.ok(lines.includes(`matrix=${JSON.stringify(sdkTargets)}\n`));
+      assert.ok(!lines.includes('forged'));
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+}

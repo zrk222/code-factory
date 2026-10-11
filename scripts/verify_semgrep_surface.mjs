@@ -80,7 +80,7 @@ try {
   mkdirSync(dirname(resolve(root, output)), { recursive: true });
   writeFileSync(`${output}.sarif`, native);
   const findings = (sarif.runs ?? []).flatMap(run => run.results ?? []);
-  if (findings.length !== 21) throw new Error(`Native profile expected 21 control findings, observed ${findings.length}`);
+  if (findings.length !== 23) throw new Error(`Native profile expected 23 control findings, observed ${findings.length}`);
   const active = results => results.filter(result => !(result.suppressions ?? []).some(suppression => suppression.status !== 'rejected'));
   const keys = results => results.map(result => {
     const locations = result.locations ?? [];
@@ -92,7 +92,7 @@ try {
   // Semgrep retains inSource metadata even with --disable-nosem. The worker
   // consumes all results from this profile; only the enabled scan excludes it.
   const disabledKeys = keys(findings);
-  if (new Set(disabledKeys).size !== 21 || annotated.some(key => !disabledKeys.includes(key))) {
+  if (new Set(disabledKeys).size !== 23 || annotated.some(key => !disabledKeys.includes(key))) {
     throw new Error('Disabled suppression omitted or duplicated an exact control finding');
   }
   if (!argv.includes('--disable-nosem')) throw new Error('Production profile must disable inline suppression');

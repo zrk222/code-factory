@@ -50,14 +50,50 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "22"
-      - name: Check worker regression and target selector controls
-        run: node --test scripts/select_worker_targets.test.mjs scripts/verify_worker_cves.test.mjs
       - name: Select SDK validation targets
         id: targets
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_EVENT_JSON: ${{ toJSON(github.event) }}
-        run: node scripts/select_worker_targets.mjs >> "$GITHUB_OUTPUT"
+        # Only baseline code may decide to skip SDK checks. Candidate controls run
+        # in a separate job and cannot alter this selection environment.
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { appendFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+          import { join } from 'node:path';
+          const targets = ['codeql-python-worker', 'codeql-javascript-worker', 'codeql-actions-worker', 'osv-worker', 'syft-worker', 'gitleaks-worker', 'trivy-worker', 'runtime-worker', 'fuzz-worker'];
+          let result = { sdk: 'true', matrix: JSON.stringify(targets), reason: 'trusted-baseline-unavailable' };
+          let temporary;
+          try {
+            const event = JSON.parse(process.env.GITHUB_EVENT_JSON);
+            const base = process.env.GITHUB_EVENT_NAME === 'pull_request' ? event.pull_request?.base?.sha : process.env.GITHUB_EVENT_NAME === 'push' ? event.before : null;
+            if (!/^[a-f0-9]{40}$/.test(base ?? '') || /^0{40}$/.test(base)) throw new Error('no baseline');
+            const source = execFileSync('git', ['show', `${base}:scripts/select_worker_targets.mjs`], { encoding: 'utf8', timeout: 10000 });
+            temporary = mkdtempSync(join(process.env.RUNNER_TEMP, 'trusted-worker-selector-'));
+            const path = join(temporary, 'selector.mjs');
+            writeFileSync(path, source);
+            const selected = JSON.parse(execFileSync(process.execPath, [path], { encoding: 'utf8', timeout: 30000, env: { ...process.env, GITHUB_OUTPUT: '' } }));
+            if (!['true', 'false'].includes(selected.sdk) || selected.matrix !== JSON.stringify(targets) || !/^[a-z-]+$/.test(selected.reason ?? '')) throw new Error('invalid selector output');
+            result = selected;
+          } catch {
+            // Missing or failing baseline is conservative: build every SDK worker.
+          } finally {
+            if (temporary) rmSync(temporary, { recursive: true, force: true });
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `sdk=${result.sdk}\nmatrix=${result.matrix}\nreason=${result.reason}\n`);
+          NODE
+  selector-controls:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22"
+      - name: Check candidate worker regression and target selector controls
+        run: node --test scripts/select_worker_targets.test.mjs scripts/verify_worker_cves.test.mjs
   semgrep-surface:
     runs-on: ubuntu-latest
     timeout-minutes: 15

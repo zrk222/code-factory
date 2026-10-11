@@ -26,11 +26,13 @@ from .agent_contract import AgentContractError, validate_verifier_attestation
 PRODUCT_GRAPH_SCHEMA = "factory.product_graph.v1"
 VALUE_SLICES_SCHEMA = "factory.value_slices.v1"
 MISSION_SCHEMA = "factory.mission.v1"
+MISSION_CONTRACT_REVISION = 2
 PR_DRAFT_SCHEMA = "factory.pr_draft.v1"
 OUTCOME_SCHEMA = "factory.outcome.v1"
 MISSION_COMPLETION_SCHEMA = "factory.mission.completion.v1"
 MISSION_VALIDATION_INPUT_SCHEMA = "factory.mission.validation-input.v1"
 MISSION_DECISION_SCHEMA = "factory.mission.decision.v1"
+TASK_PACKET_SCHEMA = "factory.small_agent_task_packet.v1"
 MAX_PRD_BYTES = 65536
 MAX_REQUIREMENTS = 500
 MAX_SLICE_REQUIREMENTS = 5
@@ -105,6 +107,23 @@ def _load_json(path: Path, schema: str | None = None) -> dict[str, Any]:
     if schema and value.get("schema") != schema:
         raise ProductMissionError("SCHEMA_UNSUPPORTED", f"expected {schema}: {path}")
     return value
+
+
+def _load_mission(path: Path) -> dict[str, Any]:
+    """Load current missions and explicitly supported v1 legacy contracts."""
+    mission = _load_json(path)
+    revision = mission.get("contract_revision", 1)
+    if (
+        mission.get("schema") != MISSION_SCHEMA
+        or isinstance(revision, bool)
+        or not isinstance(revision, int)
+        or revision not in {1, MISSION_CONTRACT_REVISION}
+    ):
+        raise ProductMissionError(
+            "SCHEMA_UNSUPPORTED",
+            f"expected {MISSION_SCHEMA} revision 1 or {MISSION_CONTRACT_REVISION}: {path}",
+        )
+    return mission
 
 
 def _atomic_text(path: Path, text: str, *, force: bool = False) -> Path:
@@ -1081,6 +1100,252 @@ connector, or production-write authority.
 """
 
 
+def _small_agent_task_packet(
+    mission_id: str,
+    graph_path: Path,
+    graph: dict[str, Any],
+    slices_path: Path,
+    slices: dict[str, Any],
+    selected: dict[str, Any],
+    budget: dict[str, Any],
+) -> dict[str, Any]:
+    """Prepare a bound task brief; candidate scope and execution remain unresolved."""
+    requirement_ids = set(selected["requirement_ids"])
+    requirements = [
+        {
+            key: item[key]
+            for key in ("id", "statement", "kind", "depends_on_requirements")
+            if key in item
+        }
+        for item in graph["requirements"]
+        if item["id"] in requirement_ids
+    ]
+    acceptance = [
+        item
+        for item in graph["acceptance"]
+        if item["id"] in selected["acceptance_refs"]
+    ]
+    lanes = ["static", "secrets", "configuration", "dependencies", "runtime", "fuzz"]
+    core = {
+        "schema": TASK_PACKET_SCHEMA,
+        "mission_id": mission_id,
+        "status": "prepared_needs_candidate_binding",
+        "actor": graph["actors"] or ["UNKNOWN: PRD does not declare an actor"],
+        "user_visible_outcome": {
+            "slice": selected["user_outcome"],
+            "declared_product_outcomes": graph["outcomes"],
+        },
+        "requirements": requirements,
+        "acceptance_examples": acceptance,
+        "counterexamples": {
+            "status": "not_declared",
+            "source": "Product Graph contains no counterexample contract",
+        },
+        "source_bindings": {
+            "product_graph": {
+                "path": str(graph_path.resolve()),
+                "file_sha256": _sha_path(graph_path),
+                "content_sha256": graph["graph_sha256"],
+            },
+            "value_slices": {
+                "path": str(slices_path.resolve()),
+                "file_sha256": _sha_path(slices_path),
+                "content_sha256": slices["slices_sha256"],
+            },
+        },
+        "interfaces": {
+            "declared_bindings": dict(graph.get("bindings", {})),
+            "relevant_files": {
+                "status": "unknown_until_candidate_inspection",
+                "paths": [],
+            },
+            "contracts": {"status": "unknown_unless_declared_in_bindings"},
+        },
+        "dependencies": selected["depends_on"],
+        "permitted_source_scope": {
+            "status": "requires_human_candidate_declaration",
+            "paths": [],
+            "scope_drift": "stop_and_request_owner_review",
+        },
+        "acceptance_commands": {
+            "status": "requires_declared_tool_manifest_and_candidate_scope",
+            "commands": [],
+        },
+        "budgets": dict(budget),
+        "stop_rules": [
+            "Stop before edits until candidate paths and interfaces are declared and bound.",
+            "Stop if a declared source hash, requirement, acceptance reference, or permitted path changes.",
+            "Stop at any budget limit, missing tool, missing control, failed gate, or unresolved external effect.",
+            "Do not weaken tests, acceptance oracles, policy, or required gates to obtain a pass.",
+            "Request owner review for scope expansion or an unmet requirement; do not infer authority.",
+        ],
+        "audit_lanes": [
+            {
+                "lane": lane,
+                "applicability": "requires_candidate_declaration",
+                "reason": "Candidate files and runtime profile are not yet bound.",
+            }
+            for lane in lanes
+        ],
+        "regression_controls": {
+            "positive": {
+                "required": True,
+                "status": "not_run",
+                "definition": "Declare an independent expected-behavior oracle.",
+            },
+            "negative": {
+                "required": True,
+                "status": "not_run",
+                "definition": "Declare a scope-drift or gate-weakening sabotage that must be rejected.",
+            },
+            "preserve_existing_gates": True,
+        },
+        "execution": {
+            "state": "preparation_only",
+            "candidate_sha256": None,
+            "requires_candidate_binding": True,
+            "requires_human_execution_decision": True,
+            "executed_audit": False,
+            "release_authority": False,
+        },
+    }
+    return {**core, "packet_sha256": _sha_bytes(_canonical(core))}
+
+
+def _verify_task_packet_sources(
+    packet: dict[str, Any], mission: dict[str, Any]
+) -> list[str]:
+    inputs = mission.get("inputs", {})
+    bindings = packet.get("source_bindings")
+    if not isinstance(inputs, dict) or not isinstance(bindings, dict):
+        return ["small-agent task packet source bindings malformed"]
+    for name, key in (("product_graph", "graph"), ("value_slices", "slices")):
+        binding = bindings.get(name)
+        if not isinstance(binding, dict) or any(
+            binding.get(field) != inputs.get(input_key)
+            for field, input_key in (
+                ("path", f"{key}_path"),
+                ("file_sha256", f"{key}_file_sha256"),
+                ("content_sha256", f"{key}_sha256"),
+            )
+        ):
+            return [f"small-agent task packet {name} binding invalid"]
+    selected = mission.get("slice", {})
+    if [
+        item.get("id")
+        for item in packet.get("requirements", [])
+        if isinstance(item, dict)
+    ] != selected.get("requirement_ids"):
+        return ["small-agent task packet requirements do not match the selected slice"]
+    if [
+        item.get("id")
+        for item in packet.get("acceptance_examples", [])
+        if isinstance(item, dict)
+    ] != selected.get("acceptance_refs"):
+        return [
+            "small-agent task packet acceptance references do not match the selected slice"
+        ]
+    if packet.get("dependencies") != selected.get("depends_on") or packet.get(
+        "budgets"
+    ) != mission.get("budgets"):
+        return ["small-agent task packet dependencies or budgets invalid"]
+    try:
+        graph = _load_json(Path(inputs["graph_path"]), PRODUCT_GRAPH_SCHEMA)
+    except (KeyError, ProductMissionError):
+        return ["small-agent task packet graph source unavailable"]
+    requirement_ids = set(selected.get("requirement_ids", []))
+    expected_requirements = [
+        {
+            key: item[key]
+            for key in ("id", "statement", "kind", "depends_on_requirements")
+            if key in item
+        }
+        for item in graph.get("requirements", [])
+        if item.get("id") in requirement_ids
+    ]
+    expected_acceptance = [
+        item
+        for item in graph.get("acceptance", [])
+        if item.get("id") in selected.get("acceptance_refs", [])
+    ]
+    if (
+        packet.get("requirements") != expected_requirements
+        or packet.get("acceptance_examples") != expected_acceptance
+    ):
+        return ["small-agent task packet requirement or acceptance content drift"]
+    interfaces = packet.get("interfaces")
+    if not isinstance(interfaces, dict) or interfaces.get(
+        "declared_bindings"
+    ) != graph.get("bindings", {}):
+        return ["small-agent task packet interface bindings invalid"]
+    return []
+
+
+def _verify_task_packet_controls(packet: dict[str, Any]) -> list[str]:
+    execution = packet.get("execution", {})
+    if not isinstance(execution, dict):
+        return ["small-agent task packet execution authority malformed"]
+    if (
+        execution.get("state") != "preparation_only"
+        or execution.get("candidate_sha256") is not None
+        or execution.get("executed_audit") is not False
+        or execution.get("release_authority") is not False
+    ):
+        return ["small-agent task packet execution authority invalid"]
+    lanes = packet.get("audit_lanes")
+    expected_lanes = {
+        "static",
+        "secrets",
+        "configuration",
+        "dependencies",
+        "runtime",
+        "fuzz",
+    }
+    if (
+        not isinstance(lanes, list)
+        or len(lanes) != len(expected_lanes)
+        or any(not isinstance(item, dict) for item in lanes)
+        or {item.get("lane") for item in lanes} != expected_lanes
+        or any(
+            item.get("applicability") != "requires_candidate_declaration"
+            or not item.get("reason")
+            for item in lanes
+        )
+    ):
+        return ["small-agent task packet audit lane declarations invalid"]
+    controls = packet.get("regression_controls", {})
+    for name in ("positive", "negative"):
+        control = controls.get(name) if isinstance(controls, dict) else None
+        if (
+            not isinstance(control, dict)
+            or control.get("required") is not True
+            or control.get("status") != "not_run"
+            or not control.get("definition")
+        ):
+            return ["small-agent task packet regression controls invalid"]
+    if controls.get("preserve_existing_gates") is not True:
+        return ["small-agent task packet may not weaken existing gates"]
+    return []
+
+
+def _verify_small_agent_task_packet(mission: dict[str, Any]) -> list[str]:
+    packet = mission.get("task_packet")
+    if not isinstance(packet, dict):
+        return ["small-agent task packet missing"]
+    core = {key: value for key, value in packet.items() if key != "packet_sha256"}
+    if packet.get("schema") != TASK_PACKET_SCHEMA or _sha_bytes(
+        _canonical(core)
+    ) != packet.get("packet_sha256"):
+        return ["small-agent task packet schema or hash invalid"]
+    if (
+        packet.get("mission_id") != mission.get("id")
+        or packet.get("status") != "prepared_needs_candidate_binding"
+    ):
+        return ["small-agent task packet identity or preparation state invalid"]
+    source_errors = _verify_task_packet_sources(packet, mission)
+    return source_errors or _verify_task_packet_controls(packet)
+
+
 def _validated_slices(path: Path) -> dict[str, Any]:
     slices = _load_json(path, VALUE_SLICES_SCHEMA)
     core = {
@@ -1125,7 +1390,7 @@ def _selected_slice(slices: dict[str, Any], slice_id: str) -> dict[str, Any]:
 def _existing_mission(path: Path, force: bool) -> dict[str, Any] | None:
     if not path.exists() or force:
         return None
-    existing = _load_json(path, MISSION_SCHEMA)
+    existing = _load_mission(path)
     verification = verify_mission(path)
     if verification["valid"]:
         return {**existing, "path": str(path), "idempotent": True}
@@ -1345,9 +1610,19 @@ def create_mission(
         Path(root), readiness_path, graph, require_intake
     )
     inputs.update(optional_inputs)
+    task_packet = _small_agent_task_packet(
+        mission_id,
+        graph_path,
+        graph,
+        Path(slices_path),
+        slices,
+        selected,
+        budget,
+    )
     markers = _mission_markers(criteria, optional_markers)
     core = {
         "schema": MISSION_SCHEMA,
+        "contract_revision": MISSION_CONTRACT_REVISION,
         "id": mission_id,
         "project": slices["project"],
         "slice_id": slice_id,
@@ -1379,6 +1654,7 @@ def create_mission(
                 "unrelated_repository_history",
             ],
         },
+        "task_packet": task_packet,
         "loop": loop,
         "budgets": budget,
         "role_permissions": {
@@ -1528,7 +1804,7 @@ def _verify_mission_passport(mission: dict[str, Any]) -> list[str]:
 
 def verify_mission(mission_path: Path) -> dict:
     """Verify mission identity, source artifacts, and Loop Passport without execution."""
-    mission = _load_json(mission_path, MISSION_SCHEMA)
+    mission = _load_mission(mission_path)
     core = {
         key: value
         for key, value in mission.items()
@@ -1540,6 +1816,10 @@ def verify_mission(mission_path: Path) -> dict:
         if _sha_bytes(_canonical(core)) == mission.get("mission_sha256")
         else ["mission hash mismatch"]
     )
+    has_packet = "task_packet" in mission
+    revision = mission.get("contract_revision", 1)
+    if revision == MISSION_CONTRACT_REVISION or has_packet:
+        errors.extend(_verify_small_agent_task_packet(mission))
     for name in ("graph", "slices"):
         errors.extend(_verify_primary_input(mission, name))
     for name in ("migration_readiness", "repository_context", "intake_confirmation"):
@@ -1552,6 +1832,14 @@ def verify_mission(mission_path: Path) -> dict:
         "status": "verified" if not errors else "invalid",
         "marker": "MISSION_VERIFIED" if not errors else "MISSION_INPUT_DRIFT",
         "errors": errors,
+        "contract_version": f"{mission.get('schema')}/revision-{revision}",
+        "task_packet_status": (
+            "verified"
+            if has_packet and not any("task packet" in error for error in errors)
+            else "legacy_unavailable"
+            if revision == 1 and not has_packet
+            else "invalid"
+        ),
         "authority": "verification only; no execution or promotion authority",
     }
 
@@ -1571,7 +1859,7 @@ def decide_mission(
         raise ProductMissionError(
             "MISSION_INPUT_DRIFT", "; ".join(verification["errors"])
         )
-    mission = _load_json(mission_path, MISSION_SCHEMA)
+    mission = _load_mission(mission_path)
     if owner.strip() != mission["owner"]:
         raise ProductMissionError(
             "MISSION_DECISION_OWNER_MISMATCH",
@@ -1976,7 +2264,7 @@ def close_mission(
         raise ProductMissionError(
             "MISSION_INPUT_DRIFT", "; ".join(mission_check["errors"])
         )
-    mission = _load_json(mission_path, MISSION_SCHEMA)
+    mission = _load_mission(mission_path)
     manifest, resolved_validation = _validation_manifest(validation_path, root)
     _validate_context_wall(mission, manifest)
     results, evidence = _validated_completion_results(mission, manifest, root)
@@ -2152,7 +2440,7 @@ def draft_pr(
         raise ProductMissionError(
             "MISSION_INPUT_DRIFT", "; ".join(verification["errors"])
         )
-    mission = _load_json(mission_path, MISSION_SCHEMA)
+    mission = _load_mission(mission_path)
     graph = _load_json(Path(mission["inputs"]["graph_path"]), PRODUCT_GRAPH_SCHEMA)
     evidence = _evidence(root, evidence_paths or [])
     review_evidence = _review_evidence(evidence)
@@ -2326,7 +2614,7 @@ def record_outcome(
             "MISSION_INPUT_DRIFT", "; ".join(verification["errors"])
         )
     _validate_outcome(metric, value, target, evidence_class, source, notes)
-    mission = _load_json(mission_path, MISSION_SCHEMA)
+    mission = _load_mission(mission_path)
     path = Path(root).resolve() / ".factory" / "outcomes" / f"{mission['id']}.jsonl"
     previous = _last_outcome_sha(path)
     verdict = _outcome_verdict(value, target)

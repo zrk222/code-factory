@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
 import json
 
 import pytest
@@ -324,6 +325,133 @@ def test_mission_is_supervised_budgeted_and_hash_bound(tmp_path: Path):
         == mission["slice"]["requirement_ids"]
     )
     assert verify_mission(Path(mission["path"]))["valid"] is True
+
+
+def test_small_agent_packet_is_prepared_bound_and_scope_gated(tmp_path: Path):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    packet = mission["task_packet"]
+    assert packet["schema"] == "factory.small_agent_task_packet.v1"
+    assert packet["status"] == "prepared_needs_candidate_binding"
+    assert [item["id"] for item in packet["requirements"]] == mission["context_packet"][
+        "requirement_ids"
+    ]
+    assert all(item["statement"] and item["kind"] for item in packet["requirements"])
+    assert all("depends_on_requirements" in item for item in packet["requirements"])
+    assert (
+        packet["acceptance_examples"][0]["id"]
+        in mission["context_packet"]["acceptance_refs"]
+    )
+    assert packet["interfaces"]["relevant_files"] == {
+        "status": "unknown_until_candidate_inspection",
+        "paths": [],
+    }
+    assert packet["permitted_source_scope"]["paths"] == []
+    assert packet["acceptance_commands"]["commands"] == []
+    assert {item["lane"] for item in packet["audit_lanes"]} == {
+        "static",
+        "secrets",
+        "configuration",
+        "dependencies",
+        "runtime",
+        "fuzz",
+    }
+    assert all(
+        item["applicability"] == "requires_candidate_declaration"
+        for item in packet["audit_lanes"]
+    )
+    assert packet["regression_controls"]["positive"]["required"] is True
+    assert packet["regression_controls"]["negative"]["required"] is True
+    assert packet["execution"] == {
+        "state": "preparation_only",
+        "candidate_sha256": None,
+        "requires_candidate_binding": True,
+        "requires_human_execution_decision": True,
+        "executed_audit": False,
+        "release_authority": False,
+    }
+
+
+def _reseal_mission(path: Path, mission: dict) -> None:
+    packet = mission.get("task_packet")
+    if isinstance(packet, dict):
+        packet_core = {
+            key: value for key, value in packet.items() if key != "packet_sha256"
+        }
+        packet["packet_sha256"] = hashlib.sha256(
+            json.dumps(
+                packet_core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
+    mission_core = {
+        key: value
+        for key, value in mission.items()
+        if key
+        not in {"mission_sha256", "generated_at", "path", "context", "idempotent"}
+    }
+    mission["mission_sha256"] = hashlib.sha256(
+        json.dumps(
+            mission_core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    path.write_text(json.dumps(mission, sort_keys=True), encoding="utf-8")
+
+
+def test_small_agent_packet_rejects_missing_authority_and_malformed_controls(
+    tmp_path: Path,
+):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    path = Path(mission["path"])
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    del stored["task_packet"]
+    _reseal_mission(path, stored)
+    assert verify_mission(path)["valid"] is False
+
+    stored = json.loads(json.dumps(mission))
+    stored["task_packet"]["execution"]["candidate_sha256"] = "a" * 64
+    _reseal_mission(path, stored)
+    check = verify_mission(path)
+    assert check["valid"] is False
+    assert "execution authority invalid" in " ".join(check["errors"])
+
+    stored = json.loads(json.dumps(mission))
+    stored["task_packet"]["regression_controls"]["negative"]["required"] = False
+    _reseal_mission(path, stored)
+    check = verify_mission(path)
+    assert check["valid"] is False
+    assert "regression controls invalid" in " ".join(check["errors"])
+
+    stored = json.loads(json.dumps(mission))
+    stored["task_packet"]["requirements"][0]["statement"] = "A weakened requirement"
+    _reseal_mission(path, stored)
+    check = verify_mission(path)
+    assert check["valid"] is False
+    assert "requirement or acceptance content drift" in " ".join(check["errors"])
+
+
+def test_small_agent_packet_rejects_changed_source_binding(tmp_path: Path):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    path = Path(mission["path"])
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    stored["task_packet"]["source_bindings"]["product_graph"]["file_sha256"] = "0" * 64
+    _reseal_mission(path, stored)
+    check = verify_mission(path)
+    assert check["valid"] is False
+    assert "product_graph binding invalid" in " ".join(check["errors"])
+
+
+def test_legacy_v1_mission_remains_verifiable_without_task_packet(tmp_path: Path):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    path = Path(mission["path"])
+    legacy = json.loads(path.read_text(encoding="utf-8"))
+    legacy["schema"] = "factory.mission.v1"
+    legacy.pop("contract_revision")
+    legacy.pop("task_packet")
+    _reseal_mission(path, legacy)
+
+    result = verify_mission(path)
+    assert result["valid"] is True
+    assert result["contract_version"] == "factory.mission.v1/revision-1"
+    assert result["task_packet_status"] == "legacy_unavailable"
 
 
 def test_mission_refuses_excess_budget_and_detects_input_drift(tmp_path: Path):
