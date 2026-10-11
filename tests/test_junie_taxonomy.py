@@ -1101,3 +1101,33 @@ def test_shared_deep_evidence_requires_execution_and_failure_facts(tmp_path):
     )
     for content in (_guidance(), _junie_proof_agent_bytes()):
         assert "## Deep execution evidence" in content.decode()
+
+
+def test_signed_zap_source_trace_contract_reaches_all_agents_and_junie(tmp_path):
+    from factoryline.audit_taxonomy import agent_taxonomy_context
+    from factoryline.junie_taxonomy import _guidance, _junie_proof_agent_bytes
+
+    taxonomy = audit_taxonomy()
+    capability = taxonomy["agent_usage_contract"]["six_lane_review"]["zap_source_trace"]
+    assert capability["provider"] == "python-stdlib-http.v1"
+    assert capability["signed_input"]["max_events_max"] == 50000
+    assert "INCOMPLETE" in capability["limits"]
+    assert "MCP remains read-only" in capability["authority"]
+    for role in taxonomy["specialist_roles"]:
+        context = agent_taxonomy_context(role["specialist_role"])
+        assert (
+            context["agent_usage_contract"]["six_lane_review"]["zap_source_trace"]
+            == capability
+        )
+    assert (
+        junie_manifest(tmp_path)["agent_usage_contract"]["six_lane_review"][
+            "zap_source_trace"
+        ]
+        == capability
+    )
+    for content in (_guidance(), _junie_proof_agent_bytes()):
+        text = content.decode()
+        assert "## Request-associated source tracing" in text
+        assert "factory.zap-source-trace.config.v1" in text
+        assert "adds no execution, approval or publication authority" in text
+    assert "private internal network" in taxonomy["native_worker_contract"]["isolation"]
