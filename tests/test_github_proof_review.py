@@ -23,6 +23,144 @@ from factoryline.github_account_overview import (
 HEAD_SHA = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
 
 
+def workflow_cli_observation(endpoint):
+    if endpoint == "user":
+        return {"login": "operator"}
+    return dict(
+        number=172,
+        html_url="https://github.com/owner/repo/pull/172",
+        base={"repo": {"full_name": "owner/repo"}},
+        head={"sha": HEAD_SHA},
+        state="open",
+        merged=False,
+        updated_at="2026-10-11T09:00:00Z",
+        title="Candidate",
+    )
+
+
+def test_cli_workflow_sync_persists_and_deduplicates_without_dispatch(
+    tmp_path, monkeypatch, capsys
+):
+    from factoryline.cli import _dispatch
+
+    monkeypatch.setattr(
+        "factoryline.agentic_control._github_runtime_read", workflow_cli_observation
+    )
+    argv = [
+        "github",
+        "workflow-sync",
+        "--root",
+        str(tmp_path),
+        "--account",
+        "operator",
+        "--repository",
+        "owner/repo",
+        "--number",
+        "172",
+        "--kind",
+        "pull_request",
+        "--json",
+    ]
+    assert _dispatch(argv) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["status"] == "created"
+    assert first["item"]["source"]["head_sha"] == HEAD_SHA
+    assert first["item"]["run"] is None
+    assert not any(first["authority"].values())
+    assert (tmp_path / ".factory/workflow-runtime/runtime.sqlite3").is_file()
+    assert _dispatch(argv) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "duplicate"
+
+
+def test_cli_workflow_sync_text_explains_local_persistence(
+    tmp_path, monkeypatch, capsys
+):
+    from factoryline.cli import _dispatch
+
+    monkeypatch.setattr(
+        "factoryline.agentic_control._github_runtime_read", workflow_cli_observation
+    )
+    assert (
+        _dispatch(
+            [
+                "github",
+                "workflow-sync",
+                "--root",
+                str(tmp_path),
+                "--account",
+                "operator",
+                "--repository",
+                "owner/repo",
+                "--number",
+                "172",
+                "--kind",
+                "pull_request",
+            ]
+        )
+        == 0
+    )
+    text = capsys.readouterr().out
+    assert "local workflow state persisted" in text and "no agent dispatch" in text
+
+
+def test_cli_workflow_sync_rejects_other_account(tmp_path, monkeypatch, capsys):
+    from factoryline.cli import _dispatch
+
+    monkeypatch.setattr(
+        "factoryline.agentic_control._github_runtime_read",
+        lambda endpoint: {"login": "other"},
+    )
+    assert (
+        _dispatch(
+            [
+                "github",
+                "workflow-sync",
+                "--root",
+                str(tmp_path),
+                "--account",
+                "operator",
+                "--repository",
+                "owner/repo",
+                "--number",
+                "172",
+                "--json",
+            ]
+        )
+        == 2
+    )
+    assert json.loads(capsys.readouterr().out)["code"] == "E_WORKFLOW_SOURCE"
+
+
+def test_cli_workflow_sync_redacts_storage_exception(tmp_path, monkeypatch, capsys):
+    from factoryline.cli import _dispatch
+
+    def fail(*args, **kwargs):
+        raise OSError(str(tmp_path / "private-path"))
+
+    monkeypatch.setattr("factoryline.agentic_control.WorkflowEventStore", fail)
+    assert (
+        _dispatch(
+            [
+                "github",
+                "workflow-sync",
+                "--root",
+                str(tmp_path),
+                "--account",
+                "operator",
+                "--repository",
+                "owner/repo",
+                "--number",
+                "172",
+                "--json",
+            ]
+        )
+        == 2
+    )
+    output = capsys.readouterr().out
+    assert json.loads(output)["code"] == "E_WORKFLOW_STORAGE"
+    assert "private-path" not in output
+
+
 def _stale_proof_workspace(root: Path) -> None:
     (root / "input.txt").write_text("before", encoding="utf-8")
     (root / "output.txt").write_text("green", encoding="utf-8")

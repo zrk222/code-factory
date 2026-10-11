@@ -11,9 +11,25 @@ def add_parser(sub) -> None:
     """Register GitHub context and advisory proof-review commands."""
     github = sub.add_parser(
         "github",
-        help="prepare an evidence-bound, advisory GitHub pull-request review without a network call",
+        help="read connected GitHub context or prepare evidence-bound advisory reviews",
     )
     github_sub = github.add_subparsers(required=True, dest="github_cmd")
+    workflow_sync = github_sub.add_parser(
+        "workflow-sync",
+        help="read a connected GitHub issue/PR and persist its local workflow state; no dispatch",
+    )
+    workflow_sync.add_argument("--root", default=".")
+    workflow_sync.add_argument(
+        "--account", required=True, help="allowed authenticated GitHub login"
+    )
+    workflow_sync.add_argument(
+        "--repository", required=True, help="allowed owner/repository"
+    )
+    workflow_sync.add_argument("--number", type=int, required=True)
+    workflow_sync.add_argument(
+        "--kind", choices=["issue", "pull_request"], default="issue"
+    )
+    workflow_sync.add_argument("--json", action="store_true")
     github_overview = github_sub.add_parser(
         "overview",
         help="read a bounded overview for this workspace's connected GitHub repository",
@@ -325,7 +341,9 @@ def _success_exit_code(a, payload: dict) -> int:
 
 
 def run(a) -> int:
-    """Run bounded GitHub reads or compile local proof without write actions."""
+    """Run bounded GitHub reads/local intake or compile advisory proof."""
+    if a.github_cmd == "workflow-sync":
+        return _run_workflow_sync(a)
     from .github_assurance_dossier import GitHubAssuranceDossierError
     from .github_plan_proof_review import GitHubPlanProofReviewError
     from .github_proof_review import GitHubProofReviewError
@@ -348,3 +366,44 @@ def run(a) -> int:
         return _report_error(a, exc)
     _print_success(a, payload)
     return _success_exit_code(a, payload)
+
+
+def _run_workflow_sync(a) -> int:
+    import sqlite3
+    from .agentic_control import (
+        AgenticControlError,
+        WorkflowEventStore,
+        sync_github_workflow_source,
+    )
+
+    try:
+        store = WorkflowEventStore(Path(a.root), [("github", a.account, a.repository)])
+        payload = sync_github_workflow_source(
+            store, a.repository, a.number, kind=a.kind
+        )
+    except (AgenticControlError, OSError, sqlite3.Error) as error:
+        code = getattr(error, "code", "E_WORKFLOW_STORAGE")
+        payload = dict(
+            schema="factory.workflow-runtime.error.v1",
+            status="error",
+            code=code,
+            summary="Workflow sync failed; no dispatch or remote write occurred",
+            next_actions=[
+                "Check the connected account, repository scope and local storage; retry only this read"
+            ],
+            artifacts=[],
+        )
+        print(
+            json.dumps(payload, sort_keys=True)
+            if a.json
+            else f"{code}: {payload['summary']}"
+        )
+        return 2
+    if a.json:
+        print(json.dumps(payload, sort_keys=True))
+    else:
+        print(f"workflow {payload['status']}: {payload['item']['phase']}")
+        print(f"source key: {payload['item']['source_key']}")
+        print("next action: " + "; ".join(payload["next_actions"]))
+        print("GitHub read; local workflow state persisted; no agent dispatch or merge")
+    return 0
