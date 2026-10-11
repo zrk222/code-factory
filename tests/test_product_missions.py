@@ -330,6 +330,7 @@ def test_mission_is_supervised_budgeted_and_hash_bound(tmp_path: Path):
 def test_small_agent_packet_is_prepared_bound_and_scope_gated(tmp_path: Path):
     _graph, _slices, mission = _pipeline(tmp_path)
     packet = mission["task_packet"]
+    rendered = Path(mission["context"]).read_text(encoding="utf-8")
     assert packet["schema"] == "factory.small_agent_task_packet.v1"
     assert packet["status"] == "prepared_needs_candidate_binding"
     assert [item["id"] for item in packet["requirements"]] == mission["context_packet"][
@@ -369,6 +370,16 @@ def test_small_agent_packet_is_prepared_bound_and_scope_gated(tmp_path: Path):
         "executed_audit": False,
         "release_authority": False,
     }
+    assert packet["packet_sha256"] in rendered
+    assert packet["requirements"][0]["statement"] in rendered
+    assert packet["acceptance_examples"][0]["title"] in rendered
+    assert "## Dependencies" in rendered
+    assert "## Budgets" in rendered
+    assert "## Audit lane applicability" in rendered
+    assert "## Preparation and stop condition" in rendered
+    assert "Preparation only" in rendered
+    assert "Stop before edits" in rendered
+    assert "does not signal readiness" in rendered
 
 
 def _reseal_mission(path: Path, mission: dict) -> None:
@@ -452,6 +463,21 @@ def test_legacy_v1_mission_remains_verifiable_without_task_packet(tmp_path: Path
     assert result["valid"] is True
     assert result["contract_version"] == "factory.mission.v1/revision-1"
     assert result["task_packet_status"] == "legacy_unavailable"
+
+
+@pytest.mark.parametrize("revision", [99, True, "2", None, {}])
+def test_mission_verifier_rejects_unknown_or_malformed_revision(
+    tmp_path: Path, revision
+):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    path = Path(mission["path"])
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    stored["contract_revision"] = revision
+    stored.pop("task_packet")
+    _reseal_mission(path, stored)
+
+    with pytest.raises(ProductMissionError, match="SCHEMA_UNSUPPORTED"):
+        verify_mission(path)
 
 
 def test_mission_refuses_excess_budget_and_detects_input_drift(tmp_path: Path):

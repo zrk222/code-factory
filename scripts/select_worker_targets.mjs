@@ -27,7 +27,7 @@ function gitOutput(git, args) {
 
 function revisionOutput(git, args) {
   const output = gitOutput(git, args).toString('ascii');
-  const match = /^([a-f0-9]{40})\n?$/.exec(output);
+  const match = output.match(/^([a-f0-9]{40})\n?$/);
   return match ? match[1] : null;
 }
 
@@ -35,44 +35,46 @@ function requireEmptyOutput(git, args) {
   if (gitOutput(git, args).length !== 0) throw new Error(`Unexpected output from git ${args[0]}`);
 }
 
+function eventRevisions(name, event) {
+  if (name === 'pull_request') return [sha(event?.pull_request?.base?.sha), sha(event?.pull_request?.head?.sha)];
+  if (name === 'push') return [sha(event?.before), sha(event?.after)];
+  return [null, null];
+}
+
+function verifiedCheckout(name, base, eventHead, git) {
+  const checkout = revisionOutput(git, ['rev-parse', '--verify', 'HEAD']);
+  if (!checkout) throw new Error('unresolvable-checkout');
+  requireEmptyOutput(git, ['diff-index', '--quiet', 'HEAD', '--']);
+  if (name === 'push') {
+    if (checkout !== eventHead) throw new Error('checkout-mismatch');
+  } else {
+    requireEmptyOutput(git, ['merge-base', '--is-ancestor', base, checkout]);
+    requireEmptyOutput(git, ['merge-base', '--is-ancestor', eventHead, checkout]);
+  }
+  return checkout;
+}
+
+function changedPaths(base, checkout, git) {
+  const raw = gitOutput(git, ['diff', '--name-only', '-z', base, checkout, '--']);
+  if (!raw.length || raw[raw.length - 1] !== 0) throw new Error('empty-or-malformed-diff');
+  const paths = raw.subarray(0, -1).toString('utf8').split('\0');
+  if (!paths.length || paths.some(path => !path || path.includes('\ufffd'))) throw new Error('malformed-path-list');
+  return paths;
+}
+
 export function selectWorkerTargets(name, event, git = execFileSync) {
   const full = { sdk: 'true', matrix: JSON.stringify(sdkTargets), reason: 'fail-closed-full-matrix' };
+  if (!['pull_request', 'push'].includes(name)) return { ...full, reason: 'manual-or-unknown-event' };
   try {
-    let base;
-    let eventHead;
-    if (name === 'pull_request') {
-      base = sha(event.pull_request?.base?.sha);
-      eventHead = sha(event.pull_request?.head?.sha);
-    } else if (name === 'push') {
-      base = sha(event.before);
-      eventHead = sha(event.after);
-    } else {
-      return { ...full, reason: 'manual-or-unknown-event' };
-    }
+    const [base, eventHead] = eventRevisions(name, event);
     if (!base || !eventHead) return { ...full, reason: 'unresolvable-revisions' };
-
-    const checkout = revisionOutput(git, ['rev-parse', '--verify', 'HEAD']);
-    if (!checkout) return { ...full, reason: 'unresolvable-checkout' };
-    requireEmptyOutput(git, ['diff-index', '--quiet', 'HEAD', '--']);
-
-    if (name === 'push') {
-      if (checkout !== eventHead) return { ...full, reason: 'checkout-mismatch' };
-    } else {
-      requireEmptyOutput(git, ['merge-base', '--is-ancestor', base, checkout]);
-      requireEmptyOutput(git, ['merge-base', '--is-ancestor', eventHead, checkout]);
-    }
-
-    const output = gitOutput(git, ['diff', '--name-only', '-z', base, checkout, '--']);
-    const raw = output;
-    if (!raw.length || raw[raw.length - 1] !== 0) return { ...full, reason: 'empty-or-malformed-diff' };
-    const paths = raw.subarray(0, -1).toString('utf8').split('\0');
-    if (!paths.length || paths.some(path => !path || path.includes('\ufffd'))) return { ...full, reason: 'malformed-path-list' };
-    if (paths.every(path => semgrepPaths.has(path))) {
-      return { sdk: 'false', matrix: JSON.stringify(sdkTargets), reason: 'semgrep-only' };
-    }
+    const checkout = verifiedCheckout(name, base, eventHead, git);
+    const paths = changedPaths(base, checkout, git);
+    if (paths.every(path => semgrepPaths.has(path))) return { sdk: 'false', matrix: JSON.stringify(sdkTargets), reason: 'semgrep-only' };
     return { ...full, reason: 'common-or-unknown-path' };
-  } catch {
-    return { ...full, reason: 'git-diff-failed' };
+  } catch (error) {
+    const known = new Set(['unresolvable-checkout', 'checkout-mismatch', 'empty-or-malformed-diff', 'malformed-path-list']);
+    return { ...full, reason: known.has(error.message) ? error.message : 'git-diff-failed' };
   }
 }
 

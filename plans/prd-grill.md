@@ -130,3 +130,37 @@ hash-bound workflow evidence and independent review. All agent and Junie
 manifests must expose the actual installed capabilities and recovery protocol.
 Final platform previews use Nanna storytelling after full goal verification,
 with authentic UI captures and published capability/version read-back.
+
+
+## Accepted repair-controller expansion: Approve & Repair
+
+After a completed scan/audit, show each actionable finding with its evidence,
+proposed patch, exact permitted files, expected positive/negative checks and
+budget. Preserve a visible no-repair option. Approval can cover one patch or
+an explicit bounded class of local repairs for this repository; it must bind
+owner, candidate/contract/tool hashes, paths, categories, attempt/cost/time
+limits, expiry and revocation. Silence and a generic scan approval are not
+repair approval. Changed candidate or scope invalidates the approval.
+
+The controller dispatches the approved repair through the existing sealed
+mission, retains every patch/attempt/failure, and reruns affected audit lanes
+plus regression controls against the exact repaired candidate. Rerun failure
+or exhausted limits stops the loop with an actionable handoff. A timeout must
+terminate its worker, preserve evidence and leave a resumable checkpoint.
+Pause/resume must revalidate hashes and approval; do not resume stale authority.
+An independent checker verifies the repair, rather than the creator declaring
+its own patch successful. Operator can inspect or revert the patch while
+retaining evidence; external data effects require their own rollback contract.
+
+Never allow a repair to remove, skip or weaken a failing test, oracle, gate or
+policy to get a pass. Reclassifying a finding is an explicit reviewed evidence
+decision, not an automatic repair. Dependencies, migrations, credentials,
+production effects, merge, publication and deployment require separate authority;
+no approval here grants them. Record proposed/applied/rejected/verified/paused/
+failed states and return remaining coverage gaps distinctly from repaired issues.
+
+Measure verified repair success, escaped regressions, time to independently
+verified repair, human interventions, and total model/tool cost including retries.
+Benchmark against the same candidate and defect corpus before claiming a
+competitive speed or quality advantage. This section is accepted design scope;
+the current generated task packet alone does not implement automatic repair.

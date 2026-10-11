@@ -1063,35 +1063,81 @@ def _routing_policy(risk: str) -> dict[str, Any]:
 
 
 def _mission_context(mission: dict[str, Any], selected: dict[str, Any]) -> str:
-    requirements = "\n".join(f"- {item}" for item in selected["requirement_ids"])
+    packet = mission["task_packet"]
+    requirements = "\n".join(
+        f"- {item['id']}: {item['statement']}" for item in packet["requirements"]
+    )
+    acceptance = (
+        "\n".join(
+            f"- {item['id']}: {item['title']}\n"
+            + "\n".join(f"  {step}" for step in item["steps"])
+            for item in packet["acceptance_examples"]
+        )
+        or "- No acceptance scenario was bound. Stop and request owner review."
+    )
+    dependencies = (
+        "\n".join(f"- {item}" for item in packet["dependencies"]) or "- None declared."
+    )
     gates = "\n".join(f"- {item}" for item in selected["gates"])
+    budgets = "\n".join(
+        f"- {name}: {value}" for name, value in packet["budgets"].items()
+    )
+    lanes = "\n".join(
+        f"- {item['lane']}: {item['applicability']} — {item['reason']}"
+        for item in packet["audit_lanes"]
+    )
     return f"""# Mission: {mission["id"]}
 
-Status: planned. Human approval is required before execution and promotion.
+Status: prepared only. Candidate scope is unresolved; this packet does not signal readiness.
 
 ## User outcome
 
 {selected["user_outcome"]}
 
-## Requirement IDs
+## Bound requirements
 
 {requirements}
+
+## Acceptance examples
+
+{acceptance}
+
+## Dependencies
+
+{dependencies}
 
 ## Required gates
 
 {gates}
+
+## Budgets
+
+{budgets}
+
+## Audit lane applicability
+
+{lanes}
 
 ## Bound inputs
 
 - Product Graph: `{mission["inputs"]["graph_sha256"]}`
 - Value slices: `{mission["inputs"]["slices_sha256"]}`
 - Loop Passport: `{mission["loop"]["passport_sha256"]}`
+- Task packet: `{packet["packet_sha256"]}`
+
+## Preparation and stop condition
+
+Preparation only: candidate files, interfaces, and commands are not bound, and
+no audit has run. Stop before edits until the owner declares the candidate
+paths and interfaces, binds their hashes, and records the required human
+execution decision. Stop if any bound source changes or the declared scope
+does not contain the requested work.
 
 ## Workspace and roles
 
-- Worktree: `{mission["workspace_contract"]["path"]}`
+- Proposed worktree: `{mission["workspace_contract"]["path"]}`
 - Branch: `{mission["workspace_contract"]["branch"]}`
-- Builder writes only inside the approved workspace.
+- Builder may write only within the candidate paths after scope binding and approval.
 - Checker receives the candidate diff and evidence, not creator-private reasoning.
 - UX reviewer may attach browser evidence but may not modify or promote the candidate.
 
@@ -1802,29 +1848,55 @@ def _verify_mission_passport(mission: dict[str, Any]) -> list[str]:
     return []
 
 
-def verify_mission(mission_path: Path) -> dict:
-    """Verify mission identity, source artifacts, and Loop Passport without execution."""
-    mission = _load_mission(mission_path)
+def _mission_hash_errors(mission: dict[str, Any]) -> list[str]:
     core = {
         key: value
         for key, value in mission.items()
         if key
         not in {"mission_sha256", "generated_at", "path", "context", "idempotent"}
     }
-    errors = (
+    return (
         []
         if _sha_bytes(_canonical(core)) == mission.get("mission_sha256")
         else ["mission hash mismatch"]
     )
-    has_packet = "task_packet" in mission
-    revision = mission.get("contract_revision", 1)
-    if revision == MISSION_CONTRACT_REVISION or has_packet:
-        errors.extend(_verify_small_agent_task_packet(mission))
+
+
+def _mission_source_errors(mission: dict[str, Any]) -> list[str]:
+    errors = []
     for name in ("graph", "slices"):
         errors.extend(_verify_primary_input(mission, name))
     for name in ("migration_readiness", "repository_context", "intake_confirmation"):
         errors.extend(_verify_optional_input(mission, name))
     errors.extend(_verify_mission_passport(mission))
+    return errors
+
+
+def _mission_packet_verification(
+    mission: dict[str, Any],
+) -> tuple[list[str], str]:
+    has_packet = "task_packet" in mission
+    revision = mission.get("contract_revision", 1)
+    errors = []
+    if revision == MISSION_CONTRACT_REVISION or has_packet:
+        errors.extend(_verify_small_agent_task_packet(mission))
+    if has_packet and not errors:
+        status = "verified"
+    elif revision == 1 and not has_packet:
+        status = "legacy_unavailable"
+    else:
+        status = "invalid"
+    return errors, status
+
+
+def verify_mission(mission_path: Path) -> dict:
+    """Verify mission identity, source artifacts, and Loop Passport without execution."""
+    mission = _load_mission(mission_path)
+    packet_errors, packet_status = _mission_packet_verification(mission)
+    errors = _mission_hash_errors(mission)
+    errors.extend(packet_errors)
+    errors.extend(_mission_source_errors(mission))
+    revision = mission.get("contract_revision", 1)
     return {
         "schema": "factory.mission.verification.v1",
         "mission_id": mission.get("id"),
@@ -1833,13 +1905,7 @@ def verify_mission(mission_path: Path) -> dict:
         "marker": "MISSION_VERIFIED" if not errors else "MISSION_INPUT_DRIFT",
         "errors": errors,
         "contract_version": f"{mission.get('schema')}/revision-{revision}",
-        "task_packet_status": (
-            "verified"
-            if has_packet and not any("task packet" in error for error in errors)
-            else "legacy_unavailable"
-            if revision == 1 and not has_packet
-            else "invalid"
-        ),
+        "task_packet_status": packet_status,
         "authority": "verification only; no execution or promotion authority",
     }
 
