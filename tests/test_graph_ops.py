@@ -1392,3 +1392,43 @@ def test_graph_ops_runtime_coverage_ui_separates_metrics_and_uses_token_api() ->
     assert "detail_truncated" in page
     assert "does not demonstrate test assertion quality" in page
     assert "innerHTML" not in page
+
+
+def test_runtime_lane_and_trace_ui_execute_without_promoting_partial_results():
+    import subprocess
+
+    page = graph_ops_html("session-token")
+    names = ("runtimeLaneSummary", "renderSourceTrace")
+    functions = []
+    for name in names:
+        start = page.index(f"    function {name}(")
+        end = page.index("\n    }", start) + len("\n    }")
+        functions.append(page[start:end])
+    script = (
+        "\n".join(functions)
+        + r"""
+const assert=require('node:assert/strict');
+const kinds=['stateful_invariant','tenant_isolation','failure_recovery','consumer_compatibility','migration_integrity','performance_regression'];
+const full=kinds.map(lane=>({lane,state:'PASS'}));
+assert.match(runtimeLaneSummary(full),/All six reported lanes/);
+assert.match(runtimeLaneSummary(full),/not signer identity or freshness/);
+assert.doesNotMatch(runtimeLaneSummary(full.slice(0,1)),/All six/);
+assert.doesNotMatch(runtimeLaneSummary([...full.slice(0,5),full[0]]),/All six/);
+assert.match(runtimeLaneSummary([]),/No self-hash/);
+assert.match(runtimeLaneSummary([{lane:'tenant_isolation',state:'FAIL',remediation:'repair tenant boundary'}]),/repair tenant boundary/);
+const element=()=>({children:[],appendChild(child){this.children.push(child)}});
+global.document={createElement:element};
+global.addText=(parent,text,tag)=>{const child={textContent:text,tag};parent.appendChild(child);return child};
+const row=element();
+renderSourceTrace(row,{provider:'python-stdlib-http.v1',observation_count:1,missing_binding_count:1,replay_matches:false,cleanup_confirmed:false,error:'E_TRACE_CAPTURE',observations:[{route_id:'<script>x</script>',path:'src/app.py',lines:[5,6]}],missing_bindings:[{route_id:'other',path:'src/other.py'}],claim_boundary:'Observed lines only',truncated:true});
+const text=row.children[0].children.map(child=>child.textContent).join('\n');
+assert.match(text,/lines 5, 6/);assert.match(text,/E_TRACE_CAPTURE/);
+assert.match(text,/Missing request evidence: other/);
+assert.match(text,/Replay observations: not established/);
+assert.match(text,/Cleanup: not confirmed/);assert.match(text,/Display bounded/);
+assert.match(text,/<script>x<\/script>/);assert.match(text,/Observed lines only/);
+"""
+    )
+    assert "innerHTML" not in page
+    result = subprocess.run(["node"], input=script, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

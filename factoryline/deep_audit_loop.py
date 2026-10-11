@@ -378,6 +378,97 @@ def _lane_summary(
     }
 
 
+def _trace_observation(item: Any) -> dict[str, Any]:
+    if not isinstance(item, dict) or not isinstance(item.get("lines"), list):
+        raise ValueError("invalid source-trace observation")
+    lines = item["lines"]
+    if len(lines) > 50000 or any(type(n) is not int or n < 1 for n in lines):
+        raise ValueError("invalid source-trace lines")
+    path = item.get("path")
+    if not isinstance(path, str) or "\\" in path or ":" in path:
+        raise ValueError("invalid source-trace path")
+    if any(part in ("", ".", "..") for part in path.split("/")):
+        raise ValueError("invalid source-trace path")
+    return {
+        "route_id": _label(item.get("route_id"), "unknown"),
+        "path": _label(path, "unknown"),
+        "source_sha256": _label(item.get("source_sha256"), "missing"),
+        "lines": lines[:100],
+        "line_count": len(lines),
+        "truncated": len(lines) > 100,
+    }
+
+
+def _trace_parts(native: dict[str, Any]) -> tuple[dict[str, Any], list, list]:
+    trace = native.get("source_trace")
+    if trace is not None and not isinstance(trace, dict):
+        raise ValueError("invalid source trace")
+    missing = native.get("source_trace_missing", [])
+    if not isinstance(missing, list) or len(missing) > 50000:
+        raise ValueError("invalid missing source-trace bindings")
+    observations = (trace or {}).get("observations", [])
+    if not isinstance(observations, list) or len(observations) > 50000:
+        raise ValueError("invalid source-trace observations")
+    return trace or {}, missing, observations
+
+
+def _trace_replay_matches(native: dict[str, Any], trace: dict[str, Any]) -> bool:
+    replay = native.get("candidate_replay")
+    repeated = replay.get("source_trace") if isinstance(replay, dict) else None
+    if not isinstance(repeated, dict) or not trace:
+        return False
+    keys = (
+        "schema",
+        "run_id",
+        "candidate_sha256",
+        "profile_sha256",
+        "target_sha256",
+        "provider",
+    )
+    identities_match = all(
+        isinstance(trace.get(key), str)
+        and bool(trace[key])
+        and trace[key] == repeated.get(key)
+        for key in keys
+    )
+    return (
+        identities_match
+        and bool(trace.get("observations"))
+        and trace["observations"] == repeated.get("observations")
+    )
+
+
+def _missing_trace_bindings(missing: list) -> list[dict[str, str]]:
+    rows = [_trace_observation({**item, "lines": []}) for item in missing[:20]]
+    return [{"route_id": row["route_id"], "path": row["path"]} for row in rows]
+
+
+def _source_trace_summary(lane: dict[str, Any]) -> dict[str, Any] | None:
+    native = lane.get("native_execution")
+    if not isinstance(native, dict):
+        return None
+    trace, missing, observations = _trace_parts(native)
+    error = native.get("source_trace_error")
+    if not trace and not error and not missing:
+        return None
+    visible = [_trace_observation(item) for item in observations[:20]]
+    return {
+        "provider": _label(trace.get("provider"), "missing"),
+        "raw_sha256": _label(trace.get("raw_sha256"), "missing"),
+        "observations": visible,
+        "observation_count": len(observations),
+        "missing_binding_count": len(missing),
+        "missing_bindings": _missing_trace_bindings(missing),
+        "error": _label(error, "UNKNOWN_TRACE_ERROR") if error else None,
+        "replay_matches": _trace_replay_matches(native, trace),
+        "cleanup_confirmed": native.get("cleanup_confirmed") is True,
+        "truncated": len(observations) > 20
+        or len(missing) > 20
+        or any(item["truncated"] for item in visible),
+        "claim_boundary": "Request-associated observed lines only; not full branches, authenticity, vulnerability causality or detection accuracy. Local self-hash observations are not signed validation.",
+    }
+
+
 def _lane_coverage_gaps(
     gaps: list[Any], lane_id: str, coverage: list[dict[str, Any]]
 ) -> int:
@@ -426,7 +517,11 @@ def _run_details(run: dict[str, Any]) -> dict[str, Any]:
     finding_count = 0
     for lane in lanes:
         lane_id, state, findings, lane_gaps = _lane_values(lane)
-        lane_summaries.append(_lane_summary(lane_id, state, findings, lane_gaps))
+        summary = _lane_summary(lane_id, state, findings, lane_gaps)
+        trace = _source_trace_summary(lane)
+        if trace is not None:
+            summary["source_trace"] = trace
+        lane_summaries.append(summary)
         coverage_gap_count += _lane_coverage_gaps(lane_gaps, lane_id, coverage_gaps)
         finding_count += len(findings)
         _append_repair_tasks(findings, repairs)

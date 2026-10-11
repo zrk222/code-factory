@@ -136,3 +136,108 @@ def test_compare_cli(tmp_path, capsys):
         == 1
     )
     assert json.loads(capsys.readouterr().out)["state"] == "stagnated"
+
+
+def _traced_lane():
+    trace = {
+        "schema": "factory.zap-source-trace.normalized.v1",
+        "run_id": "trace-run",
+        "candidate_sha256": "c" * 64,
+        "profile_sha256": "d" * 64,
+        "target_sha256": "e" * 64,
+        "provider": "python-stdlib-http.v1",
+        "raw_sha256": "a" * 64,
+        "observations": [
+            {
+                "route_id": "home",
+                "path": "src/app.py",
+                "source_sha256": "b" * 64,
+                "lines": [5, 6],
+            }
+        ],
+    }
+    return {
+        "lane_id": "runtime",
+        "state": "INCOMPLETE",
+        "findings": [],
+        "gaps": ["ZAP_SOURCE_ROUTE_COVERAGE_REQUIRED"],
+        "native_execution": {
+            "source_trace": trace,
+            "cleanup_confirmed": True,
+            "candidate_replay": {"source_trace": deepcopy(trace)},
+        },
+    }
+
+
+def test_run_details_retains_trace_observations_and_missing_bindings():
+    from factoryline.deep_audit_loop import _run_details
+
+    lane = _traced_lane()
+    lane["native_execution"]["source_trace_missing"] = [
+        {"route_id": "other", "path": "src/other.py"}
+    ]
+    value = _run_details({"lanes": [lane], "gaps": []})
+    trace = value["lanes"][0]["source_trace"]
+    assert trace["observations"][0]["lines"] == [5, 6]
+    assert trace["missing_binding_count"] == 1
+    assert trace["missing_bindings"] == [{"route_id": "other", "path": "src/other.py"}]
+    assert trace["replay_matches"] is True and trace["cleanup_confirmed"] is True
+    assert "not signed validation" in trace["claim_boundary"]
+    assert value["lanes"][0]["state"] == "INCOMPLETE"
+
+
+def test_trace_display_is_bounded_without_hiding_counts():
+    from factoryline.deep_audit_loop import _source_trace_summary
+
+    lane = _traced_lane()
+    row = lane["native_execution"]["source_trace"]["observations"][0]
+    row["lines"] = list(range(1, 151))
+    lane["native_execution"]["source_trace"]["observations"] = [row] * 23
+    trace = _source_trace_summary(lane)
+    assert trace["observation_count"] == 23 and len(trace["observations"]) == 20
+    assert trace["observations"][0]["line_count"] == 150
+    assert len(trace["observations"][0]["lines"]) == 100
+    assert trace["truncated"] is True and trace["replay_matches"] is False
+
+
+@pytest.mark.parametrize(
+    "path", ["/private/app.py", "../app.py", "C:/private/app.py", "src\\app.py"]
+)
+def test_trace_projection_rejects_noncanonical_paths(path):
+    from factoryline.deep_audit_loop import _source_trace_summary
+
+    lane = _traced_lane()
+    lane["native_execution"]["source_trace"]["observations"][0]["path"] = path
+    with pytest.raises(ValueError, match="source-trace path"):
+        _source_trace_summary(lane)
+
+
+def test_trace_error_remains_visible_without_invented_observations():
+    from factoryline.deep_audit_loop import _source_trace_summary
+
+    trace = _source_trace_summary(
+        {"native_execution": {"source_trace_error": "E_TRACE_CAPTURE"}}
+    )
+    assert trace["error"] == "E_TRACE_CAPTURE"
+    assert trace["observations"] == [] and trace["replay_matches"] is False
+    assert trace["cleanup_confirmed"] is False
+    assert _source_trace_summary({}) is None
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "schema",
+        "run_id",
+        "candidate_sha256",
+        "profile_sha256",
+        "target_sha256",
+        "provider",
+    ],
+)
+def test_trace_projection_never_matches_replay_with_changed_identity(key):
+    from factoryline.deep_audit_loop import _source_trace_summary
+
+    lane = _traced_lane()
+    lane["native_execution"]["candidate_replay"]["source_trace"][key] = "different"
+    assert _source_trace_summary(lane)["replay_matches"] is False
