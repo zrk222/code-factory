@@ -1,5 +1,21 @@
 # Code Factory
 
+## Have an app idea, but little coding experience?
+
+Ask your coding agent to help you write `PRD.md` from your idea, then run:
+
+```powershell
+factory prd grill PRD.md --root . --mode deep --json
+```
+
+The agent uses the returned interview contract to guide you through one
+decision at a time, with plain-language recommendations. Your answers become
+requirements, visible acceptance checks and failure-recovery expectations.
+After you confirm the plan, it follows CF/FL's development and audit route in
+small slices, showing what works, what needs repair and what remains untested.
+See [the beginner PRD guide](docs/PRD_GRILL.md). This source integration is a
+candidate update; it does not establish publication or defect-free output.
+
 ## Start with your repository
 
 ```powershell

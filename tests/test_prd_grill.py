@@ -146,3 +146,52 @@ def test_prd_grill_rejects_invalid_source_without_artifacts(tmp_path: Path) -> N
     with pytest.raises(ProductMissionError, match="PRD_ENCODING_INVALID"):
         grill_prd(broken, tmp_path)
     assert not (tmp_path / ".factory" / "prd-grills").exists()
+
+
+def test_beginner_interview_has_one_next_decision_and_no_implicit_approval(tmp_path):
+    prd = tmp_path / "PRD.md"
+    prd.write_text(THIN_PRD, encoding="utf-8")
+    result = grill_prd(prd, tmp_path, mode="deep")
+    interview = result["interview"]
+    assert interview["next_question_id"] == result["questions"][0]["id"]
+    assert interview["decision_owner"] == "user"
+    assert "Never treat silence as acceptance" in interview["answer_handling"]
+    assert interview["unresolved_gap_codes"] == [
+        gap["code"] for gap in result["observed_gaps"]
+    ]
+    assert "Q-JOURNEY" not in [q["id"] for q in result["questions"]]
+    assert "EARS" not in result["questions"][0]["recommendation"]
+    assert verify_prd_grill(Path(result["path"]))["valid"]
+
+
+def test_confirmed_interview_does_not_claim_development_evidence(tmp_path):
+    prd = tmp_path / "PRD.md"
+    prd.write_text(COMPLETE_PRD, encoding="utf-8")
+    result = grill_prd(prd, tmp_path, mode="deep", confirm=True)
+    assert result["interview"]["next_question_id"] is None
+    assert result["interview"]["unresolved_gap_codes"] == []
+    assert "not proof" in result["interview"]["readiness"]
+    assert result["authority"]["implementation"] == "not_authorized"
+
+
+def test_answered_prd_recomputes_next_question_and_preserves_prior_source(tmp_path):
+    prd = tmp_path / "PRD.md"
+    prd.write_text(THIN_PRD, encoding="utf-8")
+    before = grill_prd(prd, tmp_path, mode="deep")
+    prd.write_text(COMPLETE_PRD, encoding="utf-8")
+    after = grill_prd(prd, tmp_path, mode="deep")
+    assert after["source"]["sha256"] != before["source"]["sha256"]
+    assert after["status"] == "ready_for_confirmation"
+    assert after["interview"]["next_question_id"] is None
+    assert Path(before["source_copy"]).read_text(encoding="utf-8") == THIN_PRD
+    assert verify_prd_grill(Path(before["path"]))["valid"]
+
+
+def test_generated_junie_guidance_contains_beginner_native_prd_route():
+    from factoryline.junie_taxonomy import _guidance, _junie_proof_agent_bytes
+
+    guidance = _guidance().decode("utf-8")
+    assert "factory prd grill PRD.md" in guidance
+    assert "one ready question at a time" in guidance
+    assert "never accept silence as approval" in guidance
+    assert "## Beginner app-building" not in _junie_proof_agent_bytes().decode()
