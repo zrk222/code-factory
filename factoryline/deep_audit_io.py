@@ -1713,6 +1713,7 @@ def _fuzz_snapshot(
             "inputs": len(corpus["inputs"]),
             "bytes": state.get("corpus_bytes", 0),
         },
+        "control_sha256": state.get("control_sha256"),
     }
     output.write_bytes(canonical_bytes(report))
 
@@ -1992,6 +1993,78 @@ def _finalize_fuzz_report(raw, invocations):
     return report
 
 
+def _fuzz_control_ids(raw):
+    value = strict_json(raw)
+    if (
+        canonical_bytes(value) != raw
+        or set(value) != {"schema", "rules"}
+        or value["schema"] != "factory.fuzz-control.v1"
+        or not isinstance(value["rules"], dict)
+        or set(value["rules"]) != {"FUZZ_EXCEPTION"}
+        or type(value["rules"]["FUZZ_EXCEPTION"]) is not bool
+    ):
+        raise RuntimeAuditError(
+            "E_FUZZ_CONTROL", "canonical exact fuzz rule config required"
+        )
+    return ["FUZZ_EXCEPTION"] if value["rules"]["FUZZ_EXCEPTION"] else []
+
+
+def _fuzz_disable_rule(raw, rule_id):
+    if rule_id != "FUZZ_EXCEPTION" or _fuzz_control_ids(raw) != [rule_id]:
+        raise RuntimeAuditError("E_FUZZ_CONTROL", "enabled exact fuzz rule required")
+    value = strict_json(raw)
+    value["rules"][rule_id] = False
+    return canonical_bytes(value)
+
+
+def _fuzz_control_args(argv):
+    path = Path("/opt/factory/rules/fuzz-control.json")
+    offset = 3
+    if len(argv) < 3:
+        raise RuntimeAuditError(
+            "E_FUZZ_CONTROL", "closed fuzz native arguments required"
+        )
+    if argv[2].startswith("--factory-control="):
+        path = Path(argv[2].removeprefix("--factory-control="))
+        offset = 4
+    if len(argv) < offset or argv[offset - 1] != "--":
+        raise RuntimeAuditError(
+            "E_FUZZ_CONTROL", "closed fuzz native arguments required"
+        )
+    with path.open("rb") as stream:
+        raw = stream.read(4097)
+    if len(raw) > 4096:
+        raise RuntimeAuditError("E_FUZZ_CONTROL", "fuzz config budget exceeded")
+    return _fuzz_control_ids(raw), sha256_bytes(raw), argv[offset:]
+
+
+def _fuzz_execution_contract(contract, source):
+    if source == Path("/src"):
+        return contract
+    bindings = {item["path"]: item for item in contract["inventory"]["files"]}
+    names = _adapter_source_files(source)
+    if not names or not names <= bindings.keys():
+        raise RuntimeAuditError("E_FUZZ_CONTROL", "fixture source is not inventoried")
+    inventory = {
+        **contract["inventory"],
+        "files": [bindings[name] for name in sorted(names)],
+    }
+    _adapter_sources(source, inventory)
+    return {**contract, "inventory": inventory}
+
+
+def _fuzz_profile_preflight(profile, lane):
+    if lane["engine"] != "atheris":
+        return None
+    path = Path("/opt/factory/rules/fuzz-control.json")
+    raw = path.read_bytes()
+    if sha256_bytes(raw) != profile["ruleset_sha256"] or _fuzz_control_ids(raw) != [
+        "FUZZ_EXCEPTION"
+    ]:
+        raise RuntimeAuditError("E_FUZZ_CONTROL", "pinned baseline fuzz rule required")
+    return path
+
+
 def native_fuzz_main(argv: list[str]) -> int:
     """Image-owned Atheris lifecycle; candidate exports only TestOneInput(bytes)."""
     import atheris
@@ -2001,10 +2074,13 @@ def native_fuzz_main(argv: list[str]) -> int:
 
     harness_path, output = Path(argv[0]), Path(argv[1])
     contract = strict_json(Path("/factory-contract.json").read_bytes())
-    harness = harness_path.relative_to(Path("/src")).as_posix()
+    root = Path.cwd()
+    contract = _fuzz_execution_contract(contract, root)
+    rule_ids, control_sha, native_args = _fuzz_control_args(argv)
+    harness = harness_path.relative_to(root).as_posix()
     sources = {item["path"]: item["sha256"] for item in contract["inventory"]["files"]}
-    bound_bytes(Path("/src"), {"path": harness, "sha256": sources[harness]})
-    cov = coverage.Coverage(branch=True, data_file=None, source=["/src"])
+    bound_bytes(root, {"path": harness, "sha256": sources[harness]})
+    cov = coverage.Coverage(branch=True, data_file=None, source=[str(root)])
     cov.start()
     with atheris.instrument_imports():
         spec = importlib.util.spec_from_file_location(
@@ -2013,7 +2089,13 @@ def native_fuzz_main(argv: list[str]) -> int:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
     target = module.TestOneInput
-    state = {"executions": 0, "inputs": set(), "findings": [], "completed": False}
+    state = {
+        "executions": 0,
+        "inputs": set(),
+        "findings": [],
+        "completed": False,
+        "control_sha256": control_sha,
+    }
 
     def callback(data):
         try:
@@ -2024,22 +2106,23 @@ def native_fuzz_main(argv: list[str]) -> int:
         try:
             target(data)
         except Exception:
-            state["completed"] = True
-            state["findings"].append(
-                {
-                    "rule_id": "FUZZ_EXCEPTION",
-                    "path": harness,
-                    "line": 1,
-                    "severity": "high",
-                    "input_sha256": sha256_bytes(data),
-                }
-            )
-            _fuzz_snapshot(cov, contract, harness, output, state)
-            raise
+            if "FUZZ_EXCEPTION" in rule_ids:
+                state["completed"] = True
+                state["findings"].append(
+                    {
+                        "rule_id": "FUZZ_EXCEPTION",
+                        "path": harness,
+                        "line": 1,
+                        "severity": "high",
+                        "input_sha256": sha256_bytes(data),
+                    }
+                )
+                _fuzz_snapshot(cov, contract, harness, output, state)
+                raise
         if state["executions"] == 1 or state["executions"] % 64 == 0:
             _fuzz_snapshot(cov, contract, harness, output, state)
 
-    atheris.Setup([sys.argv[0], *argv[3:]], atheris.instrument_func(callback))
+    atheris.Setup([sys.argv[0], *native_args], atheris.instrument_func(callback))
     atheris.Fuzz()
     state["completed"] = True
     _fuzz_snapshot(cov, contract, harness, output, state)
@@ -2774,7 +2857,7 @@ def _osv_challenge_runner(
 def _run_native_profile(profile, contract, source, output, inventory, lane, paths):
     _osv_profile_preflight(profile, lane)
     rule_inventory = None
-    config_path = None
+    config_path = _fuzz_profile_preflight(profile, lane)
     semgrep_rules = None
     trivy_config = None
     trivy_ignore = None
@@ -2826,6 +2909,7 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
                 "report": output / paths[0],
                 "scratch": scratch,
                 "candidate_sha256": inventory["candidate_sha256"],
+                "fixture": source / ".factory/fuzz_harness.py",
                 **({"config": str(config_path)} if config_path is not None else {}),
             },
         )

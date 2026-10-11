@@ -4971,6 +4971,178 @@ def test_codeql_replay_sources_rejects_incomplete_parse_accounting():
         _codeql_replay_sources(expected, deepcopy(expected), inventory, lane)
 
 
+def test_fuzz_native_replay_executes_trusted_runner_and_binds_result(
+    tmp_path, monkeypatch
+):
+    import factoryline.runtime_audit_process as process
+    from factoryline import deep_audit_io
+    from factoryline.runtime_audit_common import canonical_bytes
+
+    source, scratch = tmp_path / "source", tmp_path / "scratch"
+    source.mkdir()
+    scratch.mkdir()
+    expected = {
+        "harness": "harness.py",
+        "corpus_sha256": "a" * 64,
+        "replayed_inputs": 2,
+        "failure_inputs": [],
+    }
+    request = {"inventory": {"candidate_sha256": "b" * 64}}
+    monkeypatch.setattr(deep_audit_io, "_fuzz_replay_expected", lambda _r: expected)
+    monkeypatch.setattr(deep_audit_io, "_fuzz_replay_profile", lambda _r: None)
+    monkeypatch.setattr(deep_audit_io, "_adapter_sources", lambda *_a: None)
+    observed = {"schema": "factory.fuzz-input-replay.v1", **expected}
+    executions = []
+
+    def run_bounded_command(argv, cwd, timeout, workdir, *, stdout_path):
+        assert argv[0] == "/usr/local/bin/python"
+        assert argv[1] == "-I"
+        assert cwd == source
+        assert timeout >= 1
+        assert workdir == scratch
+        raw = canonical_bytes(observed)
+        stdout_path.write_bytes(raw)
+        facts = {
+            "exit_code": 0,
+            "timed_out": False,
+            "launch_error": False,
+            "output_limit_exceeded": False,
+            "cleanup_confirmed": True,
+            "cancelled": False,
+            "timeout_seconds": timeout,
+            "duration_ms": 1,
+            "stdout_sha256": sha256_bytes(raw),
+            "stdout_bytes": len(raw),
+            "stderr_sha256": "0" * 64,
+            "stderr_bytes": 0,
+        }
+        executions.append(facts)
+        return facts
+
+    monkeypatch.setattr(process, "run_bounded_command", run_bounded_command)
+    result = deep_audit_io.execute_fuzz_native_replay(request, source, scratch, 10)
+
+    assert result == {**expected, "native_execution_sha256": digest(executions[0])}
+
+
+def test_fuzz_native_replay_rejects_source_drift(tmp_path, monkeypatch):
+    from factoryline import deep_audit_io
+
+    source, scratch = tmp_path / "source", tmp_path / "scratch"
+    source.mkdir()
+    scratch.mkdir()
+    request = {"inventory": {"candidate_sha256": "b" * 64}}
+    monkeypatch.setattr(
+        deep_audit_io,
+        "_fuzz_replay_expected",
+        lambda _r: {
+            "harness": "h.py",
+            "corpus_sha256": "a" * 64,
+            "replayed_inputs": 1,
+            "failure_inputs": [],
+        },
+    )
+    monkeypatch.setattr(deep_audit_io, "_fuzz_replay_profile", lambda _r: None)
+
+    def reject_drift(_source, _inventory):
+        raise RuntimeAuditError("E_REPORT_DRIFT", "source changed")
+
+    monkeypatch.setattr(deep_audit_io, "_adapter_sources", reject_drift)
+    with pytest.raises(RuntimeAuditError, match="E_REPORT_DRIFT"):
+        deep_audit_io.execute_fuzz_native_replay(request, source, scratch, 10)
+
+
+def test_codeql_native_replay_runs_each_independent_stage(tmp_path, monkeypatch):
+    from factoryline import deep_audit_io, deep_audit_sarif
+
+    source, scratch = tmp_path / "source", tmp_path / "scratch"
+    source.mkdir()
+    scratch.mkdir()
+    lane = {"languages": ["javascript"], "rule_ids": ["rule/a"]}
+    inventory = {
+        "candidate_sha256": "a" * 64,
+        "files": [{"path": "src/a.js", "language": "javascript", "sha256": "b" * 64}],
+    }
+    query_inventory = {
+        "queries": {"a.ql": "c" * 64},
+        "query_ids": {"rule/a": "a.ql"},
+        "suite_sha256": "d" * 64,
+        "query_inventory_sha256": "e" * 64,
+    }
+    coverage = {
+        "codeql_query_inventory": query_inventory,
+        "codeql_query_execution": {"rules": [{"rule_id": "rule/a"}]},
+        "codeql_source_execution": {"source": "retained"},
+    }
+    report = {"retained": True}
+    request = {
+        "lane": lane,
+        "inventory": inventory,
+        "coverage": coverage,
+        "report": report,
+    }
+    profile = {"engine": "codeql", "tool_version": "1.2.3"}
+    monkeypatch.setattr(deep_audit_io.Path, "read_bytes", lambda _p: b"trusted-profile")
+    monkeypatch.setattr(deep_audit_io, "strict_json", lambda _raw: profile)
+    monkeypatch.setattr(deep_audit_io, "_native_profile", lambda *_a: None)
+    monkeypatch.setattr(deep_audit_io, "_adapter_sources", lambda *_a: None)
+    monkeypatch.setattr(
+        deep_audit_io, "verify_codeql_retained_evidence", lambda *_a: None
+    )
+    monkeypatch.setattr(deep_audit_io, "_native_version", lambda *_a: {"version": True})
+    monkeypatch.setattr(
+        deep_audit_io, "_codeql_query_preflight", lambda *_a: query_inventory
+    )
+    monkeypatch.setattr(
+        deep_audit_io,
+        "_codeql_replay_fresh",
+        lambda *_a: {
+            "execution": {"rules": [{"rule_id": "rule/a"}]},
+            "source": {"fresh": True},
+            "report": report,
+            "invocations": [{"execution": {"exit_code": 0}}],
+        },
+    )
+    monkeypatch.setattr(
+        deep_audit_io, "_codeql_replay_queries", lambda *_a: {"rule/a": "f" * 64}
+    )
+    monkeypatch.setattr(deep_audit_io, "_codeql_replay_source_values", lambda *_a: None)
+    monkeypatch.setattr(deep_audit_io, "_codeql_replay_sources", lambda *_a: None)
+    monkeypatch.setattr(
+        deep_audit_sarif, "_native_execution_report", lambda raw, *_a: [raw]
+    )
+
+    result = deep_audit_io.execute_codeql_native_replay(request, source, scratch, 10)
+
+    assert result["state"] == "VERIFIED"
+    assert result["candidate_sha256"] == inventory["candidate_sha256"]
+    assert result["source_paths"] == ["src/a.js"]
+    assert result["queries"] == 1
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"schema": "factory.fuzz-control.v1", "rules": None},
+        {"schema": "factory.fuzz-control.v1", "rules": []},
+    ],
+)
+def test_fuzz_control_rejects_non_object_rules(value):
+    from factoryline.runtime_audit_common import canonical_bytes
+    from factoryline.deep_audit_io import _fuzz_control_ids
+
+    with pytest.raises(RuntimeAuditError, match="E_FUZZ_CONTROL"):
+        _fuzz_control_ids(canonical_bytes(value))
+
+
+@pytest.mark.parametrize("argv", [[], ["h", "o"], ["h", "o", "--factory-control=x"]])
+def test_fuzz_control_rejects_incomplete_native_argv(argv):
+    from factoryline.deep_audit_io import _fuzz_control_args
+
+    with pytest.raises(RuntimeAuditError, match="E_FUZZ_CONTROL"):
+        _fuzz_control_args(argv)
+
+
 def _codeql_replay_receipt_inputs():
     from factoryline.deep_audit_io import digest
 
@@ -6211,6 +6383,113 @@ def test_fuzz_zero_branch_exception_remains_a_finding():
     report["metrics"]["executions"] = 0
     with pytest.raises(RuntimeAuditError):
         _execution_runtime(report, lane, {"fuzz.py": "a" * 64})
+
+
+def _fuzz_control_bytes(enabled=True):
+    from factoryline.deep_audit_io import canonical_bytes
+
+    return canonical_bytes(
+        {
+            "schema": "factory.fuzz-control.v1",
+            "rules": {"FUZZ_EXCEPTION": enabled},
+        }
+    )
+
+
+def test_fuzz_control_ids_and_disable_exact_enabled_rule():
+    from factoryline.deep_audit_io import _fuzz_control_ids, _fuzz_disable_rule
+
+    enabled = _fuzz_control_bytes()
+    disabled = _fuzz_disable_rule(enabled, "FUZZ_EXCEPTION")
+    assert _fuzz_control_ids(enabled) == ["FUZZ_EXCEPTION"]
+    assert _fuzz_control_ids(disabled) == []
+    with pytest.raises(RuntimeAuditError, match="E_FUZZ_CONTROL"):
+        _fuzz_disable_rule(disabled, "FUZZ_EXCEPTION")
+    with pytest.raises(RuntimeAuditError, match="E_FUZZ_CONTROL"):
+        _fuzz_disable_rule(enabled, "FUZZ_EXCEPTION-lookalike")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"rules":{"FUZZ_EXCEPTION":true},"schema":"factory.fuzz-control.v1","extra":1}',
+        b'{"rules":{"FUZZ_EXCEPTION":true,"OTHER":false},"schema":"factory.fuzz-control.v1"}',
+        b'{"rules":{"FUZZ_EXCEPTION":true},"schema":"factory.fuzz-control.v2"}',
+        b'{ "rules": {"FUZZ_EXCEPTION": true}, "schema": "factory.fuzz-control.v1" }',
+        b'{"rules":{"FUZZ_EXCEPTION":1},"schema":"factory.fuzz-control.v1"}',
+    ],
+)
+def test_fuzz_control_ids_rejects_unknown_or_noncanonical_config(raw):
+    from factoryline.deep_audit_io import _fuzz_control_ids
+
+    with pytest.raises(RuntimeAuditError, match="E_FUZZ_CONTROL"):
+        _fuzz_control_ids(raw)
+
+
+def test_fuzz_control_args_binds_exact_option_and_native_arguments(tmp_path):
+    from factoryline.deep_audit_io import _fuzz_control_args, sha256_bytes
+
+    config = tmp_path / "fuzz-control.json"
+    raw = _fuzz_control_bytes()
+    config.write_bytes(raw)
+    assert _fuzz_control_args(
+        ["harness.py", "report.json", f"--factory-control={config}", "--", "-runs=5"]
+    ) == (["FUZZ_EXCEPTION"], sha256_bytes(raw), ["-runs=5"])
+    with pytest.raises(RuntimeAuditError, match="E_FUZZ_CONTROL"):
+        _fuzz_control_args(
+            ["harness.py", "report.json", f"--factory-control={config}", "-runs=5"]
+        )
+
+
+def test_fuzz_execution_contract_accepts_exact_inventoried_fixture_subset(tmp_path):
+    from factoryline.deep_audit_io import _fuzz_execution_contract, sha256_bytes
+
+    source = tmp_path / "fixture"
+    source.mkdir()
+    (source / "fuzz.py").write_bytes(b"def TestOneInput(data): pass\n")
+    (source / "helper.py").write_bytes(b"VALUE = 1\n")
+    contract = {
+        "inventory": {
+            "candidate_sha256": "a" * 64,
+            "files": [
+                {
+                    "path": "fuzz.py",
+                    "sha256": sha256_bytes((source / "fuzz.py").read_bytes()),
+                },
+                {
+                    "path": "helper.py",
+                    "sha256": sha256_bytes((source / "helper.py").read_bytes()),
+                },
+            ],
+        }
+    }
+    (source / "helper.py").unlink()
+    projected = _fuzz_execution_contract(contract, source)
+    assert projected["inventory"]["files"] == [contract["inventory"]["files"][0]]
+
+
+@pytest.mark.parametrize("damage", ["drift", "extra"])
+def test_fuzz_execution_contract_rejects_fixture_drift_or_uninventoried_file(
+    tmp_path, damage
+):
+    from factoryline.deep_audit_io import _fuzz_execution_contract, sha256_bytes
+
+    source = tmp_path / "fixture"
+    source.mkdir()
+    target = source / "fuzz.py"
+    target.write_bytes(b"def TestOneInput(data): pass\n")
+    contract = {
+        "inventory": {
+            "candidate_sha256": "a" * 64,
+            "files": [{"path": "fuzz.py", "sha256": sha256_bytes(target.read_bytes())}],
+        }
+    }
+    if damage == "drift":
+        target.write_bytes(b"def TestOneInput(data): return None\n")
+    else:
+        (source / "injected.py").write_bytes(b"PAYLOAD = True\n")
+    with pytest.raises(RuntimeAuditError):
+        _fuzz_execution_contract(contract, source)
 
 
 def _fuzz_replay_request_fixture():

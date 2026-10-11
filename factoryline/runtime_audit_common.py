@@ -421,6 +421,8 @@ def _render_profile_argv(template: list[str], values: dict[str, str]) -> list[st
         "factory_ledger",
         "config",
     }
+    if "fixture" in values:
+        names.add("fixture")
     if (
         not isinstance(template, list)
         or not 1 <= len(template) <= 128
@@ -495,6 +497,8 @@ def _validate_native_bindings(
     ledger: Path,
     config: Path,
     evidence: dict[str, Any],
+    *,
+    fixture: Path | None = None,
 ) -> None:
     """Ensure every closed argv placeholder resolves to this exact isolated run."""
     expected = {
@@ -505,6 +509,12 @@ def _validate_native_bindings(
         "factory_ledger": ledger,
         "config": config,
     }
+    if "fixture" in values:
+        if fixture is None:
+            raise RuntimeAuditError(
+                "E_CHALLENGE_BINDING", "signed fixture binding required"
+            )
+        expected["fixture"] = fixture
     for name, path in expected.items():
         if (
             Path(require_str(values.get(name), name, maximum=4096)).absolute()
@@ -1289,6 +1299,7 @@ def _prepare_native_challenge(
         ledger_path,
         effective_config_path,
         execution_bindings,
+        fixture=source_root / challenge["fixture_path"],
     )
     argv = _render_profile_argv(profile_argv, bindings)
     expected_exit = require_int(

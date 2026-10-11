@@ -127,5 +127,6 @@ COPY deploy/deep-adapters/requirements-fuzz.txt /tmp/requirements-fuzz.txt
 RUN python -m pip install --no-cache-dir --disable-pip-version-check --require-hashes --only-binary=:all: -r /tmp/requirements-fuzz.txt
 USER 1000:1000
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/atheris.json /opt/factory/adapter-profile.json
+COPY --chown=1000:1000 deploy/deep-adapters/rules/fuzz-control.json /opt/factory/rules/fuzz-control.json
 LABEL io.code-factory.configured="true" io.code-factory.harness="candidate-supplied"
 ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]

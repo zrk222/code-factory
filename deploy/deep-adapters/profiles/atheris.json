@@ -3,7 +3,7 @@
   "engine": "atheris",
   "mode": "native-fuzzer-owned-harness",
   "tool_version": "3.0.0",
-  "ruleset_sha256": "6bd3421ec2be7054fd7aeb4a48b9bd4c4c3aa1cd3b44f6129dda0205ed1d00a5",
+  "ruleset_sha256": "c212232aac87ad059b0c3d8065332c44df6a19ae79666156ae12ed196ca65668",
   "commands": [
     {
       "argv": [
@@ -12,8 +12,9 @@
         "-m",
         "factoryline.deep_audit_io",
         "native-fuzz",
-        "{source}/.factory/fuzz_harness.py",
+        "{fixture}",
         "{report}",
+        "--factory-control={config}",
         "--",
         "-runs=1000",
         "-artifact_prefix={scratch}/"
