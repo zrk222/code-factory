@@ -860,6 +860,22 @@ def test_shared_taxonomy_helpers_and_references_are_canonical_and_fail_closed():
     }
 
 
+def test_beginner_prd_guidance_requires_write_authorization_and_discovers_cf_commands():
+    from factoryline.junie_taxonomy import _guidance
+
+    guidance = _guidance().decode("utf-8")
+    assert "explicitly authorize writing the answers to the named PRD" in guidance
+    assert (
+        "A user answer or PRD confirmation is not blanket permission to edit files"
+        in guidance
+    )
+    assert "Discover actual installed commands from `--help`" in guidance
+    assert "if a command is unavailable, report the blocker" in guidance
+    assert "Do not assume `factory plan` creates a plan" in guidance
+    assert "factory plan verify --plan <plan-path> --root ." in guidance
+    assert "factory assemble <feature> --root ." in guidance
+
+
 def test_native_worker_catalog_and_junie_manifest_bind_profiles(tmp_path):
     catalog = audit_taxonomy()
     workers = catalog["native_workers"]
