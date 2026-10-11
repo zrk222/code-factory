@@ -7685,13 +7685,13 @@ def test_zap_zero_enabled_control_rejects_nonempty_or_unsafe_ledger(monkeypatch)
         monkeypatch.setattr(audit_io, "_zap_check_daemon", lambda *_args: None)
 
         def fake_api(component, kind, name, _deadline, *, watch=None, **_kwargs):
-            if (component, kind, name) == ("ascan", "view", "scanners"):
-                return {"scanners": [{"id": "40012", "enabled": "false"}]}
-            if (component, kind, name) == ("pscan", "view", "recordsToScan"):
-                return {"recordsToScan": "0"}
-            if (component, kind, name) == ("core", "view", "alerts"):
-                return {"alerts": []}
-            return {}
+            return {
+                ("ascan", "view", "scanners"): {
+                    "scanners": [{"id": "40012", "enabled": "false"}]
+                },
+                ("pscan", "view", "recordsToScan"): {"recordsToScan": "0"},
+                ("core", "view", "alerts"): {"alerts": []},
+            }.get((component, kind, name), {})
 
         monkeypatch.setattr(audit_io, "_zap_api", fake_api)
         if state == "unsafe":
