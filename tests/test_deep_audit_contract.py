@@ -1344,6 +1344,9 @@ def test_execution_native_errors_cannot_pass(tmp_path, engine):
     if engine == "codeql":
         assert result["state"] == "INCOMPLETE"
         assert result["gaps"] == ["CODEQL_NATIVE_ARTIFACTS_UNVERIFIED"]
+    elif engine == "osv":
+        assert result["state"] == "INCOMPLETE"
+        assert "OSV_NATIVE_ARTIFACTS_UNVERIFIED" in result["gaps"]
     else:
         assert result["state"] == "OBSERVED"
     assert result["obligations"] == [lane["engine"]]

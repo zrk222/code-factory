@@ -1131,10 +1131,12 @@ def native_inputs(tmp_path):
     import sys
 
     profile, contract, source, output = adapter_inputs(tmp_path)
-    profile["engine"] = contract["lane"]["engine"] = "osv"
+    # Keep this as a generic incomplete native adapter fixture. OSV lanes now
+    # require a pinned offline database identity and exercise that separately.
+    profile["engine"] = contract["lane"]["engine"] = "runtime"
     profile.update(
         schema="factory.native-profile.v1",
-        report_format="osv-json",
+        report_format="runtime-json",
         version_argv=[sys.executable, "-c", "print('test-harness-1')"],
     )
     contract["lane"]["languages"] = ["text"]
@@ -5487,3 +5489,452 @@ def test_codeql_replay_fresh_rejects_off_candidate_or_malformed_paths(
 ):
     with pytest.raises(RuntimeAuditError, match=diagnostic):
         _run_codeql_replay_fresh_with_report(tmp_path, monkeypatch, report)
+
+
+def _osv_replay_request_fixture():
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    source_sha = "a" * 64
+    report = _osv_package_accounting_fixture()
+    inventory = {
+        "candidate_sha256": "b" * 64,
+        "files": [
+            {"path": "requirements.txt", "language": "python", "sha256": source_sha}
+        ],
+    }
+    lane = {
+        "id": "osv-replay-test",
+        "engine": "osv",
+        "family": "dependencies",
+        "mode": "offline-pypi-snapshot",
+        "languages": ["python"],
+        "rule_ids": ["OSV-CVE-2026-0001"],
+        "coverage": "coverage.json",
+        "report": "report.json",
+        "challenge_report": "challenges.json",
+        "timeout_seconds": 60,
+        "image": "registry.example/osv@sha256:" + "c" * 64,
+        "memory_mib": 1024,
+        "argv": ["/opt/factory/bin/osv-offline", "scan", "source"],
+        "native_policy": {"database_sha256": "d" * 64},
+    }
+    required = {"requirements.txt": source_sha}
+    coverage = {
+        "profile_sha256": "e" * 64,
+        "source_accounting": _osv_source_accounting(report, required, lane["mode"]),
+    }
+    challenges = {
+        "schema": "factory.deep-challenges.v1",
+        "observations": [],
+        "gaps": [],
+    }
+    obligations = [
+        {
+            "id": "osv-dependency-control",
+            "engine": "osv",
+            "family": "dependencies",
+            "paths": ["requirements.txt"],
+            "challenges": [
+                {"kind": kind} for kind in ("positive", "negative", "mutation")
+            ],
+        }
+    ]
+    return {
+        "lane": lane,
+        "inventory": inventory,
+        "coverage": coverage,
+        "report": report,
+        "challenges": challenges,
+        "obligations": obligations,
+    }
+
+
+def _osv_replay_receipt_inputs():
+    from factoryline.deep_audit import _osv_replay_expected
+
+    request = _osv_replay_request_fixture()
+    receipt = {
+        **_osv_replay_expected(request),
+        "native_execution_sha256": "f" * 64,
+    }
+    raw = json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+    facts = _codeql_process_facts(60, raw, b"replay stderr", cancelled=False)
+    return raw, facts, request, receipt
+
+
+def test_osv_replay_receipt_accepts_source_database_and_all_control_bindings():
+    from factoryline.deep_audit import _osv_replay_receipt
+
+    raw, facts, request, expected = _osv_replay_receipt_inputs()
+    assert _osv_replay_receipt(raw, facts, request) == expected
+    assert expected["controls"] == [
+        {"id": "osv-dependency-control", "kind": kind}
+        for kind in ("mutation", "negative", "positive")
+    ]
+    assert expected["source_paths"] == ["requirements.txt"]
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "candidate_sha256",
+        "lane_sha256",
+        "coverage_sha256",
+        "report_sha256",
+        "challenges_sha256",
+        "obligations_sha256",
+        "profile_sha256",
+        "database_sha256",
+        "source_paths",
+        "controls",
+        "findings_sha256",
+        "source_accounting_sha256",
+    ],
+)
+def test_osv_replay_receipt_rejects_source_database_or_control_binding_drift(field):
+    from factoryline.deep_audit import _osv_replay_receipt
+
+    _, _, request, receipt = _osv_replay_receipt_inputs()
+    altered = deepcopy(receipt)
+    altered[field] = ["tampered"] if isinstance(altered[field], list) else "0" * 64
+    raw = json.dumps(altered, sort_keys=True, separators=(",", ":")).encode()
+    facts = _codeql_process_facts(60, raw, b"", cancelled=False)
+    with pytest.raises(RuntimeAuditError, match="E_OSV_REPLAY"):
+        _osv_replay_receipt(raw, facts, request)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        {"exit_code": 7},
+        {"timed_out": True},
+        {"cancelled": True},
+        {"cleanup_confirmed": False},
+        {"launch_error": True},
+        {"output_limit_exceeded": True},
+        {"stdout_sha256": "0" * 64},
+        {"stdout_bytes": 0},
+    ],
+)
+def test_osv_replay_receipt_fails_closed_on_process_and_cleanup_failures(failure):
+    from factoryline.deep_audit import _osv_replay_receipt
+
+    raw, facts, request, _ = _osv_replay_receipt_inputs()
+    facts.update(failure)
+    with pytest.raises(RuntimeAuditError, match="E_OSV_REPLAY"):
+        _osv_replay_receipt(raw, facts, request)
+
+
+def test_osv_replay_argv_uses_pinned_image_and_isolated_read_only_runtime(tmp_path):
+    from factoryline.deep_audit import _osv_replay_argv
+
+    request = _osv_replay_request_fixture()
+    runtime = tmp_path / "trusted runtime"
+    argv = _osv_replay_argv(
+        ["docker"],
+        request["lane"],
+        tmp_path / "source snapshot",
+        "factory-replay-test",
+        "run-id",
+        request["inventory"]["candidate_sha256"],
+        tmp_path / "contract.json",
+        runtime,
+        40,
+    )
+    for required in (
+        "--pull=never",
+        "--network=none",
+        "--read-only",
+        "--user=1000:1000",
+        request["lane"]["image"],
+    ):
+        assert required in argv
+    assert any("execute_osv_native_replay" in value for value in argv)
+    mounts = [
+        argv[index + 1] for index, value in enumerate(argv[:-1]) if value == "--mount"
+    ]
+    assert any(
+        "target=/src,readonly,bind-recursive=readonly" in mount for mount in mounts
+    )
+    assert any(
+        f"source={runtime},target=/factory-runtime,readonly" in mount
+        for mount in mounts
+    )
+
+
+def test_osv_replay_result_clears_only_required_gap_after_host_receipt(
+    tmp_path, monkeypatch
+):
+    import threading
+
+    import factoryline.deep_audit as module
+
+    request = _osv_replay_request_fixture()
+    result = {
+        "gaps": ["OSV_NATIVE_REPLAY_REQUIRED", "UNRELATED_GAP"],
+        "state": "INCOMPLETE",
+    }
+    called = []
+    monkeypatch.setattr(module, "_monitor_lane", lambda *args: None)
+    monkeypatch.setattr(
+        module,
+        "_replay_osv_lane",
+        lambda *args, **kwargs: called.append(kwargs)
+        or {"schema": "factory.osv-native-replay.v1", "state": "VERIFIED"},
+    )
+    directory = tmp_path / "monitor"
+    directory.mkdir()
+    module._osv_replay_result(
+        result,
+        ["docker"],
+        request["lane"],
+        tmp_path / "snapshot",
+        {
+            "artifacts": {
+                "coverage.json": request["coverage"],
+                "report.json": request["report"],
+                "challenges.json": request["challenges"],
+            }
+        },
+        request["inventory"],
+        "run-id",
+        threading.Event(),
+        time.monotonic() + 60,
+        (directory, {"active_lane": request["lane"]["id"]}, lambda event: None),
+        request["obligations"],
+    )
+    assert len(called) == 1
+    assert called[0]["timeout_seconds"] > 0
+    assert result["gaps"] == ["UNRELATED_GAP"]
+    assert result["state"] == "INCOMPLETE"
+    assert result["osv_replay"]["state"] == "VERIFIED"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RuntimeAuditError("E_OSV_REPLAY", "receipt invalid"),
+        {"state": "INCOMPLETE"},
+    ],
+)
+def test_osv_replay_result_failure_keeps_mandatory_gap(tmp_path, monkeypatch, failure):
+    import threading
+
+    import factoryline.deep_audit as module
+
+    request = _osv_replay_request_fixture()
+    monkeypatch.setattr(module, "_monitor_lane", lambda *args: None)
+    if isinstance(failure, Exception):
+
+        def replay_failure(*args, **kwargs):
+            raise failure
+
+        replay = replay_failure
+    else:
+
+        def replay(*args, **kwargs):
+            return failure
+
+    monkeypatch.setattr(module, "_replay_osv_lane", replay)
+    result = {"gaps": ["OSV_NATIVE_REPLAY_REQUIRED"], "state": "INCOMPLETE"}
+    directory = tmp_path / "monitor"
+    directory.mkdir()
+    module._osv_replay_result(
+        result,
+        ["docker"],
+        request["lane"],
+        tmp_path / "snapshot",
+        {
+            "artifacts": {
+                "coverage.json": request["coverage"],
+                "report.json": request["report"],
+                "challenges.json": request["challenges"],
+            }
+        },
+        request["inventory"],
+        "run-id",
+        threading.Event(),
+        time.monotonic() + 60,
+        (directory, {"active_lane": request["lane"]["id"]}, lambda event: None),
+        request["obligations"],
+    )
+    assert result["state"] == "INCOMPLETE"
+    assert "OSV_NATIVE_REPLAY_REQUIRED" in result["gaps"]
+    assert "OSV_NATIVE_REPLAY_FAILED" in result["gaps"]
+    assert result["osv_replay"]["state"] == "INCOMPLETE"
+
+
+def test_osv_replay_result_requires_gap_and_shared_deadline(tmp_path, monkeypatch):
+    import threading
+
+    import factoryline.deep_audit as module
+
+    request = _osv_replay_request_fixture()
+    monkeypatch.setattr(module, "_monitor_lane", lambda *args: None)
+    calls = []
+    monkeypatch.setattr(
+        module, "_replay_osv_lane", lambda *args, **kwargs: calls.append(args)
+    )
+    artifacts = {
+        "artifacts": {
+            "coverage.json": request["coverage"],
+            "report.json": request["report"],
+            "challenges.json": request["challenges"],
+        }
+    }
+    directory = tmp_path / "monitor"
+    directory.mkdir()
+    result = {"gaps": ["UNRELATED_GAP"], "state": "INCOMPLETE"}
+    module._osv_replay_result(
+        result,
+        ["docker"],
+        request["lane"],
+        tmp_path / "snapshot",
+        artifacts,
+        request["inventory"],
+        "run-id",
+        threading.Event(),
+        time.monotonic() + 60,
+        (directory, {"active_lane": request["lane"]["id"]}, lambda event: None),
+        request["obligations"],
+    )
+    assert calls == []
+    expired = {"gaps": ["OSV_NATIVE_REPLAY_REQUIRED"], "state": "INCOMPLETE"}
+    module._osv_replay_result(
+        expired,
+        ["docker"],
+        request["lane"],
+        tmp_path / "snapshot",
+        artifacts,
+        request["inventory"],
+        "run-id",
+        threading.Event(),
+        time.monotonic() - 1,
+        (directory, {"active_lane": request["lane"]["id"]}, lambda event: None),
+        request["obligations"],
+    )
+    assert calls == []
+    assert expired["state"] == "INCOMPLETE"
+    assert "OSV_NATIVE_REPLAY_REQUIRED" in expired["gaps"]
+    assert expired["osv_replay"]["diagnostic_code"] == "E_OSV_REPLAY"
+
+
+def _osv_replay_container_stubs(
+    monkeypatch, tmp_path, request, failure=None, cleanup=True
+):
+    import factoryline.deep_audit as module
+    from factoryline.deep_audit import _osv_replay_expected
+
+    raw = json.dumps(
+        {
+            **_osv_replay_expected(request),
+            "native_execution_sha256": "f" * 64,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    runtime = tmp_path / "trusted-runtime"
+    runtime.mkdir()
+    monkeypatch.setattr(module, "_docker_preflight", lambda *args: None)
+    monkeypatch.setattr(
+        module, "_codeql_replay_runtime", lambda scratch: (runtime, "c" * 64)
+    )
+    monkeypatch.setattr(module, "_osv_replay_argv", lambda *args: ["docker", "run"])
+    monkeypatch.setattr(module, "_container_cleanup", lambda *args: cleanup)
+
+    def run(argv, cwd, timeout, scratch, *, stdout_path, cancelled):
+        stdout_path.write_bytes(raw)
+        facts = _codeql_process_facts(
+            timeout, raw, b"private replay stderr", cancelled=False
+        )
+        if failure:
+            facts.update(failure)
+        return facts
+
+    monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
+    return raw
+
+
+@pytest.mark.parametrize(
+    "failure,cleanup",
+    [
+        ({"exit_code": 7}, True),
+        ({"timed_out": True}, True),
+        ({"cancelled": True}, True),
+        ({}, False),
+    ],
+)
+def test_osv_replay_container_failures_keep_replay_gap_incomplete(
+    tmp_path, monkeypatch, failure, cleanup
+):
+    import threading
+
+    import factoryline.deep_audit as module
+
+    request = _osv_replay_request_fixture()
+    _osv_replay_container_stubs(monkeypatch, tmp_path, request, failure, cleanup)
+    monkeypatch.setattr(module, "_monitor_lane", lambda *args: None)
+    result = {"gaps": ["OSV_NATIVE_REPLAY_REQUIRED"], "state": "INCOMPLETE"}
+    directory = tmp_path / "monitor"
+    directory.mkdir()
+    module._osv_replay_result(
+        result,
+        ["docker"],
+        request["lane"],
+        tmp_path / "snapshot",
+        {
+            "artifacts": {
+                "coverage.json": request["coverage"],
+                "report.json": request["report"],
+                "challenges.json": request["challenges"],
+            }
+        },
+        request["inventory"],
+        "run-id",
+        threading.Event(),
+        time.monotonic() + 90,
+        (directory, {"active_lane": request["lane"]["id"]}, lambda event: None),
+        request["obligations"],
+    )
+    assert result["state"] == "INCOMPLETE"
+    assert "OSV_NATIVE_REPLAY_REQUIRED" in result["gaps"]
+    assert "OSV_NATIVE_REPLAY_FAILED" in result["gaps"]
+    assert result["osv_replay"]["state"] == "INCOMPLETE"
+
+
+def test_osv_replay_container_success_clears_required_gap_only(tmp_path, monkeypatch):
+    import threading
+
+    import factoryline.deep_audit as module
+
+    request = _osv_replay_request_fixture()
+    _osv_replay_container_stubs(monkeypatch, tmp_path, request)
+    monkeypatch.setattr(module, "_monitor_lane", lambda *args: None)
+    result = {
+        "gaps": ["OSV_NATIVE_REPLAY_REQUIRED", "UNRELATED_GAP"],
+        "state": "INCOMPLETE",
+    }
+    directory = tmp_path / "monitor"
+    directory.mkdir()
+    module._osv_replay_result(
+        result,
+        ["docker"],
+        request["lane"],
+        tmp_path / "snapshot",
+        {
+            "artifacts": {
+                "coverage.json": request["coverage"],
+                "report.json": request["report"],
+                "challenges.json": request["challenges"],
+            }
+        },
+        request["inventory"],
+        "run-id",
+        threading.Event(),
+        time.monotonic() + 90,
+        (directory, {"active_lane": request["lane"]["id"]}, lambda event: None),
+        request["obligations"],
+    )
+    assert result["gaps"] == ["UNRELATED_GAP"]
+    assert result["state"] == "INCOMPLETE"
+    assert result["osv_replay"]["state"] == "VERIFIED"

@@ -450,6 +450,19 @@ def _execute_lane(
         deadline,
         (directory, state, emit),
     )
+    result = _osv_replay_result(
+        result,
+        base,
+        lane,
+        snapshot,
+        bundle,
+        inventory,
+        state["run_id"],
+        cancelled,
+        deadline,
+        (directory, state, emit),
+        plan["obligations"],
+    )
     # Retain normalized native evidence for independent review, never emit raw logs/secrets.
     write_run_json(directory, f"bundle-{lane['id']}.json", bundle)
     result.update(bundle_sha256=digest(bundle), execution=facts)
@@ -468,10 +481,68 @@ def _codeql_replay_result(
     deadline,
     monitoring,
 ):
-    if (
-        lane["engine"] != "codeql"
-        or "CODEQL_NATIVE_REPLAY_REQUIRED" not in result["gaps"]
-    ):
+    return _native_replay_result(
+        result,
+        base,
+        lane,
+        snapshot,
+        bundle,
+        inventory,
+        run_id,
+        cancelled,
+        deadline,
+        monitoring,
+        "codeql",
+        [],
+    )
+
+
+def _osv_replay_result(
+    result,
+    base,
+    lane,
+    snapshot,
+    bundle,
+    inventory,
+    run_id,
+    cancelled,
+    deadline,
+    monitoring,
+    obligations,
+):
+    return _native_replay_result(
+        result,
+        base,
+        lane,
+        snapshot,
+        bundle,
+        inventory,
+        run_id,
+        cancelled,
+        deadline,
+        monitoring,
+        "osv",
+        obligations,
+    )
+
+
+def _native_replay_result(
+    result,
+    base,
+    lane,
+    snapshot,
+    bundle,
+    inventory,
+    run_id,
+    cancelled,
+    deadline,
+    monitoring,
+    engine,
+    obligations,
+):
+    prefix = engine.upper()
+    required_gap = f"{prefix}_NATIVE_REPLAY_REQUIRED"
+    if lane["engine"] != engine or required_gap not in result["gaps"]:
         return result
     directory, state, emit = monitoring
     stop = threading.Event()
@@ -484,8 +555,14 @@ def _codeql_replay_result(
     try:
         remaining = int(deadline - time.monotonic())
         if remaining < 1:
-            raise RuntimeAuditError("E_CODEQL_REPLAY", "lane replay deadline exhausted")
-        replay = _replay_codeql_lane(
+            raise RuntimeAuditError(
+                f"E_{prefix}_REPLAY", "lane replay deadline exhausted"
+            )
+        replay_function = (
+            _replay_codeql_lane if engine == "codeql" else _replay_osv_lane
+        )
+        extra = {} if engine == "codeql" else {"obligations": obligations}
+        replay = replay_function(
             base,
             lane,
             snapshot,
@@ -494,22 +571,25 @@ def _codeql_replay_result(
             run_id,
             cancelled,
             timeout_seconds=remaining,
+            **extra,
         )
         if not isinstance(replay, dict) or replay.get("state") != "VERIFIED":
             raise RuntimeAuditError(
-                "E_CODEQL_REPLAY", "independent replay is incomplete"
+                f"E_{prefix}_REPLAY", "independent replay is incomplete"
             )
-        result["codeql_replay"] = replay
-        result["gaps"] = [
-            gap for gap in result["gaps"] if gap != "CODEQL_NATIVE_REPLAY_REQUIRED"
-        ]
+        if cancelled.is_set() or time.monotonic() >= deadline:
+            raise RuntimeAuditError(
+                f"E_{prefix}_REPLAY", "lane replay deadline expired"
+            )
+        result[f"{engine}_replay"] = replay
+        result["gaps"] = [gap for gap in result["gaps"] if gap != required_gap]
     except (RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as error:
-        result["codeql_replay"] = {
+        result[f"{engine}_replay"] = {
             "state": "INCOMPLETE",
-            "diagnostic_code": getattr(error, "code", "E_CODEQL_REPLAY"),
+            "diagnostic_code": getattr(error, "code", f"E_{prefix}_REPLAY"),
             "evidence": getattr(error, "replay_evidence", None),
         }
-        result["gaps"].append("CODEQL_NATIVE_REPLAY_FAILED")
+        result["gaps"].append(f"{prefix}_NATIVE_REPLAY_FAILED")
     finally:
         stop.set()
         monitor.join(timeout=2)
@@ -537,14 +617,26 @@ def _codeql_replay_runtime(scratch):
 
 
 def _codeql_replay_argv(
-    base, lane, snapshot, name, run_id, candidate, contract, runtime, timeout
+    base,
+    lane,
+    snapshot,
+    name,
+    run_id,
+    candidate,
+    contract,
+    runtime,
+    timeout,
+    *,
+    engine="codeql",
 ):
+    if engine not in {"codeql", "osv"}:
+        raise RuntimeAuditError("E_NATIVE_REPLAY", "unsupported replay engine")
     program = (
         "import sys,json;from pathlib import Path;"
         "sys.path.insert(0,'/factory-runtime');"
-        "from factoryline.deep_audit_io import execute_codeql_native_replay,strict_json;"
-        "s=Path('/tmp/codeql-replay');s.mkdir();"
-        "r=execute_codeql_native_replay(strict_json(Path('/factory-contract.json').read_bytes()),"
+        f"from factoryline.deep_audit_io import execute_{engine}_native_replay,strict_json;"
+        f"s=Path('/tmp/{engine}-replay');s.mkdir();"
+        f"r=execute_{engine}_native_replay(strict_json(Path('/factory-contract.json').read_bytes()),"
         "Path('/src'),s,int(sys.argv[1]));print(json.dumps(r),flush=True)"
     )
     argv = _container_argv(
@@ -568,12 +660,83 @@ def _codeql_replay_argv(
     return argv
 
 
+def _osv_replay_argv(
+    base, lane, snapshot, name, run_id, candidate, contract, runtime, timeout
+):
+    return _codeql_replay_argv(
+        base,
+        lane,
+        snapshot,
+        name,
+        run_id,
+        candidate,
+        contract,
+        runtime,
+        timeout,
+        engine="osv",
+    )
+
+
 def _replay_codeql_lane(
     base, lane, snapshot, bundle, inventory, run_id, cancelled, *, timeout_seconds=None
+):
+    return _replay_native_lane(
+        base,
+        lane,
+        snapshot,
+        bundle,
+        inventory,
+        run_id,
+        cancelled,
+        timeout_seconds=timeout_seconds,
+        engine="codeql",
+        obligations=[],
+    )
+
+
+def _replay_osv_lane(
+    base,
+    lane,
+    snapshot,
+    bundle,
+    inventory,
+    run_id,
+    cancelled,
+    obligations,
+    *,
+    timeout_seconds=None,
+):
+    return _replay_native_lane(
+        base,
+        lane,
+        snapshot,
+        bundle,
+        inventory,
+        run_id,
+        cancelled,
+        timeout_seconds=timeout_seconds,
+        engine="osv",
+        obligations=obligations,
+    )
+
+
+def _replay_native_lane(
+    base,
+    lane,
+    snapshot,
+    bundle,
+    inventory,
+    run_id,
+    cancelled,
+    *,
+    timeout_seconds,
+    engine,
+    obligations,
 ):
     from .runtime_audit_process import run_bounded_command
 
     timeout = lane["timeout_seconds"] if timeout_seconds is None else timeout_seconds
+    deadline = time.monotonic() + timeout
     _docker_preflight(base, lane)
     name = f"factory-replay-{run_id}-{lane['id']}"
     request = {
@@ -582,13 +745,20 @@ def _replay_codeql_lane(
         "coverage": bundle["artifacts"][lane["coverage"]],
         "report": bundle["artifacts"][lane["report"]],
     }
+    if engine == "osv":
+        request.update(
+            challenges=bundle["artifacts"][lane["challenge_report"]],
+            obligations=obligations,
+        )
     with tempfile.TemporaryDirectory(prefix="factory-replay-") as temporary:
         scratch = Path(temporary)
         contract = scratch / "input.json"
         contract.write_bytes(canonical_bytes(request))
         runtime, runtime_sha = _codeql_replay_runtime(scratch)
         output = scratch / "replay.json"
-        argv = _codeql_replay_argv(
+        remaining = _native_replay_remaining(deadline, engine)
+        argv_function = _codeql_replay_argv if engine == "codeql" else _osv_replay_argv
+        argv = argv_function(
             base,
             lane,
             snapshot,
@@ -597,11 +767,16 @@ def _replay_codeql_lane(
             inventory["candidate_sha256"],
             contract,
             runtime,
-            timeout,
+            remaining,
         )
         try:
             facts = run_bounded_command(
-                argv, scratch, timeout, scratch, stdout_path=output, cancelled=cancelled
+                argv,
+                scratch,
+                _native_replay_remaining(deadline, engine),
+                scratch,
+                stdout_path=output,
+                cancelled=cancelled,
             )
         finally:
             cleanup = _container_cleanup(base, name)
@@ -611,7 +786,11 @@ def _replay_codeql_lane(
                     "E_CONTAINER_CLEANUP", "replay cleanup could not be verified"
                 )
             raw = output.read_bytes() if output.exists() else b""
-            replay = _codeql_replay_receipt(raw, facts, request)
+            receipt = (
+                _codeql_replay_receipt if engine == "codeql" else _osv_replay_receipt
+            )
+            replay = receipt(raw, facts, request)
+            _native_replay_remaining(deadline, engine)
         except (RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as error:
             error.replay_evidence = {
                 "image": lane["image"],
@@ -629,6 +808,15 @@ def _replay_codeql_lane(
         cleanup_confirmed=True,
     )
     return replay
+
+
+def _native_replay_remaining(deadline, engine):
+    remaining = int(deadline - time.monotonic())
+    if remaining < 1:
+        raise RuntimeAuditError(
+            f"E_{engine.upper()}_REPLAY", "replay deadline exhausted"
+        )
+    return remaining
 
 
 def _codeql_replay_receipt(raw, facts, request):
@@ -662,6 +850,94 @@ def _codeql_replay_receipt(raw, facts, request):
     if any(replay.get(key) != value for key, value in expected.items()):
         raise RuntimeAuditError("E_CODEQL_REPLAY", "native replay binding differs")
     return replay
+
+
+def _osv_replay_receipt(raw, facts, request):
+    from .runtime_audit_common import _validate_runner_facts, require_digest
+
+    _validate_runner_facts(facts, facts["timeout_seconds"])
+    if not _osv_replay_process_valid(raw, facts):
+        raise RuntimeAuditError("E_OSV_REPLAY", "native replay execution failed")
+    replay = strict_json(raw)
+    expected = _osv_replay_expected(request)
+    if not isinstance(replay, dict) or set(replay) != set(expected) | {
+        "native_execution_sha256"
+    }:
+        raise RuntimeAuditError("E_OSV_REPLAY", "native replay fields differ")
+    if any(replay.get(key) != value for key, value in expected.items()):
+        raise RuntimeAuditError("E_OSV_REPLAY", "native replay binding differs")
+    require_digest(replay["native_execution_sha256"], "native replay invocation hash")
+    return replay
+
+
+def _osv_replay_process_valid(raw, facts):
+    return (
+        facts["exit_code"] == 0
+        and not facts["timed_out"]
+        and not facts["launch_error"]
+        and not facts["output_limit_exceeded"]
+        and facts["cleanup_confirmed"] is True
+        and not facts.get("cancelled")
+        and sha256_bytes(raw) == facts["stdout_sha256"]
+        and len(raw) == facts["stdout_bytes"]
+    )
+
+
+def _osv_replay_expected(request):
+    from .deep_audit_sarif import _native_execution_report, _osv_source_accounting
+
+    lane, inventory = request["lane"], request["inventory"]
+    required = {
+        item["path"]: item["sha256"]
+        for item in inventory["files"]
+        if item["language"] in lane["languages"]
+    }
+    sources = {item["path"]: item["sha256"] for item in inventory["files"]}
+    accounting = _osv_source_accounting(request["report"], required, lane["mode"])
+    if accounting["state"] != "COMPLETE" or accounting != request["coverage"].get(
+        "source_accounting"
+    ):
+        raise RuntimeAuditError("E_OSV_REPLAY", "primary source accounting differs")
+    controls = _osv_replay_controls(request["obligations"], lane, required)
+    return {
+        "schema": "factory.osv-native-replay.v1",
+        "state": "VERIFIED",
+        "candidate_sha256": inventory["candidate_sha256"],
+        "lane_sha256": digest(lane),
+        "coverage_sha256": digest(request["coverage"]),
+        "report_sha256": digest(request["report"]),
+        "challenges_sha256": digest(request["challenges"]),
+        "obligations_sha256": digest(request["obligations"]),
+        "profile_sha256": request["coverage"]["profile_sha256"],
+        "database_sha256": lane["native_policy"]["database_sha256"],
+        "source_paths": sorted(required),
+        "controls": controls,
+        "findings_sha256": digest(
+            _native_execution_report(request["report"], lane, sources)
+        ),
+        "source_accounting_sha256": digest(accounting),
+    }
+
+
+def _osv_replay_controls(obligations, lane, required):
+    expected = [
+        {"id": item["id"], "kind": challenge["kind"]}
+        for item in obligations
+        if item["engine"] == "osv"
+        and item["family"] == lane["family"]
+        and set(item["paths"]) <= set(required)
+        for challenge in item["challenges"]
+    ]
+    rows = sorted(expected, key=lambda item: (item["id"], item["kind"]))
+    if (
+        not rows
+        or len(rows) > 192
+        or len({(r["id"], r["kind"]) for r in rows}) != len(rows)
+    ):
+        raise RuntimeAuditError(
+            "E_OSV_REPLAY", "complete bounded control identities required"
+        )
+    return rows
 
 
 def _run_lanes(

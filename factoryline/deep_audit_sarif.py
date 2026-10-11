@@ -590,6 +590,9 @@ def _challenge_semantics(
             "E_CHALLENGE_SEMANTICS", "challenge identity or detector state differs"
         )
     native = _object(report.get("native_report"))
+    if lane["engine"] == "osv" and "fixture_manifest" in bound:
+        _osv_challenge_rows(native, lane, bound["fixture_manifest"], obligation, kind)
+        return
     findings = _native_execution_report(native, lane, sources)
     _challenge_findings_valid(findings, native, lane, obligation, kind)
 
@@ -1127,6 +1130,22 @@ def _codeql_retained_evidence_gaps(coverage, lane, required):
     return ["CODEQL_NATIVE_REPLAY_REQUIRED"]
 
 
+def _osv_retained_evidence_gaps(
+    coverage, lane, required, report, challenges, obligations
+):
+    from .deep_audit_io import verify_osv_retained_evidence
+
+    if lane["engine"] != "osv":
+        return []
+    try:
+        verify_osv_retained_evidence(
+            coverage, lane, required, report, challenges, obligations
+        )
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
+        return ["OSV_NATIVE_ARTIFACTS_UNVERIFIED"]
+    return ["OSV_NATIVE_REPLAY_REQUIRED"]
+
+
 def _semgrep_rule_execution_gaps(coverage, lane, required, report):
     from .deep_audit_io import verify_semgrep_rule_execution
 
@@ -1377,9 +1396,6 @@ def _challenge_execution_v2_fields():
 def _challenge_execution_v2_valid(
     execution, challenge, bound, obligation, identity, lane, coverage, candidate_sha
 ):
-    # Signed policy metadata is not native OSV execution or coordinator replay proof.
-    if lane["engine"] == "osv":
-        return False
     if not _challenge_execution_v2_control(execution, bound):
         return False
     if not _challenge_execution_v2_artifacts(execution, lane):
@@ -1397,7 +1413,20 @@ def _challenge_execution_v2_valid(
         and _codeql_challenge_native_valid(
             execution, challenge, bound, obligation, identity, lane, coverage
         )
+        and _osv_challenge_native_valid(challenge, bound, obligation, identity, lane)
     )
+
+
+def _osv_challenge_native_valid(challenge, bound, obligation, identity, lane):
+    if lane["engine"] != "osv":
+        return True
+    from .deep_audit_io import verify_osv_retained_challenge
+
+    try:
+        verify_osv_retained_challenge(challenge, lane, bound, obligation, identity[1])
+        return True
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError):
+        return False
 
 
 def _trivy_challenge_native_valid(execution, challenge, bound, obligation, lane):
@@ -1617,6 +1646,8 @@ def _challenge_execution_config_valid_v2(
 
 
 def _challenge_baseline_config_sha256(lane, coverage=None):
+    if lane["engine"] == "osv":
+        return _osv_baseline_config_sha256(lane)
     if lane["engine"] == "codeql":
         inventory = (coverage or {}).get("codeql_query_inventory")
         if not isinstance(inventory, dict):
@@ -1640,6 +1671,16 @@ def _challenge_baseline_config_sha256(lane, coverage=None):
     except RuntimeAuditError:
         return None
     return policy["baseline_ignore_sha256"]
+
+
+def _osv_baseline_config_sha256(lane):
+    policy = lane.get("native_policy")
+    if not isinstance(policy, dict):
+        return None
+    try:
+        return require_digest(policy.get("baseline_config_sha256"), "OSV baseline")
+    except RuntimeAuditError:
+        return None
 
 
 def _challenge_execution_budgets_valid_v2(execution, lane):
@@ -1878,6 +1919,11 @@ def normalize_execution_bundle(
             expected,
             coverage,
             inventory["candidate_sha256"],
+        )
+    )
+    gaps.extend(
+        _osv_retained_evidence_gaps(
+            coverage, lane, required, report, challenges, obligations
         )
     )
     metrics = None

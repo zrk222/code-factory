@@ -98,6 +98,150 @@ def _osv_challenge_fixture(kind):
     return result, report, lane, sources, obligation
 
 
+def _osv_retained_evidence_fixture():
+    from factoryline.deep_audit_io import _codeql_native_blob, _osv_suppression_bytes
+    from factoryline.deep_audit_sarif import (
+        _osv_challenge_rows,
+        _osv_source_accounting,
+    )
+
+    rule_id = "OSV-CVE-2026-0001"
+    aliases = list(OSV_CHALLENGE_ALIASES)
+    manifest = {"requirements.txt": "a" * 64, "other.txt": "b" * 64}
+    database = {
+        "path": "/opt/factory/osv-db/osv-scanner/PyPI/all.zip",
+        "sha256": "c" * 64,
+        "bytes": 123,
+    }
+    database_raw = canonical_bytes(database)
+    suppression = _osv_suppression_bytes(aliases)
+    lane = {
+        "engine": "osv",
+        "id": "osv-retained-test",
+        "family": "dependencies",
+        "mode": "offline-pypi-snapshot",
+        "ruleset_sha256": sha256_bytes(b"\n"),
+        "rule_ids": [rule_id],
+        "mutation_config_sha256": {rule_id: sha256_bytes(suppression)},
+        "native_artifact_roles": ["advisory_db_identity", "osv_json_report"],
+        "native_policy": {
+            "database_path": database["path"],
+            "database_sha256": database["sha256"],
+            "baseline_config_sha256": sha256_bytes(b"\n"),
+            "advisory_aliases": {rule_id: aliases},
+        },
+    }
+    target = {
+        "package": "werkzeug",
+        "ecosystem": "PyPI",
+        "vulnerable_version": "0.16.1",
+        "fixed_version": "0.16.2",
+        "aliases": aliases,
+    }
+    controls = [
+        {
+            "kind": kind,
+            "fixture_path": "requirements.txt",
+            "fixture_sha256": manifest["requirements.txt"],
+            "fixture_manifest": manifest,
+            "fixture_manifest_sha256": digest(manifest),
+        }
+        for kind in ("positive", "negative", "mutation")
+    ]
+    obligation = {
+        "id": "osv-werkzeug-target",
+        "engine": "osv",
+        "family": "dependencies",
+        "detector_rule_id": rule_id,
+        "paths": sorted(manifest),
+        "osv_target": target,
+        "challenges": controls,
+    }
+    observations = []
+    primary_report = None
+    for control in controls:
+        _, report, _, _, _ = _osv_challenge_fixture(control["kind"])
+        summary = _osv_challenge_rows(
+            report, lane, manifest, obligation, control["kind"]
+        )
+        raw = canonical_bytes(report)
+        config = suppression if control["kind"] == "mutation" else b"\n"
+        db_blob = _codeql_native_blob(database_raw)
+        raw_blob = _codeql_native_blob(raw)
+        config_blob = _codeql_native_blob(config)
+        artifacts = [
+            {
+                "kind": "advisory_db_identity",
+                "sha256": sha256_bytes(database_raw),
+                "bytes": len(database_raw),
+            },
+            {
+                "kind": "osv_json_report",
+                "sha256": sha256_bytes(raw),
+                "bytes": len(raw),
+            },
+        ]
+        wrapper = {
+            "schema": "factory.deep-challenge-observation.v1",
+            "engine": "osv",
+            "fixture_sha256": manifest["requirements.txt"],
+            "detector_rule_id": rule_id,
+            "detector_enabled": control["kind"] != "mutation",
+            "native_report": report,
+        }
+        observation = {
+            "obligation_id": obligation["id"],
+            "kind": control["kind"],
+            "report": wrapper,
+            "observation_sha256": digest(wrapper),
+            "osv_control_evidence": summary,
+            "execution": {
+                "status": "VERIFIED",
+                "baseline_config_sha256": lane["native_policy"][
+                    "baseline_config_sha256"
+                ],
+                "challenge_source_sha256": digest(manifest),
+                "raw_report_sha256": sha256_bytes(raw),
+                "effective_config_sha256": sha256_bytes(config),
+                "native_artifacts": artifacts,
+            },
+            "osv_native_evidence": {
+                "schema": "factory.osv-retained-challenge.v1",
+                "source_root": "/src/control",
+                "source_manifest": manifest,
+                "source_manifest_sha256": digest(manifest),
+                "raw_report": raw_blob,
+                "effective_config": config_blob,
+                "database_identity": db_blob,
+            },
+        }
+        observations.append(observation)
+        if control["kind"] == "positive":
+            primary_report = report
+
+    coverage = {
+        "report_sha256": digest(primary_report),
+        "native_report_sha256": digest(primary_report),
+        "source_accounting": _osv_source_accounting(
+            primary_report, manifest, lane["mode"]
+        ),
+        "osv_native_evidence": {
+            "schema": "factory.osv-native-evidence.v1",
+            "source_bindings": manifest,
+            "primary": {
+                "raw_report": _codeql_native_blob(canonical_bytes(primary_report)),
+                "database_identity": _codeql_native_blob(database_raw),
+            },
+        },
+    }
+    challenges = {
+        "schema": "factory.deep-challenges.v1",
+        "observations": observations,
+        "gaps": [],
+    }
+    return coverage, lane, manifest, primary_report, challenges, [obligation]
+
+
 def test_osv_challenge_rows_anchor_positive_and_preserve_unrelated_duplicates():
     result, report, _, _, _ = _osv_challenge_fixture("positive")
     assert result["schema"] == "factory.osv-challenge-rows.v1"
@@ -346,6 +490,272 @@ def test_codeql_retained_evidence_verifier_rejection_is_unverified(monkeypatch):
     assert _rule_accounting_gaps(coverage, lane, required) == [
         "CODEQL_NATIVE_ARTIFACTS_UNVERIFIED"
     ]
+
+
+def test_osv_retained_evidence_verification_never_clears_host_replay(monkeypatch):
+    import factoryline.deep_audit_io as deep_audit_io
+    from factoryline.deep_audit_sarif import _osv_retained_evidence_gaps
+
+    coverage = {"osv_native_evidence": {"schema": "factory.osv-native-evidence.v1"}}
+    lane = {"engine": "osv"}
+    required = {"requirements.txt": "a" * 64}
+    report = {"results": []}
+    challenges = {"schema": "factory.deep-challenges.v1", "observations": []}
+    obligations = [{"id": "osv-target"}]
+    received = []
+
+    def verify(*args):
+        received.append(args)
+        return {"state": "VERIFIED"}
+
+    monkeypatch.setattr(
+        deep_audit_io, "verify_osv_retained_evidence", verify, raising=False
+    )
+
+    assert _osv_retained_evidence_gaps(
+        coverage, lane, required, report, challenges, obligations
+    ) == ["OSV_NATIVE_REPLAY_REQUIRED"]
+    assert received == [(coverage, lane, required, report, challenges, obligations)]
+
+
+def test_osv_normalization_requires_host_replay_after_valid_retained_evidence(
+    monkeypatch,
+):
+    import factoryline.deep_audit_io as deep_audit_io
+    import factoryline.deep_audit_sarif as deep_audit_sarif
+
+    coverage = {"schema": "factory.deep-coverage.v1"}
+    report = {"results": []}
+    challenges = {"schema": "factory.deep-challenges.v1", "observations": []}
+    sources = {"requirements.txt": "a" * 64}
+    lane = {
+        "id": "osv-replay-gate",
+        "engine": "osv",
+        "family": "dependencies",
+        "mode": "offline-pypi-snapshot",
+    }
+    required = dict(sources)
+    monkeypatch.setattr(
+        deep_audit_sarif,
+        "_worker_artifacts",
+        lambda *_args: (report, coverage, challenges, sources),
+    )
+    monkeypatch.setattr(deep_audit_sarif, "_required_sources", lambda *_args: required)
+    monkeypatch.setattr(deep_audit_sarif, "_native_execution_report", lambda *_args: [])
+    monkeypatch.setattr(
+        deep_audit_sarif,
+        "_osv_source_accounting",
+        lambda *_args: {"state": "COMPLETE", "measured_paths": sorted(required)},
+    )
+    monkeypatch.setattr(deep_audit_sarif, "_coverage_gaps", lambda *_args: ([], [], []))
+    monkeypatch.setattr(deep_audit_sarif, "_challenge_gaps", lambda *_args: [])
+    monkeypatch.setattr(
+        deep_audit_io,
+        "verify_osv_retained_evidence",
+        lambda *_args: {"state": "REPLAY_REQUIRED"},
+        raising=False,
+    )
+
+    result = deep_audit_sarif.normalize_execution_bundle(
+        {}, lane, {"candidate_sha256": "b" * 64}, "osv-replay-gate", []
+    )
+    assert result["state"] == "INCOMPLETE"
+    assert "OSV_NATIVE_REPLAY_REQUIRED" in result["gaps"]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeAuditError("E_OSV_ARTIFACT", "invalid"),
+        ValueError("invalid"),
+        TypeError("invalid"),
+        KeyError("invalid"),
+        AttributeError("invalid"),
+    ],
+)
+def test_osv_retained_evidence_rejection_stays_unverified(monkeypatch, error):
+    import factoryline.deep_audit_io as deep_audit_io
+    from factoryline.deep_audit_sarif import _osv_retained_evidence_gaps
+
+    def reject(*_args):
+        raise error
+
+    monkeypatch.setattr(
+        deep_audit_io, "verify_osv_retained_evidence", reject, raising=False
+    )
+
+    assert _osv_retained_evidence_gaps({}, {"engine": "osv"}, {}, {}, {}, []) == [
+        "OSV_NATIVE_ARTIFACTS_UNVERIFIED"
+    ]
+
+
+def test_osv_retained_challenge_rejection_cannot_validate_worker_challenge(
+    monkeypatch,
+):
+    import factoryline.deep_audit_io as deep_audit_io
+    from factoryline.deep_audit_sarif import _osv_challenge_native_valid
+
+    def reject(*_args):
+        raise RuntimeAuditError("E_OSV_ARTIFACT", "invalid retained evidence")
+
+    monkeypatch.setattr(
+        deep_audit_io, "verify_osv_retained_challenge", reject, raising=False
+    )
+
+    assert not _osv_challenge_native_valid(
+        {"osv_native_evidence": {}},
+        {"fixture_manifest": {"requirements.txt": "a" * 64}},
+        {"detector_rule_id": "OSV-CVE"},
+        ("osv-target", "positive"),
+        {"engine": "osv"},
+    )
+
+
+def test_osv_retained_evidence_validates_but_remains_replay_required():
+    from factoryline.deep_audit_io import verify_osv_retained_evidence
+
+    coverage, lane, required, report, challenges, obligations = (
+        _osv_retained_evidence_fixture()
+    )
+    verified = verify_osv_retained_evidence(
+        coverage, lane, required, report, challenges, obligations
+    )
+    assert verified["state"] == "REPLAY_REQUIRED"
+    assert verified["source_accounting"]["state"] == "COMPLETE"
+    assert verified["controls"] == 3
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing_primary_report",
+        "bad_database_identity",
+        "oversized_primary_report",
+        "source_binding_drift",
+        "duplicate_control",
+        "missing_control",
+    ],
+)
+def test_osv_retained_evidence_tampering_is_rejected(damage):
+    from factoryline.deep_audit_io import (
+        LIMIT,
+        _osv_native_blob,
+        verify_osv_retained_evidence,
+    )
+
+    coverage, lane, required, report, challenges, obligations = (
+        _osv_retained_evidence_fixture()
+    )
+    if damage == "missing_primary_report":
+        del coverage["osv_native_evidence"]["primary"]["raw_report"]
+    elif damage == "bad_database_identity":
+        wrong = {
+            "path": "/opt/factory/osv-db/foreign/all.zip",
+            "sha256": "c" * 64,
+            "bytes": 123,
+        }
+        coverage["osv_native_evidence"]["primary"]["database_identity"] = (
+            _osv_native_blob(canonical_bytes(wrong))
+        )
+    elif damage == "oversized_primary_report":
+        coverage["osv_native_evidence"]["primary"]["raw_report"]["bytes"] = LIMIT + 1
+    elif damage == "source_binding_drift":
+        coverage["osv_native_evidence"]["source_bindings"]["requirements.txt"] = (
+            "f" * 64
+        )
+    elif damage == "duplicate_control":
+        challenges["observations"].append(deepcopy(challenges["observations"][0]))
+    elif damage == "missing_control":
+        challenges["observations"].pop()
+
+    with pytest.raises(RuntimeAuditError, match="E_OSV_ARTIFACT"):
+        verify_osv_retained_evidence(
+            coverage, lane, required, report, challenges, obligations
+        )
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing_raw_report",
+        "missing_effective_config",
+        "missing_database_identity",
+        "bad_database_identity",
+        "oversized_raw_report",
+        "source_manifest_drift",
+        "unsigned_alias",
+        "effective_policy_drift",
+        "duplicate_artifact_role",
+    ],
+)
+def test_osv_retained_challenge_tampering_is_rejected(damage):
+    from factoryline.deep_audit_io import (
+        LIMIT,
+        _codeql_native_blob,
+        verify_osv_retained_challenge,
+    )
+
+    coverage, lane, required, _report, challenges, obligations = (
+        _osv_retained_evidence_fixture()
+    )
+    del coverage, required
+    obligation = obligations[0]
+    index = 2 if damage == "effective_policy_drift" else 0
+    bound = obligation["challenges"][index]
+    observation = challenges["observations"][index]
+    evidence = observation["osv_native_evidence"]
+    if damage == "missing_raw_report":
+        del evidence["raw_report"]
+    elif damage == "missing_effective_config":
+        del evidence["effective_config"]
+    elif damage == "missing_database_identity":
+        del evidence["database_identity"]
+    elif damage == "bad_database_identity":
+        wrong_database = {
+            "path": "/opt/factory/osv-db/foreign/all.zip",
+            "sha256": "c" * 64,
+            "bytes": 123,
+        }
+        wrong_raw = canonical_bytes(wrong_database)
+        evidence["database_identity"] = _codeql_native_blob(wrong_raw)
+        record = next(
+            item
+            for item in observation["execution"]["native_artifacts"]
+            if item["kind"] == "advisory_db_identity"
+        )
+        record.update(sha256=sha256_bytes(wrong_raw), bytes=len(wrong_raw))
+    elif damage == "oversized_raw_report":
+        evidence["raw_report"]["bytes"] = LIMIT + 1
+    elif damage == "source_manifest_drift":
+        evidence["source_manifest"]["requirements.txt"] = "f" * 64
+        evidence["source_manifest_sha256"] = digest(evidence["source_manifest"])
+    elif damage == "unsigned_alias":
+        raw_report = deepcopy(observation["report"]["native_report"])
+        raw_report["results"][0]["packages"][0]["vulnerabilities"][0]["aliases"] = [
+            "GHSA-abcd-1234-efgh",
+            "OSV-UNSIGNED",
+        ]
+        raw = canonical_bytes(raw_report)
+        evidence["raw_report"] = _codeql_native_blob(raw)
+        observation["execution"]["raw_report_sha256"] = sha256_bytes(raw)
+        observation["execution"]["native_artifacts"][-1].update(
+            sha256=sha256_bytes(raw), bytes=len(raw)
+        )
+        observation["report"]["native_report"] = raw_report
+        observation["observation_sha256"] = digest(observation["report"])
+    elif damage == "effective_policy_drift":
+        wrong = b"\n"
+        evidence["effective_config"] = _codeql_native_blob(wrong)
+        observation["execution"]["effective_config_sha256"] = sha256_bytes(wrong)
+    elif damage == "duplicate_artifact_role":
+        observation["execution"]["native_artifacts"].append(
+            deepcopy(observation["execution"]["native_artifacts"][0])
+        )
+
+    with pytest.raises(RuntimeAuditError, match="E_OSV_ARTIFACT"):
+        verify_osv_retained_challenge(
+            observation, lane, bound, obligation, observation["kind"]
+        )
 
 
 def location(line=1, path="app.py"):

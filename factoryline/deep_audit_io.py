@@ -19,6 +19,7 @@ from urllib.parse import unquote
 from .runtime_audit_common import (
     RuntimeAuditError,
     canonical_bytes,
+    exact_keys,
     require_digest,
     require_int,
     require_str,
@@ -1901,6 +1902,13 @@ def execute_native_profile(
     coverage = _native_profile_coverage(
         execution, report, inventory, lane, profile, challenges, covered_obligations
     )
+    if lane["engine"] == "osv":
+        required = {
+            item["path"]: item["sha256"]
+            for item in inventory["files"]
+            if item["language"] in lane["languages"]
+        }
+        coverage["osv_native_evidence"] = _osv_primary_evidence(execution, required)
     artifacts = {
         paths[0]: report,
         paths[1]: coverage,
@@ -2154,6 +2162,23 @@ def _osv_challenge_controls_match(results):
     )
 
 
+def _osv_challenge_retained_budget(observations):
+    total = 0
+    for observation in observations:
+        evidence = observation.get("osv_native_evidence", {})
+        for key in ("raw_report", "effective_config", "database_identity"):
+            total += require_int(
+                evidence.get(key, {}).get("bytes"),
+                "OSV retained bytes",
+                minimum=0,
+                maximum=LIMIT,
+            )
+    if total > NATIVE_COVERAGE_LIMIT:
+        raise RuntimeAuditError(
+            "E_OSV_ARTIFACT", "retained OSV artifacts exceed aggregate budget"
+        )
+
+
 def _osv_challenge_control(
     runner,
     profile,
@@ -2199,6 +2224,11 @@ def _osv_challenge_control(
         )
         observations.append(observation)
         if observation.get("execution", {}).get("status") == "VERIFIED":
+            try:
+                _osv_challenge_retained_budget(observations)
+            except RuntimeAuditError:
+                observations.pop()
+                raise
             results[challenge["kind"]] = summary
         else:
             gaps.append(
@@ -2251,6 +2281,7 @@ def _run_osv_challenge(
         challenge_root, scratch, report_path, ledger_path, config_path, challenge_sha
     )
     summary = {}
+    retained = {}
 
     def report_parser(raw):
         report = _osv_parse_challenge_report(
@@ -2261,6 +2292,22 @@ def _run_osv_challenge(
         summary.update(
             _osv_challenge_rows(report, lane, manifest, obligation, challenge["kind"])
         )
+        try:
+            retained.update(
+                {
+                    "schema": "factory.osv-retained-challenge.v1",
+                    "source_root": challenge_root.as_posix(),
+                    "source_manifest": manifest,
+                    "source_manifest_sha256": digest(manifest),
+                    "raw_report": _osv_native_blob(raw),
+                    "effective_config": _osv_native_blob(config_path.read_bytes()),
+                    "database_identity": _osv_native_blob(database_path.read_bytes()),
+                }
+            )
+        except OSError as exc:
+            raise RuntimeAuditError(
+                "E_OSV_ARTIFACT", "challenge native artifacts unavailable"
+            ) from exc
         return report
 
     def challenge_runner(argv, cwd, budget, run_scratch):
@@ -2309,6 +2356,7 @@ def _run_osv_challenge(
         mutation_ruleset_sha256=lane["mutation_config_sha256"],
     )
     observation["osv_control_evidence"] = summary
+    observation["osv_native_evidence"] = retained
     return observation, summary
 
 
@@ -2548,6 +2596,15 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
         "raw_report_bytes": (
             raw_report_bytes if profile["report_format"] != "runtime-junit" else None
         ),
+        **(
+            {
+                "osv_database_identity": canonical_bytes(
+                    _osv_database_identity(lane, started + timeout)
+                )
+            }
+            if lane["engine"] == "osv" and "native_policy" in lane
+            else {}
+        ),
     }
 
 
@@ -2591,6 +2648,549 @@ def _osv_policy_inputs(profile, policy_bytes):
         raise RuntimeAuditError(
             "E_OSV_POLICY", "baseline requires the trusted empty OSV configuration"
         )
+
+
+def _osv_native_blob(raw):
+    try:
+        return _codeql_native_blob(raw, LIMIT)
+    except RuntimeAuditError as exc:
+        raise RuntimeAuditError(
+            "E_OSV_ARTIFACT", "OSV artifact exceeds bounds"
+        ) from exc
+
+
+def _osv_native_bytes(blob):
+    try:
+        return _codeql_blob_bytes(blob, LIMIT)
+    except RuntimeAuditError as exc:
+        raise RuntimeAuditError(
+            "E_OSV_ARTIFACT", "invalid retained OSV artifact"
+        ) from exc
+
+
+def _osv_primary_evidence(execution, required):
+    raw = execution.get("raw_report_bytes")
+    database = execution.get("osv_database_identity")
+    if not isinstance(raw, bytes) or not isinstance(database, bytes):
+        raise RuntimeAuditError("E_OSV_ARTIFACT", "primary native artifacts missing")
+    return {
+        "schema": "factory.osv-native-evidence.v1",
+        "source_bindings": dict(sorted(required.items())),
+        "primary": {
+            "raw_report": _osv_native_blob(raw),
+            "database_identity": _osv_native_blob(database),
+        },
+    }
+
+
+def _osv_database_artifact(blob, lane):
+    raw = _osv_native_bytes(blob)
+    identity = strict_json(raw)
+    if (
+        not isinstance(identity, dict)
+        or set(identity) != {"path", "sha256", "bytes"}
+        or identity.get("path") != lane["native_policy"].get("database_path")
+        or identity.get("sha256") != lane["native_policy"].get("database_sha256")
+        or type(identity.get("bytes")) is not int
+        or not 0 < identity["bytes"] <= 128 * 1024 * 1024
+        or canonical_bytes(identity) != raw
+    ):
+        raise RuntimeAuditError("E_OSV_ARTIFACT", "database identity binding differs")
+    return identity
+
+
+def _osv_normalize_retained_paths(report, source_root, manifest):
+    if not isinstance(report, dict) or not isinstance(report.get("results"), list):
+        raise RuntimeAuditError("E_OSV_ARTIFACT", "native OSV results required")
+    root = _osv_source_root_prefix(source_root)
+    for item in report["results"]:
+        _osv_normalize_result_source(item, root, manifest)
+    return report
+
+
+def _osv_source_root_prefix(source_root):
+    if not isinstance(source_root, str) or not source_root.startswith("/"):
+        raise RuntimeAuditError("E_OSV_ARTIFACT", "absolute fixture root required")
+    parts = source_root.split("/")
+    if "\\" in source_root or any(part in {"", ".", ".."} for part in parts[1:]):
+        raise RuntimeAuditError("E_OSV_ARTIFACT", "absolute fixture root required")
+    return source_root + "/"
+
+
+def _osv_normalize_result_source(item, root, manifest):
+    try:
+        source = item["source"]
+        raw = require_str(source.get("path"), "source path", maximum=2048)
+        if raw.startswith("file://"):
+            raw = raw[7:]
+        path = raw[len(root) :] if raw.startswith(root) else raw
+        path = relative_path(path)
+        if path not in manifest:
+            raise ValueError("unbound source path")
+        source["path"] = path
+    except (KeyError, TypeError, AttributeError, ValueError) as exc:
+        raise RuntimeAuditError("E_OSV_ARTIFACT", "unbound OSV source path") from exc
+
+
+def verify_osv_retained_challenge(observation, lane, bound, obligation, kind):
+    from .deep_audit_sarif import _osv_challenge_rows
+
+    try:
+        evidence = observation["osv_native_evidence"]
+        manifest = _osv_challenge_manifest(evidence, bound, kind)
+        _osv_challenge_execution(observation, lane, manifest)
+        raw = _osv_challenge_report_bytes(evidence, lane, observation, obligation, kind)
+        report = _osv_normalize_retained_paths(
+            strict_json(raw), evidence["source_root"], manifest
+        )
+        if canonical_bytes(report) != canonical_bytes(
+            observation["report"]["native_report"]
+        ):
+            raise ValueError("normalized challenge report differs")
+        summary = _osv_challenge_rows(report, lane, manifest, obligation, kind)
+        if summary != observation.get("osv_control_evidence"):
+            raise ValueError("challenge semantics differ")
+        return summary
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise RuntimeAuditError(
+            "E_OSV_ARTIFACT", "retained OSV challenge invalid"
+        ) from exc
+
+
+def _osv_challenge_manifest(evidence, bound, kind):
+    exact_keys(
+        evidence,
+        {
+            "schema",
+            "source_root",
+            "source_manifest",
+            "source_manifest_sha256",
+            "raw_report",
+            "effective_config",
+            "database_identity",
+        },
+    )
+    manifest = evidence["source_manifest"]
+    if (
+        evidence["schema"] != "factory.osv-retained-challenge.v1"
+        or not isinstance(manifest, dict)
+        or evidence["source_manifest_sha256"] != digest(manifest)
+        or manifest != bound["fixture_manifest"]
+        or kind not in {"positive", "negative", "mutation"}
+    ):
+        raise ValueError("challenge evidence binding differs")
+    return manifest
+
+
+def _osv_challenge_execution(observation, lane, manifest):
+    execution = observation["execution"]
+    if (
+        execution.get("status") != "VERIFIED"
+        or execution.get("baseline_config_sha256")
+        != lane["native_policy"]["baseline_config_sha256"]
+        or execution.get("challenge_source_sha256") != digest(manifest)
+        or observation.get("observation_sha256") != digest(observation["report"])
+    ):
+        raise ValueError("challenge execution binding differs")
+
+
+def _osv_challenge_report_bytes(evidence, lane, observation, obligation, kind):
+    execution = observation["execution"]
+    raw = _osv_native_bytes(evidence["raw_report"])
+    policy = _osv_native_bytes(evidence["effective_config"])
+    _osv_database_artifact(evidence["database_identity"], lane)
+    expected = _osv_expected_policy(lane, obligation, kind)
+    if (
+        policy != expected
+        or sha256_bytes(policy) != execution["effective_config_sha256"]
+        or execution["raw_report_sha256"] != sha256_bytes(raw)
+        or not _osv_challenge_artifacts_valid(
+            execution["native_artifacts"], lane["native_artifact_roles"], raw, evidence
+        )
+    ):
+        raise ValueError("challenge artifact binding differs")
+    return raw
+
+
+def _osv_expected_policy(lane, obligation, kind):
+    if kind != "mutation":
+        return b"\n"
+    aliases = lane["native_policy"]["advisory_aliases"][obligation["detector_rule_id"]]
+    return _osv_suppression_bytes(aliases)
+
+
+def _osv_challenge_artifacts_valid(records, roles, raw, evidence):
+    if not isinstance(records, list) or len(records) != 2:
+        return False
+    by_role = {}
+    total = 0
+    for record in records:
+        try:
+            exact_keys(record, {"kind", "sha256", "bytes"})
+            role = require_str(record["kind"], "artifact kind", maximum=64)
+            require_digest(record["sha256"], "artifact hash")
+            size = require_int(
+                record["bytes"], "artifact bytes", minimum=0, maximum=8 * 1024 * 1024
+            )
+            if role in by_role:
+                return False
+            by_role[role] = record
+            total += size
+        except (RuntimeAuditError, TypeError, KeyError):
+            return False
+    database = _osv_native_bytes(evidence["database_identity"])
+    expected = {"osv_json_report": raw, "advisory_db_identity": database}
+    return (
+        set(by_role) == set(roles) == set(expected)
+        and all(
+            by_role[role]["sha256"] == sha256_bytes(data)
+            and by_role[role]["bytes"] == len(data)
+            for role, data in expected.items()
+        )
+        and total <= 8 * 1024 * 1024
+    )
+
+
+def verify_osv_retained_evidence(
+    coverage, lane, required, report, challenges, obligations
+):
+    try:
+        accounting = _osv_primary_retained(coverage, lane, required, report)
+        observed = _osv_retained_observations(challenges, obligations, lane, required)
+        return {
+            "state": "REPLAY_REQUIRED",
+            "source_accounting": accounting,
+            "controls": len(observed),
+        }
+    except (RuntimeAuditError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise RuntimeAuditError(
+            "E_OSV_ARTIFACT", "retained OSV evidence invalid"
+        ) from exc
+
+
+def _osv_primary_retained(coverage, lane, required, report):
+    from .deep_audit_sarif import _osv_source_accounting
+
+    evidence = coverage["osv_native_evidence"]
+    exact_keys(evidence, {"schema", "source_bindings", "primary"})
+    if (
+        evidence["schema"] != "factory.osv-native-evidence.v1"
+        or evidence["source_bindings"] != dict(sorted(required.items()))
+        or set(evidence["primary"])
+        != {
+            "raw_report",
+            "database_identity",
+        }
+    ):
+        raise ValueError("primary evidence binding differs")
+    raw = _osv_native_bytes(evidence["primary"]["raw_report"])
+    _osv_database_artifact(evidence["primary"]["database_identity"], lane)
+    native = strict_json(raw)
+    if digest(native) != coverage["native_report_sha256"]:
+        raise ValueError("retained primary native report hash differs")
+    _native_dependency_paths(native, "osv-json", required)
+    if canonical_bytes(native) != canonical_bytes(report):
+        raise ValueError("primary normalized report differs")
+    if digest(report) != coverage["report_sha256"]:
+        raise ValueError("primary report hash differs")
+    accounting = _osv_source_accounting(report, required, lane["mode"])
+    if accounting["state"] != "COMPLETE" or accounting != coverage["source_accounting"]:
+        raise ValueError("source accounting incomplete or differs")
+    return accounting
+
+
+def _osv_retained_observations(challenges, obligations, lane, required):
+    exact_keys(challenges, {"schema", "observations", "gaps"})
+    if challenges["schema"] != "factory.deep-challenges.v1":
+        raise ValueError("challenge schema differs")
+    expected = _osv_retained_expected(obligations, lane, required)
+    observed = _osv_retained_observed(challenges, expected, lane)
+    _osv_challenge_retained_budget(challenges["observations"])
+    if set(observed) != set(expected) or challenges.get("gaps"):
+        raise ValueError("retained controls incomplete")
+    _osv_retained_controls_match(observed, obligations)
+    return observed
+
+
+def _osv_retained_expected(obligations, lane, required):
+    expected = {
+        (item["id"], control["kind"]): (item, control)
+        for item in obligations
+        if item["engine"] == "osv"
+        and item["family"] == lane["family"]
+        and set(item["paths"]) <= set(required)
+        for control in item["challenges"]
+    }
+    if not expected or len(expected) > 192:
+        raise ValueError("complete bounded control set required")
+    return expected
+
+
+def _osv_retained_observed(challenges, expected, lane):
+    observed = {}
+    for observation in challenges.get("observations", []):
+        key = (observation.get("obligation_id"), observation.get("kind"))
+        if key not in expected or key in observed:
+            raise ValueError("unexpected or duplicate control")
+        item, control = expected[key]
+        observed[key] = verify_osv_retained_challenge(
+            observation, lane, control, item, control["kind"]
+        )
+    return observed
+
+
+def _osv_retained_controls_match(observed, obligations):
+    for item in obligations:
+        if (item["id"], "positive") not in observed:
+            continue
+        rows = {
+            kind: observed[(item["id"], kind)]
+            for kind in ("positive", "negative", "mutation")
+        }
+        if not _osv_challenge_controls_match(rows):
+            raise ValueError("OSV challenge controls do not match")
+
+
+def execute_osv_native_replay(request, source, scratch, timeout):
+    """Independently rerun the pinned offline scanner and every signed OSV control."""
+    exact_keys(
+        request,
+        {"lane", "inventory", "coverage", "report", "challenges", "obligations"},
+    )
+    lane, inventory, coverage = (
+        request["lane"],
+        request["inventory"],
+        request["coverage"],
+    )
+    started = time.monotonic()
+    timeout = require_int(timeout, "OSV replay timeout", minimum=1, maximum=3600)
+    deadline = started + timeout
+    profile = strict_json(Path("/opt/factory/adapter-profile.json").read_bytes())
+    _native_profile(profile, lane)
+    if (
+        coverage.get("profile_sha256") != digest(profile)
+        or coverage.get("image_binding_sha256")
+        != sha256_bytes(str(lane.get("image", "")).encode("utf-8"))
+        or coverage.get("tool_version") != profile["tool_version"]
+        or coverage.get("ruleset_sha256") != profile["ruleset_sha256"]
+    ):
+        raise RuntimeAuditError("E_OSV_REPLAY", "pinned profile binding differs")
+    _adapter_sources(source, inventory)
+    required = {
+        item["path"]: item["sha256"]
+        for item in inventory["files"]
+        if item["language"] in lane["languages"]
+    }
+    verify_osv_retained_evidence(
+        coverage,
+        lane,
+        required,
+        request["report"],
+        request["challenges"],
+        request["obligations"],
+    )
+    fresh, report, findings, accounting = _osv_replay_primary(
+        request, profile, source, scratch, lane, inventory, required, deadline
+    )
+    controls = _osv_replay_controls(
+        request, profile, source, lane, fresh, report, required, deadline
+    )
+    _adapter_sources(source, inventory)
+    expected_controls = _osv_replay_control_ids(request["obligations"], lane, required)
+    return {
+        "schema": "factory.osv-native-replay.v1",
+        "state": "VERIFIED",
+        "candidate_sha256": inventory["candidate_sha256"],
+        "lane_sha256": digest(lane),
+        "coverage_sha256": digest(coverage),
+        "report_sha256": digest(request["report"]),
+        "challenges_sha256": digest(request["challenges"]),
+        "obligations_sha256": digest(request["obligations"]),
+        "profile_sha256": coverage["profile_sha256"],
+        "database_sha256": lane["native_policy"]["database_sha256"],
+        "source_paths": sorted(required),
+        "controls": expected_controls,
+        "findings_sha256": digest(findings),
+        "source_accounting_sha256": digest(accounting),
+        "native_execution_sha256": digest(
+            {"primary": fresh["invocations"], "controls": controls}
+        ),
+    }
+
+
+def _osv_replay_primary(
+    request, profile, source, scratch, lane, inventory, required, deadline
+):
+    from .deep_audit_sarif import _native_execution_report, _osv_source_accounting
+
+    coverage = request["coverage"]
+    _osv_database_identity(lane, deadline)
+    replay_lane = {
+        **lane,
+        "timeout_seconds": min(
+            lane["timeout_seconds"], _osv_replay_remaining(deadline)
+        ),
+    }
+    output = Path(scratch) / "osv-primary"
+    output.mkdir(parents=True, exist_ok=False)
+    paths = _adapter_output_paths(replay_lane, output, create_parents=True)
+    replay_lane = {
+        **lane,
+        "timeout_seconds": min(
+            lane["timeout_seconds"], _osv_replay_remaining(deadline)
+        ),
+    }
+    contract = {
+        "inventory": inventory,
+        "lane": replay_lane,
+        "obligations": request["obligations"],
+    }
+    fresh = _run_native_profile(
+        profile, contract, source, output, inventory, replay_lane, paths
+    )
+    _osv_check_deadline(deadline)
+    report = _native_report(
+        fresh["raw_report"], profile, contract, output, fresh["invocations"]
+    )
+    sources = {item["path"]: item["sha256"] for item in inventory["files"]}
+    findings = _native_execution_report(report, lane, sources)
+    expected_findings = _native_execution_report(request["report"], lane, sources)
+    if sorted(findings, key=canonical_bytes) != sorted(
+        expected_findings, key=canonical_bytes
+    ):
+        raise RuntimeAuditError("E_OSV_REPLAY", "independent findings differ")
+    accounting = _osv_source_accounting(report, required, lane["mode"])
+    if accounting["state"] != "COMPLETE" or accounting != coverage["source_accounting"]:
+        raise RuntimeAuditError("E_OSV_REPLAY", "independent source accounting differs")
+    return fresh, report, findings, accounting
+
+
+def _osv_replay_controls(
+    request, profile, source, lane, fresh, report, required, deadline
+):
+    control_timeout = min(lane["timeout_seconds"], _osv_replay_remaining(deadline))
+    replay_lane = {**lane, "timeout_seconds": control_timeout}
+    replay_contract = {
+        "inventory": request["inventory"],
+        "lane": replay_lane,
+        "obligations": request["obligations"],
+    }
+    replay_execution = {**fresh, "raw_report": report}
+    fresh_challenges, covered = _native_profile_challenges(
+        profile,
+        replay_contract,
+        source,
+        replay_lane,
+        replay_execution,
+        deadline - control_timeout,
+    )
+    _osv_check_deadline(deadline)
+    controls = _osv_replay_compare_controls(
+        request["challenges"], fresh_challenges, request["obligations"], lane, required
+    )
+    expected_obligation_ids = {
+        item["id"]
+        for item in request["obligations"]
+        if item["engine"] == "osv"
+        and item["family"] == lane["family"]
+        and set(item["paths"]) <= set(required)
+    }
+    if set(covered) != expected_obligation_ids:
+        raise RuntimeAuditError("E_OSV_REPLAY", "independent controls incomplete")
+    return controls
+
+
+def _osv_replay_remaining(deadline):
+    remaining = int(deadline - time.monotonic())
+    if remaining < 1:
+        raise RuntimeAuditError("E_OSV_REPLAY", "shared replay deadline expired")
+    return remaining
+
+
+def _osv_replay_control_ids(obligations, lane, required):
+    rows = [
+        {"id": item["id"], "kind": challenge["kind"]}
+        for item in obligations
+        if item["engine"] == "osv"
+        and item["family"] == lane["family"]
+        and set(item["paths"]) <= set(required)
+        for challenge in item["challenges"]
+    ]
+    rows.sort(key=lambda item: (item["id"], item["kind"]))
+    if (
+        not rows
+        or len(rows) > 192
+        or len({(r["id"], r["kind"]) for r in rows}) != len(rows)
+    ):
+        raise RuntimeAuditError(
+            "E_OSV_REPLAY", "complete bounded control identities required"
+        )
+    return rows
+
+
+def _osv_replay_compare_controls(expected, actual, obligations, lane, required):
+    identities = _osv_replay_identities(obligations, lane, required)
+    expected_rows = _osv_replay_row_map(expected)
+    actual_rows = _osv_replay_row_map(actual)
+    if (
+        expected.get("gaps")
+        or actual.get("gaps")
+        or set(expected_rows) != identities
+        or set(actual_rows) != identities
+    ):
+        raise RuntimeAuditError("E_OSV_REPLAY", "challenge set or execution differs")
+    _osv_replay_semantics_match(expected_rows, actual_rows, identities)
+    return _osv_replay_execution_facts(actual_rows)
+
+
+def _osv_replay_identities(obligations, lane, required):
+    return {
+        (row["id"], challenge["kind"])
+        for row in obligations
+        if row["engine"] == "osv"
+        and row["family"] == lane["family"]
+        and set(row["paths"]) <= set(required)
+        for challenge in row["challenges"]
+    }
+
+
+def _osv_replay_row_map(bundle):
+    rows = bundle.get("observations", [])
+    mapped = {}
+    for row in rows:
+        key = (row.get("obligation_id"), row.get("kind"))
+        if key in mapped:
+            raise RuntimeAuditError("E_OSV_REPLAY", "duplicate challenge observation")
+        mapped[key] = row
+    return mapped
+
+
+def _osv_replay_semantics_match(expected_rows, actual_rows, identities):
+    results = {}
+    for key in sorted(identities):
+        old, new = expected_rows[key], actual_rows[key]
+        old_execution, new_execution = old["execution"], new["execution"]
+        if (
+            old_execution.get("status") != "VERIFIED"
+            or new_execution.get("status") != "VERIFIED"
+            or old.get("osv_control_evidence") != new.get("osv_control_evidence")
+        ):
+            raise RuntimeAuditError("E_OSV_REPLAY", "challenge evidence differs")
+        results.setdefault(key[0], {})[key[1]] = new["osv_control_evidence"]
+    for controls in results.values():
+        if not _osv_challenge_controls_match(controls):
+            raise RuntimeAuditError("E_OSV_REPLAY", "challenge semantics differ")
+
+
+def _osv_replay_execution_facts(actual_rows):
+    return {
+        f"{key[0]}:{key[1]}": {
+            "argv_sha256": actual_rows[key]["execution"]["argv_sha256"],
+            "raw_report_sha256": actual_rows[key]["execution"]["raw_report_sha256"],
+            "execution_sha256": actual_rows[key]["execution"]["execution_sha256"],
+        }
+        for key in sorted(actual_rows)
+    }
 
 
 def _native_profile_report(profile, output, paths):
@@ -3422,12 +4022,15 @@ def _native_profile_coverage(
         )
         complete = not errors
     elif lane["engine"] == "osv":
-        errors = ["NATIVE_CHALLENGES_REQUIRED"]
+        errors = []
         if (
             _native_source_accounting(execution, report, inventory, lane)["state"]
             != "COMPLETE"
         ):
-            errors.insert(0, "NATIVE_SOURCE_ACCOUNTING_REQUIRED")
+            errors.append("NATIVE_SOURCE_ACCOUNTING_REQUIRED")
+        if not _osv_challenges_complete(challenges, covered_obligations):
+            errors.append("NATIVE_CHALLENGES_REQUIRED")
+        complete = not errors
     coverage = {
         "profile_sha256": digest(profile),
         "image_binding_sha256": sha256_bytes(
@@ -3510,6 +4113,28 @@ def _native_profile_coverage(
             rule_count,
         )
     return coverage
+
+
+def _osv_challenges_complete(challenges, covered_obligations):
+    observations = challenges.get("observations", [])
+    identities = {item.get("obligation_id") for item in observations}
+    controls = {(item.get("obligation_id"), item.get("kind")) for item in observations}
+    return (
+        bool(identities)
+        and not challenges.get("gaps")
+        and controls
+        == {
+            (identity, kind)
+            for identity in identities
+            for kind in ("positive", "negative", "mutation")
+        }
+        and set(covered_obligations) == identities
+        and len(covered_obligations) == len(identities)
+        and all(
+            item.get("execution", {}).get("status") == "VERIFIED"
+            for item in observations
+        )
+    )
 
 
 def _codeql_query_preflight(profile, source, scratch, remaining, *, engine="codeql"):
