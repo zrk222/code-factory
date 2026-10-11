@@ -5,7 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
+import shutil
+import stat
 from functools import wraps
 from pathlib import Path
 from typing import Any, Callable
@@ -286,3 +289,815 @@ def guarded_lane_evaluator(lane: str):
         return guarded
 
     return decorate
+
+
+def _stat_identity(info: os.stat_result) -> tuple[int, int, int, int, int]:
+    """Return fields that reveal file replacement or mutation during bounded reads."""
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def _linked_entry(info: os.stat_result) -> bool:
+    """Reject symbolic links and Windows reparse-point entries such as junctions."""
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    return stat.S_ISLNK(info.st_mode) or bool(
+        getattr(info, "st_file_attributes", 0) & reparse
+    )
+
+
+def _bounded_target(path: Path, root: Path | None) -> Path:
+    """Resolve a path lexically under its optional root and reject linked ancestors."""
+    target = path
+    if root is not None:
+        base = root.resolve(strict=True)
+        target = path if path.is_absolute() else base / path
+        try:
+            relative = target.relative_to(base)
+        except ValueError as exc:
+            raise RuntimeAuditError(
+                "E_CHALLENGE_PATH", "path outside bound root"
+            ) from exc
+        if ".." in relative.parts:
+            raise RuntimeAuditError("E_CHALLENGE_PATH", "parent traversal forbidden")
+        for part in relative.parts:
+            base = base / part
+            if _linked_entry(base.lstat()):
+                raise RuntimeAuditError(
+                    "E_CHALLENGE_PATH", "symlink component forbidden"
+                )
+        target = base
+    else:
+        target = path.absolute()
+        cursor = Path(target.anchor)
+        for part in target.parts[1:-1]:
+            cursor = cursor / part
+            if _linked_entry(cursor.lstat()):
+                raise RuntimeAuditError(
+                    "E_CHALLENGE_PATH", "linked input parent forbidden"
+                )
+    return target
+
+
+def _bounded_file(path: Path, *, root: Path | None = None) -> bytes:
+    """Read one stable, regular, non-link file under the artifact size cap."""
+    target = _bounded_target(path, root)
+    try:
+        before = target.lstat()
+        if (
+            _linked_entry(before)
+            or not stat.S_ISREG(before.st_mode)
+            or before.st_size > MAX_ARTIFACT_BYTES
+        ):
+            raise RuntimeAuditError(
+                "E_CHALLENGE_INPUT", "bounded regular file required"
+            )
+        descriptor = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            opened = os.fstat(stream.fileno())
+            raw = stream.read(MAX_ARTIFACT_BYTES + 1)
+            after = os.fstat(stream.fileno())
+        current = target.lstat()
+    except OSError as exc:
+        raise RuntimeAuditError(
+            "E_CHALLENGE_INPUT", "challenge input unavailable"
+        ) from exc
+    if (
+        len(raw) > MAX_ARTIFACT_BYTES
+        or _stat_identity(before) != _stat_identity(opened)
+        or _stat_identity(opened) != _stat_identity(after)
+        or _stat_identity(after) != _stat_identity(current)
+        or after.st_size != len(raw)
+    ):
+        raise RuntimeAuditError(
+            "E_CHALLENGE_INPUT", "challenge input changed or exceeded cap"
+        )
+    return raw
+
+
+def _render_profile_argv(template: list[str], values: dict[str, str]) -> list[str]:
+    """Render a closed native profile argv template without accepting free-form shell text."""
+    names = {
+        "source",
+        "output",
+        "report",
+        "scratch",
+        "candidate_sha256",
+        "factory_ledger",
+        "config",
+    }
+    if (
+        not isinstance(template, list)
+        or not 1 <= len(template) <= 128
+        or set(values) != names
+    ):
+        raise RuntimeAuditError(
+            "E_CHALLENGE_PROFILE", "bounded closed profile template required"
+        )
+    result = []
+    for raw in template:
+        value = require_str(raw, "profile argv item", maximum=4096)
+        for name, bound in values.items():
+            value = value.replace(
+                "{" + name + "}", require_str(bound, name, maximum=4096)
+            )
+        if "{" in value or "}" in value:
+            raise RuntimeAuditError(
+                "E_CHALLENGE_PROFILE", "unresolved profile placeholder"
+            )
+        result.append(value)
+    return result
+
+
+def _validate_runner_facts(facts: Any, timeout: int) -> dict[str, Any]:
+    """Reject absent or malformed process facts instead of filling them with success defaults."""
+    required = {
+        "exit_code",
+        "timed_out",
+        "timeout_seconds",
+        "duration_ms",
+        "launch_error",
+        "output_limit_exceeded",
+        "cleanup_confirmed",
+        "stdout_sha256",
+        "stderr_sha256",
+        "stdout_bytes",
+        "stderr_bytes",
+    }
+    if not isinstance(facts, dict) or not required <= set(facts):
+        raise RuntimeAuditError(
+            "E_CHALLENGE_FACTS", "runner returned incomplete process facts"
+        )
+    for field in (
+        "timed_out",
+        "launch_error",
+        "output_limit_exceeded",
+        "cleanup_confirmed",
+    ):
+        require_bool(facts[field], field)
+    if "cancelled" in facts:
+        require_bool(facts["cancelled"], "cancelled")
+    require_int(facts["timeout_seconds"], "timeout_seconds", minimum=1, maximum=3600)
+    require_int(facts["duration_ms"], "duration_ms", minimum=0, maximum=3_600_000)
+    if facts["timeout_seconds"] != timeout:
+        raise RuntimeAuditError(
+            "E_CHALLENGE_FACTS", "runner timeout differs from requested budget"
+        )
+    if facts["exit_code"] is not None:
+        require_int(facts["exit_code"], "exit_code", minimum=0, maximum=255)
+    for field in ("stdout_sha256", "stderr_sha256"):
+        require_digest(facts[field], field)
+    for field in ("stdout_bytes", "stderr_bytes"):
+        require_int(facts[field], field, minimum=0, maximum=1024 * 1024 * 1024)
+    return facts
+
+
+def _validate_native_bindings(
+    values: dict[str, str],
+    source: Path,
+    scratch: Path,
+    report: Path,
+    ledger: Path,
+    config: Path,
+    evidence: dict[str, Any],
+) -> None:
+    """Ensure every closed argv placeholder resolves to this exact isolated run."""
+    expected = {
+        "source": source,
+        "output": scratch,
+        "report": report,
+        "scratch": scratch,
+        "factory_ledger": ledger,
+        "config": config,
+    }
+    for name, path in expected.items():
+        if (
+            Path(require_str(values.get(name), name, maximum=4096)).absolute()
+            != path.absolute()
+        ):
+            raise RuntimeAuditError(
+                "E_CHALLENGE_BINDING", f"{name} path binding differs"
+            )
+    if values.get("candidate_sha256") != evidence["challenge_source_sha256"]:
+        raise RuntimeAuditError(
+            "E_CHALLENGE_BINDING",
+            "profile candidate placeholder is not challenge-only source",
+        )
+    if (
+        report.absolute().parent != scratch.absolute()
+        or ledger.absolute().parent != scratch.absolute()
+    ):
+        raise RuntimeAuditError(
+            "E_CHALLENGE_BINDING",
+            "native outputs must be direct children of run scratch",
+        )
+
+
+def _challenge_state(facts: dict[str, Any], expected_exit: int) -> str:
+    """Classify execution only when launch, timeout, output, exit and cleanup facts agree."""
+    if (
+        facts["launch_error"]
+        or facts["timed_out"]
+        or facts.get("cancelled", False)
+        or facts["output_limit_exceeded"]
+        or not facts["cleanup_confirmed"]
+        or facts["exit_code"] is None
+    ):
+        return "INCOMPLETE"
+    return "PASS" if facts["exit_code"] == expected_exit else "FAIL"
+
+
+def _challenge_report(
+    raw: bytes,
+    parser: Callable[[bytes], dict[str, Any]],
+    *,
+    engine: str,
+    fixture_sha: str,
+    rule_id: str,
+    enabled: bool,
+) -> tuple[dict[str, Any], str]:
+    """Parse a bounded sanitized native report and wrap it in the stable signed report shape."""
+    native = parser(raw)
+    if not isinstance(native, dict):
+        raise RuntimeAuditError("E_CHALLENGE_REPORT", "native report must be an object")
+    reject_secret_material(native)
+    report = {
+        "schema": "factory.deep-challenge-observation.v1",
+        "engine": engine,
+        "fixture_sha256": fixture_sha,
+        "detector_rule_id": rule_id,
+        "detector_enabled": enabled,
+        "native_report": native,
+    }
+    if len(canonical_bytes(report)) > MAX_ARTIFACT_BYTES:
+        raise RuntimeAuditError(
+            "E_CHALLENGE_REPORT", "sanitized report exceeds artifact cap"
+        )
+    return report, sha256_bytes(raw)
+
+
+def _challenge_source(root: Path, relative: Path) -> bytes:
+    """Require the isolated scanner source tree to contain only the single signed fixture."""
+    if _linked_entry(root.lstat()) or not root.is_dir():
+        raise RuntimeAuditError(
+            "E_CHALLENGE_SOURCE", "isolated source directory required"
+        )
+    root = root.resolve(strict=True)
+    expected = relative.as_posix()
+    expected_dirs = {
+        Path(*relative.parts[:index]).as_posix()
+        for index in range(1, len(relative.parts))
+    }
+    actual_dirs, actual_files, count = set(), set(), 0
+    for current, dirs, files in os.walk(root, followlinks=False):
+        base = Path(current)
+        for name in dirs:
+            path = base / name
+            count += 1
+            if _linked_entry(path.lstat()):
+                raise RuntimeAuditError(
+                    "E_CHALLENGE_SOURCE", "linked source directory forbidden"
+                )
+            actual_dirs.add(path.relative_to(root).as_posix())
+        for name in files:
+            path = base / name
+            count += 1
+            if _linked_entry(path.lstat()) or not stat.S_ISREG(path.lstat().st_mode):
+                raise RuntimeAuditError(
+                    "E_CHALLENGE_SOURCE", "non-regular source entry forbidden"
+                )
+            actual_files.add(path.relative_to(root).as_posix())
+        if count > 256:
+            raise RuntimeAuditError(
+                "E_CHALLENGE_SOURCE", "source tree exceeds entry budget"
+            )
+    if actual_files != {expected} or actual_dirs != expected_dirs:
+        raise RuntimeAuditError(
+            "E_CHALLENGE_SOURCE", "source tree must contain only the bound fixture"
+        )
+    return _bounded_file(relative, root=root)
+
+
+def _owned_scratch(scratch: Path, parent: Path) -> tuple[Path, tuple[int, int]]:
+    """Require a dedicated direct child directory with no symlinked path components."""
+    owner = parent.resolve(strict=True)
+    target = scratch.absolute()
+    if target.parent != owner or scratch == parent:
+        raise RuntimeAuditError(
+            "E_CHALLENGE_SCRATCH", "scratch must be one child of its owned temp parent"
+        )
+    cursor = Path(target.anchor)
+    for part in target.parts[1:-1]:
+        cursor = cursor / part
+        if _linked_entry(cursor.lstat()):
+            raise RuntimeAuditError(
+                "E_CHALLENGE_SCRATCH", "linked scratch path forbidden"
+            )
+    if scratch.exists() and _linked_entry(scratch.lstat()):
+        raise RuntimeAuditError("E_CHALLENGE_SCRATCH", "linked scratch leaf forbidden")
+    if scratch.exists() and not scratch.is_dir():
+        raise RuntimeAuditError("E_CHALLENGE_SCRATCH", "scratch directory required")
+    if not scratch.exists():
+        scratch.mkdir()
+    if any(scratch.iterdir()):
+        raise RuntimeAuditError("E_CHALLENGE_SCRATCH", "scratch must start empty")
+    info = scratch.lstat()
+    return owner, (info.st_dev, info.st_ino)
+
+
+def _validate_challenge(
+    challenge: dict[str, Any],
+    source_root: Path,
+    expected_ruleset: str,
+    baseline_path: Path,
+    effective_path: Path,
+    detector_rule_id: str,
+    enabled: bool,
+    kind: str,
+    config_rule_ids: Callable[[bytes], list[str]],
+    verify_mutation: Callable[[bytes, bytes, str], bool],
+) -> dict[str, Any]:
+    """Bind signed fixture/config inputs and prove mutation is the exact authorized rule removal."""
+    exact_keys(
+        challenge,
+        {
+            "kind",
+            "fixture_path",
+            "fixture_sha256",
+            "expected_report_sha256",
+            "expected_exit_code",
+        },
+    )
+    fixture_path = Path(
+        require_str(challenge["fixture_path"], "fixture path", maximum=2048)
+    )
+    if (
+        fixture_path.is_absolute()
+        or ".." in fixture_path.parts
+        or challenge["fixture_path"] != fixture_path.as_posix()
+    ):
+        raise RuntimeAuditError(
+            "E_CHALLENGE_PATH", "fixture must be relative to isolated source"
+        )
+    fixture = _challenge_source(source_root, fixture_path)
+    fixture_sha = sha256_bytes(fixture)
+    if fixture_sha != require_digest(challenge["fixture_sha256"], "fixture_sha256"):
+        raise RuntimeAuditError(
+            "E_CHALLENGE_FIXTURE", "fixture digest differs from signed contract"
+        )
+    baseline, effective = _bounded_file(baseline_path), _bounded_file(effective_path)
+    baseline_sha, effective_sha = sha256_bytes(baseline), sha256_bytes(effective)
+    if baseline_sha != require_digest(expected_ruleset, "ruleset_sha256"):
+        raise RuntimeAuditError(
+            "E_CHALLENGE_CONFIG", "baseline differs from pinned ruleset"
+        )
+    baseline_ids = require_unique_strings(
+        config_rule_ids(baseline), "baseline rule ids", minimum=1, maximum=4096
+    )
+    effective_ids = require_unique_strings(
+        config_rule_ids(effective), "effective rule ids", minimum=0, maximum=4096
+    )
+    if kind == "mutation":
+        if (
+            enabled
+            or detector_rule_id not in baseline_ids
+            or effective_ids
+            != [item for item in baseline_ids if item != detector_rule_id]
+            or verify_mutation(baseline, effective, detector_rule_id) is not True
+        ):
+            raise RuntimeAuditError(
+                "E_CHALLENGE_MUTATION", "mutation is not the exact target rule removal"
+            )
+    elif not enabled or effective != baseline:
+        raise RuntimeAuditError(
+            "E_CHALLENGE_CONFIG", "control must use exact baseline config"
+        )
+    return {
+        "fixture": fixture,
+        "fixture_sha": fixture_sha,
+        "baseline": baseline,
+        "effective": effective,
+        "baseline_sha": baseline_sha,
+        "effective_sha": effective_sha,
+        "baseline_ids": baseline_ids,
+        "effective_ids": effective_ids,
+    }
+
+
+def _run_native_challenge(
+    argv: list[str],
+    source_root: Path,
+    timeout: int,
+    scratch: Path,
+    runner: Callable[..., dict[str, Any]],
+    report_path: Path,
+    ledger_path: Path,
+    expected_exit: int,
+    expected_report: str,
+    report_parser: Callable[[bytes], dict[str, Any]],
+    engine: str,
+    fixture_sha: str,
+    rule_id: str,
+    enabled: bool,
+) -> dict[str, Any]:
+    """Execute once, then derive report evidence only from bounded native output files."""
+    raw_facts = runner(argv, source_root, timeout, scratch)
+    try:
+        facts = _validate_runner_facts(raw_facts, timeout)
+    except RuntimeAuditError:
+        cleanup = (
+            isinstance(raw_facts, dict) and raw_facts.get("cleanup_confirmed") is True
+        )
+        return {
+            "state": "INCOMPLETE",
+            "facts": {},
+            "cleanup_confirmed": cleanup,
+            "report": None,
+            "raw_report_sha": None,
+            "ledger_sha": None,
+        }
+    state = _challenge_state(facts, expected_exit)
+    report = None
+    raw_sha = ledger_sha = None
+    if state != "INCOMPLETE":
+        try:
+            raw = _bounded_file(report_path, root=scratch)
+            ledger_sha = sha256_bytes(_bounded_file(ledger_path, root=scratch))
+            report, raw_sha = _challenge_report(
+                raw,
+                report_parser,
+                engine=engine,
+                fixture_sha=fixture_sha,
+                rule_id=rule_id,
+                enabled=enabled,
+            )
+            if sha256_bytes(canonical_bytes(report)) != expected_report:
+                state = "FAIL"
+        except (RuntimeAuditError, OSError, ValueError, TypeError):
+            state, report = "INCOMPLETE", None
+    return {
+        "state": state,
+        "facts": facts,
+        "cleanup_confirmed": facts["cleanup_confirmed"],
+        "report": report,
+        "raw_report_sha": raw_sha,
+        "ledger_sha": ledger_sha,
+    }
+
+
+def _native_execution(
+    state: str,
+    facts: dict[str, Any],
+    expected_exit: int,
+    argv_sha: str,
+    data: dict[str, Any],
+    execution_bindings: dict[str, Any],
+    ledger_sha: str,
+    scratch_clean: bool,
+    cleanup: bool | None,
+    kind: str,
+    rule_id: str,
+    timeout: int,
+) -> dict[str, Any]:
+    """Build hash-sealed execution facts while labeling identity as a supplied binding."""
+    mutation = None
+    if kind == "mutation":
+        mutation = {
+            "disabled_rule_id": rule_id,
+            "remaining_rule_inventory_sha256": sha256_bytes(
+                canonical_bytes(sorted(data["effective_ids"]))
+            ),
+        }
+    result = {
+        "schema": "factory.native-challenge-execution.v1",
+        "status": {"PASS": "VERIFIED", "FAIL": "FAILED", "INCOMPLETE": "INCOMPLETE"}[
+            state
+        ],
+        "launched": not facts["launch_error"]
+        if type(facts.get("launch_error")) is bool
+        else None,
+        "completed": facts["exit_code"] is not None and not facts["timed_out"]
+        if type(facts.get("timed_out")) is bool and "exit_code" in facts
+        else None,
+        "timed_out": facts.get("timed_out")
+        if type(facts.get("timed_out")) is bool
+        else None,
+        "cleanup_confirmed": cleanup,
+        "scratch_cleanup_verified": scratch_clean,
+        "timeout_seconds": timeout,
+        "duration_ms": facts.get("duration_ms"),
+        "exit_code": facts.get("exit_code"),
+        "argv_sha256": argv_sha,
+        "raw_report_sha256": data.get("raw_report_sha"),
+        "stdout_sha256": facts.get("stdout_sha256"),
+        "stdout_bytes": facts.get("stdout_bytes"),
+        "stderr_sha256": facts.get("stderr_sha256"),
+        "stderr_bytes": facts.get("stderr_bytes"),
+        "fixture_sha256": data["fixture_sha"],
+        "candidate_binding_sha256": execution_bindings["candidate_sha256"],
+        "challenge_source_sha256": execution_bindings["challenge_source_sha256"],
+        "profile_binding_sha256": execution_bindings["profile_sha256"],
+        "image_binding_sha256": execution_bindings["image_sha256"],
+        "tool_version": execution_bindings["tool_version"],
+        "version_probe_sha256": execution_bindings["version_probe_sha256"],
+        "baseline_config_sha256": data["baseline_sha"],
+        "effective_config_sha256": data["effective_sha"],
+        "ledger_sha256": ledger_sha,
+        "mutation": mutation,
+    }
+    result["execution_sha256"] = sha256_bytes(canonical_bytes(result))
+    return result
+
+
+def _challenge_kind(challenge: dict[str, Any]) -> str:
+    """Require one of the signed positive, negative or detector-disabled controls."""
+    kind = require_str(
+        challenge.get("kind") if isinstance(challenge, dict) else None,
+        "challenge kind",
+        maximum=16,
+    )
+    if kind not in {"positive", "negative", "mutation"}:
+        raise RuntimeAuditError("E_CHALLENGE_KIND", "unsupported challenge control")
+    return kind
+
+
+def _validate_execution_bindings(
+    challenge: dict[str, Any], data: dict[str, Any], bindings: dict[str, Any]
+) -> None:
+    """Verify copied identity bindings and a completed, hash-bound tool version probe."""
+    exact_keys(
+        bindings,
+        {
+            "candidate_sha256",
+            "challenge_source_sha256",
+            "profile_sha256",
+            "image_sha256",
+            "tool_version",
+            "version_probe_sha256",
+            "version_probe_facts",
+        },
+    )
+    for field in (
+        "candidate_sha256",
+        "challenge_source_sha256",
+        "profile_sha256",
+        "image_sha256",
+    ):
+        require_digest(bindings[field], field)
+    require_str(bindings["tool_version"], "tool_version", maximum=128)
+    version_facts = bindings["version_probe_facts"]
+    version_timeout = require_int(
+        version_facts.get("timeout_seconds")
+        if isinstance(version_facts, dict)
+        else None,
+        "version timeout",
+        minimum=1,
+        maximum=3600,
+    )
+    facts = _validate_runner_facts(version_facts, version_timeout)
+    if (
+        facts["exit_code"] != 0
+        or facts["timed_out"]
+        or facts["launch_error"]
+        or facts["output_limit_exceeded"]
+        or facts.get("cancelled", False)
+        or not facts["cleanup_confirmed"]
+    ):
+        raise RuntimeAuditError(
+            "E_TOOLCHAIN_PROBE", "version probe execution was not clean"
+        )
+    if sha256_bytes(canonical_bytes(facts)) != require_digest(
+        bindings["version_probe_sha256"], "version_probe_sha256"
+    ):
+        raise RuntimeAuditError(
+            "E_TOOLCHAIN_PROBE", "version probe facts digest differs"
+        )
+    expected_source = sha256_bytes(
+        canonical_bytes(
+            {Path(challenge["fixture_path"]).as_posix(): data["fixture_sha"]}
+        )
+    )
+    if bindings["challenge_source_sha256"] != expected_source:
+        raise RuntimeAuditError(
+            "E_CHALLENGE_BINDING", "challenge-only source manifest differs"
+        )
+
+
+def _prepare_native_challenge(
+    challenge,
+    obligation_id,
+    engine,
+    detector_rule_id,
+    detector_enabled,
+    profile_argv,
+    bindings,
+    source_root,
+    baseline_config_path,
+    effective_config_path,
+    report_path,
+    ledger_path,
+    scratch,
+    scratch_parent,
+    timeout_seconds,
+    expected_ruleset_sha256,
+    execution_bindings,
+    config_rule_ids,
+    verify_mutation,
+):
+    """Validate all signed inputs and prepare the closed native command and evidence context."""
+    kind = _challenge_kind(challenge)
+    rule_id = require_str(detector_rule_id, "detector_rule_id", maximum=256)
+    require_bool(detector_enabled, "detector_enabled")
+    timeout = require_int(timeout_seconds, "timeout_seconds", minimum=1, maximum=3600)
+    data = _validate_challenge(
+        challenge,
+        source_root,
+        expected_ruleset_sha256,
+        baseline_config_path,
+        effective_config_path,
+        rule_id,
+        detector_enabled,
+        kind,
+        config_rule_ids,
+        verify_mutation,
+    )
+    _validate_execution_bindings(challenge, data, execution_bindings)
+    scratch_parent, scratch_identity = _owned_scratch(scratch, scratch_parent)
+    _validate_native_bindings(
+        bindings,
+        source_root,
+        scratch,
+        report_path,
+        ledger_path,
+        effective_config_path,
+        execution_bindings,
+    )
+    argv = _render_profile_argv(profile_argv, bindings)
+    expected_exit = require_int(
+        challenge["expected_exit_code"], "expected_exit_code", minimum=0, maximum=255
+    )
+    expected_report = require_digest(
+        challenge["expected_report_sha256"], "expected_report_sha256"
+    )
+    return locals()
+
+
+def _finish_native_challenge(context, *, runner, report_parser) -> dict[str, Any]:
+    """Run once, recheck mounted inputs, and preserve uncertainty through cleanup."""
+    data = context["data"]
+    facts = None
+    cleanup = False
+    run = {
+        "state": "INCOMPLETE",
+        "report": None,
+        "raw_report_sha": None,
+        "ledger_sha": None,
+    }
+    try:
+        run = _run_native_challenge(
+            context["argv"],
+            context["source_root"],
+            context["timeout"],
+            context["scratch"],
+            runner,
+            context["report_path"],
+            context["ledger_path"],
+            context["expected_exit"],
+            context["expected_report"],
+            report_parser,
+            context["engine"],
+            data["fixture_sha"],
+            context["rule_id"],
+            context["detector_enabled"],
+        )
+        facts, cleanup = run["facts"], run["cleanup_confirmed"]
+    except (RuntimeAuditError, OSError, ValueError, TypeError):
+        run["state"] = "INCOMPLETE"
+    if facts is not None:
+        _recheck_challenge_inputs(context, run)
+    scratch_clean = _clean_challenge_scratch(
+        context["scratch"],
+        context["scratch_parent"],
+        context["scratch_identity"],
+        cleanup,
+    )
+    if not scratch_clean:
+        run["state"] = "INCOMPLETE"
+    data["raw_report_sha"] = run["raw_report_sha"]
+    execution = _native_execution(
+        run["state"],
+        facts or {},
+        context["expected_exit"],
+        sha256_bytes(canonical_bytes(context["argv"])),
+        data,
+        context["execution_bindings"],
+        run["ledger_sha"],
+        scratch_clean,
+        cleanup,
+        context["kind"],
+        context["rule_id"],
+        context["timeout"],
+    )
+    report = run["report"]
+    return {
+        "obligation_id": require_str(context["obligation_id"], "obligation_id"),
+        "kind": context["kind"],
+        "fixture_sha256": data["fixture_sha"],
+        "report": report,
+        "observation_sha256": sha256_bytes(canonical_bytes(report)) if report else None,
+        "exit_code": facts.get("exit_code") if facts else None,
+        "execution": execution,
+    }
+
+
+def _recheck_challenge_inputs(context, run):
+    """Mark results incomplete when the fixture tree or either config changed during execution."""
+    try:
+        same = (
+            _challenge_source(
+                context["source_root"], Path(context["challenge"]["fixture_path"])
+            )
+            == context["data"]["fixture"]
+            and _bounded_file(context["baseline_config_path"])
+            == context["data"]["baseline"]
+            and _bounded_file(context["effective_config_path"])
+            == context["data"]["effective"]
+        )
+    except (RuntimeAuditError, OSError):
+        same = False
+    if not same:
+        run["state"], run["report"] = "INCOMPLETE", None
+
+
+def _clean_challenge_scratch(
+    scratch: Path, parent: Path, identity: tuple[int, int], cleanup: bool
+) -> bool:
+    """Delete only an owned run directory after revalidating ownership and process cleanup."""
+    try:
+        owner = parent.resolve(strict=True)
+        target = scratch.absolute()
+        if target.parent != owner or _linked_entry(owner.lstat()):
+            return False
+        cursor = Path(target.anchor)
+        for part in target.parts[1:-1]:
+            cursor = cursor / part
+            if _linked_entry(cursor.lstat()):
+                return False
+        info = scratch.lstat()
+        if _linked_entry(info) or (info.st_dev, info.st_ino) != identity:
+            return False
+    except OSError:
+        return False
+    if cleanup:
+        try:
+            shutil.rmtree(scratch)
+        except OSError:
+            return False
+    return cleanup and not scratch.exists()
+
+
+def execute_native_challenge(
+    challenge: dict[str, Any],
+    *,
+    obligation_id: str,
+    engine: str,
+    detector_rule_id: str,
+    detector_enabled: bool,
+    profile_argv: list[str],
+    bindings: dict[str, str],
+    source_root: Path,
+    baseline_config_path: Path,
+    effective_config_path: Path,
+    report_path: Path,
+    ledger_path: Path,
+    scratch: Path,
+    scratch_parent: Path,
+    timeout_seconds: int,
+    expected_ruleset_sha256: str,
+    execution_bindings: dict[str, Any],
+    runner: Callable[..., dict[str, Any]],
+    report_parser: Callable[[bytes], dict[str, Any]],
+    config_rule_ids: Callable[[bytes], list[str]],
+    verify_mutation: Callable[[bytes, bytes, str], bool],
+) -> dict[str, Any]:
+    """Run one profile-bound challenge and separate its report from execution facts."""
+    context = _prepare_native_challenge(
+        challenge,
+        obligation_id,
+        engine,
+        detector_rule_id,
+        detector_enabled,
+        profile_argv,
+        bindings,
+        source_root,
+        baseline_config_path,
+        effective_config_path,
+        report_path,
+        ledger_path,
+        scratch,
+        scratch_parent,
+        timeout_seconds,
+        expected_ruleset_sha256,
+        execution_bindings,
+        config_rule_ids,
+        verify_mutation,
+    )
+    return _finish_native_challenge(context, runner=runner, report_parser=report_parser)

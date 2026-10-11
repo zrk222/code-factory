@@ -109,6 +109,329 @@ def test_agent_repair_packet_is_stable_bound_and_untrusted():
         audit_remediation_packet("invalid", finding)
 
 
+def _native_challenge_args(tmp_path, challenge_kind="positive"):
+    import hashlib
+    from factoryline.runtime_audit_common import execute_native_challenge
+
+    root = tmp_path / "source"
+    root.mkdir(parents=True)
+    (root / "fixture.txt").write_bytes(b"fixture-data")
+    config = tmp_path / "base.toml"
+    config.write_bytes(b"id=rule-a\nid=rule-b\n")
+    report = {"runs": [{"results": []}]}
+    challenge_source_sha = sha256_bytes(
+        canonical_bytes({"fixture.txt": sha256_bytes(b"fixture-data")})
+    )
+    outer = {
+        "schema": "factory.deep-challenge-observation.v1",
+        "engine": "gitleaks",
+        "fixture_sha256": sha256_bytes(b"fixture-data"),
+        "detector_rule_id": "rule-a",
+        "detector_enabled": True,
+        "native_report": report,
+    }
+    probe_facts = {
+        "exit_code": 0,
+        "timed_out": False,
+        "timeout_seconds": 5,
+        "duration_ms": 2,
+        "launch_error": False,
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": True,
+        "stdout_sha256": "1" * 64,
+        "stdout_bytes": 6,
+        "stderr_sha256": "2" * 64,
+        "stderr_bytes": 0,
+    }
+    scratch = tmp_path / "scratch"
+    report_path, ledger_path = scratch / "report.json", scratch / "ledger.json"
+    bindings = {
+        "source": str(root),
+        "output": str(scratch),
+        "report": str(report_path),
+        "scratch": str(scratch),
+        "candidate_sha256": challenge_source_sha,
+        "factory_ledger": str(ledger_path),
+        "config": str(config),
+    }
+    args = {
+        "challenge": {
+            "kind": challenge_kind,
+            "fixture_path": "fixture.txt",
+            "fixture_sha256": outer["fixture_sha256"],
+            "expected_report_sha256": sha256_bytes(canonical_bytes(outer)),
+            "expected_exit_code": 0,
+        },
+        "obligation_id": "obligation-1",
+        "engine": "gitleaks",
+        "detector_rule_id": "rule-a",
+        "detector_enabled": True,
+        "profile_argv": [
+            "scanner",
+            "--source",
+            "{source}",
+            "--report",
+            "{report}",
+            "--config",
+            "{config}",
+            "--ledger",
+            "{factory_ledger}",
+        ],
+        "bindings": bindings,
+        "source_root": root,
+        "baseline_config_path": config,
+        "effective_config_path": config,
+        "report_path": report_path,
+        "ledger_path": ledger_path,
+        "scratch": scratch,
+        "scratch_parent": tmp_path,
+        "timeout_seconds": 5,
+        "expected_ruleset_sha256": sha256_bytes(config.read_bytes()),
+        "execution_bindings": {
+            "candidate_sha256": "c" * 64,
+            "challenge_source_sha256": challenge_source_sha,
+            "profile_sha256": "e" * 64,
+            "image_sha256": "f" * 64,
+            "tool_version": "8.28.0",
+            "version_probe_sha256": sha256_bytes(canonical_bytes(probe_facts)),
+            "version_probe_facts": probe_facts,
+        },
+        "report_parser": lambda raw: json.loads(raw),
+        "config_rule_ids": lambda raw: [
+            line.removeprefix("id=") for line in raw.decode().splitlines()
+        ],
+        "verify_mutation": lambda baseline, effective, rule_id: True,
+    }
+
+    def runner(argv, cwd, timeout, run_scratch):
+        report_path.write_bytes(canonical_bytes(report))
+        ledger_path.write_bytes(b'{"ledger":"safe"}')
+        return {
+            "exit_code": 0,
+            "timed_out": False,
+            "launch_error": False,
+            "output_limit_exceeded": False,
+            "cleanup_confirmed": True,
+            "timeout_seconds": timeout,
+            "duration_ms": 12,
+            "stdout_sha256": hashlib.sha256(b"").hexdigest(),
+            "stderr_sha256": hashlib.sha256(b"").hexdigest(),
+            "stdout_bytes": 0,
+            "stderr_bytes": 0,
+        }
+
+    args["runner"] = runner
+    return execute_native_challenge, args
+
+
+def test_native_challenge_separates_report_and_execution_evidence(tmp_path):
+    execute, args = _native_challenge_args(tmp_path)
+    observation = execute(**args)
+    assert observation["execution"]["status"] == "VERIFIED"
+    assert observation["execution"]["scratch_cleanup_verified"] is True
+    assert observation["execution"]["candidate_binding_sha256"] == "c" * 64
+    assert "fixture-data" not in json.dumps(observation)
+    assert "safe" not in json.dumps(observation)
+    assert observation["report"]["schema"] == "factory.deep-challenge-observation.v1"
+    assert observation["execution"]["raw_report_sha256"] == sha256_bytes(
+        canonical_bytes({"runs": [{"results": []}]})
+    )
+    assert observation["execution"]["ledger_sha256"] is not None
+
+
+def test_native_challenge_rejects_fixture_mismatch_before_runner(tmp_path):
+    execute, args = _native_challenge_args(tmp_path)
+    called = []
+    args["runner"] = lambda *a: called.append(a)
+    args["challenge"]["fixture_sha256"] = "0" * 64
+    with pytest.raises(RuntimeAuditError, match="E_CHALLENGE_FIXTURE"):
+        execute(**args)
+    assert called == []
+
+
+def test_native_challenge_cleanup_failure_never_verifies(tmp_path):
+    execute, args = _native_challenge_args(tmp_path)
+
+    def uncertain(argv, cwd, timeout, scratch):
+        return {
+            "exit_code": 0,
+            "timed_out": False,
+            "launch_error": False,
+            "output_limit_exceeded": False,
+            "cleanup_confirmed": False,
+            "duration_ms": 12,
+        }
+
+    args["runner"] = uncertain
+    observation = execute(**args)
+    assert observation["execution"]["status"] == "INCOMPLETE"
+    assert observation["execution"]["scratch_cleanup_verified"] is False
+    assert observation["report"] is None
+
+
+def test_native_challenge_timeout_keeps_unknown_but_records_confirmed_cleanup(tmp_path):
+    execute, args = _native_challenge_args(tmp_path)
+    args["runner"] = lambda argv, cwd, timeout, scratch: {
+        "exit_code": None,
+        "timed_out": True,
+        "timeout_seconds": timeout,
+        "duration_ms": timeout * 1000,
+        "launch_error": False,
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": True,
+        "stdout_sha256": "0" * 64,
+        "stderr_sha256": "0" * 64,
+        "stdout_bytes": 0,
+        "stderr_bytes": 0,
+    }
+    observed = execute(**args)
+    assert observed["execution"]["status"] == "INCOMPLETE"
+    assert observed["execution"]["timed_out"] is True
+    assert observed["execution"]["cleanup_confirmed"] is True
+    assert observed["execution"]["scratch_cleanup_verified"] is True
+    assert observed["report"] is None
+
+
+def test_native_challenge_rejects_unverified_mutation_bytes(tmp_path):
+    execute, args = _native_challenge_args(tmp_path, "mutation")
+    changed = tmp_path / "mutated.toml"
+    changed.write_bytes(b"id=rule-b\n")
+    args["effective_config_path"] = changed
+    args["detector_enabled"] = False
+    called = []
+    args["runner"] = lambda *a: called.append(a)
+    args["verify_mutation"] = lambda baseline, effective, rule_id: False
+    with pytest.raises(RuntimeAuditError, match="E_CHALLENGE_MUTATION"):
+        execute(**args)
+    assert called == []
+
+
+def test_native_challenge_source_drift_after_command_is_incomplete(tmp_path):
+    execute, args = _native_challenge_args(tmp_path)
+    fixture = args["source_root"] / "fixture.txt"
+
+    def changes_fixture(argv, cwd, timeout, scratch):
+        fixture.write_bytes(b"Fixture-data")
+        args["report_path"].write_bytes(canonical_bytes({"runs": [{"results": []}]}))
+        args["ledger_path"].write_bytes(b"{}")
+        return {
+            "exit_code": 0,
+            "timed_out": False,
+            "timeout_seconds": timeout,
+            "duration_ms": 2,
+            "launch_error": False,
+            "output_limit_exceeded": False,
+            "cleanup_confirmed": True,
+            "stdout_sha256": "0" * 64,
+            "stderr_sha256": "0" * 64,
+            "stdout_bytes": 0,
+            "stderr_bytes": 0,
+        }
+
+    args["runner"] = changes_fixture
+    observed = execute(**args)
+    assert observed["execution"]["status"] == "INCOMPLETE"
+    assert observed["report"] is None
+
+
+def test_native_challenge_rejects_extra_source_and_unresolved_profile_argument(
+    tmp_path,
+):
+    execute, args = _native_challenge_args(tmp_path)
+    (args["source_root"] / "extra.txt").write_text("not in the signed fixture manifest")
+    called = []
+    args["runner"] = lambda *values: called.append(values)
+    with pytest.raises(RuntimeAuditError, match="E_CHALLENGE_SOURCE"):
+        execute(**args)
+    assert called == []
+
+    execute, args = _native_challenge_args(tmp_path / "second")
+    args["profile_argv"].append("{untrusted}")
+    args["runner"] = lambda *values: called.append(values)
+    with pytest.raises(RuntimeAuditError, match="E_CHALLENGE_PROFILE"):
+        execute(**args)
+    assert called == []
+
+
+def test_native_challenge_does_not_delete_replaced_scratch_directory(tmp_path):
+    execute, args = _native_challenge_args(tmp_path)
+    scratch = args["scratch"]
+    replaced = scratch.with_name("replacement")
+
+    def replace_run_directory(argv, cwd, timeout, run_scratch):
+        shutil = __import__("shutil")
+        (run_scratch / "report.json").write_bytes(
+            canonical_bytes({"runs": [{"results": []}]})
+        )
+        (run_scratch / "ledger.json").write_bytes(b"{}")
+        shutil.rmtree(run_scratch)
+        replaced.mkdir()
+        (replaced / "do-not-delete.txt").write_text("outside replacement")
+        run_scratch.mkdir()
+        return {
+            "exit_code": 0,
+            "timed_out": False,
+            "timeout_seconds": timeout,
+            "duration_ms": 3,
+            "launch_error": False,
+            "output_limit_exceeded": False,
+            "cleanup_confirmed": True,
+            "stdout_sha256": "0" * 64,
+            "stderr_sha256": "0" * 64,
+            "stdout_bytes": 0,
+            "stderr_bytes": 0,
+        }
+
+    args["runner"] = replace_run_directory
+    observed = execute(**args)
+    assert observed["execution"]["status"] == "INCOMPLETE"
+    assert observed["execution"]["scratch_cleanup_verified"] is False
+    assert (replaced / "do-not-delete.txt").read_text() == "outside replacement"
+    assert scratch.exists()
+
+
+def test_native_challenge_parent_rename_prevents_scratch_cleanup(tmp_path):
+    execute, args = _native_challenge_args(tmp_path)
+    parent = args["scratch_parent"]
+    moved = parent.with_name(parent.name + "-moved")
+
+    def rename_parent(argv, cwd, timeout, run_scratch):
+        run_scratch.joinpath("report.json").write_bytes(
+            canonical_bytes({"runs": [{"results": []}]})
+        )
+        run_scratch.joinpath("ledger.json").write_bytes(b"{}")
+        parent.rename(moved)
+        return {
+            "exit_code": 0,
+            "timed_out": False,
+            "timeout_seconds": timeout,
+            "duration_ms": 3,
+            "launch_error": False,
+            "output_limit_exceeded": False,
+            "cleanup_confirmed": True,
+            "stdout_sha256": "0" * 64,
+            "stderr_sha256": "0" * 64,
+            "stdout_bytes": 0,
+            "stderr_bytes": 0,
+        }
+
+    args["runner"] = rename_parent
+    observed = execute(**args)
+    assert observed["execution"]["status"] == "INCOMPLETE"
+    assert observed["execution"]["scratch_cleanup_verified"] is False
+    assert (moved / "scratch").exists()
+
+
+def test_native_challenge_rejects_nonempty_source_before_runner(tmp_path):
+    execute, args = _native_challenge_args(tmp_path)
+    (args["source_root"] / ".hidden-input").write_text("unbound")
+    called = []
+    args["runner"] = lambda *values: called.append(values)
+    with pytest.raises(RuntimeAuditError, match="E_CHALLENGE_SOURCE"):
+        execute(**args)
+    assert called == []
+
+
 @pytest.mark.parametrize("kind", LANES)
 def test_every_lane_sanitizes_exception_codes_and_rejects_nonfinite_results(kind):
     from factoryline.runtime_audit_common import guarded_lane_evaluator
