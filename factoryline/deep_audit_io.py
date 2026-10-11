@@ -8860,7 +8860,6 @@ def _run_zap_native_scan(request):
 
 def adapter_main(argv: list[str] | None = None) -> int:
     """Fixed in-image endpoint; Docker isolation and host validation remain mandatory."""
-    import argparse
     import sys
 
     argv = sys.argv[1:] if argv is None else argv
@@ -8868,6 +8867,11 @@ def adapter_main(argv: list[str] | None = None) -> int:
         return native_fuzz_main(argv[1:])
     if argv and argv[0] == "native-zap":
         return _native_zap_main(argv[1:])
+    return _profile_adapter_main(argv)
+
+
+def _profile_adapter_main(argv):
+    import argparse
 
     parser = argparse.ArgumentParser()
     parser.add_argument("engine")
