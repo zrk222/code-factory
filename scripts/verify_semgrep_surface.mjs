@@ -12,7 +12,7 @@ const rulesPath = 'deploy/deep-adapters/rules/semgrep-pattern-limited.yml';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const receipt = { schema: 'factory.semgrep-surface-controls.v1', state: 'BLOCKED',
   observed_at: new Date().toISOString(), image, source: {},
-  claim_boundary: 'Native controls for eight declared rules in Python, JavaScript and TypeScript; no general detection-accuracy or interprocedural-coverage claim.' };
+  claim_boundary: 'Native controls for ten declared rules in Python, JavaScript and TypeScript; no general detection-accuracy or interprocedural-coverage claim.' };
 const temp = mkdtempSync(join(tmpdir(), 'cf-semgrep-surface-'));
 function docker(args) {
   const run = spawnSync('docker', args, { encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024 });
@@ -47,7 +47,7 @@ try {
     '--entrypoint', '/usr/bin/semgrep', id, '--test', '--json', '--metrics=off', '--disable-version-check', '--disable-nosem', '/cases']);
   receipt.controls = JSON.parse(controls);
   const tested = Object.values(receipt.controls.results ?? {}).flatMap(result => Object.entries(result.checks ?? {}));
-  if (tested.length !== 8 || tested.some(([, check]) => check.passed !== true || check.errors?.length)) {
+  if (tested.length !== 10 || tested.some(([, check]) => check.passed !== true || check.errors?.length)) {
     throw new Error('Incomplete or failing rule controls');
   }
   if (receipt.controls.config_missing_tests?.length || receipt.controls.config_with_errors?.length) {
@@ -80,7 +80,7 @@ try {
   mkdirSync(dirname(resolve(root, output)), { recursive: true });
   writeFileSync(`${output}.sarif`, native);
   const findings = (sarif.runs ?? []).flatMap(run => run.results ?? []);
-  if (findings.length !== 12) throw new Error(`Native profile expected 12 control findings, observed ${findings.length}`);
+  if (findings.length !== 21) throw new Error(`Native profile expected 21 control findings, observed ${findings.length}`);
   const active = results => results.filter(result => !(result.suppressions ?? []).some(suppression => suppression.status !== 'rejected'));
   const keys = results => results.map(result => {
     const locations = result.locations ?? [];
@@ -92,7 +92,7 @@ try {
   // Semgrep retains inSource metadata even with --disable-nosem. The worker
   // consumes all results from this profile; only the enabled scan excludes it.
   const disabledKeys = keys(findings);
-  if (new Set(disabledKeys).size !== 12 || annotated.some(key => !disabledKeys.includes(key))) {
+  if (new Set(disabledKeys).size !== 21 || annotated.some(key => !disabledKeys.includes(key))) {
     throw new Error('Disabled suppression omitted or duplicated an exact control finding');
   }
   if (!argv.includes('--disable-nosem')) throw new Error('Production profile must disable inline suppression');
@@ -114,7 +114,7 @@ try {
   receipt.native_sarif_sha256 = hash(Buffer.from(native));
   receipt.native_dataflow_findings = findings.filter(result => result.codeFlows?.length).length;
   receipt.dataflow_trace_state = receipt.native_dataflow_findings > 0 ? 'OBSERVED' : 'NOT_MEASURED';
-  if (receipt.native_rule_ids.length !== 8) throw new Error('Native profile omitted rules');
+  if (receipt.native_rule_ids.length !== 10) throw new Error('Native profile omitted rules');
   receipt.state = 'PASS';
 } catch (error) {
   receipt.error = error.message;

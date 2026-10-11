@@ -125,3 +125,62 @@ rules:
       category: security
       confidence: MEDIUM
       cwe: ["CWE-79"]
+  - id: python.request-path-traversal
+    message: Request data reaches a filesystem path; resolve against an allowed root and enforce containment before access.
+    severity: ERROR
+    languages: [python]
+    mode: taint
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.form.get(...)
+      - pattern: request.args[...]
+      - pattern: request.form[...]
+      - pattern: request.GET.get(...)
+      - pattern: request.POST.get(...)
+      - pattern: request.GET[...]
+      - pattern: request.POST[...]
+    pattern-sinks:
+      - patterns:
+          - pattern: open($PATH, ...)
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: pathlib.Path($PATH).read_text(...)
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: pathlib.Path($PATH).read_bytes(...)
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: pathlib.Path($PATH).open(...)
+          - focus-metavariable: $PATH
+    metadata:
+      category: security
+      confidence: MEDIUM
+      scope: Local request args/form/GET/POST to open and pathlib read paths; containment sanitizers require review.
+      cwe: ["CWE-22"]
+  - id: javascript.request-path-traversal
+    message: Request data reaches a filesystem path; resolve against an allowed root and enforce containment before access.
+    severity: ERROR
+    languages: [javascript, typescript]
+    mode: taint
+    pattern-sources:
+      - pattern: $REQ.query
+      - pattern: $REQ.body
+      - pattern: $REQ.params
+    pattern-sinks:
+      - patterns:
+          - pattern: fs.readFile($PATH, ...)
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: fs.readFileSync($PATH, ...)
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: fs.promises.readFile($PATH, ...)
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: fs.createReadStream($PATH, ...)
+          - focus-metavariable: $PATH
+    metadata:
+      category: security
+      confidence: MEDIUM
+      scope: Local query/body/params to fs read paths; containment sanitizers require review.
+      cwe: ["CWE-22"]
