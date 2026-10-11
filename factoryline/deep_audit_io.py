@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import stat
 import uuid
@@ -2007,6 +2008,13 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
         invocations = _adapter_commands(
             commands, {**lane, "timeout_seconds": int(remaining)}, source, scratch
         )
+        query_execution = (
+            _codeql_query_execution(
+                profile, query_inventory, source, scratch, started + timeout
+            )
+            if query_inventory is not None
+            else None
+        )
         trivy_execution = None
         if lane["engine"] == "trivy" and lane.get("native_policy"):
             trivy_execution = _trivy_full_source_execution(
@@ -2055,6 +2063,7 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
         "semgrep_rule_execution": semgrep_execution,
         "trivy_rule_execution": trivy_execution,
         "codeql_query_inventory": query_inventory,
+        "codeql_query_execution": query_execution,
         "raw_report_bytes": (
             raw_report_bytes if profile["report_format"] != "runtime-junit" else None
         ),
@@ -2921,6 +2930,11 @@ def _native_profile_coverage(
             else {}
         ),
         **(
+            {"codeql_query_execution": execution["codeql_query_execution"]}
+            if execution.get("codeql_query_execution") is not None
+            else {}
+        ),
+        **(
             {"semgrep_rule_execution": execution["semgrep_rule_execution"]}
             if execution.get("semgrep_rule_execution") is not None
             else {}
@@ -3164,6 +3178,137 @@ def verify_codeql_query_selection(inventory, *, baseline=None, disabled_rule_id=
             )
     if identifiers != expected_ids:
         raise RuntimeAuditError("E_CODEQL_INVENTORY", "query ID binding differs")
+
+
+def _codeql_result_path(query_path):
+    try:
+        parts = relative_path(query_path).split("/")
+    except (RuntimeAuditError, TypeError, ValueError) as error:
+        raise RuntimeAuditError(
+            "E_CODEQL_EXECUTION", "relative query path required"
+        ) from error
+    if (
+        len(parts) < 4
+        or parts[0] != "codeql"
+        or parts[1] not in {"javascript-queries", "python-queries", "actions-queries"}
+        or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", parts[2]) is None
+        or not parts[-1].endswith(".ql")
+    ):
+        raise RuntimeAuditError("E_CODEQL_EXECUTION", "pinned query path required")
+    return "results/" + "/".join(parts[:2] + parts[3:])[:-3] + ".bqrs"
+
+
+def _codeql_result_sets(raw):
+    if not isinstance(raw, bytes) or len(raw) > 65_536:
+        raise RuntimeAuditError("E_CODEQL_EXECUTION", "bounded result info required")
+    try:
+        sets = json.loads(raw)["result-sets"]
+        if not isinstance(sets, list) or not 1 <= len(sets) <= 64:
+            raise ValueError("result sets required")
+        result, names = [], set()
+        for item in sets:
+            name = require_str(item["name"], "result name", maximum=256)
+            rows = require_int(
+                item["rows"], "result rows", minimum=0, maximum=2**63 - 1
+            )
+            columns = item["columns"]
+            if name in names or not isinstance(columns, list) or len(columns) > 256:
+                raise ValueError("unique bounded result sets required")
+            names.add(name)
+            result.append({"name": name, "rows": rows, "columns": len(columns)})
+        return result
+    except (ValueError, KeyError, TypeError, RuntimeAuditError) as error:
+        raise RuntimeAuditError(
+            "E_CODEQL_EXECUTION", "invalid native result info"
+        ) from error
+
+
+def _codeql_query_execution(profile, inventory, source, scratch, deadline):
+    verify_codeql_query_selection(inventory)
+    records, total_bytes = [], 0
+    database = scratch / "codeql-db"
+    for rule_id, query_path in sorted(inventory["query_ids"].items()):
+        result_path = _codeql_result_path(query_path)
+        artifact = local_file(database, result_path)
+        with artifact.open("rb") as stream:
+            raw = stream.read(67_108_865)
+        total_bytes += len(raw)
+        if not raw or len(raw) > 67_108_864 or total_bytes > 536_870_912:
+            raise RuntimeAuditError(
+                "E_CODEQL_EXECUTION", "result artifact budget exceeded"
+            )
+        records.append(
+            _codeql_query_result_record(
+                profile,
+                source,
+                scratch,
+                deadline,
+                rule_id,
+                query_path,
+                inventory["queries"][query_path],
+                result_path,
+                artifact,
+                raw,
+            )
+        )
+    return {
+        "schema": "factory.codeql-query-execution.v1",
+        "query_inventory_sha256": inventory["query_inventory_sha256"],
+        "suite_sha256": inventory["suite_sha256"],
+        "rules": records,
+        "claim_boundary": "Native BQRS artifacts from the fresh database, including zero-row results; not per-source query coverage or detection accuracy.",
+    }
+
+
+def _codeql_query_result_record(
+    profile,
+    source,
+    scratch,
+    deadline,
+    rule_id,
+    query_path,
+    query_sha,
+    result_path,
+    artifact,
+    raw,
+):
+    from .runtime_audit_process import run_bounded_command
+    from .runtime_audit_common import _validate_runner_facts
+
+    remaining = int(deadline - time.monotonic())
+    if remaining < 1:
+        raise RuntimeAuditError(
+            "E_ADAPTER_TIMEOUT", "query evidence deadline exhausted"
+        )
+    directory = scratch / ("query-evidence-" + sha256_bytes(rule_id.encode())[:16])
+    directory.mkdir()
+    out = directory / "stdout.json"
+    argv = [profile["version_argv"][0], "bqrs", "info", str(artifact), "--format=json"]
+    facts = run_bounded_command(argv, source, remaining, directory, stdout_path=out)
+    _validate_runner_facts(facts, remaining)
+    if _adapter_command_failed(facts, [0], deadline):
+        raise RuntimeAuditError("E_CODEQL_EXECUTION", "native result inspection failed")
+    with local_file(directory, out.name).open("rb") as stream:
+        info = stream.read(65_537)
+    if (
+        len(info) != facts["stdout_bytes"]
+        or sha256_bytes(info) != facts["stdout_sha256"]
+    ):
+        raise RuntimeAuditError("E_CODEQL_EXECUTION", "result info bytes differ")
+    with local_file(artifact.parent, artifact.name).open("rb") as stream:
+        current = stream.read(len(raw) + 1)
+    if current != raw:
+        raise RuntimeAuditError("E_CODEQL_EXECUTION", "result artifact changed")
+    return {
+        "rule_id": rule_id,
+        "query_path": query_path,
+        "query_sha256": query_sha,
+        "result_path": result_path,
+        "result_sha256": sha256_bytes(raw),
+        "result_bytes": len(raw),
+        "result_sets": _codeql_result_sets(info),
+        "invocation": {"argv": argv, "argv_sha256": digest(argv), "execution": facts},
+    }
 
 
 def _codeql_challenges(profile, contract, source, lane, execution, started):

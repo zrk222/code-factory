@@ -1,6 +1,7 @@
 from copy import deepcopy
 import json
 from pathlib import Path
+import sys
 import time
 
 import pytest
@@ -2654,7 +2655,7 @@ def test_codeql_query_metadata_rejects_changed_content_and_duplicate_ids(
 
 
 def _codeql_test_profile(suite):
-    executable = r"C:\CodeQL\codeql.exe"
+    executable = sys.executable
     return {
         "schema": "factory.native-profile.v1",
         "engine": "codeql",
@@ -2689,7 +2690,7 @@ def _codeql_test_profile(suite):
                 "accepted_exit_codes": [0],
             },
             {
-                "argv": [r"C:\Python\python.exe", "-I", "-c", "pass", "{report}"],
+                "argv": [sys.executable, "-I", "-c", "pass", "{report}"],
                 "accepted_exit_codes": [0],
             },
         ],
@@ -2721,7 +2722,7 @@ def test_codeql_steps_runner_uses_closed_steps_shared_budget_and_real_streams(
 
     commands = [
         {
-            "argv": [r"C:\CodeQL\codeql.exe", "step", str(i)],
+            "argv": [sys.executable, "step", str(i)],
             "accepted_exit_codes": [0],
         }
         for i in range(3)
@@ -2761,7 +2762,7 @@ def test_codeql_steps_runner_fails_closed_on_child_state(
 
     commands = [
         {
-            "argv": [r"C:\CodeQL\codeql.exe", "step", str(i)],
+            "argv": [sys.executable, "step", str(i)],
             "accepted_exit_codes": [0],
         }
         for i in range(3)
@@ -2801,21 +2802,21 @@ def test_codeql_step_streams_check_captured_bytes(tmp_path, mismatch):
         [],
         [
             {
-                "argv": [r"C:\CodeQL\codeql.exe", "database", "create"],
+                "argv": [sys.executable, "database", "create"],
                 "accepted_exit_codes": [0],
             }
         ],
         [
             {
-                "argv": [r"C:\CodeQL\codeql.exe", "query"],
+                "argv": [sys.executable, "query"],
                 "accepted_exit_codes": [0],
             },
             {
-                "argv": [r"C:\CodeQL\codeql.exe", "database", "analyze"],
+                "argv": [sys.executable, "database", "analyze"],
                 "accepted_exit_codes": [0],
             },
             {
-                "argv": [r"C:\Python\python.exe", "-I", "-c", "pass"],
+                "argv": [sys.executable, "-I", "-c", "pass"],
                 "accepted_exit_codes": [0],
             },
         ],
@@ -3052,3 +3053,196 @@ def test_codeql_challenge_report_normalizes_only_volatile_telemetry(
         == first["runs"][0]["results"][0]["codeFlows"]
     )
     assert "factory_native_raw_sha256" not in a["properties"]
+
+
+def test_codeql_result_path_maps_exact_versioned_inventory_path():
+    from factoryline.deep_audit_io import _codeql_result_path
+
+    assert (
+        _codeql_result_path("codeql/javascript-queries/2.4.6/Security/A.ql")
+        == "results/codeql/javascript-queries/Security/A.bqrs"
+    )
+    assert (
+        _codeql_result_path("codeql/python-queries/1.8.11/Security/A.ql")
+        == "results/codeql/python-queries/Security/A.bqrs"
+    )
+    assert (
+        _codeql_result_path("codeql/actions-queries/0.6.36/Security/A.ql")
+        == "results/codeql/actions-queries/Security/A.bqrs"
+    )
+
+
+@pytest.mark.parametrize(
+    "query_path",
+    [
+        "codeql/unknown-queries/2.4.6/Security/A.ql",
+        "codeql/javascript-queries/not-a-version/Security/A.ql",
+        "codeql/javascript-queries/2.4.6/../A.ql",
+        "../codeql/javascript-queries/2.4.6/Security/A.ql",
+        "codeql/javascript-queries/2.4.6/Security/A.qll",
+        "codeql/javascript-queries/2.4.6/Security/A.ql/extra",
+    ],
+)
+def test_codeql_result_path_rejects_unbound_or_escaping_query_paths(query_path):
+    from factoryline.deep_audit_io import _codeql_result_path
+
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_EXECUTION"):
+        _codeql_result_path(query_path)
+
+
+def test_codeql_result_sets_accepts_zero_rows_as_valid_positive_result():
+    from factoryline.deep_audit_io import _codeql_result_sets
+
+    raw = json.dumps(
+        {"result-sets": [{"name": "js/security/A", "rows": 0, "columns": ["message"]}]}
+    ).encode()
+    assert _codeql_result_sets(raw) == [
+        {"name": "js/security/A", "rows": 0, "columns": 1}
+    ]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"not-json",
+        b"\xff",
+        pytest.param(b" " * 65_537, id="oversized"),
+        b"{}",
+        json.dumps({"result-sets": []}).encode(),
+        json.dumps(
+            {
+                "result-sets": [
+                    {"name": "same", "rows": 0, "columns": []},
+                    {"name": "same", "rows": 1, "columns": ["x"]},
+                ]
+            }
+        ).encode(),
+        json.dumps({"result-sets": [{"name": "", "rows": 0, "columns": []}]}).encode(),
+        json.dumps(
+            {"result-sets": [{"name": "x", "rows": True, "columns": []}]}
+        ).encode(),
+        json.dumps(
+            {"result-sets": [{"name": "x", "rows": -1, "columns": []}]}
+        ).encode(),
+        json.dumps(
+            {"result-sets": [{"name": "x", "rows": 2**63, "columns": []}]}
+        ).encode(),
+        json.dumps(
+            {"result-sets": [{"name": "x", "rows": 0, "columns": "c"}]}
+        ).encode(),
+        json.dumps(
+            {"result-sets": [{"name": "x", "rows": 0, "columns": list(range(257))}]}
+        ).encode(),
+    ],
+)
+def test_codeql_result_sets_rejects_malformed_or_ambiguous_metadata(raw):
+    from factoryline.deep_audit_io import _codeql_result_sets
+
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_EXECUTION"):
+        _codeql_result_sets(raw)
+
+
+def _codeql_result_record_args(tmp_path):
+    artifact = (
+        tmp_path
+        / "database"
+        / "results"
+        / "codeql"
+        / "javascript-queries"
+        / "Security"
+        / "A.bqrs"
+    )
+    artifact.parent.mkdir(parents=True)
+    raw = b"native BQRS bytes"
+    artifact.write_bytes(raw)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    source = tmp_path / "source"
+    source.mkdir()
+    return {
+        "profile": _codeql_test_profile(tmp_path / "security.qls"),
+        "source": source,
+        "scratch": scratch,
+        "deadline": time.monotonic() + 30,
+        "rule_id": "js/security/A",
+        "query_path": "codeql/javascript-queries/2.4.6/Security/A.ql",
+        "query_sha": "a" * 64,
+        "result_path": "results/codeql/javascript-queries/Security/A.bqrs",
+        "artifact": artifact,
+        "raw": raw,
+    }
+
+
+def test_codeql_query_result_record_accepts_zero_row_bqrs_info(tmp_path, monkeypatch):
+    from factoryline.deep_audit_io import _codeql_query_result_record
+
+    args = _codeql_result_record_args(tmp_path)
+    stdout = json.dumps(
+        {"result-sets": [{"name": "js/security/A", "rows": 0, "columns": []}]}
+    ).encode()
+
+    def run(argv, cwd, timeout, scratch, *, stdout_path):
+        assert argv == [
+            sys.executable,
+            "bqrs",
+            "info",
+            str(args["artifact"]),
+            "--format=json",
+        ]
+        stdout_path.write_bytes(stdout)
+        return _codeql_process_facts(timeout, stdout, b"")
+
+    monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
+    record = _codeql_query_result_record(**args)
+    assert record["result_sha256"] == sha256_bytes(args["raw"])
+    assert record["result_bytes"] == len(args["raw"])
+    assert record["result_sets"] == [{"name": "js/security/A", "rows": 0, "columns": 0}]
+    assert record["invocation"]["execution"]["stdout_sha256"] == sha256_bytes(stdout)
+
+
+@pytest.mark.parametrize(
+    "failure", ["changed_bqrs", "stdout_hash", "timeout", "cleanup"]
+)
+def test_codeql_query_result_record_rejects_untrusted_native_inspection(
+    tmp_path, monkeypatch, failure
+):
+    from factoryline.deep_audit_io import _codeql_query_result_record
+
+    args = _codeql_result_record_args(tmp_path)
+    stdout = json.dumps(
+        {"result-sets": [{"name": "js/security/A", "rows": 0, "columns": []}]}
+    ).encode()
+
+    def run(argv, cwd, timeout, scratch, *, stdout_path):
+        stdout_path.write_bytes(stdout)
+        updates = {}
+        if failure == "changed_bqrs":
+            args["artifact"].write_bytes(b"changed BQRS")
+        elif failure == "stdout_hash":
+            updates["stdout_sha256"] = "0" * 64
+        elif failure == "timeout":
+            updates["timed_out"] = True
+        else:
+            updates["cleanup_confirmed"] = False
+        return _codeql_process_facts(timeout, stdout, b"", **updates)
+
+    monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_EXECUTION"):
+        _codeql_query_result_record(**args)
+
+
+def test_codeql_query_result_record_expired_deadline_skips_native_inspection(
+    tmp_path, monkeypatch
+):
+    from factoryline.deep_audit_io import _codeql_query_result_record
+
+    args = _codeql_result_record_args(tmp_path)
+    args["deadline"] = time.monotonic() - 1
+    calls = []
+    monkeypatch.setattr(
+        "factoryline.runtime_audit_process.run_bounded_command",
+        lambda *a, **kw: calls.append((a, kw)),
+    )
+    with pytest.raises(RuntimeAuditError, match="E_ADAPTER_TIMEOUT"):
+        _codeql_query_result_record(**args)
+    assert calls == []
