@@ -210,6 +210,9 @@ This command verifies an operator-trusted runner's attestation offline; it
 neither executes the submitted project nor independently proves that the signer
 ran the mutation. Its scope is the recorded mutation and test. It is not a
 population accuracy measurement, proof of all behavior, or release approval.
-Runtime evidence is opt-in on `audit security`; the aggregate `scan` command
-retains its existing static behavior. Store generated observations and reports
+Runtime evidence is opt-in on `audit security`, `scan` and `scan --deep`, using
+the same four oracle options and the same verifier. Unified scans preserve the
+reconciliation trace in `static_security` and, with `--deep`, in the Python AST
+lane. Partial options and evidence without Python sources are rejected; other
+unmeasured lanes still keep the overall verdict incomplete. Store generated observations and reports
 outside tracked source, for example as private CI artifacts.

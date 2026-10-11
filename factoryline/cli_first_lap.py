@@ -32,6 +32,13 @@ def add_parser(sub: Any) -> None:
         help="workspace-relative signed native worker configuration; requires --deep",
     )
     scan.add_argument("--json", action="store_true")
+    for flag, help_text in (
+        ("oracle-evidence", "workspace-relative DSSE per-test mutation attestation"),
+        ("oracle-trust-root", "workspace-relative oracle-verifier public trust root"),
+        ("oracle-trust-sha256", "operator-pinned trust root SHA-256"),
+        ("oracle-environment-sha256", "expected runner/environment contract SHA-256"),
+    ):
+        scan.add_argument("--" + flag, help=help_text)
     first_lap = sub.add_parser(
         "first-lap", help="prepare and verify the human-observed first activation lap"
     )
@@ -224,7 +231,19 @@ def _run_scan(args: Any) -> int:
 
     try:
         result = run_repo_scan(
-            Path(args.root).resolve(), deep=args.deep, worker_config=args.worker_config
+            Path(args.root).resolve(),
+            deep=args.deep,
+            worker_config=args.worker_config,
+            oracle_options={
+                name: getattr(args, name, None)
+                for name in (
+                    "oracle_evidence",
+                    "oracle_trust_root",
+                    "oracle_trust_sha256",
+                    "oracle_environment_sha256",
+                )
+                if getattr(args, name, None) is not None
+            },
         )
         code = 2 if result["state"] == "BLOCKED" else 0
     except (OSError, UnicodeError, ValueError) as exc:

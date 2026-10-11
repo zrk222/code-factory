@@ -154,6 +154,81 @@ def test_repo_scan_is_zero_config_and_fails_closed_without_project_contract(
     assert any("tenant-read-contract" in action for action in result["next_actions"])
 
 
+@pytest.mark.parametrize("deep", [False, True])
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"oracle_evidence": "evidence.json"},
+        {"unexpected": "value"},
+        {
+            "oracle_evidence": "x",
+            "oracle_trust_root": "x",
+            "oracle_trust_sha256": "x",
+            "oracle_environment_sha256": "",
+        },
+    ],
+)
+def test_unified_scan_rejects_partial_oracle_options(tmp_path, deep, options):
+    (tmp_path / "app.py").write_text("value = 1\n")
+    with pytest.raises(ValueError, match="all four"):
+        run_repo_scan(tmp_path, deep=deep, oracle_options=options)
+
+
+def test_unified_scan_rejects_unused_evidence_without_python(tmp_path):
+    from factoryline.adoption import _validated_oracle_options
+
+    options = {
+        name: "value"
+        for name in (
+            "oracle_evidence",
+            "oracle_trust_root",
+            "oracle_trust_sha256",
+            "oracle_environment_sha256",
+        )
+    }
+    assert _validated_oracle_options(None, 0) == {}
+    assert _validated_oracle_options(options, 1) == options
+    with pytest.raises(ValueError, match="Python sources"):
+        run_repo_scan(tmp_path, oracle_options=options)
+    with pytest.raises(ValueError, match="Python sources"):
+        run_deep_repository_audit(
+            tmp_path, _workspace_inventory(tmp_path), oracle_options=options
+        )
+
+
+@pytest.mark.parametrize("deep", [False, True])
+def test_unified_scan_cli_partial_evidence_is_invalid(tmp_path, capsys, deep):
+    (tmp_path / "app.py").write_text("value = 1\n")
+    command = [
+        "scan",
+        "--root",
+        str(tmp_path),
+        "--json",
+        "--oracle-evidence",
+        "missing.json",
+    ]
+    if deep:
+        command.append("--deep")
+    assert main(command) == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["state"] == "INVALID"
+    assert "all four" in result["message"]
+
+
+@pytest.mark.parametrize("deep", [False, True])
+def test_unified_scan_invalid_signed_evidence_cannot_clear_findings(tmp_path, deep):
+    (tmp_path / "test_app.py").write_text("def test_behavior():\n    validate(1)\n")
+    options = {
+        "oracle_evidence": "missing.json",
+        "oracle_trust_root": "missing-trust.json",
+        "oracle_trust_sha256": "0" * 64,
+        "oracle_environment_sha256": "1" * 64,
+    }
+    result = run_repo_scan(tmp_path, deep=deep, oracle_options=options)
+    assert result["state"] == "BLOCKED"
+    assert result["static_security"]["state"] == "INVALID"
+
+
 def test_repo_scan_cli_reports_a_real_workspace_assessment(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
