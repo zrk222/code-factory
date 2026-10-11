@@ -450,6 +450,75 @@ def test_signed_semgrep_requires_rederived_native_rule_execution(missing):
     ]
 
 
+@pytest.mark.parametrize("requests", [1, 1000000])
+@pytest.mark.parametrize("findings", [[], [{"rule_id": "40012"}]])
+def test_zap_runtime_completion_cannot_substitute_for_native_rule_execution(
+    requests, findings
+):
+    from factoryline.deep_audit_sarif import _rule_accounting_gaps
+
+    lane = {"engine": "zap", "family": "runtime", "rule_ids": ["40012"]}
+    sources = {"app.py": "a" * 64}
+    report = {
+        "completed": True,
+        "errors": [],
+        "metrics": {"requests": requests},
+        "findings": findings,
+        "harness": {"path": "app.py", "sha256": sources["app.py"]},
+    }
+    coverage = {
+        "complete": True,
+        "rule_ids": lane["rule_ids"],
+        "rule_accounting": [{"rule_id": "40012", "disposition": "executed"}],
+    }
+    assert _rule_accounting_gaps(coverage, lane, sources, report) == [
+        "ZAP_NATIVE_RULE_EXECUTION_REQUIRED"
+    ]
+    assert _rule_accounting_gaps({}, lane, sources) == [
+        "ZAP_NATIVE_RULE_EXECUTION_REQUIRED"
+    ]
+
+
+def test_zap_normalization_preserves_native_rule_gap_despite_other_complete_checks(
+    monkeypatch,
+):
+    import factoryline.deep_audit_sarif as module
+
+    lane = {
+        "id": "zap",
+        "engine": "zap",
+        "family": "runtime",
+        "rule_ids": ["40012"],
+        "tool_version": "2.16.1",
+        "ruleset_sha256": "c" * 64,
+    }
+    sources = {"app.py": "a" * 64}
+    report = {"completed": True, "metrics": {"requests": 1}, "findings": []}
+    coverage = {
+        "tool_version": lane["tool_version"],
+        "ruleset_sha256": lane["ruleset_sha256"],
+        "invocation_sha256": "d" * 64,
+        "obligations": ["zap-rule"],
+    }
+    obligations = [
+        {"id": "zap-rule", "family": "runtime", "engine": "zap", "paths": ["app.py"]}
+    ]
+    monkeypatch.setattr(
+        module, "_worker_artifacts", lambda *_: (report, coverage, {}, sources)
+    )
+    monkeypatch.setattr(module, "_required_sources", lambda *_: sources)
+    monkeypatch.setattr(module, "_native_execution_report", lambda *_: [])
+    monkeypatch.setattr(module, "_native_accounting", lambda *_: None)
+    monkeypatch.setattr(module, "_coverage_source_gaps", lambda *_: [])
+    monkeypatch.setattr(module, "_challenge_gaps", lambda *_: [])
+    result = module.normalize_execution_bundle(
+        {}, lane, {"candidate_sha256": "b" * 64}, "zap-test", obligations
+    )
+    assert result["state"] == "INCOMPLETE"
+    assert result["gaps"] == ["ZAP_NATIVE_RULE_EXECUTION_REQUIRED"]
+    assert result["findings"] == [] and result["metrics"] == {"requests": 1}
+
+
 def test_codeql_retained_evidence_is_verified_and_stays_replay_required(monkeypatch):
     import factoryline.deep_audit_io as deep_audit_io
     from factoryline.deep_audit_sarif import _rule_accounting_gaps
