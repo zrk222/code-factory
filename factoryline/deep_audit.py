@@ -683,6 +683,7 @@ def apply_fuzz_control_replay(result, replay, lane, bundle, inventory, obligatio
 
 
 def has_fuzz_controls(lane, inventory, obligations):
+    """Identify signed fuzz controls applicable to the current source inventory."""
     sources = {item["path"] for item in inventory["files"]}
     return lane.get("engine") == "atheris" and any(
         item.get("engine") == "atheris"
