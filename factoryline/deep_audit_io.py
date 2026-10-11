@@ -1977,11 +1977,13 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
         probe = scratch / "probe"
         probe.mkdir()
         version = _native_version(profile, source, probe, timeout)
-        query_inventory = None
-        if lane["engine"] == "codeql":
-            query_inventory = _codeql_query_preflight(
-                profile, source, scratch, int(timeout - (time.monotonic() - started))
-            )
+        query_inventory = _codeql_query_preflight(
+            profile,
+            source,
+            scratch,
+            int(timeout - (time.monotonic() - started)),
+            engine=lane["engine"],
+        )
         remaining = timeout - (time.monotonic() - started)
         if remaining < 1:
             raise RuntimeAuditError(
@@ -2957,7 +2959,9 @@ def _native_profile_coverage(
     return coverage
 
 
-def _codeql_query_preflight(profile, source, scratch, remaining):
+def _codeql_query_preflight(profile, source, scratch, remaining, *, engine="codeql"):
+    if engine != "codeql":
+        return None
     if remaining < 1:
         raise RuntimeAuditError(
             "E_ADAPTER_TIMEOUT", "query resolution deadline exhausted"

@@ -2545,3 +2545,15 @@ def test_codeql_preflight_rejects_exhausted_deadline_before_launch(
     )
     with pytest.raises(RuntimeAuditError, match="E_ADAPTER_TIMEOUT"):
         _codeql_query_preflight({}, tmp_path, tmp_path, 0)
+
+
+def test_codeql_preflight_leaves_other_engines_unchanged(tmp_path, monkeypatch):
+    from factoryline.deep_audit_io import _codeql_query_preflight
+
+    def unexpected(*args):
+        pytest.fail("non-CodeQL engine must not resolve queries")
+
+    monkeypatch.setattr(
+        "factoryline.deep_audit_io.resolve_codeql_query_inventory", unexpected
+    )
+    assert _codeql_query_preflight({}, tmp_path, tmp_path, 0, engine="runtime") is None
