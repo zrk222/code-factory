@@ -455,12 +455,14 @@ class _EvidenceVisitor(ast.NodeVisitor):
         target.add(value)
 
     def generic_visit(self, node: ast.AST) -> None:
+        """Collect bounded identifiers while traversing syntax without execution."""
         self._count_node()
         if isinstance(node, ast.Name):
             self._add_bounded(self.identifiers, node.id)
         super().generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        """Record function definition ranges and visit their bounded syntax tree."""
         self.definitions.append(
             {
                 "name": node.name,
@@ -474,6 +476,7 @@ class _EvidenceVisitor(ast.NodeVisitor):
     visit_AsyncFunctionDef = visit_FunctionDef
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        """Record class definition ranges and visit their bounded syntax tree."""
         self.definitions.append(
             {
                 "name": node.name,
@@ -485,17 +488,20 @@ class _EvidenceVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Import(self, node: ast.Import) -> None:
+        """Collect bounded direct module imports from this syntax node."""
         self._count_node()
         for item in node.names:
             self._add_bounded(self.imports, item.name)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        """Collect bounded relative or absolute imports from this syntax node."""
         self._count_node()
         self._add_bounded(self.imports, "." * node.level + (node.module or ""))
         for item in node.names:
             self._add_bounded(self.imports, item.name)
 
     def visit_Call(self, node: ast.Call) -> None:
+        """Collect bounded syntactic call names without resolving their targets."""
         name = (
             node.func.id
             if isinstance(node.func, ast.Name)
@@ -1017,6 +1023,7 @@ def build_context_packet(
 def build_selected_context_packet(
     root: Path, manifest: Any, out: Path | None = None
 ) -> dict[str, Any]:
+    """Rank declared evidence candidates and build from their stable source snapshots."""
     request, selection, candidates = _select_context_request(root, manifest)
     return build_context_packet(
         root,
@@ -1296,6 +1303,7 @@ def _read_experiment_history(path: Path) -> list[dict[str, Any]]:
 
 
 def record_context_experiment(root: Path, observation: Any) -> dict[str, Any]:
+    """Validate and store operator-supplied paired observations as unverified evidence."""
     result = evaluate_context_experiment(observation)
     directory = _cache_dir(Path(root).resolve())
     path = directory / "experiment.json"
@@ -1843,6 +1851,16 @@ def context_efficiency_status(root: Path) -> dict[str, Any]:
     """Fast bounded status projection over cached packets (no source reread)."""
     workspace = Path(root).resolve()
     directory = _cache_dir(workspace)
+    packet_stats = _collect_packet_status(workspace, directory)
+    experiment, experiment_blocked = _load_latest_experiment(directory)
+    invalid = packet_stats["invalid_count"] + int(experiment_blocked)
+    state = "BLOCKED" if invalid else "READY" if packet_stats["rows"] else "MISSING"
+    return _status_projection(
+        packet_stats, experiment, experiment_blocked, state, invalid
+    )
+
+
+def _collect_packet_status(workspace: Path, directory: Path) -> dict[str, Any]:
     files = (
         sorted(
             path for path in directory.glob("*.json") if path.name != "experiment.json"
@@ -1858,7 +1876,6 @@ def context_efficiency_status(root: Path) -> dict[str, Any]:
     missing_selection_evidence = 0
     structural_file_count = 0
     evidence_roles: set[str] = set()
-    experiment_blocked = False
     for path in files:
         try:
             packet = json.loads(_read_bounded(path).decode("utf-8"))
@@ -1901,24 +1918,44 @@ def context_efficiency_status(root: Path) -> dict[str, Any]:
             )
         except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError):
             invalid += 1
-    state = "BLOCKED" if invalid else "READY" if rows else "MISSING"
+    return {
+        "rows": rows,
+        "invalid_count": invalid,
+        "cache_hits": cache_hits,
+        "estimated_tokens": estimated_tokens,
+        "selection_count": selection_count,
+        "missing_selection_evidence": missing_selection_evidence,
+        "structural_file_count": structural_file_count,
+        "evidence_role_count": len(evidence_roles),
+    }
+
+
+def _load_latest_experiment(directory: Path) -> tuple[dict[str, Any] | None, bool]:
     try:
         experiment_history = _read_experiment_history(directory / "experiment.json")
-        experiment = experiment_history[-1] if experiment_history else None
+        return (experiment_history[-1] if experiment_history else None), False
     except ContextEfficiencyError:
-        experiment = None
-        experiment_blocked = True
-        invalid += 1
-        state = "BLOCKED"
+        return None, True
+
+
+def _status_projection(
+    stats: dict[str, Any],
+    experiment: dict[str, Any] | None,
+    experiment_blocked: bool,
+    state: str,
+    invalid: int,
+) -> dict[str, Any]:
+    selection_count = stats["selection_count"]
+    missing_roles = stats["missing_selection_evidence"]
     return {
         "schema": STATUS_SCHEMA,
         "state": state,
         "marker": "CONTEXT_EFFICIENCY_READ_ONLY",
-        "packet_count": len(rows),
+        "packet_count": len(stats["rows"]),
         "invalid_count": invalid,
-        "cache_hits": cache_hits,
-        "estimated_tokens": estimated_tokens,
-        "packets": rows,
+        "cache_hits": stats["cache_hits"],
+        "estimated_tokens": stats["estimated_tokens"],
+        "packets": stats["rows"],
         "source_selection_status": "CACHED_METADATA_UNVERIFIED"
         if selection_count
         else "MISSING",
@@ -1926,14 +1963,12 @@ def context_efficiency_status(root: Path) -> dict[str, Any]:
         "structural_evidence_status": "CACHED_METADATA_ONLY"
         if selection_count
         else "MISSING",
-        "deep_evidence_file_count": structural_file_count,
-        "evidence_role_count": len(evidence_roles),
-        "missing_evidence_role_count": missing_selection_evidence,
+        "deep_evidence_file_count": stats["structural_file_count"],
+        "evidence_role_count": stats["evidence_role_count"],
+        "missing_evidence_role_count": missing_roles,
         "reusable_packet_count": None,
         "stale_packet_count": None,
-        "missing_evidence_count": invalid
-        + missing_selection_evidence
-        + int(experiment is None),
+        "missing_evidence_count": invalid + missing_roles + int(experiment is None),
         "experiment_status": "BLOCKED"
         if experiment_blocked
         else experiment.get("state", "MISSING_EVIDENCE")

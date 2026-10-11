@@ -1033,3 +1033,19 @@ def test_junie_guidance_exposes_approved_repair_without_proof_agent_authority():
     proof_agent = _junie_proof_agent_bytes().decode("utf-8")
     assert "never edit files, execute shell commands" in proof_agent
     assert "Never approve, merge, publish, deploy" in proof_agent
+
+
+def test_all_agents_and_junie_receive_source_bound_context_evidence(tmp_path):
+    """Context handoffs retain required evidence, freshness and read-only authority."""
+    from factoryline.junie_taxonomy import _guidance, _junie_proof_agent_bytes
+
+    context = audit_taxonomy()["agent_usage_contract"]["six_lane_review"]["context_evidence"]
+    assert "truncated required evidence blocks" in context["collection"]
+    assert "current source verification" in context["verification"]
+    assert "syntactic evidence only" in context["depth"]
+    assert "every enabled rule" in context["efficiency"]
+    assert "target" in context["measurement"]
+    assert "only reads" in context["authority"]
+    assert junie_manifest(tmp_path)["agent_usage_contract"]["six_lane_review"]["context_evidence"] == context
+    for content in (_guidance(), _junie_proof_agent_bytes()):
+        assert "## Source-bound context evidence" in content.decode()
