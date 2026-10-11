@@ -116,6 +116,7 @@ COPY deploy/deep-adapters/requirements-runtime.txt /tmp/requirements-runtime.txt
 RUN python -m pip install --no-cache-dir --disable-pip-version-check --require-hashes --only-binary=:all: -r /tmp/requirements-runtime.txt
 USER 1000:1000
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/runtime-coverage.json /opt/factory/adapter-profile.json
+COPY --chown=1000:1000 deploy/deep-adapters/rules/runtime-control.toml /opt/factory/rules/runtime-control.toml
 LABEL io.code-factory.configured="true" io.code-factory.harness="candidate-supplied"
 
 ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]

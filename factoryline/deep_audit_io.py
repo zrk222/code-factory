@@ -1239,13 +1239,26 @@ def _native_profile(profile: dict, lane: dict) -> None:
         "trivy": {"sarif"},
         "osv": {"osv-json"},
         "syft": {"syft-json"},
-        "runtime": {"runtime-json", "coverage-json"},
+        "runtime": {"runtime-json", "coverage-json", "runtime-junit"},
         "atheris": {"runtime-json"},
         "jazzer": {"runtime-json"},
         "zap": {"runtime-json"},
     }
     if profile["report_format"] not in formats.get(profile["engine"], set()):
         raise RuntimeAuditError("E_ADAPTER_PROFILE", "unsupported native report")
+    if profile["engine"] == "runtime" and profile["report_format"] == "runtime-junit":
+        if len(profile["commands"]) != 1:
+            raise RuntimeAuditError(
+                "E_ADAPTER_PROFILE", "runtime requires one bounded command"
+            )
+        if lane.get("native_artifact_roles") != ["coverage_json", "junit_xml"]:
+            raise RuntimeAuditError(
+                "E_ADAPTER_PROFILE", "runtime artifact roles differ"
+            )
+        if not isinstance(lane.get("rule_ids"), list) or not lane["rule_ids"]:
+            raise RuntimeAuditError(
+                "E_ADAPTER_PROFILE", "runtime rule inventory required"
+            )
 
 
 def _native_version(profile: dict, source: Path, scratch: Path, timeout: int) -> dict:
@@ -1438,31 +1451,82 @@ def _native_sarif_metadata(report: dict, profile: dict, invocations: list) -> di
     return report
 
 
-def _native_junit(output: Path, sources: dict) -> tuple:
+def _native_junit(
+    output: Path, sources: dict, junit_name: str = "runtime.xml"
+) -> tuple:
+    return _parse_runtime_junit(_junit_bytes(output, junit_name), sources)
+
+
+def _parse_runtime_junit(junit: bytes, sources: dict) -> tuple:
     import xml.etree.ElementTree as ET
 
-    junit = _junit_bytes(output)
+    if (
+        len(junit) > LIMIT
+        or b"<!DOCTYPE" in junit.upper()
+        or b"<!ENTITY" in junit.upper()
+    ):
+        raise RuntimeAuditError("E_RUNTIME_REPORT", "unsafe or oversized JUnit")
     try:
         tree = ET.fromstring(junit)
     except ET.ParseError as exc:
         raise RuntimeAuditError("E_RUNTIME_REPORT", "invalid native JUnit") from exc
-    tests, findings, harness = 0, [], None
-    for case in tree.iter("testcase"):
+    cases = list(tree.iter("testcase"))
+    _junit_suite_counts(tree, cases)
+    return _junit_observations(cases, sources, sha256_bytes(junit))
+
+
+def _junit_suite_counts(tree, cases):
+    suites = [tree] if tree.tag == "testsuite" else list(tree.iter("testsuite"))
+    if not suites or not cases:
+        raise RuntimeAuditError("E_RUNTIME_REPORT", "no executed source-bound tests")
+    try:
+        declared = sum(int(suite.attrib["tests"]) for suite in suites)
+        declared_failures = sum(int(suite.get("failures", "0")) for suite in suites)
+        declared_errors = sum(int(suite.get("errors", "0")) for suite in suites)
+    except (KeyError, ValueError) as exc:
+        raise RuntimeAuditError(
+            "E_RUNTIME_REPORT", "JUnit suite counts malformed"
+        ) from exc
+    actual_failures = sum(case.find("failure") is not None for case in cases)
+    actual_errors = sum(case.find("error") is not None for case in cases)
+    if (
+        declared != len(cases)
+        or declared_failures != actual_failures
+        or declared_errors != actual_errors
+    ):
+        raise RuntimeAuditError("E_RUNTIME_REPORT", "JUnit suite counts differ")
+
+
+def _junit_observations(cases, sources, junit_hash):
+    findings, identities, executed = [], set(), []
+    for case in cases:
         result = _junit_case(case, sources)
-        if result is None:
-            continue
-        path, finding = result
-        tests += 1
-        harness = harness or {"path": path, "sha256": sources[path]}
+        path, finding, skipped = result
+        identity = (path, case.get("classname", ""), case.get("name", ""))
+        if identity in identities:
+            raise RuntimeAuditError("E_RUNTIME_REPORT", "duplicate JUnit testcase")
+        identities.add(identity)
+        if not skipped:
+            executed.append(path)
         if finding is not None:
             findings.append(finding)
-    if not tests or harness is None:
+    if not executed:
         raise RuntimeAuditError("E_RUNTIME_REPORT", "no executed source-bound tests")
-    return tests, findings, harness, sha256_bytes(junit)
+    harness_path = min(executed)
+    findings.sort(key=lambda item: (item["path"], item["line"], item["rule_id"]))
+    return (
+        len(executed),
+        findings,
+        {
+            "path": harness_path,
+            "sha256": sources[harness_path],
+        },
+        junit_hash,
+    )
 
 
-def _junit_bytes(output):
-    with local_file(output, "runtime.xml").open("rb") as stream:
+def _junit_bytes(output, junit_name="runtime.xml"):
+    with local_file(output, junit_name).open("rb") as stream:
         junit = stream.read(LIMIT + 1)
     if (
         len(junit) > LIMIT
@@ -1474,31 +1538,40 @@ def _junit_bytes(output):
 
 
 def _junit_case(case, sources):
-    if case.find("skipped") is not None:
-        return None
-    path = relative_path(case.get("file", ""))
+    raw_path = case.get("file", "")
+    if raw_path.startswith("/src/"):
+        raw_path = raw_path.removeprefix("/src/")
+    path = relative_path(raw_path)
     if path not in sources:
         raise RuntimeAuditError("E_HARNESS_BINDING", "JUnit test source is unbound")
+    if case.find("skipped") is not None:
+        return path, None, True
     finding = None
     if case.find("failure") is not None or case.find("error") is not None:
+        try:
+            line = int(case.get("line", "0")) + 1
+        except ValueError as exc:
+            raise RuntimeAuditError(
+                "E_RUNTIME_REPORT", "invalid JUnit failure line"
+            ) from exc
         finding = {
             "rule_id": "RUNTIME_TEST_FAILURE",
             "path": path,
-            "line": int(case.get("line", "0")) + 1,
+            "line": line,
             "severity": "high",
         }
-    return path, finding
+    return path, finding, False
 
 
 def _native_coverage_report(
-    raw: dict, lane: dict, inventory: dict, output: Path
+    raw: dict, lane: dict, inventory: dict, output: Path, junit_name="runtime.xml"
 ) -> dict:
     if raw.get("meta", {}).get("branch_coverage") is not True:
         raise RuntimeAuditError(
             "E_RUNTIME_COVERAGE", "native branch measurement required"
         )
     sources = {item["path"]: item["sha256"] for item in inventory["files"]}
-    tests, findings, harness, junit_hash = _native_junit(output, sources)
+    tests, findings, harness, junit_hash = _native_junit(output, sources, junit_name)
     coverage = _native_source_counts(raw, sources)
     return {
         "schema": "factory.deep-runtime-observations.v1",
@@ -1689,9 +1762,18 @@ def _native_report(
     if profile["report_format"] == "sarif":
         report = _native_sarif_metadata(raw, profile, invocations)
         return _native_sarif_paths(report, sources)
+    if profile["report_format"] == "runtime-junit":
+        report = _runtime_report_file(
+            raw, contract["lane"], contract["inventory"], output
+        )
+        _runtime_exit_consistency(report, invocations)
+        return report
     if profile["report_format"] == "coverage-json":
         return _native_coverage_report(
-            raw, contract["lane"], contract["inventory"], output
+            raw,
+            contract["lane"],
+            contract["inventory"],
+            output,
         )
     report = copy.deepcopy(raw)
     _native_dependency_paths(report, profile["report_format"], sources)
@@ -1796,6 +1878,8 @@ def execute_native_profile(
     _adapter_sources(source, inventory)
     if lane["engine"] == "gitleaks":
         _gitleaks_preflight(inventory, lane, contract)
+    elif lane["engine"] == "runtime" and profile["report_format"] == "runtime-junit":
+        _runtime_ruleset_preflight(lane)
     paths = _adapter_output_paths(lane, output, create_parents=True)
     started = time.monotonic()
     execution = _run_native_profile(
@@ -1812,6 +1896,10 @@ def execute_native_profile(
     covered_obligations = []
     if lane["engine"] == "gitleaks":
         challenges, covered_obligations = _gitleaks_challenges(
+            profile, contract, Path(source), lane, execution, started
+        )
+    elif lane["engine"] == "runtime" and profile["report_format"] == "runtime-junit":
+        challenges, covered_obligations = _runtime_challenges(
             profile, contract, Path(source), lane, execution, started
         )
     coverage = _native_profile_coverage(
@@ -1842,9 +1930,15 @@ def execute_native_profile(
 
 def _run_native_profile(profile, contract, source, output, inventory, lane, paths):
     rule_inventory = None
+    config_path = None
     if lane["engine"] == "gitleaks":
-        config = Path("/opt/factory/rules/gitleaks.toml").read_bytes()
+        config_path = Path("/opt/factory/rules/gitleaks.toml")
+        config = config_path.read_bytes()
         rule_inventory = _gitleaks_rule_inventory(config, lane)
+    elif lane["engine"] == "runtime" and profile["report_format"] == "runtime-junit":
+        config_path = Path("/opt/factory/rules/runtime-control.toml")
+        config = config_path.read_bytes()
+        rule_inventory = _runtime_rule_inventory(config, lane)
     timeout = require_int(
         lane.get("timeout_seconds"), "timeout", minimum=1, maximum=3600
     )
@@ -1867,7 +1961,7 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
                 "report": output / paths[0],
                 "scratch": scratch,
                 "candidate_sha256": inventory["candidate_sha256"],
-                "config": "/opt/factory/rules/gitleaks.toml",
+                **({"config": str(config_path)} if config_path is not None else {}),
             },
         )
         invocations = _adapter_commands(
@@ -1880,8 +1974,16 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
             ledger = invocations[0].pop("native_rule_ledger", None)
             ledger_sha256 = invocations[0].get("native_rule_ledger_sha256")
             ledger_json = invocations[0].pop("native_rule_ledger_json", None)
-    with local_file(output, paths[0]).open("rb") as stream:
-        raw_report = strict_json(stream.read(LIMIT + 1))
+    if profile["report_format"] == "runtime-junit":
+        junit_path = local_file(output, paths[0])
+        _junit_bytes(output, paths[0])
+        with local_file(output, paths[1]).open("rb") as stream:
+            raw_report = strict_json(stream.read(LIMIT + 1))
+        if not junit_path.is_file():
+            raise RuntimeAuditError("E_RUNTIME_REPORT", "native JUnit missing")
+    else:
+        with local_file(output, paths[0]).open("rb") as stream:
+            raw_report = strict_json(stream.read(LIMIT + 1))
     _adapter_sources(source, inventory)
     return {
         "rule_inventory": rule_inventory,
@@ -1892,6 +1994,24 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
         "raw_report": raw_report,
         "version_probe": version,
     }
+
+
+def _runtime_exit_consistency(report, invocations):
+    if len(invocations) != 1:
+        raise RuntimeAuditError("E_RUNTIME_REPORT", "one runtime invocation required")
+    code = invocations[0].get("execution", {}).get("exit_code")
+    expected = 1 if report["findings"] else 0
+    if type(code) is not int or code != expected:
+        raise RuntimeAuditError("E_RUNTIME_REPORT", "JUnit and process exit differ")
+
+
+def _runtime_report_file(raw, lane, inventory, output):
+    if raw.get("meta", {}).get("branch_coverage") is not True:
+        raise RuntimeAuditError(
+            "E_RUNTIME_COVERAGE", "native branch measurement required"
+        )
+    report_name = lane["report"]
+    return _native_coverage_report(raw, lane, inventory, output, report_name)
 
 
 def _native_profile_coverage(
@@ -1924,6 +2044,11 @@ def _native_profile_coverage(
     if lane["engine"] == "gitleaks":
         errors = _gitleaks_coverage_errors(
             rule_accounting, challenges, covered_obligations
+        )
+        complete = not errors
+    elif lane["engine"] == "runtime" and profile["report_format"] == "runtime-junit":
+        errors = _runtime_coverage_errors(
+            report, inventory, lane, challenges, covered_obligations
         )
         complete = not errors
     coverage = {
@@ -1981,6 +2106,16 @@ def _native_profile_coverage(
             rule_count,
         )
     return coverage
+
+
+def _runtime_coverage_errors(report, inventory, lane, challenges, obligations):
+    errors = []
+    source_state = _native_runtime_accounting(report, inventory, lane)["state"]
+    if source_state != "COMPLETE":
+        errors.append("NATIVE_SOURCE_ACCOUNTING_REQUIRED")
+    if not _gitleaks_challenges_complete(challenges, obligations):
+        errors.append("NATIVE_CHALLENGES_REQUIRED")
+    return errors
 
 
 def _gitleaks_coverage_errors(accounting, challenges, obligations):
@@ -2111,6 +2246,262 @@ def _gitleaks_challenges(profile, contract, source, lane, execution, started):
     }, ids
 
 
+def _runtime_challenges(profile, contract, source, lane, execution, started):
+    from .runtime_audit_common import execute_native_challenge
+    from .runtime_audit_process import run_bounded_command
+
+    obligations = _runtime_obligations(contract, lane)
+    observations, gaps = [], []
+    source_bindings = {
+        item["path"]: item["sha256"] for item in contract["inventory"]["files"]
+    }
+    command = profile["commands"][0]
+    baseline_path = Path("/opt/factory/rules/runtime-control.toml")
+    baseline = baseline_path.read_bytes()
+    deadline = started + lane["timeout_seconds"]
+    with tempfile.TemporaryDirectory(prefix="factory-runtime-challenges-") as root:
+        for index, obligation in enumerate(obligations):
+            for challenge in obligation["challenges"]:
+                try:
+                    observation = _runtime_challenge(
+                        execute_native_challenge,
+                        run_bounded_command,
+                        profile,
+                        contract,
+                        source,
+                        lane,
+                        execution,
+                        command,
+                        challenge,
+                        obligation,
+                        source_bindings,
+                        baseline_path,
+                        baseline,
+                        Path(root) / f"control-{index}-{challenge['kind']}",
+                        deadline,
+                    )
+                    observations.append(observation)
+                except (
+                    OSError,
+                    RuntimeAuditError,
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                ) as exc:
+                    gaps.append(
+                        _challenge_gap_record(
+                            obligation, challenge, _challenge_error_code(exc)
+                        )
+                    )
+    return {
+        "schema": "factory.deep-challenges.v1",
+        "observations": observations,
+        "gaps": gaps,
+    }, [item["id"] for item in obligations]
+
+
+def _runtime_obligations(contract, lane):
+    required = {
+        item["path"]
+        for item in contract["inventory"]["files"]
+        if item["language"] in lane["languages"]
+    }
+    candidates = [
+        item
+        for item in contract["obligations"]
+        if item["engine"] == "runtime" and item["family"] == lane["family"]
+    ]
+    items = [item for item in candidates if set(item["paths"]) <= required]
+    if len(items) > 64:
+        _native_budget_error(
+            "E_RUNTIME_CHALLENGE_BUDGET", len(items), 3, len(items) * 3, 192
+        )
+    return items
+
+
+def _runtime_challenge(
+    execute,
+    runner,
+    profile,
+    contract,
+    source,
+    lane,
+    execution,
+    command,
+    challenge,
+    obligation,
+    source_bindings,
+    baseline_path,
+    baseline,
+    case,
+    deadline,
+):
+    from .runtime_audit_common import sha256_bytes as common_sha256
+
+    if not _gitleaks_challenge_allowed(
+        challenge, obligation, source_bindings, command, lane
+    ):
+        raise RuntimeAuditError("E_CHALLENGE_BINDING", "runtime challenge is not bound")
+    remaining = int(deadline - time.monotonic())
+    if remaining < 1:
+        raise RuntimeAuditError(
+            "E_ADAPTER_TIMEOUT", "runtime challenge budget exhausted"
+        )
+    fixture_path = relative_path(challenge["fixture_path"])
+    fixture_sha = challenge["fixture_sha256"]
+    manifest = dict(
+        sorted(challenge.get("fixture_manifest", {fixture_path: fixture_sha}).items())
+    )
+    case.mkdir()
+    challenge_root = case / "source"
+    for path, source_sha in manifest.items():
+        target = challenge_root.joinpath(*path.split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(bound_bytes(source, {"path": path, "sha256": source_sha}))
+    source_sha = digest(manifest)
+    config_path = baseline_path
+    if challenge["kind"] == "mutation":
+        config_path = _runtime_mutation_config(case, baseline, lane, obligation)
+    scratch = case / "run"
+    report_path, coverage_path = scratch / "runtime.xml", scratch / "coverage.json"
+    bindings = {
+        "source": str(challenge_root),
+        "output": str(scratch),
+        "report": str(report_path),
+        "scratch": str(scratch),
+        "candidate_sha256": source_sha,
+        "factory_ledger": str(coverage_path),
+        "config": str(config_path),
+    }
+
+    def parse_report(raw):
+        return _runtime_challenge_report(raw, coverage_path, manifest, lane, challenge)
+
+    image = lane["image"]
+    bound = {
+        "candidate_sha256": contract["inventory"]["candidate_sha256"],
+        "challenge_source_sha256": source_sha,
+        "profile_sha256": digest(profile),
+        "image_sha256": common_sha256(image.encode()),
+        "tool_version": profile["tool_version"],
+        "version_probe_sha256": digest(execution["version_probe"]),
+        "version_probe_facts": execution["version_probe"],
+    }
+    return execute(
+        challenge,
+        obligation_id=obligation["id"],
+        engine="runtime",
+        detector_rule_id=obligation["detector_rule_id"],
+        detector_enabled=challenge["kind"] != "mutation",
+        profile_argv=_runtime_encoded_argv(command["argv"]),
+        bindings=bindings,
+        source_root=challenge_root,
+        baseline_config_path=baseline_path,
+        effective_config_path=config_path,
+        report_path=report_path,
+        ledger_path=coverage_path,
+        scratch=scratch,
+        scratch_parent=case,
+        timeout_seconds=remaining,
+        expected_ruleset_sha256=lane["ruleset_sha256"],
+        execution_bindings=bound,
+        runner=runner,
+        report_parser=parse_report,
+        config_rule_ids=_runtime_rule_ids,
+        verify_mutation=_runtime_mutation_valid,
+        native_artifact_roles=lane["native_artifact_roles"],
+        native_artifacts={"junit_xml": report_path, "coverage_json": coverage_path},
+        rule_ids=lane["rule_ids"],
+        mutation_ruleset_sha256=lane["mutation_config_sha256"],
+    )
+
+
+def _runtime_encoded_argv(argv):
+    import base64
+
+    result = list(argv)
+    try:
+        code_index = result.index("-c") + 1
+        code = result[code_index].encode("utf-8")
+    except (ValueError, IndexError, AttributeError) as exc:
+        raise RuntimeAuditError(
+            "E_RUNTIME_PROFILE", "runtime profile command malformed"
+        ) from exc
+    encoded = base64.b64encode(code).decode("ascii")
+    result[code_index] = f"exec(__import__('base64').b64decode('{encoded}'))"
+    return result
+
+
+def _runtime_mutation_config(case, baseline, lane, obligation):
+    rule_id = obligation["detector_rule_id"]
+    changed = _runtime_disable_rule(baseline, rule_id)
+    expected = lane.get("mutation_config_sha256", {}).get(rule_id)
+    if sha256_bytes(changed) != expected or _runtime_rule_ids(changed) != []:
+        raise RuntimeAuditError(
+            "E_RUNTIME_MUTATION_BINDING", "signed mutation config differs"
+        )
+    path = case / "mutation.toml"
+    path.write_bytes(changed)
+    return path
+
+
+def _runtime_challenge_report(junit, coverage_path, manifest, lane, challenge):
+    if (
+        len(junit) > LIMIT
+        or b"<!DOCTYPE" in junit.upper()
+        or b"<!ENTITY" in junit.upper()
+    ):
+        raise RuntimeAuditError("E_RUNTIME_REPORT", "unsafe or oversized JUnit")
+    tests, findings, harness, junit_hash = _parse_runtime_junit(junit, manifest)
+    if challenge["kind"] == "positive" and not any(
+        finding["path"] == challenge["fixture_path"] for finding in findings
+    ):
+        raise RuntimeAuditError(
+            "E_CHALLENGE_SEMANTICS", "positive runtime control did not fail"
+        )
+    if challenge["kind"] in {"negative", "mutation"} and findings:
+        raise RuntimeAuditError("E_CHALLENGE_SEMANTICS", "clean runtime control failed")
+    if challenge["kind"] == "mutation" and not _runtime_has_sentinel(
+        junit, challenge["fixture_path"]
+    ):
+        raise RuntimeAuditError(
+            "E_RUNTIME_SENTINEL", "mutation control lacks a passing sentinel"
+        )
+    artifact = local_file(coverage_path.parent, "coverage.json")
+    with artifact.open("rb") as stream:
+        coverage = strict_json(stream.read(LIMIT + 1))
+    if coverage.get("meta", {}).get("branch_coverage") is not True:
+        raise RuntimeAuditError("E_RUNTIME_COVERAGE", "native branch coverage missing")
+    native = {
+        "schema": "factory.deep-runtime-observations.v1",
+        "engine": "runtime",
+        "tool_version": lane["tool_version"],
+        "completed": True,
+        "errors": [],
+        "harness": harness,
+        "metrics": {"tests": tests},
+        "findings": findings,
+        "source_coverage": {},
+        "coverage_native_sha256": digest(coverage),
+        "junit_sha256": junit_hash,
+    }
+    return native
+
+
+def _runtime_has_sentinel(junit, target_path):
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(junit)
+    target = relative_path(target_path)
+    return any(
+        relative_path(item.get("file", "").removeprefix("/src/")) != target
+        and item.find("failure") is None
+        and item.find("error") is None
+        and item.find("skipped") is None
+        for item in root.iter("testcase")
+    )
+
+
 def _gitleaks_obligations(contract, lane):
     required = {
         item["path"]
@@ -2159,6 +2550,62 @@ def _gitleaks_preflight(inventory, lane, contract):
             NATIVE_COVERAGE_LIMIT,
         )
     _gitleaks_obligations(contract, lane)
+
+
+def _runtime_ruleset_preflight(lane):
+    config_path = Path("/opt/factory/rules/runtime-control.toml")
+    _runtime_rule_inventory(config_path.read_bytes(), lane)
+
+
+def _runtime_rule_ids(config):
+    toml = _toml_parser()
+    try:
+        value = toml.loads(config.decode("utf-8"))
+        selectors = value["selectors"]
+        if selectors != {"RUNTIME_TEST_FAILURE": "factory_runtime_failure"}:
+            raise ValueError
+        rules = value.get("rules", [])
+        actual = [item["id"] for item in rules]
+    except (UnicodeError, KeyError, TypeError, ValueError, toml.TOMLDecodeError) as exc:
+        raise RuntimeAuditError(
+            "E_RUNTIME_RULESET", "runtime controls are malformed"
+        ) from exc
+    if actual not in ([], ["RUNTIME_TEST_FAILURE"]):
+        raise RuntimeAuditError("E_RUNTIME_RULESET", "runtime rule inventory differs")
+    return actual
+
+
+def _runtime_rule_inventory(config, lane):
+    actual = _runtime_rule_ids(config)
+    if (
+        sha256_bytes(config) != lane.get("ruleset_sha256")
+        or lane.get("rule_ids") != ["RUNTIME_TEST_FAILURE"]
+        or actual != lane["rule_ids"]
+    ):
+        raise RuntimeAuditError("E_RUNTIME_RULESET", "pinned runtime controls differ")
+    return {"state": "VERIFIED", "rule_ids": actual, "sha256": digest(actual)}
+
+
+def _runtime_mutation_valid(baseline, effective, rule_id):
+    return (
+        rule_id == "RUNTIME_TEST_FAILURE"
+        and _runtime_disable_rule(baseline, rule_id) == effective
+        and _runtime_rule_ids(effective) == []
+    )
+
+
+def _runtime_disable_rule(config, rule_id):
+    import re
+
+    if rule_id != "RUNTIME_TEST_FAILURE" or _runtime_rule_ids(config) != [rule_id]:
+        raise RuntimeAuditError("E_RUNTIME_MUTATION", "exact runtime rule required")
+    starts = [
+        item.start()
+        for item in re.finditer(rb"(?m)^\[\[rules\]\][\t ]*(?:\r?\n|$)", config)
+    ]
+    if len(starts) != 1:
+        raise RuntimeAuditError("E_RUNTIME_MUTATION", "one runtime rule block required")
+    return config[: starts[0]]
 
 
 def _challenge_gap_record(obligation, challenge, reason):

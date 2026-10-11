@@ -1106,6 +1106,276 @@ def test_native_adapter_retains_execution_without_inventing_completion(tmp_path)
     assert result["artifacts"]["challenges.json"]["observations"] == []
 
 
+def test_runtime_junit_profile_normalizes_native_junit_and_coverage(tmp_path):
+    from factoryline.deep_audit_io import _native_report
+
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "runtime.xml").write_text(
+        '<testsuite tests="1" failures="1" errors="0"><testcase file="/src/app.py" name="private-case" '
+        'line="4"><failure message="private-output">secret text</failure>'
+        "</testcase></testsuite>",
+        encoding="utf-8",
+    )
+    raw_coverage = {
+        "meta": {"branch_coverage": True},
+        "files": {
+            "/src/app.py": {
+                "summary": {
+                    "num_statements": 2,
+                    "covered_lines": 1,
+                    "num_branches": 1,
+                    "covered_branches": 0,
+                }
+            }
+        },
+    }
+    lane = {"tool_version": "runtime-test", "report": "runtime.xml"}
+    inventory = {"files": [{"path": "app.py", "sha256": "a" * 64}]}
+    report = _native_report(
+        raw_coverage,
+        {"report_format": "runtime-junit", "tool_version": "runtime-test"},
+        {"lane": lane, "inventory": inventory},
+        output,
+        [{"execution": {"exit_code": 1}}],
+    )
+    assert report["metrics"] == {"tests": 1}
+    assert report["findings"] == [
+        {
+            "rule_id": "RUNTIME_TEST_FAILURE",
+            "path": "app.py",
+            "line": 5,
+            "severity": "high",
+        }
+    ]
+    assert "private-case" not in json.dumps(report)
+    assert "secret text" not in json.dumps(report)
+    assert report["source_coverage"]["app.py"]["sha256"] == "a" * 64
+
+
+def test_runtime_mutation_report_requires_a_passing_sentinel(tmp_path):
+    from factoryline.deep_audit_io import _runtime_challenge_report
+
+    target = "tests/test_target.py"
+    sentinel = "tests/test_sentinel.py"
+    coverage = tmp_path / "coverage.json"
+    coverage.write_text(
+        '{"meta":{"branch_coverage":true},"files":{}}', encoding="utf-8"
+    )
+    manifest = {target: "a" * 64, sentinel: "b" * 64}
+    junit = (
+        '<testsuite tests="1"><testcase file="/src/tests/test_sentinel.py" '
+        'name="private-sentinel" /></testsuite>'
+    ).encode()
+    report = _runtime_challenge_report(
+        junit,
+        coverage,
+        manifest,
+        {"tool_version": "runtime-test"},
+        {"kind": "mutation", "fixture_path": target},
+    )
+    assert report["metrics"] == {"tests": 1}
+    assert report["findings"] == []
+    assert "private-sentinel" not in json.dumps(report)
+    no_sentinel = (
+        '<testsuite tests="1"><testcase file="/src/tests/test_target.py" '
+        'name="private-target" /></testsuite>'
+    ).encode()
+    with pytest.raises(RuntimeAuditError, match="E_RUNTIME_SENTINEL"):
+        _runtime_challenge_report(
+            no_sentinel,
+            coverage,
+            manifest,
+            {"tool_version": "runtime-test"},
+            {"kind": "mutation", "fixture_path": target},
+        )
+
+
+def test_runtime_positive_control_rejects_unrelated_test_failure(tmp_path):
+    from factoryline.deep_audit_io import _runtime_challenge_report
+
+    junit = (
+        '<testsuite tests="1" failures="1"><testcase file="tests/test_other.py" '
+        'name="other"><failure/></testcase></testsuite>'
+    ).encode()
+    with pytest.raises(RuntimeAuditError, match="E_CHALLENGE_SEMANTICS"):
+        _runtime_challenge_report(
+            junit,
+            tmp_path / "coverage.json",
+            {"tests/test_other.py": "b" * 64, "tests/test_target.py": "a" * 64},
+            {"tool_version": "runtime-test"},
+            {"kind": "positive", "fixture_path": "tests/test_target.py"},
+        )
+
+
+@pytest.mark.parametrize("kind", ["positive", "negative", "mutation"])
+def test_runtime_v2_challenge_executes_and_binds_junit_and_coverage(tmp_path, kind):
+    import sys
+    import time
+
+    from factoryline.deep_audit_io import (
+        _runtime_disable_rule,
+        _runtime_challenge,
+        _runtime_challenge_report,
+        _native_version,
+        digest,
+    )
+    from factoryline.runtime_audit_common import execute_native_challenge
+    from factoryline.runtime_audit_process import run_bounded_command
+
+    source = tmp_path / "candidate"
+    (source / "tests").mkdir(parents=True)
+    target = "tests/test_target.py"
+    sentinel = "tests/test_sentinel.py"
+    (source / target).write_text(
+        "PASS\n" if kind == "negative" else "FAIL\n", encoding="utf-8"
+    )
+    (source / sentinel).write_text("PASS\n", encoding="utf-8")
+    manifest = {
+        target: sha256_bytes((source / target).read_bytes()),
+        sentinel: sha256_bytes((source / sentinel).read_bytes()),
+    }
+    baseline = (
+        b'[selectors]\nRUNTIME_TEST_FAILURE = "factory_runtime_failure"\n\n'
+        b'[[rules]]\nid = "RUNTIME_TEST_FAILURE"\n'
+    )
+    baseline_path = tmp_path / "runtime-control.toml"
+    baseline_path.write_bytes(baseline)
+    changed = _runtime_disable_rule(baseline, "RUNTIME_TEST_FAILURE")
+    config_sha = sha256_bytes(changed)
+    coverage_json = '{"meta":{"branch_coverage":true},"files":{}}'
+    script = (
+        """import pathlib,sys,tomllib
+source, report, config = sys.argv[1:]
+enabled = bool(tomllib.loads(pathlib.Path(config).read_text()).get("rules", []))
+target = pathlib.Path(source, "tests/test_target.py")
+fails = enabled and target.read_text().strip() == "FAIL"
+cases = []
+if enabled:
+    case = '<testcase file="/src/tests/test_target.py" name="target" line="1">'
+    cases.append(case + ('<failure message="assertion">failed</failure></testcase>' if fails else '</testcase>'))
+cases.append('<testcase file="/src/tests/test_sentinel.py" name="sentinel" />')
+pathlib.Path(report).write_text('<testsuite tests="' + str(len(cases)) + '" failures="' + str(int(fails)) + '">' + ''.join(cases) + '</testsuite>')
+pathlib.Path(report).parent.joinpath("coverage.json").write_text("""
+        + repr(coverage_json)
+        + """)
+sys.exit(1 if fails else 0)
+"""
+    )
+    profile = {
+        "tool_version": "runtime-test",
+        "commands": [
+            {
+                "argv": [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    "exec(" + repr(script) + ")",
+                    "{source}",
+                    "{report}",
+                    "{config}",
+                ],
+                "accepted_exit_codes": [0, 1],
+            }
+        ],
+    }
+    lane = {
+        "engine": "runtime",
+        "image": "factory-runtime@sha256:" + "a" * 64,
+        "tool_version": "runtime-test",
+        "ruleset_sha256": sha256_bytes(baseline),
+        "rule_ids": ["RUNTIME_TEST_FAILURE"],
+        "mutation_config_sha256": {"RUNTIME_TEST_FAILURE": config_sha},
+        "native_artifact_roles": ["coverage_json", "junit_xml"],
+        "languages": ["python"],
+        "timeout_seconds": 20,
+    }
+    fixture_sha = manifest[target]
+    challenge = {
+        "kind": kind,
+        "fixture_path": target,
+        "fixture_sha256": fixture_sha,
+        "fixture_manifest": manifest,
+        "fixture_manifest_sha256": digest(manifest),
+        "expected_exit_code": 1 if kind == "positive" else 0,
+        "expected_report_sha256": "0" * 64,
+    }
+    challenge_junit_cases = []
+    if kind != "mutation":
+        failed = kind == "positive"
+        case = '<testcase file="/src/tests/test_target.py" name="target" line="1">'
+        challenge_junit_cases.append(
+            case
+            + (
+                '<failure message="assertion">failed</failure></testcase>'
+                if failed
+                else "</testcase>"
+            )
+        )
+    challenge_junit_cases.append(
+        '<testcase file="/src/tests/test_sentinel.py" name="sentinel" />'
+    )
+    expected_junit = (
+        '<testsuite tests="'
+        + str(len(challenge_junit_cases))
+        + '" failures="'
+        + str(int(kind == "positive"))
+        + '">'
+        + "".join(challenge_junit_cases)
+        + "</testsuite>"
+    ).encode()
+    expected_artifacts = tmp_path / "expected-artifacts"
+    expected_artifacts.mkdir()
+    expected_coverage = expected_artifacts / "coverage.json"
+    expected_coverage.write_text(coverage_json, encoding="utf-8")
+    native_report = _runtime_challenge_report(
+        expected_junit, expected_coverage, manifest, lane, challenge
+    )
+    expected_report = {
+        "schema": "factory.deep-challenge-observation.v1",
+        "engine": "runtime",
+        "fixture_sha256": fixture_sha,
+        "detector_rule_id": "RUNTIME_TEST_FAILURE",
+        "detector_enabled": kind != "mutation",
+        "native_report": native_report,
+    }
+    challenge["expected_report_sha256"] = digest(expected_report)
+    probe = tmp_path / "version-probe"
+    probe.mkdir()
+    version = {
+        "version_argv": [sys.executable, "-I", "-c", "print('runtime-test')"],
+        "tool_version": "runtime-test",
+    }
+    version_facts = _native_version(version, tmp_path, probe, 5)
+    execution = {"version_probe": version_facts}
+    obligation = {"id": "runtime-control", "detector_rule_id": "RUNTIME_TEST_FAILURE"}
+    contract = {"inventory": {"candidate_sha256": "c" * 64}}
+    observation = _runtime_challenge(
+        execute_native_challenge,
+        run_bounded_command,
+        profile,
+        contract,
+        source,
+        lane,
+        execution,
+        profile["commands"][0],
+        challenge,
+        obligation,
+        manifest,
+        baseline_path,
+        baseline,
+        tmp_path / f"control-{kind}",
+        time.monotonic() + 20,
+    )
+    assert observation["execution"]["status"] == "VERIFIED"
+    assert observation["execution"]["cleanup_confirmed"] is True
+    assert observation["execution"]["ledger_sha256"] is None
+    assert {item["kind"] for item in observation["execution"]["native_artifacts"]} == {
+        "coverage_json",
+        "junit_xml",
+    }
+
+
 def test_native_adapter_rejects_uninventoried_source_files(tmp_path):
     from factoryline.deep_audit_io import _adapter_sources
 
@@ -1161,11 +1431,21 @@ def test_native_sarif_enrichment_uses_actual_invocation_and_preserves_failures()
     )
 
 
+@pytest.mark.parametrize("code,findings", [(0, [1]), (1, []), (2, []), (False, [])])
+def test_runtime_junit_rejects_process_report_mismatch(code, findings):
+    from factoryline.deep_audit_io import _runtime_exit_consistency
+
+    with pytest.raises(RuntimeAuditError, match="E_RUNTIME_REPORT"):
+        _runtime_exit_consistency(
+            {"findings": findings}, [{"execution": {"exit_code": code}}]
+        )
+
+
 def test_runtime_native_coverage_preserves_uncovered_branches(tmp_path):
     from factoryline.deep_audit_io import _native_coverage_report
 
     (tmp_path / "runtime.xml").write_text(
-        '<testsuite><testcase file="test_app.py" line="2"/></testsuite>'
+        '<testsuite tests="1"><testcase file="test_app.py" line="2"/></testsuite>'
     )
     raw = {
         "meta": {"branch_coverage": True},
@@ -1202,15 +1482,13 @@ def test_runtime_native_coverage_rejects_unmeasured_or_unbound_evidence(
     from factoryline.deep_audit_io import _native_coverage_report
 
     raw = {"meta": {"branch_coverage": invalid != "no_branch"}, "files": {}}
-    xml = '<testsuite><testcase file="test_app.py"/></testsuite>'
+    xml = '<testsuite tests="1"><testcase file="test_app.py"/></testsuite>'
     if invalid == "entity":
         xml = '<!DOCTYPE testsuite [<!ENTITY x "unsafe">]>' + xml
     elif invalid == "unbound":
-        xml = '<testsuite><testcase file="other.py"/></testsuite>'
+        xml = '<testsuite tests="1"><testcase file="other.py"/></testsuite>'
     elif invalid == "skipped":
-        xml = (
-            '<testsuite><testcase file="test_app.py"><skipped/></testcase></testsuite>'
-        )
+        xml = '<testsuite tests="1"><testcase file="test_app.py"><skipped/></testcase></testsuite>'
     (tmp_path / "runtime.xml").write_text(xml)
     with pytest.raises(RuntimeAuditError):
         _native_coverage_report(
