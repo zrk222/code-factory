@@ -588,6 +588,13 @@ def _validate_v2_rule_inventory(lane: dict) -> None:
     rule_ids = _items(lane["rule_ids"], 4096)
     for rule_id in rule_ids:
         require_str(rule_id, "rule_id", maximum=256)
+        if lane["engine"] == "zap" and (
+            re.fullmatch(r"[1-9][0-9]{0,9}", rule_id) is None
+            or int(rule_id) > 2147483647
+        ):
+            raise RuntimeAuditError(
+                "E_EXECUTION_LANE", "ZAP rule IDs must be canonical positive integers"
+            )
     _unique(rule_ids)
     if rule_ids != sorted(rule_ids):
         raise RuntimeAuditError("E_EXECUTION_LANE", "rule inventory must be sorted")
@@ -799,6 +806,10 @@ def _validate_challenge(challenge: dict, version: int) -> None:
     )
     if version == 2:
         fields += " fixture_manifest fixture_manifest_sha256"
+        if "zap_route_id" in challenge:
+            fields += " zap_route_id"
+        if "zap_target" in challenge:
+            fields += " zap_target"
     _keys(challenge, fields)
     relative_path(challenge["fixture_path"])
     require_digest(challenge["fixture_sha256"], "fixture_sha256")
@@ -830,6 +841,13 @@ def _challenge_identity(challenges: list[dict], version: int) -> None:
         raise RuntimeAuditError(
             "E_HOLLOW_CHALLENGE", "mutation must bind the exact positive fixture tree"
         )
+    if version == 2 and "zap_route_id" in positive:
+        if positive["zap_route_id"] != mutation.get("zap_route_id") or positive.get(
+            "zap_target"
+        ) != mutation.get("zap_target"):
+            raise RuntimeAuditError(
+                "E_HOLLOW_CHALLENGE", "mutation must bind the exact positive route"
+            )
 
 
 def _obligation_challenges(value: object, version: int) -> None:
@@ -866,6 +884,25 @@ def _validate_obligation(obligation: dict, lanes: list[dict], version: int) -> N
     _obligation_paths(obligation)
     require_str(obligation["remediation"], "remediation", maximum=2048)
     _obligation_challenges(obligation["challenges"], version)
+    if version == 2 and obligation.get("engine") == "zap":
+        has_control = any(
+            "zap_target" in item or "zap_route_id" in item
+            for item in obligation["challenges"]
+        )
+        if has_control:
+            lane = next(
+                item
+                for item in lanes
+                if item["engine"] == "zap" and item["family"] == obligation["family"]
+            )
+            _validate_zap_control_obligation(obligation, lane)
+    elif version == 2 and any(
+        "zap_target" in item or "zap_route_id" in item
+        for item in obligation["challenges"]
+    ):
+        raise RuntimeAuditError(
+            "E_ZAP_CONTROL", "signed ZAP controls require a ZAP obligation"
+        )
 
 
 def _validate_v2_obligation(obligation: dict, lanes: list[dict]) -> None:
@@ -885,6 +922,120 @@ def _validate_v2_obligation(obligation: dict, lanes: list[dict]) -> None:
         )
     if lane["engine"] == "osv":
         _validate_osv_obligation(obligation, lane)
+
+
+def _validate_zap_control_obligation(obligation: dict, lane: dict) -> None:
+    """Bind signed ZAP controls to exact app routes and fixture trees."""
+    native_target = lane.get("native_target")
+    challenges = obligation["challenges"]
+    controls_enabled = any(
+        "zap_target" in challenge or "zap_route_id" in challenge
+        for challenge in challenges
+    )
+    if not controls_enabled:
+        return
+    if not isinstance(native_target, dict) or any(
+        "zap_target" not in challenge or "zap_route_id" not in challenge
+        for challenge in challenges
+    ):
+        raise RuntimeAuditError(
+            "E_ZAP_CONTROL", "all three challenge controls are required"
+        )
+    for challenge in challenges:
+        target = challenge["zap_target"]
+        _validate_zap_target(target)
+        if target["image"] != native_target["image"]:
+            raise RuntimeAuditError(
+                "E_ZAP_CONTROL", "control target must use the lane's pinned app image"
+            )
+        route_id = require_str(
+            challenge.get("zap_route_id"), "zap_route_id", maximum=64
+        )
+        route = _zap_route_by_id(target, route_id)
+        if challenge["fixture_manifest"] != route["source_bindings"]:
+            raise RuntimeAuditError(
+                "E_ZAP_CONTROL", "fixture manifest differs from signed route sources"
+            )
+        fixture_manifest = challenge["fixture_manifest"]
+        for declared_route in target["routes"]:
+            if any(
+                fixture_manifest.get(path) != source_sha
+                for path, source_sha in declared_route["source_bindings"].items()
+            ):
+                raise RuntimeAuditError(
+                    "E_ZAP_CONTROL", "target route source is outside fixture manifest"
+                )
+
+
+def _zap_route_by_id(target: dict, route_id: str) -> dict:
+    """Select one exact route from a validated signed ZAP target."""
+    routes = [route for route in target["routes"] if route["id"] == route_id]
+    if len(routes) != 1:
+        raise RuntimeAuditError("E_ZAP_CONTROL", "route ID is absent or ambiguous")
+    return routes[0]
+
+
+def zap_signed_controls(
+    lane: dict, obligations: list[dict], source_root: Path | None = None
+) -> dict[str, dict]:
+    """Return per-rule signed controls, optionally hashing fixture files."""
+    if lane.get("engine") != "zap" or "native_target" not in lane:
+        raise RuntimeAuditError("E_ZAP_CONTROL", "signed ZAP target lane required")
+    _validate_zap_target(lane["native_target"])
+    controls = {}
+    for obligation in obligations:
+        if (
+            obligation.get("engine") != "zap"
+            or obligation.get("family") != lane["family"]
+        ):
+            continue
+        rule_id, control = _zap_control_entry(obligation, lane, source_root)
+        if rule_id in controls:
+            raise RuntimeAuditError("E_ZAP_CONTROL", "duplicate rule control")
+        controls[rule_id] = control
+    if set(controls) != set(lane["rule_ids"]):
+        raise RuntimeAuditError(
+            "E_ZAP_CONTROL", "exactly one control per enabled rule required"
+        )
+    return controls
+
+
+def _zap_control_entry(obligation, lane, source_root):
+    rule_id = obligation.get("detector_rule_id")
+    if rule_id not in lane["rule_ids"]:
+        raise RuntimeAuditError(
+            "E_ZAP_CONTROL", "control rule is outside lane inventory"
+        )
+    if not any("zap_target" in item for item in obligation.get("challenges", [])):
+        raise RuntimeAuditError("E_ZAP_CONTROL", "signed rule control is missing")
+    _validate_zap_control_obligation(obligation, lane)
+    challenges = obligation.get("challenges")
+    if not isinstance(challenges, list) or {
+        item.get("kind") for item in challenges if isinstance(item, dict)
+    } != {"positive", "negative", "mutation"}:
+        raise RuntimeAuditError("E_ZAP_CONTROL", "complete signed control set required")
+    if source_root is not None:
+        _verify_zap_control_sources(challenges, source_root)
+    return rule_id, {"challenges": {item["kind"]: item for item in challenges}}
+
+
+def _verify_zap_control_sources(challenges, source_root):
+    for challenge in challenges:
+        for path, source_sha in challenge["fixture_manifest"].items():
+            bound_bytes(Path(source_root), {"path": path, "sha256": source_sha})
+
+
+def _zap_control_obligations(
+    lane: dict, obligations: list[dict], snapshot: Path | None = None
+) -> list[dict]:
+    """Return signed ZAP controls in lane rule order after fixture verification."""
+    selected = zap_signed_controls(lane, obligations, snapshot)
+    by_rule = {
+        item["detector_rule_id"]: item
+        for item in obligations
+        if item.get("engine") == "zap" and item.get("family") == lane["family"]
+    }
+    return [by_rule[rule_id] for rule_id in lane["rule_ids"] if rule_id in selected]
 
 
 def _validate_osv_obligation(obligation: dict, lane: dict) -> None:

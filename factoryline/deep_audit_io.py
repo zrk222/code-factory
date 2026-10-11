@@ -8324,9 +8324,14 @@ def _zap_native_v2_context(request, contract):
         "timeout_seconds",
         "target",
         "route_id",
+        "disabled_rule_id",
     }
-    exact_keys(request, fields)
-    if set(request) != fields or request["schema"] != "factory.zap-native-request.v2":
+    required_fields = fields - {"disabled_rule_id"}
+    exact_keys(request, required_fields, {"disabled_rule_id"})
+    if (
+        set(request) not in (required_fields, fields)
+        or request["schema"] != "factory.zap-native-request.v2"
+    ):
         raise RuntimeAuditError("E_ZAP_REQUEST", "native v2 request fields differ")
     inventory, lane = _adapter_contract_parts(contract)
     if lane.get("engine") != "zap" or "native_target" not in lane:
@@ -8358,6 +8363,25 @@ def _zap_native_v2_context(request, contract):
     if request["rule_ids"] != expected_rule_ids:
         raise RuntimeAuditError("E_ZAP_INVENTORY", "request rules differ from lane")
     _zap_ledger_plugins({"rule_ids": request["rule_ids"]})
+    disabled_rule_id = request.get("disabled_rule_id")
+    if disabled_rule_id is not None:
+        mutations = lane.get("mutation_config_sha256")
+        if (
+            disabled_rule_id not in expected_rule_ids
+            or not isinstance(mutations, dict)
+            or disabled_rule_id not in mutations
+            or digest(
+                {
+                    "schema": "factory.zap-disabled-policy.v1",
+                    "rule_ids": expected_rule_ids,
+                    "disabled_rule_id": disabled_rule_id,
+                }
+            )
+            != mutations[disabled_rule_id]
+        ):
+            raise RuntimeAuditError(
+                "E_ZAP_MUTATION", "disabled rule lacks its exact signed policy hash"
+            )
     timeout = require_int(
         request["timeout_seconds"], "ZAP timeout", minimum=1, maximum=3600
     )
@@ -8375,6 +8399,7 @@ def _zap_native_v2_context(request, contract):
         "base_url": _zap_target_base_url(target),
         "target_sha256": digest(target),
         "route_sha256": digest(route),
+        "disabled_rule_id": disabled_rule_id,
     }
 
 
@@ -8386,6 +8411,7 @@ def _zap_api(component, kind, name, deadline, *, watch=None, **arguments):
         ("core", "view", "version"),
         ("core", "view", "alerts"),
         ("core", "action", "accessUrl"),
+        ("pscan", "view", "recordsToScan"),
         ("ascan", "view", "scanners"),
         ("ascan", "view", "status"),
         ("ascan", "action", "scan"),
@@ -8434,6 +8460,7 @@ def _zap_api_arguments(
     target_url = target_url or "http://127.0.0.1:8765/?input=seed"
     base_url = base_url or "http://127.0.0.1:8765"
     fixed = {
+        ("pscan", "view", "recordsToScan"): {},
         ("core", "action", "accessUrl"): {
             "url": target_url,
             "followRedirects": "false",
@@ -8594,18 +8621,22 @@ def _zap_enabled_inventory(raw):
     return sorted(enabled)
 
 
-def _zap_select_rules(rule_ids, deadline, watch):
+def _zap_select_rules(rule_ids, deadline, watch, disabled_rule_id=None):
+    effective_rule_ids = [
+        rule_id for rule_id in rule_ids if rule_id != disabled_rule_id
+    ]
     _zap_api("ascan", "action", "disableAllScanners", deadline, watch=watch)
-    _zap_api(
-        "ascan",
-        "action",
-        "enableScanners",
-        deadline,
-        watch=watch,
-        ids=",".join(rule_ids),
-    )
+    if effective_rule_ids:
+        _zap_api(
+            "ascan",
+            "action",
+            "enableScanners",
+            deadline,
+            watch=watch,
+            ids=",".join(effective_rule_ids),
+        )
     raw = _zap_api("ascan", "view", "scanners", deadline, watch=watch)
-    if _zap_enabled_inventory(raw) != rule_ids:
+    if _zap_enabled_inventory(raw) != effective_rule_ids:
         raise RuntimeAuditError("E_ZAP_INVENTORY", "effective enabled rules differ")
     return raw
 
@@ -8671,19 +8702,56 @@ def _zap_wait_scan(child, identifier, deadline, watch):
         time.sleep(min(0.2, max(0, deadline - time.monotonic())))
 
 
+def _zap_wait_passive_scan(child, deadline, watch):
+    """Wait for two consecutive empty passive queues before reading alerts."""
+    empty_observations = 0
+    while True:
+        _zap_check_daemon(watch)
+        pending = _zap_api("pscan", "view", "recordsToScan", deadline, watch=watch)
+        if time.monotonic() >= deadline:
+            raise RuntimeAuditError(
+                "E_ZAP_TIMEOUT", "passive scan queue did not settle before deadline"
+            )
+        count = pending.get("recordsToScan") if isinstance(pending, dict) else None
+        if (
+            not isinstance(pending, dict)
+            or set(pending) != {"recordsToScan"}
+            or not isinstance(count, str)
+            or re.fullmatch(r"(?:0|[1-9][0-9]{0,9})", count) is None
+        ):
+            raise RuntimeAuditError("E_ZAP_PASSIVE", "invalid passive scan queue count")
+        if count == "0":
+            empty_observations += 1
+            if empty_observations == 2:
+                return pending
+        else:
+            empty_observations = 0
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeAuditError(
+                "E_ZAP_TIMEOUT", "passive scan queue did not settle before deadline"
+            )
+        time.sleep(min(0.2, remaining))
+
+
 def _zap_measure_scan(request, bindings, child, deadline, watch):
     from .deep_audit_sarif import _verify_zap_native_rule_ledger
 
     version = _zap_wait_ready(child, deadline, watch)
     if watch.get("target") is not None:
         _zap_probe_target(watch)
-    before = _zap_select_rules(request["rule_ids"], deadline, watch)
+    disabled_rule_id = watch.get("disabled_rule_id")
+    effective_rule_ids = [
+        rule_id for rule_id in request["rule_ids"] if rule_id != disabled_rule_id
+    ]
+    before = _zap_select_rules(request["rule_ids"], deadline, watch, disabled_rule_id)
     _zap_check_daemon(watch)
     identifier, access = _zap_start_scan(child, deadline, watch)
     status = _zap_wait_scan(child, identifier, deadline, watch)
     after = _zap_api("ascan", "view", "scanners", deadline, watch=watch)
-    if _zap_enabled_inventory(after) != request["rule_ids"]:
+    if _zap_enabled_inventory(after) != effective_rule_ids:
         raise RuntimeAuditError("E_ZAP_INVENTORY", "effective enabled rules drifted")
+    _zap_wait_passive_scan(child, deadline, watch)
     alerts = _zap_api(
         "core",
         "view",
@@ -8693,10 +8761,30 @@ def _zap_measure_scan(request, bindings, child, deadline, watch):
         baseurl=watch.get("base_url") or "http://127.0.0.1:8765",
     )
     _zap_check_daemon(watch)
-    ledger = _zap_retained_ledger(Path("/out"))
-    verification = _verify_zap_native_rule_ledger(
-        ledger, {"engine": "zap", "rule_ids": request["rule_ids"]}, bindings
-    )
+    if effective_rule_ids:
+        ledger = _zap_retained_ledger(Path("/out"))
+        verification = _verify_zap_native_rule_ledger(
+            ledger, {"engine": "zap", "rule_ids": effective_rule_ids}, bindings
+        )
+    else:
+        ledger_path = Path("/out") / "zap-rule-ledger.jsonl"
+        try:
+            ledger_path.lstat()
+        except FileNotFoundError:
+            ledger = b""
+        else:
+            # Use the same no-follow, bounded reader as nonempty ledgers; lstat
+            # only distinguishes an absent file from a present unsafe one.
+            ledger = _zap_retained_ledger(Path("/out"))
+        if ledger:
+            raise RuntimeAuditError(
+                "E_ZAP_LEDGER", "disabled-only control must not emit a ledger"
+            )
+        verification = {
+            "state": "DISABLED_CONTROL",
+            "expected_rule_ids": [],
+            "disabled_rule_id": disabled_rule_id,
+        }
     _zap_check_daemon(watch)
     return {
         "schema": "factory.zap-native-observation.v1",
@@ -8709,6 +8797,7 @@ def _zap_measure_scan(request, bindings, child, deadline, watch):
         "alerts": alerts,
         "native_ledger": ledger.decode("utf-8"),
         "native_verification": verification,
+        "disabled_rule_id": disabled_rule_id,
         **(
             {
                 "target_sha256": watch["target_sha256"],

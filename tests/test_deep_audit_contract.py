@@ -1344,6 +1344,163 @@ def test_execution_manifest_v2_rejects_fixture_drift_and_syft_detector(tmp_path)
         load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
 
 
+def _zap_control_fixture(tmp_path):
+    image = "example.test/app@sha256:" + "a" * 64
+    native_target = {
+        "schema": "factory.zap-target.v1",
+        "image": image,
+        "argv": ["/opt/app/bin/server"],
+        "port": 8080,
+        "readiness_path": "/ready",
+        "routes": [
+            {
+                "id": "candidate",
+                "method": "GET",
+                "path": "/candidate",
+                "query": {},
+                "source_bindings": {"app.py": "b" * 64},
+            }
+        ],
+    }
+    lane = {
+        "id": "zap",
+        "engine": "zap",
+        "family": "runtime",
+        "rule_ids": ["40012"],
+        "native_target": native_target,
+    }
+    challenges = []
+    for kind, path, raw, route_id in (
+        ("positive", "safe/positive.py", b"positive fixture", "safe-positive"),
+        ("negative", "safe/negative.py", b"negative fixture", "safe-negative"),
+        ("mutation", "safe/positive.py", b"positive fixture", "safe-positive"),
+    ):
+        source_sha = sha256_bytes(raw)
+        if not (tmp_path / path).exists():
+            (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / path).write_bytes(raw)
+        route = {
+            "id": route_id,
+            "method": "GET",
+            "path": "/probe",
+            "query": {},
+            "source_bindings": {path: source_sha},
+        }
+        target = {
+            "schema": "factory.zap-target.v1",
+            "image": image,
+            "argv": ["/opt/app/bin/server", "--fixture", path],
+            "port": 8080,
+            "readiness_path": "/ready",
+            "routes": [route],
+        }
+        manifest = {path: source_sha}
+        challenges.append(
+            {
+                "kind": kind,
+                "fixture_path": path,
+                "fixture_sha256": source_sha,
+                "expected_report_sha256": sha256_bytes(kind.encode()),
+                "expected_exit_code": 0,
+                "fixture_manifest": manifest,
+                "fixture_manifest_sha256": digest(manifest),
+                "zap_target": target,
+                "zap_route_id": route_id,
+            }
+        )
+    obligation = {
+        "id": "zap-40012",
+        "engine": "zap",
+        "family": "runtime",
+        "detector_rule_id": "40012",
+        "paths": ["safe/positive.py"],
+        "requirements": ["safe/positive.py"],
+        "remediation": "Fix the detected issue.",
+        "challenges": challenges,
+    }
+    return lane, obligation
+
+
+def test_signed_zap_controls_bind_each_rule_route_and_fixture_tree(tmp_path):
+    from factoryline.deep_audit_contract import (
+        _validate_obligation,
+        _zap_control_obligations,
+    )
+
+    lane, obligation = _zap_control_fixture(tmp_path)
+    _validate_obligation(obligation, [lane], 2)
+
+    controls = _zap_control_obligations(lane, [obligation], tmp_path)
+
+    assert controls == [obligation]
+    assert controls[0]["challenges"][0]["zap_route_id"] == "safe-positive"
+
+
+def _mutate_zap_fixture_manifest(item):
+    challenge = item["challenges"][1]
+    challenge["fixture_manifest"]["safe/negative.py"] = "a" * 64
+    challenge["fixture_sha256"] = "a" * 64
+    item["challenges"][1]["fixture_manifest_sha256"] = digest(
+        challenge["fixture_manifest"]
+    )
+
+
+def _mutate_zap_control_image(item):
+    image = "example.test/other@sha256:" + "c" * 64
+    item["challenges"][0]["zap_target"]["image"] = image
+    item["challenges"][2]["zap_target"]["image"] = image
+
+
+@pytest.mark.parametrize(
+    "mutation,code",
+    [
+        (
+            lambda item: item["challenges"][1].update(zap_route_id="missing"),
+            "E_ZAP_CONTROL",
+        ),
+        (_mutate_zap_fixture_manifest, "E_ZAP_CONTROL"),
+        (_mutate_zap_control_image, "E_ZAP_CONTROL"),
+        (
+            lambda item: item["challenges"][2].update(zap_route_id="other"),
+            "E_HOLLOW_CHALLENGE",
+        ),
+        (
+            lambda item: item["challenges"][2]["zap_target"]["argv"].append(
+                "different"
+            ),
+            "E_HOLLOW_CHALLENGE",
+        ),
+    ],
+)
+def test_signed_zap_control_contract_rejects_unbound_route_or_mutation(
+    tmp_path, mutation, code
+):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import _validate_obligation
+
+    lane, obligation = _zap_control_fixture(tmp_path)
+    changed = deepcopy(obligation)
+    mutation(changed)
+
+    with pytest.raises(RuntimeAuditError, match=code):
+        _validate_obligation(changed, [lane], 2)
+
+
+def test_zap_control_selector_rejects_missing_duplicate_and_fixture_drift(tmp_path):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import _zap_control_obligations
+
+    lane, obligation = _zap_control_fixture(tmp_path)
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_CONTROL"):
+        _zap_control_obligations(lane, [], tmp_path)
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_CONTROL"):
+        _zap_control_obligations(lane, [obligation, deepcopy(obligation)], tmp_path)
+
+    (tmp_path / "safe" / "positive.py").write_bytes(b"drifted")
+    with pytest.raises(RuntimeAuditError, match="E_REPORT_DRIFT"):
+        _zap_control_obligations(lane, [obligation], tmp_path)
+
+
 def test_scan_rejects_authorization_changed_after_signature_verification(
     tmp_path, monkeypatch
 ):

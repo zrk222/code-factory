@@ -1933,3 +1933,229 @@ def test_zap_worker_diagnostic_retains_only_bounded_codes(tmp_path, raw, expecte
     path.write_bytes(raw)
 
     assert _zap_worker_diagnostic(path) == expected
+
+
+def test_zap_control_tree_copies_only_bound_fixture_bytes(tmp_path):
+    from factoryline.deep_audit import _zap_control_tree
+    from factoryline.runtime_audit_common import sha256_bytes
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "app.py").write_bytes(b"fixture")
+    (source / "secret.txt").write_bytes(b"not mounted")
+    destination = tmp_path / "case"
+    destination.mkdir()
+    inventory = _zap_control_tree(
+        source, destination, {"app.py": sha256_bytes(b"fixture")}
+    )
+    assert (destination / "app.py").read_bytes() == b"fixture"
+    assert not (destination / "secret.txt").exists()
+    assert [item["path"] for item in inventory["files"]] == ["app.py"]
+    with pytest.raises(RuntimeAuditError, match="E_REPORT_DRIFT"):
+        _zap_control_tree(source, tmp_path / "changed", {"app.py": "0" * 64})
+
+
+def test_zap_control_projection_binds_effective_rules_not_volatile_ids():
+    from factoryline.deep_audit import _zap_report_projection
+
+    observation = {
+        "alerts": {
+            "alerts": [
+                {
+                    "id": "1",
+                    "pluginId": "40012",
+                    "risk": "High",
+                    "url": "http://factory-target:8765/",
+                    "param": "input",
+                }
+            ]
+        },
+        "effective_inventory_after": {"scanners": [{"id": "40012", "enabled": "true"}]},
+    }
+    before = _zap_report_projection(observation)
+    observation["alerts"]["alerts"][0]["id"] = "999"
+    assert _zap_report_projection(observation) == before
+    observation["effective_inventory_after"]["scanners"][0]["enabled"] = "false"
+    assert _zap_report_projection(observation) != before
+
+
+def test_zap_control_request_requires_exact_signed_disabled_policy(monkeypatch):
+    import factoryline.deep_audit as host
+
+    lane = _host_zap_lane_fixture()
+    monkeypatch.setattr(host.time, "monotonic", lambda: 10)
+    args = (
+        {"run_id": "run"},
+        {"candidate_sha256": "c" * 64},
+        lane,
+        lane["native_target"]["routes"][0],
+        20,
+    )
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_MUTATION"):
+        host._zap_target_request(*args, disabled_rule_id="40012")
+    lane["mutation_config_sha256"] = {
+        "40012": digest(
+            {
+                "schema": "factory.zap-disabled-policy.v1",
+                "rule_ids": ["40012"],
+                "disabled_rule_id": "40012",
+            }
+        )
+    }
+    request = host._zap_target_request(*args, disabled_rule_id="40012")
+    assert host._zap_host_expected_rules(request) == []
+    assert request["rule_ids"] == ["40012"]
+
+
+def test_zap_controls_replay_every_case_in_fresh_directories(tmp_path, monkeypatch):
+    import factoryline.deep_audit as host
+
+    calls = []
+
+    def execute(directory, *args):
+        calls.append(directory)
+        return {"report_sha256": "a" * 64}
+
+    monkeypatch.setattr(host, "_zap_execute_control", execute)
+    obligation = {
+        "id": "xss",
+        "detector_rule_id": "40012",
+        "challenges": [{"kind": kind} for kind in ("positive", "negative", "mutation")],
+    }
+    receipts = host._zap_execute_controls(
+        tmp_path, {}, tmp_path, {}, [obligation], 100, None
+    )
+    assert len(calls) == len(set(calls)) == 6
+    assert {item["kind"] for item in receipts} == {"positive", "negative", "mutation"}
+    assert all(item["primary"] == item["replay"] for item in receipts)
+
+
+def test_zap_controls_reject_disagreeing_independent_replay(tmp_path, monkeypatch):
+    import factoryline.deep_audit as host
+
+    results = iter(({"report_sha256": "a" * 64}, {"report_sha256": "b" * 64}))
+    monkeypatch.setattr(host, "_zap_execute_control", lambda *args: next(results))
+    obligation = {
+        "id": "xss",
+        "detector_rule_id": "40012",
+        "challenges": [{"kind": "positive"}],
+    }
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_REPLAY"):
+        host._zap_execute_controls(tmp_path, {}, tmp_path, {}, [obligation], 100, None)
+
+
+def test_zap_candidate_findings_report_route_binding_without_claiming_exact_line():
+    from factoryline.deep_audit import _zap_candidate_findings
+
+    lane = _host_zap_lane_fixture()
+    reports = [
+        {
+            "route_id": "home",
+            "report": {
+                "alerts": [
+                    {
+                        "pluginId": "40012",
+                        "risk": "High",
+                        "url": "http://factory-target:8765/",
+                        "param": "input",
+                    }
+                ]
+            },
+        }
+    ]
+    findings = _zap_candidate_findings(
+        reports, lane, {"files": [{"path": "app.py", "sha256": "c" * 64}]}
+    )
+    assert len(findings) == 1 and findings[0]["severity"] == "high"
+    assert findings[0]["exact_source_line"] is False
+    assert findings[0]["location_kind"] == "declared_route_source_binding"
+
+
+def test_zap_control_failure_retains_actionable_candidate_findings(
+    tmp_path, monkeypatch
+):
+    import factoryline.deep_audit as host
+    from factoryline.deep_audit_io import read_run_json
+
+    monkeypatch.setattr(
+        host,
+        "_execute_zap_target",
+        lambda *args, **kwargs: {
+            "state": "INCOMPLETE",
+            "gaps": [],
+            "native_execution": {},
+        },
+    )
+    monkeypatch.setattr(
+        host, "_zap_candidate_report", lambda *args: [{"route_id": "home"}]
+    )
+    monkeypatch.setattr(
+        host, "_zap_candidate_findings", lambda *args: [{"finding_id": "native-xss"}]
+    )
+
+    def fail(*args):
+        raise RuntimeAuditError("E_ZAP_CONTROL_REPORT", "private output path")
+
+    monkeypatch.setattr(host, "_zap_finish_controls", fail)
+    result = host._execute_zap_controlled_lane(
+        tmp_path,
+        {},
+        tmp_path,
+        _host_zap_lane_fixture(),
+        {"candidate_sha256": "c" * 64},
+        {},
+        None,
+    )
+    assert result["findings"] == [{"finding_id": "native-xss"}]
+    assert result["state"] == "INCOMPLETE" and result["gaps"] == [
+        "E_ZAP_CONTROL_REPORT"
+    ]
+    receipt = read_run_json(tmp_path, "zap-control-failure-zap.json")
+    assert receipt["code"] == "E_ZAP_CONTROL_REPORT"
+    assert "private output path" not in str(receipt)
+
+
+def test_zap_docker_control_caps_timeout_to_remaining_deadline(monkeypatch):
+    import factoryline.deep_audit as host
+
+    calls = []
+    monkeypatch.setattr(host.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(
+        host,
+        "_docker_control",
+        lambda *args: calls.append(args) or ({"exit_code": 0}, b"ok"),
+    )
+
+    host._zap_docker_control(["docker"], ["info"], 100.0)
+
+    assert calls == [(["docker"], ["info"], 15)]
+
+
+def test_zap_docker_control_uses_remaining_integer_seconds(monkeypatch):
+    import factoryline.deep_audit as host
+
+    calls = []
+    times = iter((10.0, 12.0))
+    monkeypatch.setattr(host.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(
+        host,
+        "_docker_control",
+        lambda *args: calls.append(args) or ({"exit_code": 0}, b"true"),
+    )
+
+    host._zap_internal_network(["docker"], "net", deadline=20.0)
+
+    assert [call[2] for call in calls] == [10, 8]
+
+
+def test_zap_docker_control_rejects_expired_deadline_before_api(monkeypatch):
+    import factoryline.deep_audit as host
+
+    calls = []
+    monkeypatch.setattr(host.time, "monotonic", lambda: 10.1)
+    monkeypatch.setattr(host, "_docker_control", lambda *args: calls.append(args))
+
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_TIMEOUT"):
+        host._zap_docker_control(["docker"], ["network", "create"], 10.9)
+
+    assert calls == []

@@ -7484,6 +7484,242 @@ def test_zap_native_v2_request_binds_target_route_inventory_and_profile():
     assert result["route_sha256"] == digest(request["target"]["routes"][0])
     assert result["bindings"]["host_id"] == sha256_bytes(result["base_url"].encode())
     assert result["bindings"]["profile_sha256"] == request["profile_sha256"]
+    assert "disabled_rule_id" not in request
+    assert result["disabled_rule_id"] is None
+
+
+def test_zap_native_v2_disabled_control_requires_signed_exact_policy():
+    from factoryline.deep_audit_io import _zap_native_v2_context, digest
+
+    request, contract = _native_zap_v2_fixture()
+    disabled = request["rule_ids"][0]
+    policy = {
+        "schema": "factory.zap-disabled-policy.v1",
+        "rule_ids": request["rule_ids"],
+        "disabled_rule_id": disabled,
+    }
+    contract["lane"]["mutation_config_sha256"] = {disabled: digest(policy)}
+    request["profile_sha256"] = digest(contract["lane"])
+    request["disabled_rule_id"] = disabled
+
+    result = _zap_native_v2_context(request, contract)
+
+    assert result["disabled_rule_id"] == disabled
+    assert request["rule_ids"] == contract["lane"]["rule_ids"]
+
+    contract["lane"]["mutation_config_sha256"][disabled] = "0" * 64
+    request["profile_sha256"] = digest(contract["lane"])
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_MUTATION"):
+        _zap_native_v2_context(request, contract)
+
+
+def test_zap_rule_selection_supports_exact_zero_enabled_control(monkeypatch):
+    import factoryline.deep_audit_io as audit_io
+
+    calls = []
+
+    def fake_api(component, kind, name, _deadline, *, watch=None, **kwargs):
+        calls.append((component, kind, name, kwargs))
+        if name == "scanners":
+            return {"scanners": [{"id": "40012", "enabled": "false"}]}
+        return {}
+
+    monkeypatch.setattr(audit_io, "_zap_api", fake_api)
+    raw = audit_io._zap_select_rules(["40012"], time.monotonic() + 10, {}, "40012")
+
+    assert raw == {"scanners": [{"id": "40012", "enabled": "false"}]}
+    assert [call[2] for call in calls] == ["disableAllScanners", "scanners"]
+
+
+def test_zap_passive_scan_wait_requires_stable_zero_and_resets_on_pending(
+    monkeypatch,
+):
+    import factoryline.deep_audit_io as audit_io
+
+    values = iter(["2", "0", "1", "0", "0"])
+    calls = []
+    sleeps = []
+    monkeypatch.setattr(audit_io, "_zap_check_daemon", lambda *_args: None)
+
+    def api(component, kind, name, _deadline, *, watch=None, **kwargs):
+        calls.append((component, kind, name))
+        return {"recordsToScan": next(values)}
+
+    monkeypatch.setattr(audit_io, "_zap_api", api)
+    monkeypatch.setattr(audit_io.time, "sleep", sleeps.append)
+    result = audit_io._zap_wait_passive_scan(object(), time.monotonic() + 10, {})
+
+    assert result == {"recordsToScan": "0"}
+    assert calls == [("pscan", "view", "recordsToScan")] * 5
+    assert sleeps == [0.2] * 4
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"recordsToScan": 0},
+        {"recordsToScan": ""},
+        {"recordsToScan": "01"},
+        {"recordsToScan": "-1"},
+        {"recordsToScan": "0", "extra": "0"},
+        [],
+    ],
+)
+def test_zap_passive_scan_rejects_malformed_queue_counts(monkeypatch, response):
+    import factoryline.deep_audit_io as audit_io
+
+    monkeypatch.setattr(audit_io, "_zap_check_daemon", lambda *_args: None)
+    monkeypatch.setattr(audit_io, "_zap_api", lambda *_args, **_kwargs: response)
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_PASSIVE"):
+        audit_io._zap_wait_passive_scan(object(), time.monotonic() + 10, {})
+
+
+def test_zap_passive_scan_wait_fails_when_deadline_is_exhausted():
+    import threading
+    import factoryline.deep_audit_io as audit_io
+
+    class Child:
+        def poll(self):
+            return None
+
+    child = Child()
+    watch = {
+        "child": child,
+        "deadline": time.monotonic() - 1,
+        "overflow": threading.Event(),
+    }
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_TIMEOUT"):
+        audit_io._zap_wait_passive_scan(child, watch["deadline"], watch)
+
+
+@pytest.mark.parametrize("ledger_state", ["absent", "empty"])
+def test_zap_measurement_marks_zero_enabled_as_disabled_control_without_ledger(
+    monkeypatch, ledger_state
+):
+    import factoryline.deep_audit_io as audit_io
+
+    class LedgerPath:
+        def __init__(self, value):
+            assert value == "/out"
+
+        def __truediv__(self, _name):
+            return self
+
+        def lstat(self):
+            if ledger_state == "absent":
+                raise FileNotFoundError
+            return object()
+
+    monkeypatch.setattr(audit_io, "Path", LedgerPath)
+    monkeypatch.setattr(
+        audit_io, "_zap_wait_ready", lambda *_args: {"version": "2.17.0"}
+    )
+    monkeypatch.setattr(audit_io, "_zap_start_scan", lambda *_args: ("1", {}))
+    monkeypatch.setattr(audit_io, "_zap_wait_scan", lambda *_args: {"status": "100"})
+    monkeypatch.setattr(audit_io, "_zap_check_daemon", lambda *_args: None)
+
+    def fake_api(component, kind, name, _deadline, *, watch=None, **_kwargs):
+        if (component, kind, name) == ("ascan", "view", "scanners"):
+            return {"scanners": [{"id": "40012", "enabled": "false"}]}
+        if (component, kind, name) == ("pscan", "view", "recordsToScan"):
+            return {"recordsToScan": "0"}
+        if (component, kind, name) == ("core", "view", "alerts"):
+            return {"alerts": []}
+        return {}
+
+    monkeypatch.setattr(audit_io, "_zap_api", fake_api)
+    retained = []
+
+    def retained_ledger(path):
+        retained.append(path)
+        return b"" if ledger_state == "empty" else b"nonempty"
+
+    monkeypatch.setattr(audit_io, "_zap_retained_ledger", retained_ledger)
+    request = {"rule_ids": ["40012"]}
+    watch = {"disabled_rule_id": "40012"}
+    result = audit_io._zap_measure_scan(
+        request,
+        {
+            "run_id": "run",
+            "candidate_sha256": "a" * 64,
+            "profile_sha256": "b" * 64,
+            "host_id": "c" * 64,
+        },
+        object(),
+        time.monotonic() + 10,
+        watch,
+    )
+
+    assert result["native_ledger"] == ""
+    assert result["native_verification"] == {
+        "state": "DISABLED_CONTROL",
+        "expected_rule_ids": [],
+        "disabled_rule_id": "40012",
+    }
+    assert result["disabled_rule_id"] == "40012"
+    assert bool(retained) is (ledger_state == "empty")
+
+
+def test_zap_zero_enabled_control_rejects_nonempty_or_unsafe_ledger(monkeypatch):
+    import factoryline.deep_audit_io as audit_io
+
+    class PresentLedgerPath:
+        def __init__(self, value):
+            assert value == "/out"
+
+        def __truediv__(self, _name):
+            return self
+
+        def lstat(self):
+            return object()
+
+    def prepare(state):
+        monkeypatch.setattr(audit_io, "Path", PresentLedgerPath)
+        monkeypatch.setattr(
+            audit_io, "_zap_wait_ready", lambda *_args: {"version": "2.17.0"}
+        )
+        monkeypatch.setattr(audit_io, "_zap_start_scan", lambda *_args: ("1", {}))
+        monkeypatch.setattr(
+            audit_io, "_zap_wait_scan", lambda *_args: {"status": "100"}
+        )
+        monkeypatch.setattr(audit_io, "_zap_check_daemon", lambda *_args: None)
+
+        def fake_api(component, kind, name, _deadline, *, watch=None, **_kwargs):
+            if (component, kind, name) == ("ascan", "view", "scanners"):
+                return {"scanners": [{"id": "40012", "enabled": "false"}]}
+            if (component, kind, name) == ("pscan", "view", "recordsToScan"):
+                return {"recordsToScan": "0"}
+            if (component, kind, name) == ("core", "view", "alerts"):
+                return {"alerts": []}
+            return {}
+
+        monkeypatch.setattr(audit_io, "_zap_api", fake_api)
+        if state == "unsafe":
+
+            def read_unsafe(_path):
+                raise RuntimeAuditError("E_PATH_ESCAPE", "symlink rejected")
+
+            monkeypatch.setattr(audit_io, "_zap_retained_ledger", read_unsafe)
+        else:
+            monkeypatch.setattr(
+                audit_io, "_zap_retained_ledger", lambda _path: b"row\n"
+            )
+
+    for state, expected in (("nonempty", "E_ZAP_LEDGER"), ("unsafe", "E_PATH_ESCAPE")):
+        prepare(state)
+        with pytest.raises(RuntimeAuditError, match=expected):
+            audit_io._zap_measure_scan(
+                {"rule_ids": ["40012"]},
+                {
+                    "run_id": "run",
+                    "candidate_sha256": "a" * 64,
+                    "profile_sha256": "b" * 64,
+                    "host_id": "c" * 64,
+                },
+                object(),
+                time.monotonic() + 10,
+                {"disabled_rule_id": "40012"},
+            )
 
 
 def test_zap_native_v2_api_watch_rejects_rewritten_target_before_network():
@@ -7539,6 +7775,8 @@ def test_zap_measurement_alerts_api_uses_worker_contract_origin(
         if (component, kind, name) == ("core", "view", "alerts"):
             captured.update(kwargs)
             return {"alerts": []}
+        if (component, kind, name) == ("pscan", "view", "recordsToScan"):
+            return {"recordsToScan": "0"}
         return {"scanners": [{"id": "40012", "enabled": "true"}]}
 
     monkeypatch.setattr(audit_io, "_zap_api", fake_api)
