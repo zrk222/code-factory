@@ -536,9 +536,7 @@ def test_native_v2_rejects_nonportable_manifest_paths(tmp_path, path):
     assert called == []
 
 
-@pytest.mark.parametrize(
-    "failure", ["missing-report", "timeout", "invalid-facts"]
-)
+@pytest.mark.parametrize("failure", ["missing-report", "timeout", "invalid-facts"])
 def test_native_v2_incomplete_runner_returns_evidence_without_exception(
     tmp_path, failure
 ):
