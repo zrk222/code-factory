@@ -53,3 +53,37 @@ def command_rebound(request):
     value = "echo safe"
     # ok: python.request-command-injection
     os.system(value)
+
+import pathlib
+
+def path_bad(request):
+    value = request.args.get("path")
+    alias = value
+    if alias:
+        # ruleid: python.request-path-traversal
+        return open(alias).read()
+
+def path_nested_bad(request):
+    value = request.form.get("path")
+    try:
+        # ruleid: python.request-path-traversal
+        return pathlib.Path(value).read_text()
+    except OSError:
+        return None
+
+def path_safe(request):
+    value = request.args.get("contents")
+    # ok: python.request-path-traversal
+    with open("fixed.txt", "w") as handle:
+        handle.write(value)
+
+def path_rebound(request):
+    value = request.args.get("path")
+    value = "fixed.txt"
+    # ok: python.request-path-traversal
+    return open(value).read()
+
+def django_path_bad(request):
+    value = request.GET.get("path")
+    # ruleid: python.request-path-traversal
+    return open(value).read()

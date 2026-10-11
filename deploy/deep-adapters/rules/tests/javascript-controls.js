@@ -49,3 +49,37 @@ function commandRebound(req) {
   // ok: javascript.request-command-injection
   child_process.exec(value);
 }
+
+const fs = require("fs");
+function pathBad(req) {
+  const value = req.query.path;
+  const alias = value;
+  if (alias) {
+    // ruleid: javascript.request-path-traversal
+    return fs.readFileSync(alias);
+  }
+}
+function pathNestedBad(req) {
+  const value = req.params.path;
+  try {
+    // ruleid: javascript.request-path-traversal
+    return fs.promises.readFile(value);
+  } catch (error) { throw error; }
+}
+function pathSafe(req) {
+  const value = req.body.contents;
+  // ok: javascript.request-path-traversal
+  fs.writeFileSync("fixed.txt", value);
+}
+function pathRebound(req) {
+  let value = req.query.path;
+  value = "fixed.txt";
+  // ok: javascript.request-path-traversal
+  return fs.readFileSync(value);
+}
+
+function streamPathBad(req) {
+  const value = req.body.path;
+  // ruleid: javascript.request-path-traversal
+  return fs.createReadStream(value);
+}
