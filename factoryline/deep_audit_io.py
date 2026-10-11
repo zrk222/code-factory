@@ -1949,6 +1949,7 @@ def _native_profile_challenges(profile, contract, source, lane, execution, start
 
 
 def _run_native_profile(profile, contract, source, output, inventory, lane, paths):
+    _osv_profile_preflight(profile, lane)
     rule_inventory = None
     config_path = None
     semgrep_rules = None
@@ -2076,6 +2077,48 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
             raw_report_bytes if profile["report_format"] != "runtime-junit" else None
         ),
     }
+
+
+def _osv_profile_preflight(profile, lane):
+    if (lane.get("engine"), lane.get("mode")) != (
+        "osv",
+        "offline-pypi-snapshot",
+    ):
+        return
+    try:
+        policy = local_file(Path("/opt/factory/rules"), "osv-scanner.toml").read_bytes()
+    except (OSError, RuntimeAuditError) as exc:
+        raise RuntimeAuditError(
+            "E_OSV_POLICY", "trusted OSV configuration unavailable"
+        ) from exc
+    _osv_policy_inputs(profile, policy)
+
+
+def _osv_policy_inputs(profile, policy_bytes):
+    expected = {
+        "argv": [
+            "/opt/factory/bin/osv-offline",
+            "scan",
+            "source",
+            "-r",
+            "{source}",
+            "--config",
+            "/opt/factory/rules/osv-scanner.toml",
+            "--offline",
+            "--offline-vulnerabilities",
+            "--allow-no-lockfiles",
+            "--all-packages",
+            "--format",
+            "json",
+            "--output",
+            "{report}",
+        ],
+        "accepted_exit_codes": [0, 1],
+    }
+    if profile.get("commands") != [expected] or policy_bytes != b"\n":
+        raise RuntimeAuditError(
+            "E_OSV_POLICY", "baseline requires the trusted empty OSV configuration"
+        )
 
 
 def _native_profile_report(profile, output, paths):

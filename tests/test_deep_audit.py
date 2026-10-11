@@ -1313,6 +1313,109 @@ def test_semgrep_native_source_budget_rejects_before_tool_execution(tmp_path):
         )
 
 
+def test_osv_baseline_policy_requires_one_trusted_config_and_offline_scope():
+    from factoryline.deep_audit_io import _osv_policy_inputs
+
+    command = {
+        "argv": [
+            "/opt/factory/bin/osv-offline",
+            "scan",
+            "source",
+            "-r",
+            "{source}",
+            "--config",
+            "/opt/factory/rules/osv-scanner.toml",
+            "--offline",
+            "--offline-vulnerabilities",
+            "--allow-no-lockfiles",
+            "--all-packages",
+            "--format",
+            "json",
+            "--output",
+            "{report}",
+        ],
+        "accepted_exit_codes": [0, 1],
+    }
+    profile = {"commands": [command]}
+    policy_bytes = Path("deploy/deep-adapters/rules/empty-ignore.txt").read_bytes()
+    assert policy_bytes == b"\n"
+    assert _osv_policy_inputs(profile, policy_bytes) is None
+
+    sabotages = []
+    missing_config = deepcopy(profile)
+    del missing_config["commands"][0]["argv"][5:7]
+    sabotages.append(missing_config)
+    duplicated_config = deepcopy(profile)
+    duplicated_config["commands"][0]["argv"][7:7] = [
+        "--config",
+        "/src/osv-scanner.toml",
+    ]
+    sabotages.append(duplicated_config)
+    candidate_config = deepcopy(profile)
+    candidate_config["commands"][0]["argv"][6] = "/src/osv-scanner.toml"
+    sabotages.append(candidate_config)
+    for argv_flag in (
+        "--offline",
+        "--offline-vulnerabilities",
+        "--all-packages",
+    ):
+        omitted = deepcopy(profile)
+        omitted["commands"][0]["argv"].remove(argv_flag)
+        sabotages.append(omitted)
+
+    unknown_command = deepcopy(profile)
+    unknown_command["commands"][0]["argv"].append("--unknown-option")
+    sabotages.append(unknown_command)
+
+    for sabotage in sabotages:
+        with pytest.raises(RuntimeAuditError, match="E_OSV_POLICY"):
+            _osv_policy_inputs(sabotage, policy_bytes)
+    for invalid_policy in (b"", b"\r\n", b'ignore = ["CVE-2026-0001"]\n'):
+        with pytest.raises(RuntimeAuditError, match="E_OSV_POLICY"):
+            _osv_policy_inputs(profile, invalid_policy)
+
+
+def test_osv_preflight_rejects_missing_trusted_config_before_runner(
+    monkeypatch, tmp_path
+):
+    from factoryline.deep_audit_io import _run_native_profile
+
+    profile = json.loads(Path("deploy/deep-adapters/profiles/osv.json").read_text())
+
+    def missing_policy(*_args):
+        raise FileNotFoundError("missing trusted config")
+
+    def runner_must_not_start(*_args, **_kwargs):
+        raise AssertionError("native runner started before policy preflight")
+
+    monkeypatch.setattr("factoryline.deep_audit_io.local_file", missing_policy)
+    monkeypatch.setattr(
+        "factoryline.deep_audit_io._native_version", runner_must_not_start
+    )
+    with pytest.raises(RuntimeAuditError, match="E_OSV_POLICY"):
+        _run_native_profile(
+            profile,
+            {},
+            tmp_path,
+            tmp_path,
+            {"files": [], "candidate_sha256": "a" * 64},
+            {
+                "engine": "osv",
+                "mode": "offline-pypi-snapshot",
+                "timeout_seconds": 30,
+            },
+            ["report.json"],
+        )
+
+
+def test_osv_worker_copies_existing_empty_policy_asset():
+    dockerfile = Path("deploy/deep-adapters/Dockerfile").read_text()
+    assert (
+        "COPY --chown=1000:1000 deploy/deep-adapters/rules/empty-ignore.txt "
+        "/opt/factory/rules/osv-scanner.toml"
+    ) in dockerfile
+
+
 def test_semgrep_native_rejects_resealed_wrong_rule_config_path():
     from factoryline.deep_audit_io import verify_semgrep_rule_execution
 
