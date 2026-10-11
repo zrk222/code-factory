@@ -1340,7 +1340,7 @@ def _finish_native_challenge(context, *, runner, report_parser) -> dict[str, Any
             _verify_artifact_anchor(context, run)
     except (RuntimeAuditError, OSError, ValueError, TypeError):
         run["state"], run["report"] = "INCOMPLETE", None
-        run.setdefault("native_artifacts", None)
+    run.setdefault("native_artifacts", None)
     if facts is not None:
         _recheck_challenge_inputs(context, run)
         if context["data"]["challenge_v2"]:
