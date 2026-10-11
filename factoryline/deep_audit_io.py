@@ -2076,10 +2076,10 @@ def native_fuzz_main(argv: list[str]) -> int:
     contract = strict_json(Path("/factory-contract.json").read_bytes())
     root = Path.cwd()
     contract = _fuzz_execution_contract(contract, root)
-    rule_ids, control_sha, native_args = _fuzz_control_args(argv)
     harness = harness_path.relative_to(root).as_posix()
     sources = {item["path"]: item["sha256"] for item in contract["inventory"]["files"]}
     bound_bytes(root, {"path": harness, "sha256": sources[harness]})
+    rule_ids, control_sha, native_args = _fuzz_control_args(argv)
     cov = coverage.Coverage(branch=True, data_file=None, source=[str(root)])
     cov.start()
     with atheris.instrument_imports():
