@@ -49,3 +49,54 @@ function commandRebound(req) {
   // ok: javascript.request-command-injection
   child_process.exec(value);
 }
+
+const fs = require("fs");
+function pathBad(req) {
+  const value = req.query.path;
+  const alias = value;
+  if (alias) {
+    // ruleid: javascript.request-path-traversal
+    return fs.readFileSync(alias);
+  }
+}
+function pathNestedBad(req) {
+  const value = req.params.path;
+  try {
+    // ruleid: javascript.request-path-traversal
+    return fs.promises.readFile(value);
+  } catch (error) { throw error; }
+}
+function callbackReadBad(req, callback) {
+  const value = req.query.path;
+  const alias = value;
+  // ruleid: javascript.request-path-traversal
+  return fs.readFile(alias, callback);
+}
+function callbackReadFixedSafe(req, callback) {
+  const value = req.query.contents;
+  // ok: javascript.request-path-traversal
+  return fs.readFile("fixed.txt", callback);
+}
+function callbackReadReboundSafe(req, callback) {
+  let value = req.query.path;
+  value = "fixed.txt";
+  // ok: javascript.request-path-traversal
+  return fs.readFile(value, callback);
+}
+function pathSafe(req) {
+  const value = req.body.contents;
+  // ok: javascript.request-path-traversal
+  fs.writeFileSync("fixed.txt", value);
+}
+function pathRebound(req) {
+  let value = req.query.path;
+  value = "fixed.txt";
+  // ok: javascript.request-path-traversal
+  return fs.readFileSync(value);
+}
+
+function streamPathBad(req) {
+  const value = req.body.path;
+  // ruleid: javascript.request-path-traversal
+  return fs.createReadStream(value);
+}

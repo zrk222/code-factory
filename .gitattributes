@@ -1,3 +1,4 @@
 deploy/deep-adapters/entrypoint text eol=lf
 deploy/deep-adapters/bin/* text eol=lf
 .factory/independent-ai/* text eol=lf
+deploy/deep-adapters/rules/semgrep-pattern-limited.yml text eol=lf
