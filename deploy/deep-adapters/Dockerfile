@@ -130,3 +130,33 @@ COPY --chown=1000:1000 deploy/deep-adapters/profiles/atheris.json /opt/factory/a
 COPY --chown=1000:1000 deploy/deep-adapters/rules/fuzz-control.json /opt/factory/rules/fuzz-control.json
 LABEL io.code-factory.configured="true" io.code-factory.harness="candidate-supplied"
 ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
+
+# Exact stable distribution plus a source-bound native invocation ledger.
+FROM ghcr.io/zaproxy/zaproxy@sha256:17711b689795c5519c512bafee363b3976ce8457358db8405c6961e18c72dc66 AS zap-native-build
+USER 0:0
+ADD --checksum=sha256:774a41e0f7089332656a8b222fc07e96fe29b390a6432719b77595775731b228 https://raw.githubusercontent.com/zaproxy/zaproxy/8a1bff313f4d183dba5aa154ecbe89ad751c9153/zap/src/main/java/org/parosproxy/paros/core/scanner/HostProcess.java /tmp/zap-source/zap/src/main/java/org/parosproxy/paros/core/scanner/HostProcess.java
+ADD --checksum=sha256:25ecec9175591616f0c38e7209476723aedc4bbae716308038a5687cf69c29e4 https://raw.githubusercontent.com/zaproxy/zaproxy/8a1bff313f4d183dba5aa154ecbe89ad751c9153/zap/src/main/java/org/parosproxy/paros/core/scanner/AbstractPlugin.java /tmp/zap-source/zap/src/main/java/org/parosproxy/paros/core/scanner/AbstractPlugin.java
+COPY deploy/deep-adapters/zap-rule-ledger.patch /tmp/zap-rule-ledger.patch
+WORKDIR /tmp/zap-source
+RUN echo '2730f8ae000c8a84e6c29202bbee853080721f18447e59345d5aed78572801c8  /tmp/zap-rule-ledger.patch' | sha256sum -c - \
+    && git apply --check /tmp/zap-rule-ledger.patch \
+    && git apply /tmp/zap-rule-ledger.patch \
+    && mkdir -p /tmp/zap-classes \
+    && javac --release 17 -proc:none -cp '/zap/zap-2.17.0.jar:/zap/lib/*:/zap/plugin/*' -d /tmp/zap-classes zap/src/main/java/org/parosproxy/paros/core/scanner/HostProcess.java zap/src/main/java/org/parosproxy/paros/core/scanner/AbstractPlugin.java \
+    && jar --update --file /zap/zap-2.17.0.jar -C /tmp/zap-classes .
+FROM sdk AS zap-worker
+USER 0:0
+RUN apt-get update \
+    && apt-get -t forky install -y --no-install-recommends libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=zap-native-build /zap /zap
+COPY --from=zap-native-build /usr/lib/jvm/java-17-openjdk-amd64 /opt/factory/java
+COPY --from=zap-native-build /etc/java-17-openjdk /etc/java-17-openjdk
+ENV JAVA_HOME=/opt/factory/java
+ENV PATH=/opt/factory/java/bin:$PATH
+RUN mkdir -p /home/factory /out && chown -R 1000:1000 /home/factory /out
+ENV HOME=/home/factory
+USER 1000:1000
+WORKDIR /src
+LABEL io.code-factory.configured="false" io.code-factory.zap-source="8a1bff313f4d183dba5aa154ecbe89ad751c9153" io.code-factory.zap-ledger="factory.zap-rule-ledger.v1"
+ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]

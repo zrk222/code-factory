@@ -7182,3 +7182,235 @@ def test_atheris_dispatcher_rejects_unbounded_obligations_before_execution(count
     assert not result["observations"] and covered == []
     assert len(result["gaps"]) == count
     assert {gap["reason"] for gap in result["gaps"]} == {"E_FUZZ_CHALLENGE_BUDGET"}
+
+
+def _native_zap_request_fixture():
+    return {
+        "schema": "factory.zap-native-request.v1",
+        "run_id": "zap-native-test",
+        "candidate_sha256": "a" * 64,
+        "profile_sha256": "b" * 64,
+        "rule_ids": ["40012"],
+        "timeout_seconds": 120,
+    }
+
+
+def test_zap_native_request_binds_fixed_loopback_target():
+    from factoryline.deep_audit_io import _zap_native_request
+
+    request = _native_zap_request_fixture()
+    result = _zap_native_request(request)
+    assert result["host_id"] == sha256_bytes(b"http://127.0.0.1:8765")
+    assert result["candidate_sha256"] == request["candidate_sha256"]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("schema", "other"),
+        ("run_id", "../escape"),
+        ("candidate_sha256", "x" * 64),
+        ("profile_sha256", None),
+        ("rule_ids", []),
+        ("rule_ids", ["040012"]),
+        ("rule_ids", ["40012", "40012"]),
+        ("timeout_seconds", True),
+        ("timeout_seconds", 0),
+        ("target", "https://external.invalid"),
+        ("passed", True),
+    ],
+)
+def test_zap_native_request_rejects_unbound_inputs(field, value):
+    from factoryline.deep_audit_io import _zap_native_request
+
+    request = _native_zap_request_fixture()
+    request[field] = value
+    with pytest.raises(RuntimeAuditError):
+        _zap_native_request(request)
+
+
+def test_zap_native_inventory_requires_exact_unique_dispositions():
+    from factoryline.deep_audit_io import _zap_enabled_inventory
+
+    raw = {
+        "scanners": [
+            {"id": "40012", "enabled": "true"},
+            {"id": "40013", "enabled": "false"},
+        ]
+    }
+    assert _zap_enabled_inventory(raw) == ["40012"]
+    raw["scanners"].append({"id": "40012", "enabled": "false"})
+    with pytest.raises(RuntimeAuditError):
+        _zap_enabled_inventory(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {},
+        {"scanners": []},
+        {"scanners": [None]},
+        {"scanners": [{"id": "40012", "enabled": True}]},
+        {"scanners": [{"id": "40012", "enabled": "maybe"}]},
+        {"scanners": [{"id": "../other", "enabled": "true"}]},
+    ],
+)
+def test_zap_native_inventory_rejects_invalid_native_rows(raw):
+    from factoryline.deep_audit_io import _zap_enabled_inventory
+
+    with pytest.raises(RuntimeAuditError):
+        _zap_enabled_inventory(raw)
+
+
+def test_zap_native_environment_drops_operator_secrets(monkeypatch):
+    from factoryline.deep_audit_io import _zap_daemon_environment, _zap_native_request
+
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "must-not-propagate")
+    monkeypatch.setenv("HTTP_PROXY", "http://external.invalid")
+    env = _zap_daemon_environment(
+        _zap_native_request(_native_zap_request_fixture()), "/tmp/zap"
+    )
+    assert "AI_GATEWAY_API_KEY" not in env and "HTTP_PROXY" not in env
+    assert env["FACTORY_ZAP_LEDGER_ENABLED"] == "1"
+
+
+def test_zap_native_api_rejects_unapproved_action_before_network():
+    from factoryline.deep_audit_io import _zap_api
+
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_API"):
+        _zap_api("core", "action", "shutdown", time.monotonic() + 10)
+
+
+@pytest.mark.parametrize(
+    "state,code",
+    [("overflow", "E_ZAP_OUTPUT"), ("deadline", "E_ZAP_TIMEOUT"), ("dead", "E_ZAP_PROCESS")],
+)
+def test_zap_daemon_watch_fails_closed_before_api_use(state, code, monkeypatch):
+    import threading
+
+    import factoryline.deep_audit_io as audit_io
+
+    class Child:
+        def poll(self):
+            return 1 if state == "dead" else None
+
+    overflow = threading.Event()
+    if state == "overflow":
+        overflow.set()
+    deadline = time.monotonic() - 1 if state == "deadline" else time.monotonic() + 10
+    watch = audit_io._zap_watch(Child(), deadline, overflow)
+    monkeypatch.setattr(
+        audit_io,
+        "build_opener",
+        lambda *_args, **_kwargs: pytest.fail("API request must not be opened"),
+        raising=False,
+    )
+
+    with pytest.raises(RuntimeAuditError, match=code):
+        audit_io._zap_api("core", "view", "version", deadline, watch=watch)
+
+
+def test_zap_native_process_facts_include_bounded_stream_and_cleanup_evidence():
+    import hashlib
+
+    from factoryline.deep_audit_io import _zap_process_facts
+
+    class Child:
+        pid = 321
+        returncode = -9
+
+        def poll(self):
+            return self.returncode
+
+    stdout = b"bounded daemon output"
+    stderr = b""
+    streams = {
+        "stdout": (hashlib.sha256(stdout).hexdigest(), len(stdout)),
+        "stderr": (hashlib.sha256(stderr).hexdigest(), len(stderr)),
+    }
+    facts = _zap_process_facts(Child(), time.monotonic() - 0.1, streams, True, True)
+
+    assert facts == {
+        "pid": 321,
+        "return_code": -9,
+        "duration_ms": facts["duration_ms"],
+        "stdout_bytes": len(stdout),
+        "stdout_sha256": hashlib.sha256(stdout).hexdigest(),
+        "stderr_bytes": 0,
+        "stderr_sha256": hashlib.sha256(b"").hexdigest(),
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": True,
+        "termination_reason": "intentional_stop",
+    }
+
+
+def test_zap_daemon_stream_drain_sets_overflow_without_retaining_unbounded_output(
+    monkeypatch,
+):
+    import io
+    import threading
+
+    import factoryline.runtime_audit_process as process
+
+    monkeypatch.setattr(process, "MAX_OUTPUT", 32)
+
+    class Child:
+        stdout = io.BytesIO(b"x" * 33)
+        stderr = io.BytesIO(b"y")
+
+    overflow = threading.Event()
+    streams = {}
+    readers = process._start_stream_readers(Child(), overflow, streams)
+    for reader in readers:
+        reader.join(timeout=1)
+
+    assert not any(reader.is_alive() for reader in readers)
+    assert overflow.is_set()
+    assert streams["stdout"][1] == 33
+    assert streams["stderr"][1] == 1
+
+
+def test_zap_native_inventory_accounts_for_core_rule_zero():
+    from factoryline.deep_audit_io import _zap_enabled_inventory
+
+    rows = {
+        "scanners": [
+            {"id": "0", "enabled": "false"},
+            {"id": "40012", "enabled": "true"},
+        ]
+    }
+    assert _zap_enabled_inventory(rows) == ["40012"]
+    rows["scanners"][0]["enabled"] = "true"
+    assert _zap_enabled_inventory(rows) == ["0", "40012"]
+
+
+@pytest.mark.parametrize(
+    "endpoint,arguments",
+    [
+        (
+            ("core", "action", "accessUrl"),
+            {"url": "https://external.invalid", "followRedirects": "false"},
+        ),
+        (
+            ("core", "action", "accessUrl"),
+            {"url": "http://127.0.0.1:8765/?input=seed", "followRedirects": "true"},
+        ),
+        (
+            ("ascan", "action", "scan"),
+            {
+                "url": "http://127.0.0.1:8765/?input=seed",
+                "recurse": "true",
+                "inScopeOnly": "false",
+            },
+        ),
+        (("core", "view", "alerts"), {"baseurl": "http://127.0.0.1:9999"}),
+        (("ascan", "view", "status"), {"scanId": "../../escape"}),
+        (("ascan", "action", "enableScanners"), {"ids": "40012,40012"}),
+        (("core", "view", "version"), {"url": "https://external.invalid"}),
+    ],
+)
+def test_zap_native_api_rejects_target_and_scope_drift(endpoint, arguments):
+    from factoryline.deep_audit_io import _zap_api_arguments
+
+    with pytest.raises(RuntimeAuditError):
+        _zap_api_arguments(*endpoint, arguments)

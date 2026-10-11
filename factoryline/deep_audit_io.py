@@ -8286,6 +8286,403 @@ def _challenge_source_uri(uri, root):
     return uri
 
 
+def _zap_native_request(request):
+    fields = {
+        "schema",
+        "run_id",
+        "candidate_sha256",
+        "profile_sha256",
+        "rule_ids",
+        "timeout_seconds",
+    }
+    exact_keys(request, fields)
+    if set(request) != fields:
+        raise RuntimeAuditError("E_ZAP_REQUEST", "native request fields differ")
+    if request["schema"] != "factory.zap-native-request.v1":
+        raise RuntimeAuditError("E_ZAP_REQUEST", "native request schema differs")
+    from .deep_audit_sarif import _zap_ledger_bindings, _zap_ledger_plugins
+
+    bindings = {
+        key: request[key] for key in ("run_id", "candidate_sha256", "profile_sha256")
+    }
+    bindings["host_id"] = sha256_bytes(b"http://127.0.0.1:8765")
+    _zap_ledger_bindings(bindings)
+    _zap_ledger_plugins({"rule_ids": request["rule_ids"]})
+    require_int(request["timeout_seconds"], "ZAP timeout", minimum=1, maximum=3600)
+    return bindings
+
+
+def _zap_api(component, kind, name, deadline, *, watch=None, **arguments):
+    from urllib.request import ProxyHandler, build_opener
+    from urllib.parse import urlencode
+
+    if (component, kind, name) not in {
+        ("core", "view", "version"),
+        ("core", "view", "alerts"),
+        ("core", "action", "accessUrl"),
+        ("ascan", "view", "scanners"),
+        ("ascan", "view", "status"),
+        ("ascan", "action", "scan"),
+        ("ascan", "action", "disableAllScanners"),
+        ("ascan", "action", "enableScanners"),
+    }:
+        raise RuntimeAuditError("E_ZAP_API", "unapproved API action")
+    _zap_api_arguments(component, kind, name, arguments)
+    if watch is not None:
+        _zap_check_daemon(watch)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise RuntimeAuditError("E_ZAP_TIMEOUT", "native scan deadline exhausted")
+    url = (
+        "http://127.0.0.1:8090/JSON/"
+        + "/".join((component, kind, name))
+        + "/?"
+        + urlencode(arguments)
+    )
+    with build_opener(ProxyHandler({})).open(
+        url, timeout=min(5, remaining)
+    ) as response:
+        raw = response.read(NATIVE_COVERAGE_LIMIT + 1)
+    if len(raw) > NATIVE_COVERAGE_LIMIT:
+        raise RuntimeAuditError("E_ZAP_OUTPUT", "native API output budget exceeded")
+    value = strict_json(raw)
+    if not isinstance(value, dict) or "code" in value:
+        raise RuntimeAuditError("E_ZAP_API", "native API request failed")
+    if watch is not None:
+        _zap_check_daemon(watch)
+    return value
+
+
+def _zap_api_arguments(component, kind, name, arguments):
+    fixed = {
+        ("core", "action", "accessUrl"): {
+            "url": "http://127.0.0.1:8765/?input=seed",
+            "followRedirects": "false",
+        },
+        ("ascan", "action", "scan"): {
+            "url": "http://127.0.0.1:8765/?input=seed",
+            "recurse": "false",
+            "inScopeOnly": "false",
+        },
+        ("core", "view", "alerts"): {"baseurl": "http://127.0.0.1:8765"},
+    }
+    endpoint = (component, kind, name)
+    if endpoint in fixed:
+        if arguments != fixed[endpoint]:
+            raise RuntimeAuditError("E_ZAP_TARGET", "native target or scope differs")
+        return
+    if endpoint == ("ascan", "view", "status"):
+        value = arguments.get("scanId")
+        if (
+            set(arguments) != {"scanId"}
+            or not isinstance(value, str)
+            or re.fullmatch(r"[0-9]{1,20}", value) is None
+        ):
+            raise RuntimeAuditError("E_ZAP_SCAN", "native scan ID required")
+        return
+    if endpoint == ("ascan", "action", "enableScanners"):
+        value = arguments.get("ids")
+        if (
+            set(arguments) != {"ids"}
+            or not isinstance(value, str)
+            or len(value) > 45_056
+        ):
+            raise RuntimeAuditError("E_ZAP_INVENTORY", "bounded plugin IDs required")
+        from .deep_audit_sarif import _zap_ledger_plugins
+
+        _zap_ledger_plugins({"rule_ids": value.split(",")})
+        return
+    if arguments:
+        raise RuntimeAuditError("E_ZAP_API", "unexpected API arguments")
+
+
+def _zap_daemon_argv(home):
+    return [
+        "/opt/factory/java/bin/java",
+        "-Xmx512m",
+        "-Djava.awt.headless=true",
+        "-jar",
+        "/zap/zap-2.17.0.jar",
+        "-daemon",
+        "-host",
+        "127.0.0.1",
+        "-port",
+        "8090",
+        "-dir",
+        str(home),
+        "-config",
+        "api.disablekey=true",
+        "-config",
+        "autoupdate.checkOnStart=false",
+        "-config",
+        "autoupdate.installAddonUpdates=false",
+        "-config",
+        "autoupdate.downloadNewRelease=false",
+    ]
+
+
+def _zap_daemon_environment(bindings, home):
+    return {
+        "PATH": "/opt/factory/java/bin:/usr/local/bin:/usr/bin:/bin",
+        "JAVA_HOME": "/opt/factory/java",
+        "HOME": str(home),
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "FACTORY_ZAP_LEDGER_ENABLED": "1",
+        "FACTORY_RUN_ID": bindings["run_id"],
+        "FACTORY_CANDIDATE_SHA256": bindings["candidate_sha256"],
+        "FACTORY_PROFILE_SHA256": bindings["profile_sha256"],
+    }
+
+
+def _zap_check_daemon(watch):
+    if watch["overflow"].is_set():
+        raise RuntimeAuditError("E_ZAP_OUTPUT", "native daemon output budget exceeded")
+    if time.monotonic() >= watch["deadline"]:
+        raise RuntimeAuditError("E_ZAP_TIMEOUT", "native scan deadline exhausted")
+    if watch["child"].poll() is not None:
+        raise RuntimeAuditError("E_ZAP_PROCESS", "native daemon exited unexpectedly")
+
+
+def _zap_watch(child, deadline, overflow):
+    return {"child": child, "deadline": deadline, "overflow": overflow}
+
+
+def _zap_wait_ready(child, deadline, watch):
+    from urllib.error import URLError
+
+    while True:
+        _zap_check_daemon(watch)
+        try:
+            version = _zap_api("core", "view", "version", deadline, watch=watch)
+            if version != {"version": "2.17.0"}:
+                raise RuntimeAuditError("E_ZAP_VERSION", "native core version differs")
+            return version
+        except URLError:
+            time.sleep(min(0.2, max(0, deadline - time.monotonic())))
+
+
+def _zap_enabled_inventory(raw):
+    scanners = raw.get("scanners")
+    if not isinstance(scanners, list) or not 1 <= len(scanners) <= 4096:
+        raise RuntimeAuditError("E_ZAP_INVENTORY", "native scanner inventory missing")
+    identities, enabled = set(), []
+    for row in scanners:
+        if not isinstance(row, dict) or row.get("enabled") not in {"true", "false"}:
+            raise RuntimeAuditError("E_ZAP_INVENTORY", "invalid scanner disposition")
+        identifier = row.get("id")
+        if (
+            not isinstance(identifier, str)
+            or re.fullmatch(r"(?:0|[1-9][0-9]{0,9})", identifier) is None
+            or identifier in identities
+        ):
+            raise RuntimeAuditError(
+                "E_ZAP_INVENTORY", "invalid or duplicate scanner ID"
+            )
+        identities.add(identifier)
+        if row["enabled"] == "true":
+            enabled.append(identifier)
+    return sorted(enabled)
+
+
+def _zap_select_rules(rule_ids, deadline, watch):
+    _zap_api("ascan", "action", "disableAllScanners", deadline, watch=watch)
+    _zap_api(
+        "ascan", "action", "enableScanners", deadline, watch=watch,
+        ids=",".join(rule_ids)
+    )
+    raw = _zap_api("ascan", "view", "scanners", deadline, watch=watch)
+    if _zap_enabled_inventory(raw) != rule_ids:
+        raise RuntimeAuditError("E_ZAP_INVENTORY", "effective enabled rules differ")
+    return raw
+
+
+def _zap_start_scan(child, deadline, watch):
+    from urllib.error import HTTPError
+
+    target = "http://127.0.0.1:8765/?input=seed"
+    access = _zap_api(
+        "core", "action", "accessUrl", deadline, watch=watch,
+        url=target, followRedirects="false"
+    )
+    while True:
+        _zap_check_daemon(watch)
+        try:
+            scan = _zap_api(
+                "ascan",
+                "action",
+                "scan",
+                deadline,
+                watch=watch,
+                url=target,
+                recurse="false",
+                inScopeOnly="false",
+            )
+            identifier = require_str(scan.get("scan"), "scan ID", maximum=20)
+            if re.fullmatch(r"[0-9]+", identifier) is None:
+                raise RuntimeAuditError("E_ZAP_SCAN", "invalid scan identifier")
+            return identifier, access
+        except HTTPError as exc:
+            raw = exc.read(4097)
+            if (
+                exc.code != 400
+                or len(raw) > 4096
+                or strict_json(raw).get("code") != "url_not_found"
+            ):
+                raise RuntimeAuditError(
+                    "E_ZAP_SCAN", "native scan start rejected"
+                ) from exc
+            time.sleep(min(0.2, max(0, deadline - time.monotonic())))
+
+
+def _zap_wait_scan(child, identifier, deadline, watch):
+    while True:
+        _zap_check_daemon(watch)
+        status = _zap_api(
+            "ascan", "view", "status", deadline, watch=watch, scanId=identifier
+        )
+        value = status.get("status")
+        if (
+            not isinstance(value, str)
+            or re.fullmatch(r"[0-9]{1,3}", value) is None
+            or int(value) > 100
+        ):
+            raise RuntimeAuditError("E_ZAP_SCAN", "invalid native scan status")
+        if value == "100":
+            return status
+        time.sleep(min(0.2, max(0, deadline - time.monotonic())))
+
+
+def _zap_measure_scan(request, bindings, child, deadline, watch):
+    from .deep_audit_sarif import _verify_zap_native_rule_ledger
+
+    version = _zap_wait_ready(child, deadline, watch)
+    before = _zap_select_rules(request["rule_ids"], deadline, watch)
+    _zap_check_daemon(watch)
+    identifier, access = _zap_start_scan(child, deadline, watch)
+    status = _zap_wait_scan(child, identifier, deadline, watch)
+    after = _zap_api("ascan", "view", "scanners", deadline, watch=watch)
+    if _zap_enabled_inventory(after) != request["rule_ids"]:
+        raise RuntimeAuditError("E_ZAP_INVENTORY", "effective enabled rules drifted")
+    alerts = _zap_api(
+        "core", "view", "alerts", deadline, watch=watch,
+        baseurl="http://127.0.0.1:8765"
+    )
+    _zap_check_daemon(watch)
+    ledger = _zap_retained_ledger(Path("/out"))
+    verification = _verify_zap_native_rule_ledger(
+        ledger, {"engine": "zap", "rule_ids": request["rule_ids"]}, bindings
+    )
+    _zap_check_daemon(watch)
+    return {
+        "schema": "factory.zap-native-observation.v1",
+        **bindings,
+        "version": version,
+        "effective_inventory_before": before,
+        "effective_inventory_after": after,
+        "scan_status": status,
+        "access": access,
+        "alerts": alerts,
+        "native_ledger": ledger.decode("utf-8"),
+        "native_verification": verification,
+    }
+
+
+def _zap_retained_ledger(output):
+    path = local_file(output, "zap-rule-ledger.jsonl")
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, "rb") as stream:
+        before = os.fstat(stream.fileno())
+        raw = stream.read(4 * 1024 * 1024 + 1)
+        after = os.fstat(stream.fileno())
+    current = path.lstat()
+    if _zap_file_signature(before) != _zap_file_signature(after) or _zap_file_signature(
+        after
+    ) != _zap_file_signature(current):
+        raise RuntimeAuditError(
+            "E_ZAP_LEDGER_DRIFT", "native ledger changed during read"
+        )
+    if len(raw) > 4 * 1024 * 1024:
+        raise RuntimeAuditError("E_ZAP_OUTPUT", "native ledger byte budget exceeded")
+    return raw
+
+
+def _zap_file_signature(info):
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+
+
+def _zap_process_facts(child, started, streams, cleanup_confirmed, streams_closed):
+    from .runtime_audit_process import _cleanup_is_confirmed
+
+    confirmed = _cleanup_is_confirmed(child, cleanup_confirmed, streams_closed)
+    return {
+        "pid": child.pid,
+        "return_code": child.returncode,
+        "duration_ms": max(0, round((time.monotonic() - started) * 1000)),
+        "stdout_bytes": streams.get("stdout", (sha256_bytes(b""), 0))[1],
+        "stdout_sha256": streams.get("stdout", (sha256_bytes(b""), 0))[0],
+        "stderr_bytes": streams.get("stderr", (sha256_bytes(b""), 0))[1],
+        "stderr_sha256": streams.get("stderr", (sha256_bytes(b""), 0))[0],
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": confirmed,
+        "termination_reason": "intentional_stop",
+    }
+
+
+def _run_zap_native_scan(request):
+    from .runtime_audit_process import _await_cleanup, _start_stream_readers
+    import socket
+
+    bindings = _zap_native_request(request)
+    output = Path("/out")
+    if output.is_symlink() or not output.is_dir() or os.name != "posix":
+        raise RuntimeAuditError(
+            "E_ZAP_BOUNDARY", "isolated Linux worker output required"
+        )
+    if (output / "zap-rule-ledger.jsonl").exists():
+        raise RuntimeAuditError("E_ZAP_OUTPUT", "native ledger must not preexist")
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 8090))
+    deadline = time.monotonic() + request["timeout_seconds"]
+    with tempfile.TemporaryDirectory(prefix="factory-zap-") as root:
+        started = time.monotonic()
+        child = subprocess.Popen(
+            _zap_daemon_argv(root),
+            cwd="/zap",
+            env=_zap_daemon_environment(bindings, root),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        overflow = threading.Event()
+        streams = {}
+        readers = []
+        deadline = started + request["timeout_seconds"]
+        watch = _zap_watch(child, deadline, overflow)
+        try:
+            readers = _start_stream_readers(child, overflow, streams)
+            result = _zap_measure_scan(request, bindings, child, deadline, watch)
+            _zap_check_daemon(watch)
+        finally:
+            cleanup, streams_closed = _await_cleanup(child, readers)
+        process_facts = _zap_process_facts(
+            child, started, streams, cleanup, streams_closed
+        )
+        if overflow.is_set():
+            raise RuntimeAuditError("E_ZAP_OUTPUT", "native daemon output budget exceeded")
+        if not process_facts["cleanup_confirmed"] or child.poll() is None:
+            raise RuntimeAuditError(
+                "E_ZAP_CLEANUP", "native process cleanup unconfirmed"
+            )
+        result["process_facts"] = process_facts
+    result["cleanup_complete"] = True
+    result["claim_boundary"] = (
+        "Native active-rule observations; not source line coverage, accuracy or release approval."
+    )
+    return result
+
+
 def adapter_main(argv: list[str] | None = None) -> int:
     """Fixed in-image endpoint; Docker isolation and host validation remain mandatory."""
     import argparse

@@ -479,6 +479,168 @@ def test_zap_runtime_completion_cannot_substitute_for_native_rule_execution(
     ]
 
 
+def _zap_ledger_fixture():
+    from factoryline.deep_audit_sarif import _verify_zap_native_rule_ledger
+
+    bindings = {
+        "run_id": "run-123",
+        "candidate_sha256": "a" * 64,
+        "profile_sha256": "b" * 64,
+        "host_id": "c" * 64,
+    }
+    rows = []
+    for plugin_id in [40012, 40013]:
+        base = {
+            "schema": "factory.zap-rule-ledger.v1",
+            **bindings,
+            "plugin_id": plugin_id,
+            "plugin_name": f"plugin-{plugin_id}",
+            "message_count": 0,
+            "alert_count": 0,
+        }
+        rows.extend(
+            [
+                {
+                    **base,
+                    "invocation": 1,
+                    "event": "invocation_started",
+                    "status": "started",
+                },
+                {
+                    **base,
+                    "invocation": 1,
+                    "event": "invocation_returned",
+                    "status": "returned",
+                },
+                {
+                    **base,
+                    "invocation": 0,
+                    "event": "plugin_completed",
+                    "status": "completed",
+                    "message_count": 3,
+                    "alert_count": 1,
+                },
+            ]
+        )
+    raw = b"".join(canonical_bytes(row) + b"\n" for row in rows)
+    return (
+        _verify_zap_native_rule_ledger,
+        raw,
+        {"engine": "zap", "rule_ids": ["40012", "40013"]},
+        bindings,
+    )
+
+
+def test_zap_native_rule_ledger_verifier_accepts_complete_bound_inventory():
+    verify, raw, lane, bindings = _zap_ledger_fixture()
+
+    result = verify(raw, lane, bindings)
+
+    assert result == {
+        "schema": "factory.zap-rule-verification.v1",
+        "state": "VERIFIED",
+        **bindings,
+        "plugin_ids": [40012, 40013],
+        "invocation_count": 2,
+        "plugin_count": 2,
+        "ledger_sha256": sha256_bytes(raw),
+    }
+
+
+def test_zap_native_rule_ledger_allows_concurrent_start_order_but_requires_contiguous_ids():
+    verify, raw, lane, bindings = _zap_ledger_fixture()
+    rows = [strict_json(line) for line in raw.splitlines()]
+    start_one, return_one, terminal = rows[:3]
+    start_two = {**start_one, "invocation": 2}
+    return_two = {**return_one, "invocation": 2}
+    rows[:3] = [start_two, start_one, return_one, return_two, terminal]
+    valid = b"".join(canonical_bytes(row) + b"\n" for row in rows)
+
+    assert verify(valid, lane, bindings)["invocation_count"] == 3
+
+    rows[0]["invocation"] = 3
+    rows[3]["invocation"] = 3
+    missing_id = b"".join(canonical_bytes(row) + b"\n" for row in rows)
+    with pytest.raises(RuntimeAuditError):
+        verify(missing_id, lane, bindings)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_return",
+        "failed_invocation",
+        "plugin_skipped",
+        "unknown_plugin",
+        "binding_drift",
+        "status_drift",
+        "bool_count",
+        "zero_messages",
+        "duplicate_terminal",
+        "duplicate_json_key",
+        "missing_newline",
+        "invalid_plugin_name",
+        "non_object_root",
+    ],
+)
+def test_zap_native_rule_ledger_verifier_rejects_incomplete_or_forged_evidence(
+    mutation,
+):
+    verify, raw, lane, bindings = _zap_ledger_fixture()
+    raw = _zap_ledger_tamper(raw, mutation)
+
+    with pytest.raises(RuntimeAuditError):
+        verify(raw, lane, bindings)
+
+
+def _zap_ledger_tamper(raw, mutation):
+    if mutation == "duplicate_json_key":
+        return raw.replace(
+            b'"event":"invocation_started"',
+            b'"event":"invocation_started","event":"invocation_started"',
+            1,
+        )
+    if mutation == "non_object_root":
+        return b"[]\n"
+    rows = [strict_json(line) for line in raw.splitlines()]
+    changes = {
+        "missing_return": lambda: rows.pop(1),
+        "failed_invocation": lambda: rows[1].update(
+            event="invocation_failed",
+            status="failed",
+            exception_class="java.lang.IllegalStateException",
+        ),
+        "plugin_skipped": lambda: rows[2].update(
+            event="plugin_skipped", status="skipped"
+        ),
+        "unknown_plugin": lambda: rows[0].update(plugin_id=49999),
+        "binding_drift": lambda: rows[0].update(candidate_sha256="d" * 64),
+        "status_drift": lambda: rows[0].update(status="returned"),
+        "bool_count": lambda: rows[2].update(message_count=True),
+        "invalid_plugin_name": lambda: rows[0].update(
+            plugin_name="https://host/plugin"
+        ),
+        "zero_messages": lambda: rows[2].update(message_count=0),
+        "duplicate_terminal": lambda: rows.insert(3, deepcopy(rows[2])),
+    }
+    if mutation == "missing_newline":
+        return raw[:-1]
+    changes[mutation]()
+    return b"".join(canonical_bytes(row) + b"\n" for row in rows)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [b"x" * (4 * 1024 * 1024 + 1), b" " * 4097 + b"\n", b"\n"],
+    ids=["byte_cap", "row_cap", "empty_record"],
+)
+def test_zap_native_rule_ledger_verifier_enforces_byte_and_record_bounds(bad):
+    verify, _, lane, bindings = _zap_ledger_fixture()
+
+    with pytest.raises(RuntimeAuditError):
+        verify(bad, lane, bindings)
+
+
 def test_zap_normalization_preserves_native_rule_gap_despite_other_complete_checks(
     monkeypatch,
 ):
@@ -1441,3 +1603,17 @@ def test_verify_trivy_rule_execution_rederives_native_pass_matrix():
     evidence["observations"][1]["raw_report_sha256"] = "0" * 64
     with pytest.raises(RuntimeAuditError, match="report bytes differ"):
         verify_trivy_rule_execution(evidence, lane, sources, report)
+
+
+def test_zap_native_rule_ledger_accepts_real_core_plugin_zero():
+    verify, raw, lane, bindings = _zap_ledger_fixture()
+    rows = [json.loads(line) for line in raw.splitlines()]
+    rows = [
+        dict(row, plugin_id=0, plugin_name="directory-browsing")
+        for row in rows
+        if row["plugin_id"] == 40012
+    ]
+    raw = b"".join(canonical_bytes(row) + b"\n" for row in rows)
+    assert verify(raw, {"engine": "zap", "rule_ids": ["0"]}, bindings)[
+        "plugin_ids"
+    ] == [0]
