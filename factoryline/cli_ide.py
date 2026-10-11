@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -124,6 +125,10 @@ def _add_repair_execution_parsers(sub) -> None:
         required=True,
         help="workspace-contained JSON array of positive and negative argv checks",
     )
+    approve.add_argument(
+        "--checks-sha256",
+        help="SHA256 of the exact checks file bytes reviewed by the operator",
+    )
     run = sub.add_parser(
         "run", help="consume approval once and verify a disposable-worktree repair"
     )
@@ -183,7 +188,7 @@ def _execute_repair_command(args, repair_sandbox):
     return result
 
 
-def _load_repair_checks(root: Path, value: str, repair_sandbox):
+def _load_repair_checks(root: Path, value: str, repair_sandbox, expected_sha256=None):
     """Read bounded local check data without granting execution authority."""
     try:
         workspace = root.resolve()
@@ -191,7 +196,14 @@ def _load_repair_checks(root: Path, value: str, repair_sandbox):
         path.relative_to(workspace)
         if not path.is_file() or path.stat().st_size > 1_000_000:
             raise ValueError("checks must be an existing file of at most 1 MB")
-        checks = json.loads(path.read_text(encoding="utf-8"))
+        with path.open("rb") as stream:
+            raw = stream.read(1_000_001)
+        if len(raw) > 1_000_000:
+            raise ValueError("checks exceed the input limit")
+        if expected_sha256 is not None:
+            if hashlib.sha256(raw).hexdigest() != expected_sha256:
+                raise ValueError("checks changed after operator review")
+        checks = json.loads(raw.decode("utf-8"))
         if not isinstance(checks, list):
             raise ValueError("checks must be a JSON array")
         return checks
@@ -215,7 +227,9 @@ def _execute_approved_command(args, repair_sandbox):
             expires_at=args.expires_at,
             container_image=args.container_image,
             container_digest=args.container_digest,
-            checks=_load_repair_checks(root, args.checks, repair_sandbox),
+            checks=_load_repair_checks(
+                root, args.checks, repair_sandbox, args.checks_sha256
+            ),
         )
     if args.repair_cmd == "run":
         return repair_sandbox.execute_approved_repair(root, Path(args.approval))

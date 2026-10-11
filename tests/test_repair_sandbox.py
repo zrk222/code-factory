@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -792,6 +793,8 @@ def test_repair_cli_approval_checks_are_bounded_and_execution_failure_exits_two(
             "e" * 64,
             "--checks",
             str(checks_path),
+            "--checks-sha256",
+            hashlib.sha256(checks_path.read_bytes()).hexdigest(),
             "--json",
         ]
     )
@@ -825,6 +828,21 @@ def test_repair_cli_approval_checks_are_bounded_and_execution_failure_exits_two(
     )
     assert escaping == 2
     assert "REPAIR_CHECKS_INPUT_INVALID" in capsys.readouterr().err
+
+
+def test_repair_checks_bind_exact_reviewed_bytes(tmp_path: Path) -> None:
+    from factoryline.cli_ide import _load_repair_checks
+
+    path = _patch(tmp_path, "checks.json", json.dumps(_repair_checks()))
+    reviewed_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert _load_repair_checks(
+        tmp_path, "checks.json", repair_sandbox, reviewed_sha
+    ) == (_repair_checks())
+    path.write_text("[]", encoding="utf-8")
+    for invalid_sha in (reviewed_sha, "", "not-a-hash", "A" * 64):
+        with pytest.raises(RepairSandboxError, match="bounded workspace-contained"):
+            _load_repair_checks(tmp_path, "checks.json", repair_sandbox, invalid_sha)
+    assert _load_repair_checks(tmp_path, "checks.json", repair_sandbox) == []
 
 
 def test_repair_cli_run_nonverified_attempt_exits_two(
