@@ -1940,6 +1940,10 @@ def _native_profile_challenges(profile, contract, source, lane, execution, start
         challenges, covered_obligations = _runtime_challenges(
             profile, contract, source, lane, execution, started
         )
+    elif lane["engine"] == "codeql" and "native_artifact_roles" in lane:
+        challenges, covered_obligations = _codeql_challenges(
+            profile, contract, source, lane, execution, started
+        )
     return challenges, covered_obligations
 
 
@@ -3160,6 +3164,378 @@ def verify_codeql_query_selection(inventory, *, baseline=None, disabled_rule_id=
             )
     if identifiers != expected_ids:
         raise RuntimeAuditError("E_CODEQL_INVENTORY", "query ID binding differs")
+
+
+def _codeql_challenges(profile, contract, source, lane, execution, started):
+    obligations = [
+        item
+        for item in contract["obligations"]
+        if item["engine"] == "codeql" and item["family"] == lane["family"]
+    ]
+    deadline = started + lane["timeout_seconds"]
+    observations, gaps = [], []
+    with tempfile.TemporaryDirectory(prefix="factory-codeql-challenges-") as temporary:
+        for index, obligation in enumerate(obligations):
+            for challenge in obligation["challenges"]:
+                _codeql_challenge_case(
+                    profile,
+                    contract,
+                    source,
+                    lane,
+                    execution,
+                    obligation,
+                    challenge,
+                    Path(temporary) / f"control-{index}-{challenge['kind']}",
+                    deadline,
+                    observations,
+                    gaps,
+                )
+    return _challenge_bundle(observations, gaps), [item["id"] for item in obligations]
+
+
+def _codeql_challenge_case(
+    profile,
+    contract,
+    source,
+    lane,
+    execution,
+    obligation,
+    challenge,
+    case,
+    deadline,
+    observations,
+    gaps,
+):
+    try:
+        remaining = int(deadline - time.monotonic())
+        if remaining < 1:
+            raise RuntimeAuditError(
+                "E_ADAPTER_TIMEOUT", "CodeQL challenge deadline exhausted"
+            )
+        observations.append(
+            _run_codeql_challenge(
+                profile,
+                contract,
+                source,
+                lane,
+                execution,
+                obligation,
+                challenge,
+                case,
+                remaining,
+            )
+        )
+    except (OSError, RuntimeAuditError, ValueError, TypeError, KeyError) as error:
+        gaps.append(
+            _challenge_gap_record(obligation, challenge, _challenge_error_code(error))
+        )
+
+
+def _codeql_challenge_inputs(
+    profile, source, lane, execution, obligation, challenge, case
+):
+    if challenge.get("fixture_manifest") is None:
+        raise RuntimeAuditError(
+            "E_CODEQL_CHALLENGE", "signed multi-file manifest required"
+        )
+    baseline = execution["codeql_query_inventory"]
+    verify_codeql_query_selection(baseline)
+    if lane.get("rule_ids") != sorted(baseline["query_ids"]):
+        raise RuntimeAuditError("E_CODEQL_CHALLENGE", "complete query ID lane required")
+    suite = local_file(
+        Path(profile["commands"][1]["argv"][4]).parent,
+        Path(profile["commands"][1]["argv"][4]).name,
+    )
+    if sha256_bytes(_codeql_suite_bytes(suite)) != baseline["suite_sha256"]:
+        raise RuntimeAuditError("E_CODEQL_CHALLENGE", "baseline suite changed")
+    manifest = dict(sorted(challenge["fixture_manifest"].items()))
+    _semgrep_fixture_binding(manifest, obligation, source, challenge["fixture_path"])
+    case.mkdir()
+    root = case / "source"
+    for path, seal in manifest.items():
+        target = root.joinpath(*relative_path(path).split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(bound_bytes(source, {"path": path, "sha256": seal}))
+    return suite, baseline, manifest, root
+
+
+def _codeql_mutation_suite(case, suite, rule_id):
+    require_str(rule_id, "CodeQL target ID", maximum=256)
+    root = Path("/opt/codeql/codeql/qlpacks")
+    relative = suite.relative_to(root).as_posix()
+    relative_path(relative)
+    parts = relative.split("/")
+    if len(parts) != 5 or parts[0] != "codeql" or parts[3] != "codeql-suites":
+        raise RuntimeAuditError(
+            "E_CODEQL_CHALLENGE", "pinned CodeQL suite location required"
+        )
+    raw = (
+        f"- import: {parts[3]}/{parts[4]}\n  from: {parts[0]}/{parts[1]}\n  version: {parts[2]}\n- exclude:\n    id: {json.dumps(rule_id)}\n"
+    ).encode()
+    path = case / "target-disabled.qls"
+    path.write_bytes(raw)
+    return path
+
+
+def _codeql_challenge_selection(
+    profile, root, case, suite, baseline, challenge, rule_id, deadline
+):
+    selected_suite = (
+        _codeql_mutation_suite(case, suite, rule_id)
+        if challenge["kind"] == "mutation"
+        else suite
+    )
+    remaining = int(deadline - time.monotonic())
+    if remaining < 1:
+        raise RuntimeAuditError(
+            "E_ADAPTER_TIMEOUT", "query selection deadline exhausted"
+        )
+    inventory = resolve_codeql_query_inventory(
+        profile["version_argv"][0], selected_suite, root, case, remaining
+    )
+    verify_codeql_query_selection(
+        inventory,
+        baseline=baseline,
+        disabled_rule_id=rule_id if challenge["kind"] == "mutation" else None,
+    )
+    return selected_suite, inventory
+
+
+def _codeql_challenge_steps(profile, bindings, suite):
+    commands = _native_argv(profile["commands"], bindings)
+    if (
+        len(commands) != 3
+        or commands[0]["argv"][1:3] != ["database", "create"]
+        or commands[1]["argv"][1:3] != ["database", "analyze"]
+    ):
+        raise RuntimeAuditError(
+            "E_CODEQL_CHALLENGE", "pinned three-step CodeQL profile required"
+        )
+    commands[1]["argv"][4] = str(suite)
+    return commands
+
+
+def _codeql_steps_runner(commands, source, budget, scratch):
+    from .runtime_audit_process import run_bounded_command
+    from .runtime_audit_common import _validate_runner_facts
+
+    started, invocations = time.monotonic(), []
+    streams = {"stdout": bytearray(), "stderr": bytearray()}
+    for index, command in enumerate(commands):
+        remaining = int(budget - (time.monotonic() - started))
+        if remaining < 1:
+            raise RuntimeAuditError(
+                "E_ADAPTER_TIMEOUT", "CodeQL steps exhausted deadline"
+            )
+        directory = scratch / f"step-{index}"
+        directory.mkdir()
+        out, err = directory / "stdout.log", directory / "stderr.log"
+        facts = run_bounded_command(
+            command["argv"],
+            source,
+            remaining,
+            directory,
+            stdout_path=out,
+            stderr_path=err,
+        )
+        _validate_runner_facts(facts, remaining)
+        if _adapter_command_failed(
+            facts, command["accepted_exit_codes"], started + budget
+        ):
+            raise RuntimeAuditError(
+                "E_CODEQL_CHALLENGE", "CodeQL native step failed or cleanup uncertain"
+            )
+        _codeql_step_streams(facts, out, err, streams)
+        invocations.append(
+            {
+                "argv": command["argv"],
+                "argv_sha256": digest(command["argv"]),
+                "execution": facts,
+            }
+        )
+    return _codeql_steps_facts(invocations, streams, started, budget), invocations
+
+
+def _codeql_step_streams(facts, out, err, streams):
+    for role, path in (("stdout", out), ("stderr", err)):
+        with local_file(path.parent, path.name).open("rb") as stream:
+            raw = stream.read(1_048_577)
+        if (
+            len(raw) > 1_048_576
+            or sha256_bytes(raw) != facts[role + "_sha256"]
+            or len(raw) != facts[role + "_bytes"]
+        ):
+            raise RuntimeAuditError("E_CODEQL_CHALLENGE", "native stream bytes differ")
+        streams[role].extend(raw)
+
+
+def _codeql_steps_facts(invocations, streams, started, budget):
+    if len(invocations) != 3:
+        raise RuntimeAuditError("E_CODEQL_CHALLENGE", "all native steps required")
+    return dict(
+        exit_code=invocations[-1]["execution"]["exit_code"],
+        timed_out=False,
+        timeout_seconds=budget,
+        duration_ms=int((time.monotonic() - started) * 1000),
+        launch_error=False,
+        output_limit_exceeded=False,
+        cleanup_confirmed=True,
+        stdout_sha256=sha256_bytes(bytes(streams["stdout"])),
+        stdout_bytes=len(streams["stdout"]),
+        stderr_sha256=sha256_bytes(bytes(streams["stderr"])),
+        stderr_bytes=len(streams["stderr"]),
+    )
+
+
+def _run_codeql_challenge(
+    profile, contract, source, lane, execution, obligation, challenge, case, timeout
+):
+    deadline = time.monotonic() + timeout
+    suite, baseline, manifest, root = _codeql_challenge_inputs(
+        profile, source, lane, execution, obligation, challenge, case
+    )
+    rule_id = obligation["detector_rule_id"]
+    selected, inventory = _codeql_challenge_selection(
+        profile, root, case, suite, baseline, challenge, rule_id, deadline
+    )
+    return _execute_codeql_challenge(
+        profile,
+        contract,
+        lane,
+        execution,
+        obligation,
+        challenge,
+        case,
+        root,
+        manifest,
+        suite,
+        selected,
+        baseline,
+        inventory,
+        deadline,
+    )
+
+
+def _execute_codeql_challenge(
+    profile,
+    contract,
+    lane,
+    execution,
+    obligation,
+    challenge,
+    case,
+    root,
+    manifest,
+    suite,
+    selected,
+    baseline,
+    inventory,
+    deadline,
+):
+    scratch = case / "run"
+    report, ledger, artifact = (
+        scratch / "report.sarif",
+        scratch / "unused-ledger.json",
+        scratch / "query-inventory.json",
+    )
+    bindings = _semgrep_challenge_bindings(
+        root, scratch, report, ledger, selected, digest(manifest)
+    )
+    commands = _codeql_challenge_steps(profile, bindings, selected)
+    configs = {
+        _codeql_suite_bytes(suite): baseline,
+        _codeql_suite_bytes(selected): inventory,
+    }
+
+    def runner(argv, cwd, budget, run_scratch):
+        if argv != commands[0]["argv"]:
+            raise RuntimeAuditError(
+                "E_CODEQL_CHALLENGE", "create argv differs from profile"
+            )
+        facts, invocations = _codeql_steps_runner(commands, cwd, budget, run_scratch)
+        inventory["native_invocations"] = invocations
+        artifact.write_bytes(canonical_bytes(inventory))
+        return facts
+
+    def parser(raw):
+        return _codeql_challenge_report(raw, profile, root, manifest)
+
+    def rule_ids(raw):
+        return sorted(configs[raw]["query_ids"])
+
+    def mutation_valid(original, effective, rule_id):
+        verify_codeql_query_selection(
+            configs[effective], baseline=configs[original], disabled_rule_id=rule_id
+        )
+        return True
+
+    remaining = int(deadline - time.monotonic())
+    if remaining < 1:
+        raise RuntimeAuditError(
+            "E_ADAPTER_TIMEOUT", "native challenge deadline exhausted"
+        )
+    observation = _native_challenge_executor()(
+        challenge,
+        obligation_id=obligation["id"],
+        engine="codeql",
+        detector_rule_id=obligation["detector_rule_id"],
+        detector_enabled=challenge["kind"] != "mutation",
+        profile_argv=profile["commands"][0]["argv"],
+        bindings=bindings,
+        source_root=root,
+        baseline_config_path=suite,
+        effective_config_path=selected,
+        report_path=report,
+        ledger_path=ledger,
+        scratch=scratch,
+        scratch_parent=case,
+        timeout_seconds=remaining,
+        expected_ruleset_sha256=baseline["suite_sha256"],
+        execution_bindings={
+            "candidate_sha256": contract["inventory"]["candidate_sha256"],
+            "challenge_source_sha256": digest(manifest),
+            "profile_sha256": digest(profile),
+            "image_sha256": sha256_bytes(lane["image"].encode()),
+            "tool_version": profile["tool_version"],
+            "version_probe_sha256": digest(execution["version_probe"]),
+            "version_probe_facts": execution["version_probe"],
+        },
+        runner=runner,
+        report_parser=parser,
+        config_rule_ids=rule_ids,
+        verify_mutation=mutation_valid,
+        native_artifact_roles=lane["native_artifact_roles"],
+        native_artifacts={"sarif_report": report, "query_inventory": artifact},
+        rule_ids=lane["rule_ids"],
+        mutation_ruleset_sha256=lane["mutation_config_sha256"],
+    )
+    observation["codeql_query_inventory"] = inventory
+    return observation
+
+
+def _codeql_challenge_report(raw, profile, root, manifest):
+    report = _semgrep_challenge_report(raw, profile, root, manifest)
+    report.get("properties", {}).pop("factory_native_raw_sha256", None)
+    for run in report["runs"]:
+        for invocation in run.get("invocations", []):
+            notifications = invocation.get("toolExecutionNotifications", [])
+            invocation["toolExecutionNotifications"] = sorted(
+                [
+                    item
+                    for item in notifications
+                    if not _codeql_telemetry_notification(item)
+                ],
+                key=canonical_bytes,
+            )
+    return report
+
+
+def _codeql_telemetry_notification(item):
+    return item.get("level") == "none" and item.get("descriptor", {}).get("id") in {
+        "cli/file-coverage-baseline",
+        "cli/platform",
+        "cli/build-mode",
+    }
 
 
 def _native_source_accounting(execution, report, inventory, lane):

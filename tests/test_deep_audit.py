@@ -1,6 +1,7 @@
 from copy import deepcopy
 import json
 from pathlib import Path
+import time
 
 import pytest
 
@@ -2650,3 +2651,404 @@ def test_codeql_query_metadata_rejects_changed_content_and_duplicate_ids(
     seal = sha256_bytes(query.read_bytes())
     with pytest.raises(RuntimeAuditError, match="unique"):
         _codeql_query_ids({"codeql/test/one.ql": seal, "codeql/test/two.ql": seal})
+
+
+def _codeql_test_profile(suite):
+    executable = r"C:\CodeQL\codeql.exe"
+    return {
+        "schema": "factory.native-profile.v1",
+        "engine": "codeql",
+        "mode": "interprocedural-full",
+        "tool_version": "2.27.1",
+        "ruleset_sha256": "a" * 64,
+        "version_argv": [executable, "version", "--format=terse"],
+        "report_format": "sarif",
+        "commands": [
+            {
+                "argv": [
+                    executable,
+                    "database",
+                    "create",
+                    "{scratch}/db",
+                    "--language=javascript-typescript",
+                    "--source-root={source}",
+                    "--build-mode=none",
+                ],
+                "accepted_exit_codes": [0],
+            },
+            {
+                "argv": [
+                    executable,
+                    "database",
+                    "analyze",
+                    "{scratch}/db",
+                    str(suite),
+                    "--format=sarif-latest",
+                    "--output={report}",
+                ],
+                "accepted_exit_codes": [0],
+            },
+            {
+                "argv": [r"C:\Python\python.exe", "-I", "-c", "pass", "{report}"],
+                "accepted_exit_codes": [0],
+            },
+        ],
+    }
+
+
+def _codeql_process_facts(timeout, stdout, stderr, **updates):
+    facts = {
+        "exit_code": 0,
+        "timed_out": False,
+        "timeout_seconds": timeout,
+        "duration_ms": 20,
+        "launch_error": False,
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": True,
+        "stdout_sha256": sha256_bytes(stdout),
+        "stderr_sha256": sha256_bytes(stderr),
+        "stdout_bytes": len(stdout),
+        "stderr_bytes": len(stderr),
+    }
+    facts.update(updates)
+    return facts
+
+
+def test_codeql_steps_runner_uses_closed_steps_shared_budget_and_real_streams(
+    tmp_path, monkeypatch
+):
+    from factoryline.deep_audit_io import _codeql_steps_runner
+
+    commands = [
+        {
+            "argv": [r"C:\CodeQL\codeql.exe", "step", str(i)],
+            "accepted_exit_codes": [0],
+        }
+        for i in range(3)
+    ]
+    budgets = []
+    clock = [0.0]
+    monkeypatch.setattr("factoryline.deep_audit_io.time.monotonic", lambda: clock[0])
+
+    def run(argv, cwd, timeout, scratch, *, stdout_path, stderr_path):
+        budgets.append(timeout)
+        index = int(argv[-1])
+        stdout, stderr = f"out-{index}".encode(), f"err-{index}".encode()
+        stdout_path.write_bytes(stdout)
+        stderr_path.write_bytes(stderr)
+        clock[0] += 1.1
+        return _codeql_process_facts(timeout, stdout, stderr)
+
+    monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
+    scratch = tmp_path / "run"
+    scratch.mkdir()
+    facts, invocations = _codeql_steps_runner(commands, tmp_path, 5, scratch)
+    assert len(invocations) == 3
+    assert budgets == [5, 3, 2]
+    assert facts["stdout_bytes"] == len(b"out-0out-1out-2")
+    assert facts["stdout_sha256"] == sha256_bytes(b"out-0out-1out-2")
+    assert facts["stderr_sha256"] == sha256_bytes(b"err-0err-1err-2")
+    assert [item["argv"] for item in invocations] == [item["argv"] for item in commands]
+
+
+@pytest.mark.parametrize(
+    "updates", [{"exit_code": 1}, {"timed_out": True}, {"cleanup_confirmed": False}]
+)
+def test_codeql_steps_runner_fails_closed_on_child_state(
+    tmp_path, monkeypatch, updates
+):
+    from factoryline.deep_audit_io import _codeql_steps_runner
+
+    commands = [
+        {
+            "argv": [r"C:\CodeQL\codeql.exe", "step", str(i)],
+            "accepted_exit_codes": [0],
+        }
+        for i in range(3)
+    ]
+
+    def run(argv, cwd, timeout, scratch, *, stdout_path, stderr_path):
+        stdout, stderr = b"stdout", b"stderr"
+        stdout_path.write_bytes(stdout)
+        stderr_path.write_bytes(stderr)
+        return _codeql_process_facts(timeout, stdout, stderr, **updates)
+
+    monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
+    (tmp_path / "run").mkdir()
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_CHALLENGE"):
+        _codeql_steps_runner(commands, tmp_path, 5, tmp_path / "run")
+
+
+@pytest.mark.parametrize("mismatch", ["sha256", "bytes"])
+def test_codeql_step_streams_check_captured_bytes(tmp_path, mismatch):
+    from factoryline.deep_audit_io import _codeql_step_streams
+
+    out, err = tmp_path / "out.log", tmp_path / "err.log"
+    out.write_bytes(b"actual out")
+    err.write_bytes(b"actual err")
+    streams = {"stdout": bytearray(), "stderr": bytearray()}
+    facts = _codeql_process_facts(2, b"actual out", b"actual err")
+    facts["stdout_sha256" if mismatch == "sha256" else "stderr_bytes"] = (
+        "0" * 64 if mismatch == "sha256" else facts["stderr_bytes"] + 1
+    )
+    with pytest.raises(RuntimeAuditError, match="stream bytes differ"):
+        _codeql_step_streams(facts, out, err, streams)
+
+
+@pytest.mark.parametrize(
+    "commands",
+    [
+        [],
+        [
+            {
+                "argv": [r"C:\CodeQL\codeql.exe", "database", "create"],
+                "accepted_exit_codes": [0],
+            }
+        ],
+        [
+            {
+                "argv": [r"C:\CodeQL\codeql.exe", "query"],
+                "accepted_exit_codes": [0],
+            },
+            {
+                "argv": [r"C:\CodeQL\codeql.exe", "database", "analyze"],
+                "accepted_exit_codes": [0],
+            },
+            {
+                "argv": [r"C:\Python\python.exe", "-I", "-c", "pass"],
+                "accepted_exit_codes": [0],
+            },
+        ],
+    ],
+)
+def test_codeql_challenge_steps_reject_malformed_profiles(tmp_path, commands):
+    from factoryline.deep_audit_io import _codeql_challenge_steps
+
+    profile = {"commands": commands}
+    with pytest.raises(RuntimeAuditError, match="three-step"):
+        _codeql_challenge_steps(profile, {}, tmp_path / "suite.qls")
+
+
+def test_codeql_mutation_suite_quotes_target_and_is_deterministic(tmp_path):
+    from factoryline.deep_audit_io import _codeql_mutation_suite
+
+    suite = Path(
+        "/opt/codeql/codeql/qlpacks/codeql/javascript-queries/2.4.6/codeql-suites/javascript-security-extended.qls"
+    )
+    target = 'js/command-"injection\\target'
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    first = _codeql_mutation_suite(tmp_path / "a", suite, target)
+    second = _codeql_mutation_suite(tmp_path / "b", suite, target)
+    expected = (
+        "- import: codeql-suites/javascript-security-extended.qls\n"
+        "  from: codeql/javascript-queries\n"
+        "  version: 2.4.6\n"
+        "- exclude:\n"
+        f"    id: {json.dumps(target)}\n"
+    ).encode()
+    assert first.read_bytes() == second.read_bytes() == expected
+
+
+def test_codeql_challenges_deadline_records_gap_without_observation(tmp_path):
+    from factoryline.deep_audit_io import _codeql_challenges
+
+    obligation = {
+        "id": "codeql-control",
+        "engine": "codeql",
+        "family": "static",
+        "challenges": [{"kind": "positive"}],
+    }
+    bundle, covered = _codeql_challenges(
+        {},
+        {"obligations": [obligation]},
+        tmp_path,
+        {"family": "static", "timeout_seconds": 1},
+        {},
+        time.monotonic() - 10,
+    )
+    assert covered == ["codeql-control"]
+    assert bundle["observations"] == []
+    assert bundle["gaps"][0]["reason"] == "E_ADAPTER_TIMEOUT"
+
+
+def test_codeql_execute_challenge_passes_exact_suite_and_binds_inventory_artifact(
+    tmp_path, monkeypatch
+):
+    from factoryline.deep_audit_io import (
+        _execute_codeql_challenge,
+        _native_argv,
+        digest,
+    )
+
+    suite = tmp_path / "baseline.qls"
+    selected = tmp_path / "target-disabled.qls"
+    suite.write_text("baseline")
+    selected.write_text("selected")
+    baseline = {
+        "schema": "factory.codeql-query-inventory.v1",
+        "suite_sha256": sha256_bytes(suite.read_bytes()),
+        "queries": {
+            "codeql/test/target.ql": "a" * 64,
+            "codeql/test/other.ql": "b" * 64,
+        },
+        "query_ids": {
+            "js/target": "codeql/test/target.ql",
+            "js/other": "codeql/test/other.ql",
+        },
+        "query_inventory_sha256": digest(
+            {"codeql/test/target.ql": "a" * 64, "codeql/test/other.ql": "b" * 64}
+        ),
+    }
+    inventory = {
+        **baseline,
+        "suite_sha256": sha256_bytes(selected.read_bytes()),
+        "queries": {"codeql/test/other.ql": "b" * 64},
+        "query_ids": {"js/other": "codeql/test/other.ql"},
+        "query_inventory_sha256": digest({"codeql/test/other.ql": "b" * 64}),
+    }
+    profile = _codeql_test_profile(suite)
+    lane = {
+        "image": "sha256:image",
+        "native_artifact_roles": ["query_inventory", "sarif_report"],
+        "rule_ids": ["js/other", "js/target"],
+        "mutation_config_sha256": {
+            "js/target": inventory["suite_sha256"],
+            "js/other": "c" * 64,
+        },
+    }
+    execution = {"version_probe": {"exit_code": 0}}
+    contract = {"inventory": {"candidate_sha256": "d" * 64}}
+    obligation = {"id": "control", "detector_rule_id": "js/target"}
+    challenge = {"kind": "mutation"}
+    case = tmp_path / "case"
+    case.mkdir()
+    captured = {}
+
+    def run(argv, cwd, timeout, scratch, *, stdout_path, stderr_path):
+        out, err = b"step out", b"step err"
+        stdout_path.write_bytes(out)
+        stderr_path.write_bytes(err)
+        return _codeql_process_facts(timeout, out, err)
+
+    monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
+
+    def executor(challenge_arg, **kwargs):
+        kwargs["scratch"].mkdir()
+        baseline_bytes = kwargs["baseline_config_path"].read_bytes()
+        selected_bytes = kwargs["effective_config_path"].read_bytes()
+        assert kwargs["config_rule_ids"](baseline_bytes) == ["js/other", "js/target"]
+        assert kwargs["config_rule_ids"](selected_bytes) == ["js/other"]
+        assert kwargs["verify_mutation"](baseline_bytes, selected_bytes, "js/target")
+        create = _native_argv(
+            [{"argv": kwargs["profile_argv"], "accepted_exit_codes": [0]}],
+            kwargs["bindings"],
+        )[0]["argv"]
+        facts = kwargs["runner"](create, kwargs["source_root"], 20, kwargs["scratch"])
+        captured["facts"] = facts
+        captured["report_path"] = kwargs["report_path"]
+        return {"execution": {"status": "VERIFIED"}, "report": {}}
+
+    monkeypatch.setattr(
+        "factoryline.deep_audit_io._native_challenge_executor", lambda: executor
+    )
+    result = _execute_codeql_challenge(
+        profile,
+        contract,
+        lane,
+        execution,
+        obligation,
+        challenge,
+        case,
+        tmp_path / "source",
+        {"route.js": "e" * 64},
+        suite,
+        selected,
+        baseline,
+        inventory,
+        time.monotonic() + 30,
+    )
+    assert captured["facts"]["cleanup_confirmed"] is True
+    analyze = next(
+        item
+        for item in result["codeql_query_inventory"]["native_invocations"]
+        if item["argv"][1:3] == ["database", "analyze"]
+    )
+    assert analyze["argv"][4] == str(selected)
+    raw = (case / "run" / "query-inventory.json").read_bytes()
+    assert raw == __import__(
+        "factoryline.runtime_audit_common", fromlist=["canonical_bytes"]
+    ).canonical_bytes(result["codeql_query_inventory"])
+    assert sha256_bytes(raw) == sha256_bytes(
+        __import__(
+            "factoryline.runtime_audit_common", fromlist=["canonical_bytes"]
+        ).canonical_bytes(result["codeql_query_inventory"])
+    )
+
+
+def test_codeql_challenge_report_normalizes_only_volatile_telemetry(
+    monkeypatch, tmp_path
+):
+    from factoryline.deep_audit_io import _codeql_challenge_report
+
+    first = {
+        "properties": {"factory_native_raw_sha256": "a" * 64, "kept": True},
+        "runs": [
+            {
+                "invocations": [
+                    {
+                        "toolExecutionNotifications": [
+                            {
+                                "level": "none",
+                                "descriptor": {"id": "cli/platform"},
+                                "time": "now",
+                            },
+                            {
+                                "level": "error",
+                                "descriptor": {"id": "cli/platform"},
+                                "message": {"text": "real failure"},
+                            },
+                            {
+                                "level": "none",
+                                "descriptor": {"id": "query-warning"},
+                                "message": {"text": "keep"},
+                            },
+                        ]
+                    }
+                ],
+                "results": [
+                    {
+                        "codeFlows": [
+                            {"threadFlows": [{"locations": ["source", "sink"]}]}
+                        ]
+                    }
+                ],
+            }
+        ],
+    }
+
+    def normalize(raw, profile, root, manifest):
+        return json.loads(raw)
+
+    monkeypatch.setattr(
+        "factoryline.deep_audit_io._semgrep_challenge_report", normalize
+    )
+    changed = deepcopy(first)
+    changed["properties"]["factory_native_raw_sha256"] = "b" * 64
+    changed["runs"][0]["invocations"][0]["toolExecutionNotifications"][0]["time"] = (
+        "later"
+    )
+    a = _codeql_challenge_report(json.dumps(first).encode(), {}, tmp_path, {})
+    b = _codeql_challenge_report(json.dumps(changed).encode(), {}, tmp_path, {})
+    assert a == b
+    kept = a["runs"][0]["invocations"][0]["toolExecutionNotifications"]
+    assert {item["descriptor"]["id"] for item in kept} == {
+        "cli/platform",
+        "query-warning",
+    }
+    assert any(item["level"] == "error" for item in kept)
+    assert (
+        a["runs"][0]["results"][0]["codeFlows"]
+        == first["runs"][0]["results"][0]["codeFlows"]
+    )
+    assert "factory_native_raw_sha256" not in a["properties"]
