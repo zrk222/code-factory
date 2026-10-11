@@ -29,6 +29,18 @@ CATEGORIES = {
     "maintainability",
     "dependency",
 }
+V2_NATIVE_ROLES = {
+    "codeql": {"sarif_report", "query_inventory"},
+    "semgrep": {"sarif_report", "rule_inventory"},
+    "trivy": {"sarif_report", "policy_inventory"},
+    "osv": {"osv_json_report", "advisory_db_identity"},
+    "gitleaks": {"sarif_report", "gitleaks_rule_ledger"},
+    "runtime": {"junit_xml", "coverage_json"},
+    "atheris": {"fuzz_result", "corpus_manifest"},
+    "jazzer": {"fuzz_result", "corpus_manifest"},
+    "zap": {"zap_report"},
+    "syft": {"sbom_json"},
+}
 
 
 def _keys(value: object, keys: str) -> dict:
@@ -378,16 +390,10 @@ def _validate_lane_limits(lane: dict) -> None:
     require_int(lane["memory_mib"], "memory_mib", minimum=64, maximum=32768)
 
 
-def _execution_lane(lane: dict) -> None:
+def _execution_lane(lane: dict, version: int = 1) -> None:
     if not isinstance(lane, dict):
         raise RuntimeAuditError("E_EXECUTION_LANE", "lane object required")
-    lane_fields = set(
-        "id engine family image argv report coverage challenge_report languages mode timeout_seconds memory_mib tool_version ruleset_sha256".split()
-    )
-    if lane.get("engine") == "gitleaks" and "rule_ids" in lane:
-        lane_fields.add("rule_ids")
-        if "mutation_config_sha256" in lane:
-            lane_fields.add("mutation_config_sha256")
+    lane_fields = _execution_lane_fields(lane, version)
     if set(lane) != lane_fields:
         raise RuntimeAuditError("E_EXECUTION_LANE", "missing or unknown lane fields")
     _keys(lane, " ".join(sorted(lane_fields)))
@@ -398,19 +404,42 @@ def _execution_lane(lane: dict) -> None:
     _validate_lane_languages(lane)
     _validate_lane_mode(lane)
     _validate_lane_limits(lane)
-    if lane["engine"] == "gitleaks" and "rule_ids" in lane:
-        rule_ids = _items(lane["rule_ids"], 4096)
+    if version == 2:
+        _validate_v2_lane(lane)
+    if version == 1:
+        _validate_legacy_gitleaks_lane(lane)
+
+
+def _validate_legacy_gitleaks_lane(lane: dict) -> None:
+    if lane["engine"] != "gitleaks" or "rule_ids" not in lane:
+        return
+    rule_ids = _items(lane["rule_ids"], 4096)
+    for rule_id in rule_ids:
+        require_str(rule_id, "rule_id", maximum=256)
+    _unique(rule_ids)
+    mutations = lane.get("mutation_config_sha256")
+    if mutations is not None:
+        if not isinstance(mutations, dict) or set(mutations) != set(rule_ids):
+            raise RuntimeAuditError(
+                "E_EXECUTION_LANE", "exact per-rule mutation config hashes required"
+            )
         for rule_id in rule_ids:
-            require_str(rule_id, "rule_id", maximum=256)
-        _unique(rule_ids)
+            require_digest(mutations[rule_id], "mutation_config_sha256")
+
+
+def _execution_lane_fields(lane: dict, version: int) -> set[str]:
+    fields = set(
+        "id engine family image argv report coverage challenge_report languages mode timeout_seconds memory_mib tool_version ruleset_sha256".split()
+    )
+    if version == 2:
+        fields.add("native_artifact_roles")
+        if lane.get("engine") != "syft":
+            fields.update({"rule_ids", "mutation_config_sha256"})
+    if lane.get("engine") == "gitleaks" and "rule_ids" in lane:
+        fields.add("rule_ids")
         if "mutation_config_sha256" in lane:
-            mutations = lane["mutation_config_sha256"]
-            if not isinstance(mutations, dict) or set(mutations) != set(rule_ids):
-                raise RuntimeAuditError(
-                    "E_EXECUTION_LANE", "exact per-rule mutation config hashes required"
-                )
-            for rule_id in rule_ids:
-                require_digest(mutations[rule_id], "mutation_config_sha256")
+            fields.add("mutation_config_sha256")
+    return fields
 
 
 def _validate_execution_identity(plan: dict) -> None:
@@ -443,10 +472,47 @@ def _validate_execution_identity(plan: dict) -> None:
     )
 
 
-def _execution_lanes(value: object) -> list[dict]:
+def _validate_v2_lane(lane: dict) -> None:
+    _validate_v2_roles(lane)
+    if lane["engine"] == "syft":
+        return
+    _validate_v2_rule_inventory(lane)
+
+
+def _validate_v2_roles(lane: dict) -> None:
+    roles = lane["native_artifact_roles"]
+    expected = V2_NATIVE_ROLES.get(lane["engine"])
+    if (
+        expected is None
+        or not isinstance(roles, list)
+        or any(not isinstance(role, str) for role in roles)
+        or roles != sorted(expected)
+    ):
+        raise RuntimeAuditError(
+            "E_NATIVE_ROLE", "signed native artifact roles differ from engine"
+        )
+
+
+def _validate_v2_rule_inventory(lane: dict) -> None:
+    rule_ids = _items(lane["rule_ids"], 4096)
+    for rule_id in rule_ids:
+        require_str(rule_id, "rule_id", maximum=256)
+    _unique(rule_ids)
+    if rule_ids != sorted(rule_ids):
+        raise RuntimeAuditError("E_EXECUTION_LANE", "rule inventory must be sorted")
+    mutations = lane["mutation_config_sha256"]
+    if not isinstance(mutations, dict) or set(mutations) != set(rule_ids):
+        raise RuntimeAuditError(
+            "E_EXECUTION_LANE", "exact per-rule mutation config hashes required"
+        )
+    for rule_id in rule_ids:
+        require_digest(mutations[rule_id], "mutation_config_sha256")
+
+
+def _execution_lanes(value: object, version: int) -> list[dict]:
     lanes = _items(value, 32)
     for lane in lanes:
-        _execution_lane(lane)
+        _execution_lane(lane, version)
     _unique([lane["id"] for lane in lanes])
     families = {lane["family"] for lane in lanes}
     if families != EXECUTION_FAMILIES:
@@ -476,11 +542,40 @@ def _obligation_paths(obligation: dict) -> None:
         _unique(obligation[field])
 
 
-def _validate_challenge(challenge: dict) -> None:
-    _keys(
-        challenge,
-        "kind fixture_path fixture_sha256 expected_report_sha256 expected_exit_code",
+def _validate_v2_fixture_manifest(challenge: dict) -> None:
+    manifest = challenge["fixture_manifest"]
+    if not isinstance(manifest, dict) or not 1 <= len(manifest) <= 64:
+        raise RuntimeAuditError(
+            "E_CHALLENGE_MANIFEST", "fixture manifest outside bounds"
+        )
+    normalized = {}
+    for path, source_sha in manifest.items():
+        normalized[relative_path(path)] = require_digest(
+            source_sha, "fixture source digest"
+        )
+    if list(manifest) != sorted(manifest) or normalized != manifest:
+        raise RuntimeAuditError(
+            "E_CHALLENGE_MANIFEST", "fixture manifest must be canonical and sorted"
+        )
+    if manifest.get(challenge["fixture_path"]) != challenge["fixture_sha256"]:
+        raise RuntimeAuditError(
+            "E_CHALLENGE_MANIFEST", "fixture anchor differs from source manifest"
+        )
+    if digest(manifest) != require_digest(
+        challenge["fixture_manifest_sha256"], "fixture_manifest_sha256"
+    ):
+        raise RuntimeAuditError(
+            "E_CHALLENGE_MANIFEST", "fixture manifest digest differs"
+        )
+
+
+def _validate_challenge(challenge: dict, version: int) -> None:
+    fields = (
+        "kind fixture_path fixture_sha256 expected_report_sha256 expected_exit_code"
     )
+    if version == 2:
+        fields += " fixture_manifest fixture_manifest_sha256"
+    _keys(challenge, fields)
     relative_path(challenge["fixture_path"])
     require_digest(challenge["fixture_sha256"], "fixture_sha256")
     require_digest(challenge["expected_report_sha256"], "expected_report_sha256")
@@ -490,9 +585,11 @@ def _validate_challenge(challenge: dict) -> None:
         minimum=0,
         maximum=255,
     )
+    if version == 2:
+        _validate_v2_fixture_manifest(challenge)
 
 
-def _challenge_identity(challenges: list[dict]) -> None:
+def _challenge_identity(challenges: list[dict], version: int) -> None:
     positive = next(item for item in challenges if item["kind"] == "positive")
     mutation = next(item for item in challenges if item["kind"] == "mutation")
     negative = next(item for item in challenges if item["kind"] == "negative")
@@ -505,9 +602,13 @@ def _challenge_identity(challenges: list[dict]) -> None:
             "E_HOLLOW_CHALLENGE",
             "disabled-control mutation must produce different report evidence",
         )
+    if version == 2 and positive["fixture_manifest"] != mutation["fixture_manifest"]:
+        raise RuntimeAuditError(
+            "E_HOLLOW_CHALLENGE", "mutation must bind the exact positive fixture tree"
+        )
 
 
-def _obligation_challenges(value: object) -> None:
+def _obligation_challenges(value: object, version: int) -> None:
     challenges = _items(value, 3)
     if any(not isinstance(item, dict) for item in challenges) or {
         item.get("kind") for item in challenges
@@ -517,11 +618,11 @@ def _obligation_challenges(value: object) -> None:
             "positive, negative and mutation challenges required",
         )
     for challenge in challenges:
-        _validate_challenge(challenge)
-    _challenge_identity(challenges)
+        _validate_challenge(challenge, version)
+    _challenge_identity(challenges, version)
 
 
-def _validate_obligation(obligation: dict, lanes: list[dict]) -> None:
+def _validate_obligation(obligation: dict, lanes: list[dict], version: int) -> None:
     _keys(
         obligation,
         "id engine family detector_rule_id paths requirements remediation challenges",
@@ -529,15 +630,34 @@ def _validate_obligation(obligation: dict, lanes: list[dict]) -> None:
     require_str(obligation["id"], "obligation.id", maximum=128)
     require_str(obligation["detector_rule_id"], "detector_rule_id", maximum=256)
     _obligation_engine(obligation, lanes)
+    if version == 2:
+        _validate_v2_obligation(obligation, lanes)
     _obligation_paths(obligation)
     require_str(obligation["remediation"], "remediation", maximum=2048)
-    _obligation_challenges(obligation["challenges"])
+    _obligation_challenges(obligation["challenges"], version)
 
 
-def _execution_obligations(value: object, lanes: list[dict]) -> None:
+def _validate_v2_obligation(obligation: dict, lanes: list[dict]) -> None:
+    if obligation["engine"] == "syft":
+        raise RuntimeAuditError(
+            "E_CHALLENGE_ENGINE", "Syft inventory is not a detector challenge"
+        )
+    lane = next(
+        item
+        for item in lanes
+        if item["engine"] == obligation["engine"]
+        and item["family"] == obligation["family"]
+    )
+    if obligation["detector_rule_id"] not in lane["rule_ids"]:
+        raise RuntimeAuditError(
+            "E_CHALLENGE_RULE", "detector rule is absent from signed inventory"
+        )
+
+
+def _execution_obligations(value: object, lanes: list[dict], version: int) -> None:
     obligations = _items(value, 4096)
     for obligation in obligations:
-        _validate_obligation(obligation, lanes)
+        _validate_obligation(obligation, lanes, version)
     _unique([item["id"] for item in obligations])
     if {item["family"] for item in obligations} != EXECUTION_FAMILIES:
         raise RuntimeAuditError(
@@ -557,9 +677,11 @@ def load_execution_manifest(path: Path, expected_sha256: str) -> dict:
         plan,
         "schema candidate_sha256 implementer_id implementer_keyid reviewer_identity reviewer_keyid coordinator_identity coordinator_keyid trust_root_sha256 lanes obligations",
     )
-    if plan["schema"] != "factory.deep-execution.v1":
+    versions = {"factory.deep-execution.v1": 1, "factory.deep-execution.v2": 2}
+    version = versions.get(plan.get("schema"))
+    if version is None:
         raise RuntimeAuditError("E_EXECUTION_SCHEMA", "unexpected execution schema")
     _validate_execution_identity(plan)
-    lanes = _execution_lanes(plan["lanes"])
-    _execution_obligations(plan["obligations"], lanes)
+    lanes = _execution_lanes(plan["lanes"], version)
+    _execution_obligations(plan["obligations"], lanes, version)
     return plan

@@ -532,6 +532,84 @@ def test_execution_manifest_and_signed_authorization(tmp_path):
         load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
 
 
+def _v2_execution_plan(plan, inventory):
+    from factoryline.deep_audit_contract import V2_NATIVE_ROLES
+
+    plan["schema"] = "factory.deep-execution.v2"
+    for lane in plan["lanes"]:
+        lane["native_artifact_roles"] = sorted(V2_NATIVE_ROLES[lane["engine"]])
+        if lane["engine"] != "syft":
+            lane["rule_ids"] = ["fixture-detection"]
+            lane["mutation_config_sha256"] = {"fixture-detection": "c" * 64}
+    plan["obligations"] = [
+        item for item in plan["obligations"] if item["engine"] != "syft"
+    ]
+    sources = {item["path"]: item["sha256"] for item in inventory["files"]}
+    for obligation in plan["obligations"]:
+        for challenge in obligation["challenges"]:
+            path = challenge["fixture_path"]
+            challenge["fixture_sha256"] = sources[path]
+            challenge["fixture_manifest"] = {path: sources[path]}
+            challenge["fixture_manifest_sha256"] = digest({path: sources[path]})
+    return plan
+
+
+def test_execution_manifest_v2_binds_roles_and_fixture_manifest(tmp_path):
+    from factoryline.deep_audit_contract import load_execution_manifest
+
+    _, manifest, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    _v2_execution_plan(plan, inventory)
+    manifest.write_text(json.dumps(plan), encoding="utf-8")
+    pin = sha256_bytes(manifest.read_bytes())
+    assert load_execution_manifest(manifest, pin) == plan
+
+    plan["lanes"][0]["native_artifact_roles"] = ["sarif_report"]
+    manifest.write_text(json.dumps(plan), encoding="utf-8")
+    with pytest.raises(RuntimeAuditError, match="E_NATIVE_ROLE"):
+        load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
+
+
+def test_v2_role_tables_match_native_helper_and_report_roles():
+    from factoryline.deep_audit_contract import V2_NATIVE_ROLES
+    from factoryline.deep_audit_sarif import _NATIVE_REPORT_ROLES
+    from factoryline.runtime_audit_common import (
+        NATIVE_ARTIFACT_ROLES,
+        NATIVE_REPORT_ROLE,
+    )
+
+    assert V2_NATIVE_ROLES == NATIVE_ARTIFACT_ROLES
+    assert _NATIVE_REPORT_ROLES == NATIVE_REPORT_ROLE
+
+
+def test_execution_manifest_v2_rejects_fixture_drift_and_syft_detector(tmp_path):
+    from factoryline.deep_audit_contract import load_execution_manifest
+
+    _, manifest, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    _v2_execution_plan(plan, inventory)
+    challenge = plan["obligations"][0]["challenges"][0]
+    challenge["fixture_manifest_sha256"] = "0" * 64
+    manifest.write_text(json.dumps(plan), encoding="utf-8")
+    with pytest.raises(RuntimeAuditError, match="E_CHALLENGE_MANIFEST"):
+        load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
+
+    _v2_execution_plan(plan, inventory)
+    plan["obligations"].append(
+        {
+            "id": "syft-detector",
+            "engine": "syft",
+            "family": "dependencies",
+            "detector_rule_id": "fixture-detection",
+            "paths": ["app.py"],
+            "requirements": ["app.py"],
+            "remediation": "Inventory only.",
+            "challenges": [],
+        }
+    )
+    manifest.write_text(json.dumps(plan), encoding="utf-8")
+    with pytest.raises(RuntimeAuditError, match="E_CHALLENGE_ENGINE"):
+        load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
+
+
 def test_scan_rejects_authorization_changed_after_signature_verification(
     tmp_path, monkeypatch
 ):

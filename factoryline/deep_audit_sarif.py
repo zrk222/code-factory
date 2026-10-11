@@ -18,6 +18,18 @@ from .runtime_audit_common import (
     require_str,
 )
 
+_NATIVE_REPORT_ROLES = {
+    "codeql": "sarif_report",
+    "semgrep": "sarif_report",
+    "trivy": "sarif_report",
+    "osv": "osv_json_report",
+    "gitleaks": "sarif_report",
+    "runtime": "junit_xml",
+    "atheris": "fuzz_result",
+    "jazzer": "fuzz_result",
+    "zap": "zap_report",
+}
+
 
 def _safe_text(value: object, maximum: int = 2048) -> str:
     text = require_str(value, "display text", maximum=maximum)
@@ -543,11 +555,7 @@ def _required_sources(inventory, lane):
 
 
 def _coverage_source_gaps(report, coverage, lane, required):
-    gaps = (
-        ["SECRETS_NATIVE_ACCOUNTING_UNAVAILABLE"]
-        if lane["engine"] == "gitleaks"
-        else []
-    )
+    gaps = []
     if (
         not required
         or coverage.get("schema") != "factory.deep-coverage.v1"
@@ -1005,7 +1013,10 @@ def _coverage_gaps(report, coverage, lane, required, obligations):
     _native_accounting(report, lane, required)
     gaps = _coverage_source_gaps(report, coverage, lane, required)
     gaps.extend(_coverage_tool_gaps(coverage, lane))
-    gaps.extend(_rule_accounting_gaps(coverage, lane, required, report))
+    accounting_gaps = _rule_accounting_gaps(coverage, lane, required, report)
+    if lane["engine"] == "gitleaks" and accounting_gaps:
+        gaps.append("SECRETS_NATIVE_ACCOUNTING_UNAVAILABLE")
+    gaps.extend(accounting_gaps)
     expected = _covered_obligation_ids(obligations, lane, required)
     observed = _list(coverage.get("obligations"), 0, 4096)
     if _obligation_coverage_missing(observed, expected):
@@ -1053,9 +1064,10 @@ def _challenge_gap(challenge, identity, approved, lane, sources):
     report_digest = digest(report_evidence)
     bound, obligation = bound_item
     _challenge_semantics(report_evidence, lane, bound, obligation, identity[1], sources)
+    source_binding_ok = _challenge_source_binding(bound, sources)
     return (
         challenge["fixture_sha256"] != bound["fixture_sha256"]
-        or sources.get(bound["fixture_path"]) != bound["fixture_sha256"]
+        or not source_binding_ok
         or report_digest != challenge["observation_sha256"]
         or report_digest != bound["expected_report_sha256"]
         or type(challenge.get("exit_code")) is not int
@@ -1063,9 +1075,20 @@ def _challenge_gap(challenge, identity, approved, lane, sources):
     )
 
 
+def _challenge_source_binding(bound, sources):
+    manifest = bound.get("fixture_manifest")
+    if manifest is None:
+        return sources.get(bound["fixture_path"]) == bound["fixture_sha256"]
+    return all(sources.get(path) == source_sha for path, source_sha in manifest.items())
+
+
 def _challenge_execution_gap(
     challenge, bound, obligation, identity, lane, coverage, candidate_sha
 ):
+    if "fixture_manifest" in bound:
+        return _challenge_execution_v2_gap(
+            challenge, bound, obligation, identity, lane, coverage, candidate_sha
+        )
     execution = challenge.get("execution")
     fields = {
         "schema",
@@ -1102,6 +1125,225 @@ def _challenge_execution_gap(
     return not _challenge_execution_fields_valid(
         execution, challenge, bound, obligation, identity, lane, coverage, candidate_sha
     )
+
+
+def _challenge_execution_v2_gap(
+    challenge, bound, obligation, identity, lane, coverage, candidate_sha
+):
+    execution = challenge.get("execution")
+    fields = _challenge_execution_v2_fields()
+    if not isinstance(execution, dict) or set(execution) != fields:
+        return True
+    return not _challenge_execution_v2_valid(
+        execution, challenge, bound, obligation, identity, lane, coverage, candidate_sha
+    )
+
+
+def _challenge_execution_v2_fields():
+    return {
+        "schema",
+        "status",
+        "launched",
+        "completed",
+        "timed_out",
+        "cleanup_confirmed",
+        "scratch_cleanup_verified",
+        "timeout_seconds",
+        "duration_ms",
+        "exit_code",
+        "argv_sha256",
+        "raw_report_sha256",
+        "stdout_sha256",
+        "stdout_bytes",
+        "stderr_sha256",
+        "stderr_bytes",
+        "fixture_sha256",
+        "fixture_manifest_sha256",
+        "candidate_binding_sha256",
+        "challenge_source_sha256",
+        "profile_binding_sha256",
+        "image_binding_sha256",
+        "tool_version",
+        "version_probe_sha256",
+        "baseline_config_sha256",
+        "effective_config_sha256",
+        "ledger_sha256",
+        "native_artifacts",
+        "mutation",
+        "execution_sha256",
+    }
+
+
+def _challenge_execution_v2_valid(
+    execution, challenge, bound, obligation, identity, lane, coverage, candidate_sha
+):
+    if not _challenge_execution_v2_control(execution, bound):
+        return False
+    if not _challenge_execution_v2_artifacts(execution, lane):
+        return False
+    if not _challenge_execution_v2_binding(
+        execution, bound, obligation, identity, lane, coverage, candidate_sha
+    ):
+        return False
+    body = {key: value for key, value in execution.items() if key != "execution_sha256"}
+    if execution.get("execution_sha256") != digest(body):
+        return False
+    return _challenge_execution_budgets_valid_v2(execution, lane)
+
+
+def _challenge_execution_v2_control(execution, bound):
+    return (
+        execution.get("schema") == "factory.native-challenge-execution.v2"
+        and execution.get("status") == "VERIFIED"
+        and execution.get("launched") is True
+        and execution.get("completed") is True
+        and execution.get("timed_out") is False
+        and execution.get("cleanup_confirmed") is True
+        and execution.get("scratch_cleanup_verified") is True
+        and type(execution.get("exit_code")) is int
+        and execution["exit_code"] == bound["expected_exit_code"]
+        and execution.get("fixture_sha256") == bound["fixture_sha256"]
+        and execution.get("fixture_manifest_sha256") == bound["fixture_manifest_sha256"]
+    )
+
+
+def _challenge_execution_v2_artifacts(execution, lane):
+    artifacts = execution.get("native_artifacts")
+    roles = lane.get("native_artifact_roles")
+    by_role = _native_artifact_record_map(artifacts, roles)
+    if by_role is None:
+        return False
+    return _challenge_v2_artifact_bindings(execution, lane, by_role)
+
+
+def _native_artifact_record_map(artifacts, roles):
+    if not isinstance(artifacts, list) or not isinstance(roles, list):
+        return None
+    if len(artifacts) != len(roles):
+        return None
+    total = 0
+    by_role = {}
+    for artifact in artifacts:
+        if not _native_artifact_record_valid(artifact, by_role):
+            return None
+        role = artifact["kind"]
+        total += artifact["bytes"]
+        by_role[role] = artifact
+    if total > 8 * 1024 * 1024 or list(by_role) != sorted(roles):
+        return None
+    return by_role if set(by_role) == set(roles) else None
+
+
+def _native_artifact_record_valid(artifact, by_role):
+    if not isinstance(artifact, dict) or set(artifact) != {"kind", "sha256", "bytes"}:
+        return False
+    if not isinstance(artifact["kind"], str) or artifact["kind"] in by_role:
+        return False
+    try:
+        require_digest(artifact["sha256"], "native artifact digest")
+        require_int(
+            artifact["bytes"],
+            "native artifact bytes",
+            minimum=0,
+            maximum=8 * 1024 * 1024,
+        )
+    except RuntimeAuditError:
+        return False
+    return True
+
+
+def _challenge_v2_artifact_bindings(execution, lane, by_role):
+    report_role = _NATIVE_REPORT_ROLES.get(lane["engine"])
+    if report_role is None or by_role[report_role]["sha256"] != execution.get(
+        "raw_report_sha256"
+    ):
+        return False
+    if lane["engine"] == "gitleaks":
+        return (
+            execution.get("ledger_sha256") == by_role["gitleaks_rule_ledger"]["sha256"]
+        )
+    return execution.get("ledger_sha256") is None
+
+
+def _challenge_execution_v2_binding(
+    execution, bound, obligation, identity, lane, coverage, candidate_sha
+):
+    expected_source = digest(bound["fixture_manifest"])
+    expected_image = sha256_bytes(lane["image"].encode("utf-8"))
+    return (
+        execution.get("candidate_binding_sha256") == candidate_sha
+        and execution.get("challenge_source_sha256") == expected_source
+        and execution.get("profile_binding_sha256") == coverage.get("profile_sha256")
+        and execution.get("image_binding_sha256") == expected_image
+        and execution.get("tool_version") == lane["tool_version"]
+        and execution.get("version_probe_sha256")
+        == digest(coverage.get("version_probe"))
+        and _challenge_execution_config_valid_v2(execution, obligation, identity, lane)
+    )
+
+
+def _challenge_execution_config_valid_v2(execution, obligation, identity, lane):
+    expected_mutation = None
+    if identity[1] == "mutation":
+        mutation_hashes = lane.get("mutation_config_sha256")
+        rule_id = obligation["detector_rule_id"]
+        expected_effective = (
+            mutation_hashes.get(rule_id) if isinstance(mutation_hashes, dict) else None
+        )
+        remaining = [rule for rule in lane["rule_ids"] if rule != rule_id]
+        expected_mutation = {
+            "disabled_rule_id": rule_id,
+            "remaining_rule_inventory_sha256": digest(remaining),
+        }
+        if expected_effective is None:
+            return False
+    else:
+        expected_effective = lane["ruleset_sha256"]
+    return (
+        execution.get("effective_config_sha256") == expected_effective
+        and execution.get("baseline_config_sha256") == lane["ruleset_sha256"]
+        and execution.get("mutation") == expected_mutation
+    )
+
+
+def _challenge_execution_budgets_valid_v2(execution, lane):
+    try:
+        for key in (
+            "argv_sha256",
+            "raw_report_sha256",
+            "stdout_sha256",
+            "stderr_sha256",
+            "fixture_sha256",
+            "fixture_manifest_sha256",
+            "candidate_binding_sha256",
+            "challenge_source_sha256",
+            "profile_binding_sha256",
+            "image_binding_sha256",
+            "version_probe_sha256",
+            "baseline_config_sha256",
+            "effective_config_sha256",
+            "execution_sha256",
+        ):
+            require_digest(execution.get(key), key)
+        if execution.get("ledger_sha256") is not None:
+            require_digest(execution["ledger_sha256"], "ledger_sha256")
+        require_int(
+            execution.get("timeout_seconds"),
+            "challenge timeout",
+            minimum=1,
+            maximum=lane["timeout_seconds"],
+        )
+        require_int(
+            execution.get("duration_ms"),
+            "challenge duration",
+            minimum=0,
+            maximum=execution["timeout_seconds"] * 1000,
+        )
+        for key in ("stdout_bytes", "stderr_bytes"):
+            require_int(execution.get(key), key, minimum=0, maximum=8 * 1024 * 1024)
+    except RuntimeAuditError:
+        return False
+    return True
 
 
 def _challenge_execution_fields_valid(
@@ -1247,7 +1489,9 @@ def _challenge_gaps(
         seen.add(identity)
         if _challenge_gap(challenge, identity, approved, lane, sources):
             gaps.append("CHALLENGE_FAILED")
-        elif lane["engine"] == "gitleaks" and _challenge_execution_gap(
+        elif (
+            lane["engine"] == "gitleaks" or _is_v2_obligation(identity, approved)
+        ) and _challenge_execution_gap(
             challenge,
             approved[identity][0],
             approved[identity][1],
@@ -1265,6 +1509,11 @@ def _challenge_gaps(
     if seen != required:
         gaps.append("CHALLENGE_COVERAGE_MISSING")
     return gaps
+
+
+def _is_v2_obligation(identity, approved):
+    item = approved.get(identity)
+    return item is not None and "fixture_manifest" in item[0]
 
 
 def normalize_execution_bundle(
@@ -1409,7 +1658,15 @@ def _native(result: dict) -> dict:
     for group in ("partialFingerprints", "fingerprints"):
         for key, value in _object(result.get(group, {})).items():
             name = require_str(key, "fingerprint key", maximum=128)
-            native[group + ":" + name] = require_str(value, "fingerprint", maximum=1024)
+            if (
+                not isinstance(value, str)
+                or len(value) > 1024
+                or any(ord(character) < 32 for character in value)
+            ):
+                raise RuntimeAuditError(
+                    "E_FIELD", "fingerprint must be a bounded printable string"
+                )
+            native[group + ":" + name] = value
     if not 1 <= len(native) <= 16:
         raise RuntimeAuditError(
             "E_NATIVE_FINGERPRINT", "require 1..16 native fingerprints"
@@ -1445,6 +1702,15 @@ def _finding(result: object, analyzer: dict, sources: dict) -> dict:
     locations = [
         _location(item, sources) for item in _list(result.get("locations"), 1, 10)
     ]
+    native_fingerprint_sha256 = digest(native)
+    identity_basis = "sarif_native_fingerprint"
+    identity_native = native
+    if not any(value.strip() for value in native.values()):
+        identity_basis = "source_location_fallback"
+        identity_native = {
+            "native_fingerprint_sha256": native_fingerprint_sha256,
+            "locations_sha256": digest(locations),
+        }
     suppressions = _suppression(result)
     return {
         "finding_id": digest(
@@ -1452,10 +1718,11 @@ def _finding(result: object, analyzer: dict, sources: dict) -> dict:
                 "schema": "factory.deep-finding-identity.v1",
                 "analyzer": analyzer["id"],
                 "rule": rule,
-                "native": native,
+                "native": identity_native,
             }
         ),
-        "native_fingerprint_sha256": digest(native),
+        "native_fingerprint_sha256": native_fingerprint_sha256,
+        "finding_identity_basis": identity_basis,
         "rule_id": rule,
         "analyzer_id": analyzer["id"],
         "kind": _enum(

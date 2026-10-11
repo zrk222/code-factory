@@ -1335,12 +1335,12 @@ def _gitleaks_rule_inventory(config: bytes, lane: dict) -> dict:
 
 
 def _gitleaks_rule_ids(config: bytes) -> list[str]:
-    import tomllib
+    toml = _toml_parser()
 
     try:
-        rules = tomllib.loads(config.decode("utf-8"))["rules"]
+        rules = toml.loads(config.decode("utf-8"))["rules"]
         actual = [item["id"] for item in rules]
-    except (UnicodeError, KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
+    except (UnicodeError, KeyError, TypeError, toml.TOMLDecodeError) as exc:
         raise RuntimeAuditError(
             "E_GITLEAKS_RULESET", "pinned ruleset is malformed"
         ) from exc
@@ -1351,7 +1351,8 @@ def _gitleaks_rule_ids(config: bytes) -> list[str]:
 
 def _gitleaks_disable_rule(config: bytes, detector_rule_id: str) -> bytes:
     import re
-    import tomllib
+
+    toml = _toml_parser()
 
     starts = [
         item.start()
@@ -1365,13 +1366,13 @@ def _gitleaks_disable_rule(config: bytes, detector_rule_id: str) -> bytes:
         end = starts[index + 1] if index + 1 < len(starts) else len(config)
         chunk = config[start:end]
         try:
-            rule_id = tomllib.loads(chunk.decode("utf-8"))["rules"][0]["id"]
+            rule_id = toml.loads(chunk.decode("utf-8"))["rules"][0]["id"]
         except (
             UnicodeError,
             KeyError,
             IndexError,
             TypeError,
-            tomllib.TOMLDecodeError,
+            toml.TOMLDecodeError,
         ) as exc:
             raise RuntimeAuditError(
                 "E_GITLEAKS_MUTATION", "rule block malformed"
@@ -1386,6 +1387,19 @@ def _gitleaks_disable_rule(config: bytes, detector_rule_id: str) -> bytes:
     if removed != 1 or _gitleaks_rule_ids(mutated) != expected:
         raise RuntimeAuditError("E_GITLEAKS_MUTATION", "mutation must disable one rule")
     return mutated
+
+
+def _toml_parser():
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        try:
+            import tomli as tomllib
+        except ModuleNotFoundError as exc:
+            raise RuntimeAuditError(
+                "E_GITLEAKS_RULESET", "TOML parser is unavailable"
+            ) from exc
+    return tomllib
 
 
 def _gitleaks_mutation_valid(
@@ -2170,6 +2184,13 @@ def _challenge_error_code(error):
 
 def _gitleaks_challenge_allowed(challenge, obligation, source_bindings, command, lane):
     accepted = command["accepted_exit_codes"]
+    manifest = challenge.get("fixture_manifest")
+    if manifest is not None and (
+        not isinstance(manifest, dict)
+        or not 1 <= len(manifest) <= 64
+        or any(source_bindings.get(path) != sha for path, sha in manifest.items())
+    ):
+        return False
     return (
         challenge.get("fixture_path") in source_bindings
         and challenge.get("fixture_sha256")
@@ -2200,13 +2221,16 @@ def _run_gitleaks_challenge(
 
     fixture_path = relative_path(challenge["fixture_path"])
     fixture_sha = challenge["fixture_sha256"]
-    fixture = bound_bytes(source, {"path": fixture_path, "sha256": fixture_sha})
+    fixture_manifest = challenge.get("fixture_manifest", {fixture_path: fixture_sha})
     case.mkdir()
     challenge_root = case / "source"
-    target = challenge_root.joinpath(*fixture_path.split("/"))
-    target.parent.mkdir(parents=True)
-    target.write_bytes(fixture)
-    challenge_source_sha = digest({fixture_path: fixture_sha})
+    challenge_inventory = dict(sorted(fixture_manifest.items()))
+    for path, source_sha in challenge_inventory.items():
+        fixture = bound_bytes(source, {"path": path, "sha256": source_sha})
+        target = challenge_root.joinpath(*path.split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(fixture)
+    challenge_source_sha = digest(challenge_inventory)
     config_path = baseline_path
     if challenge["kind"] == "mutation":
         mutation_hashes = lane.get("mutation_config_sha256")
@@ -2238,7 +2262,6 @@ def _run_gitleaks_challenge(
         "factory_ledger": str(ledger_path),
         "config": str(config_path),
     }
-    challenge_inventory = {fixture_path: fixture_sha}
 
     def report_parser(raw):
         return _gitleaks_challenge_report(
@@ -2255,6 +2278,17 @@ def _run_gitleaks_challenge(
         "version_probe_sha256": digest(execution["version_probe"]),
         "version_probe_facts": execution["version_probe"],
     }
+    options = {}
+    if "fixture_manifest" in challenge:
+        options = {
+            "native_artifact_roles": lane["native_artifact_roles"],
+            "native_artifacts": {
+                "sarif_report": report_path,
+                "gitleaks_rule_ledger": ledger_path,
+            },
+            "rule_ids": lane["rule_ids"],
+            "mutation_ruleset_sha256": lane["mutation_config_sha256"],
+        }
     return execute(
         challenge,
         obligation_id=obligation["id"],
@@ -2277,6 +2311,7 @@ def _run_gitleaks_challenge(
         report_parser=report_parser,
         config_rule_ids=_gitleaks_rule_ids,
         verify_mutation=_gitleaks_mutation_valid,
+        **options,
     )
 
 
@@ -2301,6 +2336,7 @@ def _normalize_challenge_run(run, root):
     for invocation in run.get("invocations", []):
         _normalize_challenge_invocation(invocation)
     _normalize_challenge_artifact_paths(run, root)
+    _normalize_challenge_message_paths(run, root)
 
 
 def _normalize_challenge_bases(run, root):
@@ -2327,6 +2363,24 @@ def _normalize_challenge_artifact_paths(run, root):
             uri = artifact.get("uri") if isinstance(artifact, dict) else None
             if isinstance(uri, str):
                 artifact["uri"] = _challenge_source_uri(uri, root)
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+
+
+def _normalize_challenge_message_paths(run, root):
+    stack = [run]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            message = item.get("message")
+            if isinstance(message, dict) and isinstance(message.get("text"), str):
+                text = message["text"]
+                message["text"] = text.replace(root + "/", "/src/").replace(
+                    root + "\\", "/src/"
+                )
+                if message["text"] == root:
+                    message["text"] = "/src"
             stack.extend(item.values())
         elif isinstance(item, list):
             stack.extend(item)
