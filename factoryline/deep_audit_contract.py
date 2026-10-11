@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import base64
-import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .deep_audit_io import LIMIT, bound_bytes, digest, relative_path, strict_json
+from .deep_audit_io import (
+    LIMIT,
+    _osv_suppression_bytes,
+    bound_bytes,
+    digest,
+    relative_path,
+    strict_json,
+)
 from .enterprise_receipts import verify_signed_document
 from .runtime_audit_common import (
     RuntimeAuditError,
@@ -515,13 +521,6 @@ def _osv_aliases(value: object, detector: str) -> list[str]:
     if aliases != sorted(aliases) or detector not in aliases:
         raise RuntimeAuditError("E_OSV_TARGET", "sorted target aliases required")
     return aliases
-
-
-def _osv_suppression_bytes(aliases: list[str]) -> bytes:
-    return "".join(
-        "[[IgnoredVulns]]\nid = " + json.dumps(alias, ensure_ascii=True) + "\n\n"
-        for alias in aliases
-    ).encode("ascii")
 
 
 def _validate_v2_osv_policy(lane: dict) -> None:

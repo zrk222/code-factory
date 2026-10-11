@@ -1675,6 +1675,464 @@ def test_osv_empty_native_accounting_keeps_both_worker_gaps():
     ]
 
 
+def test_osv_worker_challenge_helpers_bind_policy_command_and_mutation():
+    from factoryline.deep_audit_io import (
+        _osv_challenge_command,
+        _osv_config_rule_ids,
+        _osv_mutation_valid,
+        _osv_suppression_bytes,
+    )
+
+    profile = json.loads(Path("deploy/deep-adapters/profiles/osv.json").read_text())
+    command = _osv_challenge_command(profile)
+    assert command["argv"][command["argv"].index("--config") + 1] == "{config}"
+    assert command["accepted_exit_codes"] == [0, 1]
+    lane = {
+        "rule_ids": ["OSV-CVE-2026-0001", "OSV-GHSA-abcd-1234-efgh"],
+        "native_policy": {
+            "advisory_aliases": {
+                "OSV-CVE-2026-0001": ["CVE-2026-0001", "GHSA-abcd-1234-efgh"],
+                "OSV-GHSA-abcd-1234-efgh": ["GHSA-abcd-1234-efgh"],
+            }
+        },
+    }
+    baseline = b"\n"
+    effective = _osv_suppression_bytes(
+        lane["native_policy"]["advisory_aliases"]["OSV-CVE-2026-0001"]
+    )
+    lane["mutation_config_sha256"] = {"OSV-CVE-2026-0001": sha256_bytes(effective)}
+    assert _osv_config_rule_ids(baseline, lane) == lane["rule_ids"]
+    assert _osv_config_rule_ids(effective, lane) == [lane["rule_ids"][1]]
+    assert _osv_mutation_valid(baseline, effective, lane["rule_ids"][0], lane)
+    assert not _osv_mutation_valid(
+        baseline, effective + b"# changed\n", lane["rule_ids"][0], lane
+    )
+    assert not _osv_mutation_valid(b"", effective, lane["rule_ids"][0], lane)
+    with pytest.raises(RuntimeAuditError):
+        _osv_config_rule_ids(effective + b"# changed\n", lane)
+
+    for damage in ("config", "source", "report"):
+        changed = deepcopy(profile)
+        argv = changed["commands"][0]["argv"]
+        if damage == "config":
+            argv[argv.index("--config") + 1] = "/src/osv.toml"
+        elif damage == "source":
+            argv[argv.index("-r") + 1] = "/src"
+        else:
+            argv[-1] = "/tmp/report.json"
+        with pytest.raises(RuntimeAuditError):
+            _osv_challenge_command(changed)
+
+
+def test_osv_worker_control_comparison_requires_all_matching_control_sets():
+    from factoryline.deep_audit_io import _osv_challenge_controls_match
+
+    rows = {
+        "inventory": [{"path": "requirements.txt", "name": "werkzeug"}],
+        "unrelated_rows": [{"path": "requirements.txt", "name": "other"}],
+        "target_rows": [{"path": "requirements.txt", "name": "werkzeug"}],
+    }
+    results = {
+        "positive": deepcopy(rows),
+        "negative": {**deepcopy(rows), "target_rows": []},
+        "mutation": {**deepcopy(rows), "target_rows": []},
+    }
+    assert _osv_challenge_controls_match(results)
+    for damage in (
+        "missing_negative",
+        "inventory",
+        "unrelated",
+        "positive_empty",
+        "mutation_target",
+    ):
+        changed = deepcopy(results)
+        if damage == "missing_negative":
+            changed.pop("negative")
+        elif damage == "inventory":
+            changed["mutation"]["inventory"].append({"path": "x", "name": "drift"})
+        elif damage == "unrelated":
+            changed["mutation"]["unrelated_rows"].clear()
+        elif damage == "positive_empty":
+            changed["positive"]["target_rows"] = []
+        else:
+            changed["mutation"]["target_rows"] = deepcopy(rows["target_rows"])
+        assert not _osv_challenge_controls_match(changed), damage
+
+
+def test_osv_worker_challenge_dispatch_covers_every_matching_obligation(
+    monkeypatch, tmp_path
+):
+    import factoryline.deep_audit_io as audit_io
+
+    baseline_path = tmp_path / "osv-scanner.toml"
+    baseline_path.write_bytes(b"\n")
+    monkeypatch.setattr(audit_io, "local_file", lambda root, name: baseline_path)
+    monkeypatch.setattr(
+        audit_io,
+        "_osv_database_identity",
+        lambda lane, deadline=None: {"sha256": "a" * 64},
+    )
+    seen = []
+
+    def fake_control(
+        runner,
+        profile,
+        contract,
+        source,
+        lane,
+        execution,
+        command,
+        config_path,
+        baseline,
+        obligation,
+        challenge,
+        case,
+        deadline,
+        observations,
+        gaps,
+        results,
+    ):
+        seen.append((obligation["id"], challenge["kind"]))
+        observations.append(
+            {
+                "obligation_id": obligation["id"],
+                "kind": challenge["kind"],
+                "execution": {"status": "VERIFIED"},
+            }
+        )
+        results[challenge["kind"]] = {
+            "inventory": [{"path": "requirements.txt", "name": "werkzeug"}],
+            "unrelated_rows": [],
+            "target_rows": [{"id": obligation["id"]}]
+            if challenge["kind"] == "positive"
+            else [],
+        }
+
+    monkeypatch.setattr(audit_io, "_osv_challenge_control", fake_control)
+    profile = json.loads(Path("deploy/deep-adapters/profiles/osv.json").read_text())
+    lane = {
+        "engine": "osv",
+        "family": "dependencies",
+        "mode": "offline-pypi-snapshot",
+        "timeout_seconds": 30,
+        "native_policy": {
+            "baseline_config_sha256": sha256_bytes(b"\n"),
+            "database_path": "/opt/factory/osv-db/osv-scanner/PyPI/all.zip",
+        },
+    }
+    obligations = [
+        {
+            "id": f"osv-{index}",
+            "engine": "osv",
+            "family": "dependencies",
+            "detector_rule_id": f"OSV-{index}",
+            "challenges": [
+                {"kind": kind, "fixture_path": "requirements.txt"}
+                for kind in ("positive", "negative", "mutation")
+            ],
+        }
+        for index in range(2)
+    ]
+    challenges, covered = audit_io._osv_challenges(
+        profile, {"obligations": obligations}, tmp_path, lane, {}, time.monotonic()
+    )
+    assert covered == ["osv-0", "osv-1"]
+    assert len(seen) == 6
+    assert challenges["gaps"] == []
+
+
+def test_osv_worker_challenge_dispatch_reports_deadline_without_running_controls(
+    monkeypatch, tmp_path
+):
+    import factoryline.deep_audit_io as audit_io
+
+    baseline_path = tmp_path / "osv-scanner.toml"
+    baseline_path.write_bytes(b"\n")
+    monkeypatch.setattr(audit_io, "local_file", lambda root, name: baseline_path)
+    monkeypatch.setattr(
+        audit_io,
+        "_osv_database_identity",
+        lambda lane, deadline=None: {"sha256": "a" * 64},
+    )
+    obligations = [
+        {
+            "id": "osv-1",
+            "engine": "osv",
+            "family": "dependencies",
+            "challenges": [
+                {"kind": kind} for kind in ("positive", "negative", "mutation")
+            ],
+        }
+    ]
+    lane = {
+        "engine": "osv",
+        "family": "dependencies",
+        "timeout_seconds": 1,
+        "native_policy": {"baseline_config_sha256": sha256_bytes(b"\n")},
+    }
+    profile = json.loads(Path("deploy/deep-adapters/profiles/osv.json").read_text())
+    challenges, covered = audit_io._osv_challenges(
+        profile,
+        {"obligations": obligations},
+        tmp_path,
+        lane,
+        {},
+        time.monotonic() - 5,
+    )
+    assert covered == []
+    assert len(challenges["gaps"]) == 3
+    assert {item["reason"] for item in challenges["gaps"]} == {"E_ADAPTER_TIMEOUT"}
+
+
+def test_osv_worker_malformed_signed_policy_returns_structured_challenge_gaps(
+    monkeypatch, tmp_path
+):
+    import factoryline.deep_audit_io as audit_io
+
+    baseline_path = tmp_path / "osv-scanner.toml"
+    baseline_path.write_bytes(b"\n")
+    monkeypatch.setattr(audit_io, "local_file", lambda root, name: baseline_path)
+    monkeypatch.setattr(
+        audit_io,
+        "_osv_database_identity",
+        lambda lane, deadline=None: {"sha256": "a" * 64},
+    )
+    profile = json.loads(Path("deploy/deep-adapters/profiles/osv.json").read_text())
+    obligations = [
+        {
+            "id": "osv-malformed-policy",
+            "engine": "osv",
+            "family": "dependencies",
+            "challenges": [
+                {"kind": kind} for kind in ("positive", "negative", "mutation")
+            ],
+        }
+    ]
+    lane = {
+        "engine": "osv",
+        "family": "dependencies",
+        "mode": "offline-pypi-snapshot",
+        "timeout_seconds": 30,
+        "native_policy": {},
+    }
+    challenges, covered = audit_io._osv_challenges(
+        profile,
+        {"obligations": obligations},
+        tmp_path,
+        lane,
+        {},
+        time.monotonic(),
+    )
+    assert covered == []
+    assert challenges["observations"] == []
+    assert len(challenges["gaps"]) == 3
+    assert all(item["reason"].startswith("E_") for item in challenges["gaps"])
+
+
+def test_osv_worker_database_identity_and_unbound_source_fail_closed(
+    monkeypatch, tmp_path
+):
+    import factoryline.deep_audit_io as audit_io
+
+    database = tmp_path / "all.zip"
+    database.write_bytes(b"offline advisory snapshot")
+    policy = {
+        "database_path": "/opt/factory/osv-db/osv-scanner/PyPI/all.zip",
+        "database_sha256": sha256_bytes(database.read_bytes()),
+    }
+    lane = {"native_policy": policy}
+    monkeypatch.setattr(audit_io, "local_file", lambda root, name: database)
+    identity = audit_io._osv_database_identity(lane)
+    assert identity["sha256"] == policy["database_sha256"]
+    assert identity["bytes"] == len(database.read_bytes())
+    lane["native_policy"]["database_sha256"] = "0" * 64
+    with pytest.raises(RuntimeAuditError, match="E_OSV_DATABASE"):
+        audit_io._osv_database_identity(lane)
+
+    report = {"results": [{"source": {"path": "../outside.txt"}, "packages": []}]}
+    with pytest.raises(RuntimeAuditError, match="E_OSV_REPORT"):
+        audit_io._osv_challenge_source_paths(
+            report, tmp_path / "source", {"requirements.txt": "a" * 64}
+        )
+
+
+def test_osv_worker_observation_retains_failed_cleanup_evidence(tmp_path):
+    import factoryline.deep_audit_io as audit_io
+
+    source = tmp_path / "candidate"
+    source.mkdir()
+    (source / "requirements.txt").write_text("werkzeug==0.16.1\n")
+    fixture_sha = sha256_bytes((source / "requirements.txt").read_bytes())
+    profile = json.loads(Path("deploy/deep-adapters/profiles/osv.json").read_text())
+    lane = {
+        "engine": "osv",
+        "family": "dependencies",
+        "mode": "offline-pypi-snapshot",
+        "image": "sha256:" + "a" * 64,
+        "rule_ids": ["OSV-CVE-2026-0001"],
+        "native_policy": {"baseline_config_sha256": sha256_bytes(b"\n")},
+        "native_artifact_roles": {
+            "osv_json_report": "report",
+            "advisory_db_identity": "db",
+        },
+        "mutation_config_sha256": {},
+    }
+    contract = {"inventory": {"candidate_sha256": "b" * 64}}
+    obligation = {
+        "id": "osv-obligation",
+        "detector_rule_id": "OSV-CVE-2026-0001",
+        "paths": ["requirements.txt"],
+    }
+    challenge = {
+        "kind": "positive",
+        "fixture_path": "requirements.txt",
+        "fixture_manifest": {"requirements.txt": fixture_sha},
+    }
+    command = audit_io._osv_challenge_command(profile)
+
+    def execute(challenge_arg, **kwargs):
+        assert challenge_arg is challenge
+        assert kwargs["engine"] == "osv"
+        assert (
+            kwargs["expected_ruleset_sha256"]
+            == lane["native_policy"]["baseline_config_sha256"]
+        )
+        return {
+            "execution": {"status": "INCOMPLETE", "cleanup": {"complete": False}},
+            "native_report": {"results": []},
+        }
+
+    observation, summary = audit_io._run_osv_challenge(
+        execute,
+        lambda *args: {},
+        profile,
+        contract,
+        source,
+        lane,
+        {"version_probe": {"status": "VERIFIED"}},
+        command,
+        tmp_path / "osv-scanner.toml",
+        b"\n",
+        obligation,
+        challenge,
+        tmp_path / "case",
+        time.monotonic() + 20,
+        10,
+    )
+    assert observation["execution"]["cleanup"] == {"complete": False}
+    assert observation["osv_control_evidence"] == summary == {}
+
+
+def test_osv_worker_fixture_setup_delay_exhausts_absolute_deadline(
+    monkeypatch, tmp_path
+):
+    import factoryline.deep_audit_io as audit_io
+
+    source = tmp_path / "candidate"
+    source.mkdir()
+    (source / "requirements.txt").write_text("werkzeug==0.16.1\n")
+    fixture_sha = sha256_bytes((source / "requirements.txt").read_bytes())
+    profile = json.loads(Path("deploy/deep-adapters/profiles/osv.json").read_text())
+    lane = {
+        "image": "sha256:" + "a" * 64,
+        "native_policy": {"baseline_config_sha256": sha256_bytes(b"\n")},
+        "native_artifact_roles": {
+            "osv_json_report": "report",
+            "advisory_db_identity": "db",
+        },
+        "rule_ids": ["OSV-CVE-2026-0001"],
+        "mutation_config_sha256": {},
+    }
+    contract = {"inventory": {"candidate_sha256": "b" * 64}}
+    obligation = {
+        "id": "osv-obligation",
+        "detector_rule_id": "OSV-CVE-2026-0001",
+        "paths": ["requirements.txt"],
+    }
+    challenge = {
+        "kind": "positive",
+        "fixture_path": "requirements.txt",
+        "fixture_manifest": {"requirements.txt": fixture_sha},
+    }
+    clock = {"now": 10.0}
+    monkeypatch.setattr(audit_io.time, "monotonic", lambda: clock["now"])
+    copy_bytes = audit_io.bound_bytes
+
+    def slow_copy(candidate, ref):
+        clock["now"] = 21.0
+        return copy_bytes(candidate, ref)
+
+    monkeypatch.setattr(audit_io, "bound_bytes", slow_copy)
+    called = []
+
+    def execute(*args, **kwargs):
+        called.append(True)
+        return {"execution": {"status": "VERIFIED"}}
+
+    with pytest.raises(RuntimeAuditError, match="E_ADAPTER_TIMEOUT"):
+        audit_io._run_osv_challenge(
+            execute,
+            lambda *args, **kwargs: {},
+            profile,
+            contract,
+            source,
+            lane,
+            {"version_probe": {"status": "VERIFIED"}},
+            audit_io._osv_challenge_command(profile),
+            tmp_path / "osv-scanner.toml",
+            b"\n",
+            obligation,
+            challenge,
+            tmp_path / "case",
+            20.0,
+            10,
+        )
+    assert called == []
+
+
+def test_osv_worker_post_database_hash_deadline_overrun_cannot_return_verified(
+    monkeypatch, tmp_path
+):
+    import factoryline.deep_audit_io as audit_io
+
+    clock = {"now": 10.0}
+    calls = []
+    identity = {
+        "path": "/opt/factory/osv-db/osv-scanner/PyPI/all.zip",
+        "sha256": "a" * 64,
+    }
+
+    def database_identity(lane, deadline):
+        calls.append(deadline)
+        if len(calls) == 2:
+            clock["now"] = deadline + 1
+        return identity
+
+    monkeypatch.setattr(audit_io.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(audit_io, "_osv_database_identity", database_identity)
+    runner_calls = []
+
+    def runner(argv, cwd, budget, scratch, *, cancelled):
+        runner_calls.append((argv, cwd, budget, scratch, cancelled))
+        return {"status": "EXITED", "exit_code": 0}
+
+    with pytest.raises(RuntimeAuditError, match="E_ADAPTER_TIMEOUT"):
+        audit_io._osv_challenge_runner(
+            runner,
+            ["osv", "scan"],
+            tmp_path,
+            10,
+            tmp_path / "scratch",
+            tmp_path / "identity.json",
+            {"native_policy": {}},
+            20.0,
+        )
+    assert len(runner_calls) == 1
+    assert runner_calls[0][1] == tmp_path
+    assert runner_calls[0][4].is_set() is False
+    assert len(calls) == 2
+
+
 def test_semgrep_native_rejects_resealed_wrong_rule_config_path():
     from factoryline.deep_audit_io import verify_semgrep_rule_execution
 

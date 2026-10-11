@@ -14,6 +14,203 @@ from factoryline.runtime_audit_common import (
 ANALYZER = {"id": "scanner", "driver": "Example", "version": "1"}
 
 
+OSV_CHALLENGE_ALIASES = [
+    "CVE-2026-0001",
+    "GHSA-abcd-1234-efgh",
+    "fixture-detection",
+]
+
+
+def _osv_challenge_advisory(*, aliases=None, details="native advisory metadata"):
+    return {
+        "id": "CVE-2026-0001",
+        "aliases": list(aliases if aliases is not None else OSV_CHALLENGE_ALIASES[1:]),
+        "details": details,
+        "modified": "2026-01-02T03:04:05Z",
+    }
+
+
+def _osv_challenge_package(name, version, vulnerabilities=()):
+    return {
+        "package": {"name": name, "version": version, "ecosystem": "PyPI"},
+        "vulnerabilities": list(vulnerabilities),
+    }
+
+
+def _osv_challenge_fixture(kind):
+    from factoryline.deep_audit_sarif import _osv_challenge_rows
+
+    target = {
+        "package": "werkzeug",
+        "ecosystem": "PyPI",
+        "vulnerable_version": "0.16.1",
+        "fixed_version": "0.16.2",
+        "aliases": list(OSV_CHALLENGE_ALIASES),
+    }
+    target_version = (
+        target["fixed_version"] if kind == "negative" else target["vulnerable_version"]
+    )
+    anchor = "requirements.txt"
+    other_advisory = _osv_challenge_advisory(details="unrelated package row")
+    target_advisories = [_osv_challenge_advisory()] if kind == "positive" else []
+    report = {
+        "results": [
+            {
+                "source": {"path": anchor},
+                "packages": [
+                    _osv_challenge_package(
+                        target["package"], target_version, target_advisories
+                    ),
+                    _osv_challenge_package(
+                        "other-library", "1.2.3", [deepcopy(other_advisory)]
+                    ),
+                    _osv_challenge_package(
+                        "other-library", "1.2.3", [deepcopy(other_advisory)]
+                    ),
+                ],
+            },
+            {
+                "source": {"path": "other.txt"},
+                "packages": [
+                    _osv_challenge_package(
+                        target["package"],
+                        target["vulnerable_version"],
+                        [_osv_challenge_advisory(details="same advisory, other path")],
+                    )
+                ],
+            },
+        ]
+    }
+    sources = {anchor: "a" * 64, "other.txt": "b" * 64}
+    obligation = {
+        "osv_target": target,
+        "challenges": [
+            {"kind": control_kind, "fixture_path": anchor}
+            for control_kind in ("positive", "negative", "mutation")
+        ],
+    }
+    lane = {
+        "engine": "osv",
+        "id": "osv-challenge-test",
+        "mode": "offline-pypi-snapshot",
+    }
+    result = _osv_challenge_rows(report, lane, sources, obligation, kind)
+    return result, report, lane, sources, obligation
+
+
+def test_osv_challenge_rows_anchor_positive_and_preserve_unrelated_duplicates():
+    result, report, _, _, _ = _osv_challenge_fixture("positive")
+    assert result["schema"] == "factory.osv-challenge-rows.v1"
+    assert result["report_sha256"] == digest(report)
+    assert len(result["target_rows"]) == 1
+    target = result["target_rows"][0]
+    assert target["path"] == "requirements.txt"
+    assert target["package"] == {
+        "name": "werkzeug",
+        "version": "0.16.1",
+        "ecosystem": "PyPI",
+    }
+    assert set([target["advisory_id"], *target["aliases"]]) == set(
+        OSV_CHALLENGE_ALIASES
+    )
+    assert target["aliases"] == sorted(target["aliases"])
+    assert target["advisory_sha256"] == digest(
+        report["results"][0]["packages"][0]["vulnerabilities"][0]
+    )
+    unrelated = result["unrelated_rows"]
+    assert len(unrelated) == 3
+    duplicate_rows = [
+        row for row in unrelated if row["package"]["name"] == "other-library"
+    ]
+    assert len(duplicate_rows) == 2
+    assert duplicate_rows[0] == duplicate_rows[1]
+    assert duplicate_rows[0]["advisory_sha256"] == digest(
+        report["results"][0]["packages"][1]["vulnerabilities"][0]
+    )
+    assert any(row["path"] == "other.txt" for row in unrelated)
+    assert len(result["inventory"]) == 4
+
+
+@pytest.mark.parametrize(
+    "kind,expected_version", [("negative", "0.16.2"), ("mutation", "0.16.1")]
+)
+def test_osv_challenge_safe_controls_anchor_exact_package_and_keep_same_advisory_unrelated(
+    kind, expected_version
+):
+    result, _, _, _, _ = _osv_challenge_fixture(kind)
+    assert result["target_rows"] == []
+    assert any(
+        row["path"] == "requirements.txt"
+        and row["name"] == "werkzeug"
+        and row["version"] == expected_version
+        for row in result["inventory"]
+    )
+    assert len(result["unrelated_rows"]) == 3
+    assert all(
+        row["advisory_id"] == "CVE-2026-0001" for row in result["unrelated_rows"]
+    )
+
+
+@pytest.mark.parametrize(
+    "aliases,expected_error",
+    [
+        (["GHSA-abcd-1234-efgh"], "positive advisory family differs"),
+        (["GHSA-abcd-1234-efgh", "OSV-UNSIGNED"], "unsigned advisory alias"),
+    ],
+)
+def test_osv_positive_rejects_incomplete_or_unsigned_alias_families(
+    aliases, expected_error
+):
+    from factoryline.deep_audit_sarif import _osv_challenge_rows
+
+    _, report, lane, sources, obligation = _osv_challenge_fixture("positive")
+    report["results"][0]["packages"][0]["vulnerabilities"][0]["aliases"] = aliases
+    with pytest.raises(RuntimeAuditError, match=expected_error):
+        _osv_challenge_rows(report, lane, sources, obligation, "positive")
+
+
+@pytest.mark.parametrize("damage", ["wrong_package", "wrong_version", "wrong_path"])
+def test_osv_challenges_require_target_identity_on_bound_fixture(damage):
+    from factoryline.deep_audit_sarif import _osv_challenge_rows
+
+    _, report, lane, sources, obligation = _osv_challenge_fixture("positive")
+    target_package = report["results"][0]["packages"][0]
+    if damage == "wrong_package":
+        target_package["package"]["name"] = "different-package"
+    elif damage == "wrong_version":
+        target_package["package"]["version"] = "99.0"
+    else:
+        target_package = report["results"][0]["packages"].pop(0)
+        report["results"][1]["packages"].append(target_package)
+    with pytest.raises(RuntimeAuditError, match="signed target package/version absent"):
+        _osv_challenge_rows(report, lane, sources, obligation, "positive")
+
+
+@pytest.mark.parametrize("damage", ["missing", "empty", "duplicate"])
+def test_osv_challenges_reject_missing_empty_or_duplicate_manifest_rows(damage):
+    from factoryline.deep_audit_sarif import _osv_challenge_rows
+
+    _, report, lane, sources, obligation = _osv_challenge_fixture("positive")
+    if damage == "missing":
+        report["results"].pop()
+    elif damage == "empty":
+        report["results"][1]["packages"] = []
+    else:
+        report["results"].append(deepcopy(report["results"][0]))
+    with pytest.raises(RuntimeAuditError):
+        _osv_challenge_rows(report, lane, sources, obligation, "positive")
+
+
+@pytest.mark.parametrize("kind", ["negative", "mutation"])
+def test_osv_control_rows_reject_target_advisory_that_survives(kind):
+    from factoryline.deep_audit_sarif import _osv_challenge_rows
+
+    _, report, lane, sources, obligation = _osv_challenge_fixture(kind)
+    report["results"][0]["packages"][0]["vulnerabilities"] = [_osv_challenge_advisory()]
+    with pytest.raises(RuntimeAuditError, match="target advisory survived control"):
+        _osv_challenge_rows(report, lane, sources, obligation, kind)
+
+
 @pytest.mark.parametrize("kind", ["positive", "negative", "mutation"])
 def test_trivy_signed_policy_keeps_binary_and_control_config_distinct(kind):
     from factoryline.deep_audit_sarif import _challenge_execution_config_valid_v2

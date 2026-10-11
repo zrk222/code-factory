@@ -314,6 +314,80 @@ def _osv_fixed_versions(vulnerability: dict, identity: dict) -> list[str]:
     return sorted(fixed)
 
 
+def _osv_challenge_rows(report, lane, sources, obligation, kind):
+    """Check native package/advisory semantics; this is not execution authority."""
+    if kind not in {"positive", "negative", "mutation"}:
+        raise RuntimeAuditError("E_OSV_CHALLENGE", "unknown OSV control kind")
+    account = _osv_source_accounting(report, sources, lane["mode"])
+    if account["state"] != "COMPLETE":
+        raise RuntimeAuditError(
+            "E_OSV_CHALLENGE", "complete manifest reporting required"
+        )
+    _execution_osv(report, lane, sources)
+    target = obligation["osv_target"]
+    control = next(item for item in obligation["challenges"] if item["kind"] == kind)
+    anchor = relative_path(control["fixture_path"])
+    version = target["fixed_version" if kind == "negative" else "vulnerable_version"]
+    expected = {"name": target["package"], "version": version, "ecosystem": "PyPI"}
+    packages = account["sources"].get(anchor, {}).get("packages", [])
+    if sum(item == expected for item in packages) != 1:
+        raise RuntimeAuditError(
+            "E_OSV_CHALLENGE", "signed target package/version absent"
+        )
+    rows = _osv_challenge_finding_rows(report, anchor, expected, target["aliases"])
+    targeted, unrelated, observed_aliases = rows
+    if kind == "positive":
+        if not targeted or observed_aliases != set(target["aliases"]):
+            raise RuntimeAuditError(
+                "E_OSV_CHALLENGE", "positive advisory family differs"
+            )
+    elif targeted:
+        raise RuntimeAuditError("E_OSV_CHALLENGE", "target advisory survived control")
+    inventory = [
+        {"path": path, **package}
+        for path, source in sorted(account["sources"].items())
+        for package in source["packages"]
+    ]
+    return {
+        "schema": "factory.osv-challenge-rows.v1",
+        "inventory": sorted(inventory, key=canonical_bytes),
+        "target_rows": sorted(targeted, key=canonical_bytes),
+        "unrelated_rows": sorted(unrelated, key=canonical_bytes),
+        "report_sha256": digest(report),
+    }
+
+
+def _osv_challenge_finding_rows(report, anchor, expected, aliases):
+    targeted, unrelated, observed_aliases = [], [], set()
+    for result in report["results"]:
+        path = result["source"]["path"]
+        for package in result["packages"]:
+            identity = package["package"]
+            for advisory in package.get("vulnerabilities", []):
+                family = {advisory["id"], *advisory.get("aliases", [])}
+                row = {
+                    "path": path,
+                    "package": {key: identity[key] for key in expected},
+                    "advisory_id": advisory["id"],
+                    "aliases": sorted(advisory.get("aliases", [])),
+                    "advisory_sha256": digest(advisory),
+                }
+                if (
+                    path == anchor
+                    and row["package"] == expected
+                    and family.intersection(aliases)
+                ):
+                    if not family <= set(aliases):
+                        raise RuntimeAuditError(
+                            "E_OSV_CHALLENGE", "unsigned advisory alias"
+                        )
+                    targeted.append(row)
+                    observed_aliases.update(family)
+                else:
+                    unrelated.append(row)
+    return targeted, unrelated, observed_aliases
+
+
 def _validate_runtime_report(report, lane):
     if (
         report.get("schema") != f"factory.deep-{lane['engine']}-observations.v1"

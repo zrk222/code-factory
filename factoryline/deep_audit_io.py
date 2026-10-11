@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import subprocess
 import stat
+import threading
 import uuid
 import tempfile
 import time
@@ -1945,7 +1947,477 @@ def _native_profile_challenges(profile, contract, source, lane, execution, start
         challenges, covered_obligations = _codeql_challenges(
             profile, contract, source, lane, execution, started
         )
+    elif lane["engine"] == "osv" and "native_policy" in lane:
+        challenges, covered_obligations = _osv_challenges(
+            profile, contract, source, lane, execution, started
+        )
     return challenges, covered_obligations
+
+
+def _osv_suppression_bytes(aliases):
+    if (
+        not isinstance(aliases, list)
+        or not 1 <= len(aliases) <= 64
+        or any(
+            not isinstance(item, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", item) is None
+            for item in aliases
+        )
+        or aliases != sorted(set(aliases))
+    ):
+        raise RuntimeAuditError("E_OSV_POLICY", "canonical advisory aliases required")
+    return "".join(
+        "[[IgnoredVulns]]\nid = " + json.dumps(item, ensure_ascii=True) + "\n\n"
+        for item in aliases
+    ).encode("ascii")
+
+
+def _osv_check_deadline(deadline):
+    if deadline is not None and time.monotonic() >= deadline:
+        raise RuntimeAuditError(
+            "E_ADAPTER_TIMEOUT", "shared challenge deadline expired"
+        )
+
+
+def _osv_database_identity(lane, deadline=None):
+    _osv_check_deadline(deadline)
+    policy = lane.get("native_policy")
+    path_text = "/opt/factory/osv-db/osv-scanner/PyPI/all.zip"
+    if not isinstance(policy, dict) or policy.get("database_path") != path_text:
+        raise RuntimeAuditError("E_OSV_POLICY", "pinned database path required")
+    path = local_file(Path("/"), path_text.lstrip("/"))
+    before = path.stat()
+    if not path.is_file() or before.st_size > 128 * 1024 * 1024:
+        raise RuntimeAuditError("E_OSV_DATABASE", "bounded database file required")
+    hasher = hashlib.sha256()
+    total = 0
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            opened = os.fstat(stream.fileno())
+            while chunk := stream.read(1024 * 1024):
+                _osv_check_deadline(deadline)
+                total += len(chunk)
+                if total > 128 * 1024 * 1024:
+                    raise RuntimeAuditError(
+                        "E_OSV_DATABASE", "database exceeds identity byte budget"
+                    )
+                hasher.update(chunk)
+            after = os.fstat(stream.fileno())
+    except OSError as exc:
+        raise RuntimeAuditError(
+            "E_OSV_DATABASE", "database identity unavailable"
+        ) from exc
+    current = path.stat()
+    identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+    if (
+        any(
+            (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns) != identity
+            for item in (opened, after, current)
+        )
+        or total != before.st_size
+    ):
+        raise RuntimeAuditError("E_OSV_DATABASE", "database changed while hashing")
+    actual = hasher.hexdigest()
+    if actual != require_digest(policy.get("database_sha256"), "database_sha256"):
+        raise RuntimeAuditError("E_OSV_DATABASE", "pinned database hash differs")
+    _osv_check_deadline(deadline)
+    return {"path": path_text, "sha256": actual, "bytes": total}
+
+
+def _osv_config_rule_ids(raw, lane):
+    policy = lane.get("native_policy", {})
+    rules = lane.get("rule_ids", [])
+    if raw == b"\n":
+        return list(rules)
+    for rule, aliases in policy.get("advisory_aliases", {}).items():
+        if raw == _osv_suppression_bytes(aliases):
+            return [item for item in rules if item != rule]
+    raise RuntimeAuditError("E_OSV_POLICY", "unapproved suppression config")
+
+
+def _osv_mutation_valid(baseline, effective, rule_id, lane):
+    try:
+        policy = lane["native_policy"]
+        aliases = policy["advisory_aliases"][rule_id]
+        return (
+            baseline == b"\n"
+            and effective == _osv_suppression_bytes(aliases)
+            and sha256_bytes(effective) == lane["mutation_config_sha256"][rule_id]
+        )
+    except (KeyError, RuntimeAuditError, TypeError, ValueError):
+        return False
+
+
+def _osv_challenges(profile, contract, source, lane, execution, started):
+    from .runtime_audit_process import run_bounded_command
+
+    obligations = _osv_obligations(contract, lane)
+    observations, gaps, covered = [], [], []
+    deadline = started + lane["timeout_seconds"]
+    if len(obligations) > 64:
+        return _osv_challenge_gaps(obligations, "E_OSV_CHALLENGE_BUDGET"), []
+    if not obligations:
+        return _challenge_bundle(observations, gaps), covered
+    try:
+        baseline_path = local_file(Path("/opt/factory/rules"), "osv-scanner.toml")
+        baseline = baseline_path.read_bytes()
+        _osv_policy_inputs(profile, baseline)
+        policy = lane["native_policy"]
+        if sha256_bytes(baseline) != policy["baseline_config_sha256"]:
+            raise RuntimeAuditError("E_OSV_POLICY", "signed baseline hash differs")
+        _osv_database_identity(lane, deadline)
+        command = _osv_challenge_command(profile)
+    except (OSError, RuntimeAuditError, ValueError, TypeError, KeyError) as exc:
+        return _osv_challenge_gaps(obligations, _challenge_error_code(exc)), []
+    with tempfile.TemporaryDirectory(prefix="factory-osv-challenges-") as root:
+        for index, obligation in enumerate(obligations):
+            results = {}
+            for challenge in obligation["challenges"]:
+                _osv_challenge_control(
+                    run_bounded_command,
+                    profile,
+                    contract,
+                    source,
+                    lane,
+                    execution,
+                    command,
+                    baseline_path,
+                    baseline,
+                    obligation,
+                    challenge,
+                    Path(root) / f"control-{index}-{challenge['kind']}",
+                    deadline,
+                    observations,
+                    gaps,
+                    results,
+                )
+            if _osv_challenge_controls_match(results):
+                covered.append(obligation["id"])
+            else:
+                for challenge in obligation["challenges"]:
+                    if (obligation["id"], challenge["kind"]) not in {
+                        (item.get("obligation_id"), item.get("kind")) for item in gaps
+                    }:
+                        gaps.append(
+                            _challenge_gap_record(
+                                obligation, challenge, "E_OSV_CHALLENGE_BINDING"
+                            )
+                        )
+    return _challenge_bundle(observations, gaps), covered
+
+
+def _osv_obligations(contract, lane):
+    return [
+        item
+        for item in contract["obligations"]
+        if item["engine"] == "osv" and item["family"] == lane["family"]
+    ]
+
+
+def _osv_challenge_gaps(obligations, code):
+    gaps = [
+        _challenge_gap_record(item, challenge, code)
+        for item in obligations
+        for challenge in item["challenges"]
+    ]
+    return _challenge_bundle([], gaps)
+
+
+def _osv_challenge_command(profile):
+    if profile.get("engine") != "osv" or len(profile.get("commands", [])) != 1:
+        raise RuntimeAuditError("E_OSV_PROFILE", "one pinned OSV command required")
+    argv = list(profile["commands"][0].get("argv", []))
+    try:
+        if argv[argv.index("--config") + 1] != "/opt/factory/rules/osv-scanner.toml":
+            raise ValueError
+        argv[argv.index("--config") + 1] = "{config}"
+        if argv[argv.index("-r") + 1] != "{source}" or argv[-1] != "{report}":
+            raise ValueError
+    except (ValueError, IndexError) as exc:
+        raise RuntimeAuditError("E_OSV_PROFILE", "pinned OSV argv differs") from exc
+    return {
+        "argv": argv,
+        "accepted_exit_codes": profile["commands"][0]["accepted_exit_codes"],
+    }
+
+
+def _osv_challenge_controls_match(results):
+    if {"positive", "negative", "mutation"} != set(results):
+        return False
+    positive, mutation = results["positive"], results["mutation"]
+    return (
+        positive["inventory"] == mutation["inventory"]
+        and positive["unrelated_rows"] == mutation["unrelated_rows"]
+        and bool(positive["target_rows"])
+        and not mutation["target_rows"]
+    )
+
+
+def _osv_challenge_control(
+    runner,
+    profile,
+    contract,
+    source,
+    lane,
+    execution,
+    command,
+    baseline_path,
+    baseline,
+    obligation,
+    challenge,
+    case,
+    deadline,
+    observations,
+    gaps,
+    results,
+):
+    remaining = int(deadline - time.monotonic())
+    if remaining < 1:
+        gaps.append(_challenge_gap_record(obligation, challenge, "E_ADAPTER_TIMEOUT"))
+        return
+    if challenge.get("expected_exit_code") not in command["accepted_exit_codes"]:
+        gaps.append(_challenge_gap_record(obligation, challenge, "E_OSV_PROFILE"))
+        return
+    try:
+        observation, summary = _run_osv_challenge(
+            _native_challenge_executor(),
+            runner,
+            profile,
+            contract,
+            source,
+            lane,
+            execution,
+            command,
+            baseline_path,
+            baseline,
+            obligation,
+            challenge,
+            case,
+            deadline,
+            remaining,
+        )
+        observations.append(observation)
+        if observation.get("execution", {}).get("status") == "VERIFIED":
+            results[challenge["kind"]] = summary
+        else:
+            gaps.append(
+                _challenge_gap_record(
+                    obligation, challenge, "E_OSV_CHALLENGE_EXECUTION"
+                )
+            )
+    except (OSError, RuntimeAuditError, ValueError, TypeError, KeyError) as exc:
+        gaps.append(
+            _challenge_gap_record(obligation, challenge, _challenge_error_code(exc))
+        )
+
+
+def _run_osv_challenge(
+    execute,
+    runner,
+    profile,
+    contract,
+    source,
+    lane,
+    execution,
+    command,
+    baseline_path,
+    baseline,
+    obligation,
+    challenge,
+    case,
+    deadline,
+    timeout,
+):
+    manifest = dict(sorted(challenge["fixture_manifest"].items()))
+    _semgrep_fixture_binding(manifest, obligation, source, challenge["fixture_path"])
+    case.mkdir()
+    challenge_root = case / "source"
+    for path, source_sha in manifest.items():
+        target = challenge_root.joinpath(*relative_path(path).split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(bound_bytes(source, {"path": path, "sha256": source_sha}))
+    challenge_sha = digest(manifest)
+    config_path = baseline_path
+    if challenge["kind"] == "mutation":
+        config_path = _osv_mutation_path(case, baseline, lane, obligation)
+    scratch = case / "run"
+    report_path, database_path = (
+        scratch / "report.json",
+        scratch / "database-identity.json",
+    )
+    ledger_path = scratch / "unused-ledger.json"
+    bindings = _osv_challenge_bindings(
+        challenge_root, scratch, report_path, ledger_path, config_path, challenge_sha
+    )
+    summary = {}
+
+    def report_parser(raw):
+        report = _osv_parse_challenge_report(
+            raw, challenge_root, manifest, lane, obligation, challenge
+        )
+        from .deep_audit_sarif import _osv_challenge_rows
+
+        summary.update(
+            _osv_challenge_rows(report, lane, manifest, obligation, challenge["kind"])
+        )
+        return report
+
+    def challenge_runner(argv, cwd, budget, run_scratch):
+        return _osv_challenge_runner(
+            runner, argv, cwd, budget, run_scratch, database_path, lane, deadline
+        )
+
+    timeout = int(deadline - time.monotonic())
+    if timeout < 1:
+        raise RuntimeAuditError(
+            "E_ADAPTER_TIMEOUT", "shared challenge deadline expired"
+        )
+
+    observation = execute(
+        challenge,
+        obligation_id=obligation["id"],
+        engine="osv",
+        detector_rule_id=obligation["detector_rule_id"],
+        detector_enabled=challenge["kind"] != "mutation",
+        profile_argv=command["argv"],
+        bindings=bindings,
+        source_root=challenge_root,
+        baseline_config_path=baseline_path,
+        effective_config_path=config_path,
+        report_path=report_path,
+        ledger_path=ledger_path,
+        scratch=scratch,
+        scratch_parent=case,
+        timeout_seconds=timeout,
+        expected_ruleset_sha256=lane["native_policy"]["baseline_config_sha256"],
+        execution_bindings=_osv_execution_bindings(
+            profile, contract, lane, execution, challenge_sha
+        ),
+        runner=challenge_runner,
+        report_parser=report_parser,
+        config_rule_ids=lambda raw: _osv_config_rule_ids(raw, lane),
+        verify_mutation=lambda original, effective, rule: _osv_mutation_valid(
+            original, effective, rule, lane
+        ),
+        native_artifact_roles=lane["native_artifact_roles"],
+        native_artifacts={
+            "osv_json_report": report_path,
+            "advisory_db_identity": database_path,
+        },
+        rule_ids=lane["rule_ids"],
+        mutation_ruleset_sha256=lane["mutation_config_sha256"],
+    )
+    observation["osv_control_evidence"] = summary
+    return observation, summary
+
+
+def _osv_challenge_bindings(source, scratch, report, ledger, config, candidate_sha):
+    return {
+        "source": str(source),
+        "output": str(scratch),
+        "report": str(report),
+        "scratch": str(scratch),
+        "candidate_sha256": candidate_sha,
+        "factory_ledger": str(ledger),
+        "config": str(config),
+    }
+
+
+def _osv_execution_bindings(profile, contract, lane, execution, challenge_sha):
+    from .runtime_audit_common import sha256_bytes as common_sha256
+
+    version_probe = execution["version_probe"]
+    image = require_str(lane.get("image"), "image", maximum=512)
+    return {
+        "candidate_sha256": contract["inventory"]["candidate_sha256"],
+        "challenge_source_sha256": challenge_sha,
+        "profile_sha256": digest(profile),
+        "image_sha256": common_sha256(image.encode("utf-8")),
+        "tool_version": profile["tool_version"],
+        "version_probe_sha256": digest(version_probe),
+        "version_probe_facts": version_probe,
+    }
+
+
+def _osv_parse_challenge_report(
+    raw, source_root, manifest, lane, obligation, challenge
+):
+    report = strict_json(raw)
+    if not isinstance(report, dict):
+        raise RuntimeAuditError("E_OSV_REPORT", "native OSV report object required")
+    _osv_challenge_source_paths(report, source_root, manifest)
+    return report
+
+
+def _osv_challenge_source_paths(report, source_root, manifest):
+    results = report.get("results")
+    if not isinstance(results, list):
+        raise RuntimeAuditError("E_OSV_REPORT", "native source results required")
+    prefix = source_root.resolve().as_posix().rstrip("/") + "/"
+    for result in results:
+        try:
+            source = result["source"]
+            raw_path = require_str(source.get("path"), "OSV source path", maximum=2048)
+            if raw_path.startswith("file://"):
+                raw_path = raw_path.removeprefix("file://")
+            if raw_path.startswith(prefix):
+                path = raw_path[len(prefix) :]
+            elif raw_path in manifest:
+                path = raw_path
+            else:
+                raise RuntimeAuditError("E_OSV_REPORT", "source path outside fixture")
+            path = relative_path(path)
+            if path not in manifest:
+                raise RuntimeAuditError("E_OSV_REPORT", "source path is unbound")
+            source["path"] = path
+        except (KeyError, TypeError, AttributeError) as exc:
+            raise RuntimeAuditError(
+                "E_OSV_REPORT", "native source path malformed"
+            ) from exc
+
+
+def _osv_mutation_path(case, baseline, lane, obligation):
+    rule = obligation["detector_rule_id"]
+    aliases = lane["native_policy"]["advisory_aliases"][rule]
+    effective = _osv_suppression_bytes(aliases)
+    if sha256_bytes(effective) != lane["mutation_config_sha256"][rule]:
+        raise RuntimeAuditError(
+            "E_OSV_MUTATION_BINDING", "signed suppression digest differs"
+        )
+    path = case / "mutation-osv-scanner.toml"
+    path.write_bytes(effective)
+    return path
+
+
+def _osv_challenge_runner(
+    runner, argv, cwd, budget, scratch, database_path, lane, deadline
+):
+    expected = _osv_database_identity(lane, deadline)
+    identity = canonical_bytes(expected)
+    database_path.write_bytes(identity)
+    remaining = int(deadline - time.monotonic())
+    if remaining < 1:
+        raise RuntimeAuditError(
+            "E_ADAPTER_TIMEOUT", "shared challenge deadline expired"
+        )
+    cancelled = threading.Event()
+    timer = threading.Timer(remaining, cancelled.set)
+    timer.daemon = True
+    timer.start()
+    try:
+        facts = runner(argv, cwd, budget, scratch, cancelled=cancelled)
+    finally:
+        timer.cancel()
+    if _osv_database_identity(lane, deadline) != expected:
+        raise RuntimeAuditError(
+            "E_OSV_DATABASE", "database identity drifted during scan"
+        )
+    if time.monotonic() >= deadline:
+        raise RuntimeAuditError(
+            "E_ADAPTER_TIMEOUT", "shared challenge deadline expired"
+        )
+    return facts
 
 
 def _run_native_profile(profile, contract, source, output, inventory, lane, paths):
