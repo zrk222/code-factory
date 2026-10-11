@@ -152,6 +152,15 @@ rules:
       - patterns:
           - pattern: pathlib.Path($PATH).open(...)
           - focus-metavariable: $PATH
+      - patterns:
+          - pattern: Path($PATH).read_text(...)
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: Path($PATH).read_bytes(...)
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: Path($PATH).open(...)
+          - focus-metavariable: $PATH
     metadata:
       category: security
       confidence: MEDIUM
