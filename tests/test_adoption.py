@@ -229,6 +229,26 @@ def test_unified_scan_invalid_signed_evidence_cannot_clear_findings(tmp_path, de
     assert result["static_security"]["state"] == "INVALID"
 
 
+@pytest.mark.parametrize("deep", [False, True])
+def test_unified_scan_limit_reports_requested_but_unused_oracles(tmp_path, deep):
+    for index in range(461):
+        (tmp_path / f"source_{index}.py").write_text("value = 1\n")
+    options = {
+        "oracle_evidence": "missing.json",
+        "oracle_trust_root": "missing-trust.json",
+        "oracle_trust_sha256": "0" * 64,
+        "oracle_environment_sha256": "1" * 64,
+    }
+    result = run_repo_scan(tmp_path, deep=deep, oracle_options=options)
+    assert result["state"] == "BLOCKED"
+    oracle = result["static_security"]["runtime_oracles"]
+    assert oracle["state"] == "NOT_VERIFIED"
+    assert oracle["reason"] == "SOURCE_LIMIT_EXCEEDED"
+    assert oracle["requested"] is True
+    assert oracle["reconciled_count"] == 0
+    assert oracle["reconciled"] == []
+
+
 def test_repo_scan_cli_reports_a_real_workspace_assessment(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

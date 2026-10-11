@@ -213,6 +213,8 @@ population accuracy measurement, proof of all behavior, or release approval.
 Runtime evidence is opt-in on `audit security`, `scan` and `scan --deep`, using
 the same four oracle options and the same verifier. Unified scans preserve the
 reconciliation trace in `static_security` and, with `--deep`, in the Python AST
-lane. Partial options and evidence without Python sources are rejected; other
-unmeasured lanes still keep the overall verdict incomplete. Store generated observations and reports
+lane. Partial options and evidence without Python sources are rejected.
+Source-limit blocks explicitly record requested evidence as `NOT_VERIFIED`, with
+`SOURCE_LIMIT_EXCEEDED` and zero reconciled findings. The 460-file ceiling is unchanged.
+Unmeasured lanes still keep the overall verdict incomplete. Store generated observations and reports
 outside tracked source, for example as private CI artifacts.
