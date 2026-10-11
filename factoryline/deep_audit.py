@@ -474,6 +474,7 @@ def _execute_lane(
         cancelled,
         deadline,
         (directory, state, emit),
+        plan["obligations"],
     )
     # Retain normalized native evidence for independent review, never emit raw logs/secrets.
     write_run_json(directory, f"bundle-{lane['id']}.json", bundle)
@@ -549,7 +550,9 @@ def _fuzz_replay_result(
     cancelled,
     deadline,
     monitoring,
+    obligations=None,
 ):
+    obligations = obligations if has_fuzz_controls(lane, inventory, obligations) else []
     return _native_replay_result(
         result,
         base,
@@ -562,7 +565,7 @@ def _fuzz_replay_result(
         deadline,
         monitoring,
         "fuzz",
-        [],
+        obligations or [],
     )
 
 
@@ -601,7 +604,9 @@ def _replay_fuzz_lane(
     cancelled,
     *,
     timeout_seconds=None,
+    obligations=None,
 ):
+    obligations = obligations if has_fuzz_controls(lane, inventory, obligations) else []
     return _replay_native_lane(
         base,
         lane,
@@ -612,7 +617,7 @@ def _replay_fuzz_lane(
         cancelled,
         timeout_seconds=timeout_seconds,
         engine="fuzz",
-        obligations=[],
+        obligations=obligations or [],
     )
 
 
@@ -638,6 +643,85 @@ def _fuzz_replay_receipt(raw, facts, request):
     require_int(replay["replayed_inputs"], "replayed inputs", minimum=1, maximum=4096)
     require_digest(replay["native_execution_sha256"], "native replay invocation hash")
     return replay
+
+
+def apply_fuzz_control_replay(result, replay, lane, bundle, inventory, obligations):
+    """Validate the host receipt without changing the immutable worker bundle."""
+    from .deep_audit_io import _fuzz_replay_expected
+    from .runtime_audit_common import _validate_runner_facts, require_digest
+
+    request = {
+        "lane": lane,
+        "inventory": inventory,
+        "coverage": bundle["artifacts"][lane["coverage"]],
+        "report": bundle["artifacts"][lane["report"]],
+        "challenges": bundle["artifacts"][lane["challenge_report"]],
+        "obligations": obligations,
+    }
+    expected = _fuzz_replay_expected(request)
+    if any(replay.get(key) != value for key, value in expected.items()):
+        raise RuntimeAuditError(
+            "E_FUZZ_REPLAY", "control replay receipt binding differs"
+        )
+    _validate_fuzz_host_replay(replay, lane, _validate_runner_facts, require_digest)
+    raw = (
+        json.dumps(
+            {**expected, "native_execution_sha256": replay["native_execution_sha256"]}
+        )
+        + "\n"
+    ).encode()
+    _fuzz_replay_receipt(raw, replay["execution"], request)
+    cleared = {
+        "FUZZ_NATIVE_REPLAY_REQUIRED",
+        "FUZZ_CHALLENGE_REPLAY_REQUIRED",
+        "OBLIGATION_COVERAGE_MISSING",
+    }
+    result["gaps"] = [gap for gap in result["gaps"] if gap not in cleared]
+    result["obligations"] = expected["covered_obligations"]
+    result["state"] = "INCOMPLETE" if result["gaps"] else "OBSERVED"
+    return result
+
+
+def has_fuzz_controls(lane, inventory, obligations):
+    """Identify signed fuzz controls applicable to the current source inventory."""
+    sources = {item["path"] for item in inventory["files"]}
+    return lane.get("engine") == "atheris" and any(
+        item.get("engine") == "atheris"
+        and item.get("family") == "fuzz"
+        and set(item.get("paths", [])) <= sources
+        for item in (obligations or [])
+    )
+
+
+def _validate_fuzz_host_replay(replay, lane, validate_facts, validate_digest):
+    facts = replay.get("execution", {})
+    validate_facts(facts, facts["timeout_seconds"])
+    if (
+        replay.get("image") != lane["image"]
+        or replay.get("cleanup_confirmed") is not True
+        or not _osv_replay_process_valid_for_review(facts)
+    ):
+        raise RuntimeAuditError(
+            "E_FUZZ_REPLAY", "control replay execution is incomplete"
+        )
+    for key in ("native_execution_sha256", "runtime_sha256", "command_sha256"):
+        validate_digest(replay.get(key), key)
+
+
+def _osv_replay_process_valid_for_review(facts):
+    return (
+        facts.get("exit_code") == 0
+        and facts.get("cleanup_confirmed") is True
+        and all(
+            facts.get(key) is False
+            for key in (
+                "timed_out",
+                "output_limit_exceeded",
+                "launch_error",
+                "cancelled",
+            )
+        )
+    )
 
 
 def _native_replay_result(
@@ -680,7 +764,7 @@ def _native_replay_result(
             "osv": _replay_osv_lane,
             "fuzz": _replay_fuzz_lane,
         }[engine]
-        extra = {"obligations": obligations} if engine == "osv" else {}
+        extra = {"obligations": obligations} if engine in {"osv", "fuzz"} else {}
         replay = replay_function(
             base,
             lane,
@@ -702,6 +786,10 @@ def _native_replay_result(
             )
         result[f"{engine}_replay"] = replay
         result["gaps"] = [gap for gap in result["gaps"] if gap != required_gap]
+        if engine == "fuzz" and obligations:
+            apply_fuzz_control_replay(
+                result, replay, lane, bundle, inventory, obligations
+            )
     except (RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as error:
         result[f"{engine}_replay"] = {
             "state": "INCOMPLETE",
@@ -864,7 +952,7 @@ def _replay_native_lane(
         "coverage": bundle["artifacts"][lane["coverage"]],
         "report": bundle["artifacts"][lane["report"]],
     }
-    if engine == "osv":
+    if engine == "osv" or (engine == "fuzz" and obligations):
         request.update(
             challenges=bundle["artifacts"][lane["challenge_report"]],
             obligations=obligations,

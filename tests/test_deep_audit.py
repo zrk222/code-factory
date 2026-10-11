@@ -4988,7 +4988,9 @@ def test_fuzz_native_replay_executes_trusted_runner_and_binds_result(
         "failure_inputs": [],
     }
     request = {"inventory": {"candidate_sha256": "b" * 64}}
-    monkeypatch.setattr(deep_audit_io, "_fuzz_replay_expected", lambda _r: expected)
+    monkeypatch.setattr(
+        deep_audit_io, "_fuzz_replay_expected", lambda _r, _controls=None: expected
+    )
     monkeypatch.setattr(deep_audit_io, "_fuzz_replay_profile", lambda _r: None)
     monkeypatch.setattr(deep_audit_io, "_adapter_sources", lambda *_a: None)
     observed = {"schema": "factory.fuzz-input-replay.v1", **expected}
@@ -5035,7 +5037,7 @@ def test_fuzz_native_replay_rejects_source_drift(tmp_path, monkeypatch):
     monkeypatch.setattr(
         deep_audit_io,
         "_fuzz_replay_expected",
-        lambda _r: {
+        lambda _r, _controls=None: {
             "harness": "h.py",
             "corpus_sha256": "a" * 64,
             "replayed_inputs": 1,
@@ -6676,6 +6678,90 @@ def test_fuzz_replay_receipt_rejects_output_binding_drift(field):
         _fuzz_replay_receipt(raw, facts, request)
 
 
+def test_fuzz_control_host_receipt_clears_only_replayed_gaps(monkeypatch):
+    from factoryline.deep_audit import apply_fuzz_control_replay
+
+    expected = {
+        "schema": "factory.fuzz-native-replay.v1",
+        "state": "VERIFIED",
+        "covered_obligations": ["signed-control"],
+        "challenge_sha256": "a" * 64,
+        "replayed_inputs": 1,
+    }
+    monkeypatch.setattr(
+        "factoryline.deep_audit_io._fuzz_replay_expected", lambda request: expected
+    )
+    replay = {**expected, "native_execution_sha256": "b" * 64}
+    raw = (json.dumps(replay) + "\n").encode()
+    replay.update(
+        image="sha256:" + "c" * 64,
+        runtime_sha256="d" * 64,
+        command_sha256="e" * 64,
+        cleanup_confirmed=True,
+        execution=_codeql_process_facts(60, raw, b"", cancelled=False),
+    )
+    result = {
+        "gaps": [
+            "FUZZ_NATIVE_REPLAY_REQUIRED",
+            "FUZZ_CHALLENGE_REPLAY_REQUIRED",
+            "OBLIGATION_COVERAGE_MISSING",
+            "CHALLENGE_FAILED",
+            "UNRELATED_GAP",
+        ],
+        "obligations": [],
+        "state": "INCOMPLETE",
+    }
+    lane = {
+        "image": replay["image"],
+        "coverage": "coverage",
+        "report": "report",
+        "challenge_report": "challenges",
+    }
+    bundle = {"artifacts": {"coverage": {}, "report": {}, "challenges": {}}}
+    apply_fuzz_control_replay(result, replay, lane, bundle, {}, [{}])
+    assert result["gaps"] == ["CHALLENGE_FAILED", "UNRELATED_GAP"]
+    assert result["obligations"] == ["signed-control"]
+    assert result["state"] == "INCOMPLETE"
+    original = json.loads(json.dumps(result))
+    replay["challenge_sha256"] = "f" * 64
+    with pytest.raises(RuntimeAuditError, match="E_FUZZ_REPLAY"):
+        apply_fuzz_control_replay(result, replay, lane, bundle, {}, [{}])
+    assert result == original
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        {"exit_code": 1},
+        {"cancelled": True},
+        {"timed_out": True},
+        {"launch_error": True},
+        {"cleanup_confirmed": False},
+        {"output_limit_exceeded": True},
+    ],
+)
+def test_fuzz_host_replay_execution_fails_closed(failure):
+    from factoryline.deep_audit import (
+        _osv_replay_process_valid_for_review,
+        _validate_fuzz_host_replay,
+    )
+    from factoryline.runtime_audit_common import _validate_runner_facts, require_digest
+
+    facts = _codeql_process_facts(60, b"{}", b"", cancelled=False)
+    assert _osv_replay_process_valid_for_review(facts)
+    facts.update(failure)
+    assert not _osv_replay_process_valid_for_review(facts)
+    replay = {
+        "image": "sha256:" + "c" * 64,
+        "execution": facts,
+        "cleanup_confirmed": True,
+    }
+    with pytest.raises(RuntimeAuditError):
+        _validate_fuzz_host_replay(
+            replay, {"image": replay["image"]}, _validate_runner_facts, require_digest
+        )
+
+
 def test_fuzz_replay_receipt_accepts_native_receipt_and_checks_stdout_binding():
     from factoryline.deep_audit import _fuzz_replay_receipt
     from factoryline.deep_audit_io import _fuzz_replay_expected
@@ -6689,6 +6775,106 @@ def test_fuzz_replay_receipt_accepts_native_receipt_and_checks_stdout_binding():
         tampered_facts = {**facts, **change}
         with pytest.raises(RuntimeAuditError, match="E_FUZZ_REPLAY"):
             _fuzz_replay_receipt(raw, tampered_facts, request)
+
+
+def test_has_fuzz_controls_requires_matching_signed_paths():
+    from factoryline.deep_audit import has_fuzz_controls
+
+    lane = {"engine": "atheris", "family": "fuzz"}
+    inventory = {"files": [{"path": "fuzz.py"}]}
+    obligation = {
+        "engine": "atheris",
+        "family": "fuzz",
+        "paths": ["fuzz.py"],
+    }
+    assert has_fuzz_controls(lane, inventory, [obligation])
+    assert not has_fuzz_controls(
+        lane, inventory, [{**obligation, "paths": ["other.py"]}]
+    )
+    assert not has_fuzz_controls(lane, inventory, [])
+    assert not has_fuzz_controls({**lane, "engine": "semgrep"}, inventory, [obligation])
+
+
+def test_verify_fuzz_retained_evidence_binds_signed_triplet_and_replay_only_gaps(
+    monkeypatch,
+):
+    import factoryline.deep_audit_io as module
+
+    control_kinds = ("positive", "negative", "mutation")
+    obligation = {
+        "id": "fuzz-control",
+        "engine": "atheris",
+        "family": "fuzz",
+        "detector_rule_id": "FUZZ_EXCEPTION",
+        "paths": ["fuzz.py"],
+        "challenges": [{"kind": kind} for kind in control_kinds],
+    }
+    challenges = {
+        "schema": "factory.deep-challenges.v1",
+        "observations": [
+            {
+                "obligation_id": obligation["id"],
+                "kind": kind,
+                "atheris_native_evidence": {
+                    key: {"bytes": 0}
+                    for key in ("raw_report", "corpus_manifest", "effective_config")
+                },
+            }
+            for kind in control_kinds
+        ],
+        "gaps": [
+            {
+                "obligation_id": obligation["id"],
+                "kind": kind,
+                "reason": "FUZZ_CHALLENGE_REPLAY_REQUIRED",
+            }
+            for kind in control_kinds
+        ],
+    }
+    lane = {"engine": "atheris", "family": "fuzz"}
+    sources = {"fuzz.py": "a" * 64}
+    evidence = {"native_evidence": {"retained": True}}
+    by_key = {
+        (obligation["id"], kind): {
+            "obligation_id": obligation["id"],
+            "kind": kind,
+            **evidence,
+        }
+        for kind in control_kinds
+    }
+    monkeypatch.setattr(module, "_fuzz_retained_observations", lambda *args: by_key)
+
+    summary, controls = module.verify_fuzz_retained_evidence(
+        challenges,
+        [obligation],
+        lane,
+        sources,
+        "b" * 64,
+        {},
+    )
+    assert summary == {
+        "challenge_sha256": digest(challenges),
+        "obligations_sha256": digest([obligation]),
+        "covered_obligations": [obligation["id"]],
+        "controls_sha256": digest(
+            [
+                {
+                    "obligation_id": obligation["id"],
+                    "kind": control["kind"],
+                    "evidence": control["native_evidence"],
+                }
+                for control in controls
+            ]
+        ),
+        "control_count": 3,
+    }
+    assert [control["kind"] for control in controls] == sorted(control_kinds)
+
+    challenges["gaps"][0]["reason"] = "CHALLENGE_FAILED"
+    with pytest.raises(RuntimeAuditError, match="E_FUZZ_ARTIFACT"):
+        module.verify_fuzz_retained_evidence(
+            challenges, [obligation], lane, sources, "b" * 64, {}
+        )
 
 
 def test_fuzz_replay_result_clears_only_required_gap_after_host_receipt(
