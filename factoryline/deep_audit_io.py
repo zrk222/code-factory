@@ -2015,6 +2015,13 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
             if query_inventory is not None
             else None
         )
+        source_execution = (
+            _codeql_source_measurement(
+                profile, source, scratch, inventory, lane, started + timeout
+            )
+            if query_inventory is not None
+            else None
+        )
         trivy_execution = None
         if lane["engine"] == "trivy" and lane.get("native_policy"):
             trivy_execution = _trivy_full_source_execution(
@@ -2064,6 +2071,7 @@ def _run_native_profile(profile, contract, source, output, inventory, lane, path
         "trivy_rule_execution": trivy_execution,
         "codeql_query_inventory": query_inventory,
         "codeql_query_execution": query_execution,
+        "codeql_source_execution": source_execution,
         "raw_report_bytes": (
             raw_report_bytes if profile["report_format"] != "runtime-junit" else None
         ),
@@ -2935,6 +2943,11 @@ def _native_profile_coverage(
             else {}
         ),
         **(
+            {"codeql_source_execution": execution["codeql_source_execution"]}
+            if execution.get("codeql_source_execution") is not None
+            else {}
+        ),
+        **(
             {"semgrep_rule_execution": execution["semgrep_rule_execution"]}
             if execution.get("semgrep_rule_execution") is not None
             else {}
@@ -3221,6 +3234,251 @@ def _codeql_result_sets(raw):
         raise RuntimeAuditError(
             "E_CODEQL_EXECUTION", "invalid native result info"
         ) from error
+
+
+def _codeql_parse_rows(raw):
+    if not isinstance(raw, bytes) or len(raw) > NATIVE_COVERAGE_LIMIT:
+        raise RuntimeAuditError(
+            "E_CODEQL_SOURCE", "bounded source query output required"
+        )
+    try:
+        result = json.loads(raw)["#select"]
+        if (
+            not isinstance(result["columns"], list)
+            or result["columns"]
+            != [{"kind": "String"}, {"kind": "Integer"}, {"kind": "Integer"}]
+            or not isinstance(result["tuples"], list)
+        ):
+            raise ValueError("three-column source rows required")
+        if len(result["tuples"]) > 20_000:
+            raise ValueError("source row budget exceeded")
+        rows = {}
+        for row in result["tuples"]:
+            path, nodes, errors = row
+            path = relative_path(path)
+            if path in rows:
+                raise ValueError("duplicate source row")
+            rows[path] = {
+                "syntax_nodes": require_int(
+                    nodes, "syntax nodes", minimum=0, maximum=2**31 - 1
+                ),
+                "parse_errors": require_int(
+                    errors, "parse errors", minimum=0, maximum=2**31 - 1
+                ),
+            }
+        return rows
+    except (RuntimeAuditError, ValueError, TypeError, KeyError) as error:
+        raise RuntimeAuditError(
+            "E_CODEQL_SOURCE", "invalid native source query output"
+        ) from error
+
+
+def _codeql_source_query(profile):
+    languages = {
+        arg.removeprefix("--language=")
+        for command in profile["commands"]
+        for arg in command["argv"]
+        if arg.startswith("--language=")
+    }
+    definitions = {
+        "javascript-typescript": (
+            "javascript",
+            "TopLevel",
+            "JSParseError",
+            "e.getFile()",
+            "",
+        ),
+        "python": ("python", "Module", "SyntaxError", "e.getFile()", ""),
+        "actions": (
+            "actions",
+            "YamlDocument",
+            "YamlParseError",
+            "e.getLocation().getFile()",
+            "import codeql.files.FileSystem\nimport codeql.actions.ast.internal.Yaml\n",
+        ),
+    }
+    if len(languages) != 1 or not languages <= definitions.keys():
+        raise RuntimeAuditError("E_CODEQL_SOURCE", "one supported extractor required")
+    library, node, error, location, imports = definitions[languages.pop()]
+    query = (
+        f"import {library}\n{imports}from File f select f.getRelativePath(), "
+        f"count({node} n | n.getFile()=f), count({error} e | {location}=f)\n"
+    ).encode("utf-8")
+    return library, query
+
+
+def _codeql_source_measurement(profile, source, scratch, inventory, lane, deadline):
+    remaining = int(deadline - time.monotonic())
+    if remaining < 1:
+        raise RuntimeAuditError(
+            "E_ADAPTER_TIMEOUT", "source evidence deadline exhausted"
+        )
+    library, query = _codeql_source_query(profile)
+    directory = scratch / "source-evidence"
+    directory.mkdir()
+    pack = directory / "pack"
+    pack.mkdir()
+    package = (
+        f"name: factory/{library}-source-accounting\nversion: 0.0.1\n"
+        f"dependencies:\n  codeql/{library}-all: '*'\n"
+    ).encode("utf-8")
+    (pack / "sources.ql").write_bytes(query)
+    (pack / "qlpack.yml").write_bytes(package)
+    executable = profile["version_argv"][0]
+    result, decoded = directory / "sources.bqrs", directory / "sources.json"
+    argv = [
+        [
+            executable,
+            "query",
+            "run",
+            str(pack / "sources.ql"),
+            f"--database={scratch / 'codeql-db'}",
+            f"--output={result}",
+            "--search-path=/opt/codeql/codeql/qlpacks",
+            "--threads=2",
+            "--ram=2048",
+        ],
+        [
+            executable,
+            "bqrs",
+            "decode",
+            str(result),
+            "--format=json",
+            f"--output={decoded}",
+        ],
+        [executable, "bqrs", "info", str(result), "--format=json"],
+    ]
+    _, invocations = _codeql_steps_runner(
+        [{"argv": command, "accepted_exit_codes": [0]} for command in argv],
+        source,
+        remaining,
+        directory,
+    )
+    with local_file(directory, decoded.name).open("rb") as stream:
+        raw = stream.read(NATIVE_COVERAGE_LIMIT + 1)
+    rows = _codeql_parse_rows(raw)
+    with local_file(directory / "step-2", "stdout.log").open("rb") as stream:
+        info = stream.read(65_537)
+    if _codeql_result_sets(info) != [
+        {"name": "#select", "rows": len(rows), "columns": 3}
+    ]:
+        raise RuntimeAuditError("E_CODEQL_SOURCE", "source result metadata differs")
+    with local_file(directory, result.name).open("rb") as stream:
+        binary = stream.read(67_108_865)
+    if not binary or len(binary) > 67_108_864:
+        raise RuntimeAuditError("E_CODEQL_SOURCE", "source result budget exceeded")
+    required = {
+        item["path"]: item["sha256"]
+        for item in inventory["files"]
+        if item["language"] in lane["languages"]
+    }
+    archived, archive_sha = _codeql_archived_sources(source, scratch, required)
+    return {
+        "schema": "factory.codeql-source-execution.v1",
+        "rows": rows,
+        "archived_sources": archived,
+        "archive_sha256": archive_sha,
+        "query_sha256": sha256_bytes(query),
+        "package_sha256": sha256_bytes(package),
+        "decoded_sha256": sha256_bytes(raw),
+        "result_sha256": sha256_bytes(binary),
+        "native_invocations": invocations,
+    }
+
+
+def _codeql_source_accounting(measurement, inventory, lane):
+    try:
+        rows, archived = measurement["rows"], measurement["archived_sources"]
+        if not isinstance(rows, dict) or not isinstance(archived, dict):
+            raise ValueError("source evidence maps required")
+        checks = {}
+        for item in inventory["files"]:
+            if item["language"] in lane["languages"]:
+                path = relative_path(item["path"])
+                if path in checks:
+                    raise ValueError("duplicate source inventory")
+                seal = require_digest(item["sha256"], "source hash")
+                checks[path] = {
+                    "state": _codeql_source_state(
+                        rows.get(path), archived.get(path), seal
+                    ),
+                    "sha256": seal,
+                }
+        measured = sorted(
+            path for path, item in checks.items() if item["state"] == "EXTRACTED"
+        )
+        missing = sorted(
+            path for path, item in checks.items() if item["state"] == "NOT_EXTRACTED"
+        )
+        degraded = sorted(set(checks) - set(measured) - set(missing))
+        unexpected = sorted(set(rows) - {item["path"] for item in inventory["files"]})
+        return {
+            "state": "COMPLETE"
+            if checks and len(measured) == len(checks) and not unexpected
+            else "INCOMPLETE",
+            "checks": checks,
+            "required_paths": sorted(checks),
+            "measured_paths": measured,
+            "missing_paths": missing,
+            "degraded_paths": degraded,
+            "unexpected_paths": unexpected,
+            "claim_boundary": "Syntax model and parser diagnostics for candidate-bound archived source bytes; not runtime behavior or per-query source reachability.",
+        }
+    except (RuntimeAuditError, ValueError, TypeError, KeyError) as error:
+        raise RuntimeAuditError(
+            "E_CODEQL_SOURCE", "invalid source accounting evidence"
+        ) from error
+
+
+def _codeql_source_state(row, archived, seal):
+    if row is None:
+        return "NOT_EXTRACTED"
+    nodes = require_int(
+        row["syntax_nodes"], "syntax nodes", minimum=0, maximum=2**31 - 1
+    )
+    errors = require_int(
+        row["parse_errors"], "parse errors", minimum=0, maximum=2**31 - 1
+    )
+    if errors:
+        return "PARSE_ERROR"
+    if not nodes:
+        return "NO_SYNTAX_MODEL"
+    if archived != seal:
+        return "SOURCE_MISMATCH"
+    return "EXTRACTED"
+
+
+def _codeql_archived_sources(source, scratch, required):
+    import io
+    import zipfile
+
+    archive = local_file(scratch / "codeql-db", "src.zip")
+    with archive.open("rb") as stream:
+        raw = stream.read(67_108_865)
+    if len(raw) > 67_108_864:
+        raise RuntimeAuditError("E_CODEQL_SOURCE", "source archive budget exceeded")
+    prefix = source.resolve().as_posix().lstrip("/") + "/"
+    measured = {}
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as zipped:
+            names = zipped.namelist()
+            if len(names) > 100_000:
+                raise RuntimeAuditError(
+                    "E_CODEQL_SOURCE", "source archive entry budget exceeded"
+                )
+            for path, seal in required.items():
+                name = prefix + relative_path(path)
+                if names.count(name) != 1:
+                    continue
+                candidate = bound_bytes(source, {"path": path, "sha256": seal})
+                with zipped.open(name) as member:
+                    captured = member.read(len(candidate) + 1)
+                measured[path] = sha256_bytes(captured)
+    except (zipfile.BadZipFile, OSError, ValueError, RuntimeError) as error:
+        raise RuntimeAuditError(
+            "E_CODEQL_SOURCE", "invalid native source archive"
+        ) from error
+    return measured, sha256_bytes(raw)
 
 
 def _codeql_query_execution(profile, inventory, source, scratch, deadline):
@@ -3684,6 +3942,10 @@ def _codeql_telemetry_notification(item):
 
 
 def _native_source_accounting(execution, report, inventory, lane):
+    if execution.get("codeql_source_execution") is not None:
+        return _codeql_source_accounting(
+            execution["codeql_source_execution"], inventory, lane
+        )
     if execution.get("semgrep_rule_execution") is not None:
         return _semgrep_source_accounting(execution, inventory, lane)
     if lane.get("engine") == "trivy":

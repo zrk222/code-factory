@@ -3246,3 +3246,452 @@ def test_codeql_query_result_record_expired_deadline_skips_native_inspection(
     with pytest.raises(RuntimeAuditError, match="E_ADAPTER_TIMEOUT"):
         _codeql_query_result_record(**args)
     assert calls == []
+
+
+def _codeql_source_accounting_inputs():
+    source_sha = "a" * 64
+    path = "src/a.js"
+    inventory = {
+        "files": [{"path": path, "language": "javascript", "sha256": source_sha}]
+    }
+    lane = {"languages": ["javascript"]}
+    measurement = {
+        "rows": {path: {"syntax_nodes": 2, "parse_errors": 0}},
+        "archived_sources": {path: source_sha},
+    }
+    return path, source_sha, inventory, lane, measurement
+
+
+def _codeql_parse_column_kinds():
+    return [{"kind": "String"}, {"kind": "Integer"}, {"kind": "Integer"}]
+
+
+def test_codeql_parse_rows_parses_native_three_column_select():
+    from factoryline.deep_audit_io import _codeql_parse_rows
+
+    raw = json.dumps(
+        {
+            "#select": {
+                "columns": _codeql_parse_column_kinds(),
+                "tuples": [["src/a.js", 12, 0], ["src/b.js", 0, 3]],
+            }
+        }
+    ).encode()
+    assert _codeql_parse_rows(raw) == {
+        "src/a.js": {"syntax_nodes": 12, "parse_errors": 0},
+        "src/b.js": {"syntax_nodes": 0, "parse_errors": 3},
+    }
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"not-json",
+        b"\xff",
+        json.dumps({}).encode(),
+        json.dumps(
+            {
+                "#select": {
+                    "columns": [{"kind": "String"}, {"kind": "Integer"}],
+                    "tuples": [],
+                }
+            }
+        ).encode(),
+        json.dumps(
+            {
+                "#select": {
+                    "columns": _codeql_parse_column_kinds(),
+                    "tuples": [["src/a.js", 1, 0], ["src/a.js", 2, 0]],
+                }
+            }
+        ).encode(),
+        json.dumps(
+            {
+                "#select": {
+                    "columns": _codeql_parse_column_kinds(),
+                    "tuples": [["src/a.js", True, 0]],
+                }
+            }
+        ).encode(),
+        json.dumps(
+            {
+                "#select": {
+                    "columns": _codeql_parse_column_kinds(),
+                    "tuples": [["../outside.js", 1, 0]],
+                }
+            }
+        ).encode(),
+        json.dumps(
+            {
+                "#select": {
+                    "columns": [
+                        {"kind": "String"},
+                        {"kind": "String"},
+                        {"kind": "Integer"},
+                    ],
+                    "tuples": [["src/a.js", 1, 0]],
+                }
+            }
+        ).encode(),
+        json.dumps(
+            {
+                "#select": {
+                    "columns": _codeql_parse_column_kinds(),
+                    "tuples": [["src/a.js", 1]],
+                }
+            }
+        ).encode(),
+        pytest.param(b" " * (8 * 1024 * 1024 + 1), id="over-8-MiB"),
+    ],
+)
+def test_codeql_parse_rows_rejects_malformed_or_unbounded_output(raw):
+    from factoryline.deep_audit_io import _codeql_parse_rows
+
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_SOURCE"):
+        _codeql_parse_rows(raw)
+
+
+def test_codeql_source_accounting_marks_matching_archived_syntax_complete():
+    from factoryline.deep_audit_io import _codeql_source_accounting
+
+    path, source_sha, inventory, lane, measurement = _codeql_source_accounting_inputs()
+    accounting = _codeql_source_accounting(measurement, inventory, lane)
+    assert accounting["state"] == "COMPLETE"
+    assert accounting["checks"][path] == {"state": "EXTRACTED", "sha256": source_sha}
+    assert accounting["measured_paths"] == [path]
+    assert accounting["missing_paths"] == []
+    assert accounting["degraded_paths"] == []
+
+
+@pytest.mark.parametrize(
+    ("row", "archived", "expected"),
+    [
+        (None, None, "NOT_EXTRACTED"),
+        ({"syntax_nodes": 4, "parse_errors": 1}, "a" * 64, "PARSE_ERROR"),
+        ({"syntax_nodes": 0, "parse_errors": 0}, "a" * 64, "NO_SYNTAX_MODEL"),
+        ({"syntax_nodes": 4, "parse_errors": 0}, "b" * 64, "SOURCE_MISMATCH"),
+    ],
+)
+def test_codeql_source_accounting_marks_missing_or_degraded_source_rows(
+    row, archived, expected
+):
+    from factoryline.deep_audit_io import _codeql_source_accounting
+
+    path, _, inventory, lane, measurement = _codeql_source_accounting_inputs()
+    measurement["rows"] = {} if row is None else {path: row}
+    measurement["archived_sources"] = {} if archived is None else {path: archived}
+    accounting = _codeql_source_accounting(measurement, inventory, lane)
+    assert accounting["state"] == "INCOMPLETE"
+    assert accounting["checks"][path]["state"] == expected
+    assert accounting["degraded_paths"] == (
+        [] if expected == "NOT_EXTRACTED" else [path]
+    )
+    assert accounting["missing_paths"] == (
+        [path] if expected == "NOT_EXTRACTED" else []
+    )
+
+
+def test_codeql_source_accounting_empty_required_set_is_incomplete():
+    from factoryline.deep_audit_io import _codeql_source_accounting
+
+    _, _, inventory, lane, measurement = _codeql_source_accounting_inputs()
+    inventory["files"][0]["language"] = "python"
+    accounting = _codeql_source_accounting(measurement, inventory, lane)
+    assert accounting["state"] == "INCOMPLETE"
+    assert accounting["checks"] == {}
+    assert accounting["required_paths"] == []
+    assert accounting["measured_paths"] == []
+
+
+@pytest.mark.parametrize(
+    "measurement",
+    [
+        {},
+        {"rows": [], "archived_sources": {}},
+        {"rows": {}, "archived_sources": []},
+    ],
+)
+def test_codeql_source_accounting_rejects_malformed_measurement(measurement):
+    from factoryline.deep_audit_io import _codeql_source_accounting
+
+    _, _, inventory, lane, _ = _codeql_source_accounting_inputs()
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_SOURCE"):
+        _codeql_source_accounting(measurement, inventory, lane)
+
+
+def _codeql_archive_fixture(tmp_path, members):
+    import zipfile
+
+    source = tmp_path / "source-root"
+    (source / "src").mkdir(parents=True)
+    candidate = source / "src" / "a.js"
+    candidate.write_bytes(b"candidate source bytes")
+    scratch = tmp_path / "scratch"
+    database = scratch / "codeql-db"
+    database.mkdir(parents=True)
+    archive = database / "src.zip"
+    archive_member = source.resolve().as_posix().lstrip("/") + "/src/a.js"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        for name, content in members(archive_member):
+            zipped.writestr(name, content)
+    source_sha = sha256_bytes(candidate.read_bytes())
+    return source, scratch, archive, archive_member, source_sha
+
+
+def test_codeql_archived_sources_rejects_malformed_zip(tmp_path):
+    from factoryline.deep_audit_io import _codeql_archived_sources
+
+    source, scratch, archive, _, source_sha = _codeql_archive_fixture(
+        tmp_path, lambda member: [(member, b"candidate source bytes")]
+    )
+    archive.write_bytes(b"not a zip archive")
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_SOURCE"):
+        _codeql_archived_sources(source, scratch, {"src/a.js": source_sha})
+
+
+def test_codeql_archived_sources_ignores_duplicate_member_names(tmp_path):
+    from factoryline.deep_audit_io import (
+        _codeql_archived_sources,
+        _codeql_source_accounting,
+    )
+
+    source, scratch, _, member, source_sha = _codeql_archive_fixture(
+        tmp_path,
+        lambda name: [
+            (name, b"candidate source bytes"),
+            (name, b"different duplicate bytes"),
+        ],
+    )
+    archived, _ = _codeql_archived_sources(source, scratch, {"src/a.js": source_sha})
+    assert archived == {}
+    accounting = _codeql_source_accounting(
+        {
+            "rows": {"src/a.js": {"syntax_nodes": 1, "parse_errors": 0}},
+            "archived_sources": archived,
+        },
+        {
+            "files": [
+                {
+                    "path": "src/a.js",
+                    "language": "javascript",
+                    "sha256": source_sha,
+                }
+            ]
+        },
+        {"languages": ["javascript"]},
+    )
+    assert accounting["checks"]["src/a.js"]["state"] == "SOURCE_MISMATCH"
+
+
+def test_codeql_archived_sources_mismatch_is_reported_against_candidate_hash(
+    tmp_path,
+):
+    from factoryline.deep_audit_io import (
+        _codeql_archived_sources,
+        _codeql_source_accounting,
+    )
+
+    source, scratch, _, _, source_sha = _codeql_archive_fixture(
+        tmp_path, lambda member: [(member, b"different archived bytes")]
+    )
+    archived, _ = _codeql_archived_sources(source, scratch, {"src/a.js": source_sha})
+    accounting = _codeql_source_accounting(
+        {
+            "rows": {"src/a.js": {"syntax_nodes": 1, "parse_errors": 0}},
+            "archived_sources": archived,
+        },
+        {
+            "files": [
+                {
+                    "path": "src/a.js",
+                    "language": "javascript",
+                    "sha256": source_sha,
+                }
+            ]
+        },
+        {"languages": ["javascript"]},
+    )
+    assert accounting["checks"]["src/a.js"]["state"] == "SOURCE_MISMATCH"
+
+
+def test_codeql_archived_sources_bounds_archive_read(tmp_path, monkeypatch):
+    from factoryline.deep_audit_io import _codeql_archived_sources
+
+    source, scratch, archive, _, source_sha = _codeql_archive_fixture(
+        tmp_path, lambda member: [(member, b"candidate source bytes")]
+    )
+    original_open = Path.open
+    read_sizes = []
+
+    class ReadSpy:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return self.stream.__exit__(*args)
+
+        def read(self, size=-1):
+            read_sizes.append(size)
+            return self.stream.read(size)
+
+    def open_spy(path, *args, **kwargs):
+        stream = original_open(path, *args, **kwargs)
+        if Path(path) == archive:
+            return ReadSpy(stream)
+        return stream
+
+    monkeypatch.setattr(Path, "open", open_spy)
+    _codeql_archived_sources(source, scratch, {"src/a.js": source_sha})
+    assert read_sizes[0] == 67_108_865
+
+
+@pytest.mark.parametrize(
+    ("language", "expected_library", "expected_symbol"),
+    [
+        ("javascript-typescript", "javascript", "TopLevel"),
+        ("python", "python", "Module"),
+        ("actions", "actions", "YamlDocument"),
+    ],
+)
+def test_codeql_source_query_maps_supported_languages(
+    language, expected_library, expected_symbol
+):
+    from factoryline.deep_audit_io import _codeql_source_query
+
+    profile = _codeql_test_profile(Path("suite.qls"))
+    profile["commands"][0]["argv"] = [
+        arg if not arg.startswith("--language=") else f"--language={language}"
+        for arg in profile["commands"][0]["argv"]
+    ]
+    library, query = _codeql_source_query(profile)
+    assert library == expected_library
+    assert expected_symbol.encode() in query
+    assert b"count(" in query
+
+
+def test_codeql_source_query_rejects_unsupported_language():
+    from factoryline.deep_audit_io import _codeql_source_query
+
+    profile = _codeql_test_profile(Path("suite.qls"))
+    profile["commands"][0]["argv"] = [
+        arg if not arg.startswith("--language=") else "--language=go"
+        for arg in profile["commands"][0]["argv"]
+    ]
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_SOURCE"):
+        _codeql_source_query(profile)
+
+
+def test_codeql_source_measurement_runs_native_steps_and_routes_accounting(
+    tmp_path, monkeypatch
+):
+    import zipfile
+
+    from factoryline.deep_audit_io import (
+        _codeql_source_measurement,
+        _native_source_accounting,
+    )
+
+    source = tmp_path / "source-root"
+    (source / "src").mkdir(parents=True)
+    candidate = source / "src" / "a.js"
+    candidate.write_bytes(b"candidate source bytes")
+    source_sha = sha256_bytes(candidate.read_bytes())
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    database = scratch / "codeql-db"
+    database.mkdir()
+    with zipfile.ZipFile(database / "src.zip", "w") as zipped:
+        archived_path = source.resolve().as_posix().lstrip("/") + "/src/a.js"
+        zipped.writestr(archived_path, candidate.read_bytes())
+
+    profile = _codeql_test_profile(tmp_path / "security.qls")
+    inventory = {
+        "files": [{"path": "src/a.js", "language": "javascript", "sha256": source_sha}]
+    }
+    lane = {"languages": ["javascript"], "engine": "codeql"}
+    decoded = json.dumps(
+        {
+            "#select": {
+                "columns": _codeql_parse_column_kinds(),
+                "tuples": [["src/a.js", 5, 0]],
+            }
+        }
+    ).encode()
+    bqrs = b"native source result bytes"
+    captured_commands = []
+    info_rows = [1]
+
+    def run(argv, cwd, timeout, run_dir, *, stdout_path, stderr_path):
+        captured_commands.append(argv)
+        stdout, stderr = b"stdout", b"stderr"
+        if argv[1:3] == ["query", "run"]:
+            result_arg = next(arg for arg in argv if arg.startswith("--output="))
+            Path(result_arg.split("=", 1)[1]).write_bytes(bqrs)
+        elif argv[1:3] == ["bqrs", "decode"]:
+            decoded_arg = next(arg for arg in argv if arg.startswith("--output="))
+            Path(decoded_arg.split("=", 1)[1]).write_bytes(decoded)
+        elif argv[1:3] == ["bqrs", "info"]:
+            stdout = json.dumps(
+                {
+                    "result-sets": [
+                        {
+                            "name": "#select",
+                            "rows": info_rows[0],
+                            "columns": [
+                                {"kind": "s"},
+                                {"kind": "i"},
+                                {"kind": "i"},
+                            ],
+                        }
+                    ]
+                }
+            ).encode()
+        stdout_path.write_bytes(stdout)
+        stderr_path.write_bytes(stderr)
+        return _codeql_process_facts(timeout, stdout, stderr)
+
+    monkeypatch.setattr("factoryline.runtime_audit_process.run_bounded_command", run)
+    measurement = _codeql_source_measurement(
+        profile, source, scratch, inventory, lane, time.monotonic() + 30
+    )
+    assert [command[1:3] for command in captured_commands] == [
+        ["query", "run"],
+        ["bqrs", "decode"],
+        ["bqrs", "info"],
+    ]
+    assert measurement["rows"] == {"src/a.js": {"syntax_nodes": 5, "parse_errors": 0}}
+    assert measurement["archived_sources"] == {"src/a.js": source_sha}
+    assert measurement["result_sha256"] == sha256_bytes(bqrs)
+    result = _native_source_accounting(
+        {"codeql_source_execution": measurement}, {}, inventory, lane
+    )
+    assert result["state"] == "COMPLETE"
+
+    info_rows[0] = 2
+    scratch_mismatch = tmp_path / "scratch-mismatch"
+    scratch_mismatch.mkdir()
+    (scratch_mismatch / "codeql-db").mkdir()
+    (scratch_mismatch / "codeql-db" / "src.zip").write_bytes(
+        (database / "src.zip").read_bytes()
+    )
+    with pytest.raises(RuntimeAuditError, match="E_CODEQL_SOURCE"):
+        _codeql_source_measurement(
+            profile,
+            source,
+            scratch_mismatch,
+            inventory,
+            lane,
+            time.monotonic() + 30,
+        )
+
+    parse_error_measurement = {
+        **measurement,
+        "rows": {"src/a.js": {"syntax_nodes": 5, "parse_errors": 1}},
+    }
+    incomplete = _native_source_accounting(
+        {"codeql_source_execution": parse_error_measurement}, {}, inventory, lane
+    )
+    assert incomplete["state"] == "INCOMPLETE"
