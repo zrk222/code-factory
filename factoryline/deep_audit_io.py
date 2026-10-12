@@ -142,6 +142,7 @@ SOURCE_LIMIT = 16 * 1024 * 1024
 SNAPSHOT_LIMIT = 1024 * 1024 * 1024
 _GENERATED_FACTORY_PREFIXES = (
     ".factory/deep-runs/",
+    ".factory/review-evidence/",
     ".factory/scopes/",
     ".factory/repair-approvals/",
     ".factory/repair-attempts/",

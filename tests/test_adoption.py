@@ -280,7 +280,7 @@ def test_repo_scan_cli_reports_a_real_workspace_assessment(
 def test_default_repo_scan_reads_python_and_keeps_quality_findings_advisory(
     tmp_path: Path,
 ) -> None:
-    (tmp_path / "app.py").write_text("def test_behavior():\n    assert True\n")
+    (tmp_path / "test_app.py").write_text("def test_behavior():\n    assert True\n")
     result = run_repo_scan(tmp_path)
     assert result["static_security"]["state"] == "FINDINGS"
     assert result["static_security"]["findings"][0]["code"] == "QUALITY_HOLLOW_TEST"
@@ -317,7 +317,9 @@ def test_repo_scan_deep_runs_static_lane_on_small_workspace(tmp_path: Path) -> N
 
 
 def test_repo_scan_deep_quality_only_finding_is_advisory(tmp_path: Path) -> None:
-    (tmp_path / "tests.py").write_text("def test_behavior():\n    assert True\n")
+    (tmp_path / "test_behavior.py").write_text(
+        "def test_behavior():\n    assert True\n"
+    )
     result = run_repo_scan(tmp_path, deep=True)
     lanes = {lane["measurement_id"]: lane for lane in result["deep_audit"]["lanes"]}
     lane = lanes["python_ast_security"]

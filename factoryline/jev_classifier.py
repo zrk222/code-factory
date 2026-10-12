@@ -301,6 +301,16 @@ def review_deep_audit_result(
             "release_decision": False,
             "claim_boundary": "No attached review packet; deterministic deep-audit verdict is unchanged.",
         }
+    candidate, binding_error = _deep_audit_candidate(result)
+    if binding_error:
+        return _review_binding_fallback(binding_error)
+    return review_evidence(
+        result["review_evidence"], candidate_sha256=candidate, transport=transport
+    )
+
+
+def _deep_audit_candidate(result: Mapping[str, Any]) -> tuple[str | None, str | None]:
+    """Resolve native or signed result binding and reject conflicting receipt data."""
     packet = result["review_evidence"]
     receipt = result.get("receipt")
     nested_candidate = (
@@ -312,10 +322,10 @@ def review_deep_audit_result(
         and nested_candidate is not None
         and outer_candidate != nested_candidate
     ):
-        return _review_binding_fallback("RESULT_CANDIDATE_CONFLICT")
+        return None, "RESULT_CANDIDATE_CONFLICT"
     candidate = outer_candidate if outer_candidate is not None else nested_candidate
     if not _is_sha256(candidate):
-        return _review_binding_fallback("RESULT_CANDIDATE_UNAVAILABLE")
+        return None, "RESULT_CANDIDATE_UNAVAILABLE"
     nested_receipt_sha = (
         receipt.get("receipt_sha256") if isinstance(receipt, Mapping) else None
     )
@@ -323,12 +333,8 @@ def review_deep_audit_result(
         nested_receipt_sha is not None
         and packet.get("receipt_sha256") != nested_receipt_sha
     ):
-        return _review_binding_fallback("RESULT_RECEIPT_MISMATCH")
-    return review_evidence(
-        packet,
-        candidate_sha256=candidate,
-        transport=transport,
-    )
+        return None, "RESULT_RECEIPT_MISMATCH"
+    return candidate, None
 
 
 def _review_binding_fallback(reason: str) -> dict[str, Any]:
