@@ -339,6 +339,13 @@ def test_approved_studio_mission_returns_exact_bound_agent_handoff(tmp_path: Pat
     assert handoff["executor"] == "codex"
     assert handoff["dispatched"] is False
     assert handoff["state"] == "approved_needs_candidate_binding"
+    guidance = handoff["acceptance_guidance"]
+    assert len(guidance["starter_scenarios"]) == 5
+    assert "reload" in guidance["starter_scenarios"][2].lower()
+    assert "account or workspace" in guidance["custom_scenarios"]
+    assert any("disposable test data" in step for step in guidance["protocol"])
+    assert any("exact candidate" in step for step in guidance["protocol"])
+    assert any("Invalidate prior results" in step for step in guidance["protocol"])
     assert handoff["verify_argv"] == [
         "factory",
         "mission",
@@ -382,6 +389,9 @@ def test_studio_handoff_ui_is_explicit_readonly_and_never_dispatches():
     assert "input.readOnly=true" in page
     assert "input.value=JSON.stringify(handoff,null,2)" in page
     assert "input.onclick=()=>input.select()" in page
+    assert "Beginner acceptance checks:" in page
+    assert "This page does not run or preview the product." in page
+    assert "guidedButton('Run'" not in page
 
 
 def test_studio_mission_decision_uses_inline_required_rationale():

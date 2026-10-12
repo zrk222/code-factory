@@ -1187,3 +1187,26 @@ def test_junie_candidate_workflow_declares_native_commands_without_dispatch():
     assert "do not dispatch" in workflow["authority"]
     assert "Stop on changed HEAD" in workflow["recovery"]
     assert "concurrent filesystem replacement" in workflow["boundary"]
+
+
+def test_junie_beginner_acceptance_keeps_evidence_and_repair_authority():
+    from pathlib import Path
+    import json
+    import factoryline
+
+    manifest = json.loads(
+        (Path(factoryline.__file__).parent / "data" / "junie_pack.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    workflow = manifest["beginner_acceptance_workflow"]
+    assert workflow["schema"] == "factory.agent.beginner-acceptance.v1"
+    assert len(workflow["operator_journey"]) == 5
+    assert len(workflow["scenario_suggestions"]) == 5
+    assert "custom answer" in workflow["agent_responsibility"]
+    assert "persisted-state assertions" in " ".join(workflow["evidence_requirements"])
+    assert "invalidates" in workflow["freshness"]
+    assert "separately approved exact patch" in workflow["repair"]
+    assert "failed and impacted" in workflow["repair"]
+    assert "not database rollback" in workflow["recovery"]
+    assert "does not create a running preview" in workflow["authority"]

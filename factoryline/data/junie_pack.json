@@ -125,5 +125,35 @@
     "authority": "Binding and verification do not dispatch a process or grant credentials, external effects or release authority. Owner strings identify the local decision; they are not hosted authentication.",
     "recovery": "Stop on changed HEAD, dirty workspace, source or approval drift; preserve failure evidence. Do not overwrite receipts or silently refresh the approved scope.",
     "boundary": "Snapshot validation cannot prevent concurrent filesystem replacement. An isolated executor must revalidate inputs immediately before executing approved tools."
+  },
+  "beginner_acceptance_workflow": {
+    "schema": "factory.agent.beginner-acceptance.v1",
+    "operator_journey": [
+      "Describe your idea",
+      "Review the current plan",
+      "Approve the first slice",
+      "Try the exact build",
+      "Review issues and approve a bounded repair"
+    ],
+    "agent_responsibility": "Derive concrete scenarios and expected results from the confirmed PRD. Offer plain-language choices and a custom answer; never ask beginners for hashes, command arguments or audit profiles.",
+    "scenario_suggestions": [
+      "Open the main screen",
+      "Complete the main task",
+      "Reload and confirm saved work",
+      "Recover from invalid input",
+      "Check another account cannot see private data when accounts are applicable"
+    ],
+    "evidence_requirements": [
+      "candidate/build identity",
+      "scenario and expected observable result",
+      "ordered steps and actual result",
+      "screenshots plus API or persisted-state assertions where applicable",
+      "failure evidence and reproducible repair handoff"
+    ],
+    "test_data": "Use isolated disposable test data and explicit test identities; do not infer login or tenant isolation from an already-authenticated preview.",
+    "freshness": "Changed candidate/build invalidates prior result freshness; preserve the previous evidence and revalidate before reuse.",
+    "repair": "Only execute a separately approved exact patch/scope/check contract within attempt/time/cost limits. Retest failed and impacted checks; reuse unrelated passes only with exact evidence bindings.",
+    "recovery": "Preserve failed/paused attempts and the last verified checkpoint. Resume only after revalidating candidate, authority and budgets; preview restoration is not database rollback.",
+    "authority": "This guidance does not create a running preview, execute tests, dispatch a repair or authorize publication. Missing executor/tooling/evidence remains incomplete."
   }
 }
