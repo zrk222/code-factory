@@ -198,6 +198,255 @@ def normalize_evidence_review(
     return result
 
 
+def _span_review_material(
+    root: Any, binding_request: Mapping[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Re-read a span request's bound local evidence before constructing review input."""
+    from pathlib import Path
+    from .analysis_evidence import (
+        SPAN_REQUEST_SCHEMA,
+        evaluate_spans,
+        validate_evaluation_bindings,
+    )
+
+    if (
+        not isinstance(binding_request, Mapping)
+        or set(binding_request) != {"schema", "binding_request", "spans"}
+        or binding_request.get("schema") != SPAN_REQUEST_SCHEMA
+    ):
+        raise JevClassificationError("span request schema or fields are invalid")
+    evaluation = evaluate_spans(Path(root), binding_request)
+    if evaluation.get("state") not in {"PASS", "FAIL", "INCOMPLETE"}:
+        raise JevClassificationError("span evaluation state is invalid")
+    bound = validate_evaluation_bindings(Path(root), binding_request["binding_request"])
+    if bound.get("state") != "BOUND_LOCAL_EVIDENCE":
+        raise JevClassificationError(
+            "span binding is incomplete; review is unavailable"
+        )
+    return evaluation, bound
+
+
+def build_span_review_input(
+    root: Any, binding_request: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Build advisory semantic review from revalidated trace artifacts, without provider calls."""
+    evaluation, bound = _span_review_material(root, binding_request)
+    candidate_sha = sha256(
+        json.dumps(bound["candidate"], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    evidence, claims, unknowns = [], [], []
+    for span in evaluation.get("spans", []):
+        span_id = span["span_id"]
+        for criterion in ("numeric", "context", "tool", "redundancy"):
+            fact = span[criterion]
+            evidence_id = f"span:{span_id}:{criterion}:observation"
+            claim_id = f"span:{span_id}:{criterion}:assessment"
+            evidence.append(
+                {
+                    "id": evidence_id,
+                    "kind": "deterministic_span_observation",
+                    "epistemic_status": "observed",
+                    "provenance": {
+                        "binding_sha256": evaluation.get("binding_sha256"),
+                        "evaluation_sha256": evaluation.get("evaluation_sha256"),
+                        "span_id": span_id,
+                        "criterion": criterion,
+                        "state": fact["state"],
+                        "code": fact["code"],
+                    },
+                }
+            )
+            claims.append(
+                {
+                    "id": claim_id,
+                    "statement": f"The deterministic {criterion} evaluator recorded {fact['state']} ({fact['code']}) for span {span_id}.",
+                    "supporting_evidence_ids": [evidence_id]
+                    if fact["state"] == "PASS"
+                    else [],
+                    "contradicting_evidence_ids": [evidence_id]
+                    if fact["state"] == "FAIL"
+                    else [],
+                    "status": "supported"
+                    if fact["state"] == "PASS"
+                    else "contradicted"
+                    if fact["state"] == "FAIL"
+                    else "unresolved",
+                }
+            )
+            if fact["state"] == "INCOMPLETE":
+                unknowns.append(
+                    {
+                        "id": f"unknown:{span_id}:{criterion}",
+                        "verification_action": f"Resolve the recorded {criterion} evidence gap for span {span_id}.",
+                    }
+                )
+    packet_core = {
+        "schema": "factory.review-evidence.v1",
+        "candidate_sha256": candidate_sha,
+        "receipt_sha256": evaluation.get("evaluation_sha256")
+        or evaluation.get("binding_sha256"),
+        "evidence": evidence,
+        "claims": claims,
+        "unknowns": unknowns,
+        "authority": "none",
+    }
+    packet_core["packet_sha256"] = _digest(packet_core)
+    base_request = build_evidence_review_input(
+        packet_core, candidate_sha256=candidate_sha
+    )
+    artifacts = bound["artifacts"]
+    model = artifacts["model"]["body"]
+    prompt = artifacts["prompt"]["body"]
+    rubric = artifacts["rubric"]["body"]
+    identity = {
+        "model": {
+            "id": model.get("id"),
+            "version": model.get("version"),
+            "artifact_sha256": artifacts["model"]["sha256"],
+        },
+        "prompt": {
+            "version": prompt.get("version"),
+            "artifact_sha256": artifacts["prompt"]["sha256"],
+        },
+        "rubric": {
+            "version": rubric.get("version"),
+            "artifact_sha256": artifacts["rubric"]["sha256"],
+        },
+        "source_hashes": dict(sorted(bound["source_hashes"].items())),
+    }
+    context = {
+        "evaluation_sha256": evaluation.get("evaluation_sha256"),
+        "binding_sha256": evaluation.get("binding_sha256"),
+        "identity": identity,
+        "review_context_sha256": base_request["context_sha256"],
+    }
+    if any(
+        not isinstance(value, str) or not value
+        for value in (
+            model.get("id"),
+            model.get("version"),
+            prompt.get("version"),
+            rubric.get("version"),
+        )
+    ):
+        raise JevClassificationError(
+            "bound model, prompt, and rubric versions are required"
+        )
+    return {
+        "schema": "factory.span-semantic-review-input.v1",
+        "review_request": base_request,
+        "evaluation": evaluation,
+        "identity": identity,
+        "rubric_version": rubric.get("version"),
+        "context": context,
+        "context_sha256": _digest(context),
+        "allowed_span_ids": [item["span_id"] for item in evaluation.get("spans", [])],
+        "authority": "none",
+        "provider_call": False,
+        "deterministic_failures_immutable": True,
+    }
+
+
+def normalize_span_review(
+    raw: Mapping[str, Any],
+    *,
+    request: Mapping[str, Any],
+    root: Any,
+    binding_request: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Normalize a closed review response while retaining deterministic states unchanged."""
+    expected = build_span_review_input(root, binding_request)
+    if not isinstance(request, Mapping) or dict(request) != expected:
+        raise JevClassificationError("span review request or context was altered")
+    if (
+        not isinstance(raw, Mapping)
+        or set(raw) != {"context_sha256", "review"}
+        or raw.get("context_sha256") != expected["context_sha256"]
+    ):
+        raise JevClassificationError("span review response context does not match")
+    normalized = normalize_evidence_review(
+        raw["review"], request=expected["review_request"]
+    )
+    normalized["schema"] = "factory.span-semantic-review-result.v1"
+    normalized["evaluation_sha256"] = expected["evaluation"].get("evaluation_sha256")
+    normalized["deterministic_state"] = expected["evaluation"].get("state")
+    normalized["semantic_correctness"] = "ADVISORY_REVIEW"
+    normalized["deterministic_failures_immutable"] = True
+    normalized["authority"] = "none"
+    normalized["provider_call"] = False
+    return normalized
+
+
+def build_failure_case_receipt(
+    evaluation: Mapping[str, Any], *, span_id: str
+) -> dict[str, Any]:
+    """Create a development-only deidentified failure case; repair remains pending independent verification."""
+    if (
+        not isinstance(evaluation, Mapping)
+        or evaluation.get("schema") != "factory.span-evaluation.v1"
+    ):
+        raise JevClassificationError("span evaluation is invalid")
+    evaluation_core = dict(evaluation)
+    recorded_hash = evaluation_core.pop("evaluation_sha256", None)
+    if recorded_hash != _digest(evaluation_core):
+        raise JevClassificationError("span evaluation digest is invalid")
+    span = next(
+        (
+            item
+            for item in evaluation.get("spans", [])
+            if item.get("span_id") == span_id
+        ),
+        None,
+    )
+    if span is None:
+        raise JevClassificationError("failure case span is unavailable")
+    failed = [
+        name
+        for name in ("numeric", "context", "tool", "redundancy")
+        if span[name].get("state") == "FAIL"
+    ]
+    if not failed:
+        raise JevClassificationError(
+            "failure case requires a deterministic failed criterion"
+        )
+    core = {
+        "schema": "factory.span-failure-case.v1",
+        "evaluation_sha256": evaluation.get("evaluation_sha256"),
+        "binding_sha256": evaluation.get("binding_sha256"),
+        "span_ref": _digest({"span_id": span_id}),
+        "failed_criteria": [
+            {
+                "criterion": name,
+                "code": span[name].get("code"),
+                "evidence_ref": _digest(
+                    {
+                        "evaluation_sha256": evaluation.get("evaluation_sha256"),
+                        "span_id": span_id,
+                        "criterion": name,
+                    }
+                ),
+            }
+            for name in failed
+        ],
+        "assignment": {
+            "split": "development",
+            "development_only": True,
+            "holdout_eligible": False,
+        },
+        "repair_verification": {
+            "state": "PENDING",
+            "independent_reviewer_required": True,
+            "before_evidence_sha256": None,
+            "after_evidence_sha256": None,
+            "affected_checks": "required",
+            "source_promotion_authorized": False,
+        },
+        "authority": "none",
+    }
+    core["receipt_sha256"] = _digest(core)
+    return core
+
+
 def _normalize_claim_assessments(
     results: list[Any], validated: Mapping[str, Any], request: Mapping[str, Any]
 ) -> list[dict[str, Any]]:

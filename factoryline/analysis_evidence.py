@@ -9,12 +9,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from hashlib import sha256
 import json
+import math
+import os
 from pathlib import Path
 import re
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from .runtime_audit_common import canonical_bytes
+from .runtime_audit_common import canonical_bytes, _stable_read_identity
+from .deep_audit_io import local_file, strict_json
+from .audit_trace import verify_audit_trace
+from .assembly_process import run_cli_detailed
 
 
 SCHEMA = "factory.analysis-evidence.v1"
@@ -27,12 +32,800 @@ _PROVIDER_NAMES = {
 REVIEW_EVIDENCE_SCHEMA = "factory.review-evidence.v1"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _REVIEW_LIMIT = 20_000
+SPAN_EVALUATION_SCHEMA = "factory.span-evaluation.v1"
+SPAN_BINDING_SCHEMA = "factory.span-evaluation.binding-request.v1"
+SPAN_REQUEST_SCHEMA = "factory.span-evaluation.request.v1"
+_SPAN_ROLES = {"tool", "model", "prompt", "rubric", "dataset", "policy"}
+_SPAN_OPTIONAL_ROLES = {
+    "baseline",
+    "candidate_cohort",
+    "regression_policy",
+    "calibration_dataset",
+    "assignments",
+    "annotations",
+    "judgments",
+    "adjudications",
+    "sampling",
+    "rollout",
+    "recovery",
+    "deployment_control",
+    "killswitch_control",
+    "rollback_control",
+}
+_SPAN_ARTIFACT_LIMIT = 2_000_000
+_SPAN_TOTAL_LIMIT = 20_000_000
+
+
+def _span_incomplete(code: str, detail: str) -> dict[str, Any]:
+    return {"state": "INCOMPLETE", "errors": [{"code": code, "detail": detail}]}
+
+
+def _span_read(
+    root: Path, descriptor: object, seen: set[str], *, parse: bool = True
+) -> tuple[str, str, Any, int]:
+    if not isinstance(descriptor, Mapping) or set(descriptor) != {"path", "sha256"}:
+        raise AnalysisEvidenceError("TRACE_UNBOUND", "artifact descriptor is invalid")
+    path = local_file(root, descriptor["path"])
+    relative = path.relative_to(root.resolve()).as_posix()
+    if relative in seen:
+        raise AnalysisEvidenceError("TRACE_UNBOUND", "artifact paths must be unique")
+    size = path.stat().st_size
+    if size > _SPAN_ARTIFACT_LIMIT:
+        raise AnalysisEvidenceError("TRACE_UNBOUND", "artifact exceeds 2000000 bytes")
+    with path.open("rb") as stream:
+        before = path.stat()
+        opened = os.fstat(stream.fileno())
+        raw = stream.read(_SPAN_ARTIFACT_LIMIT + 1)
+        after = os.fstat(stream.fileno())
+    if len(raw) > _SPAN_ARTIFACT_LIMIT or not _stable_read_identity(
+        before, opened, after, path.stat(), windows=os.name == "nt"
+    ):
+        raise AnalysisEvidenceError(
+            "TRACE_UNBOUND", "artifact changed or exceeded its byte bound"
+        )
+    if sha256(raw).hexdigest() != descriptor["sha256"]:
+        raise AnalysisEvidenceError("TRACE_UNBOUND", "artifact hash is stale")
+    body = strict_json(raw) if parse else None
+    return relative, sha256(raw).hexdigest(), body, size
+
+
+def _span_binding_rows(workspace: Path, request: Mapping[str, Any]) -> dict[str, Any]:
+    artifacts, sources = request["artifacts"], request["sources"]
+    if (
+        not isinstance(artifacts, Mapping)
+        or not _SPAN_ROLES <= set(artifacts)
+        or not set(artifacts) <= _SPAN_ROLES | _SPAN_OPTIONAL_ROLES
+    ):
+        raise AnalysisEvidenceError(
+            "TRACE_UNBOUND", "artifact roles are missing or unknown"
+        )
+    if not isinstance(sources, list) or not 1 <= len(sources) <= 20:
+        raise AnalysisEvidenceError(
+            "TRACE_UNBOUND", "one to twenty source descriptors required"
+        )
+    entries = [
+        ("trace", request["trace"], True),
+        ("candidate", request["candidate"], True),
+    ]
+    entries.extend((f"source:{i}", item, False) for i, item in enumerate(sources))
+    entries.extend((role, item, True) for role, item in artifacts.items())
+    rows, seen, total = {}, set(), 0
+    for role, descriptor, parse in entries:
+        path, digest, body, size = _span_read(workspace, descriptor, seen, parse=parse)
+        seen.add(path)
+        total += size
+        if total > _SPAN_TOTAL_LIMIT:
+            raise AnalysisEvidenceError(
+                "TRACE_UNBOUND", "unique evidence exceeds 20000000 bytes"
+            )
+        rows[role] = {"path": path, "sha256": digest, "body": body}
+    return rows
+
+
+def _verify_span_identity(
+    workspace: Path, rows: Mapping[str, Any]
+) -> tuple[dict, dict[str, str]]:
+    trace, candidate = rows["trace"]["body"], rows["candidate"]["body"]
+    if not verify_audit_trace(trace)["valid"] or candidate != trace["candidate"]:
+        raise AnalysisEvidenceError(
+            "TRACE_UNBOUND", "trace or candidate binding is invalid"
+        )
+    sources = {
+        row["path"]: row["sha256"]
+        for role, row in rows.items()
+        if role.startswith("source:")
+    }
+    if sources != trace["changed_files"]:
+        raise AnalysisEvidenceError(
+            "TRACE_UNBOUND", "source bytes do not match verified trace"
+        )
+    result = run_cli_detailed(
+        "git", ["rev-parse", "HEAD"], workspace, timeout=5, max_stream_bytes=4096
+    )
+    if not (
+        result.get("ok")
+        and result.get("cleanup_confirmed")
+        and result.get("streams_closed")
+        and result.get("stdout", b"").decode(errors="replace").strip()
+        == candidate.get("commit")
+    ):
+        raise AnalysisEvidenceError(
+            "TRACE_UNBOUND", "current Git commit differs from bound candidate"
+        )
+    return trace, sources
+
+
+def _validate_span_versions(
+    rows: Mapping[str, Any], applicability: Mapping[str, Any]
+) -> None:
+    for role in _SPAN_ROLES - {"model"}:
+        body = rows[role]["body"]
+        if not _span_versioned(body):
+            raise AnalysisEvidenceError(
+                "TRACE_UNBOUND", f"{role} artifact needs a version"
+            )
+    model = rows["model"]["body"]
+    if applicability["model"] == "applicable":
+        valid = isinstance(model, Mapping) and all(
+            isinstance(model.get(key), str) and model[key].strip()
+            for key in ("id", "version")
+        )
+    else:
+        valid = (
+            isinstance(model, Mapping)
+            and set(model) == {"state", "rationale"}
+            and model.get("state") == "NOT_APPLICABLE"
+            and isinstance(model.get("rationale"), str)
+            and bool(model["rationale"].strip())
+        )
+    if not valid:
+        raise AnalysisEvidenceError(
+            "TRACE_UNBOUND", "model identity or reviewed N/A is invalid"
+        )
+    for role, row in rows.items():
+        body = row["body"]
+        if role in _SPAN_OPTIONAL_ROLES and not _span_versioned(body):
+            raise AnalysisEvidenceError(
+                "TRACE_UNBOUND", f"{role} artifact needs a version"
+            )
+
+
+def _span_versioned(body: object) -> bool:
+    if not isinstance(body, Mapping):
+        return False
+    version = body.get("version")
+    schema = body.get("schema")
+    return (isinstance(version, str) and bool(version.strip())) or (
+        isinstance(schema, str)
+        and re.fullmatch(r"factory\.[a-z0-9.-]+\.v[1-9][0-9]*", schema) is not None
+    )
+
+
+def validate_evaluation_bindings(
+    root: Path, request: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Re-read hash-bound local artifacts; integrity is not producer authentication."""
+    try:
+        return _validate_evaluation_bindings(root, request)
+    except (AnalysisEvidenceError, OSError, ValueError, TypeError, KeyError) as exc:
+        code = getattr(exc, "code", "TRACE_UNBOUND")
+        return _span_incomplete(
+            code,
+            "required trace, candidate, source, or policy evidence is unavailable or stale",
+        )
+
+
+def _validate_evaluation_bindings(
+    root: Path, request: Mapping[str, Any]
+) -> dict[str, Any]:
+    if (
+        not isinstance(request, Mapping)
+        or set(request)
+        != {"schema", "trace", "candidate", "sources", "artifacts", "applicability"}
+        or request.get("schema") != SPAN_BINDING_SCHEMA
+    ):
+        raise AnalysisEvidenceError(
+            "TRACE_UNBOUND", "binding request schema or fields are invalid"
+        )
+    workspace = Path(root).resolve()
+    rows = _span_binding_rows(workspace, request)
+    trace, source_hashes = _verify_span_identity(workspace, rows)
+    candidate = rows["candidate"]["body"]
+    artifacts = request["artifacts"]
+    applicability = request["applicability"]
+    if not isinstance(applicability, Mapping) or set(applicability) != {"model"}:
+        raise AnalysisEvidenceError(
+            "TRACE_UNBOUND", "model applicability declaration required"
+        )
+    if applicability["model"] not in {"applicable", "not_applicable"}:
+        raise AnalysisEvidenceError(
+            "TRACE_UNBOUND",
+            "non-model applicability requires a separately reviewed declaration",
+        )
+    _validate_span_versions(rows, applicability)
+    return {
+        "state": "BOUND_LOCAL_EVIDENCE",
+        "errors": [],
+        "trace": trace,
+        "candidate": candidate,
+        "source_hashes": source_hashes,
+        "artifacts": {role: value for role, value in rows.items() if role in artifacts},
+        "binding_sha256": sha256(
+            canonical_bytes(
+                {key: value for key, value in request.items() if key != "artifacts"}
+            )
+            + canonical_bytes({role: row["sha256"] for role, row in rows.items()})
+        ).hexdigest(),
+        "authority": "none",
+    }
+
+
+def _span_numeric(
+    span: Mapping[str, Any], dataset: Mapping[str, Any]
+) -> dict[str, Any]:
+    fact = dataset.get("numeric_facts", {}).get(span.get("span_id"))
+    claim = span.get("numeric")
+    if not isinstance(fact, Mapping) or not isinstance(claim, Mapping):
+        return {
+            "state": "INCOMPLETE",
+            "code": "NUMERIC_UNGROUNDED",
+            "reason": "bound numeric fact or span claim is missing",
+        }
+    keys = {"value", "unit", "numerator", "denominator", "precision"}
+    if set(fact) != keys or set(claim) != keys:
+        return {
+            "state": "FAIL",
+            "code": "NUMERIC_UNGROUNDED",
+            "reason": "numeric schema differs from the closed contract",
+        }
+    values = [
+        item[key]
+        for item in (fact, claim)
+        for key in ("value", "numerator", "denominator")
+    ]
+    if (
+        any(
+            isinstance(v, bool)
+            or not isinstance(v, (int, float))
+            or not math.isfinite(v)
+            for v in values
+        )
+        or fact["denominator"] == 0
+        or claim["denominator"] == 0
+        or not isinstance(fact["unit"], str)
+        or not 1 <= len(fact["unit"]) <= 80
+    ):
+        return {
+            "state": "FAIL",
+            "code": "NUMERIC_UNGROUNDED",
+            "reason": "numeric values must be finite and denominator nonzero",
+        }
+    precision = fact["precision"]
+    if (
+        type(precision) is not int
+        or not 0 <= precision <= 18
+        or claim["precision"] != precision
+    ):
+        return {
+            "state": "FAIL",
+            "code": "NUMERIC_UNGROUNDED",
+            "reason": "declared precision is invalid or mismatched",
+        }
+    from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
+
+    try:
+        quantum = Decimal(1).scaleb(-precision)
+        expected = (
+            Decimal(str(fact["numerator"])) / Decimal(str(fact["denominator"]))
+        ).quantize(quantum, rounding=ROUND_HALF_EVEN)
+        matches = (
+            Decimal(str(fact["value"])).quantize(quantum)
+            == expected
+            == Decimal(str(claim["value"])).quantize(quantum)
+            and claim["unit"] == fact["unit"]
+            and claim["numerator"] == fact["numerator"]
+            and claim["denominator"] == fact["denominator"]
+        )
+    except (InvalidOperation, ZeroDivisionError, OverflowError):
+        matches = False
+    return {
+        "state": "PASS" if matches else "FAIL",
+        "code": "NUMERIC_GROUNDED" if matches else "NUMERIC_UNGROUNDED",
+        "reason": "numeric claim matches bound local reference"
+        if matches
+        else "value, unit, denominator, or precision differs from bound reference",
+    }
+
+
+def _span_context(
+    span: Mapping[str, Any],
+    rubric: Mapping[str, Any],
+    dataset: Mapping[str, Any],
+    bound: Mapping[str, Any],
+) -> dict[str, Any]:
+    required = rubric.get("required_context_ids")
+    refs = span.get("context_refs")
+    if (
+        not isinstance(required, list)
+        or not all(isinstance(item, str) for item in required)
+        or not isinstance(refs, list)
+        or not all(isinstance(item, str) for item in refs)
+    ):
+        return {
+            "state": "INCOMPLETE",
+            "code": "CONTEXT_INCOMPLETE",
+            "omitted": [],
+            "contradicted": [],
+        }
+    evidence = dataset.get("context_evidence")
+    if not isinstance(evidence, Mapping):
+        return {
+            "state": "INCOMPLETE",
+            "code": "CONTEXT_INCOMPLETE",
+            "omitted": list(required),
+            "contradicted": [],
+        }
+    valid = set()
+    bound_hashes = {
+        **bound["source_hashes"],
+        **{item["path"]: item["sha256"] for item in bound["artifacts"].values()},
+    }
+    for key, item in evidence.items():
+        if (
+            isinstance(item, Mapping)
+            and set(item) == {"path", "sha256"}
+            and isinstance(item["path"], str)
+            and _is_sha(item["sha256"])
+            and bound_hashes.get(item["path"]) == item["sha256"]
+        ):
+            valid.add(key)
+    omitted = sorted(set(required) - set(refs))
+    omitted.extend(sorted(set(refs) - valid))
+    contradicted_raw = span.get("contradicted_context_ids", [])
+    if not isinstance(contradicted_raw, list) or not all(
+        isinstance(item, str) for item in contradicted_raw
+    ):
+        return {
+            "state": "INCOMPLETE",
+            "code": "CONTEXT_INCOMPLETE",
+            "omitted": omitted,
+            "contradicted": [],
+        }
+    contradicted = sorted(set(contradicted_raw) & set(required))
+    state = "FAIL" if contradicted else "INCOMPLETE" if omitted else "PASS"
+    return {
+        "state": state,
+        "code": "CONTEXT_INCOMPLETE" if state != "PASS" else "CONTEXT_COVERED",
+        "omitted": omitted,
+        "contradicted": contradicted,
+        "semantic_correctness": "UNKNOWN",
+    }
+
+
+def _span_tool(span: Mapping[str, Any], tools: Mapping[str, Any]) -> dict[str, Any]:
+    contracts = tools.get("tools", {})
+    tool = span.get("tool")
+    contract = (
+        contracts.get(tool.get("name"))
+        if isinstance(tool, Mapping) and isinstance(contracts, Mapping)
+        else None
+    )
+    result = tools.get("results", {}).get(span.get("span_id"))
+    if not isinstance(contract, Mapping) or not isinstance(result, Mapping):
+        return {
+            "state": "INCOMPLETE",
+            "code": "TOOL_SILENT_FAILURE",
+            "reason": "bound tool contract/result evidence missing",
+        }
+    if (
+        result.get("status") not in {"SUCCESS", "ERROR"}
+        or type(result.get("result_present")) is not bool
+        or type(result.get("output_bytes")) is not int
+        or result["output_bytes"] < 0
+        or type(contract.get("allow_empty")) is not bool
+    ):
+        return {
+            "state": "INCOMPLETE",
+            "code": "TOOL_SILENT_FAILURE",
+            "reason": "bound tool result or empty-output contract is invalid",
+        }
+    required = (
+        contract.get("result_required") is True
+        or contract.get("state_required") is True
+    )
+    empty = result.get("output_bytes") == 0
+    silent = required and (
+        result.get("result_present") is not True
+        or (
+            contract.get("state_required") is True
+            and result.get("observed_state") is None
+        )
+    )
+    denied_empty = empty and contract.get("allow_empty") is not True
+    failed = result.get("status") == "SUCCESS" and (silent or denied_empty)
+    if result["status"] == "ERROR":
+        return {
+            "state": "PASS",
+            "code": "TOOL_ERROR_OBSERVED",
+            "reason": "tool failure is explicitly present in bound result evidence",
+        }
+    return {
+        "state": "FAIL" if failed else "PASS",
+        "code": "TOOL_SILENT_FAILURE" if failed else "TOOL_RESULT_OBSERVED",
+        "reason": "successful tool call omitted required output/state"
+        if failed
+        else "bound tool contract and result agree",
+    }
+
+
+def _span_redundancy(
+    span: Mapping[str, Any],
+    earlier: list[Mapping[str, Any]],
+    tools: Mapping[str, Any],
+    candidate_sha256: str,
+) -> dict[str, Any]:
+    call = span.get("call")
+    if not isinstance(call, Mapping):
+        return {
+            "state": "INCOMPLETE",
+            "code": "REDUNDANCY_UNKNOWN",
+            "reason": "call facts missing",
+        }
+    if (
+        set(call)
+        != {
+            "tool",
+            "args_sha256",
+            "state_sha256",
+            "candidate_sha256",
+            "freshness_sha256",
+        }
+        or call.get("candidate_sha256") != candidate_sha256
+        or not all(
+            _is_sha(call.get(field))
+            for field in ("args_sha256", "state_sha256", "freshness_sha256")
+        )
+    ):
+        return {
+            "state": "INCOMPLETE",
+            "code": "REDUNDANCY_UNKNOWN",
+            "reason": "call state or candidate binding is invalid",
+        }
+    for prior in earlier:
+        old = prior.get("call")
+        if (
+            not isinstance(old, Mapping)
+            or old.get("tool") != call.get("tool")
+            or old.get("args_sha256") != call.get("args_sha256")
+        ):
+            continue
+        if (
+            old.get("state_sha256") == call.get("state_sha256")
+            and old.get("candidate_sha256") == call.get("candidate_sha256")
+            and old.get("freshness_sha256") == call.get("freshness_sha256")
+        ):
+            exemptions = tools.get("exemptions", {})
+            exemption = (
+                exemptions.get(span.get("span_id"))
+                if isinstance(exemptions, Mapping)
+                else None
+            )
+            if exemption is not None:
+                return {
+                    "state": "INCOMPLETE",
+                    "code": "REDUNDANCY_UNKNOWN",
+                    "reason": "retry or revalidation exemption is not independently verified",
+                }
+            return {
+                "state": "FAIL",
+                "code": "TOOL_REDUNDANT",
+                "reason": "identical tool and arguments repeated under unchanged state and freshness",
+            }
+    return {
+        "state": "PASS",
+        "code": "TOOL_NOT_REDUNDANT",
+        "reason": "no matching unchanged prior call",
+    }
+
+
+def evaluate_spans(root: Path, request: Mapping[str, Any]) -> dict[str, Any]:
+    """Contain malformed local facts without disclosing artifact contents."""
+    try:
+        if len(canonical_bytes(request)) > _SPAN_ARTIFACT_LIMIT:
+            return _span_incomplete("TRACE_UNBOUND", "request exceeds byte bound")
+        return _evaluate_spans(root, request)
+    except (
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+        OverflowError,
+        RecursionError,
+    ):
+        return _span_incomplete(
+            "TRACE_UNBOUND", "span facts violate the closed contract"
+        )
+
+
+def _evaluate_spans(root: Path, request: Mapping[str, Any]) -> dict[str, Any]:
+    """Evaluate bounded local span facts; semantic correctness and producer identity remain unknown."""
+    if (
+        not isinstance(request, Mapping)
+        or set(request) != {"schema", "binding_request", "spans"}
+        or request.get("schema") != SPAN_REQUEST_SCHEMA
+    ):
+        return _span_incomplete(
+            "TRACE_UNBOUND", "span request schema or fields are invalid"
+        )
+    bound = validate_evaluation_bindings(root, request["binding_request"])
+    if bound["state"] != "BOUND_LOCAL_EVIDENCE":
+        return {
+            **bound,
+            "schema": SPAN_EVALUATION_SCHEMA,
+            "criteria": [],
+            "authority": "none",
+        }
+    spans = request["spans"]
+    if (
+        not isinstance(spans, list)
+        or not 1 <= len(spans) <= 10_000
+        or len({s.get("span_id") for s in spans if isinstance(s, Mapping)})
+        != len(spans)
+    ):
+        return _span_incomplete(
+            "TRACE_UNBOUND", "spans exceed bounds or contain invalid/duplicate IDs"
+        )
+    artifacts = bound["artifacts"]
+    rows = []
+    previous_calls = {}
+    for index, span in enumerate(spans):
+        if not isinstance(span, Mapping) or not isinstance(span.get("span_id"), str):
+            return _span_incomplete("TRACE_UNBOUND", "span record is invalid")
+        if set(span) != {
+            "span_id",
+            "numeric",
+            "context_refs",
+            "contradicted_context_ids",
+            "tool",
+            "call",
+        }:
+            return _span_incomplete(
+                "TRACE_UNBOUND", "span has unknown or missing fields"
+            )
+        candidate_sha = sha256(canonical_bytes(bound["candidate"])).hexdigest()
+        call_key = canonical_bytes(span.get("call"))
+        prior = previous_calls.get(call_key)
+        rows.append(
+            {
+                "span_id": span["span_id"],
+                "numeric": _span_numeric(span, artifacts["dataset"]["body"]),
+                "context": _span_context(
+                    span,
+                    artifacts["rubric"]["body"],
+                    artifacts["dataset"]["body"],
+                    bound,
+                ),
+                "tool": _span_tool(span, artifacts["tool"]["body"]),
+                "redundancy": _span_redundancy(
+                    span,
+                    [prior] if prior else [],
+                    artifacts["tool"]["body"],
+                    candidate_sha,
+                ),
+            }
+        )
+        previous_calls[call_key] = span
+    states = [
+        criterion["state"]
+        for row in rows
+        for criterion in (
+            row["numeric"],
+            row["context"],
+            row["tool"],
+            row["redundancy"],
+        )
+    ]
+    overall = (
+        "FAIL"
+        if "FAIL" in states
+        else "INCOMPLETE"
+        if "INCOMPLETE" in states
+        else "PASS"
+    )
+    core = {
+        "schema": SPAN_EVALUATION_SCHEMA,
+        "state": overall,
+        "binding_sha256": bound["binding_sha256"],
+        "trace_sha256": bound["trace"]["trace_sha256"],
+        "candidate": bound["candidate"],
+        "artifact_hashes": {role: item["sha256"] for role, item in artifacts.items()},
+        "provenance": "BOUND_LOCAL_EVIDENCE",
+        "semantic_correctness": "UNKNOWN_PENDING_JEV",
+        "spans": rows,
+        "authority": "none",
+        "next_actions": [
+            "Obtain semantic review separately; local artifact integrity does not authenticate producer identity."
+        ],
+    }
+    return {**core, "evaluation_sha256": sha256(canonical_bytes(core)).hexdigest()}
+
+
+def evaluate_spans_file(
+    root: Path, request_path: Path, expected_sha256: str
+) -> dict[str, Any]:
+    """Read a bounded workspace request by exact SHA-256, then evaluate its local evidence."""
+    try:
+        workspace = Path(root).resolve()
+        supplied = Path(request_path)
+        relative = (
+            supplied.resolve().relative_to(workspace)
+            if supplied.is_absolute()
+            else supplied
+        )
+        path = local_file(workspace, relative.as_posix())
+        if path.stat().st_size > _SPAN_ARTIFACT_LIMIT:
+            raise AnalysisEvidenceError(
+                "TRACE_UNBOUND", "span request exceeds 2000000 bytes"
+            )
+        _, _, body, _ = _span_read(
+            workspace,
+            {"path": path.relative_to(workspace).as_posix(), "sha256": expected_sha256},
+            set(),
+        )
+        return evaluate_spans(workspace, body)
+    except (AnalysisEvidenceError, OSError, ValueError, TypeError) as exc:
+        return _span_incomplete(
+            getattr(exc, "code", "TRACE_UNBOUND"),
+            "span request could not be read or verified",
+        )
 
 
 class AnalysisEvidenceError(ValueError):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
+
+
+def evaluate_trace_file(
+    root: Path, request_path: Path, expected_sha256: str, *, kind: str = "spans"
+) -> dict[str, Any]:
+    """Run one local evaluator on exact request bytes; no provider or deployment effects."""
+    from .operations import (
+        evaluate_judge_calibration,
+        evaluate_trace_sampling,
+        evaluate_rollout_evidence,
+    )
+    from .runtime_audit_performance import evaluate_trace_regression
+
+    evaluators = {
+        "spans": evaluate_spans,
+        "calibration": evaluate_judge_calibration,
+        "sampling": evaluate_trace_sampling,
+        "regression": evaluate_trace_regression,
+        "rollout": evaluate_rollout_evidence,
+    }
+    if kind not in evaluators:
+        return _span_incomplete("TRACE_UNBOUND", "unknown evaluator kind")
+    try:
+        workspace = Path(root).resolve()
+        path = Path(request_path)
+        relative = path.relative_to(workspace) if path.is_absolute() else path
+        _, _, request, _ = _span_read(
+            workspace, {"path": relative.as_posix(), "sha256": expected_sha256}, set()
+        )
+        return evaluators[kind](workspace, request)
+    except (ValueError, TypeError, KeyError, OSError, AttributeError):
+        return _span_incomplete(
+            "TRACE_UNBOUND", "request or evaluator contract is invalid"
+        )
+
+
+def trace_evaluation_status(root: Path) -> dict[str, Any]:
+    """Project a hash-checked saved result only while its request bindings remain current."""
+    result = {
+        "schema": "factory.trace-evaluation-status.v1",
+        "state": "MISSING",
+        "authority": "none",
+        "metrics": {},
+        "kind": None,
+        "claim_boundary": "Local recorded evidence; producer identity and semantic accuracy are not authenticated.",
+        "next_actions": [
+            "Run the relevant evaluator and save a bound request/result manifest."
+        ],
+    }
+    try:
+        workspace = Path(root).resolve()
+        path = local_file(workspace, ".factory/trace-evaluation/latest.json")
+        with path.open("rb") as stream:
+            before = path.stat()
+            opened = os.fstat(stream.fileno())
+            raw = stream.read(4097)
+            after = os.fstat(stream.fileno())
+        if len(raw) > 4096 or not _stable_read_identity(
+            before, opened, after, path.stat(), windows=os.name == "nt"
+        ):
+            raise ValueError("manifest changed or exceeds bound")
+        manifest = strict_json(raw)
+        if (
+            set(manifest) != {"schema", "kind", "request", "receipt"}
+            or manifest["schema"] != "factory.trace-evaluation-manifest.v1"
+        ):
+            raise ValueError("manifest fields differ")
+        _, _, request, _ = _span_read(workspace, manifest["request"], set())
+        _, _, receipt, _ = _span_read(workspace, manifest["receipt"], set())
+        binding = request["binding_request"] if manifest["kind"] == "spans" else request
+        current = validate_evaluation_bindings(workspace, binding)
+        if (
+            current["state"] != "BOUND_LOCAL_EVIDENCE"
+            or receipt.get("binding_sha256") != current["binding_sha256"]
+        ):
+            raise ValueError("saved evaluation is stale")
+        _verify_trace_result_hash(receipt, manifest["kind"])
+        return {
+            **result,
+            "state": receipt["state"],
+            "kind": manifest["kind"],
+            "binding_sha256": current["binding_sha256"],
+            "metrics": _trace_status_metrics(receipt),
+            "next_actions": receipt.get("next_actions", result["next_actions"]),
+        }
+    except (ValueError, TypeError, KeyError, OSError, AttributeError):
+        return {
+            **result,
+            "state": "INCOMPLETE"
+            if (Path(root) / ".factory/trace-evaluation/latest.json").exists()
+            else "MISSING",
+        }
+
+
+def _verify_trace_result_hash(receipt: dict[str, Any], kind: str) -> None:
+    schemas = {
+        "spans": SPAN_EVALUATION_SCHEMA,
+        "calibration": "factory.judge-calibration.v1",
+        "sampling": "factory.trace-sampling.v1",
+        "regression": "factory.trace-regression.v1",
+        "rollout": "factory.rollout-evaluation.v1",
+    }
+    if receipt.get("schema") != schemas.get(kind) or kind not in schemas:
+        raise ValueError("result kind mismatch")
+    field = (
+        "evaluation_sha256" if kind in {"spans", "calibration"} else "receipt_sha256"
+    )
+    if (
+        receipt.get(field)
+        != sha256(
+            canonical_bytes(
+                {key: value for key, value in receipt.items() if key != field}
+            )
+        ).hexdigest()
+    ):
+        raise ValueError("result contents differ from receipt hash")
+
+
+def _trace_status_metrics(receipt: dict[str, Any]) -> dict[str, Any]:
+    counts = {
+        key: receipt.get(key)
+        for key in (
+            "eligible",
+            "selected",
+            "scored",
+            "unscored",
+            "actual_cost_usd",
+            "actual_latency_ms",
+        )
+    }
+    counts["span_count"] = len(receipt.get("spans", []))
+    counts["failed_criteria"] = sum(
+        row[key]["state"] == "FAIL"
+        for row in receipt.get("spans", [])
+        for key in ("numeric", "context", "tool", "redundancy")
+    )
+    counts["regression_breaches"] = sum(
+        row["state"] == "FAIL" for row in receipt.get("observations", [])
+    )
+    counts["per_category"] = receipt.get("per_category", {})
+    counts["independence"] = receipt.get("independence", "UNVERIFIED")
+    return counts
 
 
 def _canonical(value: object) -> bytes:

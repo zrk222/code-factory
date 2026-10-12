@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -10,9 +12,220 @@ from factoryline.analysis_evidence import (
     assess_review_reuse,
     build_execution_review_evidence,
     build_review_evidence,
+    evaluate_spans,
+    evaluate_spans_file,
+    validate_evaluation_bindings,
     parse_analysis_sarif,
     validate_review_evidence,
 )
+from factoryline.audit_trace import build_audit_trace
+
+
+def _span_fixture(root: Path) -> tuple[dict, list[dict]]:
+    (root / "src").mkdir()
+    source = root / "src" / "sample.py"
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    for args in (
+        ["init", "--quiet"],
+        ["config", "user.name", "Trace Test"],
+        ["config", "user.email", "trace@example.invalid"],
+        ["add", "src/sample.py"],
+        ["commit", "--quiet", "-m", "fixture"],
+    ):
+        subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+    trace = build_audit_trace(
+        root,
+        changed_paths=["src/sample.py"],
+        lane_states={"tests": "PASS"},
+        steps=[
+            {
+                "step_id": "bound-source",
+                "input": "sha256:" + hashlib.sha256(b"input").hexdigest(),
+                "guard": "SOURCE_BOUND",
+                "decision": "RECORD",
+                "state": "PASS",
+                "source_paths": ["src/sample.py"],
+            }
+        ],
+    )
+    trace_path = root / "trace.json"
+    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    candidate_path = root / "candidate.json"
+    candidate_path.write_text(json.dumps(trace["candidate"]), encoding="utf-8")
+    artifacts = {
+        "tool": {
+            "version": "1",
+            "tools": {
+                "search": {
+                    "result_required": True,
+                    "state_required": True,
+                    "allow_empty": False,
+                }
+            },
+            "results": {
+                "s1": {
+                    "status": "SUCCESS",
+                    "result_present": True,
+                    "output_bytes": 2,
+                    "observed_state": "ok",
+                }
+            },
+        },
+        "model": {"id": "review-model", "version": "1"},
+        "prompt": {"version": "1", "template": "review"},
+        "rubric": {"required_context_ids": ["goal", "tool"], "version": "1"},
+        "dataset": {
+            "version": "1",
+            "context_evidence": {
+                "goal": {
+                    "path": "src/sample.py",
+                    "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                },
+                "tool": {
+                    "path": "src/sample.py",
+                    "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                },
+            },
+            "numeric_facts": {
+                "s1": {
+                    "value": 0.5,
+                    "unit": "ratio",
+                    "numerator": 1,
+                    "denominator": 2,
+                    "precision": 3,
+                }
+            },
+        },
+        "policy": {"version": "1"},
+    }
+    paths = {}
+    for role, body in artifacts.items():
+        path = root / f"{role}.json"
+        path.write_text(json.dumps(body), encoding="utf-8")
+        raw = path.read_bytes()
+        paths[role] = {"path": path.name, "sha256": hashlib.sha256(raw).hexdigest()}
+    source_raw = source.read_bytes()
+    binding = {
+        "schema": "factory.span-evaluation.binding-request.v1",
+        "trace": {
+            "path": "trace.json",
+            "sha256": hashlib.sha256(trace_path.read_bytes()).hexdigest(),
+        },
+        "candidate": {
+            "path": "candidate.json",
+            "sha256": hashlib.sha256(candidate_path.read_bytes()).hexdigest(),
+        },
+        "sources": [
+            {"path": "src/sample.py", "sha256": hashlib.sha256(source_raw).hexdigest()}
+        ],
+        "artifacts": paths,
+        "applicability": {"model": "applicable"},
+    }
+    candidate_sha = hashlib.sha256(
+        json.dumps(trace["candidate"], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    spans = [
+        {
+            "span_id": "s1",
+            "numeric": {
+                "value": 0.5,
+                "unit": "ratio",
+                "numerator": 1,
+                "denominator": 2,
+                "precision": 3,
+            },
+            "context_refs": ["goal", "tool"],
+            "contradicted_context_ids": [],
+            "tool": {"name": "search"},
+            "call": {
+                "tool": "search",
+                "args_sha256": "a" * 64,
+                "state_sha256": "b" * 64,
+                "candidate_sha256": candidate_sha,
+                "freshness_sha256": "d" * 64,
+            },
+        }
+    ]
+    return {
+        "schema": "factory.span-evaluation.request.v1",
+        "binding_request": binding,
+        "spans": spans,
+    }, artifacts
+
+
+def test_span_evaluation_binds_artifacts_and_returns_four_closed_criteria(
+    tmp_path: Path,
+) -> None:
+    request, _ = _span_fixture(tmp_path)
+    bound = validate_evaluation_bindings(tmp_path, request["binding_request"])
+    assert bound["state"] == "BOUND_LOCAL_EVIDENCE"
+    result = evaluate_spans(tmp_path, request)
+    assert result["schema"] == "factory.span-evaluation.v1"
+    assert result["provenance"] == "BOUND_LOCAL_EVIDENCE"
+    assert result["semantic_correctness"] == "UNKNOWN_PENDING_JEV"
+    assert [
+        result["spans"][0][key]["state"]
+        for key in ("numeric", "context", "tool", "redundancy")
+    ] == ["PASS"] * 4
+    assert result["authority"] == "none"
+
+
+@pytest.mark.parametrize(
+    "mutation,code",
+    [
+        ("numeric", "NUMERIC_UNGROUNDED"),
+        ("context", "CONTEXT_INCOMPLETE"),
+        ("silent", "TOOL_SILENT_FAILURE"),
+        ("redundant", "TOOL_REDUNDANT"),
+    ],
+)
+def test_span_evaluation_detects_grounding_context_silence_and_redundancy(
+    tmp_path: Path, mutation: str, code: str
+) -> None:
+    request, _ = _span_fixture(tmp_path)
+    span = request["spans"][0]
+    if mutation == "numeric":
+        span["numeric"]["denominator"] = 0
+    elif mutation == "context":
+        span["context_refs"].remove("tool")
+    elif mutation == "silent":
+        tool = json.loads((tmp_path / "tool.json").read_text(encoding="utf-8"))
+        tool["results"]["s1"]["result_present"] = False
+        (tmp_path / "tool.json").write_text(json.dumps(tool), encoding="utf-8")
+        request["binding_request"]["artifacts"]["tool"]["sha256"] = hashlib.sha256(
+            (tmp_path / "tool.json").read_bytes()
+        ).hexdigest()
+    else:
+        request["spans"].append({**span, "span_id": "s2"})
+        tools = json.loads((tmp_path / "tool.json").read_text(encoding="utf-8"))
+        tools["results"]["s2"] = dict(tools["results"]["s1"])
+        (tmp_path / "tool.json").write_text(json.dumps(tools), encoding="utf-8")
+        request["binding_request"]["artifacts"]["tool"]["sha256"] = hashlib.sha256(
+            (tmp_path / "tool.json").read_bytes()
+        ).hexdigest()
+    result = evaluate_spans(tmp_path, request)
+    keys = {
+        "numeric": "numeric",
+        "context": "context",
+        "silent": "tool",
+        "redundant": "redundancy",
+    }
+    rows = [row[keys[mutation]]["code"] for row in result["spans"]]
+    assert code in rows
+
+
+def test_span_evaluation_file_hash_and_stale_binding_fail_closed(
+    tmp_path: Path,
+) -> None:
+    request, _ = _span_fixture(tmp_path)
+    path = tmp_path / "request.json"
+    path.write_text(json.dumps(request), encoding="utf-8")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert (
+        evaluate_spans_file(tmp_path, path, digest)["schema"]
+        == "factory.span-evaluation.v1"
+    )
+    assert evaluate_spans_file(tmp_path, path, "0" * 64)["state"] == "INCOMPLETE"
 
 
 def _sarif(root: Path, tool: str, *, result: dict[str, object] | None = None) -> Path:

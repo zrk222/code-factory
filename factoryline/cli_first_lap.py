@@ -19,17 +19,25 @@ def add_parser(sub: Any) -> None:
     first_proof.add_argument("--json", action="store_true")
     scan = sub.add_parser(
         "scan",
-        help="audit Python source statically or use --deep for all local audit lanes",
+        help="run every applicable local audit lane with explicit evidence gaps",
     )
     scan.add_argument("--root", default=".")
-    scan.add_argument(
+    scan_scope = scan.add_mutually_exclusive_group()
+    scan_scope.add_argument(
         "--deep",
         action="store_true",
+        default=True,
         help="run every applicable local audit lane and expose unmeasured coverage",
+    )
+    scan_scope.add_argument(
+        "--static-only",
+        action="store_false",
+        dest="deep",
+        help="explicitly limit this run to bounded Python static checks",
     )
     scan.add_argument(
         "--worker-config",
-        help="workspace-relative signed native worker configuration; requires --deep",
+        help="workspace-relative signed worker configuration; otherwise discover .factory/native-worker-config.json",
     )
     scan.add_argument("--json", action="store_true")
     for flag, help_text in (

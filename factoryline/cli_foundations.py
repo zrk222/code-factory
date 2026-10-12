@@ -148,6 +148,13 @@ def add_parser(sub: Any) -> None:
     )
     journey_status.add_argument("--root", default=".")
     journey_status.add_argument("--json", action="store_true")
+    journey_evaluate = journey_sub.add_parser(
+        "evaluate-trace", help="evaluate a hash-bound local trace-evaluation request"
+    )
+    journey_evaluate.add_argument("request", help="trace-evaluation request JSON path")
+    journey_evaluate.add_argument("--request-sha256", required=True)
+    journey_evaluate.add_argument("--root", default=".")
+    journey_evaluate.add_argument("--json", action="store_true")
 
     efficiency = sub.add_parser(
         "efficiency", help="compile and verify bounded, cacheable context packets"
@@ -278,6 +285,10 @@ def _journey_result(args: Any, root: Path) -> dict[str, Any]:
     )
 
     command = args.journey_cmd
+    if command == "evaluate-trace":
+        from .analysis_evidence import evaluate_spans_file
+
+        return evaluate_spans_file(root, Path(args.request), args.request_sha256)
     output_path = getattr(args, "out", None)
     output = Path(output_path) if output_path else None
     if command == "reality":
@@ -296,6 +307,7 @@ def _journey_result(args: Any, root: Path) -> dict[str, Any]:
 
 
 def _run_journey(args: Any) -> int:
+    from .analysis_evidence import AnalysisEvidenceError
     from .journey_proof import JourneyProofError
 
     try:
@@ -317,6 +329,21 @@ def _run_journey(args: Any) -> int:
             file=sys.stderr,
         )
         return 1
+    except AnalysisEvidenceError as exc:
+        print(
+            json.dumps(
+                {
+                    "schema": "factory.trace-evaluation.error.v1",
+                    "status": "BLOCKED",
+                    "code": exc.code,
+                    "message": str(exc),
+                    "marker": exc.code,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 2
     print(json.dumps(result, indent=2, sort_keys=True))
     if args.journey_cmd == "reality" and result.get("decision") != "matched":
         return 1
@@ -324,6 +351,16 @@ def _run_journey(args: Any) -> int:
         "decision"
     ) not in {"passed", "admissible_for_human_review"}:
         return 1
+    if args.journey_cmd == "evaluate-trace":
+        state = result.get(
+            "status", result.get("state", result.get("decision", result.get("verdict")))
+        )
+        if not isinstance(state, str) or state.upper() not in {
+            "PASS",
+            "PASSED",
+            "SUCCESS",
+        }:
+            return 1
     return 0
 
 

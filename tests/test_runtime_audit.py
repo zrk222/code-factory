@@ -1880,3 +1880,189 @@ def test_windows_path_handle_ctime_difference_is_not_file_drift():
     for field in ("st_dev", "st_ino", "st_size", "st_mtime_ns"):
         changed = SimpleNamespace(**{**vars(handle), field: 99})
         assert not _stable_read_identity(path, changed, changed, path, windows=True)
+
+
+def _trace_regression_bound():
+    identities = dict.fromkeys(
+        (
+            "dataset_sha256",
+            "workload_sha256",
+            "environment_sha256",
+            "rubric_sha256",
+            "prompt_sha256",
+            "tool_sha256",
+        ),
+        "a" * 64,
+    )
+    cohort = {
+        "schema": "factory.trace-cohort.v1",
+        "identities": identities,
+        "rows": [
+            {
+                "case_id": "case-1",
+                "category": "tool",
+                "outcome": "PASS",
+                "cost_usd": 0.01,
+                "latency_ms": 10,
+            }
+        ],
+    }
+    thresholds = [
+        {
+            "category": "tool",
+            "metric": metric,
+            "operator": operator,
+            "limit": limit,
+            "max_regression": 0,
+        }
+        for metric, operator, limit in (
+            ("success_rate", "gte", 1),
+            ("abstention_rate", "lte", 0),
+            ("cost_usd_mean", "lte", 0.02),
+            ("latency_ms_p95", "lte", 20),
+        )
+    ]
+    return {
+        "state": "BOUND_LOCAL_EVIDENCE",
+        "binding_sha256": "b" * 64,
+        "artifacts": {
+            **{
+                role: {"sha256": "a" * 64}
+                for role in ("dataset", "rubric", "prompt", "tool")
+            },
+            "baseline": {"body": cohort},
+            "candidate_cohort": {"body": json.loads(json.dumps(cohort))},
+            "regression_policy": {
+                "body": {
+                    "schema": "factory.trace-regression-policy.v1",
+                    "approval": {"origin": "human_confirmed", "reference": "policy-1"},
+                    "identities": dict(identities),
+                    "thresholds": thresholds,
+                }
+            },
+        },
+    }
+
+
+def test_trace_regression_exact_pairs_and_all_category_metrics(tmp_path, monkeypatch):
+    from factoryline.runtime_audit_performance import evaluate_trace_regression
+
+    bound = _trace_regression_bound()
+    monkeypatch.setattr(
+        "factoryline.analysis_evidence.validate_evaluation_bindings",
+        lambda root, request: bound,
+    )
+    result = evaluate_trace_regression(tmp_path, {})
+    assert result["state"] == "PASS"
+    assert len(result["observations"]) == 4
+    assert all(row["paired_cases"] == 1 for row in result["observations"])
+    assert result["authority"] == "none"
+    digest = result.pop("receipt_sha256")
+    assert digest == sha256(canonical_bytes(result)).hexdigest()
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("outcome", "FAIL"),
+        ("outcome", "ABSTAIN"),
+        ("cost_usd", 0.011),
+        ("latency_ms", 11),
+    ],
+)
+def test_trace_regression_breach_is_failed_even_below_absolute_limit(
+    tmp_path,
+    monkeypatch,
+    field,
+    value,
+):
+    from factoryline.runtime_audit_performance import evaluate_trace_regression
+
+    bound = _trace_regression_bound()
+    bound["artifacts"]["candidate_cohort"]["body"]["rows"][0][field] = value
+    monkeypatch.setattr(
+        "factoryline.analysis_evidence.validate_evaluation_bindings",
+        lambda root, request: bound,
+    )
+    result = evaluate_trace_regression(tmp_path, {})
+    assert result["state"] == "FAIL"
+    assert any(row["state"] == "FAIL" for row in result["observations"])
+    assert result["next_actions"]
+
+
+@pytest.mark.parametrize(
+    "sabotage",
+    [
+        "identity",
+        "case",
+        "category",
+        "duplicate",
+        "unknown",
+        "nan",
+        "bool",
+        "missing_metric",
+        "unapproved",
+        "direction",
+        "incomplete_binding",
+    ],
+)
+def test_trace_regression_missing_or_mismatched_evidence_is_incomplete(
+    tmp_path,
+    monkeypatch,
+    sabotage,
+):
+    from factoryline.runtime_audit_performance import evaluate_trace_regression
+
+    bound = _trace_regression_bound()
+    cohort = bound["artifacts"]["candidate_cohort"]["body"]
+    row = cohort["rows"][0]
+    policy = bound["artifacts"]["regression_policy"]["body"]
+    actions = {
+        "identity": lambda: cohort["identities"].update(dataset_sha256="c" * 64),
+        "case": lambda: row.update(case_id="case-2"),
+        "category": lambda: row.update(category="security"),
+        "duplicate": lambda: cohort["rows"].append(dict(row)),
+        "unknown": lambda: row.update(cost_usd=None),
+        "nan": lambda: row.update(latency_ms=float("nan")),
+        "bool": lambda: row.update(cost_usd=True),
+        "missing_metric": lambda: policy["thresholds"].pop(),
+        "unapproved": lambda: policy["approval"].update(origin="agent_proposed"),
+        "direction": lambda: policy["thresholds"][0].update(operator="lte"),
+        "incomplete_binding": lambda: bound.update(state="INCOMPLETE"),
+    }
+    actions[sabotage]()
+    monkeypatch.setattr(
+        "factoryline.analysis_evidence.validate_evaluation_bindings",
+        lambda root, request: bound,
+    )
+    result = evaluate_trace_regression(tmp_path, {})
+    assert result["state"] == "INCOMPLETE"
+    assert result["observations"] == []
+    assert result["next_actions"]
+
+
+def test_trace_regression_real_artifacts_reject_post_binding_tamper(tmp_path):
+    from factoryline.runtime_audit_performance import evaluate_trace_regression
+
+    fixture = runpy.run_path(str(Path(__file__).with_name("test_analysis_evidence.py")))
+    request, _ = fixture["_span_fixture"](tmp_path)
+    binding = request["binding_request"]
+    bodies = _trace_regression_bound()["artifacts"]
+    identities = bodies["baseline"]["body"]["identities"]
+    for role in ("dataset", "rubric", "prompt", "tool"):
+        identities[f"{role}_sha256"] = binding["artifacts"][role]["sha256"]
+    bodies["candidate_cohort"]["body"]["identities"] = dict(identities)
+    bodies["regression_policy"]["body"]["identities"] = dict(identities)
+    for role in ("baseline", "candidate_cohort", "regression_policy"):
+        raw = canonical_bytes(bodies[role]["body"])
+        relative = f"{role}.json"
+        (tmp_path / relative).write_bytes(raw)
+        binding["artifacts"][role] = {
+            "path": relative,
+            "sha256": sha256(raw).hexdigest(),
+        }
+    assert evaluate_trace_regression(tmp_path, binding)["state"] == "PASS"
+    (tmp_path / "baseline.json").write_text("{}", encoding="utf-8")
+    result = evaluate_trace_regression(tmp_path, binding)
+    assert result["state"] == "INCOMPLETE"
+    assert result["observations"] == []

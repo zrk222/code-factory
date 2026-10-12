@@ -3,6 +3,7 @@
 from hashlib import sha256
 import json
 from pathlib import Path
+import pytest
 from factoryline.contract import ensure_layout, LAYOUT, Receipt, Meter, MODULES
 from factoryline.assembly import detect, assemble, DEFAULT_CHAIN
 from factoryline.meter import (
@@ -685,6 +686,86 @@ def test_meter_capture_records_a_real_local_command(tmp_path, capsys):
     assert latest["feature"] == "codex-observation"
     assert latest["wall_ms"] >= 0
     assert latest["usage_reported"] is False
+
+
+@pytest.mark.parametrize("status", ["FAIL", "INCOMPLETE", "BLOCKED"])
+def test_trace_evaluation_cli_returns_nonzero_for_nonpass(
+    tmp_path, capsys, monkeypatch, status
+):
+    from factoryline import analysis_evidence
+    from factoryline.cli import main
+
+    observed = {}
+
+    def evaluate(root, request_path, expected_sha256):
+        observed.update(
+            root=root, request_path=request_path, expected_sha256=expected_sha256
+        )
+        return {"schema": "factory.span-evaluation.v1", "status": status}
+
+    monkeypatch.setattr(
+        analysis_evidence, "evaluate_spans_file", evaluate, raising=False
+    )
+    request = tmp_path / "request.json"
+    digest = "a" * 64
+
+    code = main(
+        [
+            "journey",
+            "evaluate-trace",
+            str(request),
+            "--request-sha256",
+            digest,
+            "--root",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+
+    assert code == 1
+    assert json.loads(capsys.readouterr().out)["status"] == status
+    assert observed == {
+        "root": tmp_path,
+        "request_path": request,
+        "expected_sha256": digest,
+    }
+
+
+def test_trace_evaluation_cli_emits_typed_bad_input_json(tmp_path, capsys, monkeypatch):
+    from factoryline import analysis_evidence
+    from factoryline.cli import main
+
+    def reject(*_args):
+        raise analysis_evidence.AnalysisEvidenceError(
+            "TRACE_UNBOUND", "request binding is invalid"
+        )
+
+    monkeypatch.setattr(analysis_evidence, "evaluate_spans_file", reject, raising=False)
+
+    code = main(
+        [
+            "journey",
+            "evaluate-trace",
+            "request.json",
+            "--request-sha256",
+            "a" * 64,
+            "--root",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    error = json.loads(captured.out)
+    assert code == 2
+    assert captured.err == ""
+    assert error == {
+        "schema": "factory.trace-evaluation.error.v1",
+        "status": "BLOCKED",
+        "code": "TRACE_UNBOUND",
+        "message": "request binding is invalid",
+        "marker": "TRACE_UNBOUND",
+    }
 
 
 def test_overhead_reports_measured_gate_times(tmp_path):

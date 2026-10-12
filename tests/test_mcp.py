@@ -47,6 +47,7 @@ def test_mcp_status_declares_default_stdio_and_zero_authority_boundary(tmp_path:
         "factory.agui_review_events",
         "factory.graph_ops",
         "factory.journey_status",
+        "factory.evaluate_trace",
         "factory.graph_impact",
         "factory.developer_memory",
         "factory.intent_ledger",

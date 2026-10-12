@@ -151,9 +151,54 @@ def test_repo_scan_is_zero_config_without_inventing_tenant_contract_advice(
     assert result["state"] == "INCOMPLETE"
     assert result["verdict"] == "INCOMPLETE"
     assert result["static_security"]["state"] == "CLEAN"
+    assert result["deep_audit"] is not None
+    assert any(
+        lane["measurement_id"] == "native_worker_execution"
+        for lane in result["deep_audit"]["lanes"]
+    )
     assert not any(
         "tenant-read-contract" in action for action in result["next_actions"]
     )
+
+
+def test_repo_scan_native_trace_covers_every_reported_lane(tmp_path):
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    result = run_repo_scan(tmp_path)
+    audit = result["deep_audit"]
+    spans = audit["telemetry"]["spans"]
+    roots = [span for span in spans if span["parent_span_id"] is None]
+    assert len(roots) == 1
+    by_id = {span["span_id"]: span for span in spans}
+    assert all(span["parent_span_id"] in by_id for span in spans if span not in roots)
+    observed = {
+        span["name"]: span
+        for span in spans
+        if span["attributes"].get("kind") == "lane_result_observation"
+    }
+    assert set(observed) == {row["measurement_id"] for row in audit["lanes"]}
+    assert all(
+        len(span["attributes"]["result_sha256"]) == 64 for span in observed.values()
+    )
+
+
+def test_repo_scan_native_trace_preserves_analyzer_failure_without_raw_error(
+    tmp_path, monkeypatch
+):
+    from factoryline import adoption
+
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+
+    def failed(*args):
+        raise RuntimeError("PRIVATE ERROR CONTENT")
+
+    monkeypatch.setattr(adoption, "_architecture_health_lane", failed)
+    result = run_repo_scan(tmp_path)
+    spans = result["deep_audit"]["telemetry"]["spans"]
+    assert any(
+        span["name"] == "architecture" and span["status"] == "ERROR" for span in spans
+    )
+    assert result["state"] == "BLOCKED"
+    assert "PRIVATE ERROR CONTENT" not in json.dumps(result)
 
 
 def test_repo_scan_recommends_tenant_contract_for_observed_orm_reads(tmp_path: Path):
@@ -445,7 +490,31 @@ def test_adoption_status_fails_closed_for_a_tampered_event(tmp_path: Path) -> No
 
 def test_native_worker_configuration_requires_explicit_deep(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="requires --deep"):
-        run_repo_scan(tmp_path, worker_config="worker.json")
+        run_repo_scan(tmp_path, deep=False, worker_config="worker.json")
+
+
+def test_repo_scan_static_only_does_not_discover_or_execute_workers(tmp_path, capsys):
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / ".factory/native-worker-config.json").write_text("{}")
+    assert main(["scan", "--static-only", "--root", str(tmp_path), "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["deep_audit"] is None
+    assert result["static_security"]["state"] == "CLEAN"
+
+
+def test_native_worker_discovery_rejects_unsigned_or_malformed_configuration(tmp_path):
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / ".factory/native-worker-config.json").write_text("{}")
+    result = run_repo_scan(tmp_path)
+    lane = next(
+        row
+        for row in result["deep_audit"]["lanes"]
+        if row["measurement_id"] == "native_worker_execution"
+    )
+    assert lane["state"] == "BLOCKED"
+    assert result["state"] == "BLOCKED"
 
 
 def test_native_worker_configuration_rejects_unknown_fields(tmp_path: Path) -> None:
@@ -461,8 +530,9 @@ def test_native_worker_configuration_rejects_unknown_fields(tmp_path: Path) -> N
     assert str(tmp_path) not in json.dumps(lane)
 
 
+@pytest.mark.parametrize("discover", [False, True])
 def test_native_worker_executes_existing_engine_without_granting_approval(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, discover: bool
 ) -> None:
     from factoryline import deep_audit
 
@@ -477,6 +547,11 @@ def test_native_worker_executes_existing_engine_without_granting_approval(
         "trust_root_sha256": "b" * 64,
     }
     (tmp_path / "worker.json").write_text(json.dumps(settings), encoding="utf-8")
+    if discover:
+        (tmp_path / ".factory").mkdir()
+        (tmp_path / ".factory/native-worker-config.json").write_text(
+            json.dumps(settings), encoding="utf-8"
+        )
     calls = []
 
     def observe(*args, **kwargs):
@@ -507,7 +582,11 @@ def test_native_worker_executes_existing_engine_without_granting_approval(
         }
 
     monkeypatch.setattr(deep_audit, "scan_deep_audit", observe)
-    result = run_repo_scan(tmp_path, deep=True, worker_config="worker.json")
+    result = (
+        run_repo_scan(tmp_path)
+        if discover
+        else run_repo_scan(tmp_path, deep=True, worker_config="worker.json")
+    )
     lane = next(
         row
         for row in result["deep_audit"]["lanes"]
