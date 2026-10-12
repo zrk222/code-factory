@@ -2,11 +2,16 @@ import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import {
   chmodSync,
+  closeSync,
+  constants,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
+  readSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -24,6 +29,7 @@ const sourcePaths = [
   'deploy/deep-adapters/Dockerfile',
   'deploy/deep-adapters/bin/osv-offline',
   'deploy/deep-adapters/osv-lookup-ledger.patch',
+  'deploy/deep-adapters/osv-extractor-inventory.go',
   'deploy/deep-adapters/profiles/osv.json',
   'scripts/verify_osv_native_ledger.mjs',
   'scripts/verify_osv_native_ledger.test.mjs',
@@ -50,6 +56,7 @@ const receipt = {
   upstream_commit: expectedSource,
   expected_database_sha256: expectedDatabase,
   observed_database_sha256: null,
+  expected_extractor_inventory: null,
   source_sha256: {},
   environment: {
     network: 'none',
@@ -115,25 +122,62 @@ function saveProcess(caseDir, name, result, argv) {
   return command;
 }
 
-function readReport(caseDir, processResult) {
+export function readReport(caseDir) {
   const reportPath = join(caseDir, 'report.json');
-  let stat;
   try {
-    stat = lstatSync(reportPath);
+    const bytes = readBoundedRegularFile(reportPath, 10_000_000, 'Native report');
+    const report = JSON.parse(bytes.toString('utf8'));
+    if (!report || typeof report !== 'object' || Array.isArray(report)) throw new Error('Native report root is invalid');
+    if (!report.factory_lookup_execution || report.factory_lookup_execution.schema !== 'factory.osv-lookup-execution.v1') {
+      throw new Error('Native report lacks the embedded execution ledger');
+    }
+    return { report, bytes, path: reportPath };
   } catch (error) {
     if (error.code === 'ENOENT') return null;
     throw error;
   }
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 10_000_000) {
-    throw new Error('Native report is not a bounded regular file');
+}
+
+function readBoundedRegularFile(path, limit, label) {
+  let descriptor;
+  try {
+    descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const opened = fstatSync(descriptor);
+    if (!opened.isFile() || opened.size > limit) {
+      throw new Error(`${label} is not a bounded regular file`);
+    }
+    const pathStat = lstatSync(path);
+    if (!sameFileIdentity(pathStat, opened)) throw new Error(`${label} path changed while opening`);
+    const bytes = readDescriptorBounded(descriptor, limit);
+    const afterRead = fstatSync(descriptor);
+    const finalPathStat = lstatSync(path);
+    if (!sameFileIdentity(finalPathStat, afterRead)
+        || opened.size !== afterRead.size || opened.mtimeMs !== afterRead.mtimeMs) {
+      throw new Error(`${label} changed while it was being read`);
+    }
+    return bytes;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
-  const bytes = readFileSync(reportPath);
-  const report = JSON.parse(bytes.toString('utf8'));
-  if (!report || typeof report !== 'object' || Array.isArray(report)) throw new Error('Native report root is invalid');
-  if (!report.factory_lookup_execution || report.factory_lookup_execution.schema !== 'factory.osv-lookup-execution.v1') {
-    throw new Error('Native report lacks the embedded execution ledger');
+}
+
+function sameFileIdentity(pathStat, openedStat) {
+  return pathStat.isFile() && !pathStat.isSymbolicLink()
+    && pathStat.dev === openedStat.dev && pathStat.ino === openedStat.ino;
+}
+
+function readDescriptorBounded(descriptor, limit) {
+  const chunks = [];
+  let total = 0;
+  while (total <= limit) {
+    const buffer = Buffer.alloc(Math.min(65_536, limit + 1 - total));
+    const count = readSync(descriptor, buffer, 0, buffer.length, null);
+    if (count === 0) break;
+    total += count;
+    if (total > limit) throw new Error('Native report exceeds its byte limit');
+    chunks.push(buffer.subarray(0, count));
   }
-  return { report, bytes, path: reportPath };
+  return Buffer.concat(chunks, total);
 }
 
 function collectIds(value, into = []) {
@@ -146,19 +190,46 @@ function collectIds(value, into = []) {
   return into;
 }
 
-export function validateExtractorRuns(ledger) {
+export function validateExtractorInventory(document, profileSha256, generatorSha256) {
+  const fields = ['schema', 'upstream_commit', 'profile_sha256', 'generator_sha256', 'presets', 'capabilities', 'plugins'];
+  if (!document || !sameStrings(Object.keys(document).sort(), fields.sort())
+      || document.schema !== 'factory.osv-extractor-inventory.v1'
+      || document.upstream_commit !== expectedSource
+      || document.profile_sha256 !== profileSha256
+      || document.generator_sha256 !== generatorSha256
+      || !sameStrings(document.presets, ['lockfile', 'sbom', 'directory'])
+      || JSON.stringify(document.capabilities) !== JSON.stringify({
+        direct_fs: true, running_system: true, network: 'offline', os: 'linux',
+      })) {
+    throw new Error('Expected extractor inventory artifact is not bound to the pinned source and profile');
+  }
+  if (!isSortedUnique(document.plugins) || document.plugins.length === 0) {
+    throw new Error('Expected extractor inventory artifact has invalid plugin names');
+  }
+  return document.plugins;
+}
+
+function sameStrings(actual, expected) {
+  return Array.isArray(actual) && JSON.stringify(actual) === JSON.stringify(expected);
+}
+
+export function validateExtractorRuns(ledger, expectedPlugins) {
+  if (!isSortedUnique(expectedPlugins) || expectedPlugins.length === 0) {
+    throw new Error('Pinned expected extractor inventory is missing or invalid');
+  }
   if (!Array.isArray(ledger.extractor_runs) || ledger.extractor_runs.length === 0) {
     throw new Error('Native extractor execution inventory is missing');
   }
-  for (const run of ledger.extractor_runs) validateExtractorRun(run);
+  for (const run of ledger.extractor_runs) validateExtractorRun(run, expectedPlugins);
 }
 
-function validateExtractorRun(run) {
+function validateExtractorRun(run, expectedPlugins) {
   if (!Array.isArray(run.plugins) || run.plugins.length === 0
       || !Array.isArray(run.statuses) || run.statuses.length !== run.plugins.length) {
     throw new Error('Native extractor run is incomplete');
   }
-  if (!isSortedUnique(run.plugins) || !isSortedUnique(run.statuses.map((row) => row.name))) {
+  if (!sameStrings(run.plugins, expectedPlugins)
+      || !isSortedUnique(run.plugins) || !isSortedUnique(run.statuses.map((row) => row.name))) {
     throw new Error('A native OSV extractor did not succeed');
   }
   const states = new Map(run.statuses.map((row) => [row.name, row.state]));
@@ -168,7 +239,7 @@ function validateExtractorRun(run) {
 }
 
 function isSortedUnique(values) {
-  return values.every((value, index) => typeof value === 'string'
+  return Array.isArray(values) && values.every((value, index) => typeof value === 'string'
     && (index === 0 || values[index - 1] < value));
 }
 
@@ -184,10 +255,10 @@ export function reportIdentity(report) {
   return JSON.stringify({ queries, reported_advisories: reported });
 }
 
-export function validateCompleteLedger(report, packageName, packageVersion, { vulnerable }) {
+export function validateCompleteLedger(report, packageName, packageVersion, { vulnerable, expectedPlugins }) {
   const ledger = report.factory_lookup_execution;
   validateLedgerBinding(ledger);
-  validateExtractorRuns(ledger);
+  validateExtractorRuns(ledger, expectedPlugins);
   const query = onlyPackageQuery(ledger);
   validatePackageQuery(ledger, query, packageName, packageVersion);
   validateDecisionDigest(ledger, query);
@@ -276,14 +347,17 @@ async function dockerRun(name, sourceDir, caseDir, extraArgs = []) {
   return { result, command, parsed: readReport(caseDir, result) };
 }
 
-export function writeRequirement(root, text) {
+export function writeRequirement(root, text, filename = 'requirements.txt') {
+  if (!['requirements.txt', 'package-lock.json'].includes(filename)) {
+    throw new Error('Unsupported native fixture filename');
+  }
   const source = mkdtempSync(join(root, 'source-'));
   chmodSync(source, 0o755);
-  writeFileSync(join(source, 'requirements.txt'), text, { mode: 0o444 });
+  writeFileSync(join(source, filename), text, { mode: 0o444 });
   return source;
 }
 
-async function runCase(root, key, requirement, { packageName, vulnerable, extraArgs = [] }) {
+async function runCase(root, key, requirement, { packageName, vulnerable, expectedPlugins, extraArgs = [] }) {
   const source = writeRequirement(root, requirement);
   const fixtureSha256 = sha256(readFileSync(join(source, 'requirements.txt')));
   const caseDir = join(outputRoot, key);
@@ -293,12 +367,12 @@ async function runCase(root, key, requirement, { packageName, vulnerable, extraA
   }
   const reportInfo = executed.parsed;
   const item = { state: 'FAIL', argv: argvTemplate, exit_code: executed.result.code,
-    fixture_sha256: fixtureSha256,
+    fixture_name: 'requirements.txt', fixture_sha256: fixtureSha256,
     stdout_sha256: executed.command.stdout_sha256, stderr_sha256: executed.command.stderr_sha256,
     report_sha256: reportInfo ? sha256(reportInfo.bytes) : null };
   if (!reportInfo) throw new Error(`${key} did not produce a complete native report`);
   item.native_ledger = validateCompleteLedger(reportInfo.report, packageName,
-    requirement.trim().split('==')[1], { vulnerable });
+    requirement.trim().split('==')[1], { vulnerable, expectedPlugins });
   markCasePassed(item, reportInfo.report);
   item.report_path = `${key}/report.json`;
   receipt.cases[key] = item;
@@ -322,7 +396,7 @@ function expectedFailurePattern(key) {
   const patterns = {
     missing_database: /(?:open|stat) .*\/all\.zip: no such file or directory|cannot find .*all\.zip|cannot execute native OSV query: unable to fetch OSV database: no offline version of the OSV database is available/i,
     malformed_database: /zip: not a valid zip file|not valid OSV JSON|OSV database contains no advisories/i,
-    extractor_failure: /extractor [a-z0-9._-]+ failed:/i,
+    extractor_failure: /extractor [a-z0-9._-]+(?:\/[a-z0-9._-]+)? failed:/i,
   };
   if (!Object.hasOwn(patterns, key)) throw new Error(`${key} lacks cause-specific native failure evidence`);
   return patterns[key];
@@ -348,13 +422,13 @@ export function markCasePassed(item, report) {
   return item;
 }
 
-async function expectedFailure(root, key, requirement, extraArgs) {
-  const source = writeRequirement(root, requirement);
-  const fixtureSha256 = sha256(readFileSync(join(source, 'requirements.txt')));
+async function expectedFailure(root, key, requirement, extraArgs, filename = 'requirements.txt') {
+  const source = writeRequirement(root, requirement, filename);
+  const fixtureSha256 = sha256(readFileSync(join(source, filename)));
   const caseDir = join(outputRoot, key);
   const executed = await dockerRun(key, source, caseDir, extraArgs);
   const item = { state: 'FAIL', argv: argvTemplate, exit_code: executed.result.code,
-    fixture_sha256: fixtureSha256,
+    fixture_name: filename, fixture_sha256: fixtureSha256,
     stdout_sha256: executed.command.stdout_sha256, stderr_sha256: executed.command.stderr_sha256,
     report_sha256: executed.parsed ? sha256(executed.parsed.bytes) : null };
   const diagnostic = Buffer.concat([executed.result.stdout, executed.result.stderr]).toString('utf8');
@@ -416,6 +490,14 @@ async function main() {
       receipt.commands.push({ argv: ['docker', 'cp', `${containerId}:/opt/factory/osv-db/osv-scanner/PyPI/all.zip`, join(dbDir, 'all.zip')],
         exit_code: cp.code, stdout_sha256: sha256(cp.stdout), stderr_sha256: sha256(cp.stderr) });
       if (cp.code !== 0) throw new Error('Could not retain the pinned database for hash verification');
+      const inventoryPath = join(dbDir, 'expected-extractors.json');
+      const inventoryCopy = await run('docker', [
+        'cp', `${containerId}:/opt/factory/osv-extractor-inventory.json`, inventoryPath,
+      ], { timeout: 15_000 });
+      receipt.commands.push({ argv: ['docker', 'cp', `${containerId}:/opt/factory/osv-extractor-inventory.json`, inventoryPath],
+        exit_code: inventoryCopy.code, stdout_sha256: sha256(inventoryCopy.stdout),
+        stderr_sha256: sha256(inventoryCopy.stderr) });
+      if (inventoryCopy.code !== 0) throw new Error('Could not retain the immutable image extractor inventory');
     } finally {
       const removed = await run('docker', ['rm', '-f', containerId], { timeout: 15_000 });
       receipt.commands.push({ argv: ['docker', 'rm', '-f', containerId], exit_code: removed.code,
@@ -423,12 +505,25 @@ async function main() {
     }
     receipt.observed_database_sha256 = sha256(readFileSync(join(dbDir, 'all.zip')));
     if (receipt.observed_database_sha256 !== expectedDatabase) throw new Error('Pinned database bytes failed their hash check');
+    const inventoryPath = join(dbDir, 'expected-extractors.json');
+    const inventoryBytes = readBoundedRegularFile(inventoryPath, 65_536, 'Image extractor inventory');
+    const expectedPlugins = validateExtractorInventory(
+      JSON.parse(inventoryBytes.toString('utf8')),
+      sha256(readFileSync('deploy/deep-adapters/profiles/osv.json')),
+      sha256(readFileSync('deploy/deep-adapters/osv-extractor-inventory.go')),
+    );
+    receipt.expected_extractor_inventory = {
+      artifact_sha256: sha256(inventoryBytes),
+      profile_sha256: sha256(readFileSync('deploy/deep-adapters/profiles/osv.json')),
+      generator_sha256: sha256(readFileSync('deploy/deep-adapters/osv-extractor-inventory.go')),
+      plugins: expectedPlugins,
+    };
 
     const positive = await runCase(caseRoot, 'positive', 'requests==2.19.1\n', {
-      packageName: 'requests', vulnerable: true,
+      packageName: 'requests', vulnerable: true, expectedPlugins,
     });
     const replay = await runCase(caseRoot, 'fresh_native_replay', 'requests==2.19.1\n', {
-      packageName: 'requests', vulnerable: true,
+      packageName: 'requests', vulnerable: true, expectedPlugins,
     });
     if (JSON.stringify(positive.native_ledger) !== JSON.stringify(replay.native_ledger)
         || positive.report_identity !== replay.report_identity) throw new Error('Fresh native replay differs from primary evidence');
@@ -436,7 +531,7 @@ async function main() {
       positive.report_sha256 === replay.report_sha256;
     receipt.cases.fresh_native_replay.primary_report_sha256 = positive.report_sha256;
     const zero = await runCase(caseRoot, 'zero_match', 'factory-native-clean-package-7fbb19==0.0.0\n', {
-      packageName: 'factory-native-clean-package-7fbb19', vulnerable: false,
+      packageName: 'factory-native-clean-package-7fbb19', vulnerable: false, expectedPlugins,
     });
     const malformed = join(caseRoot, 'malformed-db');
     mkdirSync(malformed, { recursive: true });
@@ -445,7 +540,7 @@ async function main() {
     const emptyDbArgs = ['--tmpfs', '/opt/factory/osv-db/osv-scanner/PyPI:rw,nosuid,nodev,size=16m,uid=1000,gid=1000,mode=0755'];
     await expectedFailure(caseRoot, 'missing_database', 'requests==2.19.1\n', emptyDbArgs);
     await expectedFailure(caseRoot, 'malformed_database', 'requests==2.19.1\n', dbArgs(malformed));
-    await expectedFailure(caseRoot, 'extractor_failure', 'this is not a valid requirement !!!\n', []);
+    await expectedFailure(caseRoot, 'extractor_failure', '{ this is intentionally malformed JSON\n', [], 'package-lock.json');
     if (Object.keys(receipt.cases).length !== 6 || Object.values(receipt.cases).some((item) => item.state !== 'PASS')) {
       throw new Error('One or more native operator controls remain incomplete');
     }

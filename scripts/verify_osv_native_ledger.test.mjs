@@ -1,13 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   markCasePassed,
+  readReport,
   reportIdentity,
   validateCompleteLedger,
+  validateExtractorInventory,
   validateExtractorRuns,
   validateExpectedFailure,
   writeRequirement,
@@ -53,31 +55,92 @@ function fixture({ failedExtractor = false, badDecision = false } = {}) {
 
 test('successful native ledger verifies decision and marks the operator case PASS', () => {
   const report = fixture();
-  validateCompleteLedger(report, 'native-clean-fixture', '0.0.0', { vulnerable: false });
+  validateCompleteLedger(report, 'native-clean-fixture', '0.0.0', {
+    vulnerable: false, expectedPlugins: ['requirements'],
+  });
   const item = markCasePassed({ state: 'FAIL' }, report);
   assert.equal(item.state, 'PASS');
   assert.match(item.report_identity, /native-clean-fixture/);
 });
 
+test('readReport parses a bounded regular report through its opened descriptor', () => {
+  const root = mkdtempSync(join(tmpdir(), 'osv-report-test-'));
+  try {
+    const ledgerReport = fixture();
+    const bytes = Buffer.from(JSON.stringify(ledgerReport));
+    writeFileSync(join(root, 'report.json'), bytes, { flag: 'wx' });
+    const result = readReport(root);
+    assert.deepEqual(result.report, ledgerReport);
+    assert.deepEqual(result.bytes, bytes);
+    assert.equal(readReport(join(root, 'missing')), null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('readReport rejects a directory report path', () => {
+  const root = mkdtempSync(join(tmpdir(), 'osv-report-path-test-'));
+  try {
+    const directory = join(root, 'report.json');
+    mkdirSync(directory);
+    assert.throws(() => readReport(root), /regular file/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('readReport rejects a symlink report path', { skip: process.platform === 'win32' }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'osv-report-symlink-test-'));
+  try {
+    const target = join(root, 'target.json');
+    const symlinkDir = join(root, 'symlink-case');
+    writeFileSync(target, JSON.stringify(fixture()), { flag: 'wx' });
+    mkdirSync(symlinkDir);
+    symlinkSync(target, join(symlinkDir, 'report.json'), 'file');
+    assert.throws(() => readReport(symlinkDir), /ELOOP|symbolic|regular file/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('successful scan cannot hide an unsuccessful extractor', () => {
   const report = fixture({ failedExtractor: true });
-  assert.throws(() => validateCompleteLedger(report, 'native-clean-fixture', '0.0.0', { vulnerable: false }));
+  assert.throws(() => validateCompleteLedger(report, 'native-clean-fixture', '0.0.0', {
+    vulnerable: false, expectedPlugins: ['requirements'],
+  }));
 });
 
 test('validateExtractorRuns accepts matching native statuses and rejects incomplete or mismatched rows', () => {
   const ledger = fixture().factory_lookup_execution;
-  assert.doesNotThrow(() => validateExtractorRuns(ledger));
+  assert.doesNotThrow(() => validateExtractorRuns(ledger, ['requirements']));
+  assert.throws(() => validateExtractorRuns(ledger, ['lockfile', 'requirements']), /did not succeed/);
   assert.throws(() => validateExtractorRuns({ extractor_runs: [{
     plugins: ['requirements', 'lockfile'],
     statuses: [{ name: 'requirements', state: 'SUCCEEDED' }],
-  }] }), /incomplete/);
+  }] }, ['lockfile', 'requirements']), /incomplete/);
   assert.throws(() => validateExtractorRuns({ extractor_runs: [{
     plugins: ['lockfile', 'requirements'],
     statuses: [
       { name: 'lockfile', state: 'SUCCEEDED' },
       { name: 'other', state: 'SUCCEEDED' },
     ],
-  }] }), /did not succeed/);
+  }] }, ['lockfile', 'requirements']), /did not succeed/);
+});
+
+test('validateExtractorInventory binds names to the pinned source, profile, and generator', () => {
+  const inventory = {
+    schema: 'factory.osv-extractor-inventory.v1',
+    upstream_commit: 'a14aa98ab8408547083d4411091c5fbaf5b47d8e',
+    profile_sha256: 'b'.repeat(64),
+    generator_sha256: 'c'.repeat(64),
+    presets: ['lockfile', 'sbom', 'directory'],
+    capabilities: { direct_fs: true, running_system: true, network: 'offline', os: 'linux' },
+    plugins: ['alpha', 'requirements'],
+  };
+  assert.deepEqual(validateExtractorInventory(inventory, 'b'.repeat(64), 'c'.repeat(64)), inventory.plugins);
+  assert.throws(() => validateExtractorInventory(inventory, 'd'.repeat(64), 'c'.repeat(64)), /not bound/);
+  assert.throws(() => validateExtractorInventory(inventory, 'b'.repeat(64), 'd'.repeat(64)), /not bound/);
+  assert.throws(() => validateExtractorInventory({ ...inventory, plugins: ['requirements', 'alpha'] }, 'b'.repeat(64), 'c'.repeat(64)), /invalid plugin/);
 });
 
 test('reportIdentity normalizes query order and retains only ledger-backed report IDs', () => {
@@ -111,6 +174,9 @@ test('writeRequirement creates distinct read-only fixture directories for separa
     assert.equal(readFileSync(secondPath, 'utf8'), 'urllib3==1.25.0\n');
     assert.equal(statSync(firstPath).mode & 0o222, 0);
     assert.equal(statSync(secondPath).mode & 0o222, 0);
+    const lockfile = writeRequirement(root, '{ malformed json\n', 'package-lock.json');
+    assert.equal(readFileSync(join(lockfile, 'package-lock.json'), 'utf8'), '{ malformed json\n');
+    assert.throws(() => writeRequirement(root, 'bad', '../requirements.txt'), /Unsupported native fixture filename/);
     if (process.platform !== 'win32') {
       assert.equal(statSync(first).mode & 0o111, 0o111);
       assert.equal(statSync(second).mode & 0o111, 0o111);
@@ -122,7 +188,9 @@ test('writeRequirement creates distinct read-only fixture directories for separa
 
 test('decision digest is recomputed from canonical evidence', () => {
   const report = fixture({ badDecision: true });
-  assert.throws(() => validateCompleteLedger(report, 'native-clean-fixture', '0.0.0', { vulnerable: false }));
+  assert.throws(() => validateCompleteLedger(report, 'native-clean-fixture', '0.0.0', {
+    vulnerable: false, expectedPlugins: ['requirements'],
+  }));
 });
 
 test('missing database case requires its native database diagnostic', () => {
@@ -145,6 +213,8 @@ test('malformed database case requires a zip or native database diagnostic', () 
 test('extractor failure requires explicit native extractor evidence', () => {
   assert.equal(validateExpectedFailure('extractor_failure', 2, null,
     'extractor requirements failed: invalid syntax'), null);
+  assert.equal(validateExpectedFailure('extractor_failure', 2, null,
+    'extractor javascript/packagelockjson failed: invalid JSON'), null);
   assert.throws(() => validateExpectedFailure('extractor_failure', 2, null, 'failed to extract package'));
   assert.throws(() => validateExpectedFailure('extractor_failure', 2, null, 'docker runtime error'));
   assert.throws(() => validateExpectedFailure('extractor_failure', 0, null, 'extractor requirements failed'));

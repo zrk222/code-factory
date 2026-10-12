@@ -68,14 +68,22 @@ LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interpro
 FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS osv-build
 ADD --checksum=sha256:1ce45371bd4b6480ac512156c2ea70d563753eba62283d160360bfe3cf94a7ab https://github.com/google/osv-scanner/archive/a14aa98ab8408547083d4411091c5fbaf5b47d8e.tar.gz /tmp/osv-scanner.tar.gz
 COPY deploy/deep-adapters/osv-lookup-ledger.patch /tmp/osv-lookup-ledger.patch
+COPY deploy/deep-adapters/osv-extractor-inventory.go /tmp/osv-extractor-inventory.go
+COPY deploy/deep-adapters/profiles/osv.json /tmp/osv-profile.json
 RUN mkdir -p /src && tar -xzf /tmp/osv-scanner.tar.gz --strip-components=1 -C /src && rm /tmp/osv-scanner.tar.gz
+RUN mkdir -p /src/cmd/factory-inventory && cp /tmp/osv-extractor-inventory.go /src/cmd/factory-inventory/main.go
 WORKDIR /src
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build echo '4486eff021ec7c86106a0571b76fe6fff42aaba32565d3cff945bbbca36d3652  /tmp/osv-lookup-ledger.patch' | sha256sum -c - && git init -q && git apply --check /tmp/osv-lookup-ledger.patch && git apply /tmp/osv-lookup-ledger.patch \
     && gofmt -w internal/factorylookup/ledger.go internal/clients/clientimpl/localmatcher/localmatcher.go internal/clients/clientimpl/localmatcher/zip.go pkg/osvscanner/scan.go pkg/osvscanner/osvscanner.go \
     && GOTOOLCHAIN=local CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags='-s -w' -o /osv-scanner ./cmd/osv-scanner && /osv-scanner --version | grep -F 2.2.0
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build echo '56eb42e1dbdee321433a9625c8c0a82ee55b47614fab477a714c192866026c6c  /tmp/osv-extractor-inventory.go' | sha256sum -c - \
+    && gofmt -w cmd/factory-inventory/main.go \
+    && GOTOOLCHAIN=local CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags='-s -w' -o /osv-extractor-inventory ./cmd/factory-inventory \
+    && /osv-extractor-inventory --profile /tmp/osv-profile.json --generator-sha256 56eb42e1dbdee321433a9625c8c0a82ee55b47614fab477a714c192866026c6c > /osv-extractor-inventory.json
 FROM anchore/syft:v1.33.0@sha256:cefadcf11bd9cce9e3ec5248bb1538a84e33d519486c1b4523ac155c9b5f5033 AS syft-tool
 FROM sdk AS osv-worker
 COPY --from=osv-build /osv-scanner /usr/local/bin/osv-scanner
+COPY --from=osv-build /osv-extractor-inventory.json /opt/factory/osv-extractor-inventory.json
 COPY --chmod=0555 deploy/deep-adapters/bin/osv-offline /opt/factory/bin/osv-offline
 COPY --chown=1000:1000 deploy/deep-adapters/rules/empty-ignore.txt /opt/factory/rules/osv-scanner.toml
 ADD --checksum=sha256:36ef7d92e174230b8c7c26b952562be23837472c2239b6752de64d5d683a800e https://osv-vulnerabilities.storage.googleapis.com/PyPI/all.zip?generation=1791370055357324 /tmp/osv-pypi-all.zip
