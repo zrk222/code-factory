@@ -12,6 +12,12 @@ from pathlib import Path
 import pytest
 
 from factoryline.meter import MeterLog, StageTiming
+from factoryline.app_builder import (
+    _studio_execute_plan,
+    serve_studio_preview_asset,
+    studio_journey_plan,
+    studio_journey_status,
+)
 from factoryline.studio import (
     MAX_BODY_BYTES,
     StudioRequestError,
@@ -27,6 +33,105 @@ from factoryline.studio import (
     studio_dashboard,
     studio_status,
 )
+
+
+def _studio_bound_candidate(tmp_path: Path):
+    from test_product_missions import _approved_binding_inputs
+    from factoryline.product_missions import bind_mission_candidate
+
+    mission, decision, candidate, declaration = _approved_binding_inputs(tmp_path)
+    declaration["paths"] = ["README.md"]
+    binding = bind_mission_candidate(Path(mission["path"]), Path(decision["path"]), tmp_path, owner="release-owner", declaration=declaration)
+    return candidate, declaration, binding
+
+
+def test_journey_status_and_plan_require_current_binding_and_exact_command(tmp_path: Path):
+    candidate, declaration, binding = _studio_bound_candidate(tmp_path)
+    payload = {"binding_path": binding["path"], "owner": "release-owner"}
+    status = studio_journey_status(tmp_path, payload)
+    assert status["complete_application"] is False
+    assert all(status["stages"][name]["state"] == "missing_evidence" for name in ("build", "preview", "verification", "repair"))
+    assert status["commands"] == [declaration["commands"][0]["argv"]]
+    with pytest.raises(ValueError, match="command_index"):
+        studio_journey_plan(tmp_path, {**payload, "stage": "build", "image": "python@sha256:" + "a" * 64})
+    plan = studio_journey_plan(tmp_path, {**payload, "stage": "build", "command_index": 0, "image": "python@sha256:" + "a" * 64})
+    assert plan["argv"] == status["commands"][0]
+    assert plan["candidate_sha256"] == status["candidate_sha256"]
+    (candidate / "README.md").write_text("changed", encoding="utf-8")
+    with pytest.raises(Exception, match="MISSION_CANDIDATE_INVALID"):
+        studio_journey_status(tmp_path, payload)
+
+
+def test_journey_preview_is_candidate_declared_regular_file_only(tmp_path: Path):
+    _candidate, declaration, binding = _studio_bound_candidate(tmp_path)
+    result = serve_studio_preview_asset(tmp_path, Path(binding["path"]), "release-owner", "README.md")
+    assert result["content"] == "candidate base\r\n"
+    assert result["sandbox"] == "allow-scripts"
+    assert result["parent_origin_access"] is False
+    with pytest.raises(ValueError, match="not declared"):
+        serve_studio_preview_asset(tmp_path, Path(binding["path"]), "release-owner", "../outside")
+
+
+def test_journey_execution_requires_exact_confirmation_and_cleans_container(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from factoryline import app_builder
+
+    _candidate, _declaration, binding = _studio_bound_candidate(tmp_path)
+    plan = studio_journey_plan(tmp_path, {"binding_path": binding["path"], "owner": "release-owner", "stage": "build", "command_index": 0, "image": "python@sha256:" + "a" * 64})
+    base = {"plan_path": plan["path"], "plan_sha256": plan["plan_sha256"], "owner": "release-owner"}
+    with pytest.raises(ValueError, match="confirmation"):
+        _studio_execute_plan(tmp_path, {**base, "confirmed": False})
+    calls = []
+
+    def runner(cli, args, cwd, **kwargs):
+        calls.append((cli, args, kwargs))
+        if args[0] == "inspect":
+            return {"ok": False, "exit_code": 1, "cleanup_confirmed": True, "stdout": b"", "stderr": b"no such container"}
+        return {"ok": True, "exit_code": 0, "cleanup_confirmed": True, "streams_closed": True, "stdout": b"ok", "stderr": b""}
+
+    monkeypatch.setattr(app_builder, "run_cli_detailed", runner)
+    receipt = _studio_execute_plan(tmp_path, {**base, "confirmed": True})
+    assert receipt["ok"] is True
+    assert receipt["cleanup_confirmed"] is True
+    docker = calls[0][1]
+    for flag in ("--network=none", "--read-only", "--memory=512m", "--pids-limit=64", "--cap-drop=ALL", "--security-opt=no-new-privileges"):
+        assert flag in docker
+    assert "--rm" not in docker
+    assert calls[1][1][:2] == ["rm", "--force"]
+    assert calls[2][1][:2] == ["inspect", "--type"]
+
+
+def test_journey_rejects_tampered_plan_and_root_relative_binding(tmp_path: Path):
+    _candidate, _declaration, binding = _studio_bound_candidate(tmp_path)
+    relative_binding = Path(binding["path"]).relative_to(tmp_path)
+    status = studio_journey_status(tmp_path, {"binding_path": str(relative_binding), "owner": "release-owner"})
+    plan = studio_journey_plan(tmp_path, {"binding_path": binding["path"], "owner": "release-owner", "stage": "build", "command_index": 0, "image": "python@sha256:" + "a" * 64})
+    raw = json.loads(Path(plan["path"]).read_text(encoding="utf-8"))
+    raw["receipt"]["image"] = "evil:latest"
+    Path(plan["path"]).write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="integrity"):
+        _studio_execute_plan(tmp_path, {"plan_path": plan["path"], "plan_sha256": plan["plan_sha256"], "confirmed": True, "owner": "release-owner"})
+    assert status["complete_application"] is False
+
+
+def test_journey_preview_enforces_csp_in_html_and_rejects_binary(tmp_path: Path):
+    from test_product_missions import _approved_binding_inputs
+    from factoryline.product_missions import bind_mission_candidate
+
+    mission, decision, candidate, declaration = _approved_binding_inputs(tmp_path)
+    (candidate / "index.html").write_text("<!doctype html><html><head><title>Test</title></head><body>ok</body></html>", encoding="utf-8")
+    import subprocess
+    subprocess.run(["git", "-C", str(candidate), "add", "index.html"], check=True)
+    subprocess.run(["git", "-C", str(candidate), "-c", "user.name=Test Owner", "-c", "user.email=test@example.invalid", "commit", "--quiet", "-m", "preview asset"], check=True)
+    declaration["base_commit"] = subprocess.run(["git", "-C", str(candidate), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+    declaration["paths"] = ["index.html"]
+    binding = bind_mission_candidate(Path(mission["path"]), Path(decision["path"]), tmp_path, owner="release-owner", declaration=declaration)
+    result = serve_studio_preview_asset(tmp_path, Path(binding["path"]), "release-owner", "index.html")
+    assert "Content-Security-Policy" in result["content"]
+    assert "connect-src 'none'" in result["content"]
+    assert "<title>Test</title>" in result["content"]
+    (candidate / "index.html").write_bytes(b"\x00\xff")
+    with pytest.raises(Exception, match="MISSION_CANDIDATE_INVALID"):
+        serve_studio_preview_asset(tmp_path, Path(binding["path"]), "release-owner", "index.html")
 
 
 def test_studio_dual_track_defaults_to_instant_mvp_and_keeps_pro_controls_visible():
@@ -1963,3 +2068,64 @@ def test_guided_product_advanced_controls_are_optional_and_collapsed():
     assert {"name", "prompt"}.issubset(controls.outside)
     assert "Advanced options" in html
     assert "The defaults are ready to use." in html
+
+
+@pytest.mark.parametrize("failure", ["timeout", "cleanup", "drift"])
+def test_journey_execution_retains_failures_without_success(tmp_path, monkeypatch, failure):
+    from factoryline import app_builder
+
+    candidate, _, binding = _studio_bound_candidate(tmp_path)
+    payload = {"binding_path": binding["path"], "owner": "release-owner"}
+    plan = studio_journey_plan(tmp_path, {**payload, "stage": "verify", "command_index": 0, "image": "python@sha256:" + "a" * 64})
+
+    def runner(cli, args, cwd, **kwargs):
+        if args[0] == "inspect":
+            return {"ok": False, "exit_code": 1, "stderr": b"daemon unavailable" if failure == "cleanup" else b"no such container"}
+        if args[0] == "run" and failure == "drift":
+            (candidate / "README.md").write_text("changed", encoding="utf-8")
+        return {"ok": failure != "timeout", "exit_code": 0, "reason": "timeout" if failure == "timeout" else None, "cleanup_confirmed": True, "streams_closed": True, "stdout": b"bounded log", "stderr": b""}
+
+    monkeypatch.setattr(app_builder, "run_cli_detailed", runner)
+    result = _studio_execute_plan(tmp_path, {**payload, "plan_path": plan["path"], "plan_sha256": plan["plan_sha256"], "confirmed": True})
+    assert result["ok"] is False
+    retained = json.loads(Path(result["path"]).read_text(encoding="utf-8"))
+    assert retained["receipt"]["ok"] is False
+    assert retained["receipt"]["telemetry"]["status"] == "ERROR"
+    if failure == "cleanup":
+        assert result["container_removed"] is False
+    if failure == "drift":
+        assert result["candidate_unchanged"] is False
+    if failure == "timeout":
+        assert result["timed_out"] is True
+
+
+def test_journey_status_ignores_malformed_and_other_binding_receipts(tmp_path):
+    from factoryline import app_builder
+
+    _, _, binding = _studio_bound_candidate(tmp_path)
+    payload = {"binding_path": binding["path"], "owner": "release-owner"}
+    status = studio_journey_status(tmp_path, payload)
+    app_builder._studio_write(tmp_path, "attempt", {"stage": "build", "ok": True, "candidate_sha256": status["candidate_sha256"], "binding_sha256": "f" * 64})
+    evidence = tmp_path / ".factory" / "studio-journey"
+    (evidence / "attempt-malformed.json").write_text("{}", encoding="utf-8")
+    status = studio_journey_status(tmp_path, payload)
+    assert status["stages"]["build"] == {"state": "missing_evidence", "attempts": []}
+
+
+@pytest.mark.parametrize("status, expected", [("VERIFIED", True), ("FAILED", False)])
+def test_journey_repair_requires_existing_approval_and_preserves_result(tmp_path, monkeypatch, status, expected):
+    from factoryline import app_builder
+
+    _, _, binding = _studio_bound_candidate(tmp_path)
+    observed = []
+    def repair(binding_path, approval_path, root, *, owner):
+        observed.append((binding_path, approval_path, owner))
+        return {"status": status, "attempt_id": "bound-attempt"}
+    monkeypatch.setattr(app_builder, "execute_mission_repair", repair)
+    approval = tmp_path / "existing-exact-approval.json"
+    payload = {"action": "repair", "binding_path": binding["path"], "owner": "release-owner", "approval_path": str(approval)}
+    result = app_builder.studio_journey(tmp_path, payload)
+    assert observed == [(Path(binding["path"]), approval, "release-owner")]
+    assert result["ok"] is expected
+    assert result["repair_result"]["status"] == status
+    assert Path(result["path"]).is_file()

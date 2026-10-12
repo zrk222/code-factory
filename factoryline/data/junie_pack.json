@@ -156,7 +156,32 @@
     "freshness": "Changed candidate/build invalidates prior result freshness; preserve the previous evidence and revalidate before reuse.",
     "repair": "Only execute a separately approved exact patch/scope/check contract within attempt/time/cost limits. Retest failed and impacted checks; reuse unrelated passes only with exact evidence bindings.",
     "recovery": "Preserve failed/paused attempts and the last verified checkpoint. Resume only after revalidating candidate, authority and budgets; preview restoration is not database rollback.",
-    "authority": "This guidance does not create a running preview, execute tests, dispatch a repair or authorize publication. Missing executor/tooling/evidence remains incomplete."
+    "authority": "This guidance does not create a running preview, execute tests, dispatch a repair or authorize publication. Missing executor/tooling/evidence remains incomplete.",
+    "studio_actions": {
+      "endpoint": "/api/journey",
+      "authentication": "Existing loopback Studio token required",
+      "actions": [
+        "status",
+        "plan",
+        "execute",
+        "preview",
+        "repair"
+      ],
+      "agent_setup": [
+        "Supply the current mission candidate binding and owner",
+        "Supply only owner-approved command indexes and a digest-pinned isolated runner",
+        "Declare preview files in bound candidate paths",
+        "Supply a separate exact mission-bound repair approval only after review"
+      ],
+      "operator_flow": [
+        "Check current stages",
+        "Review an approved build or verification command",
+        "Explicitly approve the displayed exact plan",
+        "Inspect the current sandboxed candidate preview",
+        "Review failed evidence and run only a separately approved repair"
+      ],
+      "limits": "A passing command is not an application verdict. All applicable six-lane evidence and behavioral oracles remain required. Preview and prior results are invalidated on source drift."
+    }
   },
   "trace_evaluation": {
     "native_tool": "factory.evaluate_trace",
