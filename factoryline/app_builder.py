@@ -627,11 +627,15 @@ def studio_journey(root: Path, payload: dict) -> dict:
             raise ValueError("preview stage response exceeds 65536 bytes")
         return response
     if action == "repair":
-        _, owner, verification, _ = _studio_binding(root, payload)
+        binding_path, owner, verification, _ = _studio_binding(root, payload)
+        approval = Path(payload.get("approval_path", ""))
+        approval = _studio_file(
+            approval if approval.is_absolute() else root / approval, root, 1_048_576
+        )
         started = time.monotonic()
         result = execute_mission_repair(
-            Path(payload["binding_path"]),
-            Path(payload["approval_path"]),
+            binding_path,
+            approval,
             root,
             owner=owner,
         )

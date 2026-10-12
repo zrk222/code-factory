@@ -2282,14 +2282,40 @@ def test_journey_repair_requires_existing_approval_and_preserves_result(
 
     monkeypatch.setattr(app_builder, "execute_mission_repair", repair)
     approval = tmp_path / "existing-exact-approval.json"
+    approval.write_text("{}", encoding="utf-8")
     payload = {
         "action": "repair",
         "binding_path": binding["path"],
         "owner": "release-owner",
-        "approval_path": str(approval),
+        "approval_path": approval.name,
     }
     result = app_builder.studio_journey(tmp_path, payload)
     assert observed == [(Path(binding["path"]), approval, "release-owner")]
     assert result["ok"] is expected
     assert result["repair_result"]["status"] == status
     assert Path(result["path"]).is_file()
+
+
+def test_journey_wrapper_handles_repair_sandbox_errors_as_validation(
+    tmp_path, monkeypatch
+):
+    from factoryline import app_builder
+    from factoryline.repair_sandbox import RepairSandboxError
+    from factoryline.studio import journey_from_studio
+
+    def rejected(root, payload):
+        raise RepairSandboxError("REPAIR_APPROVAL_INVALID", "private approval detail")
+
+    monkeypatch.setattr(app_builder, "studio_journey", rejected)
+    with pytest.raises(StudioRequestError) as caught:
+        journey_from_studio(
+            tmp_path,
+            {
+                "action": "repair",
+                "binding_path": "bound.json",
+                "owner": "owner",
+                "approval_path": "approval.json",
+            },
+        )
+    assert caught.value.code == "JOURNEY_ACTION_REJECTED"
+    assert "private approval detail" not in str(caught.value)
