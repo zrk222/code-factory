@@ -276,9 +276,8 @@ async function dockerRun(name, sourceDir, caseDir, extraArgs = []) {
   return { result, command, parsed: readReport(caseDir, result) };
 }
 
-function writeRequirement(root, text) {
-  const source = join(root, 'source');
-  mkdirSync(source, { recursive: true });
+export function writeRequirement(root, text) {
+  const source = mkdtempSync(join(root, 'source-'));
   writeFileSync(join(source, 'requirements.txt'), text, { mode: 0o444 });
   return source;
 }

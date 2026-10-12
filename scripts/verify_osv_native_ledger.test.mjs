@@ -1,12 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   markCasePassed,
   reportIdentity,
   validateCompleteLedger,
   validateExtractorRuns,
   validateExpectedFailure,
+  writeRequirement,
 } from './verify_osv_native_ledger.mjs';
 
 const sha = (value) => createHash('sha256').update(value).digest('hex');
@@ -93,6 +97,23 @@ test('reportIdentity normalizes query order and retains only ledger-backed repor
     reported_advisories: ['GHSA-A', 'GHSA-Z'],
   });
   assert.equal(reportIdentity(report), expected);
+});
+
+test('writeRequirement creates distinct read-only fixture directories for separate cases', () => {
+  const root = mkdtempSync(join(tmpdir(), 'osv-requirement-test-'));
+  try {
+    const first = writeRequirement(root, 'requests==2.19.1\n');
+    const second = writeRequirement(root, 'urllib3==1.25.0\n');
+    const firstPath = join(first, 'requirements.txt');
+    const secondPath = join(second, 'requirements.txt');
+    assert.notEqual(first, second);
+    assert.equal(readFileSync(firstPath, 'utf8'), 'requests==2.19.1\n');
+    assert.equal(readFileSync(secondPath, 'utf8'), 'urllib3==1.25.0\n');
+    assert.equal(statSync(firstPath).mode & 0o222, 0);
+    assert.equal(statSync(secondPath).mode & 0o222, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('decision digest is recomputed from canonical evidence', () => {
