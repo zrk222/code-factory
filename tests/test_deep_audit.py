@@ -35,6 +35,36 @@ def test_zap_source_trace_mount_preserves_isolation_and_signed_python(tmp_path):
     assert not any("target=/out" in item or "docker.sock" in item for item in argv)
 
 
+def test_zap_prepare_trace_activates_only_signed_bound_python_provider(tmp_path):
+    from factoryline.deep_audit import _zap_prepare_trace
+    from test_deep_audit_sarif import _zap_source_trace_fixture
+
+    request, inventory, _, _ = _zap_source_trace_fixture(tmp_path)
+    inventory["candidate_sha256"] = digest(inventory["files"])
+    lane = {
+        "id": "zap",
+        "rule_ids": request["rule_ids"],
+        "timeout_seconds": request["timeout_seconds"],
+        "native_target": request["target"],
+    }
+    state = {
+        "run_id": request["run_id"],
+        "manifest_sha256": "d" * 64,
+        "active_lane": "zap",
+    }
+
+    prepared = _zap_prepare_trace(
+        tmp_path, state, inventory, lane, time.monotonic() + 30
+    )
+
+    assert prepared is not None
+    path, prepared_request = prepared
+    assert path.is_file()
+    assert prepared_request["target"] == lane["native_target"]
+    assert prepared_request["profile_sha256"] == digest(lane)
+    assert b"/trace/events.jsonl" in path.read_bytes()
+
+
 @pytest.mark.parametrize("mode", ["valid", "missing", "replay", "unmeasured"])
 def test_zap_source_trace_cannot_clear_unobserved_or_unreplayed_sources(mode):
     from copy import deepcopy

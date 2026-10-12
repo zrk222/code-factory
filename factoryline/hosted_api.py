@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from importlib import resources
 import json
 import os
+from pathlib import Path, PurePosixPath
+import re
+import stat
 from typing import Any, Callable, Mapping
 from urllib.parse import unquote, urlsplit
 
@@ -17,6 +20,7 @@ from .hosted_control import (
 )
 from .hosted_identity import HttpxTransport, JwksCache, get_jwks
 from .hosted_storage import PostgresAssuranceStore
+from .control_plane import ControlPlaneError, Principal
 from .integrations import principal_from_verified_oidc
 from .pr_assurance import (
     MAX_WEBHOOK_BYTES,
@@ -178,6 +182,98 @@ def _bearer(environ: Mapping[str, Any]) -> str:
     return authorization[7:]
 
 
+def _trusted_repair_path(root: Path, relative: str, *, directory: bool) -> Path:
+    """Resolve a server-provisioned relative path without links or escapes."""
+    parsed = _repair_relative_path(relative)
+    base = _trusted_repair_root(root)
+    resolved = _trusted_repair_child(base, parsed.parts)
+    _check_repair_path_type(resolved, directory)
+    return resolved
+
+
+def _repair_relative_path(relative: str) -> PurePosixPath:
+    if not isinstance(relative, str) or not relative or "\\" in relative:
+        raise PRAssuranceError("E_REPAIR_PATH", "registered repair path is invalid")
+    parsed = PurePosixPath(relative)
+    if parsed.is_absolute() or any(part in {"", ".", ".."} for part in parsed.parts):
+        raise PRAssuranceError("E_REPAIR_PATH", "registered repair path is invalid")
+    return parsed
+
+
+def _trusted_repair_root(root: Path) -> Path:
+    root = Path(root).absolute()
+    root_parts = [*reversed(root.parents), root]
+    for item in root_parts:
+        if _repair_path_is_reparse(item):
+            raise PRAssuranceError("E_REPAIR_PATH", "linked repair roots are refused")
+
+    return root.resolve(strict=True)
+
+
+def _trusted_repair_child(base: Path, parts: tuple[str, ...]) -> Path:
+    current = base
+    for part in parts:
+        current = current / part
+        if _repair_path_is_reparse(current):
+            raise PRAssuranceError("E_REPAIR_PATH", "linked repair paths are refused")
+    resolved = current.resolve(strict=True)
+    try:
+        resolved.relative_to(base)
+    except ValueError as exc:
+        raise PRAssuranceError("E_REPAIR_PATH", "repair path escapes its root") from exc
+
+    return resolved
+
+
+def _check_repair_path_type(resolved: Path, directory: bool) -> None:
+    if directory and not resolved.is_dir():
+        raise PRAssuranceError("E_REPAIR_PATH", "registered repair path has wrong type")
+    if not directory and not resolved.is_file():
+        raise PRAssuranceError("E_REPAIR_PATH", "registered repair path has wrong type")
+
+
+def _repair_path_is_reparse(path: Path) -> bool:
+    attributes = getattr(path.lstat(), "st_file_attributes", 0)
+    flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return path.is_symlink() or bool(attributes & flag)
+
+
+def _repair_dispatch_binding_or_error(workspace, approval, tenant_id, requester):
+    from .repair_sandbox import RepairSandboxError, repair_dispatch_evidence
+
+    try:
+        return repair_dispatch_evidence(
+            workspace, approval, tenant_id=tenant_id, requester=requester
+        )
+    except RepairSandboxError as exc:
+        code = (
+            exc.code
+            if isinstance(exc.code, str)
+            and re.fullmatch(r"REPAIR_[A-Z0-9_]{1,80}", exc.code)
+            else "E_REPAIR_INVALID"
+        )
+        raise PRAssuranceError(code, "repair preflight validation failed") from None
+
+
+def _current_repair_principal(principal, tenant_id, resolver, require_admin):
+    if principal.tenant_id != tenant_id:
+        if require_admin:
+            raise PRAssuranceError("E_ACTION_DENIED", "current tenant admin required")
+        raise PRAssuranceError("E_TENANT_BOUNDARY", "tenant identity differs")
+    current = resolver(principal.subject, tenant_id)
+    if (
+        not isinstance(current, Principal)
+        or current.subject != principal.subject
+        or current.tenant_id != tenant_id
+    ):
+        if require_admin:
+            raise PRAssuranceError("E_ACTION_DENIED", "current tenant admin required")
+        raise PRAssuranceError("E_IDENTITY_REQUIRED", "current identity is unavailable")
+    if require_admin and "admin" not in current.roles:
+        raise PRAssuranceError("E_ACTION_DENIED", "current tenant admin required")
+    return current
+
+
 @dataclass(frozen=True)
 class HostedConfig:
     """Secret-bearing hosted configuration loaded by the deployment boundary."""
@@ -219,6 +315,8 @@ class HostedPRAssuranceService:
         tenant_identity: TenantIdentityVerifier | None = None,
         secret_resolver: EnvSecretResolver | None = None,
         console_html: str = "",
+        current_principal_resolver: Callable[[str, str], Principal] | None = None,
+        repair_root: Path | None = None,
     ):
         self.store = store
         self.jwks = jwks
@@ -229,6 +327,171 @@ class HostedPRAssuranceService:
         self.tenant_identity = tenant_identity
         self.secret_resolver = secret_resolver
         self.console_html = console_html
+        self.current_principal_resolver = current_principal_resolver
+        self.repair_root = Path(repair_root).absolute() if repair_root else None
+
+    def _repair_context(self, token: str, tenant_id: str, *, require_admin=False):
+        resolver = self.current_principal_resolver
+        if self.control is None or self.repair_root is None or not callable(resolver):
+            raise PRAssuranceError(
+                "E_REPAIR_UNAVAILABLE", "repair dispatch is disabled"
+            )
+        principal, _claims, _marker = self.authenticate(token)
+        current = _current_repair_principal(
+            principal, tenant_id, resolver, require_admin
+        )
+        return principal, current, resolver
+
+    def provision_repair_target(
+        self,
+        token: str,
+        tenant_id: str,
+        *,
+        repair_id: str,
+        workspace_relative: str,
+        approval_relative: str,
+        workflow_approval_id: str,
+    ) -> dict[str, Any]:
+        """Provision from a verified tenant admin; this method has no HTTP route."""
+        _principal, current, resolver = self._repair_context(
+            token, tenant_id, require_admin=True
+        )
+        return self._provision_repair_target(
+            current,
+            resolver,
+            tenant_id,
+            repair_id,
+            workspace_relative,
+            approval_relative,
+            workflow_approval_id,
+        )
+
+    def _provision_repair_target(
+        self,
+        current,
+        resolver,
+        tenant_id,
+        repair_id,
+        workspace_relative,
+        approval_relative,
+        workflow_approval_id,
+    ):
+        workspace = _trusted_repair_path(
+            self.repair_root, workspace_relative, directory=True
+        )
+        approval = _trusted_repair_path(workspace, approval_relative, directory=False)
+        if not re.fullmatch(r"[A-Za-z0-9_-]{16,96}", repair_id) or not re.fullmatch(
+            r"[A-Za-z0-9_-]{8,128}", workflow_approval_id
+        ):
+            raise PRAssuranceError("E_REPAIR_ID", "repair registration id is invalid")
+        workflow_approval = self.control.get_approval(
+            current, tenant_id, workflow_approval_id
+        )
+        requester = str(workflow_approval.get("requester", ""))
+        current_requester = resolver(requester, tenant_id)
+        if (
+            not isinstance(current_requester, Principal)
+            or current_requester.subject != requester
+            or current_requester.tenant_id != tenant_id
+        ):
+            raise PRAssuranceError(
+                "E_IDENTITY_REQUIRED",
+                "current repair requester identity is unavailable",
+            )
+        from .control_plane import authorize
+
+        authorize(current_requester, "repair.execute", tenant_id)
+        binding = _repair_dispatch_binding_or_error(
+            workspace, approval, tenant_id, requester
+        )
+        return self.control.register_hosted_repair(
+            tenant_id=tenant_id,
+            repair_id=repair_id,
+            workspace_path=workspace.relative_to(self.repair_root).as_posix(),
+            approval_path=approval.relative_to(workspace).as_posix(),
+            workflow_approval_id=workflow_approval_id,
+            requester=requester,
+            binding=binding,
+            registered_by=current.subject,
+        )
+
+    def execute_registered_repair(
+        self, token: str, tenant_id: str, repair_id: str, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Dispatch one tenant-registered target after verified bearer authentication."""
+        if body != {}:
+            raise PRAssuranceError("E_REPAIR_BODY", "request body must be empty")
+        principal, current, resolver = self._repair_context(token, tenant_id)
+        try:
+            return self._dispatch_registered_repair(
+                principal, current, resolver, tenant_id, repair_id
+            )
+        except (ControlPlaneError, OSError) as exc:
+            raise PRAssuranceError(
+                getattr(exc, "code", "E_REPAIR_DISPATCH"),
+                "repair dispatch was rejected",
+            ) from None
+
+    def _dispatch_registered_repair(
+        self, principal, current, resolver, tenant_id, repair_id
+    ):
+        target, workspace, approval = self._registered_repair_inputs(
+            current, tenant_id, repair_id
+        )
+        self.control.claim_hosted_repair(tenant_id, repair_id, current.subject)
+        from .repair_sandbox import execute_workflow_approved_repair
+
+        try:
+            result = execute_workflow_approved_repair(
+                workspace,
+                approval,
+                principal=principal,
+                tenant_id=tenant_id,
+                workflow_approval_id=target["workflow_approval_id"],
+                evidence_store=self.control,
+                resolve_principal=resolver,
+            )
+        except Exception:
+            self.control.finish_hosted_repair(
+                tenant_id, repair_id, succeeded=False, actor=current.subject
+            )
+            raise PRAssuranceError(
+                "E_REPAIR_DISPATCH", "repair dispatch failed"
+            ) from None
+        if result.get("status") != "VERIFIED":
+            self.control.finish_hosted_repair(
+                tenant_id, repair_id, succeeded=False, actor=current.subject
+            )
+            raise PRAssuranceError("E_REPAIR_DISPATCH", "repair did not complete")
+        self.control.finish_hosted_repair(
+            tenant_id, repair_id, succeeded=True, actor=current.subject
+        )
+        self._emit("repair.dispatched", tenant_id=tenant_id, status="completed")
+        return {
+            "schema": "factory.hosted.repair.v1",
+            "repair_id": repair_id,
+            "status": "completed",
+        }
+
+    def _registered_repair_inputs(self, current, tenant_id, repair_id):
+        from .control_plane import authorize
+
+        authorize(current, "repair.execute", tenant_id)
+        target = self.control.get_hosted_repair(tenant_id, repair_id)
+        if target["requester"] != current.subject:
+            raise PRAssuranceError("E_ACTION_DENIED", "repair requester differs")
+        workspace = _trusted_repair_path(
+            self.repair_root, target["workspace_path"], directory=True
+        )
+        approval = _trusted_repair_path(
+            workspace, target["approval_path"], directory=False
+        )
+        binding = _repair_dispatch_binding_or_error(
+            workspace, approval, tenant_id, current.subject
+        )
+        if binding != target["binding"]:
+            raise PRAssuranceError("E_REPAIR_CHANGED", "registered repair changed")
+        return target, workspace, approval
 
     def _emit(self, operation: str, **fields: Any) -> None:
         allowed = {
@@ -527,6 +790,7 @@ class HostedPRAssuranceAPI:
         for handler in (
             self._webhook_route,
             self._approval_route,
+            self._repair_execute_route,
             self._installation_callback_route,
             self._tenant_create_route,
         ):
@@ -534,6 +798,32 @@ class HostedPRAssuranceAPI:
             if response is not None:
                 return response
         return None
+
+    def _repair_execute_route(
+        self,
+        method: str,
+        path: list[str],
+        environ: dict[str, Any],
+        start_response: Callable,
+    ) -> list[bytes] | None:
+        if (
+            method != "POST"
+            or len(path) != 6
+            or path[:2] != ["v1", "tenants"]
+            or path[3] != "repairs"
+            or path[5] != "execute"
+        ):
+            return None
+        body = _json_body(environ)
+        if body != {}:
+            raise PRAssuranceError("E_REPAIR_BODY", "request body must be empty")
+        return _finish(
+            start_response,
+            "200 OK",
+            self.service.execute_registered_repair(
+                _bearer(environ), path[2], path[4], body
+            ),
+        )
 
     def _webhook_route(
         self,
@@ -570,7 +860,7 @@ class HostedPRAssuranceAPI:
             return None
         return _finish(
             start_response,
-            "202 Accepted",
+            "200 OK",
             self.service.decide(path[2], _bearer(environ), _json_body(environ)),
         )
 
@@ -750,19 +1040,26 @@ class HostedPRAssuranceAPI:
 
 
 def _status_for(code: str) -> str:
-    if code == "E_NOT_FOUND":
+    if code in {"E_NOT_FOUND", "E_REPAIR_NOT_FOUND"}:
         return "404 Not Found"
     if code in {"E_AUTH_REQUIRED", "E_OIDC_SIGNATURE", "E_OIDC_EXPIRED"}:
         return "401 Unauthorized"
     if code in {"E_ACTION_DENIED", "E_TENANT_BOUNDARY", "E_SELF_APPROVAL"}:
         return "403 Forbidden"
-    if code in {"E_WEBHOOK_REPLAY", "E_ALREADY_DECIDED", "E_OIDC_REPLAY"}:
+    if code in {
+        "E_WEBHOOK_REPLAY",
+        "E_ALREADY_DECIDED",
+        "E_OIDC_REPLAY",
+        "E_REPAIR_EXISTS",
+        "E_REPAIR_REPLAY",
+        "E_REPAIR_CHANGED",
+    }:
         return "409 Conflict"
     if code in {"E_INSTALLATION_STATE", "E_INSTALLATION_TENANT", "E_TENANT_CONFLICT"}:
         return "409 Conflict"
     if code.startswith("E_DATABASE") or code.startswith("E_JWKS"):
         return "503 Service Unavailable"
-    if code == "E_CONTROL_UNAVAILABLE":
+    if code in {"E_CONTROL_UNAVAILABLE", "E_REPAIR_UNAVAILABLE"}:
         return "503 Service Unavailable"
     return "400 Bad Request"
 

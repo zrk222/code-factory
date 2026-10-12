@@ -95,6 +95,7 @@ def test_postgres_control_plane_binds_tenant_identity_state_audit_and_redacted_o
             "factory_workflow_evidence",
             "factory_workflow_approvals",
             "factory_workflow_approval_uses",
+            "factory_hosted_repairs",
         ):
             cursor.execute(f"GRANT SELECT ON {table} TO factory_rls_test")
         cursor.execute("SET LOCAL ROLE factory_rls_test")
@@ -103,6 +104,7 @@ def test_postgres_control_plane_binds_tenant_identity_state_audit_and_redacted_o
             "factory_workflow_evidence",
             "factory_workflow_approvals",
             "factory_workflow_approval_uses",
+            "factory_hosted_repairs",
         ):
             cursor.execute(
                 f"SELECT tenant_id FROM {table} WHERE tenant_id=%s",
@@ -247,3 +249,42 @@ def test_postgres_workflow_approval_keeps_evidence_independent_and_exactly_repla
         expired_verifier(expired_payload["phase_evidence"])
     assert expired_binding.value.code == "E_APPROVAL_EVIDENCE"
     assert control.overview(platform, tenant_id)["audit"]["valid"] is True
+
+
+def test_postgres_hosted_repair_registry_is_tenant_scoped_immutable_and_single_use():
+    assurance = PostgresAssuranceStore(DSN)
+    assurance.initialize()
+    control = PostgresControlStore(assurance)
+    control.initialize()
+    platform = Principal("repair-registry-platform", "*", ("platform_admin",))
+    tenant = "repair-registry-" + uuid.uuid4().hex[:12]
+    control.create_tenant(platform, tenant, "Repair Registry Test")
+    binding = {"schema": "factory.repair.dispatch.v1", "candidate_sha256": "a" * 64}
+    repair_id = "repair_" + uuid.uuid4().hex
+    registration = {
+        "tenant_id": tenant,
+        "repair_id": repair_id,
+        "workspace_path": "workspace",
+        "approval_path": "approval.json",
+        "workflow_approval_id": "workflow_" + uuid.uuid4().hex[:16],
+        "requester": "repair-requester",
+        "binding": binding,
+        "registered_by": "tenant-admin",
+    }
+    registered = control.register_hosted_repair(**registration)
+    target = control.get_hosted_repair(tenant, repair_id)
+    assert target["binding"] == binding
+    assert target["binding_sha256"] == registered["binding_sha256"]
+    with pytest.raises(PRAssuranceError) as duplicate:
+        control.register_hosted_repair(**{**registration, "workspace_path": "other"})
+    assert duplicate.value.code == "E_REPAIR_EXISTS"
+    with pytest.raises(PRAssuranceError) as cross_tenant:
+        control.get_hosted_repair("different-tenant", repair_id)
+    assert cross_tenant.value.code == "E_REPAIR_NOT_FOUND"
+    control.claim_hosted_repair(tenant, repair_id, "repair-requester")
+    with pytest.raises(PRAssuranceError) as replay:
+        control.claim_hosted_repair(tenant, repair_id, "repair-requester")
+    assert replay.value.code == "E_REPAIR_REPLAY"
+    control.finish_hosted_repair(
+        tenant, repair_id, succeeded=True, actor="repair-requester"
+    )

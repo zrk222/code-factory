@@ -1376,7 +1376,11 @@ def test_semgrep_config_inventory_is_derived_from_signed_config(disabled):
 
 def trivy_execution_evidence():
     import base64
-    from factoryline.deep_audit_io import canonical_bytes, _trivy_observation
+    from factoryline.deep_audit_io import (
+        canonical_bytes,
+        _trivy_observation,
+        _trivy_target_bindings,
+    )
 
     config, ignore = b"# pinned config\n", b"\n"
     lane = {
@@ -1391,7 +1395,8 @@ def trivy_execution_evidence():
             "baseline_ignore_sha256": sha256_bytes(ignore),
         },
     }
-    sources = {"Dockerfile": "b" * 64}
+    source_bytes = b"FROM scratch\n"
+    sources = {"Dockerfile": sha256_bytes(source_bytes)}
     sarif = {"runs": [{"results": []}]}
     native = {
         "SchemaVersion": 2,
@@ -1445,6 +1450,10 @@ def trivy_execution_evidence():
         "config_base64": base64.b64encode(config).decode(),
         "ignore_base64": base64.b64encode(ignore).decode(),
         "sources": sources,
+        "source_bytes_base64": {"Dockerfile": base64.b64encode(source_bytes).decode()},
+        "target_bindings": _trivy_target_bindings(
+            native, sources, {"Dockerfile": source_bytes}
+        ),
         "observations": [
             _trivy_observation("sarif", argv, dict(facts), canonical_bytes(sarif)),
             _trivy_observation("json", json_argv, dict(facts), canonical_bytes(native)),
@@ -1463,6 +1472,276 @@ def test_trivy_host_rederives_explicit_native_statuses():
     )
     assert _rule_accounting_gaps({}, lane, sources, report) == [
         "TRIVY_NATIVE_RULE_EXECUTION_UNVERIFIED"
+    ]
+
+
+def test_trivy_terraform_root_and_local_module_keep_native_target_scopes():
+    from factoryline.deep_audit_io import (
+        _trivy_expected_failures,
+        _trivy_native_checks,
+        _trivy_target_bindings,
+    )
+
+    source_bytes = {
+        "main.tf": b'module "bucket" {\n  source = "./modules/bucket"\n}\n',
+        "variables.tf": b'variable "bucket_name" { type = string }\n',
+        "modules/bucket/main.tf": b'resource "aws_s3_bucket" "sample" {}\n',
+        "modules/bucket/variables.tf": b'variable "name" { type = string }\n',
+    }
+    sources = {path: sha256_bytes(raw) for path, raw in source_bytes.items()}
+    report = {
+        "SchemaVersion": 2,
+        "Results": [
+            {
+                "Target": ".",
+                "Class": "config",
+                "Type": "terraform",
+                "Misconfigurations": [{"ID": "AVD-ROOT", "Status": "PASS"}],
+                "MisconfSummary": {"Successes": 1, "Failures": 0},
+            },
+            {
+                "Target": "modules/bucket/main.tf",
+                "Class": "config",
+                "Type": "terraform",
+                "Misconfigurations": [
+                    {
+                        "ID": "s3-bucket-logging",
+                        "AVDID": "AVD-AWS-0089",
+                        "Status": "FAIL",
+                    }
+                ],
+                "MisconfSummary": {"Successes": 0, "Failures": 1},
+            },
+        ],
+    }
+    bindings = _trivy_target_bindings(report, sources, source_bytes)
+    assert bindings["."]["scope"] == "terraform_root"
+    assert [row["path"] for row in bindings["."]["members"]] == sorted(source_bytes)
+    assert bindings["modules/bucket/main.tf"]["scope"] == "terraform_file"
+    matrix = _trivy_native_checks(report, sources, bindings)
+    assert set(matrix) == {".", "modules/bucket/main.tf"}
+    sarif = {
+        "runs": [
+            {
+                "results": [
+                    {
+                        "ruleId": "s3-bucket-logging",
+                        "locations": [
+                            {
+                                "physicalLocation": {
+                                    "artifactLocation": {
+                                        "uri": "modules/bucket/main.tf"
+                                    }
+                                }
+                            }
+                        ],
+                    }
+                ]
+            }
+        ]
+    }
+    assert _trivy_expected_failures(report, bindings, sarif, sources) == {
+        ("modules/bucket/main.tf", "s3-bucket-logging")
+    }
+
+
+@pytest.mark.parametrize(
+    "source", ["../outside", "https://registry.example/module", "${var.module_path}"]
+)
+def test_trivy_terraform_module_mapping_fails_closed_on_unresolved_sources(source):
+    from factoryline.deep_audit_io import _trivy_target_bindings
+
+    source_bytes = {
+        "main.tf": f'module "bucket" {{\n  source = "{source}"\n}}\n'.encode(),
+        "modules/bucket/main.tf": b'resource "aws_s3_bucket" "sample" {}\n',
+    }
+    sources = {path: sha256_bytes(raw) for path, raw in source_bytes.items()}
+    report = {
+        "SchemaVersion": 2,
+        "Results": [
+            {
+                "Target": ".",
+                "Class": "config",
+                "Type": "terraform",
+                "Misconfigurations": [{"ID": "AVD-ROOT", "Status": "PASS"}],
+                "MisconfSummary": {"Successes": 1, "Failures": 0},
+            }
+        ],
+    }
+    with pytest.raises(Exception, match="Terraform"):
+        _trivy_target_bindings(report, sources, source_bytes)
+
+
+def test_trivy_exact_terraform_json_file_without_modules_remains_supported():
+    from factoryline.deep_audit_io import _trivy_target_bindings
+
+    source_bytes = {"standalone.tf.json": b'{"resource":{"aws_s3_bucket":{"x":{}}}}'}
+    sources = {path: sha256_bytes(raw) for path, raw in source_bytes.items()}
+    report = {
+        "SchemaVersion": 2,
+        "Results": [
+            {
+                "Target": "standalone.tf.json",
+                "Class": "config",
+                "Type": "terraform",
+                "Misconfigurations": [{"ID": "AVD-TEST", "Status": "PASS"}],
+                "MisconfSummary": {"Successes": 1, "Failures": 0},
+            }
+        ],
+    }
+    binding = _trivy_target_bindings(report, sources, source_bytes)
+    assert binding["standalone.tf.json"]["scope"] == "terraform_file"
+
+
+def test_trivy_terraform_json_root_resolves_literal_local_module_graph():
+    from factoryline.deep_audit_io import _trivy_target_bindings
+
+    source_bytes = {
+        "main.tf.json": b'{"module":{"bucket":{"source":"./modules/bucket"}}}',
+        "modules/bucket/main.tf": b'resource "aws_s3_bucket" "x" {}',
+    }
+    sources = {path: sha256_bytes(raw) for path, raw in source_bytes.items()}
+    report = {
+        "SchemaVersion": 2,
+        "Results": [
+            {
+                "Target": ".",
+                "Class": "config",
+                "Type": "terraform",
+                "Misconfigurations": [{"ID": "AVD-TEST", "Status": "PASS"}],
+                "MisconfSummary": {"Successes": 1, "Failures": 0},
+            }
+        ],
+    }
+    binding = _trivy_target_bindings(report, sources, source_bytes)
+    assert [row["path"] for row in binding["."]["members"]] == sorted(source_bytes)
+
+
+def test_trivy_terraform_graph_rejects_module_text_hidden_in_block_comment():
+    from factoryline.deep_audit_io import _trivy_target_bindings
+
+    source_bytes = {
+        "main.tf": b'/*\nmodule "fake" {\n source = "./modules/fake"\n}\n*/\n',
+        "modules/fake/main.tf": b'resource "aws_s3_bucket" "x" {}',
+    }
+    sources = {path: sha256_bytes(raw) for path, raw in source_bytes.items()}
+    report = {
+        "SchemaVersion": 2,
+        "Results": [
+            {
+                "Target": ".",
+                "Class": "config",
+                "Type": "terraform",
+                "Misconfigurations": [{"ID": "AVD-TEST", "Status": "PASS"}],
+                "MisconfSummary": {"Successes": 1, "Failures": 0},
+            }
+        ],
+    }
+    with pytest.raises(Exception, match="block comments"):
+        _trivy_target_bindings(report, sources, source_bytes)
+
+
+def _trivy_snapshot_inputs(sizes, tmp_path=None):
+    import base64
+
+    source_bytes = {
+        f"source-{index}.tf": b"x" * size for index, size in enumerate(sizes)
+    }
+    sources = {path: sha256_bytes(raw) for path, raw in source_bytes.items()}
+    if tmp_path is not None:
+        for path, raw in source_bytes.items():
+            (tmp_path / path).write_bytes(raw)
+    encoded = {
+        path: base64.b64encode(raw).decode("ascii")
+        for path, raw in source_bytes.items()
+    }
+    return sources, source_bytes, encoded
+
+
+@pytest.mark.parametrize("size,accepted", [(1_000_000, True), (1_000_001, False)])
+def test_trivy_producer_snapshot_enforces_per_file_byte_boundary(
+    tmp_path, size, accepted
+):
+    from factoryline.deep_audit_io import _trivy_source_bytes
+
+    sources, source_bytes, _ = _trivy_snapshot_inputs([size], tmp_path)
+    if accepted:
+        assert _trivy_source_bytes(tmp_path, sources) == source_bytes
+    else:
+        with pytest.raises(Exception, match="snapshot"):
+            _trivy_source_bytes(tmp_path, sources)
+
+
+@pytest.mark.parametrize("size,accepted", [(1_000_000, True), (1_000_001, False)])
+def test_trivy_host_decoder_enforces_per_file_byte_boundary(size, accepted):
+    from factoryline.deep_audit_io import _trivy_decode_source_bytes
+
+    sources, source_bytes, encoded = _trivy_snapshot_inputs([size])
+    evidence = {"source_bytes_base64": encoded}
+    if accepted:
+        assert _trivy_decode_source_bytes(evidence, sources) == source_bytes
+    else:
+        with pytest.raises(Exception, match="snapshot"):
+            _trivy_decode_source_bytes(evidence, sources)
+
+
+@pytest.mark.parametrize("extra_byte,accepted", [(False, True), (True, False)])
+@pytest.mark.parametrize("consumer", ["producer", "host"])
+def test_trivy_source_snapshot_enforces_total_byte_boundary(
+    tmp_path, extra_byte, accepted, consumer
+):
+    from factoryline.deep_audit_io import (
+        _trivy_decode_source_bytes,
+        _trivy_source_bytes,
+    )
+
+    sizes = [1_000_000] * 8 + ([1] if extra_byte else [])
+    sources, source_bytes, encoded = _trivy_snapshot_inputs(
+        sizes, tmp_path if consumer == "producer" else None
+    )
+
+    def load():
+        if consumer == "producer":
+            return _trivy_source_bytes(tmp_path, sources)
+        return _trivy_decode_source_bytes({"source_bytes_base64": encoded}, sources)
+
+    if accepted:
+        assert load() == source_bytes
+    else:
+        with pytest.raises(Exception, match="snapshot"):
+            load()
+
+
+def test_trivy_local_module_cycles_terminate_and_unrelated_targets_stay_separate():
+    import time
+    from factoryline.deep_audit_io import _trivy_target_bindings
+
+    source_bytes = {
+        "main.tf": b'module "a" {\n source = "./modules/a"\n}\n',
+        "modules/a/main.tf": b'module "self" {\n source = "./"\n}\n',
+        "modules/unused/main.tf": b'resource "aws_s3_bucket" "x" {}\n',
+    }
+    sources = {path: sha256_bytes(raw) for path, raw in source_bytes.items()}
+    report = {
+        "SchemaVersion": 2,
+        "Results": [
+            {"Target": ".", "Class": "config", "Type": "terraform"},
+            {
+                "Target": "modules/unused/main.tf",
+                "Class": "config",
+                "Type": "terraform",
+            },
+        ],
+    }
+    started = time.perf_counter()
+    bindings = _trivy_target_bindings(report, sources, source_bytes)
+    elapsed = time.perf_counter() - started
+    print(f"synthetic_module_graph_elapsed_seconds={elapsed:.6f}")
+    assert elapsed < 5.0
+    root_members = {row["path"] for row in bindings["."]["members"]}
+    assert root_members == {"main.tf", "modules/a/main.tf"}
+    assert bindings["modules/unused/main.tf"]["members"] == [
+        {"path": "modules/unused/main.tf", "sha256": sources["modules/unused/main.tf"]}
     ]
 
 
@@ -1507,6 +1786,43 @@ def test_trivy_host_rejects_resealed_incomplete_native_checks(tamper):
         raw_report_base64=base64.b64encode(raw).decode(),
         raw_report_sha256=sha256_bytes(raw),
     )
+    assert _rule_accounting_gaps(
+        {"trivy_rule_execution": evidence}, lane, sources, report
+    ) == ["TRIVY_NATIVE_RULE_EXECUTION_UNVERIFIED"]
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "target_binding_hash",
+        "source_snapshot_hash",
+        "missing_binding",
+        "duplicate_target",
+    ],
+)
+def test_trivy_host_rejects_unbound_target_membership(tamper):
+    import base64
+    from factoryline.deep_audit_io import canonical_bytes
+    from factoryline.deep_audit_sarif import _rule_accounting_gaps
+
+    evidence, lane, sources, report = trivy_execution_evidence()
+    observation = evidence["observations"][1]
+    native = json.loads(base64.b64decode(observation["raw_report_base64"]))
+    if tamper == "target_binding_hash":
+        evidence["target_bindings"]["Dockerfile"]["members"][0]["sha256"] = "0" * 64
+    elif tamper == "source_snapshot_hash":
+        evidence["source_bytes_base64"]["Dockerfile"] = base64.b64encode(
+            b"FROM busybox\n"
+        ).decode()
+    elif tamper == "missing_binding":
+        evidence["target_bindings"] = {}
+    else:
+        native["Results"].append(dict(native["Results"][0]))
+        raw = canonical_bytes(native)
+        observation.update(
+            raw_report_base64=base64.b64encode(raw).decode(),
+            raw_report_sha256=sha256_bytes(raw),
+        )
     assert _rule_accounting_gaps(
         {"trivy_rule_execution": evidence}, lane, sources, report
     ) == ["TRIVY_NATIVE_RULE_EXECUTION_UNVERIFIED"]

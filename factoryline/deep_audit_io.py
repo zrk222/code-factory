@@ -4501,12 +4501,21 @@ def _trivy_full_source_execution(
     if _adapter_command_failed(facts, [0], deadline):
         raise RuntimeAuditError("E_TRIVY_EXECUTION", "Trivy JSON inventory failed")
     raw_json = _trivy_read_raw(local_file(scratch, "trivy-full.json"))
-    _trivy_native_checks(strict_json(raw_json), _trivy_source_map(inventory, lane))
+    sources = _trivy_source_map(inventory, lane)
+    native_report = strict_json(raw_json)
+    source_bytes = _trivy_source_bytes(source, sources)
+    bindings = _trivy_target_bindings(native_report, sources, source_bytes)
+    _trivy_native_checks(native_report, sources, bindings)
     return {
         "schema": "factory.trivy-rule-execution.v1",
         "config_base64": base64.b64encode(config).decode("ascii"),
         "ignore_base64": base64.b64encode(ignore).decode("ascii"),
         "sources": _trivy_source_map(inventory, lane),
+        "target_bindings": bindings,
+        "source_bytes_base64": {
+            path: base64.b64encode(raw).decode("ascii")
+            for path, raw in sorted(source_bytes.items())
+        },
         "observations": [
             _trivy_observation("sarif", sarif_argv, invocation["execution"], raw_sarif),
             _trivy_observation("json", argv, facts, raw_json),
@@ -4541,7 +4550,294 @@ def _trivy_source_map(inventory, lane):
     }
 
 
-def _trivy_native_checks(report, sources):
+def _trivy_source_bytes(root, sources):
+    result = {}
+    total = 0
+    for path, expected in sorted(sources.items()):
+        raw = (root / path).read_bytes()
+        total += len(raw)
+        if len(raw) > 1_000_000 or total > 8_000_000 or sha256_bytes(raw) != expected:
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform source snapshot differs"
+            )
+        result[path] = raw
+    return result
+
+
+def _trivy_module_sources(raw, path):
+    import re
+    import json
+
+    text = raw.decode("utf-8", errors="strict")
+    if path.lower().endswith(".tf.json"):
+        try:
+            document = json.loads(text)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform JSON source is malformed"
+            ) from exc
+        modules = document.get("module", {}) if isinstance(document, dict) else None
+        if modules is None:
+            return []
+        if not isinstance(modules, dict):
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform JSON modules are malformed"
+            )
+        sources = []
+        for module in modules.values():
+            source = module.get("source") if isinstance(module, dict) else None
+            if not isinstance(source, str) or "$" in source:
+                raise RuntimeAuditError(
+                    "E_TRIVY_APPLICABILITY",
+                    "Terraform JSON module source is dynamic or missing",
+                )
+            sources.append((path, source))
+        return sources
+    text = _trivy_clean_hcl_comments(text)
+    return [(path, source) for source in _trivy_parse_module_blocks(text, re)]
+
+
+def _trivy_clean_hcl_comments(text):
+    lines = []
+    for line in text.splitlines():
+        out = []
+        quoted = False
+        escaped = False
+        index = 0
+        while index < len(line):
+            char = line[index]
+            pair = line[index : index + 2]
+            if not quoted and pair in {"/*", "*/", "<<"}:
+                raise RuntimeAuditError(
+                    "E_TRIVY_APPLICABILITY",
+                    "Terraform block comments and heredocs are unsupported",
+                )
+            if quoted:
+                out.append(char)
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    quoted = False
+            elif char == '"':
+                quoted = True
+                out.append(char)
+            elif char == "#" or pair == "//":
+                break
+            else:
+                out.append(char)
+            index += 2 if not quoted and pair == "//" else 1
+        lines.append("".join(out))
+    return "\n".join(lines)
+
+
+def _trivy_parse_module_blocks(text, regex):
+    lines = text.splitlines()
+    modules = []
+    index = 0
+    while index < len(lines):
+        if not regex.match(r'^\s*module\s+"[^"\n]+"\s*\{', lines[index]):
+            index += 1
+            continue
+        block, index = _trivy_hcl_block(lines, index)
+        match = regex.search(r'^\s*source\s*=\s*"([^"$]+)"\s*$', block, regex.MULTILINE)
+        if match is None:
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform module source is dynamic or missing"
+            )
+        modules.append(match.group(1))
+    return modules
+
+
+def _trivy_hcl_block(lines, start):
+    depth = 0
+    in_string = False
+    escaped = False
+    block = []
+    cursor = start
+    while cursor < len(lines):
+        line = lines[cursor]
+        block.append(line)
+        depth, in_string, escaped = _trivy_hcl_line_depth(
+            line, depth, in_string, escaped
+        )
+        if depth == 0:
+            return "\n".join(block), cursor + 1
+        cursor += 1
+    raise RuntimeAuditError(
+        "E_TRIVY_APPLICABILITY", "Terraform module block is unclosed"
+    )
+
+
+def _trivy_hcl_line_depth(line, depth, in_string, escaped):
+    comment = False
+    for char in line:
+        if comment:
+            break
+        depth, in_string, escaped, comment = _trivy_hcl_char(
+            char, depth, in_string, escaped
+        )
+    return depth, in_string, escaped
+
+
+def _trivy_hcl_char(char, depth, in_string, escaped):
+    if in_string:
+        return _trivy_hcl_string_char(char, depth, escaped)
+    if char == '"':
+        return depth, True, False, False
+    if char == "#":
+        return depth, False, False, True
+    return depth + (char == "{") - (char == "}"), False, False, False
+
+
+def _trivy_hcl_string_char(char, depth, escaped):
+    if escaped:
+        return depth, True, False, False
+    if char == "\\":
+        return depth, True, True, False
+    return depth, char != '"', False, False
+
+
+def _trivy_target_bindings(report, sources, source_bytes=None):
+    """Bind native Terraform Targets to exact candidate members and hashes."""
+    results = report.get("Results") if isinstance(report, dict) else None
+    if not isinstance(results, list):
+        raise RuntimeAuditError("E_TRIVY_REPORT", "Trivy target inventory malformed")
+    paths = set(sources)
+    root_scan = any(
+        result.get("Type") == "terraform"
+        and _trivy_target_name(result.get("Target")) == "."
+        for result in results
+        if isinstance(result, dict)
+    )
+    root_members, edges = _trivy_root_module_graph(paths, source_bytes, root_scan)
+    bindings = _trivy_bind_report_targets(
+        results, paths, sources, root_members, edges, source_bytes
+    )
+    _trivy_validate_target_coverage(bindings, paths)
+    return bindings
+
+
+def _trivy_root_module_graph(paths, source_bytes, root_scan):
+    root_members = set()
+    edges = []
+    if source_bytes is None or not root_scan:
+        return root_members, edges
+    pending = [
+        path
+        for path in paths
+        if "/" not in path and path.lower().endswith((".tf", ".tf.json"))
+    ]
+    while pending:
+        parent = pending.pop()
+        if parent in root_members:
+            continue
+        root_members.add(parent)
+        for owner, source in _trivy_module_sources(source_bytes[parent], parent):
+            members = _trivy_local_module_members(owner, source, paths)
+            edges.append({"from": owner, "source": source, "members": members})
+            pending.extend(members)
+    return root_members, edges
+
+
+def _trivy_local_module_members(owner, source, paths):
+    if not source.startswith("./"):
+        raise RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "non-local Terraform module source is unsupported"
+        )
+    resolved = Path(os.path.normpath(str(Path(owner).parent / source))).as_posix()
+    if resolved == ".." or resolved.startswith("../") or resolved.startswith("/"):
+        raise RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "Terraform module source escapes candidate root"
+        )
+    members = sorted(
+        path
+        for path in paths
+        if Path(path).parent.as_posix() == resolved
+        and path.lower().endswith((".tf", ".tf.json"))
+    )
+    if not members:
+        raise RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "Terraform local module has no inventoried sources"
+        )
+    return members
+
+
+def _trivy_bind_report_targets(
+    results, paths, sources, root_members, edges, source_bytes
+):
+    bindings = {}
+    for result in results:
+        if not isinstance(result, dict):
+            raise RuntimeAuditError("E_TRIVY_REPORT", "Trivy target malformed")
+        target = _trivy_target_name(result.get("Target"))
+        kind = result.get("Type")
+        if target in bindings:
+            raise RuntimeAuditError("E_TRIVY_REPORT", "duplicate Trivy target")
+        members, scope = _trivy_target_members(
+            target, kind, paths, root_members, source_bytes
+        )
+        if not members:
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Trivy target has no bound members"
+            )
+        bindings[target] = {
+            "kind": kind,
+            "scope": scope,
+            "members": [{"path": path, "sha256": sources[path]} for path in members],
+        }
+    if source_bytes is not None:
+        for item in bindings.values():
+            if item["scope"] == "terraform_root":
+                item["module_edges"] = sorted(
+                    edges, key=lambda edge: (edge["from"], edge["source"])
+                )
+    return bindings
+
+
+def _trivy_target_members(target, kind, paths, root_members, source_bytes):
+    if kind == "terraform" and target == ".":
+        members = (
+            sorted(root_members)
+            if source_bytes is not None
+            else sorted(
+                path
+                for path in paths
+                if "/" not in path and path.lower().endswith((".tf", ".tf.json"))
+            )
+        )
+        return members, "terraform_root"
+    if kind == "terraform" and target.lower().endswith((".tf", ".tf.json")):
+        return ([target] if target in paths else []), "terraform_file"
+    return ([target] if target in paths else []), "file"
+
+
+def _trivy_validate_target_coverage(bindings, paths):
+    covered = {row["path"] for item in bindings.values() for row in item["members"]}
+    if covered != paths:
+        raise RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "Trivy target membership is incomplete"
+        )
+    for path in paths:
+        owners = [
+            item
+            for item in bindings.values()
+            if any(row["path"] == path for row in item["members"])
+        ]
+        if len(owners) > 1 and not (
+            len(owners) == 2
+            and "terraform_root" in {item["scope"] for item in owners}
+            and all(
+                item["scope"] in {"terraform_root", "terraform_file"} for item in owners
+            )
+        ):
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Trivy target membership overlaps"
+            )
+
+
+def _trivy_native_checks(report, sources, target_bindings=None):
     if not isinstance(report, dict) or report.get("SchemaVersion") != 2:
         raise RuntimeAuditError("E_TRIVY_REPORT", "Trivy JSON schema version differs")
     results = report.get("Results")
@@ -4549,12 +4845,13 @@ def _trivy_native_checks(report, sources):
         raise RuntimeAuditError(
             "E_TRIVY_APPLICABILITY", "Trivy reported no applicable sources"
         )
+    target_bindings = target_bindings or _trivy_target_bindings(report, sources)
     matrix = {}
     for result in results:
         if not isinstance(result, dict) or result.get("Class") != "config":
             raise RuntimeAuditError("E_TRIVY_REPORT", "Trivy config result malformed")
-        path = relative_path(result.get("Target"))
-        if path not in sources:
+        target = _trivy_target_name(result.get("Target"))
+        if target not in target_bindings:
             raise RuntimeAuditError("E_TRIVY_APPLICABILITY", "Trivy source is unbound")
         rows = result.get("Misconfigurations")
         if not isinstance(rows, list) or not rows:
@@ -4562,12 +4859,12 @@ def _trivy_native_checks(report, sources):
                 "E_TRIVY_APPLICABILITY", "Trivy check inventory missing"
             )
         statuses = _trivy_check_statuses(result, rows)
-        if path in matrix:
+        if target in matrix:
             raise RuntimeAuditError("E_TRIVY_REPORT", "duplicate Trivy source result")
-        matrix[path] = statuses
-    if set(matrix) != set(sources):
+        matrix[target] = statuses
+    if set(matrix) != set(target_bindings):
         raise RuntimeAuditError(
-            "E_TRIVY_APPLICABILITY", "Trivy omitted a required source"
+            "E_TRIVY_APPLICABILITY", "Trivy omitted a required target"
         )
     return matrix
 
@@ -4602,6 +4899,10 @@ def _trivy_check_statuses(result, rows):
     return statuses
 
 
+def _trivy_target_name(value):
+    return "." if value == "." else relative_path(value)
+
+
 def verify_trivy_rule_execution(
     evidence, lane, sources, report, *, disabled_rule_id=None
 ):
@@ -4630,20 +4931,24 @@ def verify_trivy_rule_execution(
             raise RuntimeAuditError(
                 "E_TRIVY_EXECUTION", "paired Trivy command did not complete"
             )
-    matrix = _trivy_native_checks(strict_json(decoded[1]), sources)
+    native_report = strict_json(decoded[1])
+    source_bytes = _trivy_decode_source_bytes(evidence, sources)
+    bindings = _trivy_target_bindings(native_report, sources, source_bytes)
+    if evidence.get("target_bindings") != bindings:
+        raise RuntimeAuditError("E_TRIVY_APPLICABILITY", "Trivy target bindings differ")
+    matrix = _trivy_native_checks(native_report, sources, bindings)
     _trivy_matrix_ids(matrix, expected_ids)
-    fail_rows = {
-        (path, rule)
-        for path, rows in matrix.items()
-        for rule, status in rows.items()
-        if status == "FAIL"
-    }
     sarif = strict_json(decoded[0])
+    fail_rows = _trivy_expected_failures(
+        native_report, bindings, sarif, sources, observations[0]["argv"][-1]
+    )
     if _trivy_sarif_failures(sarif, sources, observations[0]["argv"][-1]) != fail_rows:
         raise RuntimeAuditError(
             "E_TRIVY_EXECUTION", "native JSON and SARIF findings differ"
         )
-    if _trivy_sarif_failures(report, sources) != fail_rows:
+    if _trivy_expected_failures(
+        native_report, bindings, report, sources
+    ) != _trivy_sarif_failures(report, sources):
         raise RuntimeAuditError(
             "E_TRIVY_EXECUTION", "normalized report differs from native status"
         )
@@ -4656,7 +4961,15 @@ def _trivy_evidence_inputs(evidence, lane, sources, disabled_rule_id):
     if (
         not isinstance(evidence, dict)
         or set(evidence)
-        != {"schema", "config_base64", "ignore_base64", "sources", "observations"}
+        != {
+            "schema",
+            "config_base64",
+            "ignore_base64",
+            "sources",
+            "observations",
+            "target_bindings",
+            "source_bytes_base64",
+        }
         or evidence["schema"] != "factory.trivy-rule-execution.v1"
         or evidence["sources"] != sources
         or not isinstance(lane.get("native_policy"), dict)
@@ -4691,6 +5004,97 @@ def _trivy_evidence_inputs(evidence, lane, sources, disabled_rule_id):
     ):
         raise RuntimeAuditError("E_TRIVY_MUTATION", "Trivy target ignore differs")
     return config, ignore, observations
+
+
+def _trivy_decode_source_bytes(evidence, sources):
+    import base64
+
+    encoded = evidence.get("source_bytes_base64")
+    if not isinstance(encoded, dict) or set(encoded) != set(sources):
+        raise RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "Terraform source snapshot set differs"
+        )
+    decoded = {}
+    total = 0
+    for path, value in encoded.items():
+        try:
+            raw = base64.b64decode(value, validate=True)
+        except (ValueError, TypeError) as exc:
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform source snapshot malformed"
+            ) from exc
+        total += len(raw)
+        if (
+            len(raw) > 1_000_000
+            or total > 8_000_000
+            or sha256_bytes(raw) != sources[path]
+        ):
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform source snapshot hash differs"
+            )
+        decoded[path] = raw
+    return decoded
+
+
+def _trivy_expected_failures(native, bindings, sarif, sources, source_root=None):
+    report = _trivy_normalized_sarif(sarif, sources, source_root)
+    rows = _trivy_native_failure_rows(native, bindings)
+    expected = _trivy_match_failure_rows(rows, report)
+    actual = _trivy_sarif_failures(sarif, sources, source_root)
+    if actual != expected:
+        raise RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "native JSON and SARIF findings differ"
+        )
+    return expected
+
+
+def _trivy_normalized_sarif(sarif, sources, source_root):
+    _trivy_sarif_failures(sarif, sources, source_root)
+    report = strict_json(canonical_bytes(sarif))
+    if source_root is not None:
+        for run in report["runs"]:
+            _normalize_challenge_run(run, source_root.rstrip("/"))
+    return _native_sarif_paths(report, sources)
+
+
+def _trivy_native_failure_rows(native, bindings):
+    rows = []
+    for result in native["Results"]:
+        binding = bindings[_trivy_target_name(result["Target"])]
+        rows.extend(
+            (binding, row)
+            for row in result["Misconfigurations"]
+            if row["Status"] == "FAIL"
+        )
+    return rows
+
+
+def _trivy_match_failure_rows(rows, report):
+    expected = set()
+    used = set()
+    for binding, row in rows:
+        candidates = []
+        accepted_ids = {row.get("ID"), row.get("AVDID")}
+        for run_index, run in enumerate(report["runs"]):
+            for result_index, result in enumerate(run.get("results", [])):
+                if result.get("ruleId") not in accepted_ids:
+                    continue
+                location = result["locations"][0]["physicalLocation"][
+                    "artifactLocation"
+                ]
+                path = relative_path(location.get("uri"))
+                if path in {item["path"] for item in binding["members"]}:
+                    key = (run_index, result_index)
+                    if key not in used:
+                        candidates.append((key, path, result["ruleId"]))
+        if len(candidates) != 1:
+            raise RuntimeAuditError(
+                "E_TRIVY_EXECUTION", "failed Trivy target has ambiguous SARIF ownership"
+            )
+        key, path, rule = candidates[0]
+        used.add(key)
+        expected.add((path, rule))
+    return expected
 
 
 def _trivy_expected_ids(lane, disabled_rule_id):
@@ -7061,7 +7465,14 @@ def _run_trivy_challenge(
 
     def report_parser(raw):
         paired["sarif_raw"] = raw
-        matrix = _trivy_native_checks(strict_json(paired["json_raw"]), fixture_map)
+        source_bytes = _trivy_source_bytes(challenge_root, fixture_map)
+        matrix = _trivy_native_checks(
+            strict_json(paired["json_raw"]),
+            fixture_map,
+            _trivy_target_bindings(
+                strict_json(paired["json_raw"]), fixture_map, source_bytes
+            ),
+        )
         return _trivy_challenge_report(
             raw, profile, challenge_root, fixture_map, matrix
         )
@@ -7104,7 +7515,7 @@ def _run_trivy_challenge(
         mutation_ruleset_sha256=lane["mutation_config_sha256"],
     )
     observation["trivy_rule_execution"] = _trivy_challenge_evidence(
-        config, effective.read_bytes(), fixture_map, paired, observation
+        config, effective.read_bytes(), fixture_map, paired, observation, challenge_root
     )
     checked = verify_trivy_rule_execution(
         observation["trivy_rule_execution"],
@@ -7214,7 +7625,9 @@ def _trivy_challenge_report(raw, profile, source_root, sources, matrix):
     return report
 
 
-def _trivy_challenge_evidence(config, ignore, sources, paired, observation):
+def _trivy_challenge_evidence(
+    config, ignore, sources, paired, observation, source_root
+):
     import base64
 
     sarif_raw = paired.get("sarif_raw")
@@ -7233,11 +7646,18 @@ def _trivy_challenge_evidence(config, ignore, sources, paired, observation):
         raise RuntimeAuditError(
             "E_TRIVY_EXECUTION", "native policy artifact binding differs"
         )
+    source_bytes = _trivy_source_bytes(source_root, sources)
+    native = strict_json(json_raw)
     return {
         "schema": "factory.trivy-rule-execution.v1",
         "config_base64": base64.b64encode(config).decode("ascii"),
         "ignore_base64": base64.b64encode(ignore).decode("ascii"),
         "sources": sources,
+        "source_bytes_base64": {
+            path: base64.b64encode(raw).decode("ascii")
+            for path, raw in sorted(source_bytes.items())
+        },
+        "target_bindings": _trivy_target_bindings(native, sources, source_bytes),
         "observations": [
             _trivy_observation(
                 "sarif", paired["sarif_argv"], paired["sarif_facts"], sarif_raw

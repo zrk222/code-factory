@@ -147,6 +147,22 @@ CREATE TABLE IF NOT EXISTS factory_workflow_approval_uses (
     FOREIGN KEY (tenant_id, approval_id)
       REFERENCES factory_workflow_approvals(tenant_id, approval_id)
 );
+CREATE TABLE IF NOT EXISTS factory_hosted_repairs (
+    tenant_id TEXT NOT NULL REFERENCES factory_tenants(tenant_id),
+    repair_id TEXT NOT NULL,
+    workspace_path TEXT NOT NULL,
+    approval_path TEXT NOT NULL,
+    workflow_approval_id TEXT NOT NULL,
+    requester TEXT NOT NULL,
+    binding_json JSONB NOT NULL,
+    binding_sha256 TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('registered','executing','completed','failed')),
+    registered_by TEXT NOT NULL,
+    registered_at TIMESTAMPTZ NOT NULL,
+    claimed_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    PRIMARY KEY (tenant_id, repair_id)
+);
 CREATE INDEX IF NOT EXISTS factory_admin_audit_tenant_sequence
   ON factory_admin_audit(tenant_id, sequence);
 CREATE INDEX IF NOT EXISTS factory_workflow_evidence_tenant_created
@@ -175,6 +191,8 @@ ALTER TABLE factory_workflow_approvals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE factory_workflow_approvals FORCE ROW LEVEL SECURITY;
 ALTER TABLE factory_workflow_approval_uses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE factory_workflow_approval_uses FORCE ROW LEVEL SECURITY;
+ALTER TABLE factory_hosted_repairs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE factory_hosted_repairs FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS factory_identity_tenant ON factory_tenant_identity;
 CREATE POLICY factory_identity_tenant ON factory_tenant_identity
   USING (tenant_id = current_setting('factory.tenant_id', true))
@@ -201,6 +219,10 @@ CREATE POLICY factory_workflow_approvals_tenant ON factory_workflow_approvals
   WITH CHECK (tenant_id = current_setting('factory.tenant_id', true));
 DROP POLICY IF EXISTS factory_workflow_approval_uses_tenant ON factory_workflow_approval_uses;
 CREATE POLICY factory_workflow_approval_uses_tenant ON factory_workflow_approval_uses
+  USING (tenant_id = current_setting('factory.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('factory.tenant_id', true));
+DROP POLICY IF EXISTS factory_hosted_repairs_tenant ON factory_hosted_repairs;
+CREATE POLICY factory_hosted_repairs_tenant ON factory_hosted_repairs
   USING (tenant_id = current_setting('factory.tenant_id', true))
   WITH CHECK (tenant_id = current_setting('factory.tenant_id', true));
 """
@@ -702,6 +724,149 @@ class PostgresControlStore:
             )
 
         return verify
+
+    def register_hosted_repair(
+        self,
+        *,
+        tenant_id: str,
+        repair_id: str,
+        workspace_path: str,
+        approval_path: str,
+        workflow_approval_id: str,
+        requester: str,
+        binding: dict[str, Any],
+        registered_by: str,
+    ) -> dict[str, Any]:
+        """Insert one immutable server-provisioned repair target."""
+        if not re.fullmatch(r"[A-Za-z0-9_-]{16,96}", repair_id):
+            raise PRAssuranceError("E_REPAIR_ID", "repair id is invalid")
+        binding_bytes = canonical_json(binding)
+        binding_sha256 = hashlib.sha256(binding_bytes).hexdigest()
+        with self._workflow_transaction(tenant_id) as (_db, cursor):
+            cursor.execute(
+                """INSERT INTO factory_hosted_repairs
+                   (tenant_id,repair_id,workspace_path,approval_path,
+                    workflow_approval_id,requester,binding_json,binding_sha256,
+                    status,registered_by,registered_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s,'registered',%s,%s)
+                   ON CONFLICT (tenant_id,repair_id) DO NOTHING
+                   RETURNING repair_id""",
+                (
+                    tenant_id,
+                    repair_id,
+                    workspace_path,
+                    approval_path,
+                    workflow_approval_id,
+                    requester,
+                    binding_bytes.decode("utf-8"),
+                    binding_sha256,
+                    registered_by,
+                    self.clock(),
+                ),
+            )
+            if cursor.fetchone() is None:
+                raise PRAssuranceError(
+                    "E_REPAIR_EXISTS", "repair registration is immutable"
+                )
+            self._audit(
+                cursor,
+                tenant_id=tenant_id,
+                action="repair.registry.register",
+                actor=registered_by,
+                resource_id=repair_id,
+                payload={
+                    "binding_sha256": binding_sha256,
+                    "workflow_approval_id": workflow_approval_id,
+                },
+            )
+        return {"repair_id": repair_id, "binding_sha256": binding_sha256}
+
+    def get_hosted_repair(self, tenant_id: str, repair_id: str) -> dict[str, Any]:
+        """Read one target within the transaction's tenant RLS context."""
+        with self._workflow_transaction(tenant_id) as (_db, cursor):
+            cursor.execute(
+                """SELECT workspace_path,approval_path,workflow_approval_id,
+                          requester,binding_json,binding_sha256,status
+                   FROM factory_hosted_repairs
+                   WHERE tenant_id=%s AND repair_id=%s""",
+                (tenant_id, repair_id),
+            )
+            row = cursor.fetchone()
+        if row is None:
+            raise PRAssuranceError("E_REPAIR_NOT_FOUND", "repair target is unavailable")
+        names = (
+            "workspace_path",
+            "approval_path",
+            "workflow_approval_id",
+            "requester",
+            "binding",
+            "binding_sha256",
+            "status",
+        )
+        value = dict(zip(names, row, strict=True))
+        if isinstance(value["binding"], str):
+            try:
+                value["binding"] = json.loads(value["binding"])
+            except json.JSONDecodeError as exc:
+                raise PRAssuranceError(
+                    "E_REPAIR_REGISTRY", "repair registration is invalid"
+                ) from exc
+        if (
+            hashlib.sha256(canonical_json(value["binding"])).hexdigest()
+            != value["binding_sha256"]
+        ):
+            raise PRAssuranceError(
+                "E_REPAIR_REGISTRY", "repair registration integrity check failed"
+            )
+        return value
+
+    def claim_hosted_repair(
+        self, tenant_id: str, repair_id: str, requester: str
+    ) -> None:
+        """Atomically make a registered target single-use before dispatch."""
+        with self._workflow_transaction(tenant_id) as (_db, cursor):
+            cursor.execute(
+                """UPDATE factory_hosted_repairs SET status='executing',claimed_at=%s
+                   WHERE tenant_id=%s AND repair_id=%s AND requester=%s
+                     AND status='registered' RETURNING repair_id""",
+                (self.clock(), tenant_id, repair_id, requester),
+            )
+            if cursor.fetchone() is None:
+                raise PRAssuranceError(
+                    "E_REPAIR_REPLAY", "repair target is unavailable or already used"
+                )
+            self._audit(
+                cursor,
+                tenant_id=tenant_id,
+                action="repair.dispatch.claim",
+                actor=requester,
+                resource_id=repair_id,
+                payload={"status": "executing"},
+            )
+
+    def finish_hosted_repair(
+        self, tenant_id: str, repair_id: str, *, succeeded: bool, actor: str
+    ) -> None:
+        """Persist the terminal state; failed dispatches stay non-replayable."""
+        status = "completed" if succeeded else "failed"
+        with self._workflow_transaction(tenant_id) as (_db, cursor):
+            cursor.execute(
+                """UPDATE factory_hosted_repairs SET status=%s,finished_at=%s
+                   WHERE tenant_id=%s AND repair_id=%s AND status='executing'""",
+                (status, self.clock(), tenant_id, repair_id),
+            )
+            if cursor.rowcount != 1:
+                raise PRAssuranceError(
+                    "E_REPAIR_REGISTRY", "repair dispatch state changed"
+                )
+            self._audit(
+                cursor,
+                tenant_id=tenant_id,
+                action="repair.dispatch.finish",
+                actor=actor,
+                resource_id=repair_id,
+                payload={"status": status},
+            )
 
     def _consume_workflow_approval(self, principal, tenant_id, approval, expected):
         fingerprint = hashlib.sha256(canonical_json(expected)).hexdigest()
