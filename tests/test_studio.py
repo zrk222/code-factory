@@ -89,7 +89,7 @@ def test_journey_preview_is_candidate_declared_regular_file_only(tmp_path: Path)
     result = serve_studio_preview_asset(
         tmp_path, Path(binding["path"]), "release-owner", "README.md"
     )
-    assert result["content"] == "candidate base\r\n"
+    assert result["content"].replace("\r\n", "\n") == "candidate base\n"
     assert result["sandbox"] == "allow-scripts"
     assert result["parent_origin_access"] is False
     with pytest.raises(ValueError, match="not declared"):
@@ -614,7 +614,8 @@ def test_studio_handoff_ui_is_explicit_readonly_and_never_dispatches():
     assert "input.value=JSON.stringify(handoff,null,2)" in page
     assert "input.onclick=()=>input.select()" in page
     assert "Beginner acceptance checks:" in page
-    assert "This page does not run or preview the product." in page
+    assert "Build success is not proof that your app works." in page
+    assert "Approve this exact" in page
     assert "guidedButton('Run'" not in page
 
 

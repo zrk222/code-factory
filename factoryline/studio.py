@@ -2340,19 +2340,9 @@ def _studio_evidence_dir(root: Path, *, create: bool = False) -> Path:
     return directory.resolve(strict=True)
 
 
-def studio_journey_status(root: Path, payload: dict) -> dict:
-    """Read journey receipts and current candidate binding without dispatch."""
-    from .app_builder import (
-        STUDIO_JOURNEY_MARKERS,
-        STUDIO_JOURNEY_SCHEMA,
-        _studio_binding,
-        _studio_evidence_dir,
-        _studio_file,
-        _studio_json,
-        _studio_sha,
-    )
+def _studio_retained_attempts(root: Path) -> list[dict]:
+    from .app_builder import _studio_sha
 
-    _, _, verification, binding = _studio_binding(root, payload)
     raw_directory = root.resolve() / ".factory" / "studio-journey"
     directory = _studio_evidence_dir(root) if raw_directory.exists() else None
     attempts = []
@@ -2366,7 +2356,20 @@ def studio_journey_status(root: Path, payload: dict) -> dict:
                     attempts.append(attempt)
             except (OSError, ValueError, KeyError, TypeError):
                 continue
-    attempts = attempts[-24:]
+    return attempts[-24:]
+
+
+def studio_journey_status(root: Path, payload: dict) -> dict:
+    """Read journey receipts and current candidate binding without dispatch."""
+    from .app_builder import (
+        STUDIO_JOURNEY_MARKERS,
+        STUDIO_JOURNEY_SCHEMA,
+        _studio_binding,
+        _studio_json,
+    )
+
+    _, _, verification, binding = _studio_binding(root, payload)
+    attempts = _studio_retained_attempts(root)
     stages = {
         name: {"state": "missing_evidence", "attempts": []}
         for name in ("build", "preview", "verification", "repair")
@@ -2607,6 +2610,25 @@ def _studio_bind_plan(root: Path, payload: dict, plan: dict) -> tuple[dict, dict
     return verification, binding
 
 
+def _studio_bound_preview_bytes(
+    binding: dict, relative_path: str, content: bytes
+) -> None:
+    from hashlib import sha256
+
+    bound_file = next(
+        (item for item in binding["files"] if item["path"] == relative_path), None
+    )
+    if (
+        bound_file is None
+        or bound_file["state"] != "existing"
+        or sha256(content).hexdigest() != bound_file["sha256"]
+    ):
+        raise ProductMissionError(
+            "MISSION_CANDIDATE_INVALID",
+            "preview asset differs from bound candidate bytes",
+        )
+
+
 def serve_studio_preview_asset(
     root: Path,
     binding_path: Path,
@@ -2619,7 +2641,6 @@ def serve_studio_preview_asset(
     from .app_builder import (
         _STUDIO_MAX_PREVIEW,
         _studio_file,
-        sha256,
         verify_mission_candidate,
     )
 
@@ -2644,18 +2665,7 @@ def serve_studio_preview_asset(
     if not stat.S_ISREG(path.lstat().st_mode):
         raise ValueError("preview asset must be a bounded regular candidate file")
     content = path.read_bytes()
-    bound_file = next(
-        (item for item in binding["files"] if item["path"] == relative_path), None
-    )
-    if (
-        bound_file is None
-        or bound_file["state"] != "existing"
-        or sha256(content).hexdigest() != bound_file["sha256"]
-    ):
-        raise ProductMissionError(
-            "MISSION_CANDIDATE_INVALID",
-            "preview asset differs from bound candidate bytes",
-        )
+    _studio_bound_preview_bytes(binding, relative_path, content)
     after = verify_mission_candidate(binding_path, root, owner=owner)
     if after["candidate_sha256"] != verification["candidate_sha256"]:
         raise ProductMissionError(

@@ -306,12 +306,14 @@ def _studio_write(root: Path, kind: str, value: dict) -> Path:
 
 
 def studio_journey_status(root: Path, payload: dict) -> dict:
+    """Read current candidate stage receipts without executing any command."""
     from .studio import studio_journey_status as implementation
 
     return implementation(root, payload)
 
 
 def studio_journey_plan(root: Path, payload: dict) -> dict:
+    """Plan one exact candidate command for explicit isolated execution."""
     from .studio import studio_journey_plan as implementation
 
     return implementation(root, payload)
@@ -576,6 +578,7 @@ def serve_studio_preview_asset(
     *,
     max_bytes: int = _STUDIO_MAX_PREVIEW,
 ) -> dict:
+    """Return a declared current candidate asset with restricted preview policy."""
     from .studio import serve_studio_preview_asset as implementation
 
     return implementation(root, binding_path, owner, relative_path, max_bytes=max_bytes)
