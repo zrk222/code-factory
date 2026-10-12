@@ -11,7 +11,7 @@ import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from factoryline.control_plane import Principal
+from factoryline.control_plane import ControlPlaneError, Principal
 from factoryline.hosted_api import (
     HostedConfig,
     HostedPRAssuranceService,
@@ -147,8 +147,8 @@ def _token(private, *, tenant_id="acme"):
 
 
 def test_control_schema_forces_rls_and_stores_references_and_state_digests_only():
-    assert CONTROL_SCHEMA_SQL.count("FORCE ROW LEVEL SECURITY") == 4
-    assert CONTROL_SCHEMA_SQL.count("current_setting('factory.tenant_id', true)") == 8
+    assert CONTROL_SCHEMA_SQL.count("FORCE ROW LEVEL SECURITY") == 7
+    assert CONTROL_SCHEMA_SQL.count("current_setting('factory.tenant_id', true)") == 14
     assert "state_sha256 TEXT PRIMARY KEY" in CONTROL_SCHEMA_SQL
     assert "secret_ref TEXT NOT NULL" in CONTROL_SCHEMA_SQL
     lowered = CONTROL_SCHEMA_SQL.lower()
@@ -167,6 +167,93 @@ def test_control_schema_forces_rls_and_stores_references_and_state_digests_only(
     wrapped = Initializable()
     initialize_control_schema(wrapped)
     assert wrapped.initialized is True
+
+
+def test_postgres_workflow_verifier_preserves_requester_and_current_approver_checks(
+    monkeypatch,
+):
+    store = object.__new__(PostgresControlStore)
+    requester = Principal("requester", "acme", ("operator",))
+    approval = {
+        "approval_id": "approval-1",
+        "tenant_id": "acme",
+        "evidence_id": "evidence-1",
+        "requester": requester.subject,
+        "reason": "dispatch repair",
+        "status": "approved",
+        "requested_at": "2026-10-11T12:00:00+00:00",
+        "decided_at": "2026-10-11T12:01:00+00:00",
+        "approver": "approver",
+        "decision_reason": "reviewed",
+    }
+    monkeypatch.setattr(store, "get_approval", lambda *args, **kwargs: approval)
+    consumed = []
+    monkeypatch.setattr(
+        store,
+        "_consume_workflow_approval",
+        lambda principal, tenant, record, expected: consumed.append(
+            (principal, tenant, record, expected)
+        )
+        or dict(expected),
+    )
+
+    def resolver(subject, tenant):
+        roles = ("operator",) if subject == requester.subject else ("approver",)
+        return Principal(subject, tenant, roles)
+
+    verifier = store.workflow_approval_verifier(
+        requester,
+        "acme",
+        "approval-1",
+        resolve_principal=resolver,
+        require_requester=True,
+    )
+    expected = {"candidate_sha256": "a" * 64}
+    assert verifier(expected) == expected
+    assert consumed == [(requester, "acme", approval, expected)]
+
+    def stale_requester(subject, tenant):
+        roles = () if subject == requester.subject else ("approver",)
+        return Principal(subject, tenant, roles)
+
+    revoked = store.workflow_approval_verifier(
+        requester, "acme", "approval-1", resolve_principal=stale_requester
+    )
+    with pytest.raises(ControlPlaneError) as caller_role_error:
+        revoked(expected)
+    assert caller_role_error.value.code == "E_ACTION_DENIED"
+
+    def moved_requester(subject, _tenant):
+        return Principal(subject, "other-tenant", ("operator",))
+
+    moved = store.workflow_approval_verifier(
+        requester, "acme", "approval-1", resolve_principal=moved_requester
+    )
+    with pytest.raises(ControlPlaneError) as tenant_error:
+        moved(expected)
+    assert tenant_error.value.code == "E_TENANT_BOUNDARY"
+
+    def stale_role(subject, tenant):
+        return Principal(subject, tenant, ("viewer",))
+
+    denied = store.workflow_approval_verifier(
+        requester, "acme", "approval-1", resolve_principal=stale_role
+    )
+    with pytest.raises(ControlPlaneError) as role_error:
+        denied(expected)
+    assert role_error.value.code == "E_ACTION_DENIED"
+
+    other = Principal("other-requester", "acme", ("operator",))
+    wrong_requester = store.workflow_approval_verifier(
+        other,
+        "acme",
+        "approval-1",
+        resolve_principal=resolver,
+        require_requester=True,
+    )
+    with pytest.raises(ControlPlaneError) as requester_error:
+        wrong_requester(expected)
+    assert requester_error.value.code == "E_APPROVAL_REQUESTER"
 
 
 def test_env_secret_resolver_accepts_only_scoped_references_and_never_returns_reference_text():

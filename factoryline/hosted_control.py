@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -13,7 +14,14 @@ import secrets
 from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
 
-from .control_plane import Principal, canonical_json
+from .control_plane import (
+    ControlPlaneError,
+    Principal,
+    _workflow_approver,
+    _workflow_approval_evidence,
+    authorize,
+    canonical_json,
+)
 from .hosted_identity import HttpTransport, JwksCache, get_jwks
 from .integrations import principal_from_verified_oidc
 from .pr_assurance import PRAssuranceError, verify_oidc_token
@@ -25,6 +33,30 @@ PURPOSE_RE = re.compile(r"[a-z][a-z0-9_]{1,62}\Z")
 ENV_REFERENCE_RE = re.compile(r"env://([A-Z][A-Z0-9_]{1,126})\Z")
 ALLOWED_ROLES = frozenset({"viewer", "operator", "approver", "admin"})
 INSTALLATION_STATE_SECONDS = 600
+WORKFLOW_EVIDENCE_COLUMNS = (
+    "evidence_id",
+    "tenant_id",
+    "payload_json",
+    "payload_sha256",
+    "schema",
+    "subject_digest",
+    "policy_digest",
+    "verdict",
+    "created_at",
+    "inserted_by",
+)
+WORKFLOW_APPROVAL_COLUMNS = (
+    "approval_id",
+    "tenant_id",
+    "evidence_id",
+    "requester",
+    "reason",
+    "status",
+    "requested_at",
+    "decided_at",
+    "approver",
+    "decision_reason",
+)
 
 
 CONTROL_SCHEMA_SQL = r"""
@@ -78,8 +110,49 @@ CREATE TABLE IF NOT EXISTS factory_admin_audit (
     event_hash TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL
 );
+CREATE TABLE IF NOT EXISTS factory_workflow_evidence (
+    tenant_id TEXT NOT NULL REFERENCES factory_tenants(tenant_id),
+    evidence_id TEXT NOT NULL,
+    payload_json JSONB NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    schema TEXT NOT NULL,
+    subject_digest TEXT,
+    policy_digest TEXT,
+    verdict TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    inserted_by TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, evidence_id)
+);
+CREATE TABLE IF NOT EXISTS factory_workflow_approvals (
+    tenant_id TEXT NOT NULL REFERENCES factory_tenants(tenant_id),
+    approval_id TEXT NOT NULL,
+    evidence_id TEXT NOT NULL,
+    requester TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending','approved','rejected')),
+    requested_at TEXT NOT NULL,
+    decided_at TEXT,
+    approver TEXT,
+    decision_reason TEXT,
+    PRIMARY KEY (tenant_id, approval_id),
+    FOREIGN KEY (tenant_id, evidence_id)
+      REFERENCES factory_workflow_evidence(tenant_id, evidence_id)
+);
+CREATE TABLE IF NOT EXISTS factory_workflow_approval_uses (
+    tenant_id TEXT NOT NULL,
+    approval_id TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    consumed_at TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, approval_id),
+    FOREIGN KEY (tenant_id, approval_id)
+      REFERENCES factory_workflow_approvals(tenant_id, approval_id)
+);
 CREATE INDEX IF NOT EXISTS factory_admin_audit_tenant_sequence
   ON factory_admin_audit(tenant_id, sequence);
+CREATE INDEX IF NOT EXISTS factory_workflow_evidence_tenant_created
+  ON factory_workflow_evidence(tenant_id, created_at, evidence_id);
+CREATE INDEX IF NOT EXISTS factory_workflow_approvals_tenant_status
+  ON factory_workflow_approvals(tenant_id, status, requested_at, approval_id);
 CREATE TABLE IF NOT EXISTS factory_installations (
     installation_id BIGINT PRIMARY KEY,
     tenant_id TEXT NOT NULL,
@@ -96,6 +169,12 @@ ALTER TABLE factory_tenant_secret_refs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE factory_tenant_secret_refs FORCE ROW LEVEL SECURITY;
 ALTER TABLE factory_admin_audit ENABLE ROW LEVEL SECURITY;
 ALTER TABLE factory_admin_audit FORCE ROW LEVEL SECURITY;
+ALTER TABLE factory_workflow_evidence ENABLE ROW LEVEL SECURITY;
+ALTER TABLE factory_workflow_evidence FORCE ROW LEVEL SECURITY;
+ALTER TABLE factory_workflow_approvals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE factory_workflow_approvals FORCE ROW LEVEL SECURITY;
+ALTER TABLE factory_workflow_approval_uses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE factory_workflow_approval_uses FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS factory_identity_tenant ON factory_tenant_identity;
 CREATE POLICY factory_identity_tenant ON factory_tenant_identity
   USING (tenant_id = current_setting('factory.tenant_id', true))
@@ -110,6 +189,18 @@ CREATE POLICY factory_secret_refs_tenant ON factory_tenant_secret_refs
   WITH CHECK (tenant_id = current_setting('factory.tenant_id', true));
 DROP POLICY IF EXISTS factory_admin_audit_tenant ON factory_admin_audit;
 CREATE POLICY factory_admin_audit_tenant ON factory_admin_audit
+  USING (tenant_id = current_setting('factory.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('factory.tenant_id', true));
+DROP POLICY IF EXISTS factory_workflow_evidence_tenant ON factory_workflow_evidence;
+CREATE POLICY factory_workflow_evidence_tenant ON factory_workflow_evidence
+  USING (tenant_id = current_setting('factory.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('factory.tenant_id', true));
+DROP POLICY IF EXISTS factory_workflow_approvals_tenant ON factory_workflow_approvals;
+CREATE POLICY factory_workflow_approvals_tenant ON factory_workflow_approvals
+  USING (tenant_id = current_setting('factory.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('factory.tenant_id', true));
+DROP POLICY IF EXISTS factory_workflow_approval_uses_tenant ON factory_workflow_approval_uses;
+CREATE POLICY factory_workflow_approval_uses_tenant ON factory_workflow_approval_uses
   USING (tenant_id = current_setting('factory.tenant_id', true))
   WITH CHECK (tenant_id = current_setting('factory.tenant_id', true));
 """
@@ -252,6 +343,18 @@ class PostgresControlStore:
     def _transaction(self, tenant_id: str | None = None):
         return self.assurance_store._transaction(tenant_id)
 
+    @contextmanager
+    def _workflow_transaction(self, tenant_id: str):
+        try:
+            with self._transaction(tenant_id) as values:
+                yield values
+        except (ControlPlaneError, PRAssuranceError):
+            raise
+        except Exception as exc:
+            raise PRAssuranceError(
+                "E_DATABASE", "hosted workflow operation failed"
+            ) from exc
+
     def initialize(self) -> None:
         """Apply the idempotent control schema or raise a classified database refusal."""
         try:
@@ -310,6 +413,355 @@ class PostgresControlStore:
             "UPDATE factory_admin_audit SET event_hash=%s WHERE tenant_id=%s AND sequence=%s",
             (hashlib.sha256(canonical_json(event)).hexdigest(), tenant_id, sequence),
         )
+
+    @staticmethod
+    def _workflow_row(row, columns):
+        return dict(zip(columns, row)) if row is not None else None
+
+    @staticmethod
+    def _workflow_evidence_payload(row):
+        payload = row["payload_json"]
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        return {
+            "schema": "factory.evidence.record.v1",
+            "evidence_id": row["evidence_id"],
+            "tenant_id": row["tenant_id"],
+            "payload": payload,
+            "payload_sha256": row["payload_sha256"],
+            "subject_digest": row["subject_digest"],
+            "policy_digest": row["policy_digest"],
+            "verdict": row["verdict"],
+            "created_at": row["created_at"],
+            "inserted_by": row["inserted_by"],
+        }
+
+    def put(
+        self, principal: Principal, payload: dict[str, Any], *, evidence_id=None
+    ) -> dict[str, Any]:
+        """Persist immutable, tenant-scoped evidence in PostgreSQL."""
+        if not isinstance(payload, dict):
+            raise ControlPlaneError(
+                "E_INVALID_EVIDENCE", "evidence payload must be a JSON object"
+            )
+        tenant_id = str(payload.get("tenant_id", ""))
+        authorize(principal, "evidence.write", tenant_id)
+        schema = str(payload.get("schema", ""))
+        if not schema.startswith("factory."):
+            raise ControlPlaneError(
+                "E_INVALID_EVIDENCE", "evidence schema must start with factory."
+            )
+        selected = evidence_id or secrets.token_hex(16)
+        payload_json = canonical_json(payload).decode("utf-8")
+        digest = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        record = {
+            "evidence_id": selected,
+            "tenant_id": tenant_id,
+            "payload_json": payload_json,
+            "payload_sha256": digest,
+            "schema": schema,
+            "subject_digest": payload.get("subject_digest"),
+            "policy_digest": payload.get("policy_sha256", payload.get("policy_digest")),
+            "verdict": str(payload.get("verdict", payload.get("ok", "UNKNOWN"))),
+            "created_at": self.clock().isoformat(),
+            "inserted_by": principal.subject,
+        }
+        with self._workflow_transaction(tenant_id) as (_db, cursor):
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                (f"workflow-evidence:{tenant_id}:{selected}",),
+            )
+            cursor.execute(
+                "SELECT "
+                + ",".join(WORKFLOW_EVIDENCE_COLUMNS)
+                + " FROM factory_workflow_evidence WHERE tenant_id=%s AND evidence_id=%s FOR UPDATE",
+                (tenant_id, selected),
+            )
+            existing = self._workflow_row(cursor.fetchone(), WORKFLOW_EVIDENCE_COLUMNS)
+            if existing:
+                if (
+                    existing["tenant_id"] != tenant_id
+                    or existing["payload_sha256"] != digest
+                ):
+                    raise ControlPlaneError(
+                        "E_EVIDENCE_IMMUTABLE",
+                        "evidence id is already bound to different content",
+                    )
+                return self._workflow_evidence_payload(existing)
+            cursor.execute(
+                """INSERT INTO factory_workflow_evidence
+                   (tenant_id,evidence_id,payload_json,payload_sha256,schema,
+                    subject_digest,policy_digest,verdict,created_at,inserted_by)
+                   VALUES (%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s)""",
+                tuple(record[key] for key in WORKFLOW_EVIDENCE_COLUMNS[1:2])
+                + (record["evidence_id"],)
+                + tuple(record[key] for key in WORKFLOW_EVIDENCE_COLUMNS[2:]),
+            )
+            self._audit(
+                cursor,
+                tenant_id=tenant_id,
+                action="evidence.write",
+                actor=principal.subject,
+                resource_id=selected,
+                payload={"payload_sha256": digest, "verdict": record["verdict"]},
+            )
+        return self._workflow_evidence_payload(record)
+
+    def get(self, principal: Principal, tenant_id: str, evidence_id: str):
+        """Read one immutable evidence record within the authorized tenant."""
+        authorize(principal, "evidence.read", tenant_id)
+        with self._workflow_transaction(tenant_id) as (_db, cursor):
+            cursor.execute(
+                "SELECT "
+                + ",".join(WORKFLOW_EVIDENCE_COLUMNS)
+                + " FROM factory_workflow_evidence WHERE tenant_id=%s AND evidence_id=%s",
+                (tenant_id, evidence_id),
+            )
+            row = self._workflow_row(cursor.fetchone(), WORKFLOW_EVIDENCE_COLUMNS)
+        if row is None:
+            raise ControlPlaneError("E_NOT_FOUND", "evidence not found")
+        return self._workflow_evidence_payload(row)
+
+    def request_approval(
+        self, principal: Principal, tenant_id: str, evidence_id: str, reason: str
+    ):
+        """Create one pending approval bound to existing tenant evidence."""
+        authorize(principal, "approval.request", tenant_id)
+        if not reason.strip():
+            raise ControlPlaneError("E_REASON_REQUIRED", "approval reason is required")
+        approval_id, requested_at = secrets.token_hex(16), self.clock().isoformat()
+        with self._workflow_transaction(tenant_id) as (_db, cursor):
+            cursor.execute(
+                "SELECT 1 FROM factory_workflow_evidence WHERE tenant_id=%s AND evidence_id=%s",
+                (tenant_id, evidence_id),
+            )
+            if cursor.fetchone() is None:
+                raise ControlPlaneError("E_NOT_FOUND", "evidence not found")
+            cursor.execute(
+                """INSERT INTO factory_workflow_approvals
+                   (tenant_id,approval_id,evidence_id,requester,reason,status,requested_at)
+                   VALUES (%s,%s,%s,%s,%s,'pending',%s)""",
+                (
+                    tenant_id,
+                    approval_id,
+                    evidence_id,
+                    principal.subject,
+                    reason.strip(),
+                    requested_at,
+                ),
+            )
+            self._audit(
+                cursor,
+                tenant_id=tenant_id,
+                action="approval.request",
+                actor=principal.subject,
+                resource_id=approval_id,
+                payload={"evidence_id": evidence_id, "reason": reason.strip()},
+            )
+        return {
+            "approval_id": approval_id,
+            "tenant_id": tenant_id,
+            "evidence_id": evidence_id,
+            "requester": principal.subject,
+            "reason": reason.strip(),
+            "status": "pending",
+            "requested_at": requested_at,
+            "decided_at": None,
+            "approver": None,
+            "decision_reason": None,
+        }
+
+    def get_approval(
+        self,
+        principal: Principal,
+        tenant_id: str,
+        approval_id: str,
+        *,
+        allow_requester=False,
+    ):
+        """Read one approval record without changing its terminal state."""
+        del (
+            allow_requester
+        )  # The SQLite-compatible argument is intentionally non-authoritative.
+        authorize(principal, "evidence.read", tenant_id)
+        with self._workflow_transaction(tenant_id) as (_db, cursor):
+            cursor.execute(
+                "SELECT "
+                + ",".join(WORKFLOW_APPROVAL_COLUMNS)
+                + " FROM factory_workflow_approvals WHERE tenant_id=%s AND approval_id=%s",
+                (tenant_id, approval_id),
+            )
+            row = self._workflow_row(cursor.fetchone(), WORKFLOW_APPROVAL_COLUMNS)
+        if row is None:
+            raise ControlPlaneError("E_NOT_FOUND", "approval request not found")
+        return row
+
+    def decide_approval(
+        self,
+        principal: Principal,
+        tenant_id: str,
+        approval_id: str,
+        decision: str,
+        reason: str,
+    ):
+        """Atomically record an independent, terminal approval decision."""
+        authorize(principal, "approval.decide", tenant_id)
+        decision = decision.strip().lower()
+        if decision not in {"approved", "rejected"}:
+            raise ControlPlaneError(
+                "E_INVALID_DECISION", "decision must be approved or rejected"
+            )
+        if not reason.strip():
+            raise ControlPlaneError("E_REASON_REQUIRED", "decision reason is required")
+        with self._workflow_transaction(tenant_id) as (_db, cursor):
+            cursor.execute(
+                "SELECT "
+                + ",".join(WORKFLOW_APPROVAL_COLUMNS)
+                + " FROM factory_workflow_approvals WHERE tenant_id=%s AND approval_id=%s FOR UPDATE",
+                (tenant_id, approval_id),
+            )
+            approval = self._workflow_row(cursor.fetchone(), WORKFLOW_APPROVAL_COLUMNS)
+            if approval is None:
+                raise ControlPlaneError("E_NOT_FOUND", "approval request not found")
+            if approval["status"] != "pending":
+                raise ControlPlaneError(
+                    "E_ALREADY_DECIDED", "approval request has already been decided"
+                )
+            if approval["requester"] == principal.subject:
+                raise ControlPlaneError(
+                    "E_SELF_APPROVAL", "requester cannot approve its own request"
+                )
+            decided_at = self.clock().isoformat()
+            cursor.execute(
+                """UPDATE factory_workflow_approvals SET status=%s,decided_at=%s,
+                   approver=%s,decision_reason=%s
+                   WHERE tenant_id=%s AND approval_id=%s AND status='pending'""",
+                (
+                    decision,
+                    decided_at,
+                    principal.subject,
+                    reason.strip(),
+                    tenant_id,
+                    approval_id,
+                ),
+            )
+            self._audit(
+                cursor,
+                tenant_id=tenant_id,
+                action="approval.decide",
+                actor=principal.subject,
+                resource_id=approval_id,
+                payload={"decision": decision, "reason": reason.strip()},
+            )
+        return {
+            **approval,
+            "status": decision,
+            "decided_at": decided_at,
+            "approver": principal.subject,
+            "decision_reason": reason.strip(),
+        }
+
+    def workflow_approval_verifier(
+        self,
+        principal: Principal,
+        tenant_id: str,
+        approval_id: str,
+        *,
+        resolve_principal,
+        require_requester: bool = False,
+    ):
+        """Build a PG-backed verifier compatible with the local control-plane contract."""
+        if not callable(resolve_principal):
+            raise ControlPlaneError(
+                "E_IDENTITY_REQUIRED", "current identity resolver required"
+            )
+
+        def verify(expected):
+            current = resolve_principal(principal.subject, tenant_id)
+            if (
+                not isinstance(current, Principal)
+                or current.subject != principal.subject
+            ):
+                raise ControlPlaneError(
+                    "E_IDENTITY_REQUIRED", "requester identity differs"
+                )
+            if current.tenant_id != tenant_id:
+                raise ControlPlaneError(
+                    "E_TENANT_BOUNDARY", "requester tenant differs from approval tenant"
+                )
+            authorize(current, "evidence.read", tenant_id)
+            approval = self.get_approval(current, tenant_id, approval_id)
+            if require_requester and approval["requester"] != current.subject:
+                raise ControlPlaneError(
+                    "E_APPROVAL_REQUESTER",
+                    "only the authenticated approval requester may dispatch this action",
+                )
+            _workflow_approver(approval, tenant_id, resolve_principal)
+            return self._consume_workflow_approval(
+                current, tenant_id, approval, expected
+            )
+
+        return verify
+
+    def _consume_workflow_approval(self, principal, tenant_id, approval, expected):
+        fingerprint = hashlib.sha256(canonical_json(expected)).hexdigest()
+        with self._workflow_transaction(tenant_id) as (_db, cursor):
+            cursor.execute(
+                "SELECT "
+                + ",".join(WORKFLOW_APPROVAL_COLUMNS)
+                + " FROM factory_workflow_approvals WHERE tenant_id=%s AND approval_id=%s FOR UPDATE",
+                (tenant_id, approval["approval_id"]),
+            )
+            current = self._workflow_row(cursor.fetchone(), WORKFLOW_APPROVAL_COLUMNS)
+            if current != approval:
+                raise ControlPlaneError(
+                    "E_APPROVAL_CHANGED", "approval changed during identity check"
+                )
+            cursor.execute(
+                "SELECT evidence_id,payload_json,payload_sha256 FROM factory_workflow_evidence WHERE tenant_id=%s AND evidence_id=%s",
+                (tenant_id, approval["evidence_id"]),
+            )
+            row = cursor.fetchone()
+            evidence = (
+                {
+                    "payload_json": canonical_json(row[1]).decode("utf-8")
+                    if isinstance(row[1], dict)
+                    else row[1],
+                    "payload_sha256": row[2],
+                }
+                if row is not None
+                else None
+            )
+            _workflow_approval_evidence(evidence, tenant_id, expected)
+            cursor.execute(
+                "SELECT fingerprint,tenant_id FROM factory_workflow_approval_uses WHERE tenant_id=%s AND approval_id=%s",
+                (tenant_id, approval["approval_id"]),
+            )
+            prior = cursor.fetchone()
+            if prior:
+                if tuple(prior) != (fingerprint, tenant_id):
+                    raise ControlPlaneError(
+                        "E_APPROVAL_REPLAY", "approval is bound to another action"
+                    )
+                return dict(expected)
+            cursor.execute(
+                "INSERT INTO factory_workflow_approval_uses VALUES (%s,%s,%s,%s)",
+                (
+                    tenant_id,
+                    approval["approval_id"],
+                    fingerprint,
+                    self.clock().isoformat(),
+                ),
+            )
+            self._audit(
+                cursor,
+                tenant_id=tenant_id,
+                action="approval.workflow.consume",
+                actor=principal.subject,
+                resource_id=approval["approval_id"],
+                payload={"fingerprint": fingerprint, "approver": approval["approver"]},
+            )
+        return dict(expected)
 
     def create_tenant(
         self, principal: Principal, tenant_id: str, display_name: str

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import os
+import uuid
 
 import pytest
 
 from factoryline.hosted_storage import PostgresAssuranceStore
 from factoryline.hosted_control import PostgresControlStore
-from factoryline.control_plane import Principal
+from factoryline.control_plane import ControlPlaneError, Principal
 from factoryline.pr_assurance import PRAssuranceError
 
 
@@ -43,18 +45,70 @@ def test_postgres_control_plane_binds_tenant_identity_state_audit_and_redacted_o
         audience="factory",
         jwks_url="https://id.integration.test/jwks",
     )
+    workflow_operator = Principal(
+        "workflow-operator", "integration-control", ("operator",)
+    )
+    workflow_approver = Principal(
+        "workflow-approver", "integration-control", ("approver",)
+    )
+    workflow_binding = {"run_id": "rls-seeded"}
+    workflow_evidence = control.put(
+        workflow_operator,
+        {
+            "schema": "factory.workflow-approval.v1",
+            "tenant_id": "integration-control",
+            "expires_at": (
+                datetime.now(timezone.utc) + timedelta(minutes=5)
+            ).isoformat(),
+            "phase_evidence": workflow_binding,
+        },
+        evidence_id="rls-workflow-evidence",
+    )
+    workflow_approval = control.request_approval(
+        workflow_operator,
+        "integration-control",
+        workflow_evidence["evidence_id"],
+        "seed workflow rows for RLS verification",
+    )
+    control.decide_approval(
+        workflow_approver,
+        "integration-control",
+        workflow_approval["approval_id"],
+        "approved",
+        "independent test approval",
+    )
+    control.workflow_approval_verifier(
+        workflow_operator,
+        "integration-control",
+        workflow_approval["approval_id"],
+        resolve_principal=lambda subject, tenant: workflow_approver
+        if subject == workflow_approver.subject
+        else workflow_operator,
+    )(workflow_binding)
     with assurance._transaction("different-tenant") as (_db, cursor):
         cursor.execute(
             "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='factory_rls_test') "
             "THEN CREATE ROLE factory_rls_test NOLOGIN; END IF; END $$"
         )
-        cursor.execute("GRANT SELECT ON factory_tenant_identity TO factory_rls_test")
+        for table in (
+            "factory_tenant_identity",
+            "factory_workflow_evidence",
+            "factory_workflow_approvals",
+            "factory_workflow_approval_uses",
+        ):
+            cursor.execute(f"GRANT SELECT ON {table} TO factory_rls_test")
         cursor.execute("SET LOCAL ROLE factory_rls_test")
-        cursor.execute(
-            "SELECT tenant_id FROM factory_tenant_identity WHERE tenant_id=%s",
-            ("integration-control",),
-        )
-        assert cursor.fetchone() is None
+        for table in (
+            "factory_tenant_identity",
+            "factory_workflow_evidence",
+            "factory_workflow_approvals",
+            "factory_workflow_approval_uses",
+        ):
+            cursor.execute(
+                f"SELECT tenant_id FROM {table} WHERE tenant_id=%s",
+                ("integration-control",),
+            )
+            assert cursor.fetchone() is None
     control.replace_roles(
         platform, "integration-control", {"release": "approver", "owners": "admin"}
     )
@@ -90,3 +144,106 @@ def test_postgres_control_plane_binds_tenant_identity_state_audit_and_redacted_o
             jwks_url="https://id.other.test/jwks",
         )
     assert boundary.value.code == "E_TENANT_BOUNDARY"
+
+
+def test_postgres_workflow_approval_keeps_evidence_independent_and_exactly_replayable():
+    assurance = PostgresAssuranceStore(DSN)
+    assurance.initialize()
+    control = PostgresControlStore(assurance)
+    control.initialize()
+    platform = Principal("workflow-platform", "*", ("platform_admin",))
+    tenant_id = "workflow-" + uuid.uuid4().hex[:12]
+    control.create_tenant(platform, tenant_id, "Workflow approval integration")
+    requester = Principal("repair-requester", tenant_id, ("operator",))
+    approver = Principal("independent-approver", tenant_id, ("approver",))
+    expected = {"candidate_sha256": "a" * 64, "phase": "repair.dispatch"}
+    payload = {
+        "schema": "factory.workflow-approval.v1",
+        "tenant_id": tenant_id,
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        "phase_evidence": expected,
+        "verdict": "APPROVED_FOR_REVIEW",
+    }
+    evidence = control.put(requester, payload, evidence_id="repair-evidence")
+    assert evidence["payload_sha256"]
+    with pytest.raises(ControlPlaneError) as immutable:
+        control.put(
+            requester,
+            {**payload, "phase_evidence": {"phase": "changed"}},
+            evidence_id="repair-evidence",
+        )
+    assert immutable.value.code == "E_EVIDENCE_IMMUTABLE"
+
+    approval = control.request_approval(
+        requester, tenant_id, evidence["evidence_id"], "dispatch exact repair"
+    )
+    control.decide_approval(
+        approver, tenant_id, approval["approval_id"], "approved", "independent review"
+    )
+
+    def resolve(subject, resolved_tenant):
+        assert resolved_tenant == tenant_id
+        return approver if subject == approver.subject else requester
+
+    verifier = control.workflow_approval_verifier(
+        requester,
+        tenant_id,
+        approval["approval_id"],
+        resolve_principal=resolve,
+        require_requester=True,
+    )
+    with ThreadPoolExecutor(max_workers=8) as workers:
+        outcomes = list(workers.map(lambda _index: verifier(expected), range(8)))
+    assert outcomes == [expected] * 8
+    with assurance._transaction(tenant_id) as (_db, cursor):
+        cursor.execute(
+            "SELECT count(*) FROM factory_admin_audit "
+            "WHERE tenant_id=%s AND action='approval.workflow.consume' AND resource_id=%s",
+            (tenant_id, approval["approval_id"]),
+        )
+        assert cursor.fetchone()[0] == 1
+    with pytest.raises(ControlPlaneError) as changed_binding:
+        verifier({**expected, "phase": "different"})
+    assert changed_binding.value.code == "E_APPROVAL_EVIDENCE"
+    with assurance._transaction(tenant_id) as (_db, cursor):
+        cursor.execute(
+            "UPDATE factory_workflow_approval_uses SET fingerprint=%s "
+            "WHERE tenant_id=%s AND approval_id=%s",
+            ("0" * 64, tenant_id, approval["approval_id"]),
+        )
+    with pytest.raises(ControlPlaneError) as changed_replay:
+        verifier(expected)
+    assert changed_replay.value.code == "E_APPROVAL_REPLAY"
+
+    expired_payload = {
+        **payload,
+        "expires_at": (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+        "phase_evidence": {"candidate_sha256": "b" * 64},
+    }
+    expired_evidence = control.put(
+        requester, expired_payload, evidence_id="expired-repair-evidence"
+    )
+    expired_approval = control.request_approval(
+        requester,
+        tenant_id,
+        expired_evidence["evidence_id"],
+        "expired dispatch test",
+    )
+    control.decide_approval(
+        approver,
+        tenant_id,
+        expired_approval["approval_id"],
+        "approved",
+        "test approval",
+    )
+    expired_verifier = control.workflow_approval_verifier(
+        requester,
+        tenant_id,
+        expired_approval["approval_id"],
+        resolve_principal=resolve,
+        require_requester=True,
+    )
+    with pytest.raises(ControlPlaneError) as expired_binding:
+        expired_verifier(expired_payload["phase_evidence"])
+    assert expired_binding.value.code == "E_APPROVAL_EVIDENCE"
+    assert control.overview(platform, tenant_id)["audit"]["valid"] is True
