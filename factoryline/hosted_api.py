@@ -860,7 +860,7 @@ class HostedPRAssuranceAPI:
             return None
         return _finish(
             start_response,
-            "200 OK",
+            "202 Accepted",
             self.service.decide(path[2], _bearer(environ), _json_body(environ)),
         )
 
