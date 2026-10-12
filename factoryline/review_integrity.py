@@ -289,6 +289,140 @@ def flask_invoked_callbacks(
     return invoked
 
 
+def _virtual_default(value, defaults):
+    if not isinstance(value, ast.IfExp) or not isinstance(value.test, ast.Compare):
+        return None
+    test = value.test
+    if len(test.ops) != 1 or not isinstance(test.ops[0], ast.Is):
+        return None
+    if len(test.comparators) != 1 or not isinstance(test.comparators[0], ast.Constant):
+        return None
+    if test.comparators[0].value is not None or _name(test.left) not in defaults:
+        return None
+    if _name(value.orelse) != _name(test.left):
+        return None
+    name = _name(value.body)
+    return name.removeprefix("self.") if name.startswith("self.") else None
+
+
+def virtual_dispatch_defaults(methods, aliases, effective):
+    """Summarize an omitted-argument virtual method binding, never execute it."""
+    init, invoke = methods.get("__init__"), methods.get("__call__")
+    if init is None or invoke is None or init.decorator_list or invoke.decorator_list:
+        return {}
+    if init.args.vararg or init.args.kwarg or init.args.kwonlyargs:
+        return {}
+    if any(
+        not isinstance(item, (ast.Assign, ast.AnnAssign, ast.Pass))
+        for item in init.body
+    ):
+        return {}
+    arguments = [*init.args.posonlyargs, *init.args.args][1:]
+    defaults = {
+        item.arg
+        for item, value in zip(
+            arguments[-len(init.args.defaults) :], init.args.defaults
+        )
+        if isinstance(value, ast.Constant) and value.value is None
+    }
+    required = len(arguments) - len(init.args.defaults)
+    bindings, invalid = {}, set()
+    for node in ast.walk(init):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)):
+            continue
+        targets = (
+            node.targets
+            if isinstance(node, (ast.Assign, ast.Delete))
+            else [node.target]
+        )
+        for target in targets:
+            name = _name(target)
+            if not name.startswith("self."):
+                continue
+            if (
+                name in bindings
+                or not isinstance(node, ast.Assign)
+                or node not in init.body
+            ):
+                invalid.add(name)
+            bindings[name] = _virtual_default(getattr(node, "value", None), defaults)
+    invalid.update(_virtual_binding_mutations(methods, bindings))
+    resolved = _awaited_virtual_bindings(
+        invoke, bindings, invalid, methods, aliases, effective
+    )
+    guards = _virtual_scope_guards(invoke)
+    return (
+        {"methods": sorted(resolved), "required_arguments": required, "guards": guards}
+        if resolved and guards is not None
+        else {}
+    )
+
+
+def _virtual_scope_guards(invoke):
+    guards = []
+    for item in invoke.body:
+        if not isinstance(item, ast.If) or not any(
+            isinstance(n, ast.Return) for n in item.body
+        ):
+            continue
+        test = item.test
+        if (
+            not isinstance(test, ast.Compare)
+            or len(test.ops) != 1
+            or not isinstance(test.ops[0], ast.NotEq)
+        ):
+            return None
+        left = test.left
+        if not isinstance(left, ast.Subscript) or not isinstance(left.value, ast.Name):
+            return None
+        if (
+            not isinstance(left.slice, ast.Constant)
+            or len(test.comparators) != 1
+            or not isinstance(test.comparators[0], ast.Constant)
+            or not isinstance(left.slice.value, str)
+            or type(test.comparators[0].value) not in (str, int, bool, type(None))
+        ):
+            return None
+        parameters = [
+            arg.arg for arg in [*invoke.args.posonlyargs, *invoke.args.args][1:]
+        ]
+        if left.value.id not in parameters:
+            return None
+        guards.append(
+            {
+                "index": parameters.index(left.value.id),
+                "parameter": left.value.id,
+                "key": left.slice.value,
+                "value": test.comparators[0].value,
+            }
+        )
+    return guards
+
+
+def _virtual_binding_mutations(methods, bindings):
+    return {
+        _name(node)
+        for name, method in methods.items()
+        if name != "__init__"
+        for node in ast.walk(method)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and _name(node) in bindings
+    }
+
+
+def _awaited_virtual_bindings(invoke, bindings, invalid, methods, aliases, effective):
+    resolved = set()
+    for node in _test_nodes(invoke):
+        if not isinstance(node, ast.Await) or not isinstance(node.value, ast.Call):
+            continue
+        name = _name(node.value.func)
+        method = bindings.get(name)
+        if name not in invalid and method in methods and effective(node.value, aliases):
+            resolved.add(method)
+    return resolved
+
+
 def _sha(v: object) -> str:
     return hashlib.sha256(
         json.dumps(v, sort_keys=True, separators=(",", ":")).encode()

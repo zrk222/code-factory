@@ -2871,7 +2871,12 @@ def _inherited_source_methods(cls, tree, depth=0):
 
 
 def _source_methods_are_stable(methods):
-    if "__getattribute__" in methods or "__getattr__" in methods:
+    if {
+        "__getattribute__",
+        "__getattr__",
+        "__setattr__",
+        "__delattr__",
+    } & methods.keys():
         return False
     for method in methods.values():
         for node in ast.walk(method):
@@ -2890,6 +2895,8 @@ def _source_methods_are_stable(methods):
 
 
 def _source_callback_invokers(imports, snapshots, summaries=None):
+    from .review_integrity import virtual_dispatch_defaults
+
     invokers = {}
     summaries = {} if summaries is None else summaries
     for local, (source, symbol) in imports.items():
@@ -2926,6 +2933,9 @@ def _source_callback_invokers(imports, snapshots, summaries=None):
             "invoked": sorted(invoked),
             "source": source.as_posix(),
             "symbol": symbol,
+            "virtual_dispatch": virtual_dispatch_defaults(
+                methods, _module_security_aliases(tree), _effective_assertion
+            ),
         }
         summaries[key] = invokers[local]
     return invokers
@@ -2977,9 +2987,183 @@ def _source_invoked_callbacks(test, invokers, strong, aliases):
     return False
 
 
+def _local_virtual_dispatch_classes(test, invokers, aliases, helpers):
+    profiles = {}
+    for cls in (item for item in test.body if isinstance(item, ast.ClassDef)):
+        if (
+            len(cls.bases) != 1
+            or cls.decorator_list
+            or cls.keywords
+            or _click_receiver_mutated(test, cls.name)
+        ):
+            continue
+        if any(
+            not isinstance(
+                item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Pass, ast.Expr)
+            )
+            for item in cls.body
+        ):
+            continue
+        if any(
+            item is not cls
+            and isinstance(item, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            and item.name == cls.name
+            for item in ast.walk(test)
+        ):
+            continue
+        base = _name(cls.bases[0])
+        profile = invokers.get(base, {}).get("virtual_dispatch", {})
+        if (
+            not profile
+            or base.split(".", 1)[0] not in aliases
+            or _click_receiver_mutated(test, base)
+        ):
+            continue
+        if any(
+            isinstance(item, ast.Expr) and not isinstance(item.value, ast.Constant)
+            for item in cls.body
+        ):
+            continue
+        methods = {
+            item.name: item
+            for item in cls.body
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        if (
+            "__init__" in methods
+            or "__call__" in methods
+            or not _source_methods_are_stable(methods)
+            or any(method.decorator_list for method in methods.values())
+            or set(methods) - set(profile["methods"])
+        ):
+            continue
+        if any(
+            _strong_local_assertion(
+                methods[name], _scope_security_aliases(aliases, methods[name]), helpers
+            )
+            for name in profile["methods"]
+            if name in methods and not methods[name].decorator_list
+        ):
+            profiles[cls.name] = {"profile": profile, "line": cls.lineno}
+    return profiles
+
+
+def _virtual_dispatch_constructor(statement, profiles, nodes):
+    if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+        return None
+    targets = (
+        statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+    )
+    call = statement.value
+    if (
+        len(targets) != 1
+        or not isinstance(targets[0], ast.Name)
+        or not isinstance(call, ast.Call)
+    ):
+        return None
+    declared = profiles.get(_call_name(call))
+    if (
+        declared is None
+        or call.keywords
+        or len(call.args) != declared["profile"]["required_arguments"]
+    ):
+        return None
+    if statement.lineno <= declared["line"] or _name_rebound(
+        nodes, _call_name(call), declared["line"], statement.lineno
+    ):
+        return None
+    return targets[0].id
+
+
+def _local_virtual_dispatch_oracle(test, invokers, aliases, helpers):
+    profiles = _local_virtual_dispatch_classes(test, invokers, aliases, helpers)
+    if not profiles:
+        return False
+    nodes = _test_oracle_body_nodes(test, aliases)
+    for statement in test.body:
+        name = _virtual_dispatch_constructor(statement, profiles, nodes)
+        if name is None or _click_receiver_mutated(test, name):
+            continue
+        for call in (item for item in nodes if isinstance(item, ast.Call)):
+            if _call_name(call) != name or not isinstance(
+                getattr(call, "_oracle_parent", None), ast.Await
+            ):
+                continue
+            if (
+                statement.lineno < call.lineno
+                and not _name_rebound(nodes, name, statement.lineno, call.lineno)
+                and _effective_assertion(call, aliases)
+                and _virtual_call_matches_guards(call, statement, profiles, nodes)
+            ):
+                return True
+    return False
+
+
+def _virtual_call_matches_guards(call, constructed, profiles, nodes):
+    guards = profiles[_call_name(constructed.value)]["profile"].get("guards", [])
+    for guard in guards:
+        argument = next(
+            (k.value for k in call.keywords if k.arg == guard["parameter"]), None
+        )
+        if guard["index"] < len(call.args):
+            argument = call.args[guard["index"]]
+        if isinstance(argument, ast.Name):
+            bindings = [
+                n
+                for n in nodes
+                if isinstance(n, (ast.Assign, ast.AnnAssign))
+                and argument.id in _bound_names(n)
+                and n.lineno < call.lineno
+            ]
+            if len(bindings) != 1 or bindings[0] not in getattr(
+                call._oracle_scope, "body", []
+            ):
+                return False
+            if not _virtual_scope_binding_safe(nodes, argument.id, bindings[0], call):
+                return False
+            argument = bindings[0].value
+        try:
+            value = ast.literal_eval(argument)
+        except (ValueError, TypeError, SyntaxError):
+            return False
+        if not isinstance(value, dict) or value.get(guard["key"]) != guard["value"]:
+            return False
+    return True
+
+
+def _virtual_scope_binding_safe(nodes, name, bound, call):
+    start, end = (bound.lineno, bound.col_offset), (call.lineno, call.col_offset)
+    for node in nodes:
+        if (
+            not start
+            < (getattr(node, "lineno", 0), getattr(node, "col_offset", 0))
+            < end
+        ):
+            continue
+        if isinstance(
+            node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr, ast.Delete)
+        ) and name in _bound_names(node):
+            return False
+        if isinstance(node, (ast.Subscript, ast.Attribute)) and isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
+            if _name(node.value).split(".", 1)[0] == name:
+                return False
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and _name(node.value) == name:
+            return False
+        if isinstance(node, ast.Call) and any(
+            _name(arg) == name
+            for arg in [*node.args, *(k.value for k in node.keywords)]
+        ):
+            return False
+    return True
+
+
 def _proven_dispatch_assertion(test, aliases, helpers, apps, invokers):
     from .review_integrity import flask_invoked_callbacks
 
+    if _local_virtual_dispatch_oracle(test, invokers, aliases, helpers):
+        return True
     definitions = _nested_helper_definitions(test)
     if not definitions or not _nested_helper_names_are_unbound(test, definitions):
         return False
@@ -3255,7 +3439,11 @@ def _declared_typecheck_sources(
 
 
 def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict) -> str:
-    from .review_integrity import flask_fixture_apps, flask_invoked_callbacks
+    from .review_integrity import (
+        flask_fixture_apps,
+        flask_invoked_callbacks,
+        virtual_dispatch_defaults,
+    )
 
     helpers = (
         ast.parse,
@@ -3282,6 +3470,7 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _callback_wrapper_preserves,
         flask_fixture_apps,
         flask_invoked_callbacks,
+        virtual_dispatch_defaults,
         _flask_context_apps,
         _local_assertion_helpers,
         _local_weak_assertion_helpers,
@@ -3498,6 +3687,17 @@ def _build_oracle_context(
             )
             for local, profile in contexts[path]["callback_invokers"].items()
             for parameter in profile["invoked"]
+        )
+        edges.update(
+            (
+                caller,
+                Path(profile["source"]).relative_to(root).as_posix(),
+                "default_virtual_dispatch",
+                local + "." + method,
+                "source_resolved",
+            )
+            for local, profile in contexts[path]["callback_invokers"].items()
+            for method in profile.get("virtual_dispatch", {}).get("methods", [])
         )
         for local, (source, symbol) in imports.items():
             target = source.relative_to(root).as_posix()

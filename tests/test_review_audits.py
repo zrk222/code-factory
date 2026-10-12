@@ -4034,3 +4034,198 @@ def test_source_callback_rejects_constructor_method_override(tmp_path, mutation)
         encoding="utf-8",
     )
     assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "base_call,override,construct,operation,expected",
+    [
+        (
+            "await self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert value == expected",
+            "Application(None)",
+            "await app({})",
+            {},
+        ),
+        (
+            "self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert value == expected",
+            "Application(None)",
+            "await app({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "if False:\n            await self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert value == expected",
+            "Application(None)",
+            "await app({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "try:\n            await self.dispatch_func(scope)\n        except AssertionError:\n            pass",
+            "async def dispatch(self, value):\n            assert value == expected",
+            "Application(None)",
+            "await app({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "await self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert True",
+            "Application(None)",
+            "await app({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "await self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert value == expected",
+            "Application(None, dispatch=noop)",
+            "await app({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "await self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert value == expected",
+            "Application(None)",
+            "app.dispatch_func = noop\n    await app({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "await self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert value == expected",
+            "Application(None)",
+            "app({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "await self.dispatch_func(scope)",
+            "async def __call__(self, value):\n            pass\n        async def dispatch(self, value):\n            assert value == expected",
+            "Application(None)",
+            "await app({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "await self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert value == expected\n        dispatch = noop",
+            "Application(None)",
+            "await app({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+    ],
+)
+def test_inherited_virtual_dispatch_requires_default_binding_and_await(
+    tmp_path, base_call, override, construct, operation, expected
+):
+    (tmp_path / "engine.py").write_text(
+        "class Base:\n    def __init__(self, app, dispatch=None):\n        self.app = app\n        self.dispatch_func = self.dispatch if dispatch is None else dispatch\n    async def __call__(self, scope):\n        "
+        + base_call
+        + "\n    async def dispatch(self, value):\n        raise NotImplementedError\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_case.py").write_text(
+        "from engine import Base\nasync def test_behavior():\n    class Application(Base):\n        "
+        + override
+        + "\n    app: object = "
+        + construct
+        + "\n    "
+        + operation
+        + "\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == expected
+    if not expected:
+        assert any(
+            edge["kind"] == "default_virtual_dispatch"
+            for edge in result["oracle_context"]["resolved_edges"]
+        )
+
+
+@pytest.mark.parametrize(
+    "base_call,override,operation",
+    [
+        (
+            "self.dispatch_func = noop\n        await self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert value == expected",
+            "await app({})",
+        ),
+        (
+            "await self.dispatch_func(scope)",
+            "Base.__init__ = noop\n        async def dispatch(self, value):\n            assert value == expected",
+            "await app({})",
+        ),
+        (
+            "await self.dispatch_func(scope)",
+            "setattr(Base, '__init__', noop)\n        async def dispatch(self, value):\n            assert value == expected",
+            "await app({})",
+        ),
+        (
+            "await self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert value == expected",
+            "Application.dispatch = noop\n    await app({})",
+        ),
+    ],
+)
+def test_virtual_dispatch_rejects_class_and_source_mutations(
+    tmp_path, base_call, override, operation
+):
+    test_inherited_virtual_dispatch_requires_default_binding_and_await(
+        tmp_path,
+        base_call,
+        override,
+        "Application(None)",
+        operation,
+        {"QUALITY_HOLLOW_TEST": 1},
+    )
+
+
+@pytest.mark.parametrize(
+    "operation,expected",
+    [
+        ("await app({'type': 'http'})", {}),
+        ("scope = {'type': 'http'}\n    await app(scope)", {}),
+        ("await app({'type': 'websocket'})", {"QUALITY_HOLLOW_TEST": 1}),
+        (
+            "scope = {'type': 'http'}\n    scope['type'] = 'websocket'\n    await app(scope)",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "scope = {'type': 'http'}\n    mutate(scope)\n    await app(scope)",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+    ],
+)
+def test_virtual_dispatch_requires_scope_guard_to_reach_override(
+    tmp_path, operation, expected
+):
+    test_inherited_virtual_dispatch_requires_default_binding_and_await(
+        tmp_path,
+        "if scope['type'] != 'http':\n            return\n        await self.dispatch_func(scope)",
+        "async def dispatch(self, value):\n            assert value == expected",
+        "Application(None)",
+        operation,
+        expected,
+    )
+
+
+@pytest.mark.parametrize(
+    "guard,operation",
+    [
+        ("scope[b'type'] != b'http'", "await app({b'type': b'http'})"),
+        (
+            "scope['type'] != 'http'",
+            "scope = {'type': 'http'}\n    scope['type'] = 'websocket'; await app(scope)",
+        ),
+    ],
+)
+def test_virtual_dispatch_unsupported_guard_and_same_line_mutation_fail_closed(
+    tmp_path, guard, operation
+):
+    test_inherited_virtual_dispatch_requires_default_binding_and_await(
+        tmp_path,
+        "if "
+        + guard
+        + ":\n            return\n        await self.dispatch_func(scope)",
+        "async def dispatch(self, value):\n            assert value == expected",
+        "Application(None)",
+        operation,
+        {"QUALITY_HOLLOW_TEST": 1},
+    )
