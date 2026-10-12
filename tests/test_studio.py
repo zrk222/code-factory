@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import socket
 import threading
@@ -802,6 +803,120 @@ def test_http_guided_prd_route_is_token_bound(tmp_path: Path):
         assert response.status == 201
         assert result["schema"] == "factory.studio.guided-prd.v1"
         assert result["confirmation_required"] is True
+        assert (
+            hashlib.sha256(result["source_text"].encode("utf-8")).hexdigest()
+            == result["source_sha256"]
+        )
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_studio_guided_ui_consumes_questions_confirmation_compile_and_source_safely():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("session-token")
+    assert "fetch('/api/product-grill'" in page
+    assert "action:'product-grill-start'" in page
+    assert "/api/product/product-mission" not in page
+    assert "renderGuided" in page
+    assert "sendGuided" in page
+    assert "confirmGuided" in page
+    assert "compileGuided" in page
+    assert "payload.questions" in page
+    assert "product-grill-confirm" in page
+    assert "product-guided-compile" in page
+    assert "payload.source_text" in page
+    assert "textContent" in page
+    assert "innerHTML" not in page
+
+
+def test_guided_ui_offers_multiple_choice_and_editable_custom_answers_without_saving():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("session-token")
+    assert "guidedAnswerOptions(question)" in page
+    assert "Custom answer" in page
+    assert "choice.onchange" in page
+    assert "input.value=guidedAnswerOptions(question)[Number(choice.value)]" in page
+    assert "input.addEventListener('input'" in page
+    assert "action:'product-grill-answer'" in page
+    assert "guidedButton('Save my answers'" in page
+    assert "guidedButton('Confirm this PRD'" in page
+    assert "choice.onchange" in page
+    change_handler = page.split("choice.onchange=", 1)[1].split(";field.append", 1)[0]
+    assert "sendGuided" not in change_handler
+    assert "confirmGuided" not in change_handler
+
+
+def test_guided_ui_question_stepper_keeps_answers_local_until_validated_save():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("session-token")
+    assert "guidedStepper(answers,save)" in page
+    assert "Question " in page and " of " in page
+    assert "Back" in page
+    assert "Next" in page
+    assert "field.hidden" in page
+    assert "validateGuidedAnswer(answers[active].input)" in page
+    assert "input.value.trim()" in page
+    assert "guidedButton('Save my answers'" in page
+
+    stepper = page.split("function guidedStepper(answers,save)", 1)[1].split(
+        "function sendGuided", 1
+    )[0]
+    assert "guidedButton('Back',()=>show(active-1))" in stepper
+    assert (
+        "guidedButton('Next question',()=>{if(validateGuidedAnswer(answers[active].input))show(active+1);})"
+        in stepper
+    )
+    assert "sendGuided" not in stepper
+
+
+def test_http_guided_answer_returns_explicit_answer_source(tmp_path: Path):
+    server, token = create_server(tmp_path)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        headers = {
+            "Content-Type": "application/json",
+            "X-Factory-Studio-Token": token,
+        }
+        prompt = "# Product\n\nA dashboard for private team notes."
+        connection.request(
+            "POST",
+            "/api/product-grill",
+            body=json.dumps(
+                {
+                    "action": "product-grill-start",
+                    "prompt": prompt,
+                    "name": "answer-source",
+                    "mode": "quick",
+                }
+            ),
+            headers=headers,
+        )
+        start = json.loads(connection.getresponse().read())
+        question = start["questions"][0]
+        answer_text = "Keep notes private and searchable by their owners."
+        connection.request(
+            "POST",
+            "/api/product-grill",
+            body=json.dumps(
+                {
+                    "action": "product-grill-answer",
+                    "session_path": start["session"]["path"],
+                    "session_sha256": start["session"]["session_sha256"],
+                    "answers": [{"question_id": question["id"], "answer": answer_text}],
+                }
+            ),
+            headers=headers,
+        )
+        answer = json.loads(connection.getresponse().read())
+        assert answer_text in answer["source_text"]
         connection.close()
     finally:
         server.shutdown()
@@ -1260,3 +1375,13 @@ def test_handler_binding_and_serve_lifecycle(tmp_path: Path, monkeypatch, capsys
     assert "http://127.0.0.1:43117/" in events
     assert events[-1] == "closed"
     assert "Factory Studio: http://127.0.0.1:43117/" in capsys.readouterr().out
+
+
+def test_guided_ui_explains_required_actor_and_experience_answer_formats():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("local-contract")
+    assert "Use Role: responsibility" in page
+    assert "question.id.startsWith('Q-UX-')" in page
+    assert "question.id.slice(5).toLowerCase()" in page
+    assert "guidedAnswerFormat(question)" in page
