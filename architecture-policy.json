@@ -47,6 +47,36 @@
         "max_bytes": 182806,
         "rationale": "Freeze the measured CLI entry point; extract commands before adding more lines."
       },
+      "factoryline/deep_audit.py": {
+        "max_lines": 6000,
+        "max_bytes": 240000,
+        "rationale": "Bound deep-audit orchestration while tool-specific analysis stays in existing dedicated modules."
+      },
+      "factoryline/deep_audit_attestation.py": {
+        "max_lines": 6000,
+        "max_bytes": 240000,
+        "rationale": "Bound deep-audit attestation and evidence verification responsibilities."
+      },
+      "factoryline/deep_audit_contract.py": {
+        "max_lines": 6000,
+        "max_bytes": 240000,
+        "rationale": "Bound deep-audit input and evidence contract validation responsibilities."
+      },
+      "factoryline/deep_audit_io.py": {
+        "max_lines": 2000,
+        "max_bytes": 80000,
+        "rationale": "Keep the shared deep-audit I/O facade small after moving tool-specific implementations into existing modules."
+      },
+      "factoryline/deep_audit_loop.py": {
+        "max_lines": 6000,
+        "max_bytes": 240000,
+        "rationale": "Bound deep-audit loop and continuation responsibilities."
+      },
+      "factoryline/deep_audit_sarif.py": {
+        "max_lines": 6000,
+        "max_bytes": 240000,
+        "rationale": "Bound SARIF parsing, normalization, and report binding responsibilities."
+      },
       "factoryline/github_account_overview.py": {
         "max_lines": 821,
         "max_bytes": 27663,
@@ -79,6 +109,12 @@
       "factoryline/audit_trace.py",
       "factoryline/benchmark_lab.py",
       "factoryline/cli.py",
+      "factoryline/deep_audit.py",
+      "factoryline/deep_audit_attestation.py",
+      "factoryline/deep_audit_contract.py",
+      "factoryline/deep_audit_io.py",
+      "factoryline/deep_audit_loop.py",
+      "factoryline/deep_audit_sarif.py",
       "factoryline/github_account_overview.py",
       "factoryline/graph_ops.py",
       "factoryline/junie_review.py",

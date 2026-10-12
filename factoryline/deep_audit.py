@@ -8,6 +8,7 @@ The explicit scan entry point runs authorized, isolated adapter containers.
 
 from __future__ import annotations
 
+from . import deep_audit_io as _deep_audit_io
 from collections import defaultdict
 from itertools import islice
 from pathlib import Path
@@ -3812,3 +3813,1057 @@ def deep_audit_status(root: Path) -> dict:
         }
     except (OSError, ValueError, KeyError, TypeError):
         return {**result, "state": "INCOMPLETE"}
+
+
+def execute_native_profile(
+    profile: dict,
+    contract: dict,
+    source: _deep_audit_io.Path,
+    output: _deep_audit_io.Path,
+) -> dict:
+    """Run native tools; incomplete coverage/challenges remain explicit, never inferred."""
+    inventory, lane = _deep_audit_io._adapter_contract_parts(contract)
+    _deep_audit_io._native_profile(profile, lane)
+    _deep_audit_io._adapter_sources(source, inventory)
+    if lane["engine"] == "gitleaks":
+        _deep_audit_io._gitleaks_preflight(inventory, lane, contract)
+    elif lane["engine"] == "runtime" and profile["report_format"] == "runtime-junit":
+        _deep_audit_io._runtime_ruleset_preflight(lane)
+    paths = _deep_audit_io._adapter_output_paths(lane, output, create_parents=True)
+    started = _deep_audit_io.time.monotonic()
+    execution = _deep_audit_io._run_native_profile(
+        profile,
+        contract,
+        _deep_audit_io.Path(source),
+        _deep_audit_io.Path(output),
+        inventory,
+        lane,
+        paths,
+    )
+    report = _deep_audit_io._native_report(
+        execution["raw_report"],
+        profile,
+        contract,
+        _deep_audit_io.Path(output),
+        execution["invocations"],
+    )
+    challenges, covered_obligations = _deep_audit_io._native_profile_challenges(
+        profile, contract, _deep_audit_io.Path(source), lane, execution, started
+    )
+    coverage = _deep_audit_io._native_profile_coverage(
+        execution, report, inventory, lane, profile, challenges, covered_obligations
+    )
+    if lane["engine"] == "osv":
+        required = {
+            item["path"]: item["sha256"]
+            for item in inventory["files"]
+            if item["language"] in lane["languages"]
+        }
+        coverage["osv_native_evidence"] = _deep_audit_io._osv_primary_evidence(
+            execution, required
+        )
+    artifacts = {
+        paths[0]: report,
+        paths[1]: coverage,
+        paths[2]: challenges,
+    }
+    bundle = {
+        "schema": "factory.deep-worker.v1",
+        "run_id": contract["run_id"],
+        "candidate_sha256": inventory["candidate_sha256"],
+        "artifacts": artifacts,
+    }
+    _deep_audit_io._bounded_json_bytes(
+        bundle,
+        _deep_audit_io.LIMIT,
+        "E_WORKER_BUNDLE_SIZE",
+        len(coverage.get("sources", {})),
+        len(lane.get("rule_ids", [])),
+    )
+    for path in paths[1:]:
+        (output / path).write_bytes(_deep_audit_io.canonical_bytes(artifacts[path]))
+    return bundle
+
+
+def _run_native_profile(profile, contract, source, output, inventory, lane, paths):
+    _deep_audit_io._osv_profile_preflight(profile, lane)
+    rule_inventory = None
+    config_path = _deep_audit_io._fuzz_profile_preflight(profile, lane)
+    semgrep_rules = None
+    trivy_config = None
+    trivy_ignore = None
+    if lane["engine"] == "gitleaks":
+        config_path = _deep_audit_io.Path("/opt/factory/rules/gitleaks.toml")
+        config = config_path.read_bytes()
+        rule_inventory = _deep_audit_io._gitleaks_rule_inventory(config, lane)
+    elif lane["engine"] == "runtime" and profile["report_format"] == "runtime-junit":
+        config_path = _deep_audit_io.Path("/opt/factory/rules/runtime-control.toml")
+        config = config_path.read_bytes()
+        rule_inventory = _deep_audit_io._runtime_rule_inventory(config, lane)
+    elif lane["engine"] == "semgrep" and "native_artifact_roles" in lane:
+        if len(inventory["files"]) > 64:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_SEMGREP_EXECUTION", "bounded source inventory required"
+            )
+        config = _deep_audit_io.Path(
+            "/opt/factory/rules/semgrep-pattern-limited.yml"
+        ).read_bytes()
+        semgrep_rules, rule_inventory = _deep_audit_io._semgrep_rule_inventory(
+            config, lane
+        )
+    elif lane["engine"] == "trivy":
+        trivy_config = _deep_audit_io.Path("/opt/factory/rules/trivy.yaml").read_bytes()
+        trivy_ignore = _deep_audit_io.Path(
+            "/opt/factory/rules/empty-trivyignore"
+        ).read_bytes()
+        _deep_audit_io._trivy_policy_inputs(trivy_config, trivy_ignore, lane)
+    timeout = _deep_audit_io.require_int(
+        lane.get("timeout_seconds"), "timeout", minimum=1, maximum=3600
+    )
+    started = _deep_audit_io.time.monotonic()
+    with _deep_audit_io.tempfile.TemporaryDirectory(
+        prefix="factory-native-"
+    ) as temporary:
+        scratch = _deep_audit_io.Path(temporary)
+        probe = scratch / "probe"
+        probe.mkdir()
+        version = _deep_audit_io._native_version(profile, source, probe, timeout)
+        query_inventory = _deep_audit_io._codeql_query_preflight(
+            profile,
+            source,
+            scratch,
+            int(timeout - (_deep_audit_io.time.monotonic() - started)),
+            engine=lane["engine"],
+        )
+        remaining = timeout - (_deep_audit_io.time.monotonic() - started)
+        if remaining < 1:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ADAPTER_TIMEOUT", "version probe exhausted deadline"
+            )
+        commands = _deep_audit_io._native_argv(
+            profile["commands"],
+            {
+                "source": source,
+                "output": output,
+                "report": output / paths[0],
+                "scratch": scratch,
+                "candidate_sha256": inventory["candidate_sha256"],
+                "fixture": source / ".factory/fuzz_harness.py",
+                **({"config": str(config_path)} if config_path is not None else {}),
+            },
+        )
+        invocations = _deep_audit_io._adapter_commands(
+            commands, {**lane, "timeout_seconds": int(remaining)}, source, scratch
+        )
+        query_execution = (
+            _deep_audit_io._codeql_query_execution(
+                profile, query_inventory, source, scratch, started + timeout
+            )
+            if query_inventory is not None
+            else None
+        )
+        source_execution = (
+            _deep_audit_io._codeql_source_measurement(
+                profile, source, scratch, inventory, lane, started + timeout
+            )
+            if query_inventory is not None
+            else None
+        )
+        trivy_execution = None
+        if lane["engine"] == "trivy" and lane.get("native_policy"):
+            trivy_execution = _deep_audit_io._trivy_full_source_execution(
+                profile,
+                lane,
+                inventory,
+                source,
+                output,
+                paths,
+                commands[0]["argv"],
+                invocations[0],
+                trivy_config,
+                trivy_ignore,
+                started,
+                timeout,
+                scratch,
+            )
+        ledger = None
+        ledger_sha256 = None
+        ledger_json = None
+        if lane["engine"] == "gitleaks" and len(invocations) == 1:
+            ledger = invocations[0].pop("native_rule_ledger", None)
+            ledger_sha256 = invocations[0].get("native_rule_ledger_sha256")
+            ledger_json = invocations[0].pop("native_rule_ledger_json", None)
+        semgrep_execution = (
+            _deep_audit_io._semgrep_rule_runs(
+                profile, lane, source, scratch, semgrep_rules, started
+            )
+            if semgrep_rules is not None
+            else None
+        )
+        if semgrep_execution is not None:
+            import base64
+
+            semgrep_execution["ruleset_base64"] = base64.b64encode(config).decode(
+                "ascii"
+            )
+    raw_report, raw_report_bytes = _deep_audit_io._native_profile_report(
+        profile, output, paths
+    )
+    _deep_audit_io._adapter_sources(source, inventory)
+    return {
+        "rule_inventory": rule_inventory,
+        "invocations": invocations,
+        "ledger": ledger,
+        "ledger_sha256": ledger_sha256,
+        "ledger_json": ledger_json,
+        "raw_report": raw_report,
+        "version_probe": version,
+        "semgrep_rule_execution": semgrep_execution,
+        "trivy_rule_execution": trivy_execution,
+        "codeql_query_inventory": query_inventory,
+        "codeql_query_execution": query_execution,
+        "codeql_source_execution": source_execution,
+        "raw_report_bytes": (
+            raw_report_bytes if profile["report_format"] != "runtime-junit" else None
+        ),
+        **(
+            {
+                "osv_database_identity": _deep_audit_io.canonical_bytes(
+                    _deep_audit_io._osv_database_identity(lane, started + timeout)
+                )
+            }
+            if lane["engine"] == "osv" and "native_policy" in lane
+            else {}
+        ),
+    }
+
+
+def _native_challenge_executor():
+    from .runtime_audit_common import execute_native_challenge
+
+    return execute_native_challenge
+
+
+def _zap_native_request(request):
+    fields = {
+        "schema",
+        "run_id",
+        "candidate_sha256",
+        "profile_sha256",
+        "rule_ids",
+        "timeout_seconds",
+    }
+    _deep_audit_io.exact_keys(request, fields)
+    if set(request) != fields:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_REQUEST", "native request fields differ"
+        )
+    if request["schema"] != "factory.zap-native-request.v1":
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_REQUEST", "native request schema differs"
+        )
+    from .deep_audit_sarif import _zap_ledger_bindings, _zap_ledger_plugins
+
+    bindings = {
+        key: request[key] for key in ("run_id", "candidate_sha256", "profile_sha256")
+    }
+    bindings["host_id"] = _deep_audit_io.sha256_bytes(b"http://127.0.0.1:8765")
+    _zap_ledger_bindings(bindings)
+    _zap_ledger_plugins({"rule_ids": request["rule_ids"]})
+    _deep_audit_io.require_int(
+        request["timeout_seconds"], "ZAP timeout", minimum=1, maximum=3600
+    )
+    return bindings
+
+
+def _zap_native_v2_context(request, contract):
+    from .deep_audit_contract import _validate_zap_target, _zap_target_url
+
+    fields = {
+        "schema",
+        "run_id",
+        "candidate_sha256",
+        "profile_sha256",
+        "rule_ids",
+        "timeout_seconds",
+        "target",
+        "route_id",
+        "disabled_rule_id",
+    }
+    required_fields = fields - {"disabled_rule_id"}
+    _deep_audit_io.exact_keys(request, required_fields, {"disabled_rule_id"})
+    if (
+        set(request) not in (required_fields, fields)
+        or request["schema"] != "factory.zap-native-request.v2"
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_REQUEST", "native v2 request fields differ"
+        )
+    inventory, lane = _deep_audit_io._adapter_contract_parts(contract)
+    if lane.get("engine") != "zap" or "native_target" not in lane:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_REQUEST", "signed ZAP target required"
+        )
+    target = request["target"]
+    if target != lane["native_target"]:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_TARGET", "request target differs from contract"
+        )
+    _validate_zap_target(target, inventory)
+    route_id = _deep_audit_io.require_str(request["route_id"], "route_id", maximum=64)
+    routes = [route for route in target["routes"] if route["id"] == route_id]
+    if len(routes) != 1:
+        raise _deep_audit_io.RuntimeAuditError("E_ZAP_ROUTE", "declared route required")
+    route = routes[0]
+    from .deep_audit_sarif import _zap_ledger_bindings, _zap_ledger_plugins
+
+    bindings = {
+        "run_id": contract["run_id"],
+        "candidate_sha256": inventory["candidate_sha256"],
+        "profile_sha256": _deep_audit_io.digest(lane),
+        "host_id": _deep_audit_io.sha256_bytes(
+            _deep_audit_io._zap_target_base_url(target).encode("utf-8")
+        ),
+    }
+    _zap_ledger_bindings(bindings)
+    if any(
+        request[key] != bindings[key]
+        for key in ("run_id", "candidate_sha256", "profile_sha256")
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_BINDING", "request differs from signed contract"
+        )
+    expected_rule_ids = lane.get("rule_ids")
+    if request["rule_ids"] != expected_rule_ids:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_INVENTORY", "request rules differ from lane"
+        )
+    _zap_ledger_plugins({"rule_ids": request["rule_ids"]})
+    disabled_rule_id = request.get("disabled_rule_id")
+    if disabled_rule_id is not None:
+        mutations = lane.get("mutation_config_sha256")
+        if (
+            disabled_rule_id not in expected_rule_ids
+            or not isinstance(mutations, dict)
+            or disabled_rule_id not in mutations
+            or _deep_audit_io.digest(
+                {
+                    "schema": "factory.zap-disabled-policy.v1",
+                    "rule_ids": expected_rule_ids,
+                    "disabled_rule_id": disabled_rule_id,
+                }
+            )
+            != mutations[disabled_rule_id]
+        ):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_MUTATION", "disabled rule lacks its exact signed policy hash"
+            )
+    timeout = _deep_audit_io.require_int(
+        request["timeout_seconds"], "ZAP timeout", minimum=1, maximum=3600
+    )
+    lane_timeout = _deep_audit_io.require_int(
+        lane.get("timeout_seconds"), "lane timeout", minimum=1, maximum=3600
+    )
+    if timeout > lane_timeout:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_TIMEOUT", "request exceeds signed timeout"
+        )
+    return {
+        "bindings": bindings,
+        "target": target,
+        "route": route,
+        "route_id": route_id,
+        "target_url": _zap_target_url(target, route),
+        "base_url": _deep_audit_io._zap_target_base_url(target),
+        "target_sha256": _deep_audit_io.digest(target),
+        "route_sha256": _deep_audit_io.digest(route),
+        "disabled_rule_id": disabled_rule_id,
+    }
+
+
+def _zap_api(component, kind, name, deadline, *, watch=None, **arguments):
+    from urllib.request import ProxyHandler, build_opener
+    from urllib.parse import urlencode
+
+    if (component, kind, name) not in {
+        ("core", "view", "version"),
+        ("core", "view", "alerts"),
+        ("core", "action", "accessUrl"),
+        ("pscan", "view", "recordsToScan"),
+        ("ascan", "view", "scanners"),
+        ("ascan", "view", "status"),
+        ("ascan", "action", "scan"),
+        ("ascan", "action", "disableAllScanners"),
+        ("ascan", "action", "enableScanners"),
+    }:
+        raise _deep_audit_io.RuntimeAuditError("E_ZAP_API", "unapproved API action")
+    if watch is not None and watch.get("target") is not None:
+        _deep_audit_io._zap_validate_target_watch(watch)
+    _deep_audit_io._zap_api_arguments(
+        component,
+        kind,
+        name,
+        arguments,
+        target_url=watch.get("target_url") if watch else None,
+        base_url=watch.get("base_url") if watch else None,
+    )
+    if watch is not None:
+        _deep_audit_io._zap_check_daemon(watch)
+    remaining = deadline - _deep_audit_io.time.monotonic()
+    if remaining <= 0:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_TIMEOUT", "native scan deadline exhausted"
+        )
+    url = (
+        "http://127.0.0.1:8090/JSON/"
+        + "/".join((component, kind, name))
+        + "/?"
+        + urlencode(arguments)
+    )
+    with build_opener(ProxyHandler({})).open(
+        url, timeout=min(5, remaining)
+    ) as response:
+        raw = response.read(_deep_audit_io.NATIVE_COVERAGE_LIMIT + 1)
+    if len(raw) > _deep_audit_io.NATIVE_COVERAGE_LIMIT:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_OUTPUT", "native API output budget exceeded"
+        )
+    value = _deep_audit_io.strict_json(raw)
+    if not isinstance(value, dict) or "code" in value:
+        raise _deep_audit_io.RuntimeAuditError("E_ZAP_API", "native API request failed")
+    if watch is not None:
+        _deep_audit_io._zap_check_daemon(watch)
+    return value
+
+
+def _zap_api_arguments(
+    component, kind, name, arguments, *, target_url=None, base_url=None
+):
+    target_url = target_url or "http://127.0.0.1:8765/?input=seed"
+    base_url = base_url or "http://127.0.0.1:8765"
+    fixed = {
+        ("pscan", "view", "recordsToScan"): {},
+        ("core", "action", "accessUrl"): {
+            "url": target_url,
+            "followRedirects": "false",
+        },
+        ("ascan", "action", "scan"): {
+            "url": target_url,
+            "recurse": "false",
+            "inScopeOnly": "false",
+        },
+        ("core", "view", "alerts"): {"baseurl": base_url},
+    }
+    endpoint = (component, kind, name)
+    if endpoint in fixed:
+        if arguments != fixed[endpoint]:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_TARGET", "native target or scope differs"
+            )
+        return
+    if endpoint == ("ascan", "view", "status"):
+        value = arguments.get("scanId")
+        if (
+            set(arguments) != {"scanId"}
+            or not isinstance(value, str)
+            or _deep_audit_io.re.fullmatch(r"[0-9]{1,20}", value) is None
+        ):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_SCAN", "native scan ID required"
+            )
+        return
+    if endpoint == ("ascan", "action", "enableScanners"):
+        value = arguments.get("ids")
+        if (
+            set(arguments) != {"ids"}
+            or not isinstance(value, str)
+            or len(value) > 45_056
+        ):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_INVENTORY", "bounded plugin IDs required"
+            )
+        from .deep_audit_sarif import _zap_ledger_plugins
+
+        _zap_ledger_plugins({"rule_ids": value.split(",")})
+        return
+    if arguments:
+        raise _deep_audit_io.RuntimeAuditError("E_ZAP_API", "unexpected API arguments")
+
+
+def _zap_validate_target_watch(watch):
+    from .deep_audit_contract import _validate_zap_target, _zap_target_url
+
+    target, route = watch["target"], watch["route"]
+    _validate_zap_target(target)
+    if route not in target["routes"]:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_ROUTE", "watch route is not declared"
+        )
+    if (
+        watch.get("target_url") != _zap_target_url(target, route)
+        or watch.get("base_url") != _deep_audit_io._zap_target_base_url(target)
+        or watch.get("target_sha256") != _deep_audit_io.digest(target)
+        or watch.get("route_sha256") != _deep_audit_io.digest(route)
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_TARGET", "watch target binding differs"
+        )
+
+
+def _zap_target_base_url(target):
+    from .deep_audit_contract import _zap_target_url
+
+    readiness_url = _zap_target_url(target)
+    return readiness_url.removesuffix(target["readiness_path"])
+
+
+def _zap_daemon_argv(home):
+    return [
+        "/opt/factory/java/bin/java",
+        "-Xmx512m",
+        "-Djava.awt.headless=true",
+        "-jar",
+        "/zap/zap-2.17.0.jar",
+        "-daemon",
+        "-host",
+        "127.0.0.1",
+        "-port",
+        "8090",
+        "-dir",
+        str(home),
+        "-config",
+        "api.disablekey=true",
+        "-config",
+        "autoupdate.checkOnStart=false",
+        "-config",
+        "autoupdate.installAddonUpdates=false",
+        "-config",
+        "autoupdate.downloadNewRelease=false",
+    ]
+
+
+def _zap_daemon_environment(bindings, home):
+    return {
+        "PATH": "/opt/factory/java/bin:/usr/local/bin:/usr/bin:/bin",
+        "JAVA_HOME": "/opt/factory/java",
+        "HOME": str(home),
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "FACTORY_ZAP_LEDGER_ENABLED": "1",
+        "FACTORY_RUN_ID": bindings["run_id"],
+        "FACTORY_CANDIDATE_SHA256": bindings["candidate_sha256"],
+        "FACTORY_PROFILE_SHA256": bindings["profile_sha256"],
+    }
+
+
+def _zap_check_daemon(watch):
+    if watch["overflow"].is_set():
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_OUTPUT", "native daemon output budget exceeded"
+        )
+    if _deep_audit_io.time.monotonic() >= watch["deadline"]:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_TIMEOUT", "native scan deadline exhausted"
+        )
+    if watch["child"].poll() is not None:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_PROCESS", "native daemon exited unexpectedly"
+        )
+
+
+def _zap_watch(child, deadline, overflow, context=None):
+    context = context or {}
+    return {
+        "child": child,
+        "deadline": deadline,
+        "overflow": overflow,
+        "target_url": context.get("target_url"),
+        "base_url": context.get("base_url"),
+    }
+
+
+def _zap_wait_ready(child, deadline, watch):
+    from urllib.error import URLError
+
+    while True:
+        _deep_audit_io._zap_check_daemon(watch)
+        try:
+            version = _deep_audit_io._zap_api(
+                "core", "view", "version", deadline, watch=watch
+            )
+            if version != {"version": "2.17.0"}:
+                raise _deep_audit_io.RuntimeAuditError(
+                    "E_ZAP_VERSION", "native core version differs"
+                )
+            return version
+        except URLError:
+            _deep_audit_io.time.sleep(
+                min(0.2, max(0, deadline - _deep_audit_io.time.monotonic()))
+            )
+
+
+def _zap_enabled_inventory(raw):
+    scanners = raw.get("scanners")
+    if not isinstance(scanners, list) or not 1 <= len(scanners) <= 4096:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_INVENTORY", "native scanner inventory missing"
+        )
+    identities, enabled = set(), []
+    for row in scanners:
+        if not isinstance(row, dict) or row.get("enabled") not in {"true", "false"}:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_INVENTORY", "invalid scanner disposition"
+            )
+        identifier = row.get("id")
+        if (
+            not isinstance(identifier, str)
+            or _deep_audit_io.re.fullmatch(r"(?:0|[1-9][0-9]{0,9})", identifier) is None
+            or identifier in identities
+        ):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_INVENTORY", "invalid or duplicate scanner ID"
+            )
+        identities.add(identifier)
+        if row["enabled"] == "true":
+            enabled.append(identifier)
+    return sorted(enabled)
+
+
+def _zap_select_rules(rule_ids, deadline, watch, disabled_rule_id=None):
+    effective_rule_ids = [
+        rule_id for rule_id in rule_ids if rule_id != disabled_rule_id
+    ]
+    _deep_audit_io._zap_api(
+        "ascan", "action", "disableAllScanners", deadline, watch=watch
+    )
+    if effective_rule_ids:
+        _deep_audit_io._zap_api(
+            "ascan",
+            "action",
+            "enableScanners",
+            deadline,
+            watch=watch,
+            ids=",".join(effective_rule_ids),
+        )
+    raw = _deep_audit_io._zap_api("ascan", "view", "scanners", deadline, watch=watch)
+    if _deep_audit_io._zap_enabled_inventory(raw) != effective_rule_ids:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_INVENTORY", "effective enabled rules differ"
+        )
+    return raw
+
+
+def _zap_start_scan(child, deadline, watch):
+    from urllib.error import HTTPError
+
+    target = watch["target_url"] or "http://127.0.0.1:8765/?input=seed"
+    access = _deep_audit_io._zap_api(
+        "core",
+        "action",
+        "accessUrl",
+        deadline,
+        watch=watch,
+        url=target,
+        followRedirects="false",
+    )
+    while True:
+        _deep_audit_io._zap_check_daemon(watch)
+        try:
+            scan = _deep_audit_io._zap_api(
+                "ascan",
+                "action",
+                "scan",
+                deadline,
+                watch=watch,
+                url=target,
+                recurse="false",
+                inScopeOnly="false",
+            )
+            identifier = _deep_audit_io.require_str(
+                scan.get("scan"), "scan ID", maximum=20
+            )
+            if _deep_audit_io.re.fullmatch(r"[0-9]+", identifier) is None:
+                raise _deep_audit_io.RuntimeAuditError(
+                    "E_ZAP_SCAN", "invalid scan identifier"
+                )
+            return identifier, access
+        except HTTPError as exc:
+            raw = exc.read(4097)
+            if (
+                exc.code != 400
+                or len(raw) > 4096
+                or _deep_audit_io.strict_json(raw).get("code") != "url_not_found"
+            ):
+                raise _deep_audit_io.RuntimeAuditError(
+                    "E_ZAP_SCAN", "native scan start rejected"
+                ) from exc
+            _deep_audit_io.time.sleep(
+                min(0.2, max(0, deadline - _deep_audit_io.time.monotonic()))
+            )
+
+
+def _zap_wait_scan(child, identifier, deadline, watch):
+    while True:
+        _deep_audit_io._zap_check_daemon(watch)
+        status = _deep_audit_io._zap_api(
+            "ascan", "view", "status", deadline, watch=watch, scanId=identifier
+        )
+        value = status.get("status")
+        if (
+            not isinstance(value, str)
+            or _deep_audit_io.re.fullmatch(r"[0-9]{1,3}", value) is None
+            or int(value) > 100
+        ):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_SCAN", "invalid native scan status"
+            )
+        if value == "100":
+            return status
+        _deep_audit_io.time.sleep(
+            min(0.2, max(0, deadline - _deep_audit_io.time.monotonic()))
+        )
+
+
+def _zap_wait_passive_scan(child, deadline, watch):
+    """Wait for two consecutive empty passive queues before reading alerts."""
+    empty_observations = 0
+    while True:
+        _deep_audit_io._zap_check_daemon(watch)
+        pending = _deep_audit_io._zap_api(
+            "pscan", "view", "recordsToScan", deadline, watch=watch
+        )
+        if _deep_audit_io.time.monotonic() >= deadline:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_TIMEOUT", "passive scan queue did not settle before deadline"
+            )
+        count = pending.get("recordsToScan") if isinstance(pending, dict) else None
+        if (
+            not isinstance(pending, dict)
+            or set(pending) != {"recordsToScan"}
+            or not isinstance(count, str)
+            or _deep_audit_io.re.fullmatch(r"(?:0|[1-9][0-9]{0,9})", count) is None
+        ):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_PASSIVE", "invalid passive scan queue count"
+            )
+        if count == "0":
+            empty_observations += 1
+            if empty_observations == 2:
+                return pending
+        else:
+            empty_observations = 0
+        remaining = deadline - _deep_audit_io.time.monotonic()
+        if remaining <= 0:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_TIMEOUT", "passive scan queue did not settle before deadline"
+            )
+        _deep_audit_io.time.sleep(min(0.2, remaining))
+
+
+def _zap_measure_scan(request, bindings, child, deadline, watch):
+    from .deep_audit_sarif import _verify_zap_native_rule_ledger
+
+    version = _deep_audit_io._zap_wait_ready(child, deadline, watch)
+    if watch.get("target") is not None:
+        _deep_audit_io._zap_probe_target(watch)
+    disabled_rule_id = watch.get("disabled_rule_id")
+    effective_rule_ids = [
+        rule_id for rule_id in request["rule_ids"] if rule_id != disabled_rule_id
+    ]
+    before = _deep_audit_io._zap_select_rules(
+        request["rule_ids"], deadline, watch, disabled_rule_id
+    )
+    _deep_audit_io._zap_check_daemon(watch)
+    identifier, access = _deep_audit_io._zap_start_scan(child, deadline, watch)
+    status = _deep_audit_io._zap_wait_scan(child, identifier, deadline, watch)
+    after = _deep_audit_io._zap_api("ascan", "view", "scanners", deadline, watch=watch)
+    if _deep_audit_io._zap_enabled_inventory(after) != effective_rule_ids:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_INVENTORY", "effective enabled rules drifted"
+        )
+    _deep_audit_io._zap_wait_passive_scan(child, deadline, watch)
+    alerts = _deep_audit_io._zap_api(
+        "core",
+        "view",
+        "alerts",
+        deadline,
+        watch=watch,
+        baseurl=watch.get("base_url") or "http://127.0.0.1:8765",
+    )
+    _deep_audit_io._zap_check_daemon(watch)
+    if effective_rule_ids:
+        ledger = _deep_audit_io._zap_retained_ledger(_deep_audit_io.Path("/out"))
+        verification = _verify_zap_native_rule_ledger(
+            ledger, {"engine": "zap", "rule_ids": effective_rule_ids}, bindings
+        )
+    else:
+        ledger_path = _deep_audit_io.Path("/out") / "zap-rule-ledger.jsonl"
+        try:
+            ledger_path.lstat()
+        except FileNotFoundError:
+            ledger = b""
+        else:
+            # Use the same no-follow, bounded reader as nonempty ledgers; lstat
+            # only distinguishes an absent file from a present unsafe one.
+            ledger = _deep_audit_io._zap_retained_ledger(_deep_audit_io.Path("/out"))
+        if ledger:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_LEDGER", "disabled-only control must not emit a ledger"
+            )
+        verification = {
+            "state": "DISABLED_CONTROL",
+            "expected_rule_ids": [],
+            "disabled_rule_id": disabled_rule_id,
+        }
+    _deep_audit_io._zap_check_daemon(watch)
+    return {
+        "schema": "factory.zap-native-observation.v1",
+        **bindings,
+        "version": version,
+        "effective_inventory_before": before,
+        "effective_inventory_after": after,
+        "scan_status": status,
+        "access": access,
+        "alerts": alerts,
+        "native_ledger": ledger.decode("utf-8"),
+        "native_verification": verification,
+        "disabled_rule_id": disabled_rule_id,
+        **(
+            {
+                "target_sha256": watch["target_sha256"],
+                "route_sha256": watch["route_sha256"],
+                "target_url": watch["target_url"],
+            }
+            if watch.get("target") is not None
+            else {}
+        ),
+    }
+
+
+def _zap_probe_target(watch):
+    from urllib.error import HTTPError
+    from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+
+    class RejectRedirect(HTTPRedirectHandler):
+        def redirect_request(self, _request, _fp, _code, _message, _headers, _url):
+            return None
+
+    _deep_audit_io._zap_check_daemon(watch)
+    target = watch["target"]
+    readiness = target["readiness_path"]
+    url = watch["base_url"] + readiness
+    remaining = watch["deadline"] - _deep_audit_io.time.monotonic()
+    if remaining <= 0:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_TIMEOUT", "target readiness deadline exhausted"
+        )
+    try:
+        opener = build_opener(ProxyHandler({}), RejectRedirect())
+        with opener.open(
+            Request(url, method="GET"), timeout=min(5, remaining)
+        ) as response:
+            response.read(1)
+            if not 200 <= response.status < 300:
+                raise _deep_audit_io.RuntimeAuditError(
+                    "E_ZAP_TARGET_READY", "target readiness failed"
+                )
+    except HTTPError as exc:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_TARGET_READY", "target readiness failed"
+        ) from exc
+    _deep_audit_io._zap_check_daemon(watch)
+
+
+def _zap_retained_ledger(output):
+    path = _deep_audit_io.local_file(output, "zap-rule-ledger.jsonl")
+    descriptor = _deep_audit_io.os.open(
+        path, _deep_audit_io.os.O_RDONLY | _deep_audit_io.os.O_NOFOLLOW
+    )
+    with _deep_audit_io.os.fdopen(descriptor, "rb") as stream:
+        before = _deep_audit_io.os.fstat(stream.fileno())
+        raw = stream.read(4 * 1024 * 1024 + 1)
+        after = _deep_audit_io.os.fstat(stream.fileno())
+    current = path.lstat()
+    if _deep_audit_io._zap_file_signature(before) != _deep_audit_io._zap_file_signature(
+        after
+    ) or _deep_audit_io._zap_file_signature(
+        after
+    ) != _deep_audit_io._zap_file_signature(current):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_LEDGER_DRIFT", "native ledger changed during read"
+        )
+    if len(raw) > 4 * 1024 * 1024:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_OUTPUT", "native ledger byte budget exceeded"
+        )
+    return raw
+
+
+def _zap_file_signature(info):
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+
+
+def _zap_process_facts(child, started, streams, cleanup_confirmed, streams_closed):
+    from .runtime_audit_process import _cleanup_is_confirmed
+
+    confirmed = _cleanup_is_confirmed(child, cleanup_confirmed, streams_closed)
+    return {
+        "pid": child.pid,
+        "return_code": child.returncode,
+        "duration_ms": max(
+            0, round((_deep_audit_io.time.monotonic() - started) * 1000)
+        ),
+        "stdout_bytes": streams.get("stdout", (_deep_audit_io.sha256_bytes(b""), 0))[1],
+        "stdout_sha256": streams.get("stdout", (_deep_audit_io.sha256_bytes(b""), 0))[
+            0
+        ],
+        "stderr_bytes": streams.get("stderr", (_deep_audit_io.sha256_bytes(b""), 0))[1],
+        "stderr_sha256": streams.get("stderr", (_deep_audit_io.sha256_bytes(b""), 0))[
+            0
+        ],
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": confirmed,
+        "termination_reason": "intentional_stop",
+    }
+
+
+def _run_zap_native_scan(request):
+    from .runtime_audit_process import _await_cleanup, _start_stream_readers
+    import socket
+
+    if not isinstance(request, dict):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_REQUEST", "native request object required"
+        )
+    context = None
+    if request.get("schema") == "factory.zap-native-request.v2":
+        with _deep_audit_io.Path("/factory-contract.json").open("rb") as stream:
+            contract = _deep_audit_io.strict_json(stream.read(_deep_audit_io.LIMIT + 1))
+        context = _deep_audit_io._zap_native_v2_context(request, contract)
+        bindings = context["bindings"]
+    else:
+        bindings = _deep_audit_io._zap_native_request(request)
+    output = _deep_audit_io.Path("/out")
+    if output.is_symlink() or not output.is_dir() or _deep_audit_io.os.name != "posix":
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_BOUNDARY", "isolated Linux worker output required"
+        )
+    if (output / "zap-rule-ledger.jsonl").exists():
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_OUTPUT", "native ledger must not preexist"
+        )
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 8090))
+    with _deep_audit_io.tempfile.TemporaryDirectory(prefix="factory-zap-") as root:
+        started = _deep_audit_io.time.monotonic()
+        child = _deep_audit_io.subprocess.Popen(
+            _deep_audit_io._zap_daemon_argv(root),
+            cwd="/zap",
+            env=_deep_audit_io._zap_daemon_environment(bindings, root),
+            stdin=_deep_audit_io.subprocess.DEVNULL,
+            stdout=_deep_audit_io.subprocess.PIPE,
+            stderr=_deep_audit_io.subprocess.PIPE,
+            start_new_session=True,
+        )
+        overflow = _deep_audit_io.threading.Event()
+        streams = {}
+        readers = []
+        deadline = started + request["timeout_seconds"]
+        watch = _deep_audit_io._zap_watch(child, deadline, overflow, context)
+        if context:
+            watch.update(context)
+        try:
+            readers = _start_stream_readers(child, overflow, streams)
+            result = _deep_audit_io._zap_measure_scan(
+                request, bindings, child, deadline, watch
+            )
+            _deep_audit_io._zap_check_daemon(watch)
+        finally:
+            cleanup, streams_closed = _await_cleanup(child, readers)
+        process_facts = _deep_audit_io._zap_process_facts(
+            child, started, streams, cleanup, streams_closed
+        )
+        if overflow.is_set():
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_OUTPUT", "native daemon output budget exceeded"
+            )
+        if not process_facts["cleanup_confirmed"] or child.poll() is None:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_CLEANUP", "native process cleanup unconfirmed"
+            )
+        result["process_facts"] = process_facts
+    result["cleanup_complete"] = True
+    result["claim_boundary"] = (
+        "Native active-rule observations; not source line coverage, accuracy or release approval."
+    )
+    return result
+
+
+def adapter_main(argv: list[str] | None = None) -> int:
+    """Fixed in-image endpoint; Docker isolation and host validation remain mandatory."""
+    import sys
+
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "native-fuzz":
+        return _deep_audit_io.native_fuzz_main(argv[1:])
+    if argv and argv[0] == "native-zap":
+        return _deep_audit_io._native_zap_main(argv[1:])
+    return _deep_audit_io._profile_adapter_main(argv)
+
+
+def _profile_adapter_main(argv):
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("engine")
+    parser.add_argument("--mode", required=True)
+    args = parser.parse_args(argv)
+    try:
+        with _deep_audit_io.Path("/opt/factory/adapter-profile.json").open(
+            "rb"
+        ) as stream:
+            profile = _deep_audit_io.strict_json(stream.read(_deep_audit_io.LIMIT + 1))
+        with _deep_audit_io.Path("/factory-contract.json").open("rb") as stream:
+            contract = _deep_audit_io.strict_json(stream.read(_deep_audit_io.LIMIT + 1))
+        if (profile.get("engine"), profile.get("mode")) != (args.engine, args.mode):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ADAPTER_PROFILE", "entrypoint arguments differ"
+            )
+        execute = (
+            _deep_audit_io.execute_native_profile
+            if profile.get("schema") == "factory.native-profile.v1"
+            else _deep_audit_io.execute_adapter_profile
+        )
+        bundle = execute(
+            profile, contract, _deep_audit_io.Path("/src"), _deep_audit_io.Path("/out")
+        )
+        raw = _deep_audit_io._bounded_json_bytes(
+            bundle, _deep_audit_io.LIMIT, "E_WORKER_BUNDLE_SIZE"
+        )
+        print(raw.decode("utf-8"))
+        return 0
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        import sys
+
+        print(getattr(exc, "code", "E_ADAPTER_INPUT"), file=sys.stderr)
+        return 2
+
+
+def _native_zap_main(argv):
+    import sys
+
+    if argv != ["--request", "/factory-zap-request.json"]:
+        print("E_ZAP_REQUEST", file=sys.stderr)
+        return 2
+    try:
+        with _deep_audit_io.Path("/factory-zap-request.json").open("rb") as stream:
+            request = _deep_audit_io.strict_json(stream.read(_deep_audit_io.LIMIT + 1))
+        result = _deep_audit_io._run_zap_native_scan(request)
+        raw = _deep_audit_io._bounded_json_bytes(
+            result, _deep_audit_io.LIMIT, "E_WORKER_BUNDLE_SIZE"
+        )
+        print(raw.decode("utf-8"))
+        return 0
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(getattr(exc, "code", "E_ADAPTER_INPUT"), file=sys.stderr)
+        return 2

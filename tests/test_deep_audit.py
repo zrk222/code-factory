@@ -8356,3 +8356,61 @@ def test_osv_native_lookup_budgets_reject_oversized_query_inventory():
         _osv_source_accounting(
             report, {"requirements.txt": "a" * 64}, "offline-pypi-snapshot"
         )
+
+
+def test_deep_audit_io_moved_exports_keep_monkeypatch_seams(monkeypatch, tmp_path):
+    import factoryline.deep_audit as audit
+    import factoryline.deep_audit_attestation as attestation
+    import factoryline.deep_audit_contract as contract
+    import factoryline.deep_audit_io as audit_io
+    import factoryline.deep_audit_loop as loop
+    import factoryline.deep_audit_sarif as sarif
+
+    assert audit_io._adapter_invocation is contract._adapter_invocation
+    assert audit_io._native_sarif_metadata is sarif._native_sarif_metadata
+    assert (
+        audit_io.verify_codeql_retained_evidence
+        is attestation.verify_codeql_retained_evidence
+    )
+    assert audit_io.execute_fuzz_native_replay is loop.execute_fuzz_native_replay
+    assert audit_io._run_zap_native_scan is audit._run_zap_native_scan
+
+    monkeypatch.setattr(audit_io, "digest", lambda _value: "patched-digest")
+    facts = {
+        "timed_out": False,
+        "launch_error": False,
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": True,
+        "exit_code": 0,
+    }
+    invocation = contract._adapter_invocation(
+        lambda *_args, **_kwargs: facts,
+        {"argv": ["scanner"], "accepted_exit_codes": [0]},
+        {"engine": "other", "tool_version": "1"},
+        tmp_path,
+        tmp_path,
+        1,
+        time.monotonic() + 10,
+    )
+    assert invocation["argv_sha256"] == "patched-digest"
+
+    report = {"runs": [{"tool": {"driver": {"version": "1"}}}]}
+    enriched = sarif._native_sarif_metadata(report, {"tool_version": "1"}, [])
+    assert (
+        enriched["runs"][0]["invocations"][0]["properties"]["factory_execution_sha256"]
+        == "patched-digest"
+    )
+
+    monkeypatch.setattr(audit_io.time, "monotonic", lambda: 2)
+    assert loop._codeql_replay_remaining(10) == 8
+
+    def stop_at_challenge(_request):
+        raise LookupError("challenge seam")
+
+    monkeypatch.setattr(audit_io, "_fuzz_replay_control_evidence", stop_at_challenge)
+    with pytest.raises(LookupError, match="challenge seam"):
+        loop.execute_fuzz_native_replay({}, tmp_path, tmp_path, 1)
+
+    monkeypatch.setattr(audit_io, "_zap_native_request", stop_at_challenge)
+    with pytest.raises(LookupError, match="challenge seam"):
+        audit._run_zap_native_scan({})
