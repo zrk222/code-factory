@@ -319,6 +319,496 @@ def test_studio_gap_feedback_is_actionable_and_never_auto_invents_product_facts(
     assert "cannot be invented" in result["resolution"]["why_auto_stopped"]
 
 
+def test_studio_guided_prd_requires_bound_confirmation_before_mission_compile(
+    tmp_path: Path,
+):
+    from test_product_missions import PRD
+    from factoryline.studio import product_grill_from_studio
+
+    draft = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": "guided-demo",
+            "mode": "quick",
+        },
+    )
+    assert draft["status"] == "ready_for_confirmation"
+    assert draft["confirmation_required"] is True
+    with pytest.raises(StudioRequestError, match="CONFIRMATION_REQUIRED"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-grill-confirm",
+                "session_path": draft["session"]["path"],
+                "session_sha256": draft["session"]["session_sha256"],
+                "confirmed": False,
+            },
+        )
+    confirmed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-confirm",
+            "session_path": draft["session"]["path"],
+            "session_sha256": draft["session"]["session_sha256"],
+            "confirmed": True,
+        },
+    )
+    compiled = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-guided-compile",
+            "confirmation_path": confirmed["confirmation"]["path"],
+            "confirmation_sha256": confirmed["confirmation"]["sha256"],
+            "owner": "product-owner",
+            "executor": "manual",
+            "resolution_mode": "human_approval",
+        },
+    )
+    assert compiled["studio_marker"] == "STUDIO_PRODUCT_MISSION_CONTAINED"
+    assert compiled["guided_source_sha256"] == draft["source_sha256"]
+    assert compiled["mission"]["approval_state"] == "required_before_execution"
+    with pytest.raises(StudioRequestError, match="CONFIRMATION_BINDING_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-guided-compile",
+                "confirmation_path": confirmed["confirmation"]["path"],
+                "confirmation_sha256": "0" * 64,
+                "owner": "product-owner",
+                "executor": "manual",
+                "resolution_mode": "human_approval",
+            },
+        )
+    session_document = json.loads(
+        (tmp_path / Path(draft["session"]["path"])).read_text(encoding="utf-8")
+    )
+    (tmp_path / Path(session_document["source_path"])).write_text(
+        PRD + "\nChanged after confirmation.\n", encoding="utf-8"
+    )
+    with pytest.raises(StudioRequestError, match="SOURCE_BINDING_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-guided-compile",
+                "confirmation_path": confirmed["confirmation"]["path"],
+                "confirmation_sha256": confirmed["confirmation"]["sha256"],
+            },
+        )
+
+
+def test_studio_guided_prd_answers_are_explicit_bounded_and_linked(tmp_path: Path):
+    from factoryline.studio import product_grill_from_studio
+
+    draft = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": "# Idea\n\nA useful dashboard.",
+            "name": "answered-demo",
+            "mode": "quick",
+        },
+    )
+    assert draft["status"] == "needs_answers"
+    question_id = draft["questions"][0]["id"]
+    request = {
+        "action": "product-grill-answer",
+        "session_path": draft["session"]["path"],
+        "session_sha256": draft["session"]["session_sha256"],
+        "answers": [
+            {
+                "question_id": question_id,
+                "answer": "The operator must be able to review a prioritized dashboard.",
+            }
+        ],
+    }
+    answered = product_grill_from_studio(tmp_path, request)
+    assert answered["session"]["session_sha256"] != draft["session"]["session_sha256"]
+    assert answered["session"]["path"] != draft["session"]["path"]
+    assert question_id not in {item["id"] for item in answered["questions"]}
+    session_path = tmp_path / Path(answered["session"]["path"])
+    session = json.loads(session_path.read_text(encoding="utf-8"))
+    answered_source = tmp_path / Path(session["source_path"])
+    assert "## Requirements" in answered_source.read_text(encoding="utf-8")
+    assert session["previous"]["path"] == draft["session"]["path"]
+    assert session["answers"] == [
+        {
+            "question_id": question_id,
+            "answer": "The operator must be able to review a prioritized dashboard.",
+        }
+    ]
+    with pytest.raises(StudioRequestError, match="QUESTION_ID_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                **request,
+                "answers": [{"question_id": "Q-NOT-DECLARED", "answer": "invented"}],
+            },
+        )
+    with pytest.raises(StudioRequestError, match="QUESTION_ID_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                **request,
+                "answers": [
+                    {"question_id": question_id, "answer": "one"},
+                    {"question_id": question_id, "answer": "two"},
+                ],
+            },
+        )
+    with pytest.raises(StudioRequestError, match="ANSWER_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                **request,
+                "answers": [{"question_id": question_id, "answer": "\ud800"}],
+            },
+        )
+
+
+def test_studio_guided_receipts_reject_hash_consistent_bad_shape_and_source_binding(
+    tmp_path: Path,
+):
+    import hashlib
+
+    from test_product_missions import PRD
+    from factoryline.studio import product_grill_from_studio
+
+    draft = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": "receipt-shape",
+            "mode": "quick",
+        },
+    )
+    session_file = tmp_path / Path(draft["session"]["path"])
+    session = json.loads(session_file.read_text(encoding="utf-8"))
+    session.pop("project")
+    core = {key: value for key, value in session.items() if key != "session_sha256"}
+    session["session_sha256"] = hashlib.sha256(
+        json.dumps(
+            core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    session_file.write_text(json.dumps(session), encoding="utf-8")
+    with pytest.raises(StudioRequestError, match="ARTIFACT_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-grill-confirm",
+                "session_path": draft["session"]["path"],
+                "session_sha256": session["session_sha256"],
+                "confirmed": True,
+            },
+        )
+
+    typed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": "receipt-type",
+            "mode": "quick",
+        },
+    )
+    typed_file = tmp_path / Path(typed["session"]["path"])
+    typed_session = json.loads(typed_file.read_text(encoding="utf-8"))
+    typed_session["mode"] = []
+    typed_core = {
+        key: value for key, value in typed_session.items() if key != "session_sha256"
+    }
+    typed_session["session_sha256"] = hashlib.sha256(
+        json.dumps(
+            typed_core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    typed_file.write_text(json.dumps(typed_session), encoding="utf-8")
+    with pytest.raises(StudioRequestError, match="SESSION_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-grill-confirm",
+                "session_path": typed["session"]["path"],
+                "session_sha256": typed_session["session_sha256"],
+                "confirmed": True,
+            },
+        )
+
+    bound = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": "receipt-source",
+            "mode": "quick",
+        },
+    )
+    bound_file = tmp_path / Path(bound["session"]["path"])
+    bound_session = json.loads(bound_file.read_text(encoding="utf-8"))
+    changed_source = (
+        tmp_path / ".factory" / "studio-guided" / "receipt-source" / "changed.md"
+    )
+    changed_source.write_text(PRD + "\nAdditional text.", encoding="utf-8")
+    changed_bytes = changed_source.read_bytes()
+    bound_session["source_path"] = changed_source.relative_to(tmp_path).as_posix()
+    bound_session["source_sha256"] = hashlib.sha256(changed_bytes).hexdigest()
+    bound_core = {
+        key: value for key, value in bound_session.items() if key != "session_sha256"
+    }
+    bound_session["session_sha256"] = hashlib.sha256(
+        json.dumps(
+            bound_core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    bound_file.write_text(json.dumps(bound_session), encoding="utf-8")
+    with pytest.raises(StudioRequestError, match="RECEIPT_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-grill-confirm",
+                "session_path": bound["session"]["path"],
+                "session_sha256": bound_session["session_sha256"],
+                "confirmed": True,
+            },
+        )
+
+
+def test_studio_guided_malformed_grill_and_surrogate_session_fail_closed(
+    tmp_path: Path,
+):
+    from test_product_missions import PRD
+    from factoryline.studio import (
+        _guided_canonical,
+        _guided_digest,
+        product_grill_from_studio,
+    )
+
+    draft = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": "malformed-grill",
+            "mode": "quick",
+        },
+    )
+    session_path = tmp_path / Path(draft["session"]["path"])
+    session = json.loads(session_path.read_text(encoding="utf-8"))
+    grill_path = tmp_path / Path(session["grill_path"])
+    grill = json.loads(grill_path.read_text(encoding="utf-8"))
+    grill["source"] = []
+    grill_core = {
+        key: value
+        for key, value in grill.items()
+        if key not in {"grill_sha256", "generated_at"}
+    }
+    grill["grill_sha256"] = _guided_digest(_guided_canonical(grill_core))
+    grill_bytes = json.dumps(grill, sort_keys=True).encode("utf-8") + b"\n"
+    grill_path.write_bytes(grill_bytes)
+    session["grill_sha256"] = _guided_digest(grill_bytes)
+    session_core = {
+        key: value for key, value in session.items() if key != "session_sha256"
+    }
+    session["session_sha256"] = _guided_digest(_guided_canonical(session_core))
+    session_path.write_text(json.dumps(session), encoding="utf-8")
+    with pytest.raises(StudioRequestError, match="RECEIPT_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-grill-confirm",
+                "session_path": draft["session"]["path"],
+                "session_sha256": session["session_sha256"],
+                "confirmed": True,
+            },
+        )
+
+    unicode_draft = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": "surrogate-session",
+            "mode": "quick",
+        },
+    )
+    unicode_file = tmp_path / Path(unicode_draft["session"]["path"])
+    raw_session = json.loads(unicode_file.read_text(encoding="utf-8"))
+    raw_session["project"] = "\ud800"
+    unicode_file.write_text(json.dumps(raw_session), encoding="utf-8")
+    with pytest.raises(StudioRequestError, match="ARTIFACT_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-grill-confirm",
+                "session_path": unicode_draft["session"]["path"],
+                "session_sha256": unicode_draft["session"]["session_sha256"],
+                "confirmed": True,
+            },
+        )
+
+
+def test_studio_guided_acceptance_answer_reaches_confirmed_compile(tmp_path: Path):
+    from test_product_missions import PRD
+    from factoryline.studio import product_grill_from_studio
+
+    prompt = PRD.split("\n## Acceptance\n", 1)[0]
+    draft = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": prompt,
+            "name": "acceptance-answer",
+            "mode": "quick",
+        },
+    )
+    assert [item["id"] for item in draft["questions"]] == ["Q-ACCEPTANCE"]
+    scenario = """Scenario: Review a signal
+  Given an authenticated operator has prioritized signals
+  When the operator opens the dashboard
+  Then the highest-priority signal and its reason are visible"""
+    answered = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-answer",
+            "session_path": draft["session"]["path"],
+            "session_sha256": draft["session"]["session_sha256"],
+            "answers": [{"question_id": "Q-ACCEPTANCE", "answer": scenario}],
+        },
+    )
+    assert answered["status"] == "ready_for_confirmation"
+    answered_session = json.loads(
+        (tmp_path / Path(answered["session"]["path"])).read_text(encoding="utf-8")
+    )
+    saved_prd = (tmp_path / Path(answered_session["source_path"])).read_text(
+        encoding="utf-8"
+    )
+    assert "Scenario: Review a signal" in saved_prd
+    assert "- Scenario: Review a signal" not in saved_prd
+    confirmed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-confirm",
+            "session_path": answered["session"]["path"],
+            "session_sha256": answered["session"]["session_sha256"],
+            "confirmed": True,
+        },
+    )
+    compiled = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-guided-compile",
+            "confirmation_path": confirmed["confirmation"]["path"],
+            "confirmation_sha256": confirmed["confirmation"]["sha256"],
+        },
+    )
+    assert compiled["studio_marker"] == "STUDIO_PRODUCT_MISSION_CONTAINED"
+
+
+def test_studio_guided_quick_mode_escalates_remaining_deep_gaps(tmp_path: Path):
+    from test_product_missions import PRD
+    from factoryline.studio import product_grill_from_studio
+
+    prefix, remainder = PRD.split("\n## Experience states\n", 1)
+    acceptance = "\n## Acceptance\n" + remainder.split("\n## Acceptance\n", 1)[1]
+    prompt = prefix + acceptance
+    quick = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": prompt,
+            "name": "quick-escalation",
+            "mode": "quick",
+        },
+    )
+    assert quick["status"] == "deep_review_required"
+    assert quick["next_action"] == "start_deep_review"
+    with pytest.raises(StudioRequestError, match="PRD_UNRESOLVED"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-grill-confirm",
+                "session_path": quick["session"]["path"],
+                "session_sha256": quick["session"]["session_sha256"],
+                "confirmed": True,
+            },
+        )
+    deep = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": prompt,
+            "name": "quick-escalation-deep",
+            "mode": "deep",
+        },
+    )
+    assert deep["questions"]
+
+
+def test_legacy_product_endpoint_labels_direct_compile_compatibility(tmp_path: Path):
+    from test_product_missions import PRD
+
+    result = create_product_mission_from_studio(
+        tmp_path,
+        {"action": "product-mission", "prompt": PRD, "name": "legacy-demo"},
+    )
+    assert result["compatibility_path"] == "legacy-product-mission-v1"
+
+
+def test_http_guided_prd_route_is_token_bound(tmp_path: Path):
+    server, token = create_server(tmp_path)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        connection.request(
+            "POST",
+            "/api/product-grill",
+            body=json.dumps(
+                {
+                    "action": "product-grill-start",
+                    "prompt": "# Product\n\nA dashboard for private team notes.",
+                    "name": "http-guided",
+                    "mode": "quick",
+                }
+            ),
+            headers={"Content-Type": "application/json"},
+        )
+        denied = connection.getresponse()
+        denied.read()
+        assert denied.status == 403
+        connection.close()
+        connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        connection.request(
+            "POST",
+            "/api/product-grill",
+            body=json.dumps(
+                {
+                    "action": "product-grill-start",
+                    "prompt": "# Product\n\nA dashboard for private team notes.",
+                    "name": "http-guided",
+                    "mode": "quick",
+                }
+            ),
+            headers={
+                "Content-Type": "application/json",
+                "X-Factory-Studio-Token": token,
+            },
+        )
+        response = connection.getresponse()
+        result = json.loads(response.read())
+        assert response.status == 201
+        assert result["schema"] == "factory.studio.guided-prd.v1"
+        assert result["confirmation_required"] is True
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_http_surface_requires_session_token_and_enforces_body_limit(tmp_path: Path):
     # Real requests exercise _StudioHandler.do_GET, do_POST, and log_message.
     server, token = create_server(tmp_path)

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
 import re
 import secrets
 import socket
+import stat
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -33,6 +36,7 @@ from .product_missions import (
     decide_mission,
     plan_value_slices,
 )
+from .prd_grill import grill_prd, verify_prd_grill
 from .run_metrics import public_metrics
 from .runtime_coverage import read_runtime_coverage_report
 from .savings import SavingsError, public_savings_report, record_savings_pair
@@ -40,6 +44,12 @@ from .target_compiler import TARGETS, TargetCompileError, create_target_from_pro
 
 STUDIO_SCHEMA = "factory.studio.v1"
 MAX_BODY_BYTES = 64 * 1024
+MAX_GUIDED_PRD_BYTES = 64 * 1024
+MAX_GUIDED_ANSWER_BYTES = 2_000
+MAX_GUIDED_ANSWERS = 5
+MAX_GUIDED_ARTIFACT_BYTES = 32 * 1024
+GUIDED_SESSION_SCHEMA = "factory.studio.guided-prd-session.v1"
+GUIDED_CONFIRMATION_SCHEMA = "factory.studio.guided-prd-confirmation.v1"
 UNAUTHORIZED_DRAIN_TIMEOUT_SECONDS = 0.25
 LOOPBACK_HOST = "127.0.0.1"
 NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}")
@@ -612,6 +622,766 @@ def create_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     return {**result, "studio_marker": "STUDIO_CONTAINED"}
 
 
+def _guided_digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _guided_is_digest(value: Any) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def _guided_canonical(value: dict[str, Any]) -> bytes:
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+
+
+def _guided_relative(relative: Any) -> Path:
+    if (
+        not isinstance(relative, str)
+        or not relative
+        or "\\" in relative
+        or "\x00" in relative
+    ):
+        raise StudioRequestError("PATH_REJECTED", "artifact path must be relative")
+    rel = Path(relative)
+    if rel.is_absolute() or rel.drive or any(part in {".", ".."} for part in rel.parts):
+        raise StudioRequestError(
+            "PATH_REJECTED", "artifact path must stay in Studio root"
+        )
+    return rel
+
+
+def _guided_path(root: Path, relative: Any, *, required: bool = False) -> Path:
+    rel = _guided_relative(relative)
+    base = Path(root).resolve()
+    path = base
+    for part in rel.parts:
+        path /= part
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            continue
+        if path.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise StudioRequestError("PATH_REJECTED", "artifact path contains a link")
+    if not path.is_relative_to(base) or (required and not path.is_file()):
+        raise StudioRequestError(
+            "ARTIFACT_NOT_FOUND",
+            "guided artifact is missing or outside Studio root",
+            409,
+        )
+    return path
+
+
+def _guided_read(path: Path, limit: int = 32 * 1024) -> bytes:
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+                raise StudioRequestError(
+                    "ARTIFACT_SIZE_INVALID",
+                    "guided artifact exceeds its regular-file bound",
+                    409,
+                )
+            data = stream.read(limit + 1)
+    except OSError as exc:
+        raise StudioRequestError(
+            "ARTIFACT_INVALID", "guided artifact cannot be read", 409
+        ) from exc
+    if len(data) > limit:
+        raise StudioRequestError(
+            "ARTIFACT_SIZE_INVALID", "guided artifact exceeds its byte bound", 409
+        )
+    return data
+
+
+def _guided_write(root: Path, relative: str, data: bytes) -> Path:
+    path = _guided_path(root, relative)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _guided_path(root, relative)
+    if path.exists():
+        if _guided_read(path, max(len(data), 64 * 1024)) == data:
+            return path
+        raise StudioRequestError(
+            "ARTIFACT_EXISTS", "refusing to replace immutable guided artifact", 409
+        )
+    try:
+        descriptor = os.open(
+            path,
+            os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except FileExistsError as exc:
+        raise StudioRequestError(
+            "ARTIFACT_EXISTS", "guided artifact already exists", 409
+        ) from exc
+    _guided_path(root, relative, required=True)
+    return path
+
+
+def _guided_rel(root: Path, path: Path) -> str:
+    return path.resolve().relative_to(Path(root).resolve()).as_posix()
+
+
+def _guided_record(
+    root: Path,
+    relative: Any,
+    expected: Any,
+    schema: str,
+    field: str,
+    binding_code: str = "ARTIFACT_BINDING_INVALID",
+) -> dict[str, Any]:
+    path = _guided_path(root, relative, required=True)
+    try:
+        record = json.loads(_guided_read(path))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise StudioRequestError(
+            "ARTIFACT_INVALID", "guided receipt is invalid", 409
+        ) from exc
+    if not isinstance(record, dict) or record.get("schema") != schema:
+        raise StudioRequestError(
+            "ARTIFACT_INVALID", "guided receipt schema is invalid", 409
+        )
+    core = {key: value for key, value in record.items() if key != field}
+    try:
+        digest = _guided_digest(_guided_canonical(core))
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        raise StudioRequestError(
+            "ARTIFACT_INVALID", "guided receipt contains invalid text", 409
+        ) from exc
+    if record.get(field) != digest or expected != digest:
+        raise StudioRequestError(binding_code, "guided receipt hash mismatch", 409)
+    return record
+
+
+def _guided_shape(record: dict[str, Any], fields: set[str]) -> None:
+    if set(record) != fields:
+        raise StudioRequestError(
+            "ARTIFACT_INVALID", "guided receipt fields are invalid", 409
+        )
+
+
+def _guided_verified_grill(path: Path, payload: bytes) -> dict[str, Any]:
+    try:
+        receipt = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise StudioRequestError(
+            "RECEIPT_INVALID", "PRD Grill receipt is invalid", 409
+        ) from exc
+    if (
+        not isinstance(receipt, dict)
+        or not isinstance(receipt.get("source"), dict)
+        or not _guided_is_digest(receipt["source"].get("sha256"))
+    ):
+        raise StudioRequestError(
+            "RECEIPT_INVALID", "PRD Grill receipt fields are invalid", 409
+        )
+    try:
+        verified = verify_prd_grill(path)
+    except (ProductMissionError, KeyError, TypeError, ValueError, UnicodeError) as exc:
+        raise StudioRequestError(
+            "RECEIPT_INVALID", "PRD Grill receipt failed verification", 409
+        ) from exc
+    if not verified.get("valid"):
+        raise StudioRequestError(
+            "RECEIPT_INVALID", "PRD Grill receipt failed verification", 409
+        )
+    return receipt
+
+
+def _guided_saved_answers(answers: Any) -> None:
+    if not isinstance(answers, list) or len(answers) > MAX_GUIDED_ANSWERS:
+        raise StudioRequestError("SESSION_INVALID", "saved answer list is invalid", 409)
+    seen: set[str] = set()
+    for item in answers:
+        if not isinstance(item, dict) or set(item) != {"question_id", "answer"}:
+            raise StudioRequestError(
+                "SESSION_INVALID", "saved answer record is invalid", 409
+            )
+        question_id = item["question_id"]
+        if (
+            not isinstance(question_id, str)
+            or not question_id
+            or len(question_id) > 128
+            or question_id in seen
+        ):
+            raise StudioRequestError(
+                "SESSION_INVALID", "saved question id is invalid", 409
+            )
+        try:
+            _guided_answer_text(item["answer"])
+        except StudioRequestError as exc:
+            raise StudioRequestError(
+                "SESSION_INVALID", "saved answer text is invalid", 409
+            ) from exc
+        seen.add(question_id)
+
+
+def _guided_source_and_grill(
+    root: Path, record: dict[str, Any]
+) -> tuple[Path, Path, dict[str, Any]]:
+    source = _guided_path(root, record["source_path"], required=True)
+    grill_path = _guided_path(root, record["grill_path"], required=True)
+    source_bytes = _guided_read(source, MAX_GUIDED_PRD_BYTES)
+    grill_bytes = _guided_read(grill_path)
+    if (
+        _guided_digest(source_bytes) != record["source_sha256"]
+        or _guided_digest(grill_bytes) != record["grill_sha256"]
+    ):
+        raise StudioRequestError(
+            "SOURCE_BINDING_INVALID", "guided PRD or Grill receipt changed", 409
+        )
+    grill_record = _guided_verified_grill(grill_path, grill_bytes)
+    if grill_record["source"]["sha256"] != record["source_sha256"]:
+        raise StudioRequestError(
+            "RECEIPT_INVALID", "PRD Grill receipt failed verification", 409
+        )
+    return source, grill_path, json.loads(grill_bytes)
+
+
+def _guided_session(
+    root: Path, relative: Any, expected: Any
+) -> tuple[dict[str, Any], Path, dict[str, Any]]:
+    session = _guided_record(
+        root, relative, expected, GUIDED_SESSION_SCHEMA, "session_sha256"
+    )
+    _guided_shape(
+        session,
+        {
+            "schema",
+            "project",
+            "mode",
+            "source_path",
+            "source_sha256",
+            "grill_path",
+            "grill_sha256",
+            "answers",
+            "previous",
+            "session_sha256",
+        },
+    )
+    if (
+        not isinstance(session["project"], str)
+        or not NAME_PATTERN.fullmatch(session["project"])
+        or not isinstance(session["mode"], str)
+        or session["mode"] not in {"quick", "deep"}
+        or not isinstance(session["source_path"], str)
+        or not _guided_is_digest(session["source_sha256"])
+        or not isinstance(session["grill_path"], str)
+        or not _guided_is_digest(session["grill_sha256"])
+    ):
+        raise StudioRequestError(
+            "SESSION_INVALID", "guided session identity is invalid", 409
+        )
+    _guided_saved_answers(session["answers"])
+    previous = session.get("previous")
+    if previous is not None:
+        if (
+            not isinstance(previous, dict)
+            or set(previous) != {"path", "sha256"}
+            or not isinstance(previous["path"], str)
+            or not isinstance(previous["sha256"], str)
+            or not _guided_is_digest(previous["sha256"])
+        ):
+            raise StudioRequestError(
+                "SESSION_INVALID", "prior session link is invalid", 409
+            )
+        prior_path = _guided_path(root, previous["path"], required=True)
+        if _guided_digest(_guided_read(prior_path)) != previous["sha256"]:
+            raise StudioRequestError(
+                "SESSION_INVALID", "prior session link changed", 409
+            )
+    source, _, grill = _guided_source_and_grill(root, session)
+    return session, source, grill
+
+
+def _guided_run_grill(
+    root: Path,
+    project: str,
+    mode: str,
+    source: Path,
+    answers: list[dict[str, str]],
+    previous: dict[str, str] | None,
+) -> dict[str, Any]:
+    _guided_path(root, f".factory/prd-grills/{project}")
+    try:
+        grill = grill_prd(source, root, mode=mode, project=project)
+    except ProductMissionError as exc:
+        raise StudioRequestError(
+            exc.code, str(exc), 409 if exc.code.endswith("EXISTS") else 400
+        ) from exc
+    grill_path = _guided_path(
+        root, _guided_rel(root, Path(grill["path"])), required=True
+    )
+    grill_bytes = _guided_read(grill_path)
+    grill_record = _guided_verified_grill(grill_path, grill_bytes)
+    if grill_record["source"]["sha256"] != grill["source"]["sha256"]:
+        raise StudioRequestError(
+            "RECEIPT_INVALID", "new PRD Grill receipt failed verification", 409
+        )
+    core = {
+        "schema": GUIDED_SESSION_SCHEMA,
+        "project": project,
+        "mode": mode,
+        "source_path": _guided_rel(root, source),
+        "source_sha256": grill["source"]["sha256"],
+        "grill_path": _guided_rel(root, grill_path),
+        "grill_sha256": _guided_digest(grill_bytes),
+        "answers": answers,
+        "previous": previous,
+    }
+    digest = _guided_digest(_guided_canonical(core))
+    session_path = _guided_write(
+        root,
+        f".factory/studio-guided/{project}/{digest}.json",
+        json.dumps({**core, "session_sha256": digest}, sort_keys=True).encode("utf-8")
+        + b"\n",
+    )
+    return {
+        "schema": "factory.studio.guided-prd.v1",
+        "status": _guided_grill_status(grill),
+        "next_action": _guided_grill_next_action(grill),
+        "session": {"path": _guided_rel(root, session_path), "session_sha256": digest},
+        "source_sha256": core["source_sha256"],
+        "grill": {
+            "path": core["grill_path"],
+            "sha256": core["grill_sha256"],
+            "status": grill["status"],
+        },
+        "questions": grill["questions"],
+        "deferred_questions": grill["deferred_questions"],
+        "confirmation_required": True,
+        "implementation_authorized": False,
+    }
+
+
+def _guided_grill_status(grill: dict[str, Any]) -> str:
+    if grill["status"] == "ready_for_confirmation":
+        return "ready_for_confirmation"
+    if (
+        not grill["questions"]
+        and not grill["deferred_questions"]
+        and grill["observed_gaps"]
+    ):
+        return "deep_review_required"
+    return "needs_answers"
+
+
+def _guided_grill_next_action(grill: dict[str, Any]) -> str:
+    return {
+        "ready_for_confirmation": "confirm",
+        "needs_answers": "answer_current_questions",
+        "deep_review_required": "start_deep_review",
+    }[_guided_grill_status(grill)]
+
+
+def _guided_start(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    if set(payload) != {"action", "prompt", "name", "mode"}:
+        raise StudioRequestError("REQUEST_INVALID", "guided start fields are invalid")
+    prompt, mode = payload.get("prompt"), payload.get("mode")
+    if (
+        not isinstance(prompt, str)
+        or not prompt.strip()
+        or not isinstance(mode, str)
+        or mode not in {"quick", "deep"}
+    ):
+        raise StudioRequestError("REQUEST_INVALID", "prompt and mode are required")
+    try:
+        source_bytes = prompt.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise StudioRequestError("SOURCE_INVALID", "PRD must be valid UTF-8") from exc
+    if len(source_bytes) > MAX_GUIDED_PRD_BYTES:
+        raise StudioRequestError("SOURCE_TOO_LARGE", "PRD exceeds the 65536-byte limit")
+    project = _output_name(payload, prompt)
+    _contained_output(root, project)
+    digest = _guided_digest(source_bytes)
+    source = _guided_write(
+        root, f".factory/studio-guided/{project}/sources/{digest}.md", source_bytes
+    )
+    return _guided_run_grill(root, project, mode, source, [], None)
+
+
+def _guided_answer_text(answer: Any) -> str:
+    if not isinstance(answer, str) or not answer.strip():
+        raise StudioRequestError("ANSWER_INVALID", "answer must be non-empty text")
+    try:
+        answer_size = len(answer.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise StudioRequestError(
+            "ANSWER_INVALID", "answer must be valid UTF-8"
+        ) from exc
+    if answer_size > MAX_GUIDED_ANSWER_BYTES:
+        raise StudioRequestError("ANSWER_INVALID", "answer must be 1-2000 UTF-8 bytes")
+    return answer.strip()
+
+
+def _guided_answer_row(item: Any, known: set[Any], seen: set[str]) -> dict[str, str]:
+    if not isinstance(item, dict) or set(item) != {"question_id", "answer"}:
+        raise StudioRequestError("ANSWERS_INVALID", "answer record fields are invalid")
+    question_id, answer = item["question_id"], item["answer"]
+    if (
+        not isinstance(question_id, str)
+        or question_id not in known
+        or question_id in seen
+    ):
+        raise StudioRequestError(
+            "QUESTION_ID_INVALID", "unknown or duplicate question id"
+        )
+    seen.add(question_id)
+    return {"question_id": question_id, "answer": _guided_answer_text(answer)}
+
+
+def _guided_answers(
+    answers: Any, questions: list[dict[str, Any]]
+) -> list[dict[str, str]]:
+    if not isinstance(answers, list) or not 1 <= len(answers) <= MAX_GUIDED_ANSWERS:
+        raise StudioRequestError(
+            "ANSWERS_INVALID", "provide 1-5 explicit answer records"
+        )
+    known, seen = {item.get("id") for item in questions}, set()
+    return [_guided_answer_row(item, known, seen) for item in answers]
+
+
+def _guided_insert_section_answer(text: str, section: str, answer: str) -> str:
+    lines = text.splitlines()
+    heading = re.compile(r"^(#{1,6})\s+" + re.escape(section) + r"\s*#*\s*$", re.I)
+    for index, line in enumerate(lines):
+        match = heading.match(line)
+        if match:
+            level = len(match.group(1))
+            end = next(
+                (
+                    position
+                    for position in range(index + 1, len(lines))
+                    if re.match(r"^#{1," + str(level) + r"}\s+", lines[position])
+                ),
+                len(lines),
+            )
+            rendered = _guided_section_answer_lines(section, answer)
+            lines[end:end] = ["", *rendered]
+            return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+    rendered = "\n".join(_guided_section_answer_lines(section, answer))
+    addition = f"## {section}\n\n" + rendered
+    return text.rstrip() + "\n\n" + addition + "\n"
+
+
+def _guided_section_answer_lines(section: str, answer: str) -> list[str]:
+    lines = answer.splitlines()
+    if section.casefold() == "acceptance":
+        return lines
+    return ["- " + lines[0], *("  " + line if line else "" for line in lines[1:])]
+
+
+def _guided_apply_answers(
+    text: str, answers: list[dict[str, str]], questions: list[dict[str, Any]]
+) -> str:
+    targets = {item["id"]: item["section"] for item in questions}
+    for answer in answers:
+        question_id = answer["question_id"]
+        if question_id not in targets:
+            raise StudioRequestError("QUESTION_ID_INVALID", "unknown question id")
+        text = _guided_insert_section_answer(
+            text, targets[question_id], answer["answer"]
+        )
+    return text
+
+
+def _guided_answer(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    if set(payload) != {"action", "session_path", "session_sha256", "answers"}:
+        raise StudioRequestError("REQUEST_INVALID", "guided answer fields are invalid")
+    session, source, grill = _guided_session(
+        root, payload.get("session_path"), payload.get("session_sha256")
+    )
+    if not grill.get("questions"):
+        raise StudioRequestError(
+            "ANSWERS_NOT_AVAILABLE", "session has no current questions", 409
+        )
+    answers = _guided_answers(payload.get("answers"), grill["questions"])
+    source_bytes = _guided_read(source, MAX_GUIDED_PRD_BYTES)
+    if _guided_digest(source_bytes) != session["source_sha256"]:
+        raise StudioRequestError(
+            "SOURCE_BINDING_INVALID", "guided PRD changed before answer", 409
+        )
+    text = _guided_apply_answers(
+        source_bytes.decode("utf-8"), answers, grill["questions"]
+    )
+    data = text.encode("utf-8")
+    if len(data) > MAX_GUIDED_PRD_BYTES:
+        raise StudioRequestError(
+            "SOURCE_TOO_LARGE", "answered PRD exceeds the 65536-byte limit"
+        )
+    digest = _guided_digest(data)
+    next_source = _guided_write(
+        root, f".factory/studio-guided/{session['project']}/sources/{digest}.md", data
+    )
+    previous = {
+        "path": payload["session_path"],
+        "sha256": _guided_digest(
+            _guided_read(_guided_path(root, payload["session_path"], required=True))
+        ),
+    }
+    return _guided_run_grill(
+        root, session["project"], session["mode"], next_source, answers, previous
+    )
+
+
+def _guided_confirm(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    if set(payload) != {"action", "session_path", "session_sha256", "confirmed"}:
+        raise StudioRequestError(
+            "REQUEST_INVALID", "guided confirmation fields are invalid"
+        )
+    if payload.get("confirmed") is not True:
+        raise StudioRequestError(
+            "CONFIRMATION_REQUIRED", "explicit confirmation is required"
+        )
+    session, source, grill = _guided_session(
+        root, payload.get("session_path"), payload.get("session_sha256")
+    )
+    if (
+        grill.get("questions")
+        or grill.get("deferred_questions")
+        or grill.get("status") != "ready_for_confirmation"
+    ):
+        raise StudioRequestError(
+            "PRD_UNRESOLVED",
+            "answer all current Grill questions before confirmation",
+            409,
+        )
+    project = f"{session['project'][:27]}-confirmed-{session['source_sha256'][:8]}"
+    _guided_path(root, f".factory/prd-grills/{project}")
+    try:
+        confirmed = grill_prd(
+            source, root, mode=session["mode"], project=project, confirm=True
+        )
+    except ProductMissionError as exc:
+        raise StudioRequestError(
+            exc.code, str(exc), 409 if exc.code.endswith("EXISTS") else 400
+        ) from exc
+    confirmed_path = _guided_path(
+        root, _guided_rel(root, Path(confirmed["path"])), required=True
+    )
+    confirmed_bytes = _guided_read(confirmed_path)
+    confirmed_record = _guided_verified_grill(confirmed_path, confirmed_bytes)
+    if (
+        confirmed_record["source"]["sha256"] != session["source_sha256"]
+        or "PRD_GRILL_SHARED_UNDERSTANDING_CONFIRMED" not in confirmed["markers"]
+    ):
+        raise StudioRequestError(
+            "CONFIRMATION_INVALID", "confirmed Grill receipt failed verification", 409
+        )
+    core = {
+        "schema": GUIDED_CONFIRMATION_SCHEMA,
+        "confirmed": True,
+        "session_path": payload["session_path"],
+        "session_sha256": session["session_sha256"],
+        "source_path": session["source_path"],
+        "source_sha256": session["source_sha256"],
+        "grill_path": session["grill_path"],
+        "grill_sha256": session["grill_sha256"],
+        "confirmed_grill_path": _guided_rel(root, confirmed_path),
+        "confirmed_grill_sha256": _guided_digest(confirmed_bytes),
+        "confirmed_grill_id": confirmed["grill_sha256"],
+    }
+    digest = _guided_digest(_guided_canonical(core))
+    path = _guided_write(
+        root,
+        f".factory/studio-guided/{session['project']}/confirmations/{digest}.json",
+        json.dumps({**core, "confirmation_sha256": digest}, sort_keys=True).encode(
+            "utf-8"
+        )
+        + b"\n",
+    )
+    return {
+        "schema": "factory.studio.guided-prd-confirmed.v1",
+        "status": "confirmed",
+        "confirmation": {"path": _guided_rel(root, path), "sha256": digest},
+        "source_sha256": session["source_sha256"],
+        "implementation_authorized": False,
+    }
+
+
+def _guided_confirmation(
+    root: Path, payload: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any], Path]:
+    confirmation = _guided_record(
+        root,
+        payload.get("confirmation_path"),
+        payload.get("confirmation_sha256"),
+        GUIDED_CONFIRMATION_SCHEMA,
+        "confirmation_sha256",
+        "CONFIRMATION_BINDING_INVALID",
+    )
+    _guided_shape(
+        confirmation,
+        {
+            "schema",
+            "confirmed",
+            "session_path",
+            "session_sha256",
+            "source_path",
+            "source_sha256",
+            "grill_path",
+            "grill_sha256",
+            "confirmed_grill_path",
+            "confirmed_grill_sha256",
+            "confirmed_grill_id",
+            "confirmation_sha256",
+        },
+    )
+    if confirmation.get("confirmed") is not True:
+        raise StudioRequestError(
+            "CONFIRMATION_REQUIRED", "confirmation state is not true", 409
+        )
+    session, source, _ = _guided_session(
+        root, confirmation["session_path"], confirmation["session_sha256"]
+    )
+    if any(
+        confirmation.get(key) != session.get(key)
+        for key in ("source_path", "source_sha256", "grill_path", "grill_sha256")
+    ):
+        raise StudioRequestError(
+            "CONFIRMATION_BINDING_INVALID",
+            "confirmation does not match the current PRD",
+            409,
+        )
+    confirmed_path = _guided_path(
+        root, confirmation["confirmed_grill_path"], required=True
+    )
+    confirmed_bytes = _guided_read(confirmed_path)
+    if _guided_digest(confirmed_bytes) != confirmation.get("confirmed_grill_sha256"):
+        raise StudioRequestError(
+            "CONFIRMATION_INVALID", "confirmed Grill receipt failed verification", 409
+        )
+    confirmed = _guided_verified_grill(confirmed_path, confirmed_bytes)
+    if (
+        confirmed.get("status") != "confirmed"
+        or confirmed.get("source", {}).get("sha256") != session["source_sha256"]
+        or confirmed.get("grill_sha256") != confirmation.get("confirmed_grill_id")
+    ):
+        raise StudioRequestError(
+            "CONFIRMATION_INVALID", "confirmed receipt is not bound to the source", 409
+        )
+    return confirmation, session, source
+
+
+def _guided_compile_owner_executor(payload: dict[str, Any]) -> tuple[str, str]:
+    owner, executor = (
+        payload.get("owner", "local-studio-user"),
+        payload.get("executor", "manual"),
+    )
+    if (
+        not isinstance(owner, str)
+        or not owner.strip()
+        or len(owner) > 80
+        or not isinstance(executor, str)
+        or not executor.strip()
+        or len(executor) > 64
+    ):
+        raise StudioRequestError(
+            "REQUEST_INVALID", "owner/executor lengths are invalid"
+        )
+    return owner.strip(), executor.strip()
+
+
+def _guided_compile_options(payload: dict[str, Any]) -> tuple[str, str, str]:
+    required, optional = (
+        {"action", "confirmation_path", "confirmation_sha256"},
+        {"owner", "executor", "resolution_mode"},
+    )
+    if not required <= set(payload) or set(payload) - required - optional:
+        raise StudioRequestError("REQUEST_INVALID", "guided compile fields are invalid")
+    owner, executor = _guided_compile_owner_executor(payload)
+    resolution = payload.get("resolution_mode", "human_approval")
+    if not isinstance(resolution, str) or resolution not in RESOLUTION_MODES:
+        raise StudioRequestError(
+            "RESOLUTION_MODE_INVALID", "resolution mode is unsupported"
+        )
+    return owner, executor, resolution
+
+
+def _guided_compile_graph(
+    root: Path,
+    session: dict[str, Any],
+    source: Path,
+    resolution: str,
+    confirmation: dict[str, Any],
+) -> dict[str, Any]:
+    source_bytes = _guided_read(source, MAX_GUIDED_PRD_BYTES)
+    if _guided_digest(source_bytes) != session["source_sha256"]:
+        raise StudioRequestError(
+            "SOURCE_BINDING_INVALID", "guided PRD changed before compile", 409
+        )
+    graph = compile_product_text(
+        source_bytes.decode("utf-8"),
+        root=Path(root),
+        source_name=source.name,
+        project=session["project"],
+    )
+    if graph["status"] != "ready":
+        return {
+            **_product_gap_response(graph, resolution),
+            "guided_confirmation_sha256": confirmation["confirmation_sha256"],
+        }
+    return graph
+
+
+def _guided_compile_ready(
+    root: Path,
+    graph: dict[str, Any],
+    owner: str,
+    executor: str,
+    resolution: str,
+    confirmation: dict[str, Any],
+    session: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        slices, mission = _first_product_mission(Path(root), graph, owner, executor)
+    except ProductMissionError as exc:
+        raise StudioRequestError(
+            exc.code, str(exc), 409 if exc.code.endswith("EXISTS") else 400
+        ) from exc
+    response = _planned_product_mission_response(graph, slices, mission, resolution)
+    response["guided_confirmation_sha256"] = confirmation["confirmation_sha256"]
+    response["guided_source_sha256"] = session["source_sha256"]
+    return response
+
+
+def _guided_compile(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    owner, executor, resolution = _guided_compile_options(payload)
+    confirmation, session, source = _guided_confirmation(root, payload)
+    try:
+        graph = _guided_compile_graph(root, session, source, resolution, confirmation)
+    except ProductMissionError as exc:
+        raise StudioRequestError(
+            exc.code, str(exc), 409 if exc.code.endswith("EXISTS") else 400
+        ) from exc
+    if graph.get("status") != "ready":
+        return graph
+    return _guided_compile_ready(
+        root, graph, owner, executor, resolution, confirmation, session
+    )
+
+
+def product_grill_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """Handle the explicit Grill, answer, confirmation and guided compile stages."""
+    handlers = {
+        "product-grill-start": _guided_start,
+        "product-grill-answer": _guided_answer,
+        "product-grill-confirm": _guided_confirm,
+        "product-guided-compile": _guided_compile,
+    }
+    action = payload.get("action")
+    handler = handlers.get(action) if isinstance(action, str) else None
+    if handler is None:
+        raise StudioRequestError("ACTION_UNSUPPORTED", "unknown guided product action")
+    return handler(root, payload)
+
+
 def _validated_product_mission_request(
     root: Path, payload: dict[str, Any]
 ) -> tuple[str, str, str, str, str]:
@@ -738,7 +1508,7 @@ def _planned_product_mission_response(
 def create_product_mission_from_studio(
     root: Path, payload: dict[str, Any]
 ) -> dict[str, Any]:
-    """Compile a PRD to the first dependency-ready supervised mission."""
+    """Legacy compatibility endpoint; guided clients must use product-grill."""
     prompt, name, owner, executor, resolution_mode = _validated_product_mission_request(
         root, payload
     )
@@ -747,12 +1517,18 @@ def create_product_mission_from_studio(
             prompt, root=Path(root), source_name="studio-prd.md", project=name
         )
         if graph["status"] != "ready":
-            return _product_gap_response(graph, resolution_mode)
+            return {
+                **_product_gap_response(graph, resolution_mode),
+                "compatibility_path": "legacy-product-mission-v1",
+            }
         slices, mission = _first_product_mission(Path(root), graph, owner, executor)
     except ProductMissionError as exc:
         status = 409 if exc.code.endswith("EXISTS") else 400
         raise StudioRequestError(exc.code, exc.message, status) from exc
-    return _planned_product_mission_response(graph, slices, mission, resolution_mode)
+    return {
+        **_planned_product_mission_response(graph, slices, mission, resolution_mode),
+        "compatibility_path": "legacy-product-mission-v1",
+    }
 
 
 def decide_product_mission_from_studio(
@@ -1050,6 +1826,7 @@ class _StudioHandler(BaseHTTPRequestHandler):
         return self.path in {
             "/api/create",
             "/api/product",
+            "/api/product-grill",
             "/api/mission-decision",
             "/api/continue",
             "/api/savings",
@@ -1106,6 +1883,7 @@ class _StudioHandler(BaseHTTPRequestHandler):
         handlers: dict[str, Callable[[Path, dict[str, Any]], dict[str, Any]]] = {
             "/api/create": create_from_studio,
             "/api/product": create_product_mission_from_studio,
+            "/api/product-grill": product_grill_from_studio,
             "/api/mission-decision": decide_product_mission_from_studio,
             "/api/continue": continue_from_studio,
             "/api/savings": savings_from_studio,
