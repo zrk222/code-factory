@@ -390,23 +390,30 @@ def test_forgeline_doctor_canary_checks_tsx_and_rejects_nonpassing_json(
     (tmp_path / "services").mkdir()
     monkeypatch.setattr(cli, "_cli_command", lambda _name: "forge")
     monkeypatch.setattr(cli, "_typescript_node_path", lambda *_args: None)
-    monkeypatch.setattr(
-        cli.subprocess,
-        "run",
-        lambda *args, **kwargs: SimpleNamespace(
-            returncode=0,
-            stdout=json.dumps(
+    invocation = []
+
+    def bounded_run(_executable, args, *_positional, **_kwargs):
+        invocation.append(args)
+        return {
+            "ok": True,
+            "stdout": json.dumps(
                 {"passed": False, "metrics": {"coverage_assessment": "measured"}}
-            ),
-            stderr="",
-        ),
-    )
+            ).encode(),
+            "stderr": b"",
+            "exit_code": 0,
+            "cleanup_confirmed": True,
+            "streams_closed": True,
+            "output": "",
+        }
+
+    monkeypatch.setattr(cli, "_run_cli_bounded", bounded_run)
 
     failure = cli._run_feature_canary(
         module, tmp_path, {"version": "0.10.7"}, True, "tsx"
     )
 
     assert failure["reason"] == "tsx feature QA did not pass"
+    assert invocation[0][0] == "qa"
     assert "<span>{id}</span>" in (tmp_path / "services" / "canary.tsx").read_text()
     assert (tmp_path / "services" / "canary.test.tsx").exists()
 
@@ -414,8 +421,8 @@ def test_forgeline_doctor_canary_checks_tsx_and_rejects_nonpassing_json(
 def test_forgeline_doctor_only_runs_typescript_canaries_for_project_sources(
     tmp_path, monkeypatch
 ):
-    from types import SimpleNamespace
     import factoryline.cli as cli
+    from types import SimpleNamespace
 
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "app.tsx").write_text("export const App = () => <main />;\n")
@@ -445,34 +452,105 @@ def test_forgeline_doctor_only_runs_typescript_canaries_for_project_sources(
 def test_forgeline_typescript_resolver_searches_nested_package_roots(
     tmp_path, monkeypatch
 ):
-    from types import SimpleNamespace
     import factoryline.cli as cli
 
     nested = tmp_path / "frontend" / "src"
     nested.mkdir(parents=True)
+    roots = [tmp_path / f"root-{index:03d}" / ("x" * 245) for index in range(127)]
+    roots.append(nested)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli.shutil, "which", lambda _name: "node")
-    monkeypatch.setattr(
-        cli.subprocess,
-        "run",
-        lambda _command, **kwargs: SimpleNamespace(
-            returncode=0,
-            stdout=str(
+
+    def run(_cli, args, _cwd, **_kwargs):
+        roots_file = Path(args[-1])
+        candidates = json.loads(roots_file.read_text(encoding="utf-8"))
+        assert roots_file.stat().st_size > 32767
+        assert len(candidates) >= 128
+        assert max(map(len, args)) < 8192
+        return {
+            "ok": str(nested) in candidates,
+            "stdout": str(
                 tmp_path
                 / "frontend"
                 / "node_modules"
                 / "typescript"
                 / "lib"
                 / "index.js"
-            ),
-        )
-        if str(nested) in json.loads(kwargs["input"])
-        else SimpleNamespace(returncode=1, stdout=""),
+            ).encode(),
+            "stderr": b"",
+            "exit_code": 0,
+            "cleanup_confirmed": True,
+            "streams_closed": True,
+            "output": "",
+        }
+
+    monkeypatch.setattr(
+        cli,
+        "_run_cli_bounded",
+        run,
     )
 
-    result = cli._typescript_node_path([nested])
+    result = cli._typescript_node_path(roots)
 
     assert result == str(tmp_path / "frontend" / "node_modules")
+
+
+def test_forgeline_canary_rejects_unconfirmed_cleanup(tmp_path, monkeypatch):
+    import factoryline.cli as cli
+    from types import SimpleNamespace
+
+    (tmp_path / "services").mkdir()
+    monkeypatch.setattr(cli, "_cli_command", lambda _name: "forge")
+    monkeypatch.setattr(cli, "_typescript_node_path", lambda *_args: None)
+    monkeypatch.setattr(
+        cli,
+        "_run_cli_bounded",
+        lambda *_args, **_kwargs: {
+            "ok": False,
+            "stdout": b'{"passed":true}',
+            "stderr": b"",
+            "exit_code": 0,
+            "cleanup_confirmed": False,
+            "streams_closed": True,
+            "output": "factory process cleanup could not be confirmed",
+        },
+    )
+
+    result = cli._run_feature_canary(
+        SimpleNamespace(cli="forge"), tmp_path, {"version": "0.10.8"}, True, "tsx"
+    )
+
+    assert result["reason"] == "tsx feature canary failed"
+
+
+def test_forgeline_canary_rejects_timeout_even_with_pass_json(tmp_path, monkeypatch):
+    import factoryline.cli as cli
+    from types import SimpleNamespace
+
+    (tmp_path / "services").mkdir()
+    monkeypatch.setattr(cli, "_cli_command", lambda _name: "forge")
+    monkeypatch.setattr(cli, "_typescript_node_path", lambda *_args: None)
+    monkeypatch.setattr(
+        cli,
+        "_run_cli_bounded",
+        lambda *_args, **_kwargs: {
+            "ok": False,
+            "stdout": b'{"passed":true}',
+            "stderr": b"",
+            "exit_code": None,
+            "cleanup_confirmed": True,
+            "streams_closed": True,
+            "reason": "stage timed out",
+            "output": "factory stage timed out",
+        },
+    )
+
+    result = cli._run_feature_canary(
+        SimpleNamespace(cli="forge"), tmp_path, {"version": "0.10.8"}, True, "tsx"
+    )
+
+    assert result["reason"] == "tsx feature canary failed"
+    assert "timed out" in result["output"]
 
 
 def test_receipt_roundtrip(tmp_path):
@@ -601,7 +679,7 @@ def test_meter_capture_records_a_real_local_command(tmp_path, capsys):
         )
         == 0
     )
-    snapshot = json.loads(capsys.readouterr().out)
+    snapshot = json.loads(capsys.readouterr().out.split("\n", 1)[1])
     latest = snapshot["activity"]["latest_stage"]
     assert latest["module"] == "codex"
     assert latest["feature"] == "codex-observation"
