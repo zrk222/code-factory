@@ -491,7 +491,138 @@ def _osv_source_accounting(report, required, mode):
             "packages_sha256": digest(packages),
             "packages": packages,
         }
-    return _osv_accounting_result(report, required, sources, errors)
+    accounting = _osv_accounting_result(report, required, sources, errors)
+    if "factory_lookup_execution" in report:
+        accounting["lookup_execution"] = _osv_lookup_execution(report, sources)
+    return accounting
+
+
+def _osv_lookup_fields(value, fields):
+    value = _object(value)
+    if set(value) != set(fields.split()):
+        raise RuntimeAuditError("E_OSV_LOOKUPS", "native lookup fields differ")
+    return value
+
+
+def _osv_lookup_targets(report):
+    targets = {}
+    for result in report["results"]:
+        path = result["source"]["path"]
+        for row in result["packages"]:
+            key = canonical_bytes(
+                {
+                    field: row["package"][field]
+                    for field in ("name", "version", "ecosystem")
+                }
+            )
+            target = targets.setdefault(key, {"locations": set(), "matched": set()})
+            target["locations"].add(path)
+            target["matched"].update(
+                require_str(_object(item).get("id"), "advisory id", maximum=256)
+                for item in _list(row.get("vulnerabilities", []), 0, 20_000)
+            )
+    return targets
+
+
+def _osv_lookup_extractors(runs):
+    for run in _list(runs, 1, 1024):
+        run = _osv_lookup_fields(run, "plugins statuses")
+        plugins = _list(run["plugins"], 1, 1024)
+        for name in plugins:
+            require_str(name, "extractor name", maximum=256)
+        statuses = _list(run["statuses"], 1, 1024)
+        names = []
+        for row in statuses:
+            row = _osv_lookup_fields(row, "name state")
+            names.append(require_str(row["name"], "extractor name", maximum=256))
+            if row["state"] != "SUCCEEDED":
+                raise RuntimeAuditError("E_OSV_LOOKUPS", "extractor did not succeed")
+        if plugins != sorted(set(plugins)) or sorted(names) != plugins:
+            raise RuntimeAuditError("E_OSV_LOOKUPS", "extractor execution set differs")
+
+
+def _osv_lookup_query(row, ledger, targets):
+    row = _osv_lookup_fields(
+        row,
+        "name version ecosystem locations state evaluated_advisories "
+        "evaluated_sha256 decision_sha256 matched_advisories",
+    )
+    identity = {
+        key: require_str(row[key], f"query.{key}", maximum=256)
+        for key in ("name", "version", "ecosystem")
+    }
+    key = canonical_bytes(identity)
+    if key not in targets or row["state"] != "EXECUTED":
+        raise RuntimeAuditError("E_OSV_LOOKUPS", "query is unbound or did not execute")
+    paths = [relative_path(path) for path in _list(row["locations"], 1, 20_000)]
+    matched = _list(row["matched_advisories"], 0, 20_000)
+    for advisory in matched:
+        require_str(advisory, "matched advisory", maximum=256)
+    evaluated = require_int(
+        row["evaluated_advisories"], "evaluated advisories", minimum=1, maximum=10**6
+    )
+    expected_decision = digest(
+        {
+            **identity,
+            "catalog_sha256": ledger["catalog_sha256"],
+            "evaluated_advisories": evaluated,
+            "matched_advisories": matched,
+        }
+    )
+    if require_digest(row["decision_sha256"], "decision hash") != expected_decision:
+        raise RuntimeAuditError("E_OSV_LOOKUPS", "native decision hash differs")
+    if (
+        paths != sorted(targets[key]["locations"])
+        or matched != sorted(targets[key]["matched"])
+        or evaluated != ledger["catalog_advisories"]
+        or row["evaluated_sha256"] != ledger["catalog_sha256"]
+    ):
+        raise RuntimeAuditError("E_OSV_LOOKUPS", "query decisions or input set differ")
+    return key, row
+
+
+def _osv_lookup_execution(report, sources):
+    ledger = _osv_lookup_fields(
+        report["factory_lookup_execution"],
+        "schema upstream_commit database_sha256 catalog_advisories catalog_sha256 "
+        "queries extractor_runs",
+    )
+    if (
+        ledger["schema"] != "factory.osv-lookup-execution.v1"
+        or ledger["upstream_commit"] != "a14aa98ab8408547083d4411091c5fbaf5b47d8e"
+    ):
+        raise RuntimeAuditError("E_OSV_LOOKUPS", "unrecognized native lookup producer")
+    require_digest(ledger["database_sha256"], "lookup database hash")
+    require_digest(ledger["catalog_sha256"], "advisory catalog hash")
+    require_int(ledger["catalog_advisories"], "catalog size", minimum=1, maximum=10**6)
+    _osv_lookup_extractors(ledger["extractor_runs"])
+    targets = _osv_lookup_targets(report)
+    observed = {}
+    for row in _list(ledger["queries"], 1, 20_000):
+        key, row = _osv_lookup_query(row, ledger, targets)
+        if key in observed:
+            raise RuntimeAuditError("E_OSV_LOOKUPS", "duplicate native package query")
+        observed[key] = row
+    if set(observed) != set(targets):
+        raise RuntimeAuditError(
+            "E_OSV_LOOKUPS", "package queries were not all executed"
+        )
+    return {
+        **ledger,
+        "queries": [observed[key] for key in sorted(observed)],
+        "source_sha256": {path: row["sha256"] for path, row in sorted(sources.items())},
+    }
+
+
+def _osv_lookup_binding_gaps(report, lane):
+    ledger = report.get("factory_lookup_execution")
+    if ledger is None:
+        return ["OSV_NATIVE_LOOKUPS_REQUIRED"]
+    ledger = _object(ledger)
+    expected = lane.get("native_policy", {}).get("database_sha256")
+    if not expected or ledger.get("database_sha256") != expected:
+        return ["OSV_NATIVE_LOOKUP_DATABASE_DRIFT"]
+    return []
 
 
 def _osv_accounting_packages(result):
@@ -771,6 +902,7 @@ def _coverage_source_gaps(report, coverage, lane, required):
         gaps.append("COVERAGE_REPORT_DRIFT")
     if lane["engine"] == "osv" and lane["mode"] == "offline-pypi-snapshot":
         expected = _osv_source_accounting(report, required, lane["mode"])
+        gaps.extend(_osv_lookup_binding_gaps(report, lane))
         if expected["state"] != "COMPLETE":
             gaps.append("OSV_SOURCE_ACCOUNTING_INCOMPLETE")
         if canonical_bytes(coverage.get("source_accounting")) != canonical_bytes(

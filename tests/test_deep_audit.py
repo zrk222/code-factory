@@ -1739,7 +1739,10 @@ def test_osv_native_worker_dispatch_and_coverage_keep_challenge_gap():
     )
     assert coverage["source_accounting"] == direct
     assert coverage["complete"] is False
-    assert coverage["errors"] == ["NATIVE_CHALLENGES_REQUIRED"]
+    assert coverage["errors"] == [
+        "OSV_NATIVE_LOOKUPS_REQUIRED",
+        "NATIVE_CHALLENGES_REQUIRED",
+    ]
 
 
 def test_osv_empty_native_accounting_keeps_both_worker_gaps():
@@ -1782,6 +1785,7 @@ def test_osv_empty_native_accounting_keeps_both_worker_gaps():
     assert coverage["source_accounting"]["state"] == "UNAVAILABLE"
     assert coverage["complete"] is False
     assert coverage["errors"] == [
+        "OSV_NATIVE_LOOKUPS_REQUIRED",
         "NATIVE_SOURCE_ACCOUNTING_REQUIRED",
         "NATIVE_CHALLENGES_REQUIRED",
     ]
@@ -7965,3 +7969,360 @@ def test_zap_native_v2_request_rejects_target_or_binding_drift(mutation):
 
     with pytest.raises(RuntimeAuditError):
         _zap_native_v2_context(request, contract)
+
+
+def _osv_lookup_execution_fixture():
+    from factoryline.deep_audit_io import digest
+
+    report = _osv_package_accounting_fixture()
+    report["factory_lookup_execution"] = {
+        "schema": "factory.osv-lookup-execution.v1",
+        "upstream_commit": "a14aa98ab8408547083d4411091c5fbaf5b47d8e",
+        "database_sha256": "c" * 64,
+        "catalog_advisories": 120,
+        "catalog_sha256": "d" * 64,
+        "extractor_runs": [
+            {
+                "plugins": ["python/requirements"],
+                "statuses": [{"name": "python/requirements", "state": "SUCCEEDED"}],
+            }
+        ],
+        "queries": [
+            {
+                "name": "werkzeug",
+                "version": "0.1",
+                "ecosystem": "PyPI",
+                "locations": ["requirements.txt"],
+                "state": "EXECUTED",
+                "evaluated_advisories": 120,
+                "evaluated_sha256": "d" * 64,
+                "decision_sha256": "e" * 64,
+                "matched_advisories": [],
+            }
+        ],
+    }
+    query = report["factory_lookup_execution"]["queries"][0]
+    query["decision_sha256"] = digest(
+        {
+            **{
+                key: query[key]
+                for key in (
+                    "name",
+                    "version",
+                    "ecosystem",
+                    "evaluated_advisories",
+                    "matched_advisories",
+                )
+            },
+            "catalog_sha256": report["factory_lookup_execution"]["catalog_sha256"],
+        }
+    )
+    return report
+
+
+def test_osv_native_lookup_zero_match_is_explicit_and_source_bound():
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    report = _osv_lookup_execution_fixture()
+    report["results"][0]["packages"] *= 2  # Repeated package rows are legal.
+    observed = _osv_source_accounting(
+        report, {"requirements.txt": "a" * 64}, "offline-pypi-snapshot"
+    )
+    ledger = observed["lookup_execution"]
+    assert ledger["queries"][0]["evaluated_advisories"] == 120
+    assert ledger["queries"][0]["matched_advisories"] == []
+    assert ledger["source_sha256"] == {"requirements.txt": "a" * 64}
+    changed = _osv_source_accounting(
+        report, {"requirements.txt": "b" * 64}, "offline-pypi-snapshot"
+    )
+    assert changed["lookup_execution"]["source_sha256"] != ledger["source_sha256"]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("state", "FAILED"),
+        ("state", "NOT_RUN"),
+        ("evaluated_advisories", 119),
+        ("evaluated_advisories", True),
+        ("evaluated_sha256", "f" * 64),
+        ("decision_sha256", "invalid"),
+        ("locations", []),
+        ("locations", ["unbound.txt"]),
+        ("locations", ["requirements.txt", "requirements.txt"]),
+        ("matched_advisories", ["CVE-unreported"]),
+        ("name", "other"),
+    ],
+)
+def test_osv_native_lookup_rejects_missing_failed_or_contradictory_query(field, value):
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    report = _osv_lookup_execution_fixture()
+    report["factory_lookup_execution"]["queries"][0][field] = value
+    with pytest.raises(RuntimeAuditError):
+        _osv_source_accounting(
+            report, {"requirements.txt": "a" * 64}, "offline-pypi-snapshot"
+        )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("queries", []),
+        ("catalog_advisories", 0),
+        ("catalog_advisories", True),
+        ("catalog_sha256", "invalid"),
+        ("database_sha256", "invalid"),
+        ("upstream_commit", "f" * 40),
+        ("schema", "unknown"),
+        ("extractor_runs", []),
+        ("extractor_runs", [{"plugins": ["python/requirements"], "statuses": []}]),
+        (
+            "extractor_runs",
+            [
+                {
+                    "plugins": ["python/requirements"],
+                    "statuses": [{"name": "python/requirements", "state": "PARTIAL"}],
+                }
+            ],
+        ),
+    ],
+)
+def test_osv_native_lookup_rejects_empty_or_incomplete_execution(field, value):
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    report = _osv_lookup_execution_fixture()
+    report["factory_lookup_execution"][field] = value
+    with pytest.raises(RuntimeAuditError):
+        _osv_source_accounting(
+            report, {"requirements.txt": "a" * 64}, "offline-pypi-snapshot"
+        )
+
+
+def test_osv_native_lookup_rejects_duplicate_and_omitted_queries():
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    report = _osv_lookup_execution_fixture()
+    report["factory_lookup_execution"]["queries"] *= 2
+    with pytest.raises(RuntimeAuditError, match="duplicate native"):
+        _osv_source_accounting(
+            report, {"requirements.txt": "a" * 64}, "offline-pypi-snapshot"
+        )
+    report = _osv_lookup_execution_fixture()
+    report["results"][0]["packages"].append(
+        {
+            "package": {"name": "other", "version": "1", "ecosystem": "PyPI"},
+            "vulnerabilities": [],
+        }
+    )
+    with pytest.raises(RuntimeAuditError, match="not all executed"):
+        _osv_source_accounting(
+            report, {"requirements.txt": "a" * 64}, "offline-pypi-snapshot"
+        )
+
+
+def test_osv_native_lookup_database_and_missing_evidence_remain_gaps():
+    from factoryline.deep_audit_sarif import _osv_lookup_binding_gaps
+
+    report = _osv_lookup_execution_fixture()
+    lane = {"native_policy": {"database_sha256": "c" * 64}}
+    assert _osv_lookup_binding_gaps(report, lane) == []
+    lane["native_policy"]["database_sha256"] = "f" * 64
+    assert _osv_lookup_binding_gaps(report, lane) == [
+        "OSV_NATIVE_LOOKUP_DATABASE_DRIFT"
+    ]
+    assert _osv_lookup_binding_gaps({}, lane) == ["OSV_NATIVE_LOOKUPS_REQUIRED"]
+
+
+def test_osv_native_lookup_paths_normalize_primary_and_retained_reports():
+    from copy import deepcopy
+    from factoryline.deep_audit_io import (
+        _native_dependency_paths,
+        _osv_normalize_retained_paths,
+    )
+
+    report = _osv_lookup_execution_fixture()
+    report["results"][0]["source"]["path"] = "/src/requirements.txt"
+    report["factory_lookup_execution"]["queries"][0]["locations"] = [
+        "/src/requirements.txt"
+    ]
+    retained = deepcopy(report)
+    sources = {"requirements.txt": "a" * 64}
+    _native_dependency_paths(report, "osv-json", sources)
+    _osv_normalize_retained_paths(retained, "/src", sources)
+    assert retained == report
+    assert report["factory_lookup_execution"]["queries"][0]["locations"] == [
+        "requirements.txt"
+    ]
+
+
+@pytest.mark.parametrize("change", ["decision", "missing", "database"])
+def test_osv_fresh_replay_requires_independent_lookup_evidence(
+    tmp_path, monkeypatch, change
+):
+    import time
+    from copy import deepcopy
+    import factoryline.deep_audit_io as module
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    request = _osv_replay_request_fixture()
+    report = _osv_lookup_execution_fixture()
+    required = {"requirements.txt": "a" * 64}
+    request["report"] = report
+    request["coverage"]["source_accounting"] = _osv_source_accounting(
+        report, required, "offline-pypi-snapshot"
+    )
+    fresh = deepcopy(report)
+    if change == "decision":
+        fresh["factory_lookup_execution"]["queries"][0]["decision_sha256"] = "f" * 64
+    elif change == "database":
+        fresh["factory_lookup_execution"]["database_sha256"] = "f" * 64
+    else:
+        del fresh["factory_lookup_execution"]
+    monkeypatch.setattr(module, "_osv_database_identity", lambda *args: {})
+    monkeypatch.setattr(
+        module, "_adapter_output_paths", lambda *args, **kwargs: ["report.json"]
+    )
+    monkeypatch.setattr(
+        module,
+        "_run_native_profile",
+        lambda *args: {"raw_report": fresh, "invocations": []},
+    )
+    monkeypatch.setattr(module, "_native_report", lambda raw, *args: raw)
+    with pytest.raises(
+        RuntimeAuditError, match="decision hash|independent source accounting differs"
+    ):
+        module._osv_replay_primary(
+            request,
+            {},
+            tmp_path,
+            tmp_path,
+            request["lane"],
+            request["inventory"],
+            required,
+            time.monotonic() + 60,
+        )
+
+
+@pytest.mark.parametrize("value", [[], 1, "ledger"])
+def test_osv_present_malformed_lookup_ledger_never_becomes_missing(value):
+    from factoryline.deep_audit_sarif import _osv_lookup_binding_gaps
+
+    with pytest.raises(RuntimeAuditError):
+        _osv_lookup_binding_gaps({"factory_lookup_execution": value}, {})
+
+
+def test_osv_native_lookup_reported_match_must_have_native_match_evidence():
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    report = _osv_lookup_execution_fixture()
+    report["results"][0]["packages"][0]["vulnerabilities"] = [{"id": "CVE-2026-1234"}]
+    required = {"requirements.txt": "a" * 64}
+    with pytest.raises(RuntimeAuditError, match="decisions"):
+        _osv_source_accounting(report, required, "offline-pypi-snapshot")
+    report["factory_lookup_execution"]["queries"][0]["matched_advisories"] = [
+        "CVE-2026-1234"
+    ]
+    from factoryline.deep_audit_io import digest
+
+    query = report["factory_lookup_execution"]["queries"][0]
+    query["decision_sha256"] = digest(
+        {
+            **{
+                key: query[key]
+                for key in (
+                    "name",
+                    "version",
+                    "ecosystem",
+                    "evaluated_advisories",
+                    "matched_advisories",
+                )
+            },
+            "catalog_sha256": report["factory_lookup_execution"]["catalog_sha256"],
+        }
+    )
+    result = _osv_source_accounting(report, required, "offline-pypi-snapshot")
+    assert result["lookup_execution"]["queries"][0]["matched_advisories"] == [
+        "CVE-2026-1234"
+    ]
+
+
+def test_osv_complete_manifest_claim_cannot_bypass_lookup_execution_gate():
+    from factoryline.deep_audit_io import digest
+    from factoryline.deep_audit_sarif import (
+        _coverage_source_gaps,
+        _osv_source_accounting,
+    )
+
+    report = _osv_package_accounting_fixture()
+    required = {"requirements.txt": "a" * 64}
+    lane = {
+        "engine": "osv",
+        "mode": "offline-pypi-snapshot",
+        "native_policy": {"database_sha256": "c" * 64},
+    }
+    coverage = {
+        "schema": "factory.deep-coverage.v1",
+        "sources": required,
+        "complete": True,
+        "errors": [],
+        "mode": lane["mode"],
+        "fallback": False,
+        "report_sha256": digest(report),
+        "source_accounting": _osv_source_accounting(report, required, lane["mode"]),
+    }
+    assert _coverage_source_gaps(report, coverage, lane, required) == [
+        "OSV_NATIVE_LOOKUPS_REQUIRED"
+    ]
+    report = _osv_lookup_execution_fixture()
+    coverage.update(
+        report_sha256=digest(report),
+        source_accounting=_osv_source_accounting(report, required, lane["mode"]),
+    )
+    assert _coverage_source_gaps(report, coverage, lane, required) == []
+    lane["native_policy"]["database_sha256"] = "f" * 64
+    assert _coverage_source_gaps(report, coverage, lane, required) == [
+        "OSV_NATIVE_LOOKUP_DATABASE_DRIFT"
+    ]
+
+
+@pytest.mark.parametrize(
+    "locations",
+    [
+        ["file:///src/requirements.txt"],
+        ["/outside/requirements.txt"],
+        ["/src/../requirements.txt"],
+        ["/src/requirements.txt", "requirements.txt"],
+    ],
+)
+def test_osv_lookup_path_aliases_cannot_hide_unbound_or_duplicate_sources(locations):
+    from factoryline.deep_audit_io import _osv_normalize_retained_paths
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    report = _osv_lookup_execution_fixture()
+    report["factory_lookup_execution"]["queries"][0]["locations"] = locations
+    required = {"requirements.txt": "a" * 64}
+    if locations == ["file:///src/requirements.txt"]:
+        result = _osv_normalize_retained_paths(report, "/src", required)
+        assert result["factory_lookup_execution"]["queries"][0]["locations"] == [
+            "requirements.txt"
+        ]
+        assert (
+            _osv_source_accounting(result, required, "offline-pypi-snapshot")["state"]
+            == "COMPLETE"
+        )
+    else:
+        with pytest.raises(RuntimeAuditError):
+            result = _osv_normalize_retained_paths(report, "/src", required)
+            _osv_source_accounting(result, required, "offline-pypi-snapshot")
+
+
+def test_osv_native_lookup_budgets_reject_oversized_query_inventory():
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    report = _osv_lookup_execution_fixture()
+    report["factory_lookup_execution"]["queries"] *= 20_001
+    with pytest.raises(RuntimeAuditError):
+        _osv_source_accounting(
+            report, {"requirements.txt": "a" * 64}, "offline-pypi-snapshot"
+        )

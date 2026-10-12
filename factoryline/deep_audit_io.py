@@ -2394,12 +2394,29 @@ def _native_dependency_paths(report: dict, kind: str, sources: dict) -> None:
             result["source"]["path"] = _native_source_path(
                 result["source"]["path"], sources
             )
+        _osv_lookup_paths(report, lambda path: _native_source_path(path, sources))
     elif kind == "syft-json":
         for artifact in report.get("artifacts", []):
             for location in artifact.get("locations", []):
                 location["path"] = _native_source_path(
                     location["path"], sources, scan_root=True
                 )
+
+
+def _osv_lookup_paths(report, normalize):
+    if "factory_lookup_execution" not in report:
+        return
+    ledger = report["factory_lookup_execution"]
+    if not isinstance(ledger, dict) or not isinstance(ledger.get("queries"), list):
+        raise RuntimeAuditError("E_OSV_LOOKUPS", "native lookup object required")
+    if len(ledger["queries"]) > 20_000:
+        raise RuntimeAuditError("E_OSV_LOOKUPS", "native query budget exceeded")
+    for row in ledger["queries"]:
+        if not isinstance(row, dict) or not isinstance(row.get("locations"), list):
+            raise RuntimeAuditError("E_OSV_LOOKUPS", "native query locations required")
+        if not 0 < len(row["locations"]) <= 20_000:
+            raise RuntimeAuditError("E_OSV_LOOKUPS", "native location budget exceeded")
+        row["locations"] = sorted(normalize(path) for path in row["locations"])
 
 
 def execute_native_profile(
@@ -3432,7 +3449,7 @@ def _run_osv_challenge(
         scratch / "database-identity.json",
     )
     ledger_path = scratch / "unused-ledger.json"
-    bindings = _osv_challenge_bindings(
+    bindings = _native_challenge_bindings(
         challenge_root, scratch, report_path, ledger_path, config_path, challenge_sha
     )
     summary = {}
@@ -3515,7 +3532,7 @@ def _run_osv_challenge(
     return observation, summary
 
 
-def _osv_challenge_bindings(source, scratch, report, ledger, config, candidate_sha):
+def _native_challenge_bindings(source, scratch, report, ledger, config, candidate_sha):
     return {
         "source": str(source),
         "output": str(scratch),
@@ -3578,6 +3595,21 @@ def _osv_challenge_source_paths(report, source_root, manifest):
             raise RuntimeAuditError(
                 "E_OSV_REPORT", "native source path malformed"
             ) from exc
+    _osv_lookup_paths(
+        report,
+        lambda path: _osv_normalize_lookup_path(path, prefix, manifest),
+    )
+
+
+def _osv_normalize_lookup_path(path, prefix, manifest):
+    path = require_str(path, "lookup source path", maximum=2048)
+    path = path.removeprefix("file://")
+    if path.startswith(prefix):
+        path = path[len(prefix) :]
+    path = relative_path(path)
+    if path not in manifest:
+        raise RuntimeAuditError("E_OSV_LOOKUPS", "lookup source path is unbound")
+    return path
 
 
 def _osv_mutation_path(case, baseline, lane, obligation):
@@ -3861,6 +3893,9 @@ def _osv_normalize_retained_paths(report, source_root, manifest):
     root = _osv_source_root_prefix(source_root)
     for item in report["results"]:
         _osv_normalize_result_source(item, root, manifest)
+    _osv_lookup_paths(
+        report, lambda path: _osv_normalize_lookup_path(path, root, manifest)
+    )
     return report
 
 
@@ -5180,7 +5215,9 @@ def _native_profile_coverage(
         )
         complete = not errors
     elif lane["engine"] == "osv":
-        errors = []
+        from .deep_audit_sarif import _osv_lookup_binding_gaps
+
+        errors = _osv_lookup_binding_gaps(report, lane)
         if (
             _native_source_accounting(execution, report, inventory, lane)["state"]
             != "COMPLETE"
@@ -6633,7 +6670,7 @@ def _execute_codeql_challenge(
         scratch / "unused-ledger.json",
         scratch / "query-inventory.json",
     )
-    bindings = _semgrep_challenge_bindings(
+    bindings = _native_challenge_bindings(
         root, scratch, report, ledger, selected, digest(manifest)
     )
     commands = _codeql_challenge_steps(profile, bindings, selected)
@@ -7587,7 +7624,7 @@ def _run_semgrep_challenge(
     report_path = scratch / "report.sarif"
     inventory_path = scratch / "rule-inventory.json"
     ledger_path = scratch / "unused-ledger.json"
-    bindings = _semgrep_challenge_bindings(
+    bindings = _native_challenge_bindings(
         challenge_root, scratch, report_path, ledger_path, config_path, challenge_sha
     )
     effective = config_path.read_bytes()
@@ -7660,18 +7697,6 @@ def _semgrep_fixture_binding(manifest, obligation, source, fixture_path):
         )
     for path, source_sha in manifest.items():
         bound_bytes(source, {"path": relative_path(path), "sha256": source_sha})
-
-
-def _semgrep_challenge_bindings(source, scratch, report, ledger, config, candidate_sha):
-    return {
-        "source": str(source),
-        "output": str(scratch),
-        "report": str(report),
-        "scratch": str(scratch),
-        "candidate_sha256": candidate_sha,
-        "factory_ledger": str(ledger),
-        "config": str(config),
-    }
 
 
 def _semgrep_challenge_report(raw, profile, source_root, sources):
