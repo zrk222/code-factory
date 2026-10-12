@@ -1797,6 +1797,30 @@ def run_graph_ops_reality_check_from_studio(
         ) from exc
 
 
+def journey_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """Operate a bound local journey only through explicit token-protected actions."""
+    from .app_builder import studio_journey
+
+    if (
+        not isinstance(payload.get("binding_path"), str)
+        or not isinstance(payload.get("owner"), str)
+        or payload.get("action")
+        not in {"status", "plan", "execute", "preview", "repair"}
+    ):
+        raise StudioRequestError(
+            "JOURNEY_REQUEST_INVALID",
+            "Choose a current agent binding and supported action.",
+        )
+    try:
+        return studio_journey(root, payload)
+    except (ProductMissionError, ValueError, OSError) as exc:
+        raise StudioRequestError(
+            "JOURNEY_ACTION_REJECTED",
+            "Candidate or action evidence is invalid; verify the binding and exact approval.",
+            409,
+        ) from exc
+
+
 def _studio_html(token: str) -> str:
     target_buttons = "".join(
         f'''<label class="target"><input type="radio" name="target" value="{key}" {"checked" if key == "web" else ""}>
@@ -1852,7 +1876,7 @@ button:disabled {{ opacity:.55; cursor:wait; }} #result {{ min-height:48px; padd
 <header class="topbar"><strong>Factory Studio</strong><span id="surface-label">Local target compiler</span><a href="/graph-ops" style="color:#dbeafe;font-weight:800">Graph Ops</a></header>
 <main data-marker="FACTORY_DUAL_TRACK_START GRAPH_OPS_UNIFIED_READ_ONLY"><section class="intro"><div><p class="eyebrow" id="workflow-label">INSTANT MVP TO PROFESSIONAL PROOF</p><h1 id="workflow-title">Describe the outcome. Get a local MVP.</h1></div><div class="boundary">Loopback only. No publish, deploy, signing, credentials, connectors, or external messages.</div></section>
 <div class="modes" role="tablist"><button class="mode" id="starter-mode" type="button">Instant MVP</button><button class="mode active" id="dashboard-mode" type="button">Professional workflow</button><button class="mode" id="assembly-mode" type="button">Assembly</button><button class="mode" id="savings-mode" type="button">Savings</button><button class="mode" id="mission-mode" type="button">Product mission</button></div>
-<section id="dashboard" class="dashboard"><div class="stats"><div class="stat"><small>Stages measured</small><strong id="stat-stages">not available</strong></div><div class="stat"><small>First-pass gates</small><strong id="stat-first-pass">not available</strong></div><div class="stat"><small>Runs observed</small><strong id="stat-runs">not available</strong></div><div class="stat"><small>Flow efficiency</small><strong id="stat-flow">not available</strong></div></div><div class="dash-grid"><div class="panel wide-panel"><h2>Professional workflow</h2><p class="empty-data">Inspect the <a href="/graph-ops">read-only Graph Ops map</a>, compile Product Missions, reuse verified proofs, apply policy and assurance controls, then keep release decisions human-owned. The same artifacts can graduate from a first MVP into team and enterprise workflows.</p></div><div class="panel"><h2><span class="live-dot"></span>Live factory activity</h2><div id="activity-list" class="data-list"></div></div><div class="panel wide-panel" aria-labelledby="context-value-title"><h2 id="context-value-title">Context engine: measured user value</h2><p class="empty-data">Target: 50% less total elapsed time with acceptance checks preserved. Preparation and repair count toward the result. Operator-recorded comparisons are unverified until independently validated.</p><div id="context-value-list" class="data-list" aria-live="polite"></div><p id="context-value-next" class="empty-data"></p></div><div class="panel"><h2>Paired savings</h2><div id="savings-list" class="data-list"></div></div><div class="panel"><h2>Human approval inbox</h2><div id="approval-list" class="data-list"></div></div><div class="panel wide-panel"><h2>Product Graph and journey map</h2><div id="product-list" class="data-list"></div></div><div class="panel"><h2>Dependency-aware slice queue</h2><div id="slice-list" class="data-list"></div></div><div class="panel"><h2>Mission board</h2><div id="mission-list" class="data-list"></div></div><div class="panel wide-panel"><h2>Proof timeline: requirement to receipt</h2><div id="proof-list" class="data-list"></div></div><div class="panel"><h2>Current vs previous run</h2><div id="comparison-list" class="data-list"></div></div><div class="panel"><h2>Capability Pack trust</h2><div id="pack-list" class="data-list"></div></div><div class="panel"><h2>Deployment routes</h2><div id="deployment-list" class="data-list"></div></div><div class="panel"><h2>Authority boundary</h2><div id="authority-list" class="data-list"></div></div></div></section>
+<section id="dashboard" class="dashboard"><div class="stats"><div class="stat"><small>Stages measured</small><strong id="stat-stages">not available</strong></div><div class="stat"><small>First-pass gates</small><strong id="stat-first-pass">not available</strong></div><div class="stat"><small>Runs observed</small><strong id="stat-runs">not available</strong></div><div class="stat"><small>Flow efficiency</small><strong id="stat-flow">not available</strong></div></div><div class="dash-grid"><div class="panel wide-panel"><h2>Professional workflow</h2><button type="button" id="open-bound-journey">Open bound app workspace</button><p class="empty-data">Inspect the <a href="/graph-ops">read-only Graph Ops map</a>, compile Product Missions, reuse verified proofs, apply policy and assurance controls, then keep release decisions human-owned. The same artifacts can graduate from a first MVP into team and enterprise workflows.</p></div><div class="panel"><h2><span class="live-dot"></span>Live factory activity</h2><div id="activity-list" class="data-list"></div></div><div class="panel wide-panel" aria-labelledby="context-value-title"><h2 id="context-value-title">Context engine: measured user value</h2><p class="empty-data">Target: 50% less total elapsed time with acceptance checks preserved. Preparation and repair count toward the result. Operator-recorded comparisons are unverified until independently validated.</p><div id="context-value-list" class="data-list" aria-live="polite"></div><p id="context-value-next" class="empty-data"></p></div><div class="panel"><h2>Paired savings</h2><div id="savings-list" class="data-list"></div></div><div class="panel"><h2>Human approval inbox</h2><div id="approval-list" class="data-list"></div></div><div class="panel wide-panel"><h2>Product Graph and journey map</h2><div id="product-list" class="data-list"></div></div><div class="panel"><h2>Dependency-aware slice queue</h2><div id="slice-list" class="data-list"></div></div><div class="panel"><h2>Mission board</h2><div id="mission-list" class="data-list"></div></div><div class="panel wide-panel"><h2>Proof timeline: requirement to receipt</h2><div id="proof-list" class="data-list"></div></div><div class="panel"><h2>Current vs previous run</h2><div id="comparison-list" class="data-list"></div></div><div class="panel"><h2>Capability Pack trust</h2><div id="pack-list" class="data-list"></div></div><div class="panel"><h2>Deployment routes</h2><div id="deployment-list" class="data-list"></div></div><div class="panel"><h2>Authority boundary</h2><div id="authority-list" class="data-list"></div></div></div></section>
 <section id="assembly" class="dashboard hidden"><div class="panel"><h2>Continue an assembly</h2><p class="empty-data">Runs safe local stages, then stops with one explicit human action. Leave feature blank only when exactly one is discoverable.</p><label class="field">Feature<input id="assembly-feature" type="text" maxlength="80" placeholder="feature-name (optional)"></label><button id="assembly-continue" type="button">Continue to next boundary</button><div id="assembly-result" role="status">No continuation started.</div></div></section>
 <section id="savings" class="dashboard hidden"><div class="panel"><h2>Record paired savings</h2><p class="empty-data">Compare exact baseline and Factory observations. Productivity stays unavailable unless you explicitly assert equivalent outcomes and provide a validation receipt beneath this workspace.</p><div class="inputs"><label class="field">Pair ID<input id="savings-pair" type="text" maxlength="80" placeholder="checkout-2026-07-25"></label><label class="field">Baseline ms<input id="baseline-ms" type="number" min="1"></label><label class="field">Factory ms<input id="factory-ms" type="number" min="1"></label><label class="field">Evidence path<input id="savings-evidence" type="text" placeholder=".factory/receipts/validation.json"></label></div><div class="inputs"><label class="field">Baseline tokens<input id="baseline-tokens" type="number" min="0"></label><label class="field">Factory tokens<input id="factory-tokens" type="number" min="0"></label><label class="field">Baseline cost USD<input id="baseline-cost" type="number" min="0" step="0.0001"></label><label class="field">Factory cost USD<input id="factory-cost" type="number" min="0" step="0.0001"></label></div><label class="field"><span><input id="equivalent-outcome" type="checkbox"> Outcomes are equivalent and the evidence file proves it</span></label><button id="savings-record" type="button">Record exact pair</button><div id="savings-result" role="status">No pair recorded.</div></div></section>
 <form id="builder" class="hidden"><fieldset id="target-fieldset"><legend>Target</legend><div class="targets">{target_buttons}</div></fieldset>
@@ -1895,16 +1919,16 @@ document.getElementById('context-value-next').textContent=c.next_action||'Build 
 async function refreshDashboard(){{const refreshId=++dashboardRefreshSequence;try{{const response=await fetch('/api/dashboard',{{headers:{{'X-Factory-Studio-Token':token}}}});const payload=await response.json();if(!response.ok)throw new Error('dashboard unavailable');const summary=payload.meter.summary||{{}};const activity=payload.meter.activity||{{}};const flow=summary.flow||{{}};const firstPass=flow.first_pass_gate_rate?.value;document.getElementById('stat-stages').textContent=textValue(summary.stages_measured);document.getElementById('stat-first-pass').textContent=firstPass===null||firstPass===undefined?'not available':`${{(firstPass*100).toFixed(1)}}%`;document.getElementById('stat-runs').textContent=textValue(activity.runs_observed);document.getElementById('stat-flow').textContent=flow.flow_efficiency===null||flow.flow_efficiency===undefined?'not available':`${{(flow.flow_efficiency*100).toFixed(1)}}%`;const latest=activity.latest_stage;rows('activity-list',[["Latest stage",latest?`${{latest.module}}:${{latest.stage}} (${{latest.ok?'ok':'failed'}})`:'none yet'],["Agent / tool time",`${{textValue(flow.agent_ms?.value,' ms')}} / ${{textValue(flow.deterministic_tool_ms?.value,' ms')}}`],["Queue / review time",`${{textValue(flow.queue_ms?.value,' ms')}} / ${{textValue(flow.human_review_ms?.value,' ms')}}`],["Requirements / token",textValue(flow.requirements_per_token)],["Rollback rate",flow.rollback_rate===null||flow.rollback_rate===undefined?'not available':`${{(flow.rollback_rate*100).toFixed(1)}}%`],["Token / cost quality",`${{JSON.stringify(flow.token_quality||{{}})}} / ${{JSON.stringify(flow.cost_quality||{{}})}}`]]);const paired=payload.savings||{{}};rows('savings-list',[["Exact pairs",textValue(paired.pairs)],["Time saved",textValue(paired.time?.saved_total,' ms')],["Tokens saved",textValue(paired.tokens?.saved_total)],["Productivity",paired.productivity?.gain_rate===null||paired.productivity?.gain_rate===undefined?'withheld until equivalence proof':`${{(paired.productivity.gain_rate*100).toFixed(1)}}%`]]);renderContextValue(payload.context_engine);renderTraceEvaluation(payload.trace_evaluation);approvalRows(payload.missions,refreshId);rows('product-list',payload.products.map(item=>[`${{item.project}} | ${{item.requirements}} requirements | ${{item.slice_count}} slices`,`${{item.status}} | journey: ${{item.journeys[0]||'missing'}} | gaps: ${{item.blocking_gaps}} blocking, ${{item.advisory_gaps}} advisory`]));rows('slice-list',payload.slice_queue.map(item=>[`${{item.id}} | priority ${{textValue(item.priority)}}`,`${{item.theme}} | ${{item.risk}} risk | dependencies ${{item.depends_on.length}}`]));rows('mission-list',payload.missions.map(item=>[`${{item.id}} | ${{item.decision}}`,`${{item.branch||'branch unavailable'}} | ${{item.completion}}`]));rows('proof-list',payload.proof_timeline.map(item=>[`${{item.requirement_id}} -> ${{item.slice_id}} -> ${{item.mission_id}}`,item.receipt?`receipt: ${{item.receipt}}`:`${{item.test_state}}; receipt pending`]));const compare=payload.receipt_comparison;rows('comparison-list',compare.status==='compared'?[["Run",`${{compare.previous.run_id}} -> ${{compare.current.run_id}}`],["Wall delta",`${{compare.delta.wall_ms}} ms`],["Token delta",String(compare.delta.tokens)],["Failed-stage delta",String(compare.delta.failed_stages)]]:[["Status","Two run IDs are required before comparison."]]);rows('pack-list',payload.packs.map(pack=>[`${{pack.target_kind}} ${{pack.version}}`,pack.valid&&pack.signature_verified?`verified; ${{pack.mutations_rejected}}/${{pack.mutations_attempted}} mutations rejected`:'invalid']));rows('deployment-list',payload.packs.flatMap(pack=>pack.deployment_profiles.map(profile=>[`${{pack.target_kind}}: ${{profile.label}}`,`${{profile.verify}} | approval: ${{profile.approval}}`])));rows('authority-list',[["Create starters",payload.authority.can_create_starters?'allowed':'denied'],["Record exact savings",payload.authority.can_record_exact_savings_pairs?'allowed':'denied'],["Approve bounded mission",payload.authority.can_record_mission_execution_decision?'allowed':'denied'],["Deploy / publish / sign",'denied until a route is selected and separately approved'],["Credentials / connectors / messages",'denied']]);}}catch(_error){{renderTraceEvaluation({{state:'UNAVAILABLE',metrics:{{}},next_actions:['Refresh telemetry; stale values have been cleared.']}});renderContextValue({{state:'UNAVAILABLE',next_action:'Refresh telemetry before using these results. Previous metrics have been cleared.'}});document.getElementById('stat-first-pass').textContent='telemetry unavailable';}}}}
 let dashboardAutoRefresh=true;
 function ensureLiveControls(){{if(document.getElementById('dashboard-refresh'))return;const panel=document.getElementById('activity-list').parentElement;const controls=document.createElement('div');controls.className='mini-actions';controls.setAttribute('aria-label','Live activity controls');const refresh=document.createElement('button');refresh.id='dashboard-refresh';refresh.type='button';refresh.textContent='Refresh now';const auto=document.createElement('button');auto.id='dashboard-auto-refresh';auto.type='button';auto.setAttribute('aria-pressed','true');auto.textContent='Auto-refresh on';const stop=document.createElement('button');stop.id='dashboard-stop';stop.type='button';stop.disabled=true;stop.textContent='Request safe stop';const result=document.createElement('div');result.id='dashboard-live-result';result.setAttribute('role','status');result.textContent='Polling local telemetry every second.';refresh.onclick=()=>refreshDashboard();auto.onclick=event=>{{dashboardAutoRefresh=!dashboardAutoRefresh;event.currentTarget.setAttribute('aria-pressed',String(dashboardAutoRefresh));event.currentTarget.textContent=dashboardAutoRefresh?'Auto-refresh on':'Auto-refresh off';}};stop.onclick=async()=>{{if(!window.confirm('Request a cooperative stop for the active local assembly? It cannot publish, deploy, sign, or contact external services.'))return;const response=await fetch('/api/activity/stop',{{method:'POST',headers:{{'Content-Type':'application/json','X-Factory-Studio-Token':token}},body:JSON.stringify({{action:'request-stop'}})}});const payload=await response.json();result.textContent=response.ok?'Stop requested. The current stage will stop at its next local heartbeat.':`${{payload.code||'STOP_FAILED'}}: ${{payload.message||'request rejected'}}`;await refreshDashboard();}};controls.append(refresh,auto,stop);panel.append(controls,result);}}
-const dashboardBaseRefresh=refreshDashboard;refreshDashboard=async()=>{{await dashboardBaseRefresh();ensureLiveControls();try{{const response=await fetch('/api/dashboard',{{headers:{{'X-Factory-Studio-Token':token}}}});const payload=await response.json();if(!response.ok)throw new Error(payload.code||'dashboard unavailable');const live=payload.live_activity||{{}};const activeStage=live.current_stage?`${{live.current_stage.module}}:${{live.current_stage.stage}}`:'none';rows('activity-list',[['Operation',live.available?`${{live.status||'unknown'}} · ${{live.feature||'local workspace'}}`:'idle — no active local assembly'],['Current stage',activeStage],['Elapsed',live.elapsed_ms===null||live.elapsed_ms===undefined?'not available':`${{live.elapsed_ms}} ms`],['Completed / failed / skipped',live.available?`${{live.completed_stages||0}} / ${{live.failed_stages||0}} / ${{live.skipped_stages||0}}`:'not available'],['Latest heartbeat',live.heartbeat_at||'not available']]);document.getElementById('dashboard-stop').disabled=live.status!=='active';document.getElementById('dashboard-live-result').textContent=`Updated ${{new Date().toLocaleTimeString()}} · local telemetry only`;}}catch(error){{const result=document.getElementById('dashboard-live-result');if(result)result.textContent=`Telemetry error: ${{String(error)}}`;}}}};
+const dashboardBaseRefresh=refreshDashboard;refreshDashboard=async()=>{{await dashboardBaseRefresh();ensureLiveControls();try{{const response=await fetch('/api/dashboard',{{headers:{{'X-Factory-Studio-Token':token}}}});const payload=await response.json();if(!response.ok)throw new Error(payload.code||'dashboard unavailable');const live=payload.live_activity||{{}};const activeStage=live.current_stage?`${{live.current_stage.module}}:${{live.current_stage.stage}}`:'none';rows('activity-list',[['Operation',live.available?`${{live.status||'unknown'}} Â· ${{live.feature||'local workspace'}}`:'idle â€” no active local assembly'],['Current stage',activeStage],['Elapsed',live.elapsed_ms===null||live.elapsed_ms===undefined?'not available':`${{live.elapsed_ms}} ms`],['Completed / failed / skipped',live.available?`${{live.completed_stages||0}} / ${{live.failed_stages||0}} / ${{live.skipped_stages||0}}`:'not available'],['Latest heartbeat',live.heartbeat_at||'not available']]);document.getElementById('dashboard-stop').disabled=live.status!=='active';document.getElementById('dashboard-live-result').textContent=`Updated ${{new Date().toLocaleTimeString()}} Â· local telemetry only`;}}catch(error){{const result=document.getElementById('dashboard-live-result');if(result)result.textContent=`Telemetry error: ${{String(error)}}`;}}}};
 function ensurePriorRunPanel(){{if(document.getElementById('previous-run-list'))return;const grid=document.querySelector('#dashboard .dash-grid');if(!grid)return;const panel=document.createElement('section');panel.className='panel';const heading=document.createElement('h3');heading.textContent='Prior measured runs';const note=document.createElement('p');note.className='muted';note.textContent='Append-only meter receipts. A recorded stage is not inferred to be a successful release.';const list=document.createElement('div');list.id='previous-run-list';list.className='data-list';panel.append(heading,note,list);grid.appendChild(panel);}}
 let studioMemoryAutoRefresh=true;
 function ensureStudioMemoryPanel(){{if(document.getElementById('studio-memory-actions'))return;const grid=document.querySelector('#dashboard .dash-grid');if(!grid)return;const panel=document.createElement('section');panel.className='panel wide-panel';const heading=document.createElement('h2');heading.textContent='Memory Spine: next safe proof';const note=document.createElement('p');note.className='empty-data';note.textContent='A visual, read-only explanation of what changed, why the evidence state matters, and the next smallest proof. Live telemetry refreshes every second; this brief is recalculated no more than once per five seconds.';const controls=document.createElement('div');controls.className='mini-actions';const refresh=document.createElement('button');refresh.id='studio-memory-refresh';refresh.type='button';refresh.textContent='Refresh stats and proof brief';const team=document.createElement('button');team.id='studio-team-refresh';team.type='button';team.textContent='Refresh team attribution';const auto=document.createElement('button');auto.id='studio-memory-auto';auto.type='button';auto.setAttribute('aria-pressed','true');auto.textContent='Brief auto-refresh on';const flow=document.createElement('div');flow.id='studio-memory-flow';flow.className='memory-studio-flow';const actions=document.createElement('div');actions.id='studio-memory-actions';actions.className='memory-studio-actions';const teamSummary=document.createElement('div');teamSummary.id='studio-memory-team';teamSummary.className='memory-studio-team';const status=document.createElement('p');status.id='studio-memory-status';status.className='empty-data';refresh.onclick=()=>refreshDashboard();team.onclick=()=>loadStudioMemory();auto.onclick=event=>{{studioMemoryAutoRefresh=!studioMemoryAutoRefresh;event.currentTarget.setAttribute('aria-pressed',String(studioMemoryAutoRefresh));event.currentTarget.textContent=studioMemoryAutoRefresh?'Brief auto-refresh on':'Brief auto-refresh off';}};controls.append(refresh,team,auto);panel.append(heading,note,controls,flow,actions,teamSummary,status);grid.appendChild(panel);}}
 function studioMemoryStep(parent,state,title,detail){{const step=document.createElement('article');step.className='memory-studio-step';step.dataset.state=state||'review';const label=document.createElement('strong');label.textContent=title;const description=document.createElement('span');description.textContent=detail;step.append(label,description);parent.appendChild(step);}}
-function renderStudioMemory(snapshot){{ensureStudioMemoryPanel();const brief=snapshot?.brief||{{}},actions=Array.isArray(brief.actions)?brief.actions:[],next=actions[0]||{{}},review=brief.change_review||{{}},team=brief.team||{{}},seats=Array.isArray(team.seats)?team.seats:[];const flow=document.getElementById('studio-memory-flow'),list=document.getElementById('studio-memory-actions');if(!flow||!list)return;flow.textContent='';const state=next.severity||'review',changed=Array.isArray(review.changed_paths)?review.changed_paths:[];studioMemoryStep(flow,review.available===false?'blocking':state,'1 · What changed',review.available===false?'Change set unavailable; no proof is inferred.':`${{changed.length}} exact path${{changed.length===1?'':'s'}} from ${{review.input_source||'unknown'}} input.`);studioMemoryStep(flow,state,'2 · Why it matters',next.why_it_matters||'No evidence state was supplied.');studioMemoryStep(flow,state,'3 · Do this next',next.do_this_next||'Refresh local facts.');studioMemoryStep(flow,team.available?'ready':'review','4 · Team contribution',team.available?`${{seats.length}} observed Git contributor${{seats.length===1?'':'s'}}; not a verified seat roster.`:'No local Git attribution is available.');list.textContent='';actions.slice(0,4).forEach(action=>{{const card=document.createElement('article');card.className='memory-studio-action';card.dataset.severity=action.severity||'review';const title=document.createElement('strong');title.textContent=action.title||action.kind||'Evidence action';const detail=document.createElement('span');detail.textContent=`What changed: ${{action.what_changed||'not supplied'}}`;const nextStep=document.createElement('span');nextStep.textContent=`Next: ${{action.do_this_next||'not supplied'}}`;card.append(title,detail,nextStep);list.appendChild(card);}});if(!actions.length){{const empty=document.createElement('span');empty.className='empty-data';empty.textContent='No action is available; Studio will not invent one.';list.appendChild(empty);}}const teamText=document.getElementById('studio-memory-team');teamText.textContent=team.available?`Observed local Git contributors: ${{seats.map(seat=>`${{seat.display_name}} (${{seat.contribution?.selected_path_commit_count??0}} selected-path commits)`).join(', ')||'none'}}. Git authorship is not seat licensing, ownership, approval, or productivity evidence.`:'Team attribution unavailable: no contributor, identity, or approval claim is made.';const cache=snapshot?.cache||{{}};const status=document.getElementById('studio-memory-status');status.textContent=`Brief ${{cache.state||'unknown'}} · cache age ${{cache.age_ms??'unknown'}} ms · refresh interval ${{cache.refresh_interval_ms??5000}} ms · local analysis only.`;}}
+function renderStudioMemory(snapshot){{ensureStudioMemoryPanel();const brief=snapshot?.brief||{{}},actions=Array.isArray(brief.actions)?brief.actions:[],next=actions[0]||{{}},review=brief.change_review||{{}},team=brief.team||{{}},seats=Array.isArray(team.seats)?team.seats:[];const flow=document.getElementById('studio-memory-flow'),list=document.getElementById('studio-memory-actions');if(!flow||!list)return;flow.textContent='';const state=next.severity||'review',changed=Array.isArray(review.changed_paths)?review.changed_paths:[];studioMemoryStep(flow,review.available===false?'blocking':state,'1 Â· What changed',review.available===false?'Change set unavailable; no proof is inferred.':`${{changed.length}} exact path${{changed.length===1?'':'s'}} from ${{review.input_source||'unknown'}} input.`);studioMemoryStep(flow,state,'2 Â· Why it matters',next.why_it_matters||'No evidence state was supplied.');studioMemoryStep(flow,state,'3 Â· Do this next',next.do_this_next||'Refresh local facts.');studioMemoryStep(flow,team.available?'ready':'review','4 Â· Team contribution',team.available?`${{seats.length}} observed Git contributor${{seats.length===1?'':'s'}}; not a verified seat roster.`:'No local Git attribution is available.');list.textContent='';actions.slice(0,4).forEach(action=>{{const card=document.createElement('article');card.className='memory-studio-action';card.dataset.severity=action.severity||'review';const title=document.createElement('strong');title.textContent=action.title||action.kind||'Evidence action';const detail=document.createElement('span');detail.textContent=`What changed: ${{action.what_changed||'not supplied'}}`;const nextStep=document.createElement('span');nextStep.textContent=`Next: ${{action.do_this_next||'not supplied'}}`;card.append(title,detail,nextStep);list.appendChild(card);}});if(!actions.length){{const empty=document.createElement('span');empty.className='empty-data';empty.textContent='No action is available; Studio will not invent one.';list.appendChild(empty);}}const teamText=document.getElementById('studio-memory-team');teamText.textContent=team.available?`Observed local Git contributors: ${{seats.map(seat=>`${{seat.display_name}} (${{seat.contribution?.selected_path_commit_count??0}} selected-path commits)`).join(', ')||'none'}}. Git authorship is not seat licensing, ownership, approval, or productivity evidence.`:'Team attribution unavailable: no contributor, identity, or approval claim is made.';const cache=snapshot?.cache||{{}};const status=document.getElementById('studio-memory-status');status.textContent=`Brief ${{cache.state||'unknown'}} Â· cache age ${{cache.age_ms??'unknown'}} ms Â· refresh interval ${{cache.refresh_interval_ms??5000}} ms Â· local analysis only.`;}}
 async function loadStudioMemory(){{ensureStudioMemoryPanel();try{{const response=await fetch('/api/developer-memory',{{headers:{{'X-Factory-Studio-Token':token}}}});const payload=await response.json();if(!response.ok)throw new Error(payload.code||'developer memory unavailable');renderStudioMemory(payload);}}catch(error){{const status=document.getElementById('studio-memory-status');if(status)status.textContent=`Developer Memory error: ${{String(error)}}. No next proof is inferred.`;}}}}
-async function refreshPriorRuns(){{if(mode!=='dashboard')return;ensurePriorRunPanel();try{{const response=await fetch('/api/dashboard',{{headers:{{'X-Factory-Studio-Token':token}}}});const payload=await response.json();if(!response.ok)return;const runs=Array.isArray(payload.recent_runs)?payload.recent_runs:[];rows('previous-run-list',runs.length?runs.map(run=>[`${{run.feature||'feature unavailable'}} · ${{run.outcome}}`,`${{run.stages_recorded}} stages · ${{run.wall_ms}} ms · tokens ${{run.tokens}} (${{(run.token_quality||[]).join(', ')||'unknown'}}) · failed stages ${{run.failed_stages}}`]):[['Status','No measured run IDs have been recorded yet.']]);}}catch(_error){{}}}}
+async function refreshPriorRuns(){{if(mode!=='dashboard')return;ensurePriorRunPanel();try{{const response=await fetch('/api/dashboard',{{headers:{{'X-Factory-Studio-Token':token}}}});const payload=await response.json();if(!response.ok)return;const runs=Array.isArray(payload.recent_runs)?payload.recent_runs:[];rows('previous-run-list',runs.length?runs.map(run=>[`${{run.feature||'feature unavailable'}} Â· ${{run.outcome}}`,`${{run.stages_recorded}} stages Â· ${{run.wall_ms}} ms Â· tokens ${{run.tokens}} (${{(run.token_quality||[]).join(', ')||'unknown'}}) Â· failed stages ${{run.failed_stages}}`]):[['Status','No measured run IDs have been recorded yet.']]);}}catch(_error){{}}}}
 const nativeStudioFetch=window.fetch.bind(window);window.fetch=async(...args)=>{{const response=await nativeStudioFetch(...args);const url=String(args[0] instanceof Request?args[0].url:args[0]);if(url.includes('/api/dashboard'))window.__factoryDashboardPromise=response.clone().json().catch(()=>null);return response;}};
-function syncDashboardLivePanels(payload){{const live=payload.live_activity||{{}};const activeStage=live.current_stage?`${{live.current_stage.module}}:${{live.current_stage.stage}}`:'none';rows('activity-list',[['Operation',live.available?`${{live.status||'unknown'}} · ${{live.feature||'local workspace'}}`:'idle — no active local assembly'],['Current stage',activeStage],['Elapsed',live.elapsed_ms===null||live.elapsed_ms===undefined?'not available':`${{live.elapsed_ms}} ms`],['Completed / failed / skipped',live.available?`${{live.completed_stages||0}} / ${{live.failed_stages||0}} / ${{live.skipped_stages||0}}`:'not available'],['Latest heartbeat',live.heartbeat_at||'not available']]);const stop=document.getElementById('dashboard-stop');if(stop)stop.disabled=live.status!=='active';const result=document.getElementById('dashboard-live-result');if(result)result.textContent=`Updated ${{new Date().toLocaleTimeString()}} · local telemetry only`;ensurePriorRunPanel();const runs=Array.isArray(payload.recent_runs)?payload.recent_runs:[];rows('previous-run-list',runs.length?runs.map(run=>[`${{run.feature||'feature unavailable'}} · ${{run.outcome}}`,`${{run.stages_recorded}} stages · ${{run.wall_ms}} ms · tokens ${{run.tokens}} (${{(run.token_quality||[]).join(', ')||'unknown'}}) · failed stages ${{run.failed_stages}}`]):[['Status','No measured run IDs have been recorded yet.']]);if(studioMemoryAutoRefresh)renderStudioMemory(payload.developer_memory);}}
+function syncDashboardLivePanels(payload){{const live=payload.live_activity||{{}};const activeStage=live.current_stage?`${{live.current_stage.module}}:${{live.current_stage.stage}}`:'none';rows('activity-list',[['Operation',live.available?`${{live.status||'unknown'}} Â· ${{live.feature||'local workspace'}}`:'idle â€” no active local assembly'],['Current stage',activeStage],['Elapsed',live.elapsed_ms===null||live.elapsed_ms===undefined?'not available':`${{live.elapsed_ms}} ms`],['Completed / failed / skipped',live.available?`${{live.completed_stages||0}} / ${{live.failed_stages||0}} / ${{live.skipped_stages||0}}`:'not available'],['Latest heartbeat',live.heartbeat_at||'not available']]);const stop=document.getElementById('dashboard-stop');if(stop)stop.disabled=live.status!=='active';const result=document.getElementById('dashboard-live-result');if(result)result.textContent=`Updated ${{new Date().toLocaleTimeString()}} Â· local telemetry only`;ensurePriorRunPanel();const runs=Array.isArray(payload.recent_runs)?payload.recent_runs:[];rows('previous-run-list',runs.length?runs.map(run=>[`${{run.feature||'feature unavailable'}} Â· ${{run.outcome}}`,`${{run.stages_recorded}} stages Â· ${{run.wall_ms}} ms Â· tokens ${{run.tokens}} (${{(run.token_quality||[]).join(', ')||'unknown'}}) Â· failed stages ${{run.failed_stages}}`]):[['Status','No measured run IDs have been recorded yet.']]);if(studioMemoryAutoRefresh)renderStudioMemory(payload.developer_memory);}}
 refreshDashboard=async()=>{{ensureLiveControls();await dashboardBaseRefresh();const payload=await window.__factoryDashboardPromise;if(payload)syncDashboardLivePanels(payload);}};refreshPriorRuns=async()=>{{}};
 setInterval(()=>{{if(mode==='dashboard'&&dashboardAutoRefresh)refreshDashboard();}},1000);refreshDashboard();
 function addText(className,text){{const el=document.createElement('div');el.className=className;el.textContent=text;result.appendChild(el);return el;}}
@@ -1931,7 +1955,39 @@ async function decideMission(decision){{
  }}catch(_error){{if(mode==='mission'&&generation===guidedGeneration&&currentMission===mission)renderFailure({{code:'DECISION_STATUS_UNKNOWN',message:'The response was interrupted. Inspect the saved decision receipt before retrying; the decision may have been recorded.'}});}}
  finally{{missionDecisionBusy=false;controls.forEach(control=>control.disabled=false);}}
 }}
-function renderAgentHandoff(handoff){{if(!handoff)return;addText('result-row','Next: give this brief to your coding agent. Nothing has been dispatched. The agent must bind the candidate scope before editing.');addText('result-row','After approval: your agent binds the exact candidate, implements the confirmed behavior, and records evidence from checks. This page does not run or preview the product.');const guidance=handoff.acceptance_guidance;if(guidance){{addText('result-row','Beginner acceptance checks:');const list=document.createElement('ol');guidance.starter_scenarios.forEach(text=>{{const item=document.createElement('li');item.textContent=text;list.appendChild(item);}});result.appendChild(list);addText('result-row',guidance.custom_scenarios);}}const details=document.createElement('details');const summary=document.createElement('summary');summary.textContent='Agent handoff: ready to paste';const label=document.createElement('label');label.className='field';label.htmlFor='agent-handoff';label.textContent='Select and copy this verified mission brief into your coding agent';const input=document.createElement('textarea');input.id='agent-handoff';input.readOnly=true;input.rows=12;input.value=JSON.stringify(handoff,null,2);input.onclick=()=>input.select();label.appendChild(input);details.append(summary,label);result.appendChild(details);}}
+
+function journeyField(host,labelText,id,placeholder=''){{const label=document.createElement('label');label.htmlFor=id;label.textContent=labelText;const input=document.createElement('input');input.id=id;input.setAttribute('aria-label',labelText);input.placeholder=placeholder;input.autocomplete='off';host.append(label,input);return input;}}
+document.getElementById('open-bound-journey').onclick=()=>{{setMode('mission');result.textContent='';renderJourneyControls(null);result.scrollIntoView({{block:'start'}});}};
+function renderJourneyControls(handoff){{
+ const host=document.createElement('section');host.setAttribute('aria-label','Build, preview, verify and repair');host.className='panel';
+ const title=document.createElement('h3');title.textContent='Try your app and check the evidence';host.appendChild(title);
+ const help=document.createElement('p');help.textContent='Your coding agent supplies the candidate binding and pinned runner. Each action rechecks the source. Build success is not proof that your app works.';host.appendChild(help);
+ const setup=document.createElement('details');const setupTitle=document.createElement('summary');setupTitle.textContent='Agent connection details (your coding agent supplies these)';setup.appendChild(setupTitle);host.appendChild(setup);
+ const binding=journeyField(setup,'Candidate binding supplied by your agent','journey-binding','.factory/mission-candidates/â€¦/binding.json');
+ const image=journeyField(setup,'Pinned container image supplied by your agent','journey-image','image@sha256:â€¦');
+ const previewPath=journeyField(setup,'Declared preview file','journey-preview-path','dist/index.html');
+ const repair=journeyField(setup,'Separate exact repair approval','journey-repair-approval','.factory/repair-approvals/â€¦json');
+ const commandLabel=document.createElement('label');commandLabel.htmlFor='journey-command';commandLabel.textContent='Approved command to run';const command=document.createElement('select');command.id='journey-command';host.append(commandLabel,command);
+ const output=document.createElement('div');output.setAttribute('role','status');output.setAttribute('aria-live','polite');host.appendChild(output);
+ const journeyKey='factory-studio-journey:'+(handoff?.mission?.mission_sha256||'workspace');try{{const saved=JSON.parse(sessionStorage.getItem(journeyKey)||'null');if(saved){{binding.value=saved.binding_path||'';image.value=saved.image||'';previewPath.value=saved.preview_path||'';repair.value=saved.approval_path||'';}}}}catch(error){{}}
+ let busy=false,frame=null;
+ async function request(extra){{
+  if(busy)return null;try{{sessionStorage.setItem(journeyKey,JSON.stringify({{binding_path:binding.value,image:image.value,preview_path:previewPath.value,approval_path:repair.value}}));}}catch(error){{}}busy=true;controls.forEach(control=>control.disabled=true);if(frame){{frame.remove();frame=null;}}
+  try{{const response=await fetch('/api/journey',{{method:'POST',headers:{{'Content-Type':'application/json','X-Factory-Studio-Token':token}},body:JSON.stringify({{binding_path:binding.value,owner:document.getElementById('owner').value,...extra}})}});const data=await response.json();output.textContent='';const text=document.createElement('pre');text.style.whiteSpace='pre-wrap';text.textContent=JSON.stringify(data,null,2);output.appendChild(text);return response.ok?data:null;}}
+  catch(error){{output.textContent='The action could not finish. Refresh the current evidence before retrying.';return null;}}
+  finally{{busy=false;controls.forEach(control=>control.disabled=false);}}
+ }}
+ const controls=[];
+ function action(label,fn){{const control=document.createElement('button');control.type='button';control.textContent=label;control.onclick=fn;controls.push(control);host.appendChild(control);}}
+ action('Check current stages',async()=>{{const data=await request({{action:'status'}});if(!data)return;command.textContent='';(data.commands||[]).forEach((argv,index)=>{{const option=document.createElement('option');option.value=String(index);option.textContent=argv.join(' ');command.appendChild(option);}});}});
+ async function execute(stage){{if(!command.options.length){{output.textContent='Check current stages to load the approved commands first.';return;}}const plan=await request({{action:'plan',stage,command_index:Number(command.value),image:image.value}});if(!plan)return;const confirm=document.createElement('button');confirm.type='button';confirm.textContent=`Approve this exact ${{stage}} action`;confirm.onclick=async()=>{{confirm.disabled=true;await request({{action:'execute',plan_path:plan.path,plan_sha256:plan.plan_sha256,confirmed:true}});confirm.remove();}};output.appendChild(confirm);}}
+ action('Review build command',()=>execute('build'));action('Review verification command',()=>execute('verify'));
+ action('Open current preview',async()=>{{const data=await request({{action:'preview',path:previewPath.value}});if(!data)return;frame=document.createElement('iframe');frame.title='Current candidate preview';frame.setAttribute('sandbox','allow-scripts');frame.setAttribute('referrerpolicy','no-referrer');frame.srcdoc=data.content;frame.style.width='100%';frame.style.minHeight='400px';host.appendChild(frame);}});
+ action('Run separately approved repair',()=>request({{action:'repair',approval_path:repair.value}}));
+ result.appendChild(host);
+}}
+
+function renderAgentHandoff(handoff){{if(!handoff)return;addText('result-row','Next: give this brief to your coding agent. Nothing has been dispatched. The agent must bind the candidate scope before editing.');addText('result-row','After approval, your agent binds the candidate and supplies the exact execution inputs. Use the controls below to review actions, inspect the current preview and retain check evidence.');const guidance=handoff.acceptance_guidance;if(guidance){{addText('result-row','Beginner acceptance checks:');const list=document.createElement('ol');guidance.starter_scenarios.forEach(text=>{{const item=document.createElement('li');item.textContent=text;list.appendChild(item);}});result.appendChild(list);addText('result-row',guidance.custom_scenarios);}}const details=document.createElement('details');const summary=document.createElement('summary');summary.textContent='Agent handoff: ready to paste';const label=document.createElement('label');label.className='field';label.htmlFor='agent-handoff';label.textContent='Select and copy this verified mission brief into your coding agent';const input=document.createElement('textarea');input.id='agent-handoff';input.readOnly=true;input.rows=12;input.value=JSON.stringify(handoff,null,2);input.onclick=()=>input.select();label.appendChild(input);details.append(summary,label);result.appendChild(details);renderJourneyControls(handoff);}}
 function renderMission(payload){{result.className='';result.textContent='';if(!payload.mission){{addText('result-title','Product Graph needs human input');addText('result-row',payload.resolution.next_action);const list=document.createElement('div');list.className='resolution-list';payload.resolution.items.forEach(item=>{{const el=document.createElement('div');el.className='resolution-item';el.textContent=`${{item.code}}: ${{item.next_action}}`;list.appendChild(el);}});result.appendChild(list);addText('result-row',payload.resolution.why_auto_stopped);return;}}currentMission=payload.mission.path;addText('result-title',`Approval ready: ${{payload.mission.id}}`);addText('result-row',`Slice ${{payload.mission.slice_id}} | Risk ${{payload.approval.risk}} | Owner ${{payload.approval.owner}}`);addText('result-row',`Budget: ${{payload.approval.budgets.max_iterations}} iterations, ${{payload.approval.budgets.max_wall_seconds}}s, ${{payload.approval.budgets.max_tokens}} tokens, $${{payload.approval.budgets.max_cost_usd}}`);addText('result-row',`${{payload.approval.completion_criteria.length}} completion criteria require independent evidence.`);const rationaleLabel=document.createElement('label');rationaleLabel.className='field';rationaleLabel.htmlFor='mission-rationale';rationaleLabel.textContent='Why is this decision appropriate?';const rationaleInput=document.createElement('textarea');rationaleInput.id='mission-rationale';rationaleInput.maxLength=4000;rationaleInput.placeholder='For example: the scope and budget are clear; proceed with this slice.';rationaleInput.oninput=()=>rationaleInput.setCustomValidity('');rationaleLabel.appendChild(rationaleInput);result.appendChild(rationaleLabel);const bar=document.createElement('div');bar.className='decision-bar';[['approved_execution','Approve execution',''],['deferred','Defer','defer'],['rejected','Reject','reject']].forEach(([value,label,kind])=>{{const b=document.createElement('button');b.type='button';b.className=kind;b.textContent=label;b.onclick=()=>decideMission(value);bar.appendChild(b);}});result.appendChild(bar);addText('result-row','Approval authorizes only the bounded executor; release effects stay human-owned.');}}
 let guidedSession=null, guidedConfirmation=null, guidedDraft=null, guidedBusy=false, guidedGeneration=0;
 function readGuidedBookmark(){{try{{const saved=JSON.parse(sessionStorage.getItem('factory-guided-interview')||'null');return saved&&typeof saved.project==='string'&&saved.session&&typeof saved.session.path==='string'&&typeof saved.session.session_sha256==='string'?saved:null;}}catch(_error){{return null;}}}}
@@ -2083,6 +2139,7 @@ class _StudioHandler(BaseHTTPRequestHandler):
             "/api/create",
             "/api/product",
             "/api/product-grill",
+            "/api/journey",
             "/api/mission-decision",
             "/api/continue",
             "/api/savings",
@@ -2140,6 +2197,7 @@ class _StudioHandler(BaseHTTPRequestHandler):
             "/api/create": create_from_studio,
             "/api/product": create_product_mission_from_studio,
             "/api/product-grill": product_grill_from_studio,
+            "/api/journey": journey_from_studio,
             "/api/mission-decision": decide_product_mission_from_studio,
             "/api/continue": continue_from_studio,
             "/api/savings": savings_from_studio,
@@ -2242,3 +2300,421 @@ def serve_studio(
         pass
     finally:
         server.server_close()
+
+
+def _studio_file(path: Path, anchor: Path, maximum: int) -> Path:
+    """Resolve one regular file under anchor while rejecting links and reparse points."""
+    anchor = anchor.resolve(strict=True)
+    raw = Path(os.path.abspath(path))
+    if not raw.is_relative_to(anchor):
+        raise ValueError("Studio file must be beneath its declared root")
+    current = anchor
+    for part in raw.relative_to(anchor).parts:
+        current = current / part
+        info = current.lstat()
+        if current.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise ValueError("Studio files cannot traverse links or reparse points")
+    info = raw.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_size > maximum:
+        raise ValueError("Studio file must be a bounded regular file")
+    return raw
+
+
+def _studio_evidence_dir(root: Path, *, create: bool = False) -> Path:
+    root = root.resolve(strict=True)
+    factory_dir = root / ".factory"
+    directory = factory_dir / "studio-journey"
+    for path in (factory_dir, directory):
+        if path.exists() and (
+            path.is_symlink() or getattr(path.lstat(), "st_file_attributes", 0) & 0x400
+        ):
+            raise ValueError("Studio evidence directory cannot be a link")
+    if create:
+        directory.mkdir(parents=True, exist_ok=True)
+    if not directory.exists() or not directory.resolve(strict=True).is_relative_to(
+        root
+    ):
+        raise ValueError(
+            "Studio evidence directory is unavailable or outside the workspace"
+        )
+    return directory.resolve(strict=True)
+
+
+def _studio_retained_attempts(root: Path) -> list[dict]:
+    from .app_builder import _studio_sha
+
+    raw_directory = root.resolve() / ".factory" / "studio-journey"
+    directory = _studio_evidence_dir(root) if raw_directory.exists() else None
+    attempts = []
+    if directory is not None:
+        for path in sorted(directory.glob("attempt-*.json"))[-24:]:
+            try:
+                receipt_path = _studio_file(path, directory.resolve(), 65_536)
+                envelope = json.loads(receipt_path.read_text(encoding="utf-8"))
+                attempt = envelope["receipt"]
+                if envelope.get("receipt_sha256") == _studio_sha(attempt):
+                    attempts.append(attempt)
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+    return attempts[-24:]
+
+
+def studio_journey_status(root: Path, payload: dict) -> dict:
+    """Read journey receipts and current candidate binding without dispatch."""
+    from .app_builder import (
+        STUDIO_JOURNEY_MARKERS,
+        STUDIO_JOURNEY_SCHEMA,
+        _studio_binding,
+        _studio_json,
+    )
+
+    _, _, verification, binding = _studio_binding(root, payload)
+    attempts = _studio_retained_attempts(root)
+    stages = {
+        name: {"state": "missing_evidence", "attempts": []}
+        for name in ("build", "preview", "verification", "repair")
+    }
+    for attempt in attempts:
+        stage = attempt.get("stage")
+        if stage == "verify":
+            stage = "verification"
+        if (
+            stage in stages
+            and attempt.get("candidate_sha256") == verification["candidate_sha256"]
+            and attempt.get("binding_sha256") == verification["binding_sha256"]
+        ):
+            stages[stage]["attempts"].append(
+                {
+                    key: attempt.get(key)
+                    for key in (
+                        "stage",
+                        "candidate_sha256",
+                        "binding_sha256",
+                        "plan_sha256",
+                        "exit_code",
+                        "ok",
+                        "timed_out",
+                        "cleanup_confirmed",
+                        "container_removed",
+                        "candidate_unchanged",
+                        "path",
+                    )
+                }
+            )
+            stages[stage]["state"] = "executed" if attempt.get("ok") else "failed"
+    for stage in stages.values():
+        stage["attempts"] = stage["attempts"][-8:]
+    response = {
+        "schema": STUDIO_JOURNEY_SCHEMA,
+        "candidate_sha256": verification["candidate_sha256"],
+        "binding_sha256": verification["binding_sha256"],
+        "stages": stages,
+        "commands": [row["argv"] for row in binding["declaration"]["commands"]],
+        "complete_application": False,
+        "markers": list(STUDIO_JOURNEY_MARKERS),
+        "invariants": {
+            marker: "checked"
+            if marker
+            in {
+                "STUDIO_JOURNEY_R1",
+                "STUDIO_JOURNEY_R2",
+                "STUDIO_JOURNEY_R8",
+                "STUDIO_JOURNEY_R9",
+            }
+            else "not_applicable"
+            for marker in STUDIO_JOURNEY_MARKERS
+        },
+        "limits": [
+            "Status reads retained local receipts only; it does not execute project commands."
+        ],
+    }
+    if len(_studio_json(response)) > 65_536:
+        raise ValueError(
+            "approved command manifest exceeds the Studio status response bound"
+        )
+    return response
+
+
+def studio_journey_plan(root: Path, payload: dict) -> dict:
+    """Create a digest-bound plan for one exact approved candidate argv."""
+    from .app_builder import (
+        STUDIO_ACTION_PLAN_SCHEMA,
+        _STUDIO_MAX_LOG,
+        _STUDIO_MAX_MEMORY,
+        _STUDIO_MAX_PIDS,
+        _STUDIO_MAX_TIME,
+        _studio_argv,
+        _studio_binding,
+        _studio_sha,
+        _studio_write,
+    )
+
+    binding_path, _, verification, binding = _studio_binding(root, payload)
+    stage = payload.get("stage")
+    if stage not in {"build", "verify"}:
+        raise ValueError("stage must be build or verify")
+    commands = binding["declaration"]["commands"]
+    index = payload.get("command_index")
+    if type(index) is not int or not 0 <= index < len(commands):
+        raise ValueError("command_index is outside the approved manifest")
+    command = commands[index]
+    _studio_argv(command["argv"])
+    if command.get("stage") not in {None, stage}:
+        raise ValueError("selected command is not declared for this stage")
+    image = payload.get("image")
+    if not isinstance(image, str) or not re.fullmatch(
+        r"[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}", image
+    ):
+        raise ValueError("image must be digest-pinned")
+    plan = {
+        "schema": STUDIO_ACTION_PLAN_SCHEMA,
+        "stage": stage,
+        "binding_path": str(binding_path),
+        "binding_sha256": verification["binding_sha256"],
+        "candidate_sha256": verification["candidate_sha256"],
+        "candidate_files": binding["files"],
+        "workspace": binding["workspace"],
+        "command_id": command["id"],
+        "argv": command["argv"],
+        "image": image,
+        "limits": {
+            "timeout_seconds": _STUDIO_MAX_TIME,
+            "memory_mib": _STUDIO_MAX_MEMORY,
+            "pids": _STUDIO_MAX_PIDS,
+            "network": "none",
+            "workspace_mount": "read-only",
+            "logs_per_stream_bytes": _STUDIO_MAX_LOG,
+        },
+    }
+    plan["plan_sha256"] = _studio_sha(plan)
+    path = _studio_write(root, "plan", plan)
+    return {
+        **plan,
+        "path": str(path),
+        "confirmation_required": {
+            "argv": command["argv"],
+            "candidate_sha256": verification["candidate_sha256"],
+            "image": image,
+        },
+    }
+
+
+def _studio_read_plan(root: Path, payload: dict) -> tuple[dict, str]:
+    from .app_builder import (
+        STUDIO_ACTION_PLAN_SCHEMA,
+        _STUDIO_MAX_LOG,
+        _STUDIO_MAX_MEMORY,
+        _STUDIO_MAX_PIDS,
+        _STUDIO_MAX_TIME,
+        _studio_evidence_dir,
+        _studio_file,
+        _studio_sha,
+    )
+
+    plan_input = payload.get("plan_path") or payload.get("plan")
+    if not isinstance(plan_input, str) or not plan_input:
+        raise ValueError("plan_path is required")
+    raw_plan = Path(plan_input)
+    evidence_dir = _studio_evidence_dir(root)
+    plan_path = _studio_file(
+        raw_plan if raw_plan.is_absolute() else root / raw_plan, evidence_dir, 65_536
+    )
+    stored = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan = stored.get("receipt") if isinstance(stored, dict) else None
+    if not isinstance(plan, dict) or stored.get("receipt_sha256") != _studio_sha(plan):
+        raise ValueError("action plan receipt integrity differs")
+    plan = dict(plan)
+    digest = plan.pop("plan_sha256", None)
+    if digest != payload.get("plan_sha256") or _studio_sha(plan) != digest:
+        raise ValueError("action plan digest differs")
+    plan["plan_sha256"] = digest
+    required = {
+        "schema",
+        "stage",
+        "binding_path",
+        "binding_sha256",
+        "candidate_sha256",
+        "candidate_files",
+        "workspace",
+        "command_id",
+        "argv",
+        "image",
+        "limits",
+        "plan_sha256",
+    }
+    if set(plan) != required or plan.get("schema") != STUDIO_ACTION_PLAN_SCHEMA:
+        raise ValueError("action plan schema or fields are invalid")
+    if (
+        plan["stage"] not in {"build", "verify"}
+        or not isinstance(plan["image"], str)
+        or not re.fullmatch(r"[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}", plan["image"])
+    ):
+        raise ValueError("action plan stage or pinned image is invalid")
+    expected_limits = {
+        "timeout_seconds": _STUDIO_MAX_TIME,
+        "memory_mib": _STUDIO_MAX_MEMORY,
+        "pids": _STUDIO_MAX_PIDS,
+        "network": "none",
+        "workspace_mount": "read-only",
+        "logs_per_stream_bytes": _STUDIO_MAX_LOG,
+    }
+    if plan["limits"] != expected_limits:
+        raise ValueError("action plan limits differ from enforced constants")
+    return plan, digest
+
+
+def _studio_bind_plan(root: Path, payload: dict, plan: dict) -> tuple[dict, dict]:
+    from .app_builder import _studio_argv, _studio_revalidate
+
+    if payload.get("confirmed") is not True:
+        raise ValueError(
+            "explicit confirmation of exact argv, candidate and image is required"
+        )
+    supplied_binding = payload.get("binding_path")
+    if (
+        supplied_binding is not None
+        and (
+            Path(supplied_binding)
+            if Path(supplied_binding).is_absolute()
+            else root / supplied_binding
+        ).resolve()
+        != Path(plan["binding_path"]).resolve()
+    ):
+        raise ValueError("confirmed binding differs from the planned candidate")
+    binding_payload = {
+        "binding_path": plan["binding_path"],
+        "owner": payload.get("owner"),
+    }
+    _, _, verification, binding = _studio_revalidate(
+        root, binding_payload, plan["binding_sha256"]
+    )
+    if (
+        verification["candidate_sha256"] != plan["candidate_sha256"]
+        or binding["files"] != plan["candidate_files"]
+    ):
+        raise ProductMissionError(
+            "MISSION_CANDIDATE_INVALID",
+            "candidate source hashes changed after planning",
+        )
+    command = next(
+        (
+            row
+            for row in binding["declaration"]["commands"]
+            if row["id"] == plan["command_id"]
+        ),
+        None,
+    )
+    if command is None or command["argv"] != plan["argv"]:
+        raise ValueError("planned argv is no longer approved")
+    _studio_argv(plan["argv"])
+    return verification, binding
+
+
+def _studio_bound_preview_bytes(
+    binding: dict, relative_path: str, content: bytes
+) -> None:
+    from hashlib import sha256
+
+    bound_file = next(
+        (item for item in binding["files"] if item["path"] == relative_path), None
+    )
+    if (
+        bound_file is None
+        or bound_file["state"] != "existing"
+        or sha256(content).hexdigest() != bound_file["sha256"]
+    ):
+        raise ProductMissionError(
+            "MISSION_CANDIDATE_INVALID",
+            "preview asset differs from bound candidate bytes",
+        )
+
+
+def serve_studio_preview_asset(
+    root: Path,
+    binding_path: Path,
+    owner: str,
+    relative_path: str,
+    *,
+    max_bytes: int = 524_288,
+) -> dict:
+    """Read one current, declared regular-file preview asset from the candidate."""
+    from .app_builder import (
+        _STUDIO_MAX_PREVIEW,
+        _studio_file,
+        verify_mission_candidate,
+    )
+
+    root = Path(root).resolve(strict=True)
+    binding_given = Path(binding_path)
+    binding_path = _studio_file(
+        binding_given if binding_given.is_absolute() else root / binding_given,
+        root,
+        1_048_576,
+    )
+    verification = verify_mission_candidate(binding_path, root, owner=owner)
+    binding = json.loads(binding_path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(relative_path, str)
+        or relative_path not in binding["declaration"]["paths"]
+    ):
+        raise ValueError("preview asset is not declared by the current candidate")
+    candidate = Path(binding["workspace"]).resolve(strict=True)
+    path = _studio_file(
+        candidate / relative_path, candidate, min(max_bytes, _STUDIO_MAX_PREVIEW)
+    )
+    if not stat.S_ISREG(path.lstat().st_mode):
+        raise ValueError("preview asset must be a bounded regular candidate file")
+    content = path.read_bytes()
+    _studio_bound_preview_bytes(binding, relative_path, content)
+    after = verify_mission_candidate(binding_path, root, owner=owner)
+    if after["candidate_sha256"] != verification["candidate_sha256"]:
+        raise ProductMissionError(
+            "MISSION_CANDIDATE_INVALID", "candidate changed while reading preview"
+        )
+    text_extensions = {".html", ".htm", ".css", ".js", ".json", ".svg", ".txt", ".md"}
+    if path.suffix.lower() not in text_extensions:
+        raise ValueError("binary preview assets are not returned as text")
+    try:
+        text = content.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        raise ValueError("preview asset must be UTF-8 text") from error
+    media = {
+        ".html": "text/html; charset=utf-8",
+        ".css": "text/css; charset=utf-8",
+        ".js": "text/javascript; charset=utf-8",
+        ".json": "application/json",
+        ".svg": "image/svg+xml",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+    }
+    csp = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'"
+    if path.suffix.lower() in {".html", ".htm"}:
+        meta = f'<meta http-equiv="Content-Security-Policy" content="{csp}">'
+        referrer = '<meta name="referrer" content="no-referrer">'
+        text = re.sub(
+            r"<head\b[^>]*>",
+            lambda match: match.group(0) + meta,
+            text,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"<head\b[^>]*>",
+            lambda match: match.group(0) + referrer,
+            text,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        if meta not in text:
+            text = f"<!doctype html><html><head>{meta}{referrer}</head><body>{text}</body></html>"
+    return {
+        "candidate_sha256": verification["candidate_sha256"],
+        "path": relative_path,
+        "content_type": media.get(path.suffix.lower(), "text/plain; charset=utf-8"),
+        "content": text,
+        "sandbox": "allow-scripts",
+        "parent_origin_access": False,
+        "csp": csp,
+    }

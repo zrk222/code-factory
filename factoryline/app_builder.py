@@ -14,11 +14,31 @@ from hashlib import sha256
 from pathlib import Path
 import json
 import re
+import os
+import stat
+import time
+import tempfile
+import secrets
+
+from .assembly_process import run_cli_detailed
+from .product_missions import (
+    ProductMissionError,
+    verify_mission_candidate,
+    execute_mission_repair,
+)
 
 from .output_map import write_output_map
 
 
 APP_SCHEMA = "factory.app_blueprint.v1"
+STUDIO_JOURNEY_SCHEMA = "factory.studio.journey.v1"
+STUDIO_ACTION_PLAN_SCHEMA = "factory.studio.action-plan.v1"
+STUDIO_JOURNEY_MARKERS = tuple(f"STUDIO_JOURNEY_R{i}" for i in range(1, 10))
+_STUDIO_MAX_LOG = 65_536
+_STUDIO_MAX_PREVIEW = 8 * 1024
+_STUDIO_MAX_TIME = 120
+_STUDIO_MAX_MEMORY = 512
+_STUDIO_MAX_PIDS = 64
 
 STACKS = {
     "nextjs-fastapi-postgres": {
@@ -172,6 +192,483 @@ def build_blueprint(
         ],
         generated_at=datetime.now(timezone.utc).isoformat(),
     )
+
+
+def _studio_json(value: object) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _studio_sha(value: object) -> str:
+    return sha256(_studio_json(value)).hexdigest()
+
+
+def _studio_argv(argv: object) -> list[str]:
+    shells = {
+        "sh",
+        "bash",
+        "dash",
+        "zsh",
+        "fish",
+        "cmd",
+        "cmd.exe",
+        "powershell",
+        "powershell.exe",
+        "pwsh",
+        "pwsh.exe",
+    }
+    if (
+        not isinstance(argv, list)
+        or not argv
+        or any(
+            not isinstance(arg, str) or not arg or len(arg) > 4096 or "\x00" in arg
+            for arg in argv
+        )
+    ):
+        raise ValueError("approved argv is malformed")
+    executable = argv[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if executable in shells:
+        raise ValueError("shell commands are not permitted in the isolated runner")
+    return argv
+
+
+def _studio_log(value: object) -> str:
+    text = (
+        value.decode("utf-8", errors="replace")
+        if isinstance(value, bytes)
+        else str(value or "")
+    )
+    return text.encode("utf-8", errors="replace")[:8_192].decode(
+        "utf-8", errors="ignore"
+    )
+
+
+def _studio_file(path: Path, anchor: Path, maximum: int) -> Path:
+    from .studio import _studio_file as implementation
+
+    return implementation(path, anchor, maximum)
+
+
+def _studio_evidence_dir(root: Path, *, create: bool = False) -> Path:
+    from .studio import _studio_evidence_dir as implementation
+
+    return implementation(root, create=create)
+
+
+def _studio_binding(root: Path, payload: dict) -> tuple[Path, str, dict, dict]:
+    root = root.resolve(strict=True)
+    binding_value = payload.get("binding_path")
+    if not isinstance(binding_value, str) or not binding_value:
+        raise ValueError("binding_path is required")
+    given = Path(binding_value)
+    binding_path = _studio_file(
+        given if given.is_absolute() else root / given, root, 1_048_576
+    )
+    owner = payload.get("owner")
+    if (
+        not isinstance(owner, str)
+        or not owner.strip()
+        or not binding_path.is_relative_to(root)
+    ):
+        raise ProductMissionError(
+            "MISSION_CANDIDATE_INVALID", "binding or owner is invalid"
+        )
+    verification = verify_mission_candidate(binding_path, root, owner=owner)
+    binding = json.loads(binding_path.read_text(encoding="utf-8"))
+    return binding_path, owner, verification, binding
+
+
+def _studio_revalidate(
+    root: Path, payload: dict, expected: str
+) -> tuple[Path, str, dict, dict]:
+    current = _studio_binding(root, payload)
+    if current[2]["binding_sha256"] != expected:
+        raise ProductMissionError(
+            "MISSION_CANDIDATE_INVALID", "candidate binding changed"
+        )
+    return current
+
+
+def _studio_write(root: Path, kind: str, value: dict) -> Path:
+    root = root.resolve(strict=True)
+    directory = _studio_evidence_dir(root, create=True)
+    digest = _studio_sha(value)
+    path = (
+        directory / f"{kind}-{time.time_ns()}-{secrets.token_hex(6)}-{digest[:12]}.json"
+    )
+    envelope = {"receipt": value, "receipt_sha256": digest}
+    serialized = _studio_json(envelope)
+    if len(serialized) > 65_536:
+        raise ValueError("Studio stage receipt exceeds 65536 bytes")
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(serialized)
+    return path
+
+
+def studio_journey_status(root: Path, payload: dict) -> dict:
+    """Read current candidate stage receipts without executing any command."""
+    from .studio import studio_journey_status as implementation
+
+    return implementation(root, payload)
+
+
+def studio_journey_plan(root: Path, payload: dict) -> dict:
+    """Plan one exact candidate command for explicit isolated execution."""
+    from .studio import studio_journey_plan as implementation
+
+    return implementation(root, payload)
+
+
+def _studio_read_plan(root: Path, payload: dict) -> tuple[dict, str]:
+    from .studio import _studio_read_plan as implementation
+
+    return implementation(root, payload)
+
+
+def _studio_bind_plan(root: Path, payload: dict, plan: dict) -> tuple[dict, dict]:
+    from .studio import _studio_bind_plan as implementation
+
+    return implementation(root, payload, plan)
+
+
+def _studio_validated_plan(
+    root: Path, payload: dict
+) -> tuple[dict, str, dict, dict, dict]:
+    root = root.resolve(strict=True)
+    plan, digest = _studio_read_plan(root, payload)
+    verification, binding = _studio_bind_plan(root, payload, plan)
+    return (
+        plan,
+        digest,
+        {"binding_path": plan["binding_path"], "owner": payload.get("owner")},
+        verification,
+        binding,
+    )
+
+
+def _studio_snapshot(workspace: Path, entries: list[dict]) -> Path:
+    snapshot = Path(tempfile.mkdtemp(prefix="factory-studio-snapshot-"))
+    try:
+        for entry in entries:
+            if entry["state"] != "existing":
+                continue
+            source = _studio_file(
+                workspace / entry["path"], workspace, 16 * 1024 * 1024
+            )
+            if not stat.S_ISREG(source.lstat().st_mode):
+                raise ProductMissionError(
+                    "MISSION_CANDIDATE_INVALID",
+                    "candidate snapshot contains a link or special file",
+                )
+            source_bytes = source.read_bytes()
+            if sha256(source_bytes).hexdigest() != entry["sha256"]:
+                raise ProductMissionError(
+                    "MISSION_CANDIDATE_INVALID",
+                    "candidate source changed during snapshot",
+                )
+            target = snapshot / entry["path"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(source_bytes)
+    except BaseException:
+        import shutil
+
+        shutil.rmtree(snapshot, ignore_errors=True)
+        raise
+    return snapshot
+
+
+def _studio_container(snapshot: Path, workspace: Path, plan: dict) -> tuple[dict, bool]:
+    name = "studio-" + secrets.token_hex(10)
+    argv = plan["argv"]
+    if not argv or argv[0].startswith("-"):
+        raise ValueError("approved command must begin with an explicit executable")
+    args = [
+        "run",
+        "--name",
+        name,
+        "--network=none",
+        "--read-only",
+        "--memory=512m",
+        "--pids-limit=64",
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges",
+        "--user=65534:65534",
+        "--tmpfs",
+        "/tmp:rw,noexec,nosuid,size=64m",
+        "--mount",
+        f"type=bind,src={snapshot},dst=/workspace,readonly",
+        "--workdir",
+        "/workspace",
+        "--entrypoint",
+        argv[0],
+        plan["image"],
+        *argv[1:],
+    ]
+    try:
+        result = run_cli_detailed(
+            "docker",
+            args,
+            workspace,
+            timeout=_STUDIO_MAX_TIME,
+            max_stream_bytes=_STUDIO_MAX_LOG,
+        )
+    except Exception as error:
+        result = {
+            "ok": False,
+            "exit_code": None,
+            "reason": type(error).__name__,
+            "output": str(error),
+            "cleanup_confirmed": False,
+            "streams_closed": False,
+        }
+    try:
+        cleanup = run_cli_detailed(
+            "docker",
+            ["rm", "--force", name],
+            workspace,
+            timeout=10,
+            max_stream_bytes=4096,
+        )
+        inspect = run_cli_detailed(
+            "docker",
+            ["inspect", "--type", "container", name],
+            workspace,
+            timeout=10,
+            max_stream_bytes=4096,
+        )
+    except Exception:
+        cleanup, inspect = {}, {"output": "container absence not verified"}
+    detail = (
+        str(inspect.get("output", ""))
+        + bytes(inspect.get("stderr", b"")).decode("utf-8", errors="replace")
+    ).lower()
+    removed = bool(
+        ("no such container" in detail or "no such object" in detail)
+        and cleanup.get("ok") is True
+        and cleanup.get("exit_code") == 0
+        and cleanup.get("cleanup_confirmed") is True
+        and cleanup.get("streams_closed") is True
+    )
+    result["container_removed"] = removed
+    result["ok"] = (
+        bool(result.get("ok"))
+        and result.get("exit_code") == 0
+        and result.get("streams_closed") is True
+        and removed
+    )
+    return result, removed
+
+
+def _studio_after_execution(
+    root: Path, payload: dict, plan: dict, verification: dict
+) -> tuple[bool, str | None]:
+    try:
+        _, _, after, binding_after = _studio_revalidate(
+            root, payload, plan["binding_sha256"]
+        )
+        return after["candidate_sha256"] == verification[
+            "candidate_sha256"
+        ] and binding_after["files"] == plan["candidate_files"], None
+    except (OSError, ValueError, ProductMissionError) as error:
+        return False, type(error).__name__
+
+
+def _studio_telemetry(stage: str, result: dict, duration: float) -> dict:
+    from .operations import TelemetryRecorder
+
+    recorder = TelemetryRecorder("local-workspace", service="factory.studio")
+    span = recorder.span(
+        f"studio.{stage}",
+        status="OK" if result.get("ok") is True else "ERROR",
+        duration_ms=max(0, round(duration * 1000)),
+        attributes={
+            "stage": stage,
+            "result_sha256": _studio_sha(result),
+            "receipt_schema": "factory.studio.attempt.v1",
+        },
+    )
+    return {
+        key: span[key]
+        for key in (
+            "schema",
+            "trace_id",
+            "span_id",
+            "name",
+            "status",
+            "duration_ms",
+            "attributes",
+            "span_sha256",
+        )
+    }
+
+
+def _studio_execute_plan(root: Path, payload: dict) -> dict:
+    root = root.resolve(strict=True)
+    plan, digest, binding_payload, verification, binding = _studio_validated_plan(
+        root, payload
+    )
+    workspace = Path(binding["workspace"]).resolve(strict=True)
+    started = time.monotonic()
+    snapshot = _studio_snapshot(workspace, plan["candidate_files"])
+    try:
+        _, _, before, _ = _studio_revalidate(
+            root, binding_payload, plan["binding_sha256"]
+        )
+        if before["candidate_sha256"] != verification["candidate_sha256"]:
+            raise ProductMissionError(
+                "MISSION_CANDIDATE_INVALID", "candidate changed before execution"
+            )
+        result, container_removed = _studio_container(snapshot, workspace, plan)
+    finally:
+        import shutil
+
+        shutil.rmtree(snapshot, ignore_errors=True)
+    unchanged, drift = _studio_after_execution(
+        root, binding_payload, plan, verification
+    )
+    attempt = {
+        "schema": "factory.studio.attempt.v1",
+        "stage": "verification" if plan["stage"] == "verify" else plan["stage"],
+        "candidate_sha256": verification["candidate_sha256"],
+        "binding_sha256": verification["binding_sha256"],
+        "plan_sha256": digest,
+        "argv": plan["argv"],
+        "image": plan["image"],
+        "exit_code": result.get("exit_code"),
+        "ok": bool(result.get("ok")) and unchanged and container_removed,
+        "timed_out": result.get("reason") == "timeout",
+        "duration_seconds": round(time.monotonic() - started, 3),
+        "cleanup_confirmed": result.get("cleanup_confirmed") is True
+        and result.get("streams_closed") is True
+        and container_removed,
+        "container_removed": container_removed,
+        "stdout": _studio_log(result.get("stdout", result.get("output", ""))),
+        "stderr": _studio_log(result.get("stderr", b"")),
+        "candidate_unchanged": unchanged,
+        "post_execution_drift": drift,
+        "markers": list(STUDIO_JOURNEY_MARKERS),
+        "invariants": {
+            marker: (
+                "checked"
+                if marker
+                in {
+                    "STUDIO_JOURNEY_R2",
+                    "STUDIO_JOURNEY_R3",
+                    "STUDIO_JOURNEY_R4",
+                    "STUDIO_JOURNEY_R5",
+                    "STUDIO_JOURNEY_R8",
+                }
+                else "not_applicable"
+            )
+            for marker in STUDIO_JOURNEY_MARKERS
+        },
+    }
+    attempt["telemetry"] = _studio_telemetry(
+        attempt["stage"], attempt, attempt["duration_seconds"]
+    )
+    receipt_path = _studio_write(root, "attempt", attempt)
+    return {**attempt, "path": str(receipt_path)}
+
+
+def serve_studio_preview_asset(
+    root: Path,
+    binding_path: Path,
+    owner: str,
+    relative_path: str,
+    *,
+    max_bytes: int = _STUDIO_MAX_PREVIEW,
+) -> dict:
+    """Return a declared current candidate asset with restricted preview policy."""
+    from .studio import serve_studio_preview_asset as implementation
+
+    return implementation(root, binding_path, owner, relative_path, max_bytes=max_bytes)
+
+
+def studio_journey(root: Path, payload: dict) -> dict:
+    """Dispatch a bounded Studio journey action over an existing approved mission."""
+    action = payload.get("action")
+    if action == "status":
+        return studio_journey_status(root, payload)
+    if action == "plan":
+        return studio_journey_plan(root, payload)
+    if action == "execute":
+        return _studio_execute_plan(root, payload)
+    if action == "preview":
+        _, owner, verification, _ = _studio_binding(root, payload)
+        result = serve_studio_preview_asset(
+            root, Path(payload["binding_path"]), owner, payload.get("path", "")
+        )
+        receipt = {
+            "schema": "factory.studio.attempt.v1",
+            "stage": "preview",
+            "candidate_sha256": verification["candidate_sha256"],
+            "binding_sha256": verification["binding_sha256"],
+            "ok": True,
+            "path": result["path"],
+            "markers": list(STUDIO_JOURNEY_MARKERS),
+            "invariants": {
+                marker: (
+                    "checked"
+                    if marker
+                    in {
+                        "STUDIO_JOURNEY_R2",
+                        "STUDIO_JOURNEY_R3",
+                        "STUDIO_JOURNEY_R6",
+                        "STUDIO_JOURNEY_R8",
+                    }
+                    else "not_applicable"
+                )
+                for marker in STUDIO_JOURNEY_MARKERS
+            },
+        }
+        response = {
+            "schema": "factory.studio.preview.v1",
+            **result,
+            "receipt_path": str(_studio_write(root, "attempt", receipt)),
+        }
+        if len(_studio_json(response)) > 65_536:
+            raise ValueError("preview stage response exceeds 65536 bytes")
+        return response
+    if action == "repair":
+        binding_path, owner, verification, _ = _studio_binding(root, payload)
+        approval = Path(payload.get("approval_path", ""))
+        approval = _studio_file(
+            approval if approval.is_absolute() else root / approval, root, 1_048_576
+        )
+        started = time.monotonic()
+        result = execute_mission_repair(
+            binding_path,
+            approval,
+            root,
+            owner=owner,
+        )
+        duration = time.monotonic() - started
+        receipt = {
+            "schema": "factory.studio.attempt.v1",
+            "stage": "repair",
+            "candidate_sha256": verification["candidate_sha256"],
+            "binding_sha256": verification["binding_sha256"],
+            "ok": result.get("status") == "VERIFIED",
+            "repair_result": {
+                "status": result.get("status"),
+                "attempt_id": result.get("attempt_id"),
+            },
+            "repair_result_sha256": _studio_sha(result),
+            "duration_seconds": round(duration, 3),
+            "markers": list(STUDIO_JOURNEY_MARKERS),
+            "invariants": {
+                marker: (
+                    "checked"
+                    if marker
+                    in {"STUDIO_JOURNEY_R2", "STUDIO_JOURNEY_R7", "STUDIO_JOURNEY_R8"}
+                    else "not_applicable"
+                )
+                for marker in STUDIO_JOURNEY_MARKERS
+            },
+        }
+        receipt["telemetry"] = _studio_telemetry("repair", receipt, duration)
+        return {**receipt, "path": str(_studio_write(root, "attempt", receipt))}
+    raise ValueError("unknown Studio journey action")
 
 
 def _write(path: Path, content: str) -> None:

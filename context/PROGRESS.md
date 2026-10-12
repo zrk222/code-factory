@@ -844,3 +844,6 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-10-12 09:44] GATE plan trace-evaluation approver=human tasks=10 sha=46d7dc1dda4e503f
 - [2026-10-12 09:44] GATE spec trace-evaluation approver=human strict=True sha=c135606190edff91
 - [2026-10-12 09:44] GATE plan trace-evaluation approver=human tasks=11 sha=c135606190edff91
+- [2026-10-12 10:51] GATE spec studio-journey approver=user-authorized-studio-integration strict=True sha=e75706357e0c9daa
+- [2026-10-12 10:52] GATE plan studio-journey approver=user-authorized-studio-integration tasks=3 sha=e75706357e0c9daa
+- [2026-10-12 11:11] GATE code studio-journey approver=user-authorized-studio-integration reviewer=personas/reviewer.md auditor=personas/security_auditor.md

@@ -168,3 +168,48 @@ def test_verifier_attestation_requires_distinct_fresh_isolated_adapter():
     value["verifier_id"] = value["creator_id"]
     with pytest.raises(AgentContractError, match="VERIFIER_IDENTITY_DISTINCT"):
         validate_verifier_attestation(value)
+
+
+def test_studio_journey_ui_and_junie_exact_action_boundaries():
+    from factoryline.studio import _studio_html
+
+    html = _studio_html("local-test-token")
+    assert "Check current stages" in html
+    assert "Review build command" in html
+    assert "Review verification command" in html
+    assert "Run separately approved repair" in html
+    assert "plan_sha256:plan.plan_sha256" in html
+    assert "command_index:Number(command.value)" in html
+    assert "frame.setAttribute('sandbox','allow-scripts')" in html
+    assert "frame.setAttribute('referrerpolicy','no-referrer')" in html
+    assert "if(frame){frame.remove();frame=null;}" in html
+    assert "Agent connection details (your coding agent supplies these)" in html
+    manifest = json.loads(
+        (Path(__file__).parents[1] / "factoryline/data/junie_pack.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    actions = manifest["beginner_acceptance_workflow"]["studio_actions"]
+    assert actions["endpoint"] == "/api/journey"
+    assert actions["actions"] == ["status", "plan", "execute", "preview", "repair"]
+    assert "A passing command is not an application verdict" in actions["limits"]
+
+
+def test_studio_journey_wrapper_rejects_missing_locator_and_preserves_backend_result(
+    tmp_path, monkeypatch
+):
+    from factoryline.studio import journey_from_studio, StudioRequestError
+    from factoryline import app_builder
+
+    with pytest.raises(StudioRequestError, match="JOURNEY_REQUEST_INVALID"):
+        journey_from_studio(tmp_path, {"action": "execute"})
+    calls = []
+
+    def backend(root, payload):
+        calls.append(payload)
+        return {"stage": "verification", "ok": False, "cleanup_confirmed": True}
+
+    monkeypatch.setattr(app_builder, "studio_journey", backend)
+    request = {"action": "status", "binding_path": "bound.json", "owner": "owner"}
+    assert journey_from_studio(tmp_path, request)["ok"] is False
+    assert calls == [request]
