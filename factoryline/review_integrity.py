@@ -6,9 +6,287 @@ import hashlib
 import json
 import os
 import tempfile
+import ast
 from pathlib import Path
 from typing import Any
 from .revenueforge import AUTHORITY, RevenueForgeError
+
+
+def _name(node: ast.AST | None) -> str:
+    return ast.unparse(node) if node is not None else ""
+
+
+def _resolve(node: ast.AST | None, aliases: dict[str, str]) -> str:
+    name = _name(node)
+    head, dot, tail = name.partition(".")
+    return aliases.get(head, head) + dot + tail
+
+
+def _targets(stmt: ast.AST) -> list[str]:
+    targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+    return [
+        n.id
+        for t in targets
+        for n in ast.walk(t)
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+    ]
+
+
+def _true_arg(call: ast.AST, key: str) -> bool:
+    return isinstance(call, ast.Call) and any(
+        k.arg == key and isinstance(k.value, ast.Constant) and k.value.value is True
+        for k in call.keywords
+    )
+
+
+def _fixture_name(fn: ast.AST, aliases: dict[str, str]) -> str | None:
+    for dec in getattr(fn, "decorator_list", ()):
+        call = dec if isinstance(dec, ast.Call) else None
+        if _resolve(call.func if call else dec, aliases) in {
+            "pytest.fixture",
+            "_pytest.fixture",
+        }:
+            return (
+                next(
+                    (
+                        k.value.value
+                        for k in (call.keywords if call else ())
+                        if k.arg == "name"
+                        and isinstance(k.value, ast.Constant)
+                        and isinstance(k.value.value, str)
+                    ),
+                    None,
+                )
+                or fn.name
+            )
+    return None
+
+
+def _fixture_step(
+    stmt: ast.AST, app: str | None, testing: bool, aliases: dict
+) -> tuple[str | None, bool]:
+    if (
+        app
+        and isinstance(stmt, (ast.If, ast.Try, ast.For, ast.While, ast.With))
+        and _mutated(ast.Module(body=[stmt], type_ignores=[]), {app})
+    ):
+        return app, False
+    if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+        value, names = stmt.value, _targets(stmt)
+        if (
+            isinstance(value, ast.Call)
+            and _resolve(value.func, aliases) == "flask.Flask"
+        ):
+            return names[0] if len(names) == 1 else None, False
+        if app and app in names:
+            return None, False
+        if app and any(
+            _name(t).endswith((".testing", ".config['TESTING']", '.config["TESTING"]'))
+            and _name(t).rsplit(".", 1)[0] == app
+            for t in (stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target])
+        ):
+            return app, isinstance(value, ast.Constant) and value.value is True
+    if (
+        isinstance(stmt, ast.Expr)
+        and app is not None
+        and isinstance(stmt.value, ast.Call)
+        and _name(stmt.value.func) == app + ".config.update"
+    ):
+        setting = next(
+            (k.value for k in stmt.value.keywords if k.arg == "TESTING"), None
+        )
+        if setting is not None:
+            return app, isinstance(setting, ast.Constant) and setting.value is True
+    return app, testing
+
+
+def _fixture_terminal(
+    stmt: ast.AST, app: str | None, testing: bool, aliases: dict
+) -> bool | None:
+    if isinstance(stmt, ast.Return):
+        value = stmt.value
+    elif isinstance(stmt, ast.Expr) and isinstance(
+        stmt.value, (ast.Yield, ast.YieldFrom)
+    ):
+        value = stmt.value.value
+    else:
+        return None
+    if value is None:
+        return False
+    return testing if isinstance(value, ast.Name) and value.id == app else False
+
+
+def _fixture_testing(fn: ast.AST, aliases: dict[str, str]) -> bool:
+    shadowed = {
+        item.arg for item in [*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs]
+    }
+    aliases = {name: value for name, value in aliases.items() if name not in shadowed}
+    app, testing = None, False
+    for stmt in getattr(fn, "body", ()):
+        app, testing = _fixture_step(stmt, app, testing, aliases)
+        result = _fixture_terminal(stmt, app, testing, aliases)
+        if result is not None:
+            return result
+    return False
+
+
+def flask_fixture_apps(tree: ast.AST, aliases: dict[str, str]) -> dict[str, bool]:
+    """Summarize testing-enabled Flask fixture source; does not prove runtime execution."""
+    return {
+        name: _fixture_testing(fn, aliases)
+        for fn in getattr(tree, "body", ())
+        if (name := _fixture_name(fn, aliases))
+    }
+
+
+def _test_nodes(test: ast.AST):
+    stack = list(getattr(test, "body", ()))
+    while stack:
+        node = stack.pop()
+        yield node
+        if not isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            stack.extend(ast.iter_child_nodes(node))
+
+
+def _mutated(test: ast.AST, apps: set[str]) -> bool:
+    for n in _test_nodes(test):
+        if (
+            isinstance(n, ast.Name)
+            and n.id in apps
+            and isinstance(n.ctx, (ast.Store, ast.Del))
+        ):
+            return True
+        if (
+            isinstance(n, ast.Attribute)
+            and _name(n.value).split(".", 1)[0] in apps
+            and (
+                isinstance(n.ctx, (ast.Store, ast.Del))
+                or n.attr in {"config", "testing"}
+            )
+        ):
+            return True
+        if (
+            isinstance(n, ast.Call)
+            and n.args
+            and isinstance(n.args[0], ast.Name)
+            and n.args[0].id in apps
+            and _resolve(n.func, {}) in {"setattr", "delattr"}
+        ):
+            return True
+    return False
+
+
+def _route(fn: ast.AST, aliases: dict[str, str], apps: set[str], effective):
+    if len(fn.decorator_list) != 1:
+        return None
+    dec = fn.decorator_list[0]
+    if (
+        not isinstance(dec, ast.Call)
+        or len(dec.args) != 1
+        or dec.keywords
+        or not isinstance(dec.func, ast.Attribute)
+    ):
+        return None
+    path = dec.args[0]
+    if (
+        dec.func.attr != "route"
+        or _name(dec.func.value) not in apps
+        or not isinstance(path, ast.Constant)
+        or not isinstance(path.value, str)
+        or any(ch in path.value for ch in "<>")
+        or not effective(dec, aliases)
+    ):
+        return None
+    return path.value
+
+
+def _flask_routes(test: ast.AST, aliases: dict, apps: set[str], effective) -> dict:
+    routes = {}
+    for fn in (
+        n
+        for n in ast.walk(test)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ):
+        path = _route(fn, aliases, apps, effective)
+        if path is not None:
+            routes.setdefault(path, []).append(fn)
+    return routes
+
+
+def _flask_clients(
+    test: ast.AST, apps: set[str], effective, aliases: dict
+) -> tuple[dict, set]:
+    clients, bad, other = {}, set(), set()
+    for stmt in _test_nodes(test):
+        if not isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+            continue
+        value, targets = stmt.value, _targets(stmt)
+        if len(targets) != 1:
+            other.update(targets)
+            continue
+        app = (
+            value.func.value.id
+            if isinstance(value, ast.Call)
+            and not value.args
+            and not value.keywords
+            and isinstance(value.func, ast.Attribute)
+            and value.func.attr == "test_client"
+            and isinstance(value.func.value, ast.Name)
+            and value.func.value.id in apps
+            and effective(value, aliases)
+            else None
+        )
+        target = targets[0]
+        if app:
+            if target in clients and clients[target] != app:
+                bad.add(target)
+            clients[target] = app
+        else:
+            other.add(target)
+    return clients, bad | (other & clients.keys())
+
+
+def flask_invoked_callbacks(
+    test: ast.AST,
+    aliases: dict[str, str],
+    apps: set[str],
+    strong_callback_names: set[str],
+    effective,
+) -> set[str]:
+    """Credit only local literal routes reached by an effective exact GET on a proven app.
+
+    This bounded AST summary does not prove Flask runtime dispatch.
+    """
+    if not apps or _mutated(test, apps):
+        return set()
+    routes = _flask_routes(test, aliases, apps, effective)
+    clients, bad = _flask_clients(test, apps, effective, aliases)
+    invoked = set()
+    for call in _test_nodes(test):
+        if (
+            not isinstance(call, ast.Call)
+            or not isinstance(call.func, ast.Attribute)
+            or call.func.attr != "get"
+            or len(call.args) != 1
+            or call.keywords
+            or not isinstance(call.func.value, ast.Name)
+            or call.func.value.id not in clients
+            or call.func.value.id in bad
+            or not isinstance(call.args[0], ast.Constant)
+            or not isinstance(call.args[0].value, str)
+            or not effective(call, aliases)
+        ):
+            continue
+        callbacks = routes.get(call.args[0].value, ())
+        if (
+            len(callbacks) == 1
+            and callbacks[0].name in strong_callback_names
+            and callbacks[0].lineno < call.lineno
+        ):
+            invoked.add(callbacks[0].name)
+    return invoked
 
 
 def _sha(v: object) -> str:

@@ -97,6 +97,8 @@ def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
                 "pytest_inherited": set(item["pytest_inherited"]),
                 "click_runners": set(item["click_runners"]),
                 "typecheck": item["typecheck"],
+                "flask_apps": set(item.get("flask_apps", [])),
+                "callback_invokers": item.get("callback_invokers", {}),
             }
             for item in document["contexts"]
         }
@@ -123,6 +125,8 @@ def _oracle_context_cache_write(key: str, contexts: dict, edges: list) -> None:
                 "pytest_inherited": sorted(context["pytest_inherited"]),
                 "click_runners": sorted(context["click_runners"]),
                 "typecheck": bool(context["typecheck"]),
+                "flask_apps": sorted(context.get("flask_apps", set())),
+                "callback_invokers": context.get("callback_invokers", {}),
             }
         )
     payload = json.dumps(
@@ -2678,6 +2682,340 @@ def _callback_argument(call, function, parameter):
     )
 
 
+def _source_callback_parameters(function, methods, depth=0, aliases=None):
+    """Resolve bounded first-party callback paths, excluding swallowed calls."""
+    if depth >= 4 or function.decorator_list:
+        return set()
+    parameters = _scope_parameters(function)
+    nodes = _test_oracle_body_nodes(function, {})
+    if sum(isinstance(item, ast.Call) for item in nodes) > 128:
+        return set()
+    aliases = _scope_security_aliases(aliases or {}, function)
+    invoked = _partial_callback_parameters(
+        function, methods, nodes, depth, aliases or {}
+    )
+    for call in (item for item in nodes if isinstance(item, ast.Call)):
+        if not _in_current_test_body(call) or not _effective_assertion(call, aliases):
+            continue
+        if isinstance(call.func, ast.Name) and call.func.id in parameters:
+            if isinstance(
+                getattr(call, "_oracle_parent", None), ast.Await
+            ) and _callback_binding_preserved(
+                nodes, call.func.id, call.lineno, methods, aliases
+            ):
+                invoked.add(call.func.id)
+            continue
+        target = methods.get(_call_name(call).removeprefix("self."))
+        if target is None or not _call_name(call).startswith("self."):
+            continue
+        if isinstance(target, ast.AsyncFunctionDef) and not isinstance(
+            getattr(call, "_oracle_parent", None), ast.Await
+        ):
+            continue
+        for parameter in _source_callback_parameters(
+            target, methods, depth + 1, aliases
+        ):
+            invoked.update(
+                _forwarded_callback_names(
+                    call, target, parameter, parameters, nodes, methods, aliases
+                )
+            )
+    return invoked
+
+
+def _forwarded_callback_names(
+    call, target, parameter, parameters, nodes, methods, aliases
+):
+    names = [item.arg for item in [*target.args.posonlyargs, *target.args.args][1:]]
+    values = [value.value for value in call.keywords if value.arg == parameter]
+    if parameter in names and names.index(parameter) < len(call.args):
+        values.append(call.args[names.index(parameter)])
+    return {
+        value.id
+        for value in values
+        if isinstance(value, ast.Name)
+        and value.id in parameters
+        and _callback_binding_preserved(nodes, value.id, call.lineno, methods, aliases)
+    }
+
+
+def _partial_callback_bindings(nodes, methods, aliases):
+    bindings, invalid = {}, set()
+    for statement in nodes:
+        if not isinstance(
+            statement, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)
+        ):
+            continue
+        names = _bound_names(statement)
+        call = getattr(statement, "value", None)
+        target = None
+        if (
+            isinstance(call, ast.Call)
+            and _normalized_call_name(call, aliases) == "functools.partial"
+            and call.args
+            and _name(call.args[0]).startswith("self.")
+        ):
+            target = methods.get(_name(call.args[0]).removeprefix("self."))
+        if target is None or not _effective_assertion(call, aliases):
+            invalid.update(names)
+            continue
+        for name in names:
+            bindings.setdefault(name, []).append((target, call))
+    return {name: values for name, values in bindings.items() if name not in invalid}
+
+
+def _partial_callback_parameters(function, methods, nodes, depth, aliases):
+    if depth >= 4:
+        return set()
+    bindings = _partial_callback_bindings(nodes, methods, aliases)
+    invoked = set()
+    for call in (item for item in nodes if isinstance(item, ast.Call)):
+        if not isinstance(
+            getattr(call, "_oracle_parent", None), ast.Await
+        ) or not _effective_assertion(call, aliases):
+            continue
+        for target, partial in bindings.get(_call_name(call), ()):
+            if partial.lineno >= call.lineno:
+                continue
+            names = [
+                item.arg for item in [*target.args.posonlyargs, *target.args.args][1:]
+            ]
+            for parameter in _source_callback_parameters(
+                target, methods, depth + 1, aliases
+            ):
+                if parameter in names and names.index(parameter) + 1 < len(
+                    partial.args
+                ):
+                    value = partial.args[names.index(parameter) + 1]
+                    if (
+                        isinstance(value, ast.Name)
+                        and value.id in _scope_parameters(function)
+                        and _callback_binding_preserved(
+                            nodes, value.id, partial.lineno, methods, aliases
+                        )
+                    ):
+                        invoked.add(value.id)
+    return invoked
+
+
+def _callback_wrapper_preserves(method, parameter, aliases=None):
+    definitions = _nested_helper_definitions(method) or {}
+    returned = [item.value for item in method.body if isinstance(item, ast.Return)]
+    if len(returned) != 1 or not isinstance(returned[0], ast.Name):
+        return False
+    wrapper = definitions.get(returned[0].id)
+    if (
+        not isinstance(wrapper, ast.AsyncFunctionDef)
+        or wrapper.decorator_list
+        or parameter in _scope_parameters(wrapper)
+    ):
+        return False
+    if any(parameter in _bound_names(item) for item in method.body):
+        return False
+    aliases = _scope_security_aliases(aliases or {}, wrapper)
+    nodes = _test_oracle_body_nodes(wrapper, aliases)
+    return any(
+        isinstance(item, ast.Call)
+        and _call_name(item) == parameter
+        and isinstance(getattr(item, "_oracle_parent", None), ast.Await)
+        and _effective_assertion(item, aliases)
+        and _callback_binding_preserved(nodes, parameter, item.lineno, {}, aliases)
+        for item in nodes
+    )
+
+
+def _callback_binding_preserved(nodes, parameter, before, methods, aliases=None):
+    for statement in nodes:
+        if (
+            not isinstance(
+                statement, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)
+            )
+            or statement.lineno >= before
+            or parameter not in _bound_names(statement)
+        ):
+            continue
+        call = getattr(statement, "value", None)
+        if (
+            not isinstance(call, ast.Call)
+            or not _call_name(call).startswith("self.")
+            or len(call.args) != 1
+            or not isinstance(call.args[0], ast.Name)
+            or call.args[0].id != parameter
+        ):
+            return False
+        method = methods.get(_call_name(call).removeprefix("self."))
+        if method is None:
+            return False
+        names = [item.arg for item in [*method.args.posonlyargs, *method.args.args][1:]]
+        if not names or not _callback_wrapper_preserves(method, names[0], aliases):
+            return False
+    return True
+
+
+def _inherited_source_methods(cls, tree, depth=0):
+    methods = {}
+    if depth >= 4:
+        return methods
+    classes = {item.name: item for item in tree.body if isinstance(item, ast.ClassDef)}
+    for base in cls.bases:
+        if isinstance(base, ast.Name) and base.id in classes:
+            methods.update(_inherited_source_methods(classes[base.id], tree, depth + 1))
+    methods.update(
+        {
+            item.name: item
+            for item in cls.body
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+    )
+    return methods
+
+
+def _source_methods_are_stable(methods):
+    if "__getattribute__" in methods or "__getattr__" in methods:
+        return False
+    for method in methods.values():
+        for node in ast.walk(method):
+            if isinstance(node, ast.Attribute) and isinstance(
+                node.ctx, (ast.Store, ast.Del)
+            ):
+                if _name(node.value) == "self" and node.attr in methods:
+                    return False
+            if isinstance(node, ast.Call) and _call_name(node) in {
+                "setattr",
+                "delattr",
+            }:
+                if node.args and _name(node.args[0]) == "self":
+                    return False
+    return True
+
+
+def _source_callback_invokers(imports, snapshots, summaries=None):
+    invokers = {}
+    summaries = {} if summaries is None else summaries
+    for local, (source, symbol) in imports.items():
+        tree = snapshots.get(source)
+        if tree is None or symbol is None:
+            continue
+        key = (source, symbol)
+        if key in summaries:
+            if summaries[key] is not None:
+                invokers[local] = summaries[key]
+            continue
+        summaries[key] = None
+        declarations = [
+            item
+            for item in tree.body
+            if isinstance(item, ast.ClassDef) and item.name == symbol
+        ]
+        if len(declarations) != 1:
+            continue
+        methods = _inherited_source_methods(declarations[0], tree)
+        if not _source_methods_are_stable(methods):
+            continue
+        function = methods.get("__call__")
+        if not isinstance(function, ast.AsyncFunctionDef):
+            continue
+        parameters = [
+            item.arg for item in [*function.args.posonlyargs, *function.args.args][1:]
+        ]
+        invoked = _source_callback_parameters(
+            function, methods, aliases=_module_security_aliases(tree)
+        )
+        invokers[local] = {
+            "parameters": parameters,
+            "invoked": sorted(invoked),
+            "source": source.as_posix(),
+            "symbol": symbol,
+        }
+        summaries[key] = invokers[local]
+    return invokers
+
+
+def _source_invoked_callbacks(test, invokers, strong, aliases):
+    nodes = _test_oracle_body_nodes(test, aliases)
+    constructors = {
+        statement.targets[0].id: (
+            invokers[_call_name(statement.value)],
+            statement.lineno,
+        )
+        for statement in test.body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and isinstance(statement.value, ast.Call)
+        and _call_name(statement.value) in invokers
+        and _call_name(statement.value).split(".", 1)[0] in aliases
+    }
+    for call in (item for item in nodes if isinstance(item, ast.Call)):
+        binding = constructors.get(_call_name(call))
+        if (
+            binding is None
+            or not isinstance(getattr(call, "_oracle_parent", None), ast.Await)
+            or not _effective_assertion(call, aliases)
+        ):
+            continue
+        profile, constructed_at = binding
+        if (
+            call.lineno <= constructed_at
+            or _name_rebound(nodes, _call_name(call), constructed_at, call.lineno)
+            or _click_receiver_mutated(test, _call_name(call))
+        ):
+            continue
+        for parameter in profile["invoked"]:
+            index = (
+                profile["parameters"].index(parameter)
+                if parameter in profile["parameters"]
+                else len(call.args)
+            )
+            arguments = [item.value for item in call.keywords if item.arg == parameter]
+            if index < len(call.args):
+                arguments.append(call.args[index])
+            if any(
+                isinstance(item, ast.Name) and item.id in strong for item in arguments
+            ):
+                return True
+    return False
+
+
+def _proven_dispatch_assertion(test, aliases, helpers, apps, invokers):
+    from .review_integrity import flask_invoked_callbacks
+
+    definitions = _nested_helper_definitions(test)
+    if not definitions or not _nested_helper_names_are_unbound(test, definitions):
+        return False
+    strong = {
+        name
+        for name, function in definitions.items()
+        if _strong_local_assertion(
+            function, _scope_security_aliases(aliases, function), helpers
+        )
+    }
+    undecorated = {name for name in strong if not definitions[name].decorator_list}
+    return bool(
+        flask_invoked_callbacks(test, aliases, apps, strong, _effective_assertion)
+    ) or _source_invoked_callbacks(test, invokers, undecorated, aliases)
+
+
+def _flask_context_apps(path, tree, snapshots):
+    from .review_integrity import flask_fixture_apps
+
+    declared = {}
+    sources = sorted(
+        (
+            source
+            for source in snapshots
+            if source.name == "conftest.py"
+            and path.parent.is_relative_to(source.parent)
+        ),
+        key=lambda source: len(source.parts),
+    )
+    for source in sources:
+        target = snapshots[source]
+        declared.update(flask_fixture_apps(target, _module_security_aliases(target)))
+    declared.update(flask_fixture_apps(tree, _module_security_aliases(tree)))
+    return {name for name, trusted in declared.items() if trusted}
+
+
 def _invoked_nested_assertion_helpers(
     test: ast.AST, aliases: dict[str, str], inherited: set[str]
 ) -> set[str]:
@@ -2917,6 +3255,8 @@ def _declared_typecheck_sources(
 
 
 def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict) -> str:
+    from .review_integrity import flask_fixture_apps, flask_invoked_callbacks
+
     helpers = (
         ast.parse,
         _click_runner_fixtures,
@@ -2932,6 +3272,17 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _oracle_snapshots,
         _oracle_source_inputs,
         _declared_typecheck_sources,
+        _source_callback_invokers,
+        _source_methods_are_stable,
+        _source_callback_parameters,
+        _forwarded_callback_names,
+        _partial_callback_bindings,
+        _partial_callback_parameters,
+        _callback_binding_preserved,
+        _callback_wrapper_preserves,
+        flask_fixture_apps,
+        flask_invoked_callbacks,
+        _flask_context_apps,
         _local_assertion_helpers,
         _local_weak_assertion_helpers,
         _is_oracle_helper_name,
@@ -3113,6 +3464,7 @@ def _build_oracle_context(
         for path in snapshots
     }
     edges = set()
+    callback_summaries = {}
     for path, tree in snapshots.items():
         aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
         fixtures = {}
@@ -3124,7 +3476,11 @@ def _build_oracle_context(
             name for name, trusted in fixtures.items() if trusted
         }
         contexts[path]["typecheck"] = path in typecheck_sources
+        contexts[path]["flask_apps"] = _flask_context_apps(path, tree, snapshots)
         imports = _oracle_imports(root, path, tree, set(files))
+        contexts[path]["callback_invokers"] = _source_callback_invokers(
+            imports, snapshots, callback_summaries
+        )
         contexts[path]["helpers"] = _imported_oracle_helpers(
             imports, snapshots, aliases
         )
@@ -3132,6 +3488,17 @@ def _build_oracle_context(
             imports, snapshots, aliases
         )
         caller = path.relative_to(root).as_posix()
+        edges.update(
+            (
+                caller,
+                Path(profile["source"]).relative_to(root).as_posix(),
+                "callback_parameter",
+                local + "." + parameter,
+                "source_resolved",
+            )
+            for local, profile in contexts[path]["callback_invokers"].items()
+            for parameter in profile["invoked"]
+        )
         for local, (source, symbol) in imports.items():
             target = source.relative_to(root).as_posix()
             target_tree = snapshots.get(source)
@@ -3981,6 +4348,8 @@ def _test_oracle_findings(
     typecheck: bool = False,
     test_file_patterns: set[str] | None = None,
     inherited_pytest_methods: set[int] | None = None,
+    flask_apps: set[str] | None = None,
+    callback_invokers: dict | None = None,
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     parents = _oracle_ancestor_map(nodes[0].body)
@@ -4022,6 +4391,10 @@ def _test_oracle_findings(
             and node.name.startswith("test_")
             else aliases
         )
+        if _proven_dispatch_assertion(
+            node, scoped_aliases, helpers, flask_apps or set(), callback_invokers or {}
+        ):
+            continue
         hollow = _hollow_test_finding(
             relative,
             node,
@@ -4395,6 +4768,8 @@ def _security_scan_tree(
             context.get("typecheck", False),
             test_file_patterns,
             _pytest_inherited_method_ids(tree, context.get("pytest_inherited", set())),
+            context.get("flask_apps", set()),
+            context.get("callback_invokers", {}),
         )
     )
     roundtrip_aliases = _unmodified_serialization_aliases(nodes, aliases)

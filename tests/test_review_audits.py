@@ -3858,3 +3858,179 @@ def test_runtime_oracle_rechecks_source_after_verification(tmp_path, monkeypatch
     monkeypatch.setattr(attestation, "verify_signed_test_oracles", drift)
     with pytest.raises(ReviewAuditError, match="Runtime oracle evidence rejected"):
         security_scan(tmp_path, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "testing,path,mutation,expected",
+    [
+        (True, "/checked", "", {}),
+        (False, "/checked", "", {"QUALITY_HOLLOW_TEST": 1}),
+        (True, "/other", "", {"QUALITY_HOLLOW_TEST": 1}),
+        (True, "/checked", "app.testing = False\n    ", {"QUALITY_HOLLOW_TEST": 1}),
+        (True, "/checked", "client = fake_client\n    ", {"QUALITY_HOLLOW_TEST": 1}),
+        (
+            True,
+            "/checked",
+            "app.config.update(TESTING=False)\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+    ],
+)
+def test_registered_flask_callback_requires_dispatch_and_propagation(
+    tmp_path, testing, path, mutation, expected
+):
+    (tmp_path / "conftest.py").write_text(
+        "import pytest\nfrom flask import Flask\n@pytest.fixture\ndef app():\n    app = Flask('test')\n    app.config.update(TESTING="
+        + str(testing)
+        + ")\n    return app\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_case.py").write_text(
+        "def test_behavior(app):\n    @app.route('/checked')\n    def check():\n        assert compute() == 42\n        return ''\n    client = app.test_client()\n    "
+        + mutation
+        + "client.get('"
+        + path
+        + "')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == expected
+
+
+@pytest.mark.parametrize(
+    "operation,expected",
+    [
+        ("await send(scope)", {}),
+        ("send(scope)", {"QUALITY_HOLLOW_TEST": 1}),
+        ("if False:\n            await send(scope)", {"QUALITY_HOLLOW_TEST": 1}),
+        (
+            "try:\n            await send(scope)\n        except AssertionError:\n            pass",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        ("send = noop\n        await send(scope)", {"QUALITY_HOLLOW_TEST": 1}),
+    ],
+)
+def test_source_resolved_async_callback_requires_escaping_await(
+    tmp_path, operation, expected
+):
+    (tmp_path / "engine.py").write_text(
+        "class Application:\n    async def __call__(self, scope, receive, send):\n        await self.deliver(scope, send)\n    async def deliver(self, scope, send):\n        "
+        + operation
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_case.py").write_text(
+        "from engine import Application\nasync def test_behavior():\n    async def check(message):\n        assert message == expected\n    app = Application()\n    await app({}, None, check)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == expected
+
+
+@pytest.mark.parametrize(
+    "setup,dispatch,expected",
+    [
+        ("run = partial(self.deliver, send)", "await run()", {}),
+        ("run = partial(self.deliver, send)", "run()", {"QUALITY_HOLLOW_TEST": 1}),
+        (
+            "run = partial(self.deliver, send)\n        run: object = noop",
+            "await run()",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "run = partial(self.deliver, send)\n        send = noop",
+            "await self.deliver(send)",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "",
+            "await run()\n        run = partial(self.deliver, send)",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "run = partial(self.deliver, send)",
+            "try:\n            await run()\n        except AssertionError:\n            pass",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+    ],
+)
+def test_source_partial_callback_rejects_rebinding_and_swallowing(
+    tmp_path, setup, dispatch, expected
+):
+    (tmp_path / "engine.py").write_text(
+        "from functools import partial\nclass Application:\n    async def __call__(self, scope, receive, send):\n        "
+        + setup
+        + "\n        "
+        + dispatch
+        + "\n    async def deliver(self, send):\n        await send({})\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_case.py").write_text(
+        "from engine import Application\nasync def test_behavior():\n    async def check(message):\n        assert message == expected\n    app = Application()\n    await app({}, None, check)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == expected
+
+
+@pytest.mark.parametrize(
+    "wrapper,expected",
+    [
+        ("async def wrapped(message):\n            await send(message)", {}),
+        (
+            "async def wrapped(send):\n            await send({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "async def wrapped(message):\n            send = noop\n            await send(message)",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "async def wrapped(message):\n            try:\n                await send(message)\n            except AssertionError:\n                pass",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+    ],
+)
+def test_source_callback_wrapper_requires_original_escaping_callback(
+    tmp_path, wrapper, expected
+):
+    (tmp_path / "engine.py").write_text(
+        "class Application:\n    async def __call__(self, scope, receive, send):\n        send = self.wrap(send)\n        await send({})\n    def wrap(self, send):\n        "
+        + wrapper
+        + "\n        return wrapped\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_case.py").write_text(
+        "from engine import Application\nasync def test_behavior():\n    async def check(message):\n        assert message == expected\n    app = Application()\n    await app({}, None, check)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == expected
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_source_callback_rejects_aliased_assertion_handler(tmp_path, wrapped):
+    direct = "class Application:\n    async def __call__(self, scope, receive, send):\n        try:\n            await send(scope)\n        except E:\n            pass\n"
+    wrapper = "class Application:\n    async def __call__(self, scope, receive, send):\n        send = self.wrap(send)\n        await send(scope)\n    def wrap(self, send):\n        async def wrapped(message):\n            try:\n                await send(message)\n            except E:\n                pass\n        return wrapped\n"
+    (tmp_path / "engine.py").write_text(
+        "from builtins import AssertionError as E\n" + (wrapper if wrapped else direct),
+        encoding="utf-8",
+    )
+    (tmp_path / "test_case.py").write_text(
+        "from engine import Application\nasync def test_behavior():\n    async def check(message):\n        assert message == expected\n    app = Application()\n    await app({}, None, check)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "mutation", ["self.deliver = noop", "setattr(self, 'deliver', noop)"]
+)
+def test_source_callback_rejects_constructor_method_override(tmp_path, mutation):
+    (tmp_path / "engine.py").write_text(
+        "class Application:\n    def __init__(self):\n        "
+        + mutation
+        + "\n    async def __call__(self, scope, receive, send):\n        await self.deliver(send)\n    async def deliver(self, send):\n        await send({})\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_case.py").write_text(
+        "from engine import Application\nasync def test_behavior():\n    async def check(message):\n        assert message == expected\n    app = Application()\n    await app({}, None, check)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
