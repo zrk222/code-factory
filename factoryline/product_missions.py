@@ -10,6 +10,8 @@ import json
 import math
 import os
 import re
+import stat
+import subprocess
 import tempfile
 
 from .loop_passport import (
@@ -32,6 +34,7 @@ OUTCOME_SCHEMA = "factory.outcome.v1"
 MISSION_COMPLETION_SCHEMA = "factory.mission.completion.v1"
 MISSION_VALIDATION_INPUT_SCHEMA = "factory.mission.validation-input.v1"
 MISSION_DECISION_SCHEMA = "factory.mission.decision.v1"
+CANDIDATE_BINDING_SCHEMA = "factory.mission.candidate-binding.v1"
 TASK_PACKET_SCHEMA = "factory.small_agent_task_packet.v1"
 MAX_PRD_BYTES = 65536
 MAX_REQUIREMENTS = 500
@@ -1980,6 +1983,257 @@ def decide_mission(
         / "execution_decision.json"
     )
     _atomic_json(path, receipt, force=force)
+    return {**receipt, "path": str(path)}
+
+
+def _candidate_reject(message: str) -> None:
+    raise ProductMissionError("MISSION_CANDIDATE_INVALID", message)
+
+
+def _candidate_relative(value: Any, *, workspace: bool = False) -> str:
+    if not isinstance(value, str) or not value or len(value) > 512:
+        _candidate_reject("candidate paths must be explicit relative file names")
+    parts = value.split("/")
+    reserved = {"", ".", "..", ".git", ".factory"}
+    checked_parts = (
+        parts[2:] if workspace and parts[:2] == [".factory", "worktrees"] else parts
+    )
+    if any(
+        part.casefold() in reserved or part != part.rstrip(" .")
+        for part in checked_parts
+    ):
+        _candidate_reject("candidate path contains a reserved or escaping segment")
+    if any(char in value for char in "\\:*?[]\x00\r\n"):
+        _candidate_reject(
+            "candidate paths cannot contain drives, globs or control characters"
+        )
+    return value
+
+
+def _candidate_inside(root: Path, value: str, *, workspace: bool = False) -> Path:
+    relative = _candidate_relative(value, workspace=workspace)
+    path = root / relative
+    for part in [path, *path.parents]:
+        if part == root:
+            break
+        if part.is_symlink() or (
+            part.exists() and getattr(part.lstat(), "st_file_attributes", 0) & 0x400
+        ):
+            _candidate_reject("candidate paths cannot traverse links or reparse points")
+        if part != path and part.exists() and not part.is_dir():
+            _candidate_reject("candidate path ancestors must be directories")
+    if not path.resolve().is_relative_to(root):
+        _candidate_reject("candidate path escapes its declared root")
+    return path
+
+
+def _candidate_git(workspace: Path, args: list[str]) -> str:
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "--no-optional-locks",
+                "-c",
+                "core.fsmonitor=false",
+                "-C",
+                str(workspace),
+                *args,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ProductMissionError(
+            "MISSION_CANDIDATE_INVALID", "candidate Git facts unavailable"
+        ) from exc
+    return result.stdout.strip()
+
+
+def _candidate_revision(workspace: Path, base: Any) -> None:
+    if not isinstance(base, str) or not re.fullmatch(r"[0-9a-f]{40}", base):
+        _candidate_reject("base_commit must be an exact Git commit SHA")
+    if (
+        Path(_candidate_git(workspace, ["rev-parse", "--show-toplevel"])).resolve()
+        != workspace
+    ):
+        _candidate_reject("candidate must be its own Git workspace")
+    if _candidate_git(workspace, ["rev-parse", "HEAD"]) != base:
+        _candidate_reject("candidate HEAD differs from the approved base_commit")
+    if _candidate_git(
+        workspace, ["status", "--porcelain=v1", "--untracked-files=normal"]
+    ):
+        _candidate_reject("candidate must be clean before binding")
+
+
+def _candidate_strings(value: Any, label: str, *, unique: bool = True) -> list[str]:
+    if not isinstance(value, list) or not 1 <= len(value) <= 100:
+        _candidate_reject(f"{label} requires one to 100 explicit entries")
+    if any(
+        not isinstance(item, str)
+        or not item.strip()
+        or len(item) > 2000
+        or "\x00" in item
+        for item in value
+    ):
+        _candidate_reject(f"{label} entries must be nonempty bounded strings")
+    if unique and len(set(value)) != len(value):
+        _candidate_reject(f"{label} entries must be unique")
+    return value
+
+
+def _candidate_commands(value: Any) -> None:
+    if not isinstance(value, list) or not 1 <= len(value) <= 20:
+        _candidate_reject("commands requires one to 20 argument vectors")
+    identifiers = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"id", "argv"}:
+            _candidate_reject("commands must contain only id and argv")
+        identifier = item["id"]
+        if not isinstance(identifier, str) or not re.fullmatch(
+            r"[A-Za-z0-9_-]{1,64}", identifier
+        ):
+            _candidate_reject("command id must be a bounded identifier")
+        _candidate_strings(item["argv"], "command argv", unique=False)
+        identifiers.append(identifier)
+    if len(set(identifiers)) != len(identifiers):
+        _candidate_reject("command identifiers must be unique")
+
+
+def _candidate_lanes(value: Any) -> None:
+    lanes = {"static", "secrets", "configuration", "dependencies", "runtime", "fuzz"}
+    if not isinstance(value, dict) or set(value) != lanes:
+        _candidate_reject("declare applicability for all six audit lanes")
+    for item in value.values():
+        if not isinstance(item, dict) or set(item) != {"applicable", "reason"}:
+            _candidate_reject("audit lanes require applicable and reason")
+        if type(item["applicable"]) is not bool:
+            _candidate_reject("audit lane applicability must be Boolean")
+        _candidate_strings([item["reason"]], "audit lane reason")
+
+
+def _candidate_declaration(
+    root: Path, declaration: dict[str, Any]
+) -> tuple[Path, list[dict[str, Any]]]:
+    keys = {
+        "schema",
+        "workspace",
+        "base_commit",
+        "paths",
+        "interfaces",
+        "profiles",
+        "commands",
+        "audit_lanes",
+    }
+    if not isinstance(declaration, dict) or set(declaration) != keys:
+        _candidate_reject("candidate declaration fields are invalid")
+    if declaration["schema"] != "factory.mission.candidate-declaration.v1":
+        _candidate_reject("candidate declaration schema is unsupported")
+    workspace = _candidate_inside(
+        root, declaration["workspace"], workspace=True
+    ).resolve()
+    _candidate_revision(workspace, declaration["base_commit"])
+    paths = _candidate_strings(declaration["paths"], "permitted paths")
+    files = [_candidate_file(workspace, value) for value in paths]
+    _candidate_strings(declaration["interfaces"], "interfaces")
+    _candidate_strings(declaration["profiles"], "execution profiles")
+    _candidate_commands(declaration["commands"])
+    _candidate_lanes(declaration["audit_lanes"])
+    _candidate_revision(workspace, declaration["base_commit"])
+    return workspace, files
+
+
+def _candidate_file(workspace: Path, value: str) -> dict[str, Any]:
+    path = _candidate_inside(workspace, value)
+    if not path.exists():
+        return {"path": value, "sha256": None, "state": "planned_new"}
+    info = path.stat()
+    if not stat.S_ISREG(info.st_mode) or info.st_size > 16 * 1024 * 1024:
+        _candidate_reject("candidate scope must contain regular files at most 16 MiB")
+    return {"path": value, "sha256": _sha_path(path), "state": "existing"}
+
+
+def _candidate_approval(
+    mission_path: Path, decision_path: Path, owner: str
+) -> tuple[dict, dict]:
+    if not verify_mission(mission_path)["valid"]:
+        _candidate_reject("mission is no longer verified")
+    mission = _load_mission(mission_path)
+    decision = _load_json(decision_path, MISSION_DECISION_SCHEMA)
+    core = {
+        key: value
+        for key, value in decision.items()
+        if key not in {"decision_sha256", "generated_at"}
+    }
+    if _sha_bytes(_canonical(core)) != decision.get("decision_sha256"):
+        _candidate_reject("execution decision hash differs")
+    if decision.get("owner") != owner or mission["owner"] != owner:
+        _candidate_reject("candidate binding requires the mission owner")
+    expected = {
+        "path": str(mission_path),
+        "file_sha256": _sha_path(mission_path),
+        "mission_sha256": mission["mission_sha256"],
+    }
+    if (
+        decision.get("mission") != expected
+        or decision.get("mission_id") != mission["id"]
+    ):
+        _candidate_reject("execution decision does not bind the current mission")
+    if (
+        decision.get("decision") != "approved_execution"
+        or decision.get("execution_authorized") is not True
+    ):
+        _candidate_reject("candidate binding requires approved execution")
+    return mission, decision
+
+
+def bind_mission_candidate(
+    mission_path: Path,
+    decision_path: Path,
+    root: Path,
+    *,
+    owner: str,
+    declaration: dict[str, Any],
+) -> dict[str, Any]:
+    """Bind approved scope to a clean Git candidate; never launch commands."""
+    root = Path(root).resolve()
+    mission_path = Path(mission_path).resolve()
+    decision_path = Path(decision_path).resolve()
+    if not mission_path.is_relative_to(root) or not decision_path.is_relative_to(root):
+        _candidate_reject(
+            "mission and decision must be contained in the owner workspace"
+        )
+    mission, decision = _candidate_approval(mission_path, decision_path, owner)
+    workspace, files = _candidate_declaration(root, declaration)
+    core = {
+        "schema": CANDIDATE_BINDING_SCHEMA,
+        "state": "bound_not_executed",
+        "owner": owner,
+        "mission": decision["mission"],
+        "decision": {
+            "path": str(decision_path),
+            "sha256": decision["decision_sha256"],
+            "file_sha256": _sha_path(decision_path),
+        },
+        "workspace": str(workspace),
+        "declaration": declaration,
+        "files": files,
+        "candidate_sha256": _sha_bytes(
+            _canonical({"base_commit": declaration["base_commit"], "files": files})
+        ),
+        "budgets": mission["budgets"],
+        "execution_authorized": False,
+        "dispatched": False,
+        "limits": [
+            "Snapshot binding only; revalidate before execution. No process isolation or executor is supplied.",
+            "Lane applicability is an owner declaration, not executed audit evidence.",
+        ],
+    }
+    digest = _sha_bytes(_canonical(core))
+    path = mission_path.parent / f"candidate-binding-{digest[:16]}.json"
+    receipt = {**core, "binding_sha256": digest}
+    _atomic_json(path, receipt)
     return {**receipt, "path": str(path)}
 
 

@@ -1621,3 +1621,37 @@ def test_guided_resume_reads_verified_snapshot_without_regrilling(
     }
     assert resumed == saved
     assert after == before
+
+
+def test_guided_product_advanced_controls_are_optional_and_collapsed():
+    from html.parser import HTMLParser
+    from factoryline.studio import _studio_html
+
+    class Controls(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.advanced = False
+            self.collapsed = False
+            self.inside = []
+            self.outside = []
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if tag == "details" and attrs.get("id") == "mission-advanced":
+                self.advanced = True
+                self.collapsed = "open" not in attrs
+            if tag in {"input", "select", "textarea"}:
+                (self.inside if self.advanced else self.outside).append(attrs.get("id"))
+
+        def handle_endtag(self, tag):
+            if tag == "details":
+                self.advanced = False
+
+    html = _studio_html("simple-ux-contract")
+    controls = Controls()
+    controls.feed(html)
+    assert controls.collapsed
+    assert controls.inside == ["executor", "owner", "resolution-mode"]
+    assert {"name", "prompt"}.issubset(controls.outside)
+    assert "Advanced options" in html
+    assert "The defaults are ready to use." in html

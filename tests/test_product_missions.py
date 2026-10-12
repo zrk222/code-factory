@@ -3,11 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 import hashlib
 import json
+import subprocess
 
 import pytest
 
 from factoryline.product_missions import (
     ProductMissionError,
+    bind_mission_candidate,
     compile_product_prd,
     close_mission,
     create_mission,
@@ -75,6 +77,7 @@ Scenario: Review the most important signal
 
 
 def _pipeline(tmp_path: Path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     prd = tmp_path / "PRD.md"
     prd.write_text(PRD, encoding="utf-8")
     graph = compile_product_prd(prd, tmp_path)
@@ -83,6 +86,70 @@ def _pipeline(tmp_path: Path):
         Path(slices["path"]), slices["slices"][-1]["id"], tmp_path, "release-owner"
     )
     return graph, slices, mission
+
+
+def _candidate_workspace(root: Path, workspace: str = "candidate") -> tuple[Path, dict]:
+    candidate = root / workspace
+    candidate.mkdir(parents=True)
+    (candidate / "README.md").write_text("candidate base\n", encoding="utf-8")
+
+    def git(*args: str) -> str:
+        result = subprocess.run(
+            ["git", "-C", str(candidate), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
+
+    git("init", "--quiet")
+    git("add", "README.md")
+    git(
+        "-c",
+        "user.name=Test Owner",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "--quiet",
+        "-m",
+        "candidate base",
+    )
+    lanes = {
+        lane: {"applicable": True, "reason": f"{lane} applies to this candidate"}
+        for lane in (
+            "static",
+            "secrets",
+            "configuration",
+            "dependencies",
+            "runtime",
+            "fuzz",
+        )
+    }
+    declaration = {
+        "schema": "factory.mission.candidate-declaration.v1",
+        "workspace": workspace,
+        "base_commit": git("rev-parse", "HEAD"),
+        # The target is intentionally absent at binding time; it is an exact path.
+        "paths": ["src/signal-review.py"],
+        "interfaces": ["GET /signals returns prioritized signals"],
+        "profiles": ["python-3.11-windows"],
+        "commands": [{"id": "unit", "argv": ["python", "-m", "pytest", "-q"]}],
+        "audit_lanes": lanes,
+    }
+    return candidate, declaration
+
+
+def _approved_binding_inputs(tmp_path: Path):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    decision = decide_mission(
+        Path(mission["path"]),
+        tmp_path,
+        owner="release-owner",
+        decision="approved_execution",
+        rationale="Approve this bounded candidate slice.",
+    )
+    candidate, declaration = _candidate_workspace(tmp_path)
+    return mission, decision, candidate, declaration
 
 
 def test_product_graph_is_stable_bound_and_ux_complete(tmp_path: Path):
@@ -246,6 +313,286 @@ def test_mission_decision_is_owner_bound_and_cannot_authorize_release(tmp_path: 
         "connector_grant": False,
         "credential_access": False,
     }
+
+
+def test_candidate_binding_is_hash_bound_and_does_not_dispatch(tmp_path: Path):
+    mission, decision, candidate, declaration = _approved_binding_inputs(tmp_path)
+    mission_before = Path(mission["path"]).read_bytes()
+    decision_before = Path(decision["path"]).read_bytes()
+
+    binding = bind_mission_candidate(
+        Path(mission["path"]),
+        Path(decision["path"]),
+        tmp_path,
+        owner="release-owner",
+        declaration=declaration,
+    )
+
+    assert binding["schema"] == "factory.mission.candidate-binding.v1"
+    assert binding["state"] == "bound_not_executed"
+    assert binding["execution_authorized"] is False
+    assert binding["dispatched"] is False
+    assert len(binding["candidate_sha256"]) == 64
+    assert len(binding["binding_sha256"]) == 64
+    assert Path(binding["path"]).is_file()
+    assert candidate.joinpath("src", "signal-review.py").exists() is False
+    assert Path(mission["path"]).read_bytes() == mission_before
+    assert Path(decision["path"]).read_bytes() == decision_before
+
+
+def test_candidate_binding_rejects_missing_approval_and_owner_mismatch(tmp_path: Path):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    decision = decide_mission(
+        Path(mission["path"]),
+        tmp_path,
+        owner="release-owner",
+        decision="deferred",
+        rationale="Wait for candidate inspection.",
+    )
+    _candidate, declaration = _candidate_workspace(tmp_path)
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            Path(decision["path"]),
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+
+    _mission, approved, _candidate, approved_declaration = _approved_binding_inputs(
+        tmp_path / "owner-mismatch"
+    )
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(_mission["path"]),
+            Path(approved["path"]),
+            tmp_path / "owner-mismatch",
+            owner="another-owner",
+            declaration=approved_declaration,
+        )
+
+
+@pytest.mark.parametrize(
+    "path_value",
+    [
+        "../outside.py",
+        "src/*.py",
+        ".git/config",
+        ".factory/state.json",
+        ".GIT/config",
+        ".Factory/state.json",
+        ".git./config",
+        ".factory./state.json",
+        str(Path.cwd() / "outside.py"),
+    ],
+)
+def test_candidate_binding_rejects_unsafe_scope_paths(tmp_path: Path, path_value: str):
+    mission, decision, _candidate, declaration = _approved_binding_inputs(tmp_path)
+    declaration["paths"] = [path_value]
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            Path(decision["path"]),
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+
+
+@pytest.mark.parametrize(
+    "path_value",
+    [".GIT/config", ".Factory/state.json", ".git./config", ".factory./state.json"],
+)
+def test_candidate_binding_rejects_casefolded_and_trailing_dot_reserved_paths(
+    tmp_path: Path, path_value: str
+):
+    mission, decision, _candidate, declaration = _approved_binding_inputs(tmp_path)
+    declaration["paths"] = [path_value]
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            Path(decision["path"]),
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+
+
+@pytest.mark.parametrize("dirty_kind", ["tracked", "untracked"])
+def test_candidate_binding_rejects_dirty_candidate(tmp_path: Path, dirty_kind: str):
+    mission, decision, candidate, declaration = _approved_binding_inputs(tmp_path)
+    if dirty_kind == "tracked":
+        (candidate / "README.md").write_text("changed after base\n", encoding="utf-8")
+    else:
+        (candidate / "untracked.txt").write_text("untracked\n", encoding="utf-8")
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            Path(decision["path"]),
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+
+
+def test_candidate_binding_rejects_base_commit_and_mission_drift(tmp_path: Path):
+    mission, decision, _candidate, declaration = _approved_binding_inputs(tmp_path)
+    declaration["base_commit"] = "0" * 40
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            Path(decision["path"]),
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+
+
+@pytest.mark.parametrize("invalid_part", ["audit_lanes", "commands", "workspace"])
+def test_candidate_binding_rejects_incomplete_declaration(
+    tmp_path: Path, invalid_part: str
+):
+    mission, decision, candidate, declaration = _approved_binding_inputs(tmp_path)
+    if invalid_part == "audit_lanes":
+        declaration["audit_lanes"].pop("fuzz")
+    elif invalid_part == "commands":
+        declaration["commands"] = []
+    else:
+        nested = candidate / "nested"
+        nested.mkdir()
+        declaration["workspace"] = "candidate/nested"
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            Path(decision["path"]),
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+
+
+def test_candidate_binding_rejects_decision_hash_drift_and_symlink_scope(
+    tmp_path: Path,
+):
+    mission, decision, candidate, declaration = _approved_binding_inputs(tmp_path)
+    decision_path = Path(decision["path"])
+    changed_decision = json.loads(decision_path.read_text(encoding="utf-8"))
+    changed_decision["rationale"] = "tampered after approval"
+    decision_path.write_text(json.dumps(changed_decision), encoding="utf-8")
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            decision_path,
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+
+    # Recreate an approved, clean binding context for the filesystem-link case.
+    linked_root = tmp_path / "symlink-case"
+    linked_mission, linked_decision, linked_candidate, linked_declaration = (
+        _approved_binding_inputs(linked_root)
+    )
+    source = tmp_path / "outside-target.py"
+    source.write_text("outside\n", encoding="utf-8")
+    source_dir = linked_candidate / "src"
+    source_dir.mkdir()
+    try:
+        (source_dir / "linked.py").symlink_to(source)
+    except OSError as exc:
+        pytest.skip(f"symlink creation unavailable: {exc}")
+    linked_declaration["paths"] = ["src/linked.py"]
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(linked_mission["path"]),
+            Path(linked_decision["path"]),
+            linked_root,
+            owner="release-owner",
+            declaration=linked_declaration,
+        )
+
+
+def test_candidate_binding_accepts_worktree_under_factory_worktrees(tmp_path: Path):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    decision = decide_mission(
+        Path(mission["path"]),
+        tmp_path,
+        owner="release-owner",
+        decision="approved_execution",
+        rationale="Approve a candidate below the designated worktree directory.",
+    )
+    candidate, declaration = _candidate_workspace(
+        tmp_path, ".factory/worktrees/candidate"
+    )
+    declaration["commands"][0]["argv"] = ["python", "-m", "pytest", "-q", "-q"]
+
+    binding = bind_mission_candidate(
+        Path(mission["path"]),
+        Path(decision["path"]),
+        tmp_path,
+        owner="release-owner",
+        declaration=declaration,
+    )
+
+    assert binding["workspace"] == str(candidate.resolve())
+    assert binding["state"] == "bound_not_executed"
+    assert binding["dispatched"] is False
+
+
+def test_candidate_binding_rejects_other_factory_workspace(tmp_path: Path):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    decision = decide_mission(
+        Path(mission["path"]),
+        tmp_path,
+        owner="release-owner",
+        decision="approved_execution",
+        rationale="Approve the mission before checking workspace scope.",
+    )
+    _candidate, declaration = _candidate_workspace(
+        tmp_path, ".factory/private-candidate"
+    )
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            Path(decision["path"]),
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+
+
+def test_candidate_binding_rejects_scope_beneath_file_ancestor(tmp_path: Path):
+    mission, decision, _candidate, declaration = _approved_binding_inputs(tmp_path)
+    declaration["paths"] = ["README.md/child.py"]
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            Path(decision["path"]),
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+
+    declaration["base_commit"] = _candidate_workspace_head(tmp_path / "candidate")
+    Path(mission["path"]).write_text("{}\n", encoding="utf-8")
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            Path(decision["path"]),
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+
+
+def _candidate_workspace_head(candidate: Path) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(candidate), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
 
 
 def test_product_graph_blocks_slicing_when_acceptance_is_missing(tmp_path: Path):
