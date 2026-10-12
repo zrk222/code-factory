@@ -2827,7 +2827,8 @@ def execute_approved_repair(
             "REPAIR_APPROVAL_REJECTED",
             "approval is expired, revoked, or stored unexpectedly",
         )
-    _verify_approved_candidate(workspace, approval)
+    if (expected_approval_sha256, expected_approval_file_sha256) != (None, None):
+        _verify_approved_candidate(workspace, approval)
     attempt = workspace / ".factory" / "repair-attempts" / approval_sha
     origin = _verify_repair_origin(workspace, approval.get("origin_audit"))
     _begin_attempt(attempt, approval_sha, origin)

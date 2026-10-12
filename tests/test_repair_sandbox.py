@@ -1097,6 +1097,26 @@ def test_repair_approval_revocation_and_stale_candidate_fail_closed(
         execute_approved_repair(other, other / approval2["path"])
 
 
+def test_host_bound_stale_repair_rejects_before_attempt_creation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    approval = _approval(tmp_path, monkeypatch)
+    approval_path = tmp_path / approval["path"]
+    raw_sha = hashlib.sha256(approval_path.read_bytes()).hexdigest()
+    (tmp_path / ".factory" / "candidate.diff").write_text(
+        "tampered\n", encoding="utf-8"
+    )
+    with pytest.raises(RepairSandboxError) as error:
+        execute_approved_repair(
+            tmp_path,
+            approval_path,
+            expected_approval_sha256=approval["approval_sha256"],
+            expected_approval_file_sha256=raw_sha,
+        )
+    assert error.value.code == "REPAIR_CANDIDATE_STALE"
+    assert not (tmp_path / ".factory" / "repair-attempts").exists()
+
+
 def test_repair_attempt_journal_detects_reorder_and_missing_events(
     tmp_path: Path,
 ) -> None:
