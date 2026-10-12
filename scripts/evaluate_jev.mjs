@@ -267,8 +267,8 @@ function admissionFor(item, options, ledger) {
   if (!selectByFraction(options.budgetPolicy, item)) return { ...empty, disposition: 'not_selected' };
   const quote = options.budgetPolicy.cases.find(candidate => candidate.id === item.id);
   if (ledger.admitted >= options.budgetPolicy.max_cases
-    || ledger.actualCost + quote.upper_bound_cost_usd > options.budgetPolicy.max_cost_usd
-    || ledger.usedLatency + quote.upper_bound_latency_ms > options.budgetPolicy.max_latency_ms) {
+    || Math.max(ledger.actualCost, ledger.reservedCost) + quote.upper_bound_cost_usd > options.budgetPolicy.max_cost_usd
+    || Math.max(ledger.usedLatency, ledger.reservedLatency) + quote.upper_bound_latency_ms > options.budgetPolicy.max_latency_ms) {
     return { ...empty, disposition: 'denied' };
   }
   return { disposition: 'admitted', reserved_cost_usd: quote.upper_bound_cost_usd,
@@ -290,9 +290,11 @@ async function executeAdmittedCase(item, rubric, options, ledger, admission) {
   if (admission.disposition !== 'admitted') return { status: admission.disposition,
     prediction: null, probability: null, evidence_probability: null,
     reported_cost_usd: null, provider_verified: false };
-  const remainingLatency = options.budgetPolicy.max_latency_ms - ledger.usedLatency;
+  const remainingLatency = options.budgetPolicy.max_latency_ms - Math.max(ledger.usedLatency, ledger.reservedLatency);
+  ledger.reservedCost += admission.reserved_cost_usd;
+  ledger.reservedLatency += admission.reserved_latency_ms;
   const outcome = await evaluateOne(item, rubric, options,
-    Math.max(1, Math.min(options.timeoutMs, remainingLatency)));
+    Math.max(1, Math.min(options.timeoutMs, admission.reserved_latency_ms, remainingLatency)));
   reconcileDispatch(outcome, options, ledger);
   return outcome;
 }
@@ -309,7 +311,7 @@ export async function evaluateCases(cases, rubric, supplied = {}) {
   const options = dispatchOptions(supplied);
   validate(cases, rubric, options);
   if (EVIDENCE_PROFILES.has(options.profile)) validateEvidenceReviewCases(cases, options.profile);
-  const results = [], ledger = { actualCost: 0, usedLatency: 0, admitted: 0, halted: false };
+  const results = [], ledger = { actualCost: 0, usedLatency: 0, admitted: 0, halted: false, reservedCost: 0, reservedLatency: 0 };
   for (const item of cases) {
     const admission = admissionFor(item, options, ledger);
     const outcome = await executeAdmittedCase(item, rubric, options, ledger, admission);

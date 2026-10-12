@@ -1054,3 +1054,23 @@ test('dispatch budget rejects rubric drift before any transport', async () => {
   }), /invalid_budget_policy/);
   assert.equal(calls, 0);
 });
+
+
+test('dispatch budget retains cumulative upper-bound reservations after cheap responses', async () => {
+  const policy = fixtureBudget(cases);
+  policy.max_cost_usd = 0.0015;
+  let calls = 0;
+  const report = await evaluateCasesRaw(cases, rubric, { live: true, apiKey: 'mock',
+    budgetPolicy: policy, fetchImpl: async () => { calls++; return answer(0.99); } });
+  assert.equal(calls, 1);
+  assert.equal(report.results[0].status, 'decided');
+  assert.equal(report.results[1].status, 'denied');
+  assert.equal(report.metrics.total, 2);
+  policy.max_cost_usd = 1;
+  policy.max_latency_ms = 15_000;
+  calls = 0;
+  const latency = await evaluateCasesRaw(cases, rubric, { live: true, apiKey: 'mock',
+    budgetPolicy: policy, fetchImpl: async () => { calls++; return answer(0.99); } });
+  assert.equal(calls, 1);
+  assert.equal(latency.results[1].status, 'denied');
+});
