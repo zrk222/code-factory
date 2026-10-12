@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import hashlib
 from importlib import resources
 import json
+import ntpath
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -466,7 +467,7 @@ def _require_recovery_cleanup(workspace, attempt, approval):
     if _recovery_path_present(execution):
         raise PRAssuranceError("E_REPAIR_CLEANUP", "attempt worktree remains")
     worktrees = _git(workspace, ["worktree", "list", "--porcelain"])
-    path_text = str(execution.resolve()).replace("\\", "/").casefold()
+    path_text = _normalize_worktree_path(str(execution))
     output = bytes(worktrees.get("stdout", b"")).decode("utf-8", errors="replace")
     registered_paths = _registered_worktree_paths(output)
     if not worktrees.get("ok") or path_text in registered_paths:
@@ -480,8 +481,15 @@ def _registered_worktree_paths(output):
     paths = set()
     for line in output.splitlines():
         if line.startswith("worktree "):
-            paths.add(str(Path(line[9:]).resolve()).replace("\\", "/").casefold())
+            paths.add(_normalize_worktree_path(line[9:]))
     return paths
+
+
+def _normalize_worktree_path(value):
+    text = value.replace("\\", "/")
+    if re.match(r"^[A-Za-z]:/", text) or text.startswith("//"):
+        return ntpath.normpath(text).replace("\\", "/").casefold()
+    return str(Path(text).resolve()).replace("\\", "/").casefold()
 
 
 def _recovery_path_present(path):

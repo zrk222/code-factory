@@ -490,12 +490,28 @@ def test_recovery_requires_terminal_attempt_and_confirmed_cleanup():
 
 
 def test_recovery_cleanup_normalizes_windows_worktree_paths():
-    from factoryline.hosted_api import _registered_worktree_paths
+    from factoryline.hosted_api import (
+        _normalize_worktree_path,
+        _registered_worktree_paths,
+    )
 
     paths = _registered_worktree_paths(
         "worktree C:\\repo\\.factory\\repair\\execution\n"
+        "worktree C:\\repo\\.factory\\repair\\temporary\\..\\execution\n"
     )
     assert "c:/repo/.factory/repair/execution" in paths
+    assert len(paths) == 1
+    assert _normalize_worktree_path("\\\\server\\share\\repair") == (
+        "//server/share/repair"
+    )
+
+
+def test_recovery_cleanup_resolves_native_worktree_paths():
+    from factoryline.hosted_api import _normalize_worktree_path
+
+    assert _normalize_worktree_path("/tmp/repo/repair/../execution") == (
+        _normalize_worktree_path("/tmp/repo/execution")
+    )
 
 
 def test_registered_repair_recovery_refuses_while_dispatch_lock_is_held(
