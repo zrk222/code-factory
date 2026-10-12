@@ -31,10 +31,12 @@ from .live_activity import activity_snapshot, request_stop
 from .meter import MeterLog, live_snapshot
 from .product_missions import (
     ProductMissionError,
+    _candidate_approval,
     compile_product_text,
     create_mission,
     decide_mission,
     plan_value_slices,
+    verify_product_graph,
 )
 from .prd_grill import grill_prd, verify_prd_grill
 from .run_metrics import public_metrics
@@ -962,7 +964,7 @@ def _guided_response(
     session_path: Path,
     digest: str,
 ) -> dict[str, Any]:
-    return {
+    response = {
         "schema": "factory.studio.guided-prd.v1",
         "project": core["project"],
         "status": _guided_grill_status(grill),
@@ -980,6 +982,74 @@ def _guided_response(
         "confirmation_required": True,
         "implementation_authorized": False,
     }
+    handoff = _guided_approved_handoff(root, core)
+    if handoff is not None:
+        response["agent_handoff"] = handoff
+    return response
+
+
+def _guided_approved_handoff(
+    root: Path, session: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Restore only a verified approval for the current guided PRD."""
+    mission_root = Path(root).resolve() / ".factory" / "missions"
+    for mission_path in sorted(mission_root.glob("*/mission.json")):
+        graph_path = _guided_mission_graph_path(root, mission_path)
+        if graph_path is None or not _guided_graph_matches_source(
+            graph_path, session["source_sha256"], session["project"]
+        ):
+            continue
+        handoff = _guided_mission_handoff(mission_path)
+        if handoff is not None:
+            return handoff
+    return None
+
+
+def _guided_mission_graph_path(root: Path, mission_path: Path) -> Path | None:
+    mission = _json_or_none(mission_path)
+    inputs = mission.get("inputs") if mission is not None else None
+    graph_value = inputs.get("graph_path") if isinstance(inputs, dict) else None
+    if not isinstance(graph_value, str):
+        return None
+    graph_path = Path(graph_value).resolve()
+    try:
+        graph_path.relative_to(Path(root).resolve())
+    except ValueError:
+        return None
+    return graph_path
+
+
+def _guided_graph_matches_source(
+    graph_path: Path, source_sha256: str, project: str
+) -> bool:
+    try:
+        verified = verify_product_graph(graph_path)
+    except (OSError, ProductMissionError, ValueError):
+        return False
+    graph = _json_or_none(graph_path)
+    source = graph.get("source") if graph is not None else None
+    return bool(
+        verified["valid"]
+        and isinstance(source, dict)
+        and source.get("sha256") == source_sha256
+        and graph.get("project") == project
+    )
+
+
+def _guided_mission_handoff(mission_path: Path) -> dict[str, Any] | None:
+    mission = _json_or_none(mission_path)
+    owner = mission.get("owner") if mission is not None else None
+    if not isinstance(owner, str) or not owner:
+        return None
+    decision_path = mission_path.parent / "execution_decision.json"
+    try:
+        _, decision = _candidate_approval(mission_path, decision_path, owner)
+        mission_bytes = _guided_read(mission_path, 1024 * 1024)
+        return _mission_agent_handoff(
+            mission_path, mission_bytes, {**decision, "path": str(decision_path)}
+        )
+    except (OSError, ProductMissionError, StudioRequestError, ValueError):
+        return None
 
 
 def _guided_source_text(source: Path, expected: str) -> str:
@@ -1772,7 +1842,7 @@ button:disabled {{ opacity:.55; cursor:wait; }} #result {{ min-height:48px; padd
 @media(max-width:900px) {{ .stats {{ grid-template-columns:1fr 1fr; }} .dash-grid {{ grid-template-columns:1fr; }} .memory-studio-flow,.memory-studio-actions {{ grid-template-columns:1fr 1fr; }} }}
 @media(max-width:560px) {{ .targets,.stats,.memory-studio-flow,.memory-studio-actions {{ grid-template-columns:1fr; }} h1 {{ font-size:31px; }} }}
 [hidden] {{ display:none !important; }}
-.panel,.field,fieldset {{ min-width:0; }} .data-row {{ overflow-wrap:anywhere; }}
+.panel,.field,fieldset,#result {{ min-width:0; }} .data-row,.result-row {{ overflow-wrap:anywhere; }}
 @media(max-width:560px) {{ .topbar {{ min-height:64px; height:auto; flex-wrap:wrap; gap:8px; padding:12px 5vw; }} .modes {{ display:flex; flex-wrap:wrap; max-width:100%; }} .data-row {{ flex-wrap:wrap; }} }}
 :focus-visible {{ outline:3px solid #166534; outline-offset:3px; }} .empty-data {{ max-width:75ch; }}
 </style></head><body>
@@ -1863,7 +1933,7 @@ function guidedAnswerOptions(question){{const choices={{
 }};if(question.id.startsWith('Q-UX-')){{const state=question.id.slice(5).toLowerCase();const states={{loading:['Show progress and keep the layout stable.','Show the current step and offer cancellation where safe.'],empty:['Explain how to add the first item.','Show a clearly labelled example and a button to create a real item.'],error:['Preserve the draft, explain the problem, and offer retry.','Keep the last safe result and provide a safe recovery action.'],success:['Confirm what completed and show the next useful action.','Show the saved result and how to review or undo it where possible.'],permission:['Explain the required role and how to request access.','Hide private data and provide a safe route back.'],offline:['Preserve read-only cached data and explain how to reconnect.','Preserve the draft locally and require reconnection before submission.'],recovery:['Resume the interrupted action without duplication.','Restore the last safe draft and require confirmation before retry.'],accessibility:['Expose control names, roles, keyboard focus order, and status announcements.','Support keyboard operation, visible focus, readable contrast, and associated form errors.']}};return (states[state]||['Explain the current state and the next safe action.']).map(answer=>`${{state}}: ${{answer}}`);}}return choices[question.id]||['This decision needs clarification from the product owner before implementation.'];}}
 function guidedAnswerFormat(question){{if(question.id==='Q-ACTORS')return ' Use Role: responsibility, for example Operator: reviews signals.';if(question.id.startsWith('Q-UX-'))return ` Begin with ${{question.id.slice(5).toLowerCase()}}: followed by the visible state and next safe action.`;return '';}}
 async function sendGuided(body){{if(guidedBusy)return null;guidedBusy=true;const generation=guidedGeneration,requestedMode=mode;button.disabled=true;const controls=[...result.querySelectorAll('button')];controls.forEach(control=>control.disabled=true);try{{const response=await fetch('/api/product-grill',{{method:'POST',headers:{{'Content-Type':'application/json','X-Factory-Studio-Token':token}},body:JSON.stringify(body)}});const payload=await response.json();if(generation!==guidedGeneration||mode!==requestedMode)return null;if(!response.ok){{renderFailure(payload);return null;}}return payload;}}catch(error){{if(generation===guidedGeneration&&mode===requestedMode)renderFailure({{code:'NETWORK_ERROR',message:String(error)}});return null;}}finally{{guidedBusy=false;button.disabled=false;controls.forEach(control=>control.disabled=false);}}}}
-function renderGuided(payload){{saveGuidedBookmark(payload);guidedSession=payload.session;guidedConfirmation=null;guidedDraft=payload;currentMission=null;result.className='';result.textContent='';addText('result-title',payload.status==='ready_for_confirmation'?'Review your PRD before confirming':'Clarify your product, one decision at a time');addText('result-row','Choose a starting point, then edit it to fit your app. Choices are examples, not verified facts. Your answers become the PRD; confirmation does not approve execution or release.');const preview=document.createElement('details');preview.open=payload.status==='ready_for_confirmation';const summary=document.createElement('summary');summary.textContent='Review the exact current PRD';const source=document.createElement('pre');source.style.whiteSpace='pre-wrap';source.style.overflowWrap='anywhere';source.textContent=payload.source_text;preview.append(summary,source);result.appendChild(preview);addText('result-row',`PRD SHA-256: ${{payload.source_sha256}}`);const answers=[];payload.questions.forEach((question,index)=>{{const field=document.createElement('div');field.className='field';const label=document.createElement('label');const input=document.createElement('textarea');input.id=`guided-answer-${{index}}`;input.maxLength=2000;label.htmlFor=input.id;label.textContent=question.title;const explanation=document.createElement('p');explanation.className='result-row';explanation.textContent=question.prompt;const hint=document.createElement('p');hint.className='result-row';hint.textContent=`Suggested starting point: ${{question.recommendation}}${{guidedAnswerFormat(question)}}`;input.setAttribute('aria-describedby',`guided-hint-${{index}}`);hint.id=`guided-hint-${{index}}`;const choiceLabel=document.createElement('label');const choice=document.createElement('select');choice.id=`guided-choice-${{index}}`;choiceLabel.htmlFor=choice.id;choiceLabel.textContent='Choose a starting point or write your own';const custom=document.createElement('option');custom.value='';custom.textContent='Custom answer / edit a choice';choice.appendChild(custom);guidedAnswerOptions(question).forEach((answer,optionIndex)=>{{const option=document.createElement('option');option.value=String(optionIndex);option.textContent=answer;choice.appendChild(option);}});choice.setAttribute('aria-describedby',hint.id);choice.onchange=()=>{{if(choice.value!=='')input.value=guidedAnswerOptions(question)[Number(choice.value)];input.setCustomValidity('');input.focus();}};input.addEventListener('input',()=>{{choice.value='';input.setCustomValidity('');}});field.append(label,explanation,hint,choiceLabel,choice,input);result.appendChild(field);answers.push({{question,input,field}});}});if(payload.deferred_questions.length)addText('result-row',`${{payload.deferred_questions.length}} dependent questions will follow after these decisions.`);if(answers.length){{const save=guidedButton('Save my answers',async()=>{{const invalid=answers.find(row=>!row.input.value.trim());if(invalid){{invalid.field.hidden=false;validateGuidedAnswer(invalid.input);return;}}const rows=answers.filter(row=>row.input.value.trim()).map(row=>({{question_id:row.question.id,answer:row.input.value}}));if(!rows.length){{answers[0].input.focus();answers[0].input.setCustomValidity('Write at least one answer.');answers[0].input.reportValidity();answers[0].input.oninput=()=>answers[0].input.setCustomValidity('');return;}}const next=await sendGuided({{action:'product-grill-answer',session_path:guidedSession.path,session_sha256:guidedSession.session_sha256,answers:rows}});if(next)renderGuided(next);}});guidedStepper(answers,save);}}else if(payload.status==='ready_for_confirmation')guidedButton('Confirm this PRD',confirmGuided);else if(payload.status==='deep_review_required')guidedButton('Continue with deeper questions',async()=>{{const next=await sendGuided({{action:'product-grill-start',prompt:payload.source_text,name:document.getElementById('name').value,mode:'deep'}});if(next)renderGuided(next);}});result.scrollIntoView({{block:'start'}});}}
+function renderGuided(payload){{saveGuidedBookmark(payload);guidedSession=payload.session;guidedConfirmation=null;guidedDraft=payload;currentMission=null;result.className='';result.textContent='';addText('result-title',payload.status==='ready_for_confirmation'?'Review your PRD before confirming':'Clarify your product, one decision at a time');addText('result-row','Choose a starting point, then edit it to fit your app. Choices are examples, not verified facts. Your answers become the PRD; confirmation does not approve execution or release.');const preview=document.createElement('details');preview.open=payload.status==='ready_for_confirmation';const summary=document.createElement('summary');summary.textContent='Review the exact current PRD';const source=document.createElement('pre');source.style.whiteSpace='pre-wrap';source.style.overflowWrap='anywhere';source.textContent=payload.source_text;preview.append(summary,source);result.appendChild(preview);addText('result-row',`PRD SHA-256: ${{payload.source_sha256}}`);const answers=[];payload.questions.forEach((question,index)=>{{const field=document.createElement('div');field.className='field';const label=document.createElement('label');const input=document.createElement('textarea');input.id=`guided-answer-${{index}}`;input.maxLength=2000;label.htmlFor=input.id;label.textContent=question.title;const explanation=document.createElement('p');explanation.className='result-row';explanation.textContent=question.prompt;const hint=document.createElement('p');hint.className='result-row';hint.textContent=`Suggested starting point: ${{question.recommendation}}${{guidedAnswerFormat(question)}}`;input.setAttribute('aria-describedby',`guided-hint-${{index}}`);hint.id=`guided-hint-${{index}}`;const choiceLabel=document.createElement('label');const choice=document.createElement('select');choice.id=`guided-choice-${{index}}`;choiceLabel.htmlFor=choice.id;choiceLabel.textContent='Choose a starting point or write your own';const custom=document.createElement('option');custom.value='';custom.textContent='Custom answer / edit a choice';choice.appendChild(custom);guidedAnswerOptions(question).forEach((answer,optionIndex)=>{{const option=document.createElement('option');option.value=String(optionIndex);option.textContent=answer;choice.appendChild(option);}});choice.setAttribute('aria-describedby',hint.id);choice.onchange=()=>{{if(choice.value!=='')input.value=guidedAnswerOptions(question)[Number(choice.value)];input.setCustomValidity('');input.focus();}};input.addEventListener('input',()=>{{choice.value='';input.setCustomValidity('');}});field.append(label,explanation,hint,choiceLabel,choice,input);result.appendChild(field);answers.push({{question,input,field}});}});if(payload.deferred_questions.length)addText('result-row',`${{payload.deferred_questions.length}} dependent questions will follow after these decisions.`);if(answers.length){{const save=guidedButton('Save my answers',async()=>{{const invalid=answers.find(row=>!row.input.value.trim());if(invalid){{invalid.field.hidden=false;validateGuidedAnswer(invalid.input);return;}}const rows=answers.filter(row=>row.input.value.trim()).map(row=>({{question_id:row.question.id,answer:row.input.value}}));if(!rows.length){{answers[0].input.focus();answers[0].input.setCustomValidity('Write at least one answer.');answers[0].input.reportValidity();answers[0].input.oninput=()=>answers[0].input.setCustomValidity('');return;}}const next=await sendGuided({{action:'product-grill-answer',session_path:guidedSession.path,session_sha256:guidedSession.session_sha256,answers:rows}});if(next)renderGuided(next);}});guidedStepper(answers,save);}}else if(payload.status==='ready_for_confirmation')guidedButton('Confirm this PRD',confirmGuided);else if(payload.status==='deep_review_required')guidedButton('Continue with deeper questions',async()=>{{const next=await sendGuided({{action:'product-grill-start',prompt:payload.source_text,name:document.getElementById('name').value,mode:'deep'}});if(next)renderGuided(next);}});renderAgentHandoff(payload.agent_handoff);result.scrollIntoView({{block:'start'}});}}
 async function confirmGuided(){{const payload=await sendGuided({{action:'product-grill-confirm',session_path:guidedSession.path,session_sha256:guidedSession.session_sha256,confirmed:true}});if(!payload)return;guidedConfirmation=payload.confirmation;result.textContent='';addText('result-title','PRD confirmed. Prepare the first mission.');addText('result-row',`Confirmed PRD: ${{payload.source_sha256}}`);addText('result-row','The next step prepares a bounded mission for separate execution approval.');guidedButton('Compile reviewed PRD',compileGuided);}}
 async function compileGuided(){{const payload=await sendGuided({{action:'product-guided-compile',confirmation_path:guidedConfirmation.path,confirmation_sha256:guidedConfirmation.sha256,owner:document.getElementById('owner').value,executor:document.getElementById('executor').value,resolution_mode:document.getElementById('resolution-mode').value}});if(payload)renderMission(payload);}}
 document.getElementById('resume-guided').onclick=resumeGuided;

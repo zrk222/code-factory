@@ -399,6 +399,16 @@ def test_studio_handoff_ui_is_explicit_readonly_and_never_dispatches():
     assert "guidedButton('Run'" not in page
 
 
+def test_guided_resume_renders_restored_agent_handoff():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("token")
+    render_guided = page.split("function renderGuided(payload)", 1)[1].split(
+        "async function confirmGuided", 1
+    )[0]
+    assert "renderAgentHandoff(payload.agent_handoff)" in render_guided
+
+
 def test_studio_mission_decision_uses_inline_required_rationale():
     from factoryline.studio import _studio_html
 
@@ -526,6 +536,210 @@ def test_studio_guided_prd_requires_bound_confirmation_before_mission_compile(
                 "confirmation_sha256": confirmed["confirmation"]["sha256"],
             },
         )
+
+
+def test_guided_resume_restores_verified_approval_and_handoff(tmp_path: Path):
+    from test_product_missions import PRD
+    from factoryline.studio import product_grill_from_studio
+
+    draft = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": "resume-ok",
+            "mode": "quick",
+        },
+    )
+    confirmed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-confirm",
+            "session_path": draft["session"]["path"],
+            "session_sha256": draft["session"]["session_sha256"],
+            "confirmed": True,
+        },
+    )
+    mission = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-guided-compile",
+            "confirmation_path": confirmed["confirmation"]["path"],
+            "confirmation_sha256": confirmed["confirmation"]["sha256"],
+            "owner": "resume-owner",
+            "executor": "manual",
+        },
+    )
+    decide_product_mission_from_studio(
+        tmp_path,
+        {
+            "action": "mission-decision",
+            "mission": mission["mission"]["path"],
+            "owner": "resume-owner",
+            "decision": "approved_execution",
+            "rationale": "Resume this approved bounded mission.",
+        },
+    )
+    resumed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-resume",
+            "session_path": draft["session"]["path"],
+            "session_sha256": draft["session"]["session_sha256"],
+        },
+    )
+    assert resumed["agent_handoff"]["mission"]["path"] == mission["mission"]["path"]
+    assert resumed["agent_handoff"]["state"] == "approved_needs_candidate_binding"
+    assert resumed["agent_handoff"]["dispatched"] is False
+
+
+def test_guided_resume_ignores_approved_mission_from_other_project(tmp_path: Path):
+    from test_product_missions import PRD
+    from factoryline.studio import product_grill_from_studio
+
+    current = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": "current-project",
+            "mode": "quick",
+        },
+    )
+    other = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": "other-project",
+            "mode": "quick",
+        },
+    )
+    assert other["source_sha256"] == current["source_sha256"]
+    confirmed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-confirm",
+            "session_path": other["session"]["path"],
+            "session_sha256": other["session"]["session_sha256"],
+            "confirmed": True,
+        },
+    )
+    mission = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-guided-compile",
+            "confirmation_path": confirmed["confirmation"]["path"],
+            "confirmation_sha256": confirmed["confirmation"]["sha256"],
+            "owner": "other-owner",
+            "executor": "manual",
+        },
+    )
+    decide_product_mission_from_studio(
+        tmp_path,
+        {
+            "action": "mission-decision",
+            "mission": mission["mission"]["path"],
+            "owner": "other-owner",
+            "decision": "approved_execution",
+            "rationale": "Approve only the other project's bounded mission.",
+        },
+    )
+    resumed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-resume",
+            "session_path": current["session"]["path"],
+            "session_sha256": current["session"]["session_sha256"],
+        },
+    )
+    assert "agent_handoff" not in resumed
+
+
+@pytest.mark.parametrize(
+    "sabotage",
+    ["decision_tamper", "mission_stale", "wrong_owner", "graph_source_stale"],
+)
+def test_guided_resume_never_restores_unverified_approval(
+    tmp_path: Path, sabotage: str
+):
+    from test_product_missions import PRD
+    from factoryline.studio import product_grill_from_studio
+
+    draft = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": f"resume-{sabotage}",
+            "mode": "quick",
+        },
+    )
+    confirmed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-confirm",
+            "session_path": draft["session"]["path"],
+            "session_sha256": draft["session"]["session_sha256"],
+            "confirmed": True,
+        },
+    )
+    mission = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-guided-compile",
+            "confirmation_path": confirmed["confirmation"]["path"],
+            "confirmation_sha256": confirmed["confirmation"]["sha256"],
+            "owner": "resume-owner",
+            "executor": "manual",
+        },
+    )
+    decision = decide_product_mission_from_studio(
+        tmp_path,
+        {
+            "action": "mission-decision",
+            "mission": mission["mission"]["path"],
+            "owner": "resume-owner",
+            "decision": "approved_execution",
+            "rationale": "Resume this approved bounded mission.",
+        },
+    )
+    if sabotage == "decision_tamper":
+        receipt_path = Path(decision["path"])
+        receipt = json.loads(receipt_path.read_bytes())
+        receipt["rationale"] = "Tampered without updating the decision hash."
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    elif sabotage == "wrong_owner":
+        receipt_path = Path(decision["path"])
+        receipt = json.loads(receipt_path.read_bytes())
+        receipt["owner"] = "other-owner"
+        core = {
+            key: value
+            for key, value in receipt.items()
+            if key not in {"decision_sha256", "generated_at"}
+        }
+        receipt["decision_sha256"] = hashlib.sha256(
+            json.dumps(
+                core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    elif sabotage == "mission_stale":
+        mission_path = Path(mission["mission"]["path"])
+        mission_path.write_bytes(mission_path.read_bytes() + b" ")
+    else:
+        graph_path = Path(mission["mission"]["inputs"]["graph_path"])
+        source_path = graph_path.parent / "source.md"
+        source_path.write_bytes(source_path.read_bytes() + b" tampered")
+    resumed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-resume",
+            "session_path": draft["session"]["path"],
+            "session_sha256": draft["session"]["session_sha256"],
+        },
+    )
+    assert "agent_handoff" not in resumed
 
 
 def test_studio_guided_prd_answers_are_explicit_bounded_and_linked(tmp_path: Path):
