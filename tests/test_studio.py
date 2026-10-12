@@ -1385,3 +1385,134 @@ def test_guided_ui_explains_required_actor_and_experience_answer_formats():
     assert "question.id.startsWith('Q-UX-')" in page
     assert "question.id.slice(5).toLowerCase()" in page
     assert "guidedAnswerFormat(question)" in page
+
+
+def test_guided_resume_restores_saved_frontier_and_rejects_changed_source(
+    tmp_path: Path,
+):
+    from factoryline.studio import product_grill_from_studio
+
+    started = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": "Build a private dashboard.",
+            "name": "resume-proof",
+            "mode": "deep",
+        },
+    )
+    saved = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-answer",
+            "session_path": started["session"]["path"],
+            "session_sha256": started["session"]["session_sha256"],
+            "answers": [
+                {
+                    "question_id": "Q-ACTORS",
+                    "answer": "Operator: reviews private records.",
+                }
+            ],
+        },
+    )
+    request = {
+        "action": "product-grill-resume",
+        "session_path": saved["session"]["path"],
+        "session_sha256": saved["session"]["session_sha256"],
+    }
+    resumed = product_grill_from_studio(tmp_path, request)
+    assert resumed["project"] == "resume-proof"
+    assert resumed["session"] == saved["session"]
+    assert resumed["source_text"] == saved["source_text"]
+    assert resumed["questions"] == saved["questions"]
+    assert "Q-ACTORS" not in [q["id"] for q in resumed["questions"]]
+    assert resumed["confirmation_required"] is True
+    assert resumed["implementation_authorized"] is False
+    session = json.loads(
+        (tmp_path / saved["session"]["path"]).read_text(encoding="utf-8")
+    )
+    (tmp_path / session["source_path"]).write_text("changed", encoding="utf-8")
+    with pytest.raises(StudioRequestError, match="SOURCE_BINDING_INVALID"):
+        product_grill_from_studio(tmp_path, request)
+
+
+def test_guided_resume_rejects_extra_fields_and_escape(tmp_path: Path):
+    from factoryline.studio import product_grill_from_studio
+
+    with pytest.raises(StudioRequestError, match="REQUEST_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-grill-resume",
+                "session_path": "x",
+                "session_sha256": "0" * 64,
+                "confirmed": True,
+            },
+        )
+    with pytest.raises(StudioRequestError, match="PATH_REJECTED"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-grill-resume",
+                "session_path": "../foreign.json",
+                "session_sha256": "0" * 64,
+            },
+        )
+
+
+def test_guided_resume_ui_stores_only_locator_and_requires_explicit_resume():
+    from factoryline.studio import _studio_html
+
+    html = _studio_html("local-contract")
+    bookmark = html.split("function saveGuidedBookmark(payload)", 1)[1].split(
+        "async function resumeGuided", 1
+    )[0]
+    assert "project:payload.project,session:payload.session" in bookmark
+    assert "source_text" not in bookmark
+    assert "token" not in bookmark
+    assert "sessionStorage" in bookmark
+    assert "Resume saved interview" in html
+    assert "Unsaved answers are not restored" in html
+    assert "action:'product-grill-resume'" in html
+    assert "document.getElementById('prompt').value=payload.source_text" in html
+
+
+def test_guided_resume_reads_verified_snapshot_without_regrilling(
+    tmp_path: Path, monkeypatch
+):
+    from factoryline.studio import product_grill_from_studio
+
+    saved = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": "Build a private dashboard.",
+            "name": "resume-snapshot",
+            "mode": "deep",
+        },
+    )
+    before = {
+        p.relative_to(tmp_path).as_posix(): p.read_bytes()
+        for p in tmp_path.rglob("*")
+        if p.is_file()
+    }
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Resume must not regenerate immutable Grill evidence")
+
+    monkeypatch.setattr("factoryline.studio.grill_prd", forbidden)
+    resumed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-resume",
+            "session_path": saved["session"]["path"],
+            "session_sha256": saved["session"]["session_sha256"],
+        },
+    )
+    after = {
+        p.relative_to(tmp_path).as_posix(): p.read_bytes()
+        for p in tmp_path.rglob("*")
+        if p.is_file()
+    }
+    assert resumed == saved
+    assert after == before
