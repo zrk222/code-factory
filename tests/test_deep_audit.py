@@ -2998,6 +2998,16 @@ def test_signed_execution_threshold_and_idempotent_receipt(tmp_path):
     args, plan, targets, canaries = inputs(tmp_path)
     result = execute_deep_audit(*args)
     receipt = result["receipt"]
+    packet = result["review_evidence"]
+    assert packet["candidate_sha256"] == receipt["candidate_sha256"]
+    assert packet["receipt_sha256"] == receipt["receipt_sha256"]
+    assert result["review_evidence_path"].startswith(".factory/review-evidence/")
+    assert (tmp_path / result["review_evidence_path"]).is_file()
+    assert packet["authority"] == "none"
+    assert any(
+        "six distinct required audit lanes" in row["verification_action"]
+        for row in packet["unknowns"]
+    )
     assert receipt["decision"] == "BLOCKED"
     assert codes(receipt) == {"DEEP_RULE_THRESHOLD"}
     assert receipt["repair_queue"][0]["remediation"] == "Close owned resources"
@@ -3011,6 +3021,65 @@ def test_signed_execution_threshold_and_idempotent_receipt(tmp_path):
     assert status["state"] == "BLOCKED"
     assert status["agent_actions"] == receipt["agent_actions"]
     assert evaluate_deep_audit(plan, targets, canaries)["authority"] == "none"
+
+
+def test_native_execution_outer_packet_uses_persisted_populated_lanes(tmp_path):
+    from factoryline.deep_audit import _attach_execution_review_evidence
+    from factoryline.deep_audit_io import write_run_json
+
+    candidate = "a" * 64
+    plan_lanes = []
+    lanes = []
+    for index in range(6):
+        lane_id, engine = f"lane-{index}", f"engine-{index}"
+        plan_lanes.append({"id": lane_id, "engine": engine})
+        lanes.append(
+            {
+                "lane_id": lane_id,
+                "family": "runtime" if index == 0 else "static",
+                "engine": engine,
+                "state": "OBSERVED",
+                "gaps": [],
+                "report_sha256": str(index) * 64,
+                "coverage_sha256": str(index + 1) * 64,
+                "native_execution": (
+                    {"source_candidate_sha256": candidate, "cleanup_confirmed": True}
+                    if index == 0
+                    else None
+                ),
+                "findings": (
+                    [
+                        {
+                            "rule_id": "R1",
+                            "finding_id": "native-finding-1",
+                            "kind": "fail",
+                            "level": "warning",
+                            "locations": [
+                                {"path": "src/app.py", "source_sha256": "f" * 64}
+                            ],
+                            "flows": [],
+                        }
+                    ]
+                    if index == 0
+                    else []
+                ),
+            }
+        )
+    state = {"run_id": "native-test", "candidate_sha256": candidate, "lanes": lanes}
+    root = tmp_path.resolve()
+    run_dir = root / ".factory" / "deep-runs" / "native-test"
+    run_dir.mkdir(parents=True)
+    write_run_json(run_dir, "evidence.json", state)
+    result = _attach_execution_review_evidence(
+        root, run_dir, state, {"lanes": plan_lanes}
+    )
+    assert result["review_evidence"]["candidate_sha256"] == candidate
+    assert len(result["review_evidence"]["claims"]) == 1
+    assert (root / result["review_evidence_path"]).is_file()
+    assert any(
+        item["id"].startswith("source_link:")
+        for item in result["review_evidence"]["unknowns"]
+    )
 
 
 def test_clean_with_detected_canary_requires_human_review(tmp_path):

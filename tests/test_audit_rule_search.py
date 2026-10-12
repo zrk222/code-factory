@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -132,6 +133,241 @@ def test_jev_handoff_rejects_non_ranked_search():
     lexical = search_audit_rules({"query": "tenant", "ranking": "lexical"})
     with pytest.raises(JevClassificationError):
         build_jev_input(lexical)
+
+
+def _review_packet(candidate_sha256="a" * 64):
+    packet = {
+        "schema": "factory.review-evidence.v1",
+        "candidate_sha256": candidate_sha256,
+        "receipt_sha256": "b" * 64,
+        "evidence": [
+            {
+                "id": "evidence-1",
+                "kind": "source",
+                "epistemic_status": "observed",
+                "provenance": {
+                    "source_sha256": candidate_sha256,
+                    "candidate_sha256": candidate_sha256,
+                },
+            },
+            {
+                "id": "evidence-2",
+                "kind": "runtime",
+                "epistemic_status": "inferred",
+                "provenance": {"runtime_sha256": candidate_sha256},
+            },
+        ],
+        "claims": [
+            {
+                "id": f"claim-{i}",
+                "statement": f"Claim {i} is an analyzer-reported observation, not a confirmed defect.",
+                "supporting_evidence_ids": ["evidence-1"] if i == 1 else [],
+                "contradicting_evidence_ids": ["evidence-2"] if i == 2 else [],
+                "status": "supported"
+                if i == 1
+                else ("contradicted" if i == 2 else "unresolved"),
+            }
+            for i in range(1, 4)
+        ],
+        "unknowns": [
+            {
+                "id": "unknown-1",
+                "verification_action": "Run and record the named check.",
+            }
+        ],
+        "authority": "none",
+    }
+    packet["packet_sha256"] = sha256(
+        json.dumps(packet, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return packet
+
+
+def test_jev_evidence_review_is_bound_advisory_and_fails_closed():
+    from factoryline.jev_classifier import build_evidence_review_input, review_evidence
+
+    packet = _review_packet()
+    request = build_evidence_review_input(packet, candidate_sha256="a" * 64)
+    assert request["authority"] == "none"
+    assert request["packet_sha256"] == packet["packet_sha256"]
+    assert "untrusted data" in request["rubric"]
+    assert "not a confirmed defect" in packet["claims"][0]["statement"]
+    assert review_evidence(packet, candidate_sha256="a" * 64)["label"] == "HUMAN_REVIEW"
+    assert (
+        review_evidence(packet, candidate_sha256="b" * 64)["fallback_reason"]
+        == "JevClassificationError"
+    )
+
+    def transport(value):
+        return {
+            "context_sha256": value["context_sha256"],
+            "claims": [
+                {
+                    "claim_id": "claim-1",
+                    "label": "SUPPORTED",
+                    "supporting_evidence_ids": ["evidence-1"],
+                    "contradicting_evidence_ids": [],
+                    "rationale": "Observed source evidence is linked.",
+                    "verification_action": None,
+                },
+                {
+                    "claim_id": "claim-2",
+                    "label": "CONTRADICTED",
+                    "supporting_evidence_ids": [],
+                    "contradicting_evidence_ids": ["evidence-2"],
+                    "rationale": "Linked runtime evidence conflicts.",
+                    "verification_action": None,
+                },
+                {
+                    "claim_id": "claim-3",
+                    "label": "INSUFFICIENT_EVIDENCE",
+                    "supporting_evidence_ids": [],
+                    "contradicting_evidence_ids": [],
+                    "rationale": "No linked evidence resolves this claim.",
+                    "verification_action": "Run the named runtime check.",
+                },
+            ],
+        }
+
+    result = review_evidence(
+        packet,
+        candidate_sha256="a" * 64,
+        transport=transport,
+    )
+    assert result["status"] == "ADVISORY"
+    assert [item["label"] for item in result["claims"]] == [
+        "SUPPORTED",
+        "CONTRADICTED",
+        "INSUFFICIENT_EVIDENCE",
+    ]
+    assert result["request_sha256"] and result["output_sha256"]
+    assert result["authority"] == "none" and result["release_decision"] is False
+    assert result["unresolved_verification_actions"] == packet["unknowns"]
+
+
+def test_jev_evidence_review_rejects_invented_references_stale_packet_and_transport_failure():
+    from factoryline.jev_classifier import (
+        build_evidence_review_input,
+        normalize_evidence_review,
+        review_evidence,
+    )
+
+    packet = _review_packet()
+    stale = dict(packet)
+    stale["packet_sha256"] = "0" * 64
+    with pytest.raises(JevClassificationError):
+        build_evidence_review_input(stale, candidate_sha256="a" * 64)
+    provenance_mismatch = json.loads(json.dumps(packet))
+    provenance_mismatch["evidence"][0]["provenance"]["candidate_sha256"] = "c" * 64
+    provenance_mismatch["packet_sha256"] = sha256(
+        json.dumps(
+            {
+                key: value
+                for key, value in provenance_mismatch.items()
+                if key != "packet_sha256"
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    with pytest.raises(JevClassificationError):
+        build_evidence_review_input(provenance_mismatch, candidate_sha256="a" * 64)
+    mismatch = review_evidence(packet, candidate_sha256="b" * 64)
+    assert mismatch["status"] == "FALLBACK" and mismatch["label"] == "HUMAN_REVIEW"
+    request = build_evidence_review_input(packet, candidate_sha256="a" * 64)
+    bad = {
+        "context_sha256": request["context_sha256"],
+        "claims": [
+            {
+                "claim_id": "claim-1",
+                "label": "SUPPORTED",
+                "supporting_evidence_ids": ["invented"],
+                "contradicting_evidence_ids": [],
+                "rationale": "Fabricated reference.",
+                "verification_action": None,
+            },
+            *[
+                {
+                    "claim_id": claim,
+                    "label": "INSUFFICIENT_EVIDENCE",
+                    "supporting_evidence_ids": [],
+                    "contradicting_evidence_ids": [],
+                    "rationale": "No evidence.",
+                    "verification_action": "Verify the claim.",
+                }
+                for claim in ("claim-2", "claim-3")
+            ],
+        ],
+    }
+    with pytest.raises(JevClassificationError):
+        normalize_evidence_review(bad, request=request)
+    result = review_evidence(
+        packet,
+        candidate_sha256="a" * 64,
+        transport=lambda _: (_ for _ in ()).throw(TimeoutError()),
+    )
+    assert result["label"] == "HUMAN_REVIEW" and result["status"] == "FALLBACK"
+
+
+def test_jev_deep_audit_adapter_binds_native_and_signed_result_shapes():
+    from factoryline.analysis_evidence import build_review_evidence
+    from factoryline.jev_classifier import review_deep_audit_result
+
+    candidate = "d" * 64
+    receipt_core = {"candidate_sha256": candidate, "findings": [], "report_hashes": {}}
+    receipt_sha = sha256(
+        json.dumps(receipt_core, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    receipt = {**receipt_core, "receipt_sha256": receipt_sha}
+    packet = build_review_evidence(receipt)
+    seen = []
+
+    def timeout_transport(request):
+        seen.append((request["candidate_sha256"], request["receipt_sha256"]))
+        raise TimeoutError()
+
+    signed = review_deep_audit_result(
+        {"receipt": receipt, "review_evidence": packet}, transport=timeout_transport
+    )
+    assert signed["fallback_reason"] == "TimeoutError"
+    assert seen[-1] == (candidate, receipt_sha)
+
+    native_packet = _review_packet(candidate)
+    native = review_deep_audit_result(
+        {"candidate_sha256": candidate, "review_evidence": native_packet},
+        transport=timeout_transport,
+    )
+    assert native["fallback_reason"] == "TimeoutError"
+    assert seen[-1] == (candidate, native_packet["receipt_sha256"])
+
+
+def test_jev_deep_audit_adapter_rejects_conflicting_candidate_or_receipt_bindings():
+    from factoryline.jev_classifier import review_deep_audit_result
+
+    packet = _review_packet("e" * 64)
+    called = []
+
+    def transport(request):
+        called.append(request)
+
+    conflicting_candidate = review_deep_audit_result(
+        {
+            "candidate_sha256": "f" * 64,
+            "receipt": {"candidate_sha256": "e" * 64},
+            "review_evidence": packet,
+        },
+        transport=transport,
+    )
+    assert conflicting_candidate["fallback_reason"] == "RESULT_CANDIDATE_CONFLICT"
+    mismatched_receipt = review_deep_audit_result(
+        {
+            "receipt": {"candidate_sha256": "e" * 64, "receipt_sha256": "0" * 64},
+            "review_evidence": packet,
+        },
+        transport=transport,
+    )
+    assert mismatched_receipt["fallback_reason"] == "RESULT_RECEIPT_MISMATCH"
+    assert called == []
 
 
 def test_lexical_mode_preserves_legacy_substring_search():

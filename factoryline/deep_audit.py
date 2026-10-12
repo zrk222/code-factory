@@ -2246,6 +2246,33 @@ def _finish_scan(
     return state
 
 
+def _attach_execution_review_evidence(
+    root: Path, directory: Path, state: dict, plan: dict
+) -> dict:
+    from .analysis_evidence import (
+        AnalysisEvidenceError,
+        build_execution_review_evidence,
+        validate_review_evidence,
+    )
+
+    try:
+        packet = validate_review_evidence(
+            build_execution_review_evidence(state, plan, directory / "evidence.json")
+        )
+        packet_path = _write_review_evidence(root, packet)
+        return {
+            **state,
+            "review_evidence": packet,
+            "review_evidence_path": packet_path.relative_to(root).as_posix(),
+        }
+    except AnalysisEvidenceError as exc:
+        return {
+            **state,
+            "review_evidence_state": "INCOMPLETE",
+            "review_evidence_error": exc.code,
+        }
+
+
 def scan_deep_audit(
     root: Path,
     manifest: Path,
@@ -2362,7 +2389,8 @@ def scan_deep_audit(
                 {"request": request_reference},
                 emit,
             )
-    return _finish_scan(directory, state, plan, emit, write_run_json)
+    completed = _finish_scan(directory, state, plan, emit, write_run_json)
+    return _attach_execution_review_evidence(root, directory, completed, plan)
 
 
 def _request_file_reference(root: Path, value: Path | None) -> dict | None:
@@ -3708,6 +3736,36 @@ def _write_receipt(root: Path, receipt: dict) -> Path:
     return path
 
 
+def _write_review_evidence(root: Path, packet: dict) -> Path:
+    """Persist the advisory packet separately from signed receipt history."""
+    directory = Path(root)
+    for part in (".factory", "review-evidence"):
+        directory = directory / part
+        directory.mkdir(exist_ok=True)
+        info = directory.lstat()
+        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise RuntimeAuditError(
+                "E_PATH_ESCAPE", "review evidence directory must not be linked"
+            )
+    raw = canonical_bytes(packet)
+    if len(raw) > LIMIT:
+        raise RuntimeAuditError(
+            "E_DEEP_LIMIT", "review evidence packet exceeds byte budget"
+        )
+    path = directory / (packet["packet_sha256"] + ".json")
+    try:
+        with path.open("xb") as stream:
+            stream.write(raw)
+    except FileExistsError:
+        checked = local_file(root, path.relative_to(root).as_posix())
+        with checked.open("rb") as stream:
+            if stream.read(LIMIT + 1) != raw:
+                raise RuntimeAuditError(
+                    "E_RECEIPT_COLLISION", "existing review evidence differs"
+                )
+    return path
+
+
 def execute_deep_audit(
     plan_path: Path, trust_root_path: Path, trust_root_sha256: str, workspace_root: Path
 ) -> dict:
@@ -3739,7 +3797,23 @@ def execute_deep_audit(
         receipt[name] = checked[name]
     receipt["receipt_sha256"] = digest(receipt)
     path = _write_receipt(Path(workspace_root).resolve(), receipt)
-    return {"receipt": receipt, "receipt_path": str(path), "authority": "none"}
+    from .analysis_evidence import build_review_evidence, validate_review_evidence
+
+    review_evidence = validate_review_evidence(
+        build_review_evidence(receipt, reports=targets, plan=plan)
+    )
+    review_evidence_path = _write_review_evidence(
+        Path(workspace_root).resolve(), review_evidence
+    )
+    return {
+        "receipt": receipt,
+        "receipt_path": str(path),
+        "review_evidence": review_evidence,
+        "review_evidence_path": review_evidence_path.relative_to(
+            Path(workspace_root).resolve()
+        ).as_posix(),
+        "authority": "none",
+    }
 
 
 def _history(root: Path) -> list:
