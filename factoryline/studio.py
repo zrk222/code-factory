@@ -799,27 +799,29 @@ def _guided_saved_answers(answers: Any) -> None:
         raise StudioRequestError("SESSION_INVALID", "saved answer list is invalid", 409)
     seen: set[str] = set()
     for item in answers:
-        if not isinstance(item, dict) or set(item) != {"question_id", "answer"}:
-            raise StudioRequestError(
-                "SESSION_INVALID", "saved answer record is invalid", 409
-            )
-        question_id = item["question_id"]
-        if (
-            not isinstance(question_id, str)
-            or not question_id
-            or len(question_id) > 128
-            or question_id in seen
-        ):
-            raise StudioRequestError(
-                "SESSION_INVALID", "saved question id is invalid", 409
-            )
-        try:
-            _guided_answer_text(item["answer"])
-        except StudioRequestError as exc:
-            raise StudioRequestError(
-                "SESSION_INVALID", "saved answer text is invalid", 409
-            ) from exc
-        seen.add(question_id)
+        seen.add(_guided_saved_answer(item, seen))
+
+
+def _guided_saved_answer(item: Any, seen: set[str]) -> str:
+    if not isinstance(item, dict) or set(item) != {"question_id", "answer"}:
+        raise StudioRequestError(
+            "SESSION_INVALID", "saved answer record is invalid", 409
+        )
+    question_id = item["question_id"]
+    if (
+        not isinstance(question_id, str)
+        or not question_id
+        or len(question_id) > 128
+        or question_id in seen
+    ):
+        raise StudioRequestError("SESSION_INVALID", "saved question id is invalid", 409)
+    try:
+        _guided_answer_text(item["answer"])
+    except StudioRequestError as exc:
+        raise StudioRequestError(
+            "SESSION_INVALID", "saved answer text is invalid", 409
+        ) from exc
+    return question_id
 
 
 def _guided_source_and_grill(
@@ -865,6 +867,14 @@ def _guided_session(
             "session_sha256",
         },
     )
+    _guided_session_identity(session)
+    _guided_saved_answers(session["answers"])
+    _guided_previous_session(root, session.get("previous"))
+    source, _, grill = _guided_source_and_grill(root, session)
+    return session, source, grill
+
+
+def _guided_session_identity(session: dict[str, Any]) -> None:
     if (
         not isinstance(session["project"], str)
         or not NAME_PATTERN.fullmatch(session["project"])
@@ -878,8 +888,9 @@ def _guided_session(
         raise StudioRequestError(
             "SESSION_INVALID", "guided session identity is invalid", 409
         )
-    _guided_saved_answers(session["answers"])
-    previous = session.get("previous")
+
+
+def _guided_previous_session(root: Path, previous: Any) -> None:
     if previous is not None:
         if (
             not isinstance(previous, dict)
@@ -896,8 +907,6 @@ def _guided_session(
             raise StudioRequestError(
                 "SESSION_INVALID", "prior session link changed", 409
             )
-    source, _, grill = _guided_source_and_grill(root, session)
-    return session, source, grill
 
 
 def _guided_run_grill(
