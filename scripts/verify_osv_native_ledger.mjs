@@ -278,6 +278,7 @@ async function dockerRun(name, sourceDir, caseDir, extraArgs = []) {
 
 export function writeRequirement(root, text) {
   const source = mkdtempSync(join(root, 'source-'));
+  chmodSync(source, 0o755);
   writeFileSync(join(source, 'requirements.txt'), text, { mode: 0o444 });
   return source;
 }

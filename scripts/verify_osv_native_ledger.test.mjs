@@ -111,6 +111,10 @@ test('writeRequirement creates distinct read-only fixture directories for separa
     assert.equal(readFileSync(secondPath, 'utf8'), 'urllib3==1.25.0\n');
     assert.equal(statSync(firstPath).mode & 0o222, 0);
     assert.equal(statSync(secondPath).mode & 0o222, 0);
+    if (process.platform !== 'win32') {
+      assert.equal(statSync(first).mode & 0o111, 0o111);
+      assert.equal(statSync(second).mode & 0o111, 0o111);
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
