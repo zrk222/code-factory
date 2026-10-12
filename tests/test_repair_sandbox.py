@@ -22,6 +22,8 @@ from factoryline.repair_sandbox import (
     verify_sandbox_execution_receipt,
     create_repair_approval,
     execute_approved_repair,
+    execute_workflow_approved_repair,
+    repair_dispatch_evidence,
     request_repair_stop,
     revoke_repair_approval,
 )
@@ -252,6 +254,61 @@ def _approval(root: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     )
 
 
+def _workflow_repair_case(
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    decision: str = "approved",
+    mutate_evidence: bool = False,
+):
+    from factoryline.control_plane import EvidenceStore, Principal
+
+    approval = _approval(root, monkeypatch)
+    approval_path = root / approval["path"]
+    requester = Principal("repair-operator", "tenant-a", ("operator",))
+    approver = Principal("reviewer", "tenant-a", ("approver",))
+    binding = repair_dispatch_evidence(
+        root,
+        approval_path,
+        tenant_id="tenant-a",
+        requester=requester.subject,
+    )
+    if mutate_evidence:
+        binding["patch_sha256"] = "0" * 64
+    store = EvidenceStore(root / ".factory" / "workflow-approvals.sqlite3")
+    evidence = store.put(
+        requester,
+        {
+            "schema": "factory.workflow-approval.v1",
+            "tenant_id": "tenant-a",
+            "expires_at": (
+                datetime.now(timezone.utc) + timedelta(minutes=2)
+            ).isoformat(),
+            "phase_evidence": binding,
+        },
+    )
+    request = store.request_approval(
+        requester, "tenant-a", evidence["evidence_id"], "Authorize exact repair"
+    )
+    if decision != "pending":
+        store.decide_approval(
+            approver,
+            "tenant-a",
+            request["approval_id"],
+            decision,
+            "Independent review",
+        )
+    identities = {requester.subject: requester, approver.subject: approver}
+
+    def resolve(subject, tenant):
+        identity = identities.get(subject)
+        return (
+            identity if identity is not None and identity.tenant_id == tenant else None
+        )
+
+    return approval, approval_path, requester, request, store, identities, resolve
+
+
 def _mock_docker_tool_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
     original = repair_sandbox._tool_path
     monkeypatch.setattr(
@@ -288,6 +345,221 @@ def _assert_scope_contract(scope: dict[str, object], measured_bytes: bytes) -> N
         "independent_verifier",
         "human_apply",
     ]
+
+
+def test_workflow_approved_repair_dispatch_binds_exact_receipt_and_current_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    approval, approval_path, requester, request, store, _, resolve = (
+        _workflow_repair_case(tmp_path, monkeypatch)
+    )
+    calls = []
+
+    def execute(
+        root,
+        path,
+        *,
+        expected_approval_sha256,
+        expected_approval_file_sha256,
+    ):
+        calls.append(
+            (root, path, expected_approval_sha256, expected_approval_file_sha256)
+        )
+        return {
+            "status": "VERIFYING",
+            "approval_sha256": expected_approval_sha256,
+            "event_sequence": 1,
+            "event_sha256": "e" * 64,
+        }
+
+    def journal(root, expected_approval_sha256):
+        return {
+            "state": {
+                "approval_sha256": expected_approval_sha256,
+                "status": "VERIFYING",
+                "event_sequence": 1,
+                "origin_audit": None,
+                "candidate_before_sha256": None,
+            },
+            "event_sha256": "e" * 64,
+        }
+
+    monkeypatch.setattr(repair_sandbox, "execute_approved_repair", execute)
+    monkeypatch.setattr(repair_sandbox, "verify_repair_attempt_journal", journal)
+    result = execute_workflow_approved_repair(
+        tmp_path,
+        approval_path,
+        principal=requester,
+        tenant_id="tenant-a",
+        workflow_approval_id=request["approval_id"],
+        evidence_store=store,
+        resolve_principal=resolve,
+    )
+
+    assert result["approval_sha256"] == Path(approval["path"]).stem
+    assert len(calls) == 1
+    assert calls[0][2] == result["approval_sha256"]
+    assert calls[0][3] == hashlib.sha256(approval_path.read_bytes()).hexdigest()
+    binding = store.get(requester, "tenant-a", request["evidence_id"])["payload"][
+        "phase_evidence"
+    ]
+    assert binding["repair_approval_sha256"] == result["approval_sha256"]
+    assert binding["tool_contract_sha256"]
+    assert binding["candidate_sha256"]
+    assert "approved_by" not in binding
+
+
+@pytest.mark.parametrize("decision", ["pending", "rejected"])
+def test_workflow_approved_repair_dispatch_rejects_nonapproved_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: str
+) -> None:
+    from factoryline.control_plane import ControlPlaneError
+
+    _, approval_path, requester, request, store, _, resolve = _workflow_repair_case(
+        tmp_path, monkeypatch, decision=decision
+    )
+    with pytest.raises(ControlPlaneError) as error:
+        execute_workflow_approved_repair(
+            tmp_path,
+            approval_path,
+            principal=requester,
+            tenant_id="tenant-a",
+            workflow_approval_id=request["approval_id"],
+            evidence_store=store,
+            resolve_principal=resolve,
+        )
+    assert error.value.code == "E_APPROVAL_REQUIRED"
+    assert not (tmp_path / ".factory" / "repair-attempts").exists()
+
+
+def test_workflow_approved_repair_dispatch_rechecks_approver_role(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factoryline.control_plane import ControlPlaneError, Principal
+
+    _, approval_path, requester, request, store, identities, resolve = (
+        _workflow_repair_case(tmp_path, monkeypatch)
+    )
+    identities["reviewer"] = Principal("reviewer", "tenant-a", ("viewer",))
+    with pytest.raises(ControlPlaneError) as error:
+        execute_workflow_approved_repair(
+            tmp_path,
+            approval_path,
+            principal=requester,
+            tenant_id="tenant-a",
+            workflow_approval_id=request["approval_id"],
+            evidence_store=store,
+            resolve_principal=resolve,
+        )
+    assert error.value.code == "E_ACTION_DENIED"
+    assert not (tmp_path / ".factory" / "repair-attempts").exists()
+
+
+def test_workflow_approved_repair_dispatch_rejects_wrong_tenant_and_drifted_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factoryline.control_plane import ControlPlaneError, Principal
+
+    _, approval_path, requester, request, store, identities, resolve = (
+        _workflow_repair_case(tmp_path, monkeypatch)
+    )
+    other_tenant = Principal("repair-operator", "tenant-b", ("operator",))
+    identities[requester.subject] = other_tenant
+    with pytest.raises(ControlPlaneError) as tenant_error:
+        execute_workflow_approved_repair(
+            tmp_path,
+            approval_path,
+            principal=other_tenant,
+            tenant_id="tenant-b",
+            workflow_approval_id=request["approval_id"],
+            evidence_store=store,
+            resolve_principal=resolve,
+        )
+    assert tenant_error.value.code == "E_NOT_FOUND"
+
+    second = tmp_path / "second"
+    second.mkdir()
+    (
+        _,
+        second_path,
+        second_requester,
+        second_request,
+        second_store,
+        _,
+        second_resolve,
+    ) = _workflow_repair_case(second, monkeypatch, mutate_evidence=True)
+    with pytest.raises(ControlPlaneError) as drift_error:
+        execute_workflow_approved_repair(
+            second,
+            second_path,
+            principal=second_requester,
+            tenant_id="tenant-a",
+            workflow_approval_id=second_request["approval_id"],
+            evidence_store=second_store,
+            resolve_principal=second_resolve,
+        )
+    assert drift_error.value.code == "E_APPROVAL_EVIDENCE"
+    assert not (second / ".factory" / "repair-attempts").exists()
+
+
+def test_workflow_approved_repair_file_swap_fails_before_attempt_creation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    approval, approval_path, requester, request, store, _, resolve = (
+        _workflow_repair_case(tmp_path, monkeypatch)
+    )
+    original = store.workflow_approval_verifier
+
+    def swap_after_verification(*args, **kwargs):
+        verifier = original(*args, **kwargs)
+
+        def verify(expected):
+            result = verifier(expected)
+            approval_path.write_bytes(approval_path.read_bytes() + b" \n")
+            return result
+
+        return verify
+
+    monkeypatch.setattr(store, "workflow_approval_verifier", swap_after_verification)
+    with pytest.raises(RepairSandboxError) as error:
+        execute_workflow_approved_repair(
+            tmp_path,
+            approval_path,
+            principal=requester,
+            tenant_id="tenant-a",
+            workflow_approval_id=request["approval_id"],
+            evidence_store=store,
+            resolve_principal=resolve,
+        )
+    assert error.value.code == "REPAIR_APPROVAL_CHANGED"
+    assert not (
+        tmp_path / ".factory" / "repair-attempts" / Path(approval["path"]).stem
+    ).exists()
+
+
+def test_workflow_approved_repair_re_resolves_requester_role_before_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factoryline.control_plane import ControlPlaneError, Principal
+
+    _, approval_path, requester, request, store, identities, resolve = (
+        _workflow_repair_case(tmp_path, monkeypatch)
+    )
+    identities[requester.subject] = Principal(
+        requester.subject, "tenant-a", ("viewer",)
+    )
+    with pytest.raises(ControlPlaneError) as error:
+        execute_workflow_approved_repair(
+            tmp_path,
+            approval_path,
+            principal=requester,
+            tenant_id="tenant-a",
+            workflow_approval_id=request["approval_id"],
+            evidence_store=store,
+            resolve_principal=resolve,
+        )
+    assert error.value.code == "E_ACTION_DENIED"
+    assert not (tmp_path / ".factory" / "repair-attempts").exists()
 
 
 def test_repair_scope_is_explicit_deterministic_and_does_not_write_by_default(

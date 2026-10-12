@@ -27,6 +27,7 @@ from .change_review import ChangeReviewError, review_change
 REPAIR_SCOPE_SCHEMA = "factory.repair_scope.v1"
 REPAIR_CANDIDATE_SCHEMA = "factory.repair_candidate.v1"
 SANDBOX_EXECUTION_SCHEMA = "factory.sandbox-execution.v1"
+REPAIR_DISPATCH_BINDING_SCHEMA = "factory.repair.dispatch-binding.v1"
 MAX_CHANGE_LIST_NAME = 160
 MAX_PATCH_BYTES = 1_000_000
 DEFAULT_CONTEXT_BUDGET_BYTES = 262_144
@@ -1617,17 +1618,62 @@ def create_repair_approval(
 
 
 def _read_approval(path: Path) -> dict[str, Any]:
+    return _read_approval_snapshot(path)[0]
+
+
+def _read_approval_snapshot(path: Path) -> tuple[dict[str, Any], str]:
+    descriptor = None
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+        before = path.lstat()
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or getattr(before, "st_file_attributes", 0) & 0x400
+            or before.st_size > 2_000_000
+        ):
+            raise RepairSandboxError(
+                "REPAIR_APPROVAL_INVALID",
+                "approval must be a bounded regular file",
+            )
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or getattr(opened, "st_file_attributes", 0) & 0x400
+            or opened.st_size > 2_000_000
+            or (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino)
+        ):
+            raise RepairSandboxError(
+                "REPAIR_APPROVAL_INVALID",
+                "opened approval is not a bounded regular file",
+            )
+        chunks, total = [], 0
+        while True:
+            chunk = os.read(descriptor, min(65536, 2_000_001 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > 2_000_000:
+                raise RepairSandboxError(
+                    "REPAIR_APPROVAL_INVALID", "approval file exceeds size limit"
+                )
+        raw = b"".join(chunks)
+        payload = json.loads(raw.decode("utf-8"))
+    except RepairSandboxError:
+        raise
+    except (OSError, UnicodeError, ValueError) as exc:
         raise RepairSandboxError(
             "REPAIR_APPROVAL_MISSING", "approval file missing or malformed"
         ) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
     if not isinstance(payload, dict):
         raise RepairSandboxError(
             "REPAIR_APPROVAL_INVALID", "approval must be an object"
         )
-    return payload
+    return payload, sha256(raw).hexdigest()
 
 
 def _valid_engine_identity(value: object) -> bool:
@@ -2242,6 +2288,166 @@ def _verify_approved_candidate(root: Path, approval: dict[str, Any]) -> None:
     _check_protected(candidate, approval["protected_paths"])
 
 
+def _load_host_repair_approval(root: Path, approval_path: Path):
+    workspace = _mount_safe_workspace(root)
+    approval_file = _under_workspace(workspace, approval_path, file_only=True)
+    approval, approval_file_sha = _read_approval_snapshot(approval_file)
+    approval_sha = _verify_approval(approval)
+    expected_file, revoked_file = _approval_paths(workspace, approval_sha)
+    expiry = _utc(approval.get("expires_at"), "expires_at")
+    if (
+        approval.get("schema") != REPAIR_APPROVAL_SCHEMA
+        or approval_file != expected_file
+        or revoked_file.exists()
+        or expiry <= datetime.now(timezone.utc)
+    ):
+        raise RepairSandboxError(
+            "REPAIR_APPROVAL_REJECTED",
+            "host dispatch requires a current, unrevoked v2 approval at its bound path",
+        )
+    _verify_approved_candidate(workspace, approval)
+    origin = _verify_repair_origin(workspace, approval.get("origin_audit"))
+    return (
+        workspace,
+        approval_file,
+        approval,
+        approval_sha,
+        approval_file_sha,
+        revoked_file,
+        origin,
+    )
+
+
+def repair_dispatch_evidence(
+    root: Path, approval_path: Path, *, tenant_id: str, requester: str
+) -> dict[str, Any]:
+    """Build current tenant evidence for a host's independent repair approval request.
+
+    The caller must store this object through the authenticated control plane.
+    It does not authenticate the named requester or grant execution authority.
+    """
+    from .control_plane import ControlPlaneError
+
+    if not isinstance(tenant_id, str) or not tenant_id.strip():
+        raise ControlPlaneError("E_TENANT_REQUIRED", "tenant id is required")
+    if not isinstance(requester, str) or not requester.strip():
+        raise ControlPlaneError("E_IDENTITY_REQUIRED", "requester is required")
+    _, _, approval, approval_sha, approval_file_sha, _, _ = _load_host_repair_approval(
+        root, approval_path
+    )
+    return _repair_dispatch_binding(
+        approval, approval_sha, approval_file_sha, tenant_id, requester
+    )
+
+
+def _repair_dispatch_binding(
+    approval, approval_sha, approval_file_sha, tenant_id, requester
+):
+    return {
+        "schema": REPAIR_DISPATCH_BINDING_SCHEMA,
+        "action": "repair.execute",
+        "tenant_id": tenant_id,
+        "requester": requester.strip(),
+        "repair_approval_sha256": approval_sha,
+        "repair_approval_file_sha256": approval_file_sha,
+        "candidate_sha256": approval["candidate_sha256"],
+        "scope_sha256": approval["scope_sha256"],
+        "patch_sha256": approval["patch_sha256"],
+        "tool_contract_sha256": approval["tool_contract_sha256"],
+        "origin_audit": approval.get("origin_audit"),
+        "expires_at": approval["expires_at"],
+    }
+
+
+def _current_dispatch_principal(principal, tenant_id, resolve_principal):
+    from .control_plane import ControlPlaneError, Principal, authorize
+
+    if not isinstance(principal, Principal) or principal.tenant_id != tenant_id:
+        raise ControlPlaneError(
+            "E_TENANT_BOUNDARY",
+            "host-authenticated caller is not in the requested tenant",
+        )
+    if not callable(resolve_principal):
+        raise ControlPlaneError(
+            "E_IDENTITY_REQUIRED", "host current-identity resolver is required"
+        )
+    current = resolve_principal(principal.subject, tenant_id)
+    if (
+        not isinstance(current, Principal)
+        or current.subject != principal.subject
+        or current.tenant_id != tenant_id
+    ):
+        raise ControlPlaneError(
+            "E_IDENTITY_REQUIRED", "current caller identity or tenant differs"
+        )
+    authorize(current, "repair.execute", tenant_id)
+    return current
+
+
+def execute_workflow_approved_repair(
+    root: Path,
+    approval_path: Path,
+    *,
+    principal,
+    tenant_id: str,
+    workflow_approval_id: str,
+    evidence_store,
+    resolve_principal,
+) -> dict[str, Any]:
+    """Dispatch only after current host identity and durable independent approval.
+
+    `principal` must come from the host authentication dependency; constructing a
+    Principal from request JSON is not authentication. The local CLI intentionally
+    continues to expose only the separate filesystem-owner approval boundary.
+    """
+    current = _current_dispatch_principal(principal, tenant_id, resolve_principal)
+    workspace, approval_file, approval, approval_sha, approval_file_sha, _, _ = (
+        _load_host_repair_approval(root, approval_path)
+    )
+    expected = _repair_dispatch_binding(
+        approval, approval_sha, approval_file_sha, tenant_id, current.subject
+    )
+    verifier = evidence_store.workflow_approval_verifier(
+        current,
+        tenant_id,
+        workflow_approval_id,
+        resolve_principal=resolve_principal,
+        require_requester=True,
+    )
+    verifier(expected)
+    _current_dispatch_principal(current, tenant_id, resolve_principal)
+    result = execute_approved_repair(
+        workspace,
+        approval_file,
+        expected_approval_sha256=approval_sha,
+        expected_approval_file_sha256=approval_file_sha,
+    )
+    return _verify_host_dispatch_result(workspace, approval, approval_sha, result)
+
+
+def _verify_host_dispatch_result(workspace, approval, approval_sha, result):
+    journal = verify_repair_attempt_journal(workspace, approval_sha)
+    state = journal["state"]
+    expected_origin = approval.get("origin_audit")
+    expected_candidate = (
+        expected_origin["candidate_sha256"] if expected_origin is not None else None
+    )
+    if (
+        result.get("approval_sha256") != approval_sha
+        or result.get("status") != state.get("status")
+        or result.get("event_sequence") != state.get("event_sequence")
+        or result.get("event_sha256") != journal.get("event_sha256")
+        or state.get("approval_sha256") != approval_sha
+        or state.get("origin_audit") != expected_origin
+        or state.get("candidate_before_sha256") != expected_candidate
+    ):
+        raise RepairSandboxError(
+            "REPAIR_ATTEMPT_INTEGRITY",
+            "dispatched attempt receipt differs from its verified journal",
+        )
+    return result
+
+
 def _run_stage(
     root: Path,
     attempt: Path,
@@ -2583,12 +2789,33 @@ def _execute_repair_lifecycle(
     return _read_attempt_state(attempt)
 
 
-def execute_approved_repair(root: Path, approval_path: Path) -> dict[str, Any]:
-    """Consume one approval and run its patch checks only in isolated Docker."""
+def execute_approved_repair(
+    root: Path,
+    approval_path: Path,
+    *,
+    expected_approval_sha256: str | None = None,
+    expected_approval_file_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Run locally owner-approved checks; this path does not authenticate identity."""
     workspace = _mount_safe_workspace(root)
     approval_file = _under_workspace(workspace, approval_path, file_only=True)
-    approval = _read_approval(approval_file)
+    approval, approval_file_sha = _read_approval_snapshot(approval_file)
     approval_sha = _verify_approval(approval)
+    if (
+        expected_approval_sha256 is not None
+        and approval_sha != expected_approval_sha256
+    ):
+        raise RepairSandboxError(
+            "REPAIR_APPROVAL_CHANGED", "approval changed after host verification"
+        )
+    if (
+        expected_approval_file_sha256 is not None
+        and approval_file_sha != expected_approval_file_sha256
+    ):
+        raise RepairSandboxError(
+            "REPAIR_APPROVAL_CHANGED",
+            "approval file bytes changed after host verification",
+        )
     expected_file, revoked_file = _approval_paths(workspace, approval_sha)
     expiry = _utc(approval.get("expires_at"), "expires_at")
     if (
@@ -2600,6 +2827,7 @@ def execute_approved_repair(root: Path, approval_path: Path) -> dict[str, Any]:
             "REPAIR_APPROVAL_REJECTED",
             "approval is expired, revoked, or stored unexpectedly",
         )
+    _verify_approved_candidate(workspace, approval)
     attempt = workspace / ".factory" / "repair-attempts" / approval_sha
     origin = _verify_repair_origin(workspace, approval.get("origin_audit"))
     _begin_attempt(attempt, approval_sha, origin)

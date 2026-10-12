@@ -191,22 +191,30 @@ function collectIds(value, into = []) {
 }
 
 export function validateExtractorInventory(document, profileSha256, generatorSha256) {
-  const fields = ['schema', 'upstream_commit', 'profile_sha256', 'generator_sha256', 'presets', 'capabilities', 'plugins'];
-  if (!document || !sameStrings(Object.keys(document).sort(), fields.sort())
-      || document.schema !== 'factory.osv-extractor-inventory.v1'
-      || document.upstream_commit !== expectedSource
-      || document.profile_sha256 !== profileSha256
-      || document.generator_sha256 !== generatorSha256
-      || !sameStrings(document.presets, ['lockfile', 'sbom', 'directory'])
-      || JSON.stringify(document.capabilities) !== JSON.stringify({
-        direct_fs: true, running_system: true, network: 'offline', os: 'linux',
-      })) {
+  if (!isPinnedExtractorInventory(document, profileSha256, generatorSha256)) {
     throw new Error('Expected extractor inventory artifact is not bound to the pinned source and profile');
   }
   if (!isSortedUnique(document.plugins) || document.plugins.length === 0) {
     throw new Error('Expected extractor inventory artifact has invalid plugin names');
   }
   return document.plugins;
+}
+
+function isPinnedExtractorInventory(document, profileSha256, generatorSha256) {
+  const fields = ['schema', 'upstream_commit', 'profile_sha256', 'generator_sha256', 'presets', 'capabilities', 'plugins'];
+  return document !== null && typeof document === 'object' && !Array.isArray(document)
+    && sameStrings(Object.keys(document).sort(), fields.sort())
+    && document.schema === 'factory.osv-extractor-inventory.v1'
+    && document.upstream_commit === expectedSource
+    && document.profile_sha256 === profileSha256
+    && document.generator_sha256 === generatorSha256
+    && sameStrings(document.presets, ['lockfile', 'sbom', 'directory'])
+    && hasPinnedExtractorCapabilities(document.capabilities);
+}
+
+function hasPinnedExtractorCapabilities(capabilities) {
+  const expected = { direct_fs: true, running_system: true, network: 'offline', os: 'linux' };
+  return JSON.stringify(capabilities) === JSON.stringify(expected);
 }
 
 function sameStrings(actual, expected) {
