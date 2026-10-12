@@ -124,7 +124,9 @@
     "verify_command": "factory mission verify-candidate <binding> --root <root> --owner <owner> --json",
     "authority": "Binding and verification do not dispatch a process or grant credentials, external effects or release authority. Owner strings identify the local decision; they are not hosted authentication.",
     "recovery": "Stop on changed HEAD, dirty workspace, source or approval drift; preserve failure evidence. Do not overwrite receipts or silently refresh the approved scope.",
-    "boundary": "Snapshot validation cannot prevent concurrent filesystem replacement. An isolated executor must revalidate inputs immediately before executing approved tools."
+    "boundary": "Snapshot validation cannot prevent concurrent filesystem replacement. An isolated executor must revalidate inputs immediately before executing approved tools.",
+    "repair_command": "factory mission execute-repair <binding> <exact-repair-approval> --root <root> --owner <owner> --json",
+    "repair_prerequisite": "Existing separately approved exact patch/scope/check contract; docker-linux profile and exact approved commands; valid source and mission bindings. Never synthesize repair approval from a mission decision."
   },
   "beginner_acceptance_workflow": {
     "schema": "factory.agent.beginner-acceptance.v1",

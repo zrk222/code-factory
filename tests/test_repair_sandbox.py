@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -1115,6 +1116,155 @@ def test_host_bound_stale_repair_rejects_before_attempt_creation(
         )
     assert error.value.code == "REPAIR_CANDIDATE_STALE"
     assert not (tmp_path / ".factory" / "repair-attempts").exists()
+
+
+def test_invalid_mission_binding_rejects_before_consuming_approval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    approval = _approval(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "factoryline.product_missions.verify_mission_repair_binding",
+        lambda *_args, **_kwargs: {"workspace": "C:/another/workspace"},
+    )
+    with pytest.raises(RepairSandboxError, match="another workspace"):
+        execute_approved_repair(
+            tmp_path,
+            tmp_path / approval["path"],
+            mission_binding={
+                "path": "binding.json",
+                "root": str(tmp_path),
+                "owner": "owner",
+            },
+        )
+    assert not (tmp_path / ".factory" / "repair-attempts").exists()
+
+
+def test_mission_candidate_staleness_rejects_before_attempt_consumption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    approval = _approval(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "factoryline.product_missions.verify_mission_repair_binding",
+        lambda *_args, **_kwargs: {"workspace": str(tmp_path)},
+    )
+
+    def reject_stale_candidate(*_args, **_kwargs):
+        raise RepairSandboxError("REPAIR_CANDIDATE_STALE", "candidate changed")
+
+    monkeypatch.setattr(
+        repair_sandbox, "_verify_approved_candidate", reject_stale_candidate
+    )
+    with pytest.raises(RepairSandboxError) as failure:
+        execute_approved_repair(
+            tmp_path,
+            tmp_path / approval["path"],
+            mission_binding={
+                "path": "binding.json",
+                "root": str(tmp_path),
+                "owner": "owner",
+            },
+        )
+    assert failure.value.code == "REPAIR_CANDIDATE_STALE"
+    assert not (tmp_path / ".factory" / "repair-attempts").exists()
+
+
+def test_mission_context_is_journaled_and_heartbeat_stops_on_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    approval = _approval(tmp_path, monkeypatch)
+    context = {
+        "schema": "factory.mission.repair-binding.v1",
+        "workspace": str(tmp_path).casefold(),
+        "binding_sha256": "a" * 64,
+    }
+    monkeypatch.setattr(
+        "factoryline.product_missions.verify_mission_repair_binding",
+        lambda *_args, **_kwargs: context,
+    )
+    result = execute_approved_repair(
+        tmp_path,
+        tmp_path / approval["path"],
+        mission_binding={
+            "path": "binding.json",
+            "root": str(tmp_path),
+            "owner": "owner",
+        },
+    )
+    assert result["mission_binding"] == context
+    journal = repair_sandbox.verify_repair_attempt_journal(
+        tmp_path, approval["approval_sha256"]
+    )
+    assert journal["state"]["mission_binding"] == context
+
+    changed = {**context, "binding_sha256": "b" * 64}
+    observed = iter((context, changed))
+    monkeypatch.setattr(
+        "factoryline.product_missions.verify_mission_repair_binding",
+        lambda *_args, **_kwargs: next(observed),
+    )
+    binding = {
+        "path": "binding.json",
+        "root": str(tmp_path),
+        "owner": "owner",
+        "approval": json.loads(
+            (tmp_path / approval["path"]).read_text(encoding="utf-8")
+        ),
+        "context": context,
+    }
+    monkeypatch.setattr(repair_sandbox, "_reject_checkout_filters", lambda *_args: None)
+    monkeypatch.setattr(repair_sandbox, "_clean_base", lambda *_args: "base")
+    monkeypatch.setattr(
+        repair_sandbox, "_verify_approved_candidate", lambda *_args: None
+    )
+    monkeypatch.setattr(repair_sandbox, "_assert_docker_engine", lambda *_args: None)
+    monkeypatch.setattr(repair_sandbox, "_image_ref", lambda *_args: "image")
+    monkeypatch.setattr(repair_sandbox, "_git", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(repair_sandbox, "_reject_runtime_secrets", lambda *_args: None)
+    attempt = tmp_path / "attempt"
+    attempt.mkdir()
+    _, heartbeat = repair_sandbox._prepare_repair_attempt(
+        tmp_path,
+        attempt,
+        binding["approval"],
+        {},
+        tmp_path / "revoked",
+        time.monotonic() + 60,
+        {"base": None, "temporary": None, "worktree": None},
+        binding,
+    )
+    with pytest.raises(RepairSandboxError, match="changed during execution"):
+        heartbeat()
+
+    from factoryline.product_missions import ProductMissionError
+
+    calls = 0
+
+    def reject_changed_binding(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise ProductMissionError("MISSION_REPAIR_BINDING_STALE", "changed")
+        return context
+
+    monkeypatch.setattr(
+        "factoryline.product_missions.verify_mission_repair_binding",
+        reject_changed_binding,
+    )
+    attempt2 = tmp_path / "attempt2"
+    attempt2.mkdir()
+    _, heartbeat = repair_sandbox._prepare_repair_attempt(
+        tmp_path,
+        attempt2,
+        binding["approval"],
+        {},
+        tmp_path / "revoked",
+        time.monotonic() + 60,
+        {"base": None, "temporary": None, "worktree": None},
+        binding,
+    )
+    with pytest.raises(RepairSandboxError) as failure:
+        heartbeat()
+    assert failure.value.code == "MISSION_REPAIR_BINDING_DRIFT"
 
 
 def test_repair_attempt_journal_detects_reorder_and_missing_events(

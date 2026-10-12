@@ -2291,6 +2291,85 @@ def verify_mission_candidate(
     }
 
 
+def _mission_repair_snapshot(binding_path: Path, root: Path, owner: str) -> dict:
+    verification = verify_mission_candidate(binding_path, root, owner=owner)
+    binding = _load_json(binding_path, CANDIDATE_BINDING_SCHEMA)
+    core = {key: value for key, value in binding.items() if key != "binding_sha256"}
+    if _sha_bytes(_canonical(core)) != verification["binding_sha256"]:
+        _candidate_reject("candidate binding changed during repair verification")
+    return binding
+
+
+def _mission_repair_scope(binding: dict, approval: dict) -> None:
+    declaration = binding["declaration"]
+    if (
+        approval["workspace"] != str(Path(binding["workspace"])).casefold()
+        or approval["base_commit"] != declaration["base_commit"]
+    ):
+        _candidate_reject("repair approval belongs to another workspace or Git base")
+    paths = approval["touched_paths"]
+    if not paths or not set(paths).issubset(declaration["paths"]):
+        _candidate_reject("repair patch exceeds the approved mission paths")
+    if "docker-linux" not in declaration["profiles"]:
+        _candidate_reject(
+            "mission must explicitly declare the docker-linux execution profile"
+        )
+
+
+def _mission_repair_tools(binding: dict, approval: dict) -> None:
+    contract = approval["tool_contract"]
+    permitted = {tuple(row["argv"]) for row in binding["declaration"]["commands"]}
+    checks = contract["checks"]
+    if not checks or any(tuple(check["argv"]) not in permitted for check in checks):
+        _candidate_reject(
+            "repair commands exceed the approved mission command manifest"
+        )
+    if contract["total_timeout_seconds"] > binding["budgets"]["max_wall_seconds"]:
+        _candidate_reject("repair lifecycle exceeds the mission wall-time budget")
+
+
+def verify_mission_repair_binding(
+    binding_path: Path, root: Path, *, owner: str, approval: dict
+) -> dict[str, Any]:
+    """Constrain an independently verified repair approval; never create one."""
+    binding_path, root = Path(binding_path).resolve(), Path(root).resolve()
+    binding = _mission_repair_snapshot(binding_path, root, owner)
+    try:
+        _mission_repair_scope(binding, approval)
+        _mission_repair_tools(binding, approval)
+    except ProductMissionError:
+        raise
+    except (KeyError, TypeError, ValueError) as exc:
+        _candidate_reject(f"repair contract cannot be matched: {type(exc).__name__}")
+    return {
+        "schema": "factory.mission.repair-binding.v1",
+        "path": str(binding_path),
+        "root": str(root),
+        "owner": owner,
+        "workspace": binding["workspace"],
+        "binding_sha256": binding["binding_sha256"],
+        "binding_file_sha256": _sha_path(binding_path),
+        "candidate_sha256": binding["candidate_sha256"],
+        "mission_sha256": binding["mission"]["mission_sha256"],
+        "decision_sha256": binding["decision"]["sha256"],
+    }
+
+
+def execute_mission_repair(
+    binding_path: Path, approval_path: Path, root: Path, *, owner: str
+) -> dict[str, Any]:
+    """Dispatch the existing isolated executor with a separate exact repair approval."""
+    from .repair_sandbox import execute_approved_repair
+
+    binding_path, root = Path(binding_path).resolve(), Path(root).resolve()
+    binding = _mission_repair_snapshot(binding_path, root, owner)
+    return execute_approved_repair(
+        Path(binding["workspace"]),
+        Path(approval_path),
+        mission_binding={"path": str(binding_path), "root": str(root), "owner": owner},
+    )
+
+
 def _evidence(root: Path, paths: list[Path]) -> list[dict[str, Any]]:
     root = Path(root).resolve()
     result = []

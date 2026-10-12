@@ -2554,7 +2554,9 @@ def _apply_candidate(worktree: Path, attempt: Path) -> None:
 
 
 def _attempt_state(
-    approval_sha: str, origin: dict[str, Any] | None = None
+    approval_sha: str,
+    origin: dict[str, Any] | None = None,
+    mission_binding: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "schema": REPAIR_ATTEMPT_SCHEMA,
@@ -2563,6 +2565,7 @@ def _attempt_state(
         "phase": "VALIDATING",
         "checks": [],
         "origin_audit": origin,
+        "mission_binding": mission_binding,
         "candidate_before_sha256": None,
         "candidate_after_sha256": None,
         "started_at": datetime.now(timezone.utc).isoformat(),
@@ -2570,7 +2573,10 @@ def _attempt_state(
 
 
 def _begin_attempt(
-    directory: Path, approval_sha: str, origin: dict[str, Any] | None = None
+    directory: Path,
+    approval_sha: str,
+    origin: dict[str, Any] | None = None,
+    mission_binding: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     directory.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -2580,7 +2586,7 @@ def _begin_attempt(
             "REPAIR_APPROVAL_ALREADY_USED",
             "single-use approval has already been consumed",
         ) from exc
-    state = _attempt_state(approval_sha, origin)
+    state = _attempt_state(approval_sha, origin, mission_binding)
     _persist_attempt(directory, state)
     return state
 
@@ -2623,7 +2629,10 @@ def _prepare_repair_attempt(
     revoked_file: Path,
     deadline: float,
     resources: dict,
+    mission_binding: dict | None = None,
 ) -> tuple:
+    if mission_binding is not None:
+        _revalidate_mission_binding(workspace, mission_binding)
     _reject_checkout_filters(workspace)
     base = _clean_base(workspace, approval["base_commit"])
     resources["base"] = base
@@ -2664,6 +2673,8 @@ def _prepare_repair_attempt(
     _reject_runtime_secrets(worktree)
 
     def heartbeat() -> bool:
+        if mission_binding is not None:
+            _revalidate_mission_binding(workspace, mission_binding)
         return (
             _approval_live(workspace, approval, revoked_file, attempt)
             and time.monotonic() < deadline
@@ -2737,12 +2748,20 @@ def _execute_repair_lifecycle(
     origin: dict | None,
     revoked_file: Path,
     state: dict,
+    mission_binding: dict | None = None,
 ) -> tuple:
     deadline = time.monotonic() + 600
     resources = {"base": None, "temporary": None, "worktree": None}
     try:
         image, heartbeat = _prepare_repair_attempt(
-            workspace, attempt, approval, state, revoked_file, deadline, resources
+            workspace,
+            attempt,
+            approval,
+            state,
+            revoked_file,
+            deadline,
+            resources,
+            mission_binding,
         )
         state = _run_repair_stages(
             workspace,
@@ -2758,7 +2777,12 @@ def _execute_repair_lifecycle(
         state = _persist_failure(
             attempt,
             stopped=exc.code
-            in {"REPAIR_ATTEMPT_STOPPED", "REPAIR_ATTEMPT_BUDGET_EXHAUSTED"},
+            in {
+                "REPAIR_ATTEMPT_STOPPED",
+                "REPAIR_ATTEMPT_BUDGET_EXHAUSTED",
+                "MISSION_REPAIR_BINDING_DRIFT",
+                "MISSION_REPAIR_BINDING_WORKSPACE",
+            },
             code=exc.code,
             phase=exc.code,
         )
@@ -2795,6 +2819,7 @@ def execute_approved_repair(
     *,
     expected_approval_sha256: str | None = None,
     expected_approval_file_sha256: str | None = None,
+    mission_binding: dict | None = None,
 ) -> dict[str, Any]:
     """Run locally owner-approved checks; this path does not authenticate identity."""
     workspace = _mount_safe_workspace(root)
@@ -2827,13 +2852,44 @@ def execute_approved_repair(
             "REPAIR_APPROVAL_REJECTED",
             "approval is expired, revoked, or stored unexpectedly",
         )
-    if (expected_approval_sha256, expected_approval_file_sha256) != (None, None):
+    if (expected_approval_sha256, expected_approval_file_sha256) != (
+        None,
+        None,
+    ) or mission_binding is not None:
         _verify_approved_candidate(workspace, approval)
+    mission_context = None
+    runtime_mission_binding = None
+    if mission_binding is not None:
+        if (
+            not isinstance(mission_binding, dict)
+            or set(mission_binding) != {"path", "root", "owner"}
+            or any(
+                not isinstance(mission_binding.get(key), str) for key in mission_binding
+            )
+        ):
+            raise RepairSandboxError(
+                "MISSION_REPAIR_BINDING_INVALID",
+                "mission binding request must contain exactly path, root, and owner strings",
+            )
+        mission_context = _validate_mission_binding(
+            workspace, mission_binding, approval
+        )
+        runtime_mission_binding = {
+            **mission_binding,
+            "approval": approval,
+            "context": mission_context,
+        }
     attempt = workspace / ".factory" / "repair-attempts" / approval_sha
     origin = _verify_repair_origin(workspace, approval.get("origin_audit"))
-    _begin_attempt(attempt, approval_sha, origin)
+    _begin_attempt(attempt, approval_sha, origin, mission_context)
     state = _execute_repair_lifecycle(
-        workspace, attempt, approval, origin, revoked_file, _read_attempt_state(attempt)
+        workspace,
+        attempt,
+        approval,
+        origin,
+        revoked_file,
+        _read_attempt_state(attempt),
+        runtime_mission_binding,
     )
     return {
         "schema": REPAIR_ATTEMPT_SCHEMA,
@@ -2845,6 +2901,7 @@ def execute_approved_repair(
         "cleanup_confirmed": state.get("cleanup_confirmed"),
         "primary_checkout_unchanged": state.get("primary_checkout_unchanged"),
         "origin_audit": state.get("origin_audit"),
+        "mission_binding": state.get("mission_binding"),
         "candidate_before_sha256": state.get("candidate_before_sha256"),
         "candidate_after_sha256": state.get("candidate_after_sha256"),
         "event_sequence": state.get("event_sequence"),
@@ -2852,3 +2909,41 @@ def execute_approved_repair(
         "checks": state["checks"],
         "error": state.get("error"),
     }
+
+
+def _validate_mission_binding(
+    workspace: Path, request: dict[str, str], approval: dict[str, Any]
+) -> dict[str, Any]:
+    from .product_missions import verify_mission_repair_binding
+
+    context = verify_mission_repair_binding(
+        request["path"], request["root"], owner=request["owner"], approval=approval
+    )
+    try:
+        context_workspace = Path(context["workspace"]).resolve()
+    except (KeyError, TypeError, OSError):
+        context_workspace = None
+    if not isinstance(context, dict) or context_workspace != workspace.resolve():
+        raise RepairSandboxError(
+            "MISSION_REPAIR_BINDING_WORKSPACE",
+            "mission binding targets another workspace",
+        )
+    return context
+
+
+def _revalidate_mission_binding(workspace: Path, binding: dict[str, Any]) -> None:
+    from .product_missions import ProductMissionError
+
+    try:
+        request = {key: binding[key] for key in ("path", "root", "owner")}
+        current = _validate_mission_binding(workspace, request, binding["approval"])
+    except (ProductMissionError, OSError, ValueError, KeyError, TypeError) as exc:
+        raise RepairSandboxError(
+            "MISSION_REPAIR_BINDING_DRIFT",
+            "mission repair binding is no longer valid",
+        ) from exc
+    if current != binding["context"]:
+        raise RepairSandboxError(
+            "MISSION_REPAIR_BINDING_DRIFT",
+            "mission repair binding changed during execution",
+        )

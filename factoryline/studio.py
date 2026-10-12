@@ -1637,6 +1637,8 @@ def _mission_agent_handoff(
             "declaration_schema": "factory.mission.candidate-declaration.v1",
             "bind_command": "factory mission bind-candidate",
             "verify_command": "factory mission verify-candidate",
+            "repair_command": "factory mission execute-repair",
+            "repair_prerequisite": "Separate exact patch/scope/check approval and docker-linux profile; never synthesize repair approval from this handoff.",
             "required_fields": [
                 "schema",
                 "workspace",

@@ -1820,6 +1820,15 @@ def _build_parser() -> argparse.ArgumentParser:
     mission_bound.add_argument("--root", default=".")
     mission_bound.add_argument("--owner", required=True)
     mission_bound.add_argument("--json", action="store_true")
+    mission_repair = mission_sub.add_parser(
+        "execute-repair",
+        help="execute an approved repair against a bound mission candidate",
+    )
+    mission_repair.add_argument("binding")
+    mission_repair.add_argument("repair_approval")
+    mission_repair.add_argument("--root", default=".")
+    mission_repair.add_argument("--owner", required=True)
+    mission_repair.add_argument("--json", action="store_true")
     mission_delta = mission_sub.add_parser(
         "proof-delta", help="bind new evidence before a supervised mission retry"
     )

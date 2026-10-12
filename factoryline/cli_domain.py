@@ -547,6 +547,13 @@ def _workflow_action_36(a):
 
 
 def _workflow_action_37(a):
+    if a.cmd == "mission" and a.mission_cmd == "execute-repair":
+        return _lazy_import("product_missions", "execute_mission_repair")(
+            Path(a.binding),
+            Path(a.repair_approval),
+            Path(a.root),
+            owner=a.owner,
+        )
     if a.cmd == "mission" and a.mission_cmd == "verify-candidate":
         return _lazy_import("product_missions", "verify_mission_candidate")(
             Path(a.binding), Path(a.root), owner=a.owner
@@ -1014,6 +1021,7 @@ def run_workflow_family(a):
         _lazy_import("agent_contract", "AgentContractError"),
         _lazy_import("agentic_control", "AgenticControlError"),
         _lazy_import("langgraph_assurance", "LangGraphAssuranceError"),
+        _lazy_import("repair_sandbox", "RepairSandboxError"),
     ) as exc:
         return _workflow_domain_error(exc)
     except (OSError, json.JSONDecodeError) as exc:

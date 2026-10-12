@@ -1182,6 +1182,8 @@ def test_junie_candidate_workflow_declares_native_commands_without_dispatch():
     assert workflow["protocol"] == "factory.mission.candidate-declaration.v1"
     assert workflow["bind_command"].startswith("factory mission bind-candidate ")
     assert workflow["verify_command"].startswith("factory mission verify-candidate ")
+    assert workflow["repair_command"].startswith("factory mission execute-repair ")
+    assert "Never synthesize" in workflow["repair_prerequisite"]
     assert "Separately approved" in workflow["prerequisite"]
     assert "beginner interview" in workflow["agent_responsibility"]
     assert "do not dispatch" in workflow["authority"]

@@ -339,6 +339,11 @@ def test_approved_studio_mission_returns_exact_bound_agent_handoff(tmp_path: Pat
     assert handoff["executor"] == "codex"
     assert handoff["dispatched"] is False
     assert handoff["state"] == "approved_needs_candidate_binding"
+    assert (
+        handoff["candidate_binding"]["repair_command"]
+        == "factory mission execute-repair"
+    )
+    assert "Separate exact" in handoff["candidate_binding"]["repair_prerequisite"]
     guidance = handoff["acceptance_guidance"]
     assert len(guidance["starter_scenarios"]) == 5
     assert "reload" in guidance["starter_scenarios"][2].lower()
