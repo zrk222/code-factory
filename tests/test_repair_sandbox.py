@@ -1176,7 +1176,7 @@ def test_mission_context_is_journaled_and_heartbeat_stops_on_drift(
     monkeypatch.setattr(repair_sandbox, "_settle_mission_repair", lambda *_args: None)
     context = {
         "schema": "factory.mission.repair-binding.v1",
-        "workspace": str(tmp_path).casefold(),
+        "workspace": str(tmp_path),
         "binding_sha256": "a" * 64,
     }
     monkeypatch.setattr(

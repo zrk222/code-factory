@@ -2817,16 +2817,13 @@ def _execute_repair_lifecycle(
     return _read_attempt_state(attempt)
 
 
-def execute_approved_repair(
-    root: Path,
-    approval_path: Path,
-    *,
-    expected_approval_sha256: str | None = None,
-    expected_approval_file_sha256: str | None = None,
-    mission_binding: dict | None = None,
-) -> dict[str, Any]:
-    """Run locally owner-approved checks; this path does not authenticate identity."""
-    workspace = _mount_safe_workspace(root)
+def _execution_approval(
+    workspace,
+    approval_path,
+    expected_approval_sha256,
+    expected_approval_file_sha256,
+    mission_binding,
+):
     approval_file = _under_workspace(workspace, approval_path, file_only=True)
     approval, approval_file_sha = _read_approval_snapshot(approval_file)
     approval_sha = _verify_approval(approval)
@@ -2861,6 +2858,10 @@ def execute_approved_repair(
         None,
     ) or mission_binding is not None:
         _verify_approved_candidate(workspace, approval)
+    return approval, approval_sha, revoked_file
+
+
+def _mission_dispatch_context(workspace, mission_binding, approval):
     mission_context = None
     runtime_mission_binding = None
     if mission_binding is not None:
@@ -2883,6 +2884,31 @@ def execute_approved_repair(
             "approval": approval,
             "context": mission_context,
         }
+    return mission_context, runtime_mission_binding
+
+
+def execute_approved_repair(
+    root: Path,
+    approval_path: Path,
+    *,
+    expected_approval_sha256: str | None = None,
+    expected_approval_file_sha256: str | None = None,
+    mission_binding: dict | None = None,
+) -> dict[str, Any]:
+    """Run locally owner-approved checks; this path does not authenticate identity."""
+    workspace = _mount_safe_workspace(root)
+    approval, approval_sha, revoked_file = _execution_approval(
+        workspace,
+        approval_path,
+        expected_approval_sha256,
+        expected_approval_file_sha256,
+        mission_binding,
+    )
+    mission_context, runtime_mission_binding = _mission_dispatch_context(
+        workspace,
+        mission_binding,
+        approval,
+    )
     attempt = workspace / ".factory" / "repair-attempts" / approval_sha
     origin = _verify_repair_origin(workspace, approval.get("origin_audit"))
     admission = _admit_mission_repair(mission_context, approval_sha, approval)
