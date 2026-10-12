@@ -1872,6 +1872,8 @@ def _mock_argument_oracle(node: ast.Call, aliases: dict[str, str]) -> bool:
     methods = {
         "assert_called_with",
         "assert_called_once_with",
+        "assert_called",
+        "assert_called_once",
         "assert_any_call",
         "assert_has_calls",
         "assert_not_called",
@@ -1888,6 +1890,8 @@ def _mock_argument_oracle(node: ast.Call, aliases: dict[str, str]) -> bool:
     if node.func.attr in {
         "assert_not_called",
         "assert_not_awaited",
+        "assert_called",
+        "assert_called_once",
         "assert_awaited",
         "assert_awaited_once",
     } and not _injected_mock_use(node, aliases):
@@ -1903,12 +1907,42 @@ def _injected_mock_use(assertion: ast.Call, aliases: dict[str, str]) -> bool:
     receiver = _name(assertion.func.value)
     scoped_aliases = _scope_security_aliases(aliases, scope)
     nodes = _test_oracle_body_nodes(scope, scoped_aliases)
-    return any(
+    return _direct_mock_dependency_use(
+        assertion, receiver, scoped_aliases, nodes
+    ) or any(
         _injected_mock_assertion_proven(
             constructor, assertion, receiver, aliases, scoped_aliases, nodes
         )
         for constructor in nodes
     )
+
+
+def _direct_mock_dependency_use(assertion, receiver, aliases, nodes):
+    """Credit interaction checks after passing a mock to an executed dependency."""
+    for call in nodes:
+        if not isinstance(call, ast.Call) or call.lineno >= assertion.lineno:
+            continue
+        if not _in_current_test_body(call) or not _effective_assertion(call, aliases):
+            continue
+        name = _normalized_call_name(call, aliases)
+        scope = getattr(assertion, "_oracle_scope", None)
+        if _call_name(call) in getattr(
+            scope, "_oracle_async_functions", set()
+        ) and not isinstance(getattr(call, "_oracle_parent", None), ast.Await):
+            continue
+        if name == receiver or name.startswith(("unittest.mock.", "mock.")):
+            continue
+        if isinstance(
+            getattr(call, "_oracle_parent", None), (ast.Assign, ast.AnnAssign)
+        ):
+            continue
+        arguments = [*call.args, *(item.value for item in call.keywords)]
+        if any(
+            isinstance(item, ast.Name) and item.id == receiver for item in arguments
+        ):
+            if not _name_rebound(nodes, receiver, call.lineno, assertion.lineno):
+                return True
+    return False
 
 
 def _injected_mock_assertion_proven(
@@ -2612,12 +2646,17 @@ def _direct_callback_parameter(function):
             and isinstance(item.value.value, str)
         )
     ]
-    if len(statements) != 1 or not isinstance(statements[0], ast.Expr):
+    if not statements or not isinstance(statements[-1], (ast.Expr, ast.Return)):
         return None
-    call = statements[0].value
+    if any(
+        not isinstance(item, (ast.Assign, ast.AnnAssign, ast.Expr))
+        for item in statements[:-1]
+    ):
+        return None
+    call = statements[-1].value
     if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
         return None
-    if call.args or call.keywords:
+    if any(call.func.id in _bound_names(item) for item in statements[:-1]):
         return None
     return call.func.id if call.func.id in _scope_parameters(function) else None
 
@@ -2816,7 +2855,7 @@ def _oracle_snapshots(root: Path, files: list[Path], source_bytes: dict) -> dict
 def _declared_typecheck_sources(
     root: Path, files: list[Path]
 ) -> tuple[set, list, dict, bool]:
-    """Bind bounded mypy configuration; never exempt a collected runtime file."""
+    """Bind explicit type-checker sources without exempting runtime assertions."""
     config_identity: dict[str, Any] = {"path": "pyproject.toml", "state": "missing"}
     config_binding: list[dict[str, Any]] = []
     try:
@@ -2846,11 +2885,17 @@ def _declared_typecheck_sources(
         config_binding = [
             {"path": "pyproject.toml", "sha256": config_digest, "bytes": len(data)}
         ]
-        settings = tomllib.loads(data.decode("utf-8")).get("tool", {}).get("mypy", {})
-        declared = settings.get("files", [])
+        tools = tomllib.loads(data.decode("utf-8")).get("tool", {})
+        declared = tools.get("mypy", {}).get("files", [])
+        pyright = tools.get("pyright", {}).get("include", [])
+        if not isinstance(pyright, list):
+            return set(), config_binding, config_identity, True
+        declared = declared + pyright if isinstance(declared, list) else declared
         if not isinstance(declared, list) or len(declared) > MAX_PATHS:
             return set(), config_binding, config_identity, True
         roots = [root / _relative_path(item) for item in declared]
+        if any(not target.resolve().is_relative_to(root.resolve()) for target in roots):
+            return set(), config_binding, config_identity, False
     except RuntimeAuditError as exc:
         if exc.code == "E_SOURCE_MISSING":
             return set(), [], config_identity, True
@@ -2862,7 +2907,10 @@ def _declared_typecheck_sources(
     selected = {
         path
         for path in files
-        if not (path.name.startswith("test_") or path.name.endswith("_test.py"))
+        if (
+            path in roots
+            or not (path.name.startswith("test_") or path.name.endswith("_test.py"))
+        )
         and any(path == target or path.is_relative_to(target) for target in roots)
     }
     return selected, config_binding, config_identity, True
@@ -3161,7 +3209,7 @@ def _static_type_edges(
             "caller": path.relative_to(root).as_posix(),
             "target": binding["path"],
             "kind": "static_type_configuration",
-            "symbol": "mypy.files",
+            "symbol": "type_checker.sources",
             "strength": "declared",
             "sha256": binding["sha256"],
         }
@@ -3182,9 +3230,10 @@ def _weak_assertion_call_reason(node: ast.Call, aliases: dict) -> str | None:
         )
     ):
         return "non-null assertion does not verify the expected behavior"
-    if leaf in {"assert_called", "assert_called_once"} or (
-        leaf == "assert_called_once_with" and _mock_self_check(node)
-    ):
+    if (
+        leaf in {"assert_called", "assert_called_once"}
+        and not _mock_argument_oracle(node, aliases)
+    ) or (leaf == "assert_called_once_with" and _mock_self_check(node)):
         return "mock invocation state does not verify its result or arguments"
     return None
 
@@ -3955,6 +4004,11 @@ def _test_oracle_findings(
         ):
             continue
         node._oracle_click_runners = click_runners or set()
+        node._oracle_async_functions = {
+            item.name
+            for item in [*nodes[0].body, *node.body]
+            if isinstance(item, ast.AsyncFunctionDef)
+        }
         is_unittest_method = id(node) in unittest_methods
         helpers = helper_names | (class_helpers or {}).get(id(node), set())
         if node.name.startswith("test_"):

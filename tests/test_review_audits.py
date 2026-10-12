@@ -260,6 +260,81 @@ def test_mock_state_oracle_does_not_credit_unused_or_unreachable_dependencies(
     )
 
 
+@pytest.mark.parametrize(
+    "method",
+    [
+        "assert_not_called",
+        "assert_not_awaited",
+        "assert_awaited",
+        "assert_awaited_once",
+        "assert_called",
+        "assert_called_once",
+    ],
+)
+def test_mock_oracle_supports_function_dependency_injection(tmp_path, method):
+    (tmp_path / "test_case.py").write_text(
+        "from unittest.mock import AsyncMock\n"
+        "async def test_behavior():\n    dependency = AsyncMock()\n"
+        f"    await perform(dependency)\n    dependency.{method}()\n",
+        encoding="utf-8",
+    )
+    assert not security_scan(tmp_path)["findings"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "dependency()",
+        "perform(dependency)\n    dependency = AsyncMock()",
+        "if False:\n        perform(dependency)",
+    ],
+)
+def test_mock_oracle_rejects_self_unused_and_rebound_state(tmp_path, body):
+    (tmp_path / "test_case.py").write_text(
+        "from unittest.mock import AsyncMock\ndef test_behavior():\n"
+        "    dependency = AsyncMock()\n    "
+        + body
+        + "\n    dependency.assert_called_once()\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize("invoke", ["check(42)", "return check(42)"])
+def test_callback_oracle_follows_setup_and_return(tmp_path, invoke):
+    (tmp_path / "test_case.py").write_text(
+        "def test_behavior():\n    def check(value):\n        assert compute() == value\n"
+        "    def execute(callback):\n        setup = 42\n        "
+        + invoke.replace("check", "callback")
+        + "\n    execute(check)\n",
+        encoding="utf-8",
+    )
+    assert not security_scan(tmp_path)["findings"]
+
+
+def test_mock_oracle_does_not_credit_unawaited_async_dependency(tmp_path):
+    (tmp_path / "test_case.py").write_text(
+        "from unittest.mock import AsyncMock\nasync def perform(dep):\n    await dep()\n"
+        "async def test_behavior():\n    dependency = AsyncMock()\n"
+        "    perform(dependency)\n    dependency.assert_not_awaited()\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_explicit_pyright_type_source_credits_only_real_type_assertion(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pyright]\ninclude = ["test_typing.py"]\n', encoding="utf-8"
+    )
+    (tmp_path / "test_typing.py").write_text(
+        "from typing import assert_type\ndef test_types():\n    assert_type(compute(), int)\n"
+        "def test_missing():\n    compute()\n",
+        encoding="utf-8",
+    )
+    findings = security_scan(tmp_path)["findings"]
+    assert [item["facts"]["symbol"] for item in findings] == ["test_missing"]
+
+
 def test_callback_oracle_requires_direct_invocation_not_callback_passing(tmp_path):
     (tmp_path / "test_callback.py").write_text(
         "def test_direct_callback():\n"
