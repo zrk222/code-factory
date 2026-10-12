@@ -101,6 +101,9 @@
     },
     "audience": "New builders and experienced developers",
     "presentation": "Plain language, one ready question with a recommendation and a concrete example; explain technical terms only when needed.",
+    "source_review": "Before an explicit Save or Confirm action, show the exact current PRD text and its source SHA-256. Display PRD text as text, not markup. Verify displayed bytes against the bound digest; if the source cannot be read or its digest differs, stop and report the mismatch. A digest identifies bytes; it does not prove that the PRD is correct.",
+    "answer_choices": "For each ready question, offer bounded starting choices as examples and a Custom answer. Keep the answer editable after a choice. A selected or recommended example is not a user decision until the user explicitly saves it; silence and defaults are not acceptance.",
+    "question_progression": "Show one ready question at a time with progress. Back and Next navigate locally and preserve entered answers. Require a non-empty answer before Next. Saving the current frontier is explicit; after saving, show the updated PRD text and digest before presenting the next ready question or asking for final confirmation.",
     "decision_owner": "user",
     "facts": "Inspect relevant repository facts before asking the user. File hashes identify inputs; they do not establish product decisions or facts about implementation.",
     "answer_handling": "Recommendations are proposals. Never treat silence as acceptance. Record the user answer in the PRD, distinguish confirmed decisions from assumptions, then rerun the frontier.",
@@ -110,7 +113,7 @@
       "After explicit shared understanding, optimize and compile the current PRD; create small value slices with acceptance evidence.",
       "Use CF plan/assembly and applicable CF/FL audit lanes for each authorized development slice; return actionable findings and evidence gaps."
     ],
-    "authority": "Clarification only. Confirmation is not build, runtime, security, merge or release approval.",
+    "authority": "Clarification and source review only. PRD confirmation records the user's acceptance of the exact reviewed source revision; it does not authorize implementation, mission execution, external effects, merge, publication, deployment or release.",
     "judge": "Jev may review a bound PRD revision against an explicit criterion when configured and authorized. An experimental score never supplies missing user decisions or implementation evidence."
   }
 }

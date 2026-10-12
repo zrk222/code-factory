@@ -876,6 +876,41 @@ def test_beginner_prd_guidance_requires_write_authorization_and_discovers_cf_com
     assert "factory assemble <feature> --root ." in guidance
 
 
+def test_guided_interaction_contract_is_exposed_in_verified_prd_receipt(tmp_path):
+    from factoryline.prd_grill import grill_prd, verify_prd_grill
+
+    source = tmp_path / "PRD.md"
+    source_text = "# Draft\n\nA private notes dashboard.\n"
+    source.write_bytes(source_text.encode("utf-8"))
+    result = grill_prd(source, tmp_path, mode="quick")
+    interview = result["interview"]
+
+    assert Path(result["source_copy"]).read_bytes() == source_text.encode("utf-8")
+    assert (
+        sha256(Path(result["source_copy"]).read_bytes()).hexdigest()
+        == result["source"]["sha256"]
+    )
+    assert "exact current PRD text" in interview["source_review"]
+    assert "source SHA-256" in interview["source_review"]
+    assert "digest differs, stop" in interview["source_review"]
+    assert "bounded starting choices" in interview["answer_choices"]
+    assert "Custom answer" in interview["answer_choices"]
+    assert "not a user decision" in interview["answer_choices"]
+    assert "one ready question at a time" in interview["question_progression"]
+    assert "Back and Next" in interview["question_progression"]
+    assert "non-empty answer" in interview["question_progression"]
+    assert (
+        "Saving the current frontier is explicit" in interview["question_progression"]
+    )
+    assert "exact reviewed source revision" in interview["authority"]
+    assert "mission execution" in interview["authority"]
+    assert (
+        "external effects, merge, publication, deployment or release"
+        in interview["authority"]
+    )
+    assert verify_prd_grill(Path(result["path"]))["valid"] is True
+
+
 def test_native_worker_catalog_and_junie_manifest_bind_profiles(tmp_path):
     catalog = audit_taxonomy()
     workers = catalog["native_workers"]
