@@ -1172,6 +1172,8 @@ def test_mission_context_is_journaled_and_heartbeat_stops_on_drift(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     approval = _approval(tmp_path, monkeypatch)
+    monkeypatch.setattr(repair_sandbox, "_admit_mission_repair", lambda *_args: None)
+    monkeypatch.setattr(repair_sandbox, "_settle_mission_repair", lambda *_args: None)
     context = {
         "schema": "factory.mission.repair-binding.v1",
         "workspace": str(tmp_path).casefold(),
@@ -1817,6 +1819,78 @@ def test_repair_checks_bind_exact_reviewed_bytes(tmp_path: Path) -> None:
         with pytest.raises(RepairSandboxError, match="bounded workspace-contained"):
             _load_repair_checks(tmp_path, "checks.json", repair_sandbox, invalid_sha)
     assert _load_repair_checks(tmp_path, "checks.json", repair_sandbox) == []
+
+
+def test_mission_budget_rejection_precedes_approval_consumption(tmp_path, monkeypatch):
+    approval = _approval(tmp_path, monkeypatch)
+    monkeypatch.setattr(repair_sandbox, "_validate_mission_binding", lambda *_: {})
+
+    def reject(*_):
+        raise RepairSandboxError("MISSION_BUDGET_BLOCKED", "ACTION_IN_PROGRESS")
+
+    monkeypatch.setattr(repair_sandbox, "_admit_mission_repair", reject)
+    with pytest.raises(RepairSandboxError) as failure:
+        execute_approved_repair(
+            tmp_path,
+            tmp_path / approval["path"],
+            mission_binding={
+                "path": "binding.json",
+                "root": str(tmp_path),
+                "owner": "owner",
+            },
+        )
+    assert failure.value.code == "MISSION_BUDGET_BLOCKED"
+    assert not (tmp_path / ".factory" / "repair-attempts").exists()
+
+
+@pytest.mark.parametrize("cleanup", [True, False])
+def test_mission_budget_settlement_requires_cleanup_and_is_journaled(
+    tmp_path, monkeypatch, cleanup
+):
+    approval = _approval(tmp_path, monkeypatch)
+    context = {
+        "root": str(tmp_path),
+        "mission_sha256": "c" * 64,
+        "budget_passport_path": "passport.json",
+    }
+    monkeypatch.setattr(repair_sandbox, "_validate_mission_binding", lambda *_: context)
+    monkeypatch.setattr(
+        repair_sandbox, "_admit_mission_repair", lambda *_: {"status": "ADMITTED"}
+    )
+    calls = []
+
+    def lifecycle(*args):
+        state = args[5]
+        state.update(status="VERIFIED", cleanup_confirmed=cleanup)
+        return state
+
+    def settle(*args):
+        calls.append(args)
+        return {"status": "SETTLED"}
+
+    monkeypatch.setattr(repair_sandbox, "_execute_repair_lifecycle", lifecycle)
+    monkeypatch.setattr("factoryline.loop_passport.settle_budget_action", settle)
+    result = execute_approved_repair(
+        tmp_path,
+        tmp_path / approval["path"],
+        mission_binding={
+            "path": "binding.json",
+            "root": str(tmp_path),
+            "owner": "owner",
+        },
+    )
+    assert len(calls) == int(cleanup)
+    assert result["mission_budget"]["admission"]["status"] == "ADMITTED"
+    if cleanup:
+        assert calls[0][4]["iterations"] == 1
+        assert calls[0][4]["wall_seconds"] >= 0
+        assert result["mission_budget"]["settlement"]["status"] == "SETTLED"
+    else:
+        assert "settlement" not in result["mission_budget"]
+    journal = repair_sandbox.verify_repair_attempt_journal(
+        tmp_path, approval["approval_sha256"]
+    )
+    assert journal["state"]["mission_budget"] == result["mission_budget"]
 
 
 def test_repair_cli_run_nonverified_attempt_exits_two(

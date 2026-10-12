@@ -10,6 +10,7 @@ from __future__ import annotations
 from hashlib import sha256
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -31,6 +32,9 @@ REPAIR_DISPATCH_BINDING_SCHEMA = "factory.repair.dispatch-binding.v1"
 MAX_CHANGE_LIST_NAME = 160
 MAX_PATCH_BYTES = 1_000_000
 DEFAULT_CONTEXT_BUDGET_BYTES = 262_144
+# Conservative recovery allowance: worktree/primary checks, container removal,
+# trailing source inspection, and process termination after a cooperative stop.
+MISSION_REPAIR_RECOVERY_SECONDS = 600
 _CORE_SCOPE_KEYS = (
     "schema",
     "change_list",
@@ -2881,16 +2885,23 @@ def execute_approved_repair(
         }
     attempt = workspace / ".factory" / "repair-attempts" / approval_sha
     origin = _verify_repair_origin(workspace, approval.get("origin_audit"))
+    admission = _admit_mission_repair(mission_context, approval_sha, approval)
+    started = time.monotonic()
     _begin_attempt(attempt, approval_sha, origin, mission_context)
+    initial = _read_attempt_state(attempt)
+    if admission is not None:
+        initial["mission_budget"] = {"admission": admission}
+        _persist_attempt(attempt, initial)
     state = _execute_repair_lifecycle(
         workspace,
         attempt,
         approval,
         origin,
         revoked_file,
-        _read_attempt_state(attempt),
+        initial,
         runtime_mission_binding,
     )
+    _settle_mission_repair(attempt, state, mission_context, approval_sha, started)
     return {
         "schema": REPAIR_ATTEMPT_SCHEMA,
         "attempt_path": (attempt / "state.json").relative_to(workspace).as_posix(),
@@ -2902,6 +2913,7 @@ def execute_approved_repair(
         "primary_checkout_unchanged": state.get("primary_checkout_unchanged"),
         "origin_audit": state.get("origin_audit"),
         "mission_binding": state.get("mission_binding"),
+        "mission_budget": state.get("mission_budget"),
         "candidate_before_sha256": state.get("candidate_before_sha256"),
         "candidate_after_sha256": state.get("candidate_after_sha256"),
         "event_sequence": state.get("event_sequence"),
@@ -2909,6 +2921,69 @@ def execute_approved_repair(
         "checks": state["checks"],
         "error": state.get("error"),
     }
+
+
+def _admit_mission_repair(context: dict | None, approval_sha: str, approval: dict):
+    from .loop_passport import admit_budget_action, start_budget_session
+
+    if context is None:
+        return None
+    root = Path(context["root"])
+    passport = Path(context["budget_passport_path"])
+    run_id = context["mission_sha256"][:32]
+    session = start_budget_session(root, passport, run_id)
+    if session["status"] != "ACTIVE":
+        raise RepairSandboxError("MISSION_BUDGET_BLOCKED", session["status"])
+    receipt = admit_budget_action(
+        root,
+        passport,
+        run_id,
+        approval_sha[:32],
+        {
+            "iterations": 1,
+            "wall_seconds": approval["tool_contract"]["total_timeout_seconds"]
+            + MISSION_REPAIR_RECOVERY_SECONDS,
+            "tokens": 0,
+            "cost_usd": 0,
+        },
+    )
+    if (
+        receipt["status"] != "ADMITTED"
+        or "RUNTIME_ACTION_IDEMPOTENT" in receipt["markers"]
+    ):
+        raise RepairSandboxError("MISSION_BUDGET_BLOCKED", receipt["status"])
+    return receipt
+
+
+def _settle_mission_repair(attempt, state, context, approval_sha, started):
+    from .loop_passport import settle_budget_action
+
+    if context is None:
+        return
+    # Unconfirmed cleanup retains its durable reservation, including after restart.
+    if state.get("cleanup_confirmed") is not True:
+        return
+    receipt = settle_budget_action(
+        Path(context["root"]),
+        Path(context["budget_passport_path"]),
+        context["mission_sha256"][:32],
+        approval_sha[:32],
+        {
+            "iterations": 1,
+            "wall_seconds": math.ceil((time.monotonic() - started) * 1_000_000)
+            / 1_000_000,
+            "tokens": 0,
+            "cost_usd": 0,
+        },
+    )
+    state["mission_budget"]["settlement"] = receipt
+    if receipt["status"] != "SETTLED":
+        state["status"] = "STOPPED"
+        state["error"] = {
+            "code": "MISSION_BUDGET_BLOCKED",
+            "message": receipt["status"],
+        }
+    _persist_attempt(attempt, state)
 
 
 def _validate_mission_binding(

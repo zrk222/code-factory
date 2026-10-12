@@ -1512,8 +1512,13 @@ def test_mission_repair_real_docker_preserves_primary_and_bound_journal(tmp_path
     assert result["primary_checkout_unchanged"] is True
     assert (candidate / "README.md").read_text(encoding="utf-8") == "candidate base\n"
     assert result["mission_binding"]["binding_sha256"] == binding["binding_sha256"]
+    assert result["mission_budget"]["admission"]["action"]["status"] == "ADMITTED"
+    assert result["mission_budget"]["settlement"]["action"]["status"] == "SETTLED"
+    assert result["mission_budget"]["settlement"]["usage"]["iterations"] == 1
+    assert float(result["mission_budget"]["settlement"]["usage"]["wall_seconds"]) > 0
     journal = verify_repair_attempt_journal(candidate, approval["approval_sha256"])
     assert journal["state"]["mission_binding"] == result["mission_binding"]
+    assert journal["state"]["mission_budget"] == result["mission_budget"]
     assert [row["stage"] for row in result["checks"]] == [
         "baseline",
         "repaired",
@@ -1533,3 +1538,157 @@ def test_mission_repair_binding_requires_declared_docker_profile(tmp_path: Path)
         verify_mission_repair_binding(
             path, tmp_path, owner="release-owner", approval=approval
         )
+
+
+def _mission_repair_budget_context(
+    tmp_path: Path, *, max_iterations=3, max_wall_seconds=1600
+):
+    from factoryline.product_missions import verify_mission_repair_binding
+
+    _candidate, binding, approval = _mission_repair_inputs(tmp_path)
+    context = verify_mission_repair_binding(
+        Path(binding["path"]), tmp_path, owner="release-owner", approval=approval
+    )
+    # Keep the mission and binding hash gates untouched. Build a separate valid
+    # passport/manifest pair with tight runtime limits for ledger boundary cases.
+    from factoryline.loop_passport import build_loop_passport
+
+    source = json.loads(
+        Path(context["budget_passport_path"]).read_text(encoding="utf-8")
+    )
+    source_manifest = Path(source["manifest_path"])
+    manifest = json.loads(source_manifest.read_text(encoding="utf-8"))
+    manifest["id"] = f"test-{max_iterations}-{max_wall_seconds}"
+    manifest["budgets"].update(
+        max_iterations=max_iterations, max_wall_seconds=max_wall_seconds
+    )
+    manifest_path = tmp_path / f"{manifest['id']}.manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    passport = build_loop_passport(tmp_path, manifest_path)
+    context["budget_passport_path"] = passport["paths"]["json"]
+    return context, approval
+
+
+def test_mission_repair_budget_pending_and_replay_are_durable(tmp_path: Path):
+    import factoryline.repair_sandbox as sandbox
+
+    context, approval = _mission_repair_budget_context(tmp_path)
+    approval_one, approval_two = "1" * 64, "2" * 64
+    first = sandbox._admit_mission_repair(context, approval_one, approval)
+    assert first["status"] == "ADMITTED"
+    assert first["usage"]["wall_seconds"] == 1200
+    with pytest.raises(sandbox.RepairSandboxError) as blocked:
+        sandbox._admit_mission_repair(context, approval_two, approval)
+    assert blocked.value.code == "MISSION_BUDGET_BLOCKED"
+    # A helper re-entry simulates process restart; the SQLite reservation remains.
+    with pytest.raises(sandbox.RepairSandboxError) as blocked:
+        sandbox._admit_mission_repair(context, approval_two, approval)
+    assert blocked.value.code == "MISSION_BUDGET_BLOCKED"
+    with pytest.raises(sandbox.RepairSandboxError) as blocked:
+        sandbox._admit_mission_repair(context, approval_one, approval)
+    assert blocked.value.code == "MISSION_BUDGET_BLOCKED"
+
+
+def test_mission_repair_budget_enforces_iterations_and_wall_reservation(
+    tmp_path: Path, monkeypatch
+):
+    import factoryline.repair_sandbox as sandbox
+
+    context, approval = _mission_repair_budget_context(
+        tmp_path, max_iterations=1, max_wall_seconds=1201
+    )
+    monkeypatch.setattr(sandbox, "_persist_attempt", lambda *_args: None)
+    monkeypatch.setattr(sandbox.time, "monotonic", lambda: 10.0)
+    approval_sha = "3" * 64
+    admission = sandbox._admit_mission_repair(context, approval_sha, approval)
+    state = {
+        "cleanup_confirmed": True,
+        "mission_budget": {"admission": admission},
+        "status": "VERIFIED",
+    }
+    sandbox._settle_mission_repair("attempt", state, context, approval_sha, 9.0)
+    assert state["mission_budget"]["settlement"]["status"] == "SETTLED"
+    with pytest.raises(sandbox.RepairSandboxError) as blocked:
+        sandbox._admit_mission_repair(context, "4" * 64, approval)
+    assert blocked.value.code == "MISSION_BUDGET_BLOCKED"
+
+    wall_context, wall_approval = _mission_repair_budget_context(
+        tmp_path / "wall", max_iterations=3, max_wall_seconds=1199
+    )
+    with pytest.raises(sandbox.RepairSandboxError) as blocked:
+        sandbox._admit_mission_repair(wall_context, "5" * 64, wall_approval)
+    assert blocked.value.code == "MISSION_BUDGET_BLOCKED"
+
+
+def test_mission_repair_budget_rejects_altered_passport_budget(tmp_path: Path):
+    import factoryline.repair_sandbox as sandbox
+
+    context, approval = _mission_repair_budget_context(tmp_path)
+    passport_path = Path(context["budget_passport_path"])
+    passport = json.loads(passport_path.read_text(encoding="utf-8"))
+    passport["budgets"]["max_iterations"] += 1
+    passport_path.write_text(json.dumps(passport), encoding="utf-8")
+    with pytest.raises(sandbox.RepairSandboxError) as blocked:
+        sandbox._admit_mission_repair(context, "6" * 64, approval)
+    assert blocked.value.code == "MISSION_BUDGET_BLOCKED"
+
+
+def test_mission_repair_binding_rejects_passport_budget_mismatch(
+    tmp_path: Path, monkeypatch
+):
+    _candidate, binding, approval = _mission_repair_inputs(tmp_path)
+    from factoryline.product_missions import verify_mission_repair_binding
+
+    _reseal_candidate_binding(
+        Path(binding["path"]),
+        lambda value: value["budgets"].update(max_iterations=999),
+    )
+    with pytest.raises(ProductMissionError, match="MISSION_CANDIDATE_INVALID"):
+        verify_mission_repair_binding(
+            Path(binding["path"]), tmp_path, owner="release-owner", approval=approval
+        )
+
+
+def test_mission_repair_budget_serializes_competing_approvals(tmp_path: Path):
+    from concurrent.futures import ThreadPoolExecutor
+    import factoryline.repair_sandbox as sandbox
+
+    context, approval = _mission_repair_budget_context(tmp_path)
+
+    def reserve(approval_sha):
+        try:
+            return sandbox._admit_mission_repair(context, approval_sha, approval)[
+                "status"
+            ]
+        except sandbox.RepairSandboxError as error:
+            return error.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(reserve, ("7" * 64, "8" * 64)))
+    assert sorted(results) == ["ADMITTED", "MISSION_BUDGET_BLOCKED"]
+
+
+def test_mission_repair_budget_records_cleanup_overrun_and_stops(
+    tmp_path: Path, monkeypatch
+):
+    import factoryline.repair_sandbox as sandbox
+
+    context, approval = _mission_repair_budget_context(tmp_path, max_wall_seconds=1200)
+    admission = sandbox._admit_mission_repair(context, "9" * 64, approval)
+    state = {
+        "cleanup_confirmed": True,
+        "mission_budget": {"admission": admission},
+        "status": "VERIFIED",
+    }
+    monkeypatch.setattr(sandbox, "_persist_attempt", lambda *_: None)
+    monkeypatch.setattr(sandbox.time, "monotonic", lambda: 1201.0000001)
+    sandbox._settle_mission_repair("attempt", state, context, "9" * 64, 0)
+    receipt = state["mission_budget"]["settlement"]
+    assert receipt["status"] == "BUDGET_EXCEEDED"
+    assert receipt["usage"]["wall_seconds"] == "1201.000001"
+    assert state["status"] == "STOPPED"
+    with pytest.raises(sandbox.RepairSandboxError) as blocked:
+        sandbox._admit_mission_repair(context, "a" * 64, approval)
+    assert blocked.value.code == "MISSION_BUDGET_BLOCKED"

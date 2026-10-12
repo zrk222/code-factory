@@ -2341,6 +2341,12 @@ def verify_mission_repair_binding(
         raise
     except (KeyError, TypeError, ValueError) as exc:
         _candidate_reject(f"repair contract cannot be matched: {type(exc).__name__}")
+    mission = _load_mission(Path(binding["mission"]["path"]))
+    passport = json.loads(
+        Path(mission["loop"]["passport_path"]).read_text(encoding="utf-8")
+    )
+    if passport.get("budgets") != binding["budgets"]:
+        _candidate_reject("mission budgets differ from the runtime passport")
     return {
         "schema": "factory.mission.repair-binding.v1",
         "path": str(binding_path),
@@ -2352,6 +2358,7 @@ def verify_mission_repair_binding(
         "candidate_sha256": binding["candidate_sha256"],
         "mission_sha256": binding["mission"]["mission_sha256"],
         "decision_sha256": binding["decision"]["sha256"],
+        "budget_passport_path": mission["loop"]["passport_path"],
     }
 
 
