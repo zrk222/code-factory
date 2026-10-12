@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from . import deep_audit_io as _deep_audit_io
 import base64
 import re
 from datetime import datetime, timezone
@@ -1151,3 +1152,1280 @@ def load_execution_manifest(
     lanes = _execution_lanes(plan["lanes"], version, inventory)
     _execution_obligations(plan["obligations"], lanes, version)
     return plan
+
+
+def _adapter_profile(profile: dict, lane: dict) -> list[dict]:
+    """Commands come from the immutable image, never from scanned repository text."""
+    expected = {
+        "schema",
+        "engine",
+        "mode",
+        "tool_version",
+        "ruleset_sha256",
+        "commands",
+    }
+    if set(profile) != expected or profile["schema"] != "factory.adapter-profile.v1":
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ADAPTER_PROFILE", "invalid image-bundled profile"
+        )
+    for key in ("engine", "mode", "tool_version", "ruleset_sha256"):
+        if profile[key] != lane.get(key):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ADAPTER_PROFILE", "profile differs from signed lane"
+            )
+    commands = profile["commands"]
+    if not isinstance(commands, list) or not 1 <= len(commands) <= 64:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ADAPTER_PROFILE", "bounded command list required"
+        )
+    for command in commands:
+        _deep_audit_io._adapter_command_shape(command)
+    return commands
+
+
+def _adapter_command_shape(command: dict) -> None:
+    if not isinstance(command, dict) or set(command) != {"argv", "accepted_exit_codes"}:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ADAPTER_PROFILE", "invalid command fields"
+        )
+    _deep_audit_io._adapter_argv_shape(command["argv"])
+    _deep_audit_io._adapter_exit_shape(command["accepted_exit_codes"])
+
+
+def _adapter_argv_shape(argv):
+    if not isinstance(argv, list) or not 1 <= len(argv) <= 128:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ADAPTER_PROFILE", "bounded argv required"
+        )
+    for arg in argv:
+        _deep_audit_io.require_str(arg, "adapter argument", maximum=2048)
+    if not _deep_audit_io.Path(argv[0]).is_absolute():
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ADAPTER_PROFILE", "absolute executable path required"
+        )
+
+
+def _adapter_exit_shape(exits):
+    if not isinstance(exits, list) or not 1 <= len(exits) <= 16:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ADAPTER_PROFILE", "bounded exit codes required"
+        )
+    if any(type(code) is not int or not 0 <= code <= 255 for code in exits):
+        raise _deep_audit_io.RuntimeAuditError("E_ADAPTER_PROFILE", "invalid exit code")
+
+
+def _adapter_sources(source: _deep_audit_io.Path, inventory: dict) -> None:
+    files = inventory.get("files")
+    if not isinstance(files, list) or not 1 <= len(files) <= 50_000:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ADAPTER_INPUT", "bounded inventory required"
+        )
+    names = set()
+    for item in files:
+        if not isinstance(item, dict) or item.get("path") in names:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ADAPTER_INPUT", "unique source bindings required"
+            )
+        path = _deep_audit_io.relative_path(item.get("path"))
+        names.add(path)
+        _deep_audit_io.bound_bytes(source, {"path": path, "sha256": item.get("sha256")})
+    actual = _deep_audit_io._adapter_source_files(source)
+    if actual != names:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ADAPTER_INPUT", "source file set differs from inventory"
+        )
+
+
+def _adapter_source_files(source):
+    if source.is_symlink() or not source.is_dir():
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ADAPTER_INPUT", "source root must be a real directory"
+        )
+    pending = [source]
+    names = set()
+    entries = 0
+    while pending:
+        directory = pending.pop()
+        with _deep_audit_io.os.scandir(directory) as iterator:
+            for entry in iterator:
+                entries += 1
+                if entries > 100_000:
+                    raise _deep_audit_io.RuntimeAuditError(
+                        "E_ADAPTER_INPUT", "source tree exceeds entry budget"
+                    )
+                if entry.is_symlink():
+                    raise _deep_audit_io.RuntimeAuditError(
+                        "E_ADAPTER_INPUT", "source links are unsupported"
+                    )
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(_deep_audit_io.Path(entry.path))
+                    continue
+                if not entry.is_file(follow_symlinks=False):
+                    raise _deep_audit_io.RuntimeAuditError(
+                        "E_ADAPTER_INPUT", "special source entries are unsupported"
+                    )
+                relative = (
+                    _deep_audit_io.Path(entry.path).relative_to(source).as_posix()
+                )
+                names.add(_deep_audit_io.relative_path(relative))
+    return names
+
+
+def _adapter_commands(
+    commands: list[dict],
+    lane: dict,
+    source: _deep_audit_io.Path,
+    scratch: _deep_audit_io.Path,
+) -> list[dict]:
+    from .runtime_audit_process import run_bounded_command
+
+    timeout = lane.get("timeout_seconds")
+    if type(timeout) is not int or not 1 <= timeout <= 3600:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ADAPTER_INPUT", "bounded signed timeout required"
+        )
+    deadline = _deep_audit_io.time.monotonic() + timeout
+    invocations = []
+    for index, command in enumerate(commands):
+        remaining = int(deadline - _deep_audit_io.time.monotonic())
+        if remaining <= 0:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ADAPTER_TIMEOUT", "adapter deadline exhausted"
+            )
+        directory = scratch / str(index)
+        directory.mkdir()
+        invocations.append(
+            _deep_audit_io._adapter_invocation(
+                run_bounded_command,
+                command,
+                lane,
+                source,
+                directory,
+                remaining,
+                deadline,
+            )
+        )
+    return invocations
+
+
+def _adapter_invocation(runner, command, lane, source, directory, remaining, deadline):
+    argv = [
+        value.replace("{factory_ledger}", str(directory / "rule-ledger.json"))
+        for value in command["argv"]
+    ]
+    stderr_path = _deep_audit_io._gitleaks_stderr_path(directory, lane)
+    facts = runner(argv, source, remaining, directory, stderr_path=stderr_path)
+    if _deep_audit_io._adapter_command_failed(
+        facts, command["accepted_exit_codes"], deadline
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ADAPTER_COMMAND", "native command did not complete"
+        )
+    invocation = {
+        "argv_sha256": _deep_audit_io.digest(command["argv"]),
+        "execution": facts,
+    }
+    _deep_audit_io._attach_gitleaks_ledger(invocation, command, directory)
+    if stderr_path is not None:
+        invocation["native_scanned_bytes"] = _deep_audit_io._gitleaks_scanned_bytes(
+            stderr_path.read_bytes(), lane["tool_version"]
+        )
+    return invocation
+
+
+def _json_size_upper_bound(value):
+    """Conservatively estimate canonical JSON bytes without materializing them."""
+    total = 0
+    pending = [value]
+    while pending:
+        total += _deep_audit_io._json_value_size(pending.pop(), pending)
+    return total
+
+
+def _json_value_size(item, pending):
+    if isinstance(item, dict):
+        pending.extend(item.values())
+        for key in item:
+            if not isinstance(key, str):
+                raise _deep_audit_io.RuntimeAuditError(
+                    "E_NATIVE_BUNDLE_SIZE", "JSON key is not text"
+                )
+        return (
+            2
+            + max(0, len(item) - 1)
+            + sum(_deep_audit_io._json_string_size(key) for key in item)
+        )
+    if isinstance(item, (list, tuple)):
+        pending.extend(item)
+        return 2 + max(0, len(item) - 1)
+    if isinstance(item, str):
+        return _deep_audit_io._json_string_size(item)
+    if item is None or isinstance(item, bool):
+        return 5
+    if isinstance(item, int):
+        return len(str(item))
+    if isinstance(item, float):
+        return 32
+    raise _deep_audit_io.RuntimeAuditError(
+        "E_NATIVE_BUNDLE_SIZE", "unsupported JSON value"
+    )
+
+
+def _json_string_size(value):
+    size = 2
+    for char in value:
+        codepoint = ord(char)
+        if char in {'"', "\\", "\b", "\t", "\n", "\f", "\r"}:
+            size += 2
+        elif codepoint < 32:
+            size += 6
+        else:
+            size += len(char.encode("utf-8"))
+    return size
+
+
+def _native_budget_error(code, sources, rules, estimate, limit):
+    pairs = sources * rules
+    raise _deep_audit_io.RuntimeAuditError(
+        code,
+        f"native budget requires {sources} sources x {rules} rules "
+        f"({pairs} rows); estimated {estimate} bytes exceeds {limit}",
+    )
+
+
+def _gitleaks_coverage_preflight(
+    execution, report, inventory, lane, challenges, obligations
+):
+    source_count = sum(
+        item["language"] in lane["languages"] for item in inventory["files"]
+    )
+    rule_count = len(lane["rule_ids"])
+    pairs = source_count * rule_count
+    per_pair = 768 + (
+        max(
+            (
+                _deep_audit_io._json_string_size(item["path"]) - 2
+                for item in inventory["files"]
+            ),
+            default=0,
+        )
+        + max(
+            (
+                _deep_audit_io._json_string_size(rule_id) - 2
+                for rule_id in lane["rule_ids"]
+            ),
+            default=0,
+        )
+    )
+    fixed = (
+        len(execution["ledger_json"].encode("utf-8"))
+        + _deep_audit_io._json_size_upper_bound(inventory["files"])
+        + _deep_audit_io._json_size_upper_bound(execution["invocations"])
+        + _deep_audit_io._json_size_upper_bound(execution["version_probe"])
+        + _deep_audit_io._json_size_upper_bound(execution["rule_inventory"])
+        + _deep_audit_io._json_size_upper_bound(report)
+        + _deep_audit_io._json_size_upper_bound(challenges)
+        + _deep_audit_io._json_size_upper_bound(obligations)
+        + 4096
+    )
+    estimate = fixed + pairs * per_pair
+    if pairs > 200_000 or estimate > _deep_audit_io.NATIVE_COVERAGE_LIMIT:
+        _deep_audit_io._native_budget_error(
+            "E_GITLEAKS_LEDGER_SIZE",
+            source_count,
+            rule_count,
+            estimate,
+            _deep_audit_io.NATIVE_COVERAGE_LIMIT,
+        )
+
+
+def _bounded_json_bytes(value, limit, code, sources=0, rules=0):
+    estimate = _deep_audit_io._json_size_upper_bound(value)
+    if estimate > limit:
+        _deep_audit_io._native_budget_error(code, sources, rules, estimate, limit)
+    raw = _deep_audit_io.canonical_bytes(value)
+    if len(raw) > limit:
+        _deep_audit_io._native_budget_error(code, sources, rules, len(raw), limit)
+    return raw
+
+
+def _adapter_command_failed(facts, accepted_exit_codes, deadline):
+    if any(
+        facts[key] for key in ("timed_out", "launch_error", "output_limit_exceeded")
+    ):
+        return True
+    if not facts["cleanup_confirmed"] or facts["exit_code"] not in accepted_exit_codes:
+        return True
+    return _deep_audit_io.time.monotonic() > deadline
+
+
+def _adapter_contract_parts(contract: dict) -> tuple[dict, dict]:
+    """Validate shared input identity before executing either worker format."""
+    keys = {"schema", "run_id", "manifest_sha256", "inventory", "lane", "obligations"}
+    if (
+        not isinstance(contract, dict)
+        or set(contract) != keys
+        or contract["schema"] != "factory.deep-adapter-input.v1"
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ADAPTER_INPUT", "invalid adapter contract"
+        )
+    _deep_audit_io.require_str(contract["run_id"], "run_id", maximum=64)
+    _deep_audit_io.require_digest(contract["manifest_sha256"], "manifest_sha256")
+    inventory, lane = contract["inventory"], contract["lane"]
+    if not isinstance(inventory, dict) or not isinstance(lane, dict):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ADAPTER_INPUT", "inventory and lane objects required"
+        )
+    _deep_audit_io.require_digest(inventory.get("candidate_sha256"), "candidate_sha256")
+    return inventory, lane
+
+
+def _adapter_output_paths(
+    lane: dict, output: _deep_audit_io.Path, *, create_parents: bool = False
+) -> list[str]:
+    """Reject stale or aliased artifacts before any native tool is started."""
+    paths = [
+        _deep_audit_io.relative_path(lane[key])
+        for key in ("report", "coverage", "challenge_report")
+    ]
+    if len(set(paths)) != 3:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ADAPTER_INPUT", "distinct artifact paths required"
+        )
+    for path in paths:
+        target = output / path
+        if target.exists() or target.is_symlink():
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ADAPTER_STALE", "preexisting output rejected"
+            )
+        if create_parents:
+            target.parent.mkdir(parents=True, exist_ok=True)
+    return paths
+
+
+def execute_adapter_profile(
+    profile: dict,
+    contract: dict,
+    source: _deep_audit_io.Path,
+    output: _deep_audit_io.Path,
+) -> dict:
+    """Join actual native artifacts; never synthesize coverage or challenge success."""
+    inventory, lane = _deep_audit_io._adapter_contract_parts(contract)
+    commands = _deep_audit_io._adapter_profile(profile, lane)
+    _deep_audit_io._adapter_sources(source, inventory)
+    report_paths = _deep_audit_io._adapter_output_paths(
+        lane, _deep_audit_io.Path(output)
+    )
+    with _deep_audit_io.tempfile.TemporaryDirectory(
+        prefix="factory-adapter-"
+    ) as temporary:
+        invocations = _deep_audit_io._adapter_commands(
+            commands, lane, _deep_audit_io.Path(source), _deep_audit_io.Path(temporary)
+        )
+    artifacts = {}
+    for path in sorted(report_paths):
+        artifact = _deep_audit_io.local_file(output, path)
+        with artifact.open("rb") as stream:
+            artifacts[path] = _deep_audit_io.strict_json(
+                stream.read(_deep_audit_io.LIMIT + 1)
+            )
+    coverage = artifacts[lane["coverage"]]
+    coverage["native_coverage_sha256"] = _deep_audit_io.digest(coverage)
+    coverage["native_invocations"] = invocations
+    coverage["invocation_sha256"] = _deep_audit_io.digest(invocations)
+    _deep_audit_io._adapter_sources(source, inventory)
+    return {
+        "schema": "factory.deep-worker.v1",
+        "run_id": contract["run_id"],
+        "candidate_sha256": inventory["candidate_sha256"],
+        "artifacts": artifacts,
+    }
+
+
+def _native_profile(profile: dict, lane: dict) -> None:
+    expected = {
+        "schema",
+        "engine",
+        "mode",
+        "tool_version",
+        "ruleset_sha256",
+        "commands",
+        "version_argv",
+        "report_format",
+    }
+    if set(profile) != expected or profile["schema"] != "factory.native-profile.v1":
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ADAPTER_PROFILE", "invalid native profile"
+        )
+    projected = {
+        key: value
+        for key, value in profile.items()
+        if key not in {"version_argv", "report_format"}
+    }
+    projected["schema"] = "factory.adapter-profile.v1"
+    _deep_audit_io._adapter_profile(projected, lane)
+    _deep_audit_io._adapter_command_shape(
+        {"argv": profile["version_argv"], "accepted_exit_codes": [0]}
+    )
+    formats = {
+        "codeql": {"sarif"},
+        "semgrep": {"sarif"},
+        "gitleaks": {"sarif"},
+        "trivy": {"sarif"},
+        "osv": {"osv-json"},
+        "syft": {"syft-json"},
+        "runtime": {"runtime-json", "coverage-json", "runtime-junit"},
+        "atheris": {"runtime-json"},
+        "jazzer": {"runtime-json"},
+        "zap": {"runtime-json"},
+    }
+    if profile["report_format"] not in formats.get(profile["engine"], set()):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ADAPTER_PROFILE", "unsupported native report"
+        )
+    if profile["engine"] == "runtime" and profile["report_format"] == "runtime-junit":
+        if len(profile["commands"]) != 1:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ADAPTER_PROFILE", "runtime requires one bounded command"
+            )
+        if lane.get("native_artifact_roles") != ["coverage_json", "junit_xml"]:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ADAPTER_PROFILE", "runtime artifact roles differ"
+            )
+        if not isinstance(lane.get("rule_ids"), list) or not lane["rule_ids"]:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ADAPTER_PROFILE", "runtime rule inventory required"
+            )
+
+
+def _native_version(
+    profile: dict,
+    source: _deep_audit_io.Path,
+    scratch: _deep_audit_io.Path,
+    timeout: int,
+) -> dict:
+    from .runtime_audit_process import run_bounded_command
+    import re
+
+    capture = scratch / "version.txt"
+    facts = run_bounded_command(
+        profile["version_argv"], source, timeout, scratch, stdout_path=capture
+    )
+    if (
+        facts["exit_code"] != 0
+        or facts["timed_out"]
+        or facts["launch_error"]
+        or facts["output_limit_exceeded"]
+        or not facts["cleanup_confirmed"]
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TOOLCHAIN_PROBE", "native version probe failed"
+        )
+    text = capture.read_text(encoding="utf-8")
+    pattern = r"(?<![\w.])v?" + re.escape(profile["tool_version"]) + r"(?![\w.])"
+    if not re.search(pattern, text):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TOOLCHAIN_DRIFT", "native version differs"
+        )
+    return facts
+
+
+def _native_argv(commands: list, bindings: dict) -> list:
+    result = []
+    for command in commands:
+        argv = []
+        for value in command["argv"]:
+            for name, bound in bindings.items():
+                value = value.replace("{" + name + "}", str(bound))
+            argv.append(value)
+        _deep_audit_io._adapter_command_shape(
+            {"argv": argv, "accepted_exit_codes": command["accepted_exit_codes"]}
+        )
+        result.append(
+            {"argv": argv, "accepted_exit_codes": command["accepted_exit_codes"]}
+        )
+    return result
+
+
+def _gitleaks_rule_inventory(config: bytes, lane: dict) -> dict:
+    """Bind the signed rule IDs to the exact TOML consumed by the pinned worker."""
+    actual = _deep_audit_io._gitleaks_rule_ids(config)
+    expected = lane.get("rule_ids")
+    if not isinstance(expected, list) or not expected:
+        return {"state": "UNAVAILABLE", "rule_ids": [], "sha256": None}
+    if _deep_audit_io.sha256_bytes(config) != lane["ruleset_sha256"]:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_GITLEAKS_RULESET", "pinned ruleset bytes differ"
+        )
+    if len(actual) != len(set(actual)) or set(actual) != set(expected):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_GITLEAKS_RULESET", "enabled rule inventory differs"
+        )
+    identity = {"ruleset_sha256": lane["ruleset_sha256"], "rule_ids": sorted(actual)}
+    return {
+        "state": "VERIFIED",
+        "rule_ids": sorted(actual),
+        "sha256": _deep_audit_io.digest(identity),
+    }
+
+
+def _gitleaks_rule_ids(config: bytes) -> list[str]:
+    toml = _deep_audit_io._toml_parser()
+
+    try:
+        rules = toml.loads(config.decode("utf-8"))["rules"]
+        actual = [item["id"] for item in rules]
+    except (UnicodeError, KeyError, TypeError, toml.TOMLDecodeError) as exc:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_GITLEAKS_RULESET", "pinned ruleset is malformed"
+        ) from exc
+    if not all(isinstance(rule_id, str) and rule_id for rule_id in actual):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_GITLEAKS_RULESET", "enabled rule inventory differs"
+        )
+    return actual
+
+
+def _gitleaks_disable_rule(config: bytes, detector_rule_id: str) -> bytes:
+    import re
+
+    toml = _deep_audit_io._toml_parser()
+
+    starts = [
+        item.start()
+        for item in re.finditer(rb"(?m)^\[\[rules\]\][\t ]*(?:\r?\n|$)", config)
+    ]
+    if not starts:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_GITLEAKS_MUTATION", "rules section missing"
+        )
+    chunks = [config[: starts[0]]]
+    removed = 0
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else len(config)
+        chunk = config[start:end]
+        try:
+            rule_id = toml.loads(chunk.decode("utf-8"))["rules"][0]["id"]
+        except (
+            UnicodeError,
+            KeyError,
+            IndexError,
+            TypeError,
+            toml.TOMLDecodeError,
+        ) as exc:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_GITLEAKS_MUTATION", "rule block malformed"
+            ) from exc
+        if rule_id == detector_rule_id:
+            removed += 1
+        else:
+            chunks.append(chunk)
+    mutated = b"".join(chunks)
+    original_ids = _deep_audit_io._gitleaks_rule_ids(config)
+    expected = [rule_id for rule_id in original_ids if rule_id != detector_rule_id]
+    if removed != 1 or _deep_audit_io._gitleaks_rule_ids(mutated) != expected:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_GITLEAKS_MUTATION", "mutation must disable one rule"
+        )
+    return mutated
+
+
+def _toml_parser():
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        try:
+            import tomli as tomllib
+        except ModuleNotFoundError as exc:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_GITLEAKS_RULESET", "TOML parser is unavailable"
+            ) from exc
+    return tomllib
+
+
+def _gitleaks_mutation_valid(
+    baseline: bytes, effective: bytes, detector_rule_id: str
+) -> bool:
+    try:
+        return (
+            _deep_audit_io._gitleaks_disable_rule(baseline, detector_rule_id)
+            == effective
+        )
+    except _deep_audit_io.RuntimeAuditError:
+        return False
+
+
+def _fuzz_execution_contract(contract, source):
+    if source == _deep_audit_io.Path("/src"):
+        return contract
+    bindings = {item["path"]: item for item in contract["inventory"]["files"]}
+    names = _deep_audit_io._adapter_source_files(source)
+    if not names or not names <= bindings.keys():
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_FUZZ_CONTROL", "fixture source is not inventoried"
+        )
+    inventory = {
+        **contract["inventory"],
+        "files": [bindings[name] for name in sorted(names)],
+    }
+    _deep_audit_io._adapter_sources(source, inventory)
+    return {**contract, "inventory": inventory}
+
+
+def _fuzz_profile_preflight(profile, lane):
+    if lane["engine"] != "atheris":
+        return None
+    path = _deep_audit_io.Path("/opt/factory/rules/fuzz-control.json")
+    raw = path.read_bytes()
+    if _deep_audit_io.sha256_bytes(raw) != profile[
+        "ruleset_sha256"
+    ] or _deep_audit_io._fuzz_control_ids(raw) != ["FUZZ_EXCEPTION"]:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_FUZZ_CONTROL", "pinned baseline fuzz rule required"
+        )
+    return path
+
+
+def _native_profile_challenges(profile, contract, source, lane, execution, started):
+    challenges = {"schema": "factory.deep-challenges.v1", "observations": []}
+    covered_obligations = []
+    if lane["engine"] == "gitleaks":
+        challenges, covered_obligations = _deep_audit_io._gitleaks_challenges(
+            profile, contract, source, lane, execution, started
+        )
+    elif lane["engine"] == "trivy":
+        challenges, covered_obligations = _deep_audit_io._trivy_challenges(
+            profile, contract, source, lane, execution, started
+        )
+    elif lane["engine"] == "semgrep" and "native_artifact_roles" in lane:
+        challenges, covered_obligations = _deep_audit_io._semgrep_challenges(
+            profile, contract, source, lane, execution, started
+        )
+    elif lane["engine"] == "runtime" and profile["report_format"] == "runtime-junit":
+        challenges, covered_obligations = _deep_audit_io._runtime_challenges(
+            profile, contract, source, lane, execution, started
+        )
+    elif lane["engine"] == "codeql" and "native_artifact_roles" in lane:
+        challenges, covered_obligations = _deep_audit_io._codeql_challenges(
+            profile, contract, source, lane, execution, started
+        )
+    elif lane["engine"] == "osv" and "native_policy" in lane:
+        challenges, covered_obligations = _deep_audit_io._osv_challenges(
+            profile, contract, source, lane, execution, started
+        )
+    elif lane["engine"] == "atheris" and "native_artifact_roles" in lane:
+        challenges, covered_obligations = _deep_audit_io._atheris_challenges(
+            profile, contract, source, lane, execution, started
+        )
+    return challenges, covered_obligations
+
+
+def _osv_config_rule_ids(raw, lane):
+    policy = lane.get("native_policy", {})
+    rules = lane.get("rule_ids", [])
+    if raw == b"\n":
+        return list(rules)
+    for rule, aliases in policy.get("advisory_aliases", {}).items():
+        if raw == _deep_audit_io._osv_suppression_bytes(aliases):
+            return [item for item in rules if item != rule]
+    raise _deep_audit_io.RuntimeAuditError(
+        "E_OSV_POLICY", "unapproved suppression config"
+    )
+
+
+def _osv_mutation_valid(baseline, effective, rule_id, lane):
+    try:
+        policy = lane["native_policy"]
+        aliases = policy["advisory_aliases"][rule_id]
+        return (
+            baseline == b"\n"
+            and effective == _deep_audit_io._osv_suppression_bytes(aliases)
+            and _deep_audit_io.sha256_bytes(effective)
+            == lane["mutation_config_sha256"][rule_id]
+        )
+    except (KeyError, _deep_audit_io.RuntimeAuditError, TypeError, ValueError):
+        return False
+
+
+def _osv_profile_preflight(profile, lane):
+    if (lane.get("engine"), lane.get("mode")) != (
+        "osv",
+        "offline-pypi-snapshot",
+    ):
+        return
+    try:
+        policy = _deep_audit_io.local_file(
+            _deep_audit_io.Path("/opt/factory/rules"), "osv-scanner.toml"
+        ).read_bytes()
+    except (OSError, _deep_audit_io.RuntimeAuditError) as exc:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_OSV_POLICY", "trusted OSV configuration unavailable"
+        ) from exc
+    _deep_audit_io._osv_policy_inputs(profile, policy)
+
+
+def _osv_policy_inputs(profile, policy_bytes):
+    expected = {
+        "argv": [
+            "/opt/factory/bin/osv-offline",
+            "scan",
+            "source",
+            "-r",
+            "{source}",
+            "--config",
+            "/opt/factory/rules/osv-scanner.toml",
+            "--offline",
+            "--offline-vulnerabilities",
+            "--allow-no-lockfiles",
+            "--all-packages",
+            "--format",
+            "json",
+            "--output",
+            "{report}",
+        ],
+        "accepted_exit_codes": [0, 1],
+    }
+    if profile.get("commands") != [expected] or policy_bytes != b"\n":
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_OSV_POLICY", "baseline requires the trusted empty OSV configuration"
+        )
+
+
+def _osv_expected_policy(lane, obligation, kind):
+    if kind != "mutation":
+        return b"\n"
+    aliases = lane["native_policy"]["advisory_aliases"][obligation["detector_rule_id"]]
+    return _deep_audit_io._osv_suppression_bytes(aliases)
+
+
+def _trivy_policy_inputs(config, ignore, lane):
+    policy = lane.get("native_policy")
+    if policy is None:
+        return
+    if _deep_audit_io.sha256_bytes(config) != policy.get(
+        "config_sha256"
+    ) or _deep_audit_io.sha256_bytes(ignore) != policy.get("baseline_ignore_sha256"):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_POLICY", "pinned Trivy policy bytes differ"
+        )
+    if _deep_audit_io._trivy_ignore_ids(ignore):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_POLICY", "baseline ignorefile must be empty"
+        )
+
+
+def _trivy_ignore_ids(config):
+    try:
+        text = config.decode("ascii")
+    except (AttributeError, UnicodeDecodeError) as exc:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_POLICY", "Trivy ignorefile is malformed"
+        ) from exc
+    ids = text.splitlines()
+    if not text.strip():
+        return []
+    if ids != sorted(set(ids)) or any(
+        _deep_audit_io._trivy_rule_id_valid(item) is False for item in ids
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_POLICY", "Trivy ignore IDs are invalid"
+        )
+    return ids
+
+
+def _trivy_rule_id_valid(rule_id):
+    import re
+
+    return (
+        isinstance(rule_id, str)
+        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,255}", rule_id) is not None
+    )
+
+
+def _trivy_mutation(ignore, rule_id):
+    if _deep_audit_io._trivy_ignore_ids(ignore):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_MUTATION", "baseline ignorefile is not empty"
+        )
+    if not _deep_audit_io._trivy_rule_id_valid(rule_id):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_MUTATION", "unsupported Trivy check ID"
+        )
+    return f"{rule_id}\n".encode("ascii")
+
+
+def _trivy_mutation_valid(baseline, effective, rule_id):
+    try:
+        return _deep_audit_io._trivy_mutation(baseline, rule_id) == effective
+    except (_deep_audit_io.RuntimeAuditError, ValueError, TypeError):
+        return False
+
+
+def _trivy_json_argv(sarif_argv, output_path):
+    result = list(sarif_argv)
+    try:
+        format_index = result.index("--format") + 1
+        output_index = result.index("--output") + 1
+        if result[format_index] != "sarif":
+            raise ValueError
+        result[format_index] = "json"
+        result[output_index] = str(output_path)
+        result.insert(result.index("config") + 1, "--include-non-failures")
+    except (ValueError, IndexError) as exc:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_PROFILE", "pinned Trivy command differs"
+        ) from exc
+    return result
+
+
+def _trivy_expected_ids(lane, disabled_rule_id):
+    ids = lane.get("rule_ids")
+    if not isinstance(ids, list) or not ids or ids != sorted(set(ids)):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_RULES", "signed Trivy check inventory is missing"
+        )
+    if disabled_rule_id is not None:
+        if disabled_rule_id not in ids:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TRIVY_MUTATION", "target is not a signed Trivy check"
+            )
+        ids = [item for item in ids if item != disabled_rule_id]
+    return ids
+
+
+def _trivy_matrix_ids(matrix, expected_ids):
+    observed_ids = set().union(*(set(rows) for rows in matrix.values()))
+    if observed_ids != set(expected_ids):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "signed Trivy check IDs differ"
+        )
+
+
+def _semgrep_rule_sources(rule, sources):
+    languages = rule.get("languages")
+    if (
+        not isinstance(languages, list)
+        or not languages
+        or not set(languages) <= {"python", "javascript", "typescript"}
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_RULESET", "unsupported pinned rule languages"
+        )
+    return {
+        path
+        for path in sources
+        if _deep_audit_io.source_language(path, b"") in languages
+    }
+
+
+def _semgrep_scanned_sources(native, sources, lane):
+    if (
+        not isinstance(native, dict)
+        or native.get("version") != lane["tool_version"]
+        or native.get("errors") != []
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "native report failed or version drifted"
+        )
+    paths = native.get("paths", {}).get("scanned")
+    if not isinstance(paths, list) or len(paths) > 64:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "bounded native scanned paths required"
+        )
+    observed = [_deep_audit_io._native_source_path(path, sources) for path in paths]
+    if len(set(observed)) != len(observed):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "duplicate native source execution"
+        )
+    return set(observed)
+
+
+def _codeql_query_preflight(profile, source, scratch, remaining, *, engine="codeql"):
+    if engine != "codeql":
+        return None
+    if remaining < 1:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ADAPTER_TIMEOUT", "query resolution deadline exhausted"
+        )
+    commands = profile.get("commands")
+    if not isinstance(commands, list) or len(commands) < 2:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_INVENTORY", "analyze command required"
+        )
+    command = commands[1]
+    argv = command.get("argv") if isinstance(command, dict) else None
+    if not isinstance(argv, list) or len(argv) < 5:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_INVENTORY", "bounded analyze argv required"
+        )
+    if argv[1:3] != ["database", "analyze"] or not isinstance(argv[4], str):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_INVENTORY", "native analyze suite required"
+        )
+    return _deep_audit_io.resolve_codeql_query_inventory(
+        argv[0], _deep_audit_io.Path(argv[4]), source, scratch, remaining
+    )
+
+
+def _codeql_suite_bytes(suite):
+    with suite.open("rb") as stream:
+        raw = stream.read(1_048_577)
+    if len(raw) > 1_048_576 or suite.is_symlink():
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_INVENTORY", "bounded regular suite required"
+        )
+    return raw
+
+
+def resolve_codeql_query_inventory(codeql, suite, source, scratch, timeout):
+    """Record native suite resolution and query bytes, not query execution coverage."""
+    from .runtime_audit_process import run_bounded_command
+
+    timeout = _deep_audit_io.require_int(
+        timeout, "query resolution timeout", minimum=1, maximum=3600
+    )
+    suite = _deep_audit_io.local_file(
+        _deep_audit_io.Path(suite).parent, _deep_audit_io.Path(suite).name
+    )
+    suite_raw = _deep_audit_io._codeql_suite_bytes(suite)
+    run_root = _deep_audit_io.Path(scratch) / (
+        "query-resolution-" + _deep_audit_io.uuid.uuid4().hex
+    )
+    run_root.mkdir()
+    capture = run_root / "queries.json"
+    argv = [str(codeql), "resolve", "queries", "--format=json", "--", str(suite)]
+    deadline = _deep_audit_io.time.monotonic() + timeout
+    facts = run_bounded_command(argv, source, timeout, run_root, stdout_path=capture)
+    if _deep_audit_io._adapter_command_failed(facts, [0], deadline):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_INVENTORY", "native query resolution failed"
+        )
+    with capture.open("rb") as stream:
+        raw = stream.read(1_048_577)
+    if (
+        len(raw) > 1_048_576
+        or _deep_audit_io.sha256_bytes(raw) != facts["stdout_sha256"]
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_INVENTORY", "query resolution output differs"
+        )
+    try:
+        paths = _deep_audit_io.json.loads(raw, parse_constant=_deep_audit_io._finite)
+    except (ValueError, RecursionError, UnicodeError) as error:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_INVENTORY", "invalid query resolution JSON"
+        ) from error
+    queries = _deep_audit_io._codeql_resolved_queries(paths)
+    if _deep_audit_io._codeql_suite_bytes(suite) != suite_raw:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_INVENTORY", "suite changed during resolution"
+        )
+    return dict(
+        schema="factory.codeql-query-inventory.v1",
+        suite_sha256=_deep_audit_io.sha256_bytes(suite_raw),
+        queries=queries,
+        query_ids=_deep_audit_io._codeql_query_ids(queries),
+        query_inventory_sha256=_deep_audit_io.digest(queries),
+        argv=argv,
+        argv_sha256=_deep_audit_io.digest(argv),
+        execution=facts,
+        raw_resolution_sha256=_deep_audit_io.sha256_bytes(raw),
+        claim_boundary="Native suite selection and query content identity only; not execution or source coverage",
+    )
+
+
+def _codeql_resolved_queries(paths):
+    if not isinstance(paths, list) or not 1 <= len(paths) <= 1024:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_INVENTORY", "bounded nonempty query list required"
+        )
+    queries, total = {}, 0
+    root = _deep_audit_io.Path("/opt/codeql/codeql/qlpacks")
+    for value in paths:
+        _deep_audit_io.require_str(value, "resolved query", maximum=2048)
+        path = _deep_audit_io.Path(value)
+        try:
+            relative = path.relative_to(root).as_posix()
+        except ValueError as error:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_CODEQL_INVENTORY", "query is outside pinned packs"
+            ) from error
+        _deep_audit_io.relative_path(relative)
+        if path.suffix != ".ql" or relative in queries:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_CODEQL_INVENTORY", "duplicate or non-query path"
+            )
+        with _deep_audit_io.local_file(root, relative).open("rb") as stream:
+            raw = stream.read(1_048_577)
+        total += len(raw)
+        if len(raw) > 1_048_576 or total > 8_388_608:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_CODEQL_INVENTORY", "query content budget exceeded"
+            )
+        queries[relative] = _deep_audit_io.sha256_bytes(raw)
+    return dict(sorted(queries.items()))
+
+
+def verify_codeql_query_isolation(baseline, mutated, target_query):
+    """Require exactly one removed query and unchanged nonempty sentinel inventory."""
+    _deep_audit_io.relative_path(target_query)
+    for inventory in (baseline, mutated):
+        if not isinstance(inventory, dict) or not inventory:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_CODEQL_MUTATION", "query inventory required"
+            )
+        for path, seal in inventory.items():
+            _deep_audit_io.relative_path(path)
+            _deep_audit_io.require_digest(seal, "query content hash")
+    expected = {path: seal for path, seal in baseline.items() if path != target_query}
+    if target_query not in baseline or not expected or mutated != expected:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_MUTATION", "mutation must remove only target query"
+        )
+    return dict(
+        disabled_query=target_query,
+        remaining_query_inventory_sha256=_deep_audit_io.digest(mutated),
+    )
+
+
+def _codeql_query_ids(queries):
+    import re
+
+    identifiers = {}
+    root = _deep_audit_io.Path("/opt/codeql/codeql/qlpacks")
+    for path, expected in queries.items():
+        with _deep_audit_io.local_file(root, path).open("rb") as stream:
+            raw = stream.read(1_048_577)
+        if _deep_audit_io.sha256_bytes(raw) != expected:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_CODEQL_INVENTORY", "query changed during metadata read"
+            )
+        text = raw.decode("utf-8")
+        ids = re.findall(r"(?m)^\s*\*\s*@id\s+([^\s]+)\s*$", text)
+        if len(ids) != 1 or ids[0] in identifiers:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_CODEQL_INVENTORY", "unique native query ID required"
+            )
+        _deep_audit_io.require_str(ids[0], "native query ID", maximum=256)
+        identifiers[ids[0]] = path
+    return dict(sorted(identifiers.items()))
+
+
+def _codeql_selection_shape(inventory):
+    if (
+        not isinstance(inventory, dict)
+        or inventory.get("schema") != "factory.codeql-query-inventory.v1"
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_INVENTORY", "native query inventory required"
+        )
+    queries, identifiers = inventory.get("queries"), inventory.get("query_ids")
+    if not isinstance(queries, dict) or not 1 <= len(queries) <= 1024:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_INVENTORY", "bounded query map required"
+        )
+    for path, seal in queries.items():
+        _deep_audit_io.relative_path(path)
+        _deep_audit_io.require_digest(seal, "query content hash")
+        if not path.startswith("codeql/") or not path.endswith(".ql"):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_CODEQL_INVENTORY", "pinned query path required"
+            )
+    _deep_audit_io._codeql_selection_ids(identifiers, queries)
+    _deep_audit_io.require_digest(inventory.get("suite_sha256"), "suite hash")
+    if inventory.get("query_inventory_sha256") != _deep_audit_io.digest(queries):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_INVENTORY", "query inventory hash differs"
+        )
+    return queries, identifiers
+
+
+def _codeql_selection_ids(identifiers, queries):
+    if not isinstance(identifiers, dict) or len(identifiers) != len(queries):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_INVENTORY", "complete query ID map required"
+        )
+    for rule_id, path in identifiers.items():
+        _deep_audit_io.require_str(rule_id, "native query ID", maximum=256)
+        _deep_audit_io.relative_path(path)
+    if set(identifiers.values()) != set(queries):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_INVENTORY", "one-to-one query ID mapping required"
+        )
+
+
+def verify_codeql_query_selection(inventory, *, baseline=None, disabled_rule_id=None):
+    """Validate selected query identity against a baseline, without claiming execution."""
+    queries, identifiers = _deep_audit_io._codeql_selection_shape(inventory)
+    if baseline is None:
+        if disabled_rule_id is not None:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_CODEQL_MUTATION", "baseline required for mutation"
+            )
+        return
+    original, original_ids = _deep_audit_io._codeql_selection_shape(baseline)
+    if disabled_rule_id is not None:
+        if disabled_rule_id not in original_ids:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_CODEQL_MUTATION", "target query ID absent"
+            )
+        _deep_audit_io.verify_codeql_query_isolation(
+            original, queries, original_ids[disabled_rule_id]
+        )
+        expected_ids = {
+            key: value for key, value in original_ids.items() if key != disabled_rule_id
+        }
+    else:
+        expected_ids = original_ids
+        if queries != original or inventory["suite_sha256"] != baseline["suite_sha256"]:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_CODEQL_INVENTORY", "baseline query selection differs"
+            )
+    if identifiers != expected_ids:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_INVENTORY", "query ID binding differs"
+        )
+
+
+def _semgrep_rule_ids(config):
+    import yaml
+
+    try:
+        rules = yaml.safe_load(config)["rules"]
+    except (yaml.YAMLError, KeyError, TypeError) as exc:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_RULESET", "invalid Semgrep rules"
+        ) from exc
+    if not isinstance(rules, list) or not 1 <= len(rules) <= 64:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_RULESET", "bounded Semgrep rules required"
+        )
+    ids = [
+        _deep_audit_io.require_str(rule.get("id"), "rule id", maximum=256)
+        for rule in rules
+        if isinstance(rule, dict)
+    ]
+    if len(ids) != len(rules) or len(set(ids)) != len(ids):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_RULESET", "invalid Semgrep rule IDs"
+        )
+    return sorted(ids)
+
+
+def _semgrep_mutation_file(case, baseline, lane, obligation):
+    mutation = _deep_audit_io._semgrep_disable_rule(
+        baseline, obligation["detector_rule_id"]
+    )
+    expected = lane.get("mutation_config_sha256", {}).get(
+        obligation["detector_rule_id"]
+    )
+    if _deep_audit_io.sha256_bytes(mutation) != expected:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_MUTATION", "signed target removal differs"
+        )
+    path = case / "mutation.yml"
+    path.write_bytes(mutation)
+    return path
+
+
+def _semgrep_disable_rule(config, rule_id):
+    import yaml
+
+    try:
+        document = yaml.safe_load(config)
+        rules = document["rules"]
+    except (yaml.YAMLError, KeyError, TypeError) as exc:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_MUTATION", "pinned ruleset malformed"
+        ) from exc
+    before = _deep_audit_io._semgrep_rule_ids(config)
+    if before.count(rule_id) != 1:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_MUTATION", "target rule not unique"
+        )
+    document["rules"] = [item for item in rules if item.get("id") != rule_id]
+    mutated = yaml.safe_dump(document, sort_keys=True).encode("utf-8")
+    expected = [item for item in before if item != rule_id]
+    if _deep_audit_io._semgrep_rule_ids(mutated) != expected:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_MUTATION", "mutation removed extra rules"
+        )
+    return mutated
+
+
+def _semgrep_mutation_valid(baseline, effective, rule_id):
+    try:
+        return _deep_audit_io._semgrep_disable_rule(baseline, rule_id) == effective
+    except _deep_audit_io.RuntimeAuditError:
+        return False
+
+
+def _runtime_ruleset_preflight(lane):
+    config_path = _deep_audit_io.Path("/opt/factory/rules/runtime-control.toml")
+    _deep_audit_io._runtime_rule_inventory(config_path.read_bytes(), lane)
+
+
+def _runtime_rule_ids(config):
+    toml = _deep_audit_io._toml_parser()
+    try:
+        value = toml.loads(config.decode("utf-8"))
+        selectors = value["selectors"]
+        if selectors != {"RUNTIME_TEST_FAILURE": "factory_runtime_failure"}:
+            raise ValueError
+        rules = value.get("rules", [])
+        actual = [item["id"] for item in rules]
+    except (UnicodeError, KeyError, TypeError, ValueError, toml.TOMLDecodeError) as exc:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_RUNTIME_RULESET", "runtime controls are malformed"
+        ) from exc
+    if actual not in ([], ["RUNTIME_TEST_FAILURE"]):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_RUNTIME_RULESET", "runtime rule inventory differs"
+        )
+    return actual
+
+
+def _runtime_rule_inventory(config, lane):
+    actual = _deep_audit_io._runtime_rule_ids(config)
+    if (
+        _deep_audit_io.sha256_bytes(config) != lane.get("ruleset_sha256")
+        or lane.get("rule_ids") != ["RUNTIME_TEST_FAILURE"]
+        or actual != lane["rule_ids"]
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_RUNTIME_RULESET", "pinned runtime controls differ"
+        )
+    return {
+        "state": "VERIFIED",
+        "rule_ids": actual,
+        "sha256": _deep_audit_io.digest(actual),
+    }
+
+
+def _runtime_mutation_valid(baseline, effective, rule_id):
+    return (
+        rule_id == "RUNTIME_TEST_FAILURE"
+        and _deep_audit_io._runtime_disable_rule(baseline, rule_id) == effective
+        and _deep_audit_io._runtime_rule_ids(effective) == []
+    )
+
+
+def _runtime_disable_rule(config, rule_id):
+    import re
+
+    if rule_id != "RUNTIME_TEST_FAILURE" or _deep_audit_io._runtime_rule_ids(
+        config
+    ) != [rule_id]:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_RUNTIME_MUTATION", "exact runtime rule required"
+        )
+    starts = [
+        item.start()
+        for item in re.finditer(rb"(?m)^\[\[rules\]\][\t ]*(?:\r?\n|$)", config)
+    ]
+    if len(starts) != 1:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_RUNTIME_MUTATION", "one runtime rule block required"
+        )
+    return config[: starts[0]]

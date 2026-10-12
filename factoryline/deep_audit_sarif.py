@@ -6,6 +6,7 @@ Unrecognized SARIF indirection is rejected rather than silently dropping evidenc
 
 from __future__ import annotations
 
+from . import deep_audit_io as _deep_audit_io
 from pathlib import Path
 from copy import deepcopy
 import re
@@ -2632,3 +2633,1990 @@ def normalize_sarif(
         "authority": "none",
     }
     return {**result, "normalized_sha256": digest(result)}
+
+
+def _native_sarif_metadata(report: dict, profile: dict, invocations: list) -> dict:
+    """Supplement absent metadata from measured execution; preserve native bytes hash."""
+    import copy
+
+    report = copy.deepcopy(report)
+    runs = report.get("runs")
+    if not isinstance(runs, list) or not 1 <= len(runs) <= 16:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_REPORT_JSON", "native SARIF runs missing"
+        )
+    for run in runs:
+        driver = run["tool"]["driver"]
+        if driver.get("version", profile["tool_version"]) != profile["tool_version"]:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TOOLCHAIN_DRIFT", "native report version differs"
+            )
+        driver.setdefault("version", profile["tool_version"])
+        run.setdefault(
+            "invocations",
+            [
+                {
+                    "executionSuccessful": True,
+                    "properties": {
+                        "factory_execution_sha256": _deep_audit_io.digest(invocations)
+                    },
+                }
+            ],
+        )
+    return report
+
+
+def _native_junit(
+    output: _deep_audit_io.Path, sources: dict, junit_name: str = "runtime.xml"
+) -> tuple:
+    return _deep_audit_io._parse_runtime_junit(
+        _deep_audit_io._junit_bytes(output, junit_name), sources
+    )
+
+
+def _parse_runtime_junit(junit: bytes, sources: dict) -> tuple:
+    import xml.etree.ElementTree as ET
+
+    if (
+        len(junit) > _deep_audit_io.LIMIT
+        or b"<!DOCTYPE" in junit.upper()
+        or b"<!ENTITY" in junit.upper()
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_RUNTIME_REPORT", "unsafe or oversized JUnit"
+        )
+    try:
+        tree = ET.fromstring(junit)
+    except ET.ParseError as exc:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_RUNTIME_REPORT", "invalid native JUnit"
+        ) from exc
+    cases = list(tree.iter("testcase"))
+    _deep_audit_io._junit_suite_counts(tree, cases)
+    return _deep_audit_io._junit_observations(
+        cases, sources, _deep_audit_io.sha256_bytes(junit)
+    )
+
+
+def _junit_suite_counts(tree, cases):
+    suites = [tree] if tree.tag == "testsuite" else list(tree.iter("testsuite"))
+    if not suites or not cases:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_RUNTIME_REPORT", "no executed source-bound tests"
+        )
+    try:
+        declared = sum(int(suite.attrib["tests"]) for suite in suites)
+        declared_failures = sum(int(suite.get("failures", "0")) for suite in suites)
+        declared_errors = sum(int(suite.get("errors", "0")) for suite in suites)
+    except (KeyError, ValueError) as exc:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_RUNTIME_REPORT", "JUnit suite counts malformed"
+        ) from exc
+    actual_failures = sum(case.find("failure") is not None for case in cases)
+    actual_errors = sum(case.find("error") is not None for case in cases)
+    if (
+        declared != len(cases)
+        or declared_failures != actual_failures
+        or declared_errors != actual_errors
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_RUNTIME_REPORT", "JUnit suite counts differ"
+        )
+
+
+def _junit_observations(cases, sources, junit_hash):
+    findings, identities, executed = [], set(), []
+    for case in cases:
+        result = _deep_audit_io._junit_case(case, sources)
+        path, finding, skipped = result
+        identity = (path, case.get("classname", ""), case.get("name", ""))
+        if identity in identities:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_RUNTIME_REPORT", "duplicate JUnit testcase"
+            )
+        identities.add(identity)
+        if not skipped:
+            executed.append(path)
+        if finding is not None:
+            findings.append(finding)
+    if not executed:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_RUNTIME_REPORT", "no executed source-bound tests"
+        )
+    harness_path = min(executed)
+    findings.sort(key=lambda item: (item["path"], item["line"], item["rule_id"]))
+    return (
+        len(executed),
+        findings,
+        {
+            "path": harness_path,
+            "sha256": sources[harness_path],
+        },
+        junit_hash,
+    )
+
+
+def _junit_bytes(output, junit_name="runtime.xml"):
+    with _deep_audit_io.local_file(output, junit_name).open("rb") as stream:
+        junit = stream.read(_deep_audit_io.LIMIT + 1)
+    if (
+        len(junit) > _deep_audit_io.LIMIT
+        or b"<!DOCTYPE" in junit.upper()
+        or b"<!ENTITY" in junit.upper()
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_RUNTIME_REPORT", "unsafe or oversized JUnit"
+        )
+    return junit
+
+
+def _junit_case(case, sources):
+    raw_path = case.get("file", "")
+    if raw_path.startswith("/src/"):
+        raw_path = raw_path.removeprefix("/src/")
+    path = _deep_audit_io.relative_path(raw_path)
+    if path not in sources:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_HARNESS_BINDING", "JUnit test source is unbound"
+        )
+    if case.find("skipped") is not None:
+        return path, None, True
+    finding = None
+    if case.find("failure") is not None or case.find("error") is not None:
+        try:
+            line = int(case.get("line", "0")) + 1
+        except ValueError as exc:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_RUNTIME_REPORT", "invalid JUnit failure line"
+            ) from exc
+        finding = {
+            "rule_id": "RUNTIME_TEST_FAILURE",
+            "path": path,
+            "line": line,
+            "severity": "high",
+        }
+    return path, finding, False
+
+
+def _native_coverage_report(
+    raw: dict,
+    lane: dict,
+    inventory: dict,
+    output: _deep_audit_io.Path,
+    junit_name="runtime.xml",
+) -> dict:
+    if raw.get("meta", {}).get("branch_coverage") is not True:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_RUNTIME_COVERAGE", "native branch measurement required"
+        )
+    sources = {item["path"]: item["sha256"] for item in inventory["files"]}
+    tests, findings, harness, junit_hash = _deep_audit_io._native_junit(
+        output, sources, junit_name
+    )
+    coverage = _deep_audit_io._native_source_counts(raw, sources)
+    return {
+        "schema": "factory.deep-runtime-observations.v1",
+        "engine": "runtime",
+        "tool_version": lane["tool_version"],
+        "completed": True,
+        "errors": [],
+        "harness": harness,
+        "metrics": {"tests": tests},
+        "findings": findings,
+        "source_coverage": coverage,
+        "coverage_native_sha256": _deep_audit_io.digest(raw),
+        "junit_sha256": junit_hash,
+    }
+
+
+def _native_source_counts(raw: dict, sources: dict) -> dict:
+    coverage = {}
+    files = raw.get("files")
+    if not isinstance(files, dict) or not all(isinstance(name, str) for name in files):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_RUNTIME_COVERAGE", "native coverage files object required"
+        )
+    for name, measured in files.items():
+        path = _deep_audit_io.relative_path(name.removeprefix("/src/"))
+        if path not in sources:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_RUNTIME_COVERAGE", "coverage source is unbound"
+            )
+        if path in coverage:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_RUNTIME_COVERAGE", "duplicate native coverage source"
+            )
+        counts = _deep_audit_io._native_coverage_counts(measured)
+        coverage[path] = {
+            "sha256": sources[path],
+            "lines_total": counts["num_statements"],
+            "lines_covered": counts["covered_lines"],
+            "branches_total": counts["num_branches"],
+            "branches_covered": counts["covered_branches"],
+        }
+    return coverage
+
+
+def _native_coverage_counts(measured: dict) -> dict:
+    """Validate measured totals before exposing them as runtime facts."""
+    if not isinstance(measured, dict) or not isinstance(measured.get("summary"), dict):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_RUNTIME_COVERAGE", "native coverage summary required"
+        )
+    counts = measured["summary"]
+    for field in (
+        "num_statements",
+        "covered_lines",
+        "num_branches",
+        "covered_branches",
+    ):
+        _deep_audit_io.require_int(
+            counts.get(field), field, minimum=0, maximum=10_000_000
+        )
+    if (
+        counts["covered_lines"] > counts["num_statements"]
+        or counts["covered_branches"] > counts["num_branches"]
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_RUNTIME_COVERAGE", "covered counts exceed measured totals"
+        )
+    return counts
+
+
+def _native_report(
+    raw: dict,
+    profile: dict,
+    contract: dict,
+    output: _deep_audit_io.Path,
+    invocations: list,
+) -> dict:
+    import copy
+
+    sources = {item["path"]: item["sha256"] for item in contract["inventory"]["files"]}
+    if profile["report_format"] == "sarif":
+        report = _deep_audit_io._native_sarif_metadata(raw, profile, invocations)
+        return _deep_audit_io._native_sarif_paths(report, sources)
+    if profile["report_format"] == "runtime-junit":
+        report = _deep_audit_io._runtime_report_file(
+            raw, contract["lane"], contract["inventory"], output
+        )
+        _deep_audit_io._runtime_exit_consistency(report, invocations)
+        return report
+    if profile["report_format"] == "coverage-json":
+        return _deep_audit_io._native_coverage_report(
+            raw,
+            contract["lane"],
+            contract["inventory"],
+            output,
+        )
+    if profile["engine"] == "atheris":
+        report = _deep_audit_io._finalize_fuzz_report(raw, invocations)
+        corpus_path = output / _deep_audit_io.Path(
+            contract["lane"]["report"]
+        ).with_suffix(".corpus.json")
+        with _deep_audit_io.local_file(
+            output, corpus_path.relative_to(output).as_posix()
+        ).open("rb") as stream:
+            corpus_raw = stream.read(4_194_305)
+        if len(corpus_raw) > 4_194_304:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_FUZZ_CORPUS", "corpus artifact budget exceeded"
+            )
+        _deep_audit_io._validate_fuzz_corpus(corpus_raw, report, sources)
+        report["fuzz_corpus"] = _deep_audit_io._codeql_native_blob(
+            corpus_raw, maximum=4_194_304
+        )
+        return report
+    report = copy.deepcopy(raw)
+    _deep_audit_io._native_dependency_paths(report, profile["report_format"], sources)
+    return report
+
+
+def _native_source_path(uri: str, sources: dict, *, scan_root: bool = False) -> str:
+    _deep_audit_io.require_str(uri, "native source URI", maximum=2048)
+    path = uri.removeprefix("file:///src/").removeprefix("/src/")
+    if scan_root and path.startswith("/"):
+        path = path[1:]  # Native Syft directory locations start at the scan root.
+    path = _deep_audit_io.relative_path(path)
+    if path not in sources:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRACE_UNBOUND", "native source is outside candidate"
+        )
+    return path
+
+
+def _native_artifact_path(artifact: dict, run: dict, sources: dict) -> str:
+    uri, indexed_uri = _deep_audit_io._native_artifact_uri(artifact, run)
+    path = _deep_audit_io._native_source_path(uri, sources)
+    if (
+        indexed_uri is not None
+        and _deep_audit_io._native_source_path(indexed_uri, sources) != path
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SARIF_INDIRECTION", "native artifact reference differs"
+        )
+    return path
+
+
+def _native_artifact_uri(artifact, run):
+    indexed_uri = None
+    if "index" in artifact:
+        indexed_uri = _deep_audit_io._indexed_artifact_uri(artifact, run)
+        if not isinstance(indexed_uri, dict):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_SARIF_INDIRECTION", "indexed artifact is invalid"
+            )
+    value = artifact if "uri" in artifact else indexed_uri
+    if not isinstance(value, dict):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SARIF_INDIRECTION", "native source URI missing"
+        )
+    uri = _deep_audit_io.require_str(
+        value.get("uri"), "native source URI", maximum=2048
+    )
+    absolute_source = uri.startswith(("/src/", "file:///src/"))
+    if "uriBaseId" in value and not absolute_source:
+        base = run.get("originalUriBaseIds", {}).get(value["uriBaseId"], {})
+        if base.get("uri") not in {"file:///src/", "file:///src", "/src/"}:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_SARIF_INDIRECTION", "untrusted native source base"
+            )
+    return uri, indexed_uri.get("uri") if indexed_uri is not None else None
+
+
+def _indexed_artifact_uri(artifact, run):
+    index = _deep_audit_io.require_int(
+        artifact["index"], "artifact index", minimum=0, maximum=49999
+    )
+    items = run.get("artifacts", [])
+    if index >= len(items):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SARIF_INDIRECTION", "artifact index is absent"
+        )
+    return items[index]["location"]
+
+
+def _native_sarif_paths(report: dict, sources: dict) -> dict:
+    for run in report["runs"]:
+        stack = [run]
+        count = 0
+        while stack:
+            item = stack.pop()
+            count += 1
+            if count > 200000:
+                raise _deep_audit_io.RuntimeAuditError(
+                    "E_REPORT_SIZE", "native SARIF tree exceeds budget"
+                )
+            if isinstance(item, list):
+                stack.extend(item)
+            elif isinstance(item, dict):
+                if "artifactLocation" in item:
+                    artifact = item["artifactLocation"]
+                    path = _deep_audit_io._native_artifact_path(artifact, run, sources)
+                    artifact.update(uri=path)
+                    artifact.pop("uriBaseId", None)
+                    artifact.pop("index", None)
+                stack.extend(item.values())
+    return report
+
+
+def _native_dependency_paths(report: dict, kind: str, sources: dict) -> None:
+    if kind == "osv-json":
+        for result in report.get("results", []):
+            result["source"]["path"] = _deep_audit_io._native_source_path(
+                result["source"]["path"], sources
+            )
+        _deep_audit_io._osv_lookup_paths(
+            report, lambda path: _deep_audit_io._native_source_path(path, sources)
+        )
+    elif kind == "syft-json":
+        for artifact in report.get("artifacts", []):
+            for location in artifact.get("locations", []):
+                location["path"] = _deep_audit_io._native_source_path(
+                    location["path"], sources, scan_root=True
+                )
+
+
+def _osv_lookup_paths(report, normalize):
+    if "factory_lookup_execution" not in report:
+        return
+    ledger = report["factory_lookup_execution"]
+    if not isinstance(ledger, dict) or not isinstance(ledger.get("queries"), list):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_OSV_LOOKUPS", "native lookup object required"
+        )
+    if len(ledger["queries"]) > 20_000:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_OSV_LOOKUPS", "native query budget exceeded"
+        )
+    for row in ledger["queries"]:
+        if not isinstance(row, dict) or not isinstance(row.get("locations"), list):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_OSV_LOOKUPS", "native query locations required"
+            )
+        if not 0 < len(row["locations"]) <= 20_000:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_OSV_LOOKUPS", "native location budget exceeded"
+            )
+        row["locations"] = sorted(normalize(path) for path in row["locations"])
+
+
+def _osv_suppression_bytes(aliases):
+    if (
+        not isinstance(aliases, list)
+        or not 1 <= len(aliases) <= 64
+        or any(
+            not isinstance(item, str)
+            or _deep_audit_io.re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", item)
+            is None
+            for item in aliases
+        )
+        or aliases != sorted(set(aliases))
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_OSV_POLICY", "canonical advisory aliases required"
+        )
+    return "".join(
+        "[[IgnoredVulns]]\nid = "
+        + _deep_audit_io.json.dumps(item, ensure_ascii=True)
+        + "\n\n"
+        for item in aliases
+    ).encode("ascii")
+
+
+def _osv_challenge_source_paths(report, source_root, manifest):
+    results = report.get("results")
+    if not isinstance(results, list):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_OSV_REPORT", "native source results required"
+        )
+    prefix = source_root.resolve().as_posix().rstrip("/") + "/"
+    for result in results:
+        try:
+            source = result["source"]
+            raw_path = _deep_audit_io.require_str(
+                source.get("path"), "OSV source path", maximum=2048
+            )
+            if raw_path.startswith("file://"):
+                raw_path = raw_path.removeprefix("file://")
+            if raw_path.startswith(prefix):
+                path = raw_path[len(prefix) :]
+            elif raw_path in manifest:
+                path = raw_path
+            else:
+                raise _deep_audit_io.RuntimeAuditError(
+                    "E_OSV_REPORT", "source path outside fixture"
+                )
+            path = _deep_audit_io.relative_path(path)
+            if path not in manifest:
+                raise _deep_audit_io.RuntimeAuditError(
+                    "E_OSV_REPORT", "source path is unbound"
+                )
+            source["path"] = path
+        except (KeyError, TypeError, AttributeError) as exc:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_OSV_REPORT", "native source path malformed"
+            ) from exc
+    _deep_audit_io._osv_lookup_paths(
+        report,
+        lambda path: _deep_audit_io._osv_normalize_lookup_path(path, prefix, manifest),
+    )
+
+
+def _osv_normalize_lookup_path(path, prefix, manifest):
+    path = _deep_audit_io.require_str(path, "lookup source path", maximum=2048)
+    path = path.removeprefix("file://")
+    if path.startswith(prefix):
+        path = path[len(prefix) :]
+    path = _deep_audit_io.relative_path(path)
+    if path not in manifest:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_OSV_LOOKUPS", "lookup source path is unbound"
+        )
+    return path
+
+
+def _osv_normalize_result_source(item, root, manifest):
+    try:
+        source = item["source"]
+        raw = _deep_audit_io.require_str(
+            source.get("path"), "source path", maximum=2048
+        )
+        if raw.startswith("file://"):
+            raw = raw[7:]
+        path = raw[len(root) :] if raw.startswith(root) else raw
+        path = _deep_audit_io.relative_path(path)
+        if path not in manifest:
+            raise ValueError("unbound source path")
+        source["path"] = path
+    except (KeyError, TypeError, AttributeError, ValueError) as exc:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_OSV_ARTIFACT", "unbound OSV source path"
+        ) from exc
+
+
+def _native_profile_report(profile, output, paths):
+    if profile["report_format"] == "runtime-junit":
+        junit_path = _deep_audit_io.local_file(output, paths[0])
+        _deep_audit_io._junit_bytes(output, paths[0])
+        with _deep_audit_io.local_file(output, paths[1]).open("rb") as stream:
+            raw_report = _deep_audit_io.strict_json(
+                stream.read(_deep_audit_io.LIMIT + 1)
+            )
+        if not junit_path.is_file():
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_RUNTIME_REPORT", "native JUnit missing"
+            )
+    else:
+        with _deep_audit_io.local_file(output, paths[0]).open("rb") as stream:
+            raw_report_bytes = stream.read(_deep_audit_io.LIMIT + 1)
+        if len(raw_report_bytes) > _deep_audit_io.LIMIT:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_REPORT_SIZE", "native report exceeds budget"
+            )
+        raw_report = _deep_audit_io.strict_json(raw_report_bytes)
+    return raw_report, (
+        raw_report_bytes if profile["report_format"] != "runtime-junit" else None
+    )
+
+
+def _trivy_full_source_execution(
+    profile,
+    lane,
+    inventory,
+    source,
+    output,
+    paths,
+    sarif_argv,
+    invocation,
+    config,
+    ignore,
+    started,
+    timeout,
+    scratch,
+):
+    import base64
+    from .runtime_audit_process import run_bounded_command
+
+    remaining = int(timeout - (_deep_audit_io.time.monotonic() - started))
+    if remaining < 1:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ADAPTER_TIMEOUT", "Trivy inventory budget exhausted"
+        )
+    raw_sarif = _deep_audit_io._trivy_read_raw(
+        _deep_audit_io.local_file(output, paths[0])
+    )
+    json_path = scratch / "trivy-full.json"
+    json_run = scratch / "trivy-full-run"
+    json_run.mkdir()
+    argv = _deep_audit_io._trivy_json_argv(sarif_argv, json_path)
+    deadline = _deep_audit_io.time.monotonic() + remaining
+    facts = run_bounded_command(argv, source, remaining, json_run)
+    if _deep_audit_io._adapter_command_failed(facts, [0], deadline):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "Trivy JSON inventory failed"
+        )
+    raw_json = _deep_audit_io._trivy_read_raw(
+        _deep_audit_io.local_file(scratch, "trivy-full.json")
+    )
+    sources = _deep_audit_io._trivy_source_map(inventory, lane)
+    native_report = _deep_audit_io.strict_json(raw_json)
+    source_bytes = _deep_audit_io._trivy_source_bytes(source, sources)
+    bindings = _deep_audit_io._trivy_target_bindings(
+        native_report, sources, source_bytes
+    )
+    _deep_audit_io._trivy_native_checks(native_report, sources, bindings)
+    return {
+        "schema": "factory.trivy-rule-execution.v1",
+        "config_base64": base64.b64encode(config).decode("ascii"),
+        "ignore_base64": base64.b64encode(ignore).decode("ascii"),
+        "sources": _deep_audit_io._trivy_source_map(inventory, lane),
+        "target_bindings": bindings,
+        "source_bytes_base64": {
+            path: base64.b64encode(raw).decode("ascii")
+            for path, raw in sorted(source_bytes.items())
+        },
+        "observations": [
+            _deep_audit_io._trivy_observation(
+                "sarif", sarif_argv, invocation["execution"], raw_sarif
+            ),
+            _deep_audit_io._trivy_observation("json", argv, facts, raw_json),
+        ],
+    }
+
+
+def _trivy_read_raw(path):
+    raw = path.read_bytes()
+    if len(raw) > _deep_audit_io.LIMIT:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_REPORT", "Trivy report exceeds byte budget"
+        )
+    return raw
+
+
+def _trivy_observation(report_format, argv, facts, raw):
+    import base64
+
+    return {
+        "format": report_format,
+        "argv": argv,
+        "execution": facts,
+        "raw_report_base64": base64.b64encode(raw).decode("ascii"),
+        "raw_report_sha256": _deep_audit_io.sha256_bytes(raw),
+    }
+
+
+def _trivy_source_map(inventory, lane):
+    return {
+        item["path"]: item["sha256"]
+        for item in inventory["files"]
+        if item["language"] in lane["languages"]
+    }
+
+
+def _trivy_source_bytes(root, sources):
+    result = {}
+    total = 0
+    for path, expected in sorted(sources.items()):
+        raw = (root / path).read_bytes()
+        total += len(raw)
+        if (
+            len(raw) > 1_000_000
+            or total > 8_000_000
+            or _deep_audit_io.sha256_bytes(raw) != expected
+        ):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform source snapshot differs"
+            )
+        result[path] = raw
+    return result
+
+
+def _trivy_module_sources(raw, path):
+    import re
+    import json
+
+    text = raw.decode("utf-8", errors="strict")
+    if path.lower().endswith(".tf.json"):
+        try:
+            document = json.loads(text)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform JSON source is malformed"
+            ) from exc
+        modules = document.get("module", {}) if isinstance(document, dict) else None
+        if modules is None:
+            return []
+        if not isinstance(modules, dict):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform JSON modules are malformed"
+            )
+        sources = []
+        for module in modules.values():
+            source = module.get("source") if isinstance(module, dict) else None
+            if not isinstance(source, str) or "$" in source:
+                raise _deep_audit_io.RuntimeAuditError(
+                    "E_TRIVY_APPLICABILITY",
+                    "Terraform JSON module source is dynamic or missing",
+                )
+            sources.append((path, source))
+        return sources
+    text = _deep_audit_io._trivy_clean_hcl_comments(text)
+    return [
+        (path, source) for source in _deep_audit_io._trivy_parse_module_blocks(text, re)
+    ]
+
+
+def _trivy_clean_hcl_comments(text):
+    lines = []
+    for line in text.splitlines():
+        out = []
+        quoted = False
+        escaped = False
+        index = 0
+        while index < len(line):
+            char = line[index]
+            pair = line[index : index + 2]
+            if not quoted and pair in {"/*", "*/", "<<"}:
+                raise _deep_audit_io.RuntimeAuditError(
+                    "E_TRIVY_APPLICABILITY",
+                    "Terraform block comments and heredocs are unsupported",
+                )
+            if quoted:
+                out.append(char)
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    quoted = False
+            elif char == '"':
+                quoted = True
+                out.append(char)
+            elif char == "#" or pair == "//":
+                break
+            else:
+                out.append(char)
+            index += 2 if not quoted and pair == "//" else 1
+        lines.append("".join(out))
+    return "\n".join(lines)
+
+
+def _trivy_parse_module_blocks(text, regex):
+    lines = text.splitlines()
+    modules = []
+    index = 0
+    while index < len(lines):
+        if not regex.match(r'^\s*module\s+"[^"\n]+"\s*\{', lines[index]):
+            index += 1
+            continue
+        block, index = _deep_audit_io._trivy_hcl_block(lines, index)
+        match = regex.search(r'^\s*source\s*=\s*"([^"$]+)"\s*$', block, regex.MULTILINE)
+        if match is None:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform module source is dynamic or missing"
+            )
+        modules.append(match.group(1))
+    return modules
+
+
+def _trivy_hcl_block(lines, start):
+    depth = 0
+    in_string = False
+    escaped = False
+    block = []
+    cursor = start
+    while cursor < len(lines):
+        line = lines[cursor]
+        block.append(line)
+        depth, in_string, escaped = _deep_audit_io._trivy_hcl_line_depth(
+            line, depth, in_string, escaped
+        )
+        if depth == 0:
+            return "\n".join(block), cursor + 1
+        cursor += 1
+    raise _deep_audit_io.RuntimeAuditError(
+        "E_TRIVY_APPLICABILITY", "Terraform module block is unclosed"
+    )
+
+
+def _trivy_hcl_line_depth(line, depth, in_string, escaped):
+    comment = False
+    for char in line:
+        if comment:
+            break
+        depth, in_string, escaped, comment = _deep_audit_io._trivy_hcl_char(
+            char, depth, in_string, escaped
+        )
+    return depth, in_string, escaped
+
+
+def _trivy_hcl_char(char, depth, in_string, escaped):
+    if in_string:
+        return _deep_audit_io._trivy_hcl_string_char(char, depth, escaped)
+    if char == '"':
+        return depth, True, False, False
+    if char == "#":
+        return depth, False, False, True
+    return depth + (char == "{") - (char == "}"), False, False, False
+
+
+def _trivy_hcl_string_char(char, depth, escaped):
+    if escaped:
+        return depth, True, False, False
+    if char == "\\":
+        return depth, True, True, False
+    return depth, char != '"', False, False
+
+
+def _trivy_target_bindings(report, sources, source_bytes=None):
+    """Bind native Terraform Targets to exact candidate members and hashes."""
+    results = report.get("Results") if isinstance(report, dict) else None
+    if not isinstance(results, list):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_REPORT", "Trivy target inventory malformed"
+        )
+    paths = set(sources)
+    root_members, root_edges, root_prefixes = _deep_audit_io._trivy_root_module_graphs(
+        results, paths, source_bytes
+    )
+    bindings = _deep_audit_io._trivy_bind_report_targets(
+        results, paths, sources, root_members, root_edges, source_bytes, root_prefixes
+    )
+    _deep_audit_io._trivy_validate_target_coverage(bindings, paths)
+    return bindings
+
+
+def _trivy_root_module_graphs(results, paths, source_bytes):
+    members_by_target, edges_by_target, prefixes = {}, {}, {}
+    if source_bytes is None:
+        return members_by_target, edges_by_target, prefixes
+    for result in results:
+        if not isinstance(result, dict) or result.get("Type") != "terraform":
+            continue
+        target = _deep_audit_io._trivy_target_name(result.get("Target"))
+        prefix = _deep_audit_io._trivy_root_target_prefix(target, paths)
+        if prefix is None:
+            continue
+        members, edges = _deep_audit_io._trivy_root_module_graph(
+            paths, source_bytes, True, prefix
+        )
+        if not members:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform root target has no source members"
+            )
+        members_by_target[target] = members
+        edges_by_target[target] = edges
+        prefixes[target] = prefix
+    return members_by_target, edges_by_target, prefixes
+
+
+def _trivy_root_target_prefix(target, paths):
+    if target == ".":
+        # A dot target is the scan root. Candidate paths are already relative
+        # to that root; never infer a hidden root from a shared path prefix.
+        return ""
+    if target.lower().endswith((".tf", ".tf.json")):
+        return None
+    direct_members = [
+        path
+        for path in paths
+        if _deep_audit_io.Path(path).parent.as_posix() == target
+        and path.lower().endswith((".tf", ".tf.json"))
+    ]
+    return target if direct_members else None
+
+
+def _trivy_root_module_graph(paths, source_bytes, root_scan, root_prefix=""):
+    root_members = set()
+    edges = []
+    if source_bytes is None or not root_scan:
+        return root_members, edges
+    root_directory = root_prefix or "."
+    pending = [
+        path
+        for path in paths
+        if _deep_audit_io.Path(path).parent.as_posix() == root_directory
+        and path.lower().endswith((".tf", ".tf.json"))
+    ]
+    while pending:
+        parent = pending.pop()
+        if parent in root_members:
+            continue
+        root_members.add(parent)
+        for owner, source in _deep_audit_io._trivy_module_sources(
+            source_bytes[parent], parent
+        ):
+            members = _deep_audit_io._trivy_local_module_members(owner, source, paths)
+            edges.append({"from": owner, "source": source, "members": members})
+            pending.extend(members)
+    return root_members, edges
+
+
+def _trivy_local_module_members(owner, source, paths):
+    if not source.startswith("./"):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "non-local Terraform module source is unsupported"
+        )
+    resolved = _deep_audit_io.Path(
+        _deep_audit_io.os.path.normpath(str(_deep_audit_io.Path(owner).parent / source))
+    ).as_posix()
+    if resolved == ".." or resolved.startswith("../") or resolved.startswith("/"):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "Terraform module source escapes candidate root"
+        )
+    members = sorted(
+        path
+        for path in paths
+        if _deep_audit_io.Path(path).parent.as_posix() == resolved
+        and path.lower().endswith((".tf", ".tf.json"))
+    )
+    if not members:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "Terraform local module has no inventoried sources"
+        )
+    return members
+
+
+def _trivy_bind_report_targets(
+    results,
+    paths,
+    sources,
+    root_members,
+    root_edges,
+    source_bytes,
+    root_prefixes,
+):
+    bindings = {}
+    for result in results:
+        if not isinstance(result, dict):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TRIVY_REPORT", "Trivy target malformed"
+            )
+        target = _deep_audit_io._trivy_target_name(result.get("Target"))
+        kind = result.get("Type")
+        if target in bindings:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TRIVY_REPORT", "duplicate Trivy target"
+            )
+        members, scope = _deep_audit_io._trivy_target_members(
+            target, kind, paths, root_members, source_bytes, root_prefixes
+        )
+        if not members:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Trivy target has no bound members"
+            )
+        bindings[target] = {
+            "kind": kind,
+            "scope": scope,
+            "members": [{"path": path, "sha256": sources[path]} for path in members],
+        }
+    if source_bytes is not None:
+        for target, item in bindings.items():
+            if item["scope"] == "terraform_root":
+                item["module_edges"] = sorted(
+                    root_edges[target], key=lambda edge: (edge["from"], edge["source"])
+                )
+    return bindings
+
+
+def _trivy_target_members(
+    target, kind, paths, root_members, source_bytes, root_prefixes
+):
+    if kind != "terraform":
+        return ([target] if target in paths else []), "file"
+    if target in root_members:
+        members = sorted(root_members[target])
+        return members, "terraform_root"
+    if target == "." and source_bytes is None:
+        members = sorted(
+            path
+            for path in paths
+            if "/" not in path and path.lower().endswith((".tf", ".tf.json"))
+        )
+        return members, "terraform_root"
+    if target.lower().endswith((".tf", ".tf.json")):
+        return _deep_audit_io._trivy_terraform_file_target_members(
+            target, paths, root_members, root_prefixes
+        )
+    return ([target] if target in paths else []), "file"
+
+
+def _trivy_terraform_file_target_members(target, paths, root_members, root_prefixes):
+    prefixes = [
+        root_prefixes.get(root_target, "")
+        for root_target in root_members
+        if root_target == "." or target.startswith(root_target + "/")
+    ]
+    candidates = {target}
+    candidates.update(f"{prefix}/{target}" for prefix in prefixes if prefix)
+    found = sorted(candidates & paths)
+    if len(found) > 1:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "Terraform file target mapping is ambiguous"
+        )
+    return found, "terraform_file"
+
+
+def _trivy_validate_target_coverage(bindings, paths):
+    covered = {row["path"] for item in bindings.values() for row in item["members"]}
+    if covered != paths:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "Trivy target membership is incomplete"
+        )
+    for path in paths:
+        owners = [
+            item
+            for item in bindings.values()
+            if any(row["path"] == path for row in item["members"])
+        ]
+        if len(owners) > 1 and not (
+            len(owners) == 2
+            and "terraform_root" in {item["scope"] for item in owners}
+            and all(
+                item["scope"] in {"terraform_root", "terraform_file"} for item in owners
+            )
+        ):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Trivy target membership overlaps"
+            )
+
+
+def _trivy_native_checks(report, sources, target_bindings=None):
+    if not isinstance(report, dict) or report.get("SchemaVersion") != 2:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_REPORT", "Trivy JSON schema version differs"
+        )
+    results = report.get("Results")
+    if not isinstance(results, list) or not results:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "Trivy reported no applicable sources"
+        )
+    target_bindings = target_bindings or _deep_audit_io._trivy_target_bindings(
+        report, sources
+    )
+    matrix = {}
+    for result in results:
+        if not isinstance(result, dict) or result.get("Class") != "config":
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TRIVY_REPORT", "Trivy config result malformed"
+            )
+        target = _deep_audit_io._trivy_target_name(result.get("Target"))
+        if target not in target_bindings:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Trivy source is unbound"
+            )
+        rows = result.get("Misconfigurations")
+        if not isinstance(rows, list) or not rows:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Trivy check inventory missing"
+            )
+        statuses = _deep_audit_io._trivy_check_statuses(result, rows)
+        if target in matrix:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TRIVY_REPORT", "duplicate Trivy source result"
+            )
+        matrix[target] = statuses
+    if set(matrix) != set(target_bindings):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "Trivy omitted a required target"
+        )
+    return matrix
+
+
+def _trivy_check_statuses(result, rows):
+    statuses = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TRIVY_REPORT", "Trivy check row malformed"
+            )
+        rule_id = _deep_audit_io.require_str(
+            row.get("ID"), "Trivy check ID", maximum=256
+        )
+        status = row.get("Status")
+        if (
+            not isinstance(status, str)
+            or status not in {"PASS", "FAIL"}
+            or rule_id in statuses
+        ):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TRIVY_REPORT", "Trivy check status is unsupported"
+            )
+        statuses[rule_id] = status
+    summary = result.get("MisconfSummary")
+    if (
+        not isinstance(summary, dict)
+        or type(summary.get("Successes")) is not int
+        or type(summary.get("Failures")) is not int
+        or summary.get("Successes")
+        != sum(status == "PASS" for status in statuses.values())
+        or summary.get("Failures")
+        != sum(status == "FAIL" for status in statuses.values())
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_REPORT", "Trivy status summary differs"
+        )
+    return statuses
+
+
+def _trivy_target_name(value):
+    return "." if value == "." else _deep_audit_io.relative_path(value)
+
+
+def _trivy_decode_source_bytes(evidence, sources):
+    import base64
+
+    encoded = evidence.get("source_bytes_base64")
+    if not isinstance(encoded, dict) or set(encoded) != set(sources):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "Terraform source snapshot set differs"
+        )
+    decoded = {}
+    total = 0
+    for path, value in encoded.items():
+        try:
+            raw = base64.b64decode(value, validate=True)
+        except (ValueError, TypeError) as exc:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform source snapshot malformed"
+            ) from exc
+        total += len(raw)
+        if (
+            len(raw) > 1_000_000
+            or total > 8_000_000
+            or _deep_audit_io.sha256_bytes(raw) != sources[path]
+        ):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform source snapshot hash differs"
+            )
+        decoded[path] = raw
+    return decoded
+
+
+def _trivy_expected_failures(native, bindings, sarif, sources, source_root=None):
+    report = _deep_audit_io._trivy_normalized_sarif(sarif, sources, source_root)
+    rows = _deep_audit_io._trivy_native_failure_rows(native, bindings)
+    expected = _deep_audit_io._trivy_match_failure_rows(rows, report)
+    actual = _deep_audit_io._trivy_sarif_failures(sarif, sources, source_root)
+    if actual != expected:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "native JSON and SARIF findings differ"
+        )
+    return expected
+
+
+def _trivy_normalized_sarif(sarif, sources, source_root):
+    _deep_audit_io._trivy_sarif_failures(sarif, sources, source_root)
+    report = _deep_audit_io.strict_json(_deep_audit_io.canonical_bytes(sarif))
+    if source_root is not None:
+        for run in report["runs"]:
+            _deep_audit_io._normalize_challenge_run(run, source_root.rstrip("/"))
+    return _deep_audit_io._native_sarif_paths(report, sources)
+
+
+def _trivy_native_failure_rows(native, bindings):
+    rows = []
+    for result in native["Results"]:
+        binding = bindings[_deep_audit_io._trivy_target_name(result["Target"])]
+        rows.extend(
+            (binding, row)
+            for row in result["Misconfigurations"]
+            if row["Status"] == "FAIL"
+        )
+    return rows
+
+
+def _trivy_match_failure_rows(rows, report):
+    expected = set()
+    used = set()
+    for binding, row in rows:
+        candidates = []
+        accepted_ids = {row.get("ID"), row.get("AVDID")}
+        for run_index, run in enumerate(report["runs"]):
+            for result_index, result in enumerate(run.get("results", [])):
+                if result.get("ruleId") not in accepted_ids:
+                    continue
+                location = result["locations"][0]["physicalLocation"][
+                    "artifactLocation"
+                ]
+                path = _deep_audit_io.relative_path(location.get("uri"))
+                if path in {item["path"] for item in binding["members"]}:
+                    key = (run_index, result_index)
+                    if key not in used:
+                        candidates.append((key, path, result["ruleId"]))
+        if len(candidates) != 1:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_TRIVY_EXECUTION", "failed Trivy target has ambiguous SARIF ownership"
+            )
+        key, path, rule = candidates[0]
+        used.add(key)
+        expected.add((path, rule))
+    return expected
+
+
+def _trivy_observation_bytes(item):
+    import base64
+
+    fields = {"format", "argv", "execution", "raw_report_base64", "raw_report_sha256"}
+    if not isinstance(item, dict) or set(item) != fields:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "Trivy observation shape differs"
+        )
+    try:
+        raw = base64.b64decode(item["raw_report_base64"], validate=True)
+    except (ValueError, TypeError) as exc:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "Trivy report bytes are malformed"
+        ) from exc
+    if (
+        len(raw) > _deep_audit_io.LIMIT
+        or _deep_audit_io.sha256_bytes(raw) != item["raw_report_sha256"]
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "Trivy report bytes differ"
+        )
+    return raw
+
+
+def _trivy_pair_identity(sarif_argv, json_argv):
+    if not isinstance(sarif_argv, list) or not isinstance(json_argv, list):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "Trivy command vectors are missing"
+        )
+    _deep_audit_io._trivy_closed_argv(sarif_argv)
+    expected = list(sarif_argv)
+    try:
+        expected[expected.index("--format") + 1] = "json"
+        expected[expected.index("--output") + 1] = json_argv[
+            json_argv.index("--output") + 1
+        ]
+        expected.insert(expected.index("config") + 1, "--include-non-failures")
+    except (ValueError, IndexError) as exc:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "Trivy command pair is malformed"
+        ) from exc
+    try:
+        first_output = sarif_argv[sarif_argv.index("--output") + 1]
+        second_output = json_argv[json_argv.index("--output") + 1]
+        formats_match = (
+            sarif_argv[sarif_argv.index("--format") + 1] == "sarif"
+            and json_argv[json_argv.index("--format") + 1] == "json"
+        )
+        input_match = sarif_argv[-1] == json_argv[-1]
+        fixed = (
+            sarif_argv[0:2] == ["/usr/local/bin/trivy", "config"]
+            and sarif_argv[sarif_argv.index("--config") + 1]
+            == "/opt/factory/rules/trivy.yaml"
+            and sarif_argv[sarif_argv.index("--ignorefile") + 1]
+            == json_argv[json_argv.index("--ignorefile") + 1]
+        )
+    except (ValueError, IndexError) as exc:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "Trivy command pair is incomplete"
+        ) from exc
+    if (
+        json_argv != expected
+        or first_output == second_output
+        or not formats_match
+        or not input_match
+        or not fixed
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "Trivy command pair differs"
+        )
+
+
+def _trivy_closed_argv(argv):
+    if len(argv) != 14:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "Trivy command is not closed"
+        )
+    expected = [
+        "/usr/local/bin/trivy",
+        "config",
+        "--config",
+        "/opt/factory/rules/trivy.yaml",
+        "--skip-check-update",
+        "--skip-version-check",
+        "--disable-telemetry",
+        "--ignorefile",
+        argv[8],
+        "--format",
+        "sarif",
+        "--output",
+        argv[12],
+        argv[13],
+    ]
+    if argv != expected or any(
+        not value.startswith("/") for value in (argv[8], argv[12], argv[13])
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "Trivy command permits unbound options"
+        )
+
+
+def _trivy_sarif_failures(report, sources, source_root=None):
+    import copy
+
+    if not isinstance(report, dict) or not isinstance(report.get("runs"), list):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_TRIVY_REPORT", "Trivy SARIF is malformed"
+        )
+    normalized = copy.deepcopy(report)
+    if source_root is not None:
+        for run in normalized["runs"]:
+            _deep_audit_io._normalize_challenge_run(run, source_root.rstrip("/"))
+    normalized = _deep_audit_io._native_sarif_paths(normalized, sources)
+    failures = set()
+    for run in normalized["runs"]:
+        for result in run.get("results", []):
+            rule = _deep_audit_io.require_str(
+                result.get("ruleId"), "Trivy SARIF rule ID", maximum=256
+            )
+            locations = result.get("locations", [])
+            if len(locations) != 1:
+                raise _deep_audit_io.RuntimeAuditError(
+                    "E_TRIVY_REPORT", "Trivy finding location is ambiguous"
+                )
+            location = (
+                locations[0].get("physicalLocation", {}).get("artifactLocation", {})
+            )
+            path = _deep_audit_io.relative_path(location.get("uri"))
+            if path not in sources or (path, rule) in failures:
+                raise _deep_audit_io.RuntimeAuditError(
+                    "E_TRIVY_REPORT", "Trivy SARIF finding is unbound"
+                )
+            failures.add((path, rule))
+    return failures
+
+
+def _semgrep_json_findings(native, rule_id, sources):
+    results = native.get("results")
+    if not isinstance(results, list) or len(results) > 20_000:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "bounded native results required"
+        )
+    findings = []
+    for result in results:
+        if not isinstance(result, dict) or result.get("check_id") != rule_id:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_SEMGREP_EXECUTION", "unselected detector finding"
+            )
+        path = _deep_audit_io._native_source_path(result.get("path"), sources)
+        line = _deep_audit_io.require_int(
+            result.get("start", {}).get("line"),
+            "finding line",
+            minimum=1,
+            maximum=10**9,
+        )
+        findings.append((rule_id, path, line))
+    if len(set(findings)) != len(findings):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "duplicate native findings"
+        )
+    return findings
+
+
+def _semgrep_sarif_findings(report, rule_ids, sources):
+    findings = []
+    for run in report["runs"]:
+        for item in run.get("results", []):
+            matches = [
+                rule
+                for rule in rule_ids
+                if item["ruleId"] == rule or item["ruleId"].endswith("." + rule)
+            ]
+            if len(matches) != 1 or len(item["locations"]) != 1:
+                raise _deep_audit_io.RuntimeAuditError(
+                    "E_SEMGREP_EXECUTION", "baseline detector identity differs"
+                )
+            place = item["locations"][0]["physicalLocation"]
+            path = _deep_audit_io._native_source_path(
+                place["artifactLocation"]["uri"], sources
+            )
+            findings.append((matches[0], path, place["region"]["startLine"]))
+    if len(set(findings)) != len(findings):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_SEMGREP_EXECUTION", "duplicate baseline findings"
+        )
+    return findings
+
+
+def _runtime_exit_consistency(report, invocations):
+    if len(invocations) != 1:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_RUNTIME_REPORT", "one runtime invocation required"
+        )
+    code = invocations[0].get("execution", {}).get("exit_code")
+    expected = 1 if report["findings"] else 0
+    if type(code) is not int or code != expected:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_RUNTIME_REPORT", "JUnit and process exit differ"
+        )
+
+
+def _runtime_report_file(raw, lane, inventory, output):
+    if raw.get("meta", {}).get("branch_coverage") is not True:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_RUNTIME_COVERAGE", "native branch measurement required"
+        )
+    report_name = lane["report"]
+    return _deep_audit_io._native_coverage_report(
+        raw, lane, inventory, output, report_name
+    )
+
+
+def _codeql_result_path(query_path):
+    try:
+        parts = _deep_audit_io.relative_path(query_path).split("/")
+    except (_deep_audit_io.RuntimeAuditError, TypeError, ValueError) as error:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_EXECUTION", "relative query path required"
+        ) from error
+    if (
+        len(parts) < 4
+        or parts[0] != "codeql"
+        or parts[1] not in {"javascript-queries", "python-queries", "actions-queries"}
+        or _deep_audit_io.re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", parts[2]) is None
+        or not parts[-1].endswith(".ql")
+    ):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_EXECUTION", "pinned query path required"
+        )
+    return "results/" + "/".join(parts[:2] + parts[3:])[:-3] + ".bqrs"
+
+
+def _codeql_result_sets(raw):
+    if not isinstance(raw, bytes) or len(raw) > 65_536:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_EXECUTION", "bounded result info required"
+        )
+    try:
+        sets = _deep_audit_io.json.loads(raw)["result-sets"]
+        if not isinstance(sets, list) or not 1 <= len(sets) <= 64:
+            raise ValueError("result sets required")
+        result, names = [], set()
+        for item in sets:
+            name = _deep_audit_io.require_str(item["name"], "result name", maximum=256)
+            rows = _deep_audit_io.require_int(
+                item["rows"], "result rows", minimum=0, maximum=2**63 - 1
+            )
+            columns = item["columns"]
+            if name in names or not isinstance(columns, list) or len(columns) > 256:
+                raise ValueError("unique bounded result sets required")
+            names.add(name)
+            result.append({"name": name, "rows": rows, "columns": len(columns)})
+        return result
+    except (ValueError, KeyError, TypeError, _deep_audit_io.RuntimeAuditError) as error:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_EXECUTION", "invalid native result info"
+        ) from error
+
+
+def _codeql_parse_rows(raw):
+    if not isinstance(raw, bytes) or len(raw) > _deep_audit_io.NATIVE_COVERAGE_LIMIT:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_SOURCE", "bounded source query output required"
+        )
+    try:
+        result = _deep_audit_io.json.loads(raw)["#select"]
+        if (
+            not isinstance(result["columns"], list)
+            or result["columns"]
+            != [{"kind": "String"}, {"kind": "Integer"}, {"kind": "Integer"}]
+            or not isinstance(result["tuples"], list)
+        ):
+            raise ValueError("three-column source rows required")
+        if len(result["tuples"]) > 20_000:
+            raise ValueError("source row budget exceeded")
+        rows = {}
+        for row in result["tuples"]:
+            path, nodes, errors = row
+            path = _deep_audit_io.relative_path(path)
+            if path in rows:
+                raise ValueError("duplicate source row")
+            rows[path] = {
+                "syntax_nodes": _deep_audit_io.require_int(
+                    nodes, "syntax nodes", minimum=0, maximum=2**31 - 1
+                ),
+                "parse_errors": _deep_audit_io.require_int(
+                    errors, "parse errors", minimum=0, maximum=2**31 - 1
+                ),
+            }
+        return rows
+    except (_deep_audit_io.RuntimeAuditError, ValueError, TypeError, KeyError) as error:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_SOURCE", "invalid native source query output"
+        ) from error
+
+
+def _codeql_source_query(profile):
+    languages = {
+        arg.removeprefix("--language=")
+        for command in profile["commands"]
+        for arg in command["argv"]
+        if arg.startswith("--language=")
+    }
+    definitions = {
+        "javascript-typescript": (
+            "javascript",
+            "TopLevel",
+            "JSParseError",
+            "e.getFile()",
+            "",
+        ),
+        "python": ("python", "Module", "SyntaxError", "e.getFile()", ""),
+        "actions": (
+            "actions",
+            "YamlDocument",
+            "YamlParseError",
+            "e.getLocation().getFile()",
+            "import codeql.files.FileSystem\nimport codeql.actions.ast.internal.Yaml\n",
+        ),
+    }
+    if len(languages) != 1 or not languages <= definitions.keys():
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_CODEQL_SOURCE", "one supported extractor required"
+        )
+    library, node, error, location, imports = definitions[languages.pop()]
+    query = (
+        f"import {library}\n{imports}from File f select f.getRelativePath(), "
+        f"count({node} n | n.getFile()=f), count({error} e | {location}=f)\n"
+    ).encode("utf-8")
+    return library, query
+
+
+def _trivy_paired_runner(runner, argv, cwd, budget, scratch, policy_path, paired):
+    started = _deep_audit_io.time.monotonic()
+    deadline = started + budget
+    sarif_facts = runner(argv, cwd, budget, scratch)
+    json_facts = None
+    if not _deep_audit_io._adapter_command_failed(sarif_facts, [0], deadline):
+        remaining = int(deadline - _deep_audit_io.time.monotonic())
+        if remaining > 0:
+            json_scratch = scratch / "json-run"
+            json_scratch.mkdir()
+            json_argv = _deep_audit_io._trivy_json_argv(argv, policy_path)
+            json_facts = runner(json_argv, cwd, remaining, json_scratch)
+            paired.update(json_argv=json_argv, json_facts=json_facts)
+            if not _deep_audit_io._adapter_command_failed(json_facts, [0], deadline):
+                paired["json_raw"] = _deep_audit_io.local_file(
+                    scratch, "policy.json"
+                ).read_bytes()
+    paired.update(sarif_argv=argv, sarif_facts=sarif_facts)
+    return _deep_audit_io._trivy_pair_facts(sarif_facts, json_facts, budget)
+
+
+def _trivy_pair_facts(sarif, native, budget):
+    facts = dict(sarif)
+    other = native or {}
+    facts.update(
+        timeout_seconds=budget,
+        duration_ms=min(
+            3_600_000, sarif.get("duration_ms", 0) + other.get("duration_ms", 0)
+        ),
+        exit_code=(
+            sarif.get("exit_code")
+            if sarif.get("exit_code") != 0 or native is None
+            else other.get("exit_code")
+        ),
+        timed_out=sarif.get("timed_out", False) or other.get("timed_out", False),
+        launch_error=sarif.get("launch_error", False)
+        or other.get("launch_error", False),
+        output_limit_exceeded=sarif.get("output_limit_exceeded", False)
+        or other.get("output_limit_exceeded", False),
+        cleanup_confirmed=sarif.get("cleanup_confirmed", False)
+        and (native is None or other.get("cleanup_confirmed", False)),
+        stdout_sha256=_deep_audit_io.digest(
+            [sarif.get("stdout_sha256"), other.get("stdout_sha256")]
+        ),
+        stderr_sha256=_deep_audit_io.digest(
+            [sarif.get("stderr_sha256"), other.get("stderr_sha256")]
+        ),
+        stdout_bytes=sarif.get("stdout_bytes", 0) + other.get("stdout_bytes", 0),
+        stderr_bytes=sarif.get("stderr_bytes", 0) + other.get("stderr_bytes", 0),
+    )
+    return facts
+
+
+def _normalize_challenge_sarif_paths(report, source_root):
+    root = source_root.resolve().as_posix().rstrip("/")
+    for run in report.get("runs", []):
+        _deep_audit_io._normalize_challenge_run(run, root)
+
+
+def _normalize_challenge_run(run, root):
+    _deep_audit_io._normalize_challenge_bases(run, root)
+    run.pop("workingDirectory", None)
+    for invocation in run.get("invocations", []):
+        _deep_audit_io._normalize_challenge_invocation(invocation)
+    _deep_audit_io._normalize_challenge_artifact_paths(run, root)
+    _deep_audit_io._normalize_challenge_message_paths(run, root)
+
+
+def _normalize_challenge_bases(run, root):
+    bases = run.get("originalUriBaseIds", {})
+    for base in bases.values():
+        uri = base.get("uri") if isinstance(base, dict) else None
+        if isinstance(uri, str) and _deep_audit_io._under_challenge_root(uri, root):
+            base["uri"] = "file:///src/"
+
+
+def _normalize_challenge_invocation(invocation):
+    if not isinstance(invocation, dict):
+        return
+    for key in ("startTimeUtc", "endTimeUtc", "processId", "workingDirectory"):
+        invocation.pop(key, None)
+
+
+def _normalize_challenge_artifact_paths(run, root):
+    stack = [run]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            artifact = item.get("artifactLocation")
+            uri = artifact.get("uri") if isinstance(artifact, dict) else None
+            if isinstance(uri, str):
+                artifact["uri"] = _deep_audit_io._challenge_source_uri(uri, root)
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+
+
+def _normalize_challenge_message_paths(run, root):
+    stack = [run]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            message = item.get("message")
+            if isinstance(message, dict) and isinstance(message.get("text"), str):
+                text = message["text"]
+                message["text"] = text.replace(root + "/", "/src/").replace(
+                    root + "\\", "/src/"
+                )
+                if message["text"] == root:
+                    message["text"] = "/src"
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+
+
+def _under_challenge_root(uri, root):
+    clean = _deep_audit_io.unquote(uri).removeprefix("file://")
+    return clean == root or clean.startswith(root + "/")
+
+
+def _challenge_source_uri(uri, root):
+    clean = _deep_audit_io.unquote(uri).removeprefix("file://")
+    if clean == root:
+        return "/src"
+    if clean.startswith(root + "/"):
+        return "/src/" + clean[len(root) + 1 :]
+    return uri
+
+
+def zap_source_trace_bootstrap(request: dict, inventory: dict) -> str:
+    """Build the bounded in-process Python HTTP trace runner for a signed target."""
+    from .deep_audit_contract import _validate_zap_target
+
+    fields = {
+        "schema",
+        "run_id",
+        "candidate_sha256",
+        "profile_sha256",
+        "rule_ids",
+        "timeout_seconds",
+        "target",
+        "route_id",
+    }
+    _deep_audit_io.exact_keys(request, fields, {"disabled_rule_id"})
+    if not fields <= set(request) or set(request) - fields - {"disabled_rule_id"}:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_SOURCE_TRACE", "native request fields differ"
+        )
+    target = request["target"]
+    _validate_zap_target(target, inventory)
+    config = target.get("source_trace")
+    if not isinstance(config, dict):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_SOURCE_TRACE", "signed trace config required"
+        )
+    sources = _deep_audit_io._zap_trace_sources(inventory)
+    routes = _deep_audit_io._zap_trace_routes(target, sources)
+    argv = target["argv"]
+    script = argv[1]
+    script_path = _deep_audit_io.relative_path(script.removeprefix("/src/"))
+    if script != "/src/" + script_path or script_path not in sources:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_SOURCE_TRACE", "bound Python entrypoint required"
+        )
+    body = {
+        "run_id": request["run_id"],
+        "candidate_sha256": request["candidate_sha256"],
+        "profile_sha256": request["profile_sha256"],
+        "target_sha256": _deep_audit_io.digest(target),
+        "provider": config["provider"],
+        "max_events": config["max_events"],
+        "routes": routes,
+        "script": script,
+        "argv": argv[2:],
+    }
+    embedded = repr(
+        _deep_audit_io.json.dumps(body, sort_keys=True, separators=(",", ":"))
+    )
+    return _deep_audit_io._ZAP_TRACE_BOOTSTRAP.replace("__TRACE_CONFIG__", embedded)
+
+
+def _zap_trace_sources(inventory: dict) -> dict[str, str]:
+    from .deep_audit_contract import _zap_inventory_sources
+
+    return _zap_inventory_sources(inventory)
+
+
+def _zap_trace_routes(target: dict, sources: dict[str, str]) -> list[dict]:
+    routes = []
+    seen = set()
+    for route in target["routes"]:
+        identity = (route["method"], route["path"])
+        if identity in seen:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_SOURCE_TRACE", "duplicate method and path"
+            )
+        seen.add(identity)
+        bindings = route["source_bindings"]
+        if any(
+            path not in sources or sources[path] != sha
+            for path, sha in bindings.items()
+        ):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_SOURCE_TRACE", "route source binding differs"
+            )
+        routes.append(
+            {
+                "id": route["id"],
+                "method": route["method"],
+                "path": route["path"],
+                "bindings": bindings,
+            }
+        )
+    return routes
+
+
+def zap_validate_source_trace(
+    raw: bytes, request: dict, inventory: dict, snapshot: _deep_audit_io.Path
+) -> dict:
+    """Validate bounded request-associated trace lines against retained candidate bytes."""
+    target, config, routes, parsed = _deep_audit_io._zap_trace_document(
+        raw, request, inventory
+    )
+    observations = _deep_audit_io._zap_trace_observations(
+        parsed, routes, inventory, snapshot
+    )
+    if not observations:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_SOURCE_TRACE", "nonempty trace required"
+        )
+    normalized = [
+        {
+            "route_id": route,
+            "path": path,
+            "source_sha256": sha,
+            "lines": sorted(numbers),
+        }
+        for (route, path, sha), numbers in sorted(observations.items())
+    ]
+    return {
+        "schema": "factory.zap-source-trace.normalized.v1",
+        "run_id": request["run_id"],
+        "candidate_sha256": request["candidate_sha256"],
+        "profile_sha256": request["profile_sha256"],
+        "target_sha256": _deep_audit_io.digest(target),
+        "provider": config["provider"],
+        "raw_sha256": _deep_audit_io.sha256_bytes(raw),
+        "observations": normalized,
+        "claim_boundary": "in-process observed request-associated lines, not authenticity/full branches",
+    }
+
+
+def _zap_trace_document(raw: bytes, request: dict, inventory: dict):
+    from .deep_audit_contract import _validate_zap_target
+
+    if not isinstance(raw, bytes) or not 1 <= len(raw) <= 4 * 1024 * 1024:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_SOURCE_TRACE", "trace byte budget exceeded"
+        )
+    if not raw.endswith(b"\n") or not isinstance(request, dict):
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_SOURCE_TRACE", "complete trace and request required"
+        )
+    target = request.get("target")
+    _validate_zap_target(target, inventory)
+    config = target.get("source_trace", {})
+    sources = _deep_audit_io._zap_trace_sources(inventory)
+    routes = _deep_audit_io._zap_trace_routes(target, sources)
+    lines = raw.splitlines()
+    if not lines or len(lines) > config["max_events"] + 1:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_SOURCE_TRACE", "trace row budget exceeded"
+        )
+    parsed = []
+    for line in lines:
+        row = _deep_audit_io.strict_json(line)
+        if _deep_audit_io.canonical_bytes(row) != line:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_SOURCE_TRACE", "noncanonical trace row"
+            )
+        parsed.append(row)
+    expected = {
+        "kind": "header",
+        "schema": "factory.zap-source-trace.v1",
+        "run_id": request["run_id"],
+        "candidate_sha256": request["candidate_sha256"],
+        "profile_sha256": request["profile_sha256"],
+        "target_sha256": _deep_audit_io.digest(target),
+        "provider": config["provider"],
+        "route_ids": sorted(r["id"] for r in routes),
+        "max_events": config["max_events"],
+    }
+    if parsed[0] != expected:
+        raise _deep_audit_io.RuntimeAuditError(
+            "E_ZAP_SOURCE_TRACE", "trace header binding differs"
+        )
+    return target, config, routes, parsed[1:]
+
+
+def _zap_trace_observations(rows, routes, inventory, snapshot):
+    sources = _deep_audit_io._zap_trace_sources(inventory)
+    route_map = {route["id"]: route for route in routes}
+    source_lines = {}
+    seen = set()
+    observations = {}
+    for row in rows:
+        if row.get("overflow") is True:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_SOURCE_TRACE", "trace overflow marker present"
+            )
+        _deep_audit_io.exact_keys(row, {"route_id", "path", "source_sha256", "line"})
+        route_id = _deep_audit_io.require_str(row["route_id"], "route_id", maximum=64)
+        path = _deep_audit_io.relative_path(row["path"])
+        source_hash = _deep_audit_io.require_digest(
+            row["source_sha256"], "source_sha256"
+        )
+        line_no = row["line"]
+        route = route_map.get(route_id)
+        if (
+            route is None
+            or route["bindings"].get(path) != source_hash
+            or sources.get(path) != source_hash
+            or type(line_no) is not int
+            or line_no < 1
+        ):
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_SOURCE_TRACE", "trace event binding differs"
+            )
+        key = (route_id, path, source_hash, line_no)
+        if key in seen:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_SOURCE_TRACE", "duplicate trace event"
+            )
+        seen.add(key)
+        binding = (path, source_hash)
+        if binding not in source_lines:
+            source = _deep_audit_io.bound_bytes(
+                snapshot, {"path": path, "sha256": source_hash}
+            )
+            try:
+                encoding, _ = _deep_audit_io.tokenize.detect_encoding(
+                    iter(source.splitlines(keepends=True)).__next__
+                )
+                source_lines[binding] = len(source.decode(encoding).splitlines())
+            except (SyntaxError, UnicodeError, StopIteration) as exc:
+                raise _deep_audit_io.RuntimeAuditError(
+                    "E_ZAP_SOURCE_TRACE", "invalid bound Python source"
+                ) from exc
+        if line_no > source_lines[binding]:
+            raise _deep_audit_io.RuntimeAuditError(
+                "E_ZAP_SOURCE_TRACE", "trace line exceeds source"
+            )
+        observations.setdefault((route_id, path, source_hash), set()).add(line_no)
+    return observations
+
+
+_ZAP_TRACE_BOOTSTRAP = r"""import json, os, runpy, sys, threading
+from http.server import BaseHTTPRequestHandler
+from urllib.parse import urlsplit
+
+CONFIG = json.loads(__TRACE_CONFIG__)
+LIMIT = 4 * 1024 * 1024
+TRACE_PATH = "/trace/events.jsonl"
+if os.path.islink("/trace") or not os.path.isdir("/trace"):
+    raise RuntimeError("trace directory unavailable")
+fd = os.open(TRACE_PATH, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+if not __import__("stat").S_ISREG(os.fstat(fd).st_mode):
+    raise RuntimeError("trace file is not regular")
+routes = {(r["method"], r["path"]): r for r in CONFIG["routes"]}
+route_by_id = {r["id"]: r for r in CONFIG["routes"]}
+header = {"kind":"header", "schema":"factory.zap-source-trace.v1", "run_id":CONFIG["run_id"],
+ "candidate_sha256":CONFIG["candidate_sha256"], "profile_sha256":CONFIG["profile_sha256"],
+ "target_sha256":CONFIG["target_sha256"], "provider":CONFIG["provider"],
+ "route_ids":sorted(route_by_id), "max_events":CONFIG["max_events"]}
+lock = threading.Lock()
+context = threading.local()
+seen = set()
+path_cache = {}
+size = 0
+count = 0
+failed = False
+
+def encoded(row):
+    return json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8") + b"\n"
+
+def invalidate(reason):
+    global failed
+    failed = True
+    try:
+        marker = encoded({"overflow": True, "reason": reason})
+        if size + len(marker) <= LIMIT:
+            os.write(fd, marker)
+    finally:
+        os._exit(70)
+
+def write_row(row, counted):
+    global size, count
+    raw = encoded(row)
+    with lock:
+        if failed:
+            return
+        if (counted and count >= CONFIG["max_events"]) or size + len(raw) > LIMIT - 256:
+            invalidate("event_budget")
+        try:
+            written = os.write(fd, raw)
+            if written != len(raw):
+                invalidate("short_write")
+        except BaseException:
+            invalidate("write_failure")
+        size += len(raw)
+        if counted:
+            count += 1
+
+write_row(header, False)
+local = threading.local()
+original_parse = BaseHTTPRequestHandler.parse_request
+original_handle = BaseHTTPRequestHandler.handle_one_request
+
+def parse_request(self):
+    ok = original_parse(self)
+    if ok:
+        route = routes.get((self.command, urlsplit(self.path).path))
+        local.route_id = route["id"] if route else None
+    return ok
+
+def handle_one_request(self):
+    try:
+        return original_handle(self)
+    finally:
+        local.route_id = None
+
+BaseHTTPRequestHandler.parse_request = parse_request
+BaseHTTPRequestHandler.handle_one_request = handle_one_request
+
+def trace(frame, event, arg):
+    route_id = getattr(local, "route_id", None)
+    if event == "call":
+        if not route_id:
+            return None
+        filename = frame.f_code.co_filename
+        path = path_cache.get(filename)
+        if path is None:
+            canonical = os.path.realpath(filename)
+            path = canonical[5:] if canonical.startswith("/src/") else ""
+            path_cache[filename] = path
+        return trace if path in route_by_id[route_id]["bindings"] else None
+    if event == "line" and route_id:
+        filename = frame.f_code.co_filename
+        path = path_cache.get(filename)
+        if path is None:
+            canonical = os.path.realpath(filename)
+            path = canonical[5:] if canonical.startswith("/src/") else ""
+            path_cache[filename] = path
+        sha = route_by_id[route_id]["bindings"].get(path)
+        if sha:
+            key = (route_id, path, frame.f_lineno)
+            with lock:
+                fresh = key not in seen
+                if fresh:
+                    seen.add(key)
+            if fresh:
+                write_row({"route_id":route_id, "path":path, "source_sha256":sha, "line":frame.f_lineno}, True)
+    return trace
+
+script = CONFIG["script"]
+if os.path.realpath(script) != script or not script.startswith("/src/"):
+    raise RuntimeError("entrypoint path differs")
+sys.path.insert(0, os.path.dirname(script))
+sys.argv = [script] + CONFIG["argv"]
+sys.settrace(trace)
+threading.settrace(trace)
+runpy.run_path(script, run_name="__main__")
+"""

@@ -2207,7 +2207,11 @@ def synthetic_execution(tmp_path, monkeypatch):
 
 
 def review_documents(tmp_path, args, evidence, findings=None, gaps=None):
+    from factoryline.deep_audit_io import read_run_json, run_directory
+
     root, _, pin, _, _, plan, inventory, material = args
+    # Sign persisted execution evidence, excluding advisory CLI attachments.
+    evidence = read_run_json(run_directory(root, evidence["run_id"]), "evidence.json")
     now = datetime.now(timezone.utc)
     common = {
         "run_id": evidence["run_id"],

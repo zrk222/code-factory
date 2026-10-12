@@ -7,9 +7,11 @@ certification. A declared guard must raise on denial and must not be rebound.
 from __future__ import annotations
 
 import ast
+import configparser
 from collections import OrderedDict
 from dataclasses import dataclass
 from hashlib import sha256
+from fnmatch import fnmatchcase
 import json
 import operator
 import os
@@ -92,6 +94,7 @@ def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
                 "helpers": set(item["helpers"]),
                 "weak_helpers": set(item["weak_helpers"]),
                 "mixins": set(item["mixins"]),
+                "pytest_inherited": set(item["pytest_inherited"]),
                 "click_runners": set(item["click_runners"]),
                 "typecheck": item["typecheck"],
             }
@@ -117,6 +120,7 @@ def _oracle_context_cache_write(key: str, contexts: dict, edges: list) -> None:
                 "helpers": sorted(context["helpers"]),
                 "weak_helpers": sorted(context["weak_helpers"]),
                 "mixins": sorted(context["mixins"]),
+                "pytest_inherited": sorted(context["pytest_inherited"]),
                 "click_runners": sorted(context["click_runners"]),
                 "typecheck": bool(context["typecheck"]),
             }
@@ -810,6 +814,7 @@ _SECRET_ASSIGNMENT = re.compile(
 _PLACEHOLDER_SECRET = re.compile(
     r"(?i)^(?:$|changeme|replace[-_ ]?me|example|placeholder|your[-_ ]|<[^>]+>|\$\{[^}]+\})$"
 )
+_URL_QUOTING_CHARSET = frozenset("%!*'();:@&=+$,/?#[]")
 
 
 def _call_name(node: ast.Call) -> str:
@@ -1513,6 +1518,14 @@ def _secret_literal(node: ast.Assign | ast.AnnAssign) -> str | None:
     return value.value
 
 
+def _url_quoting_charset(value: str) -> bool:
+    """Recognize only the complete reserved-punctuation alphabet fixture."""
+    visible = value.strip()
+    return len(visible) == len(_URL_QUOTING_CHARSET) and set(visible) == set(
+        _URL_QUOTING_CHARSET
+    )
+
+
 def _literal_assignment_diagnostic(
     relative: str, node: ast.Assign | ast.AnnAssign, target: ast.expr
 ) -> dict[str, Any] | None:
@@ -1532,7 +1545,10 @@ def _literal_assignment_diagnostics(
     relative: str, node: ast.Assign | ast.AnnAssign
 ) -> list[dict[str, Any]]:
     value = _secret_literal(node)
-    if value is None:
+    is_test_source = "tests" in Path(relative).parts or Path(relative).name.startswith(
+        "test_"
+    )
+    if value is None or (is_test_source and _url_quoting_charset(value)):
         return []
     # Evaluate the exception at the input boundary; diagnostic builders receive
     # only symbol/location metadata, never the credential literal itself.
@@ -1833,7 +1849,7 @@ def _assertion_call(
     return (
         name in {"pytest.raises", "pytest.warns"}
         or (name == "pytest.fail" and _call_name(node).split(".", 1)[0] in aliases)
-        or _mock_argument_oracle(node)
+        or _mock_argument_oracle(node, aliases)
         or _click_callback_oracle(node, aliases, helper_names) is not None
         or (
             unittest_context
@@ -1852,19 +1868,141 @@ def _assertion_call(
     )
 
 
-def _mock_argument_oracle(node: ast.Call) -> bool:
-    if not isinstance(node.func, ast.Attribute) or node.func.attr not in {
+def _mock_argument_oracle(node: ast.Call, aliases: dict[str, str]) -> bool:
+    methods = {
         "assert_called_with",
         "assert_called_once_with",
         "assert_any_call",
         "assert_has_calls",
+        "assert_not_called",
         "assert_awaited_with",
         "assert_awaited_once_with",
         "assert_any_await",
         "assert_has_awaits",
-    }:
+        "assert_not_awaited",
+        "assert_awaited",
+        "assert_awaited_once",
+    }
+    if not isinstance(node.func, ast.Attribute) or node.func.attr not in methods:
+        return False
+    if node.func.attr in {
+        "assert_not_called",
+        "assert_not_awaited",
+        "assert_awaited",
+        "assert_awaited_once",
+    } and not _injected_mock_use(node, aliases):
         return False
     return not _mock_self_check(node)
+
+
+def _injected_mock_use(assertion: ast.Call, aliases: dict[str, str]) -> bool:
+    """Track an injected mock through an imported dependency receiver call."""
+    scope = getattr(assertion, "_oracle_scope", None)
+    if scope is None:
+        return False
+    receiver = _name(assertion.func.value)
+    scoped_aliases = _scope_security_aliases(aliases, scope)
+    nodes = _test_oracle_body_nodes(scope, scoped_aliases)
+    return any(
+        _injected_mock_assertion_proven(
+            constructor, assertion, receiver, aliases, scoped_aliases, nodes
+        )
+        for constructor in nodes
+    )
+
+
+def _injected_mock_assertion_proven(
+    constructor, assertion, receiver, aliases, scoped_aliases, nodes
+):
+    if not _effective_assertion(constructor, aliases):
+        return False
+    if not _injected_dependency_constructor(
+        constructor, receiver, assertion, scoped_aliases
+    ):
+        return False
+    targets = _assignment_names(constructor)
+    injected_at = constructor.lineno
+    if not targets or _name_rebound(nodes, receiver, injected_at, assertion.lineno):
+        return False
+    return any(
+        _injected_receiver_call(call, targets, injected_at, assertion, aliases, nodes)
+        for call in nodes
+    )
+
+
+def _injected_receiver_call(call, targets, injected_at, assertion, aliases, nodes):
+    if not _receiver_method_call(call, targets, assertion, aliases):
+        return False
+    if not _effective_assertion(call, aliases):
+        return False
+    return not any(
+        _name_rebound(nodes, target, injected_at, call.lineno) for target in targets
+    )
+
+
+def _injected_dependency_constructor(call, receiver, assertion, aliases):
+    if not isinstance(call, ast.Call) or call.lineno >= assertion.lineno:
+        return False
+    if not _in_current_test_body(call):
+        return False
+    constructor = _normalized_call_name(call, aliases)
+    if constructor.startswith(("unittest.mock.", "mock.")):
+        return False
+    imported = constructor != _call_name(call)
+    receives_mock = any(
+        isinstance(value, ast.Name) and value.id == receiver
+        for value in [*call.args, *(keyword.value for keyword in call.keywords)]
+    )
+    return (
+        imported
+        and receives_mock
+        and isinstance(getattr(call, "_oracle_parent", None), ast.Assign)
+    )
+
+
+def _assignment_names(call):
+    parent = getattr(call, "_oracle_parent", None)
+    if not isinstance(parent, ast.Assign) or len(parent.targets) != 1:
+        return set()
+    return {
+        target.id
+        for target in getattr(parent, "targets", ())
+        if isinstance(target, ast.Name)
+    }
+
+
+def _receiver_method_call(call, targets, assertion, _aliases):
+    return (
+        isinstance(call, ast.Call)
+        and call.lineno < assertion.lineno
+        and _in_current_test_body(call)
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id in targets
+        and call.func.attr not in {"assert", "assert_called", "assert_awaited"}
+    )
+
+
+def _in_current_test_body(node):
+    scope = getattr(node, "_oracle_scope", None)
+    return not any(
+        parent is not scope
+        and isinstance(
+            parent,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+        )
+        for parent, _child in getattr(node, "_oracle_ancestors", ())
+    )
+
+
+def _name_rebound(nodes, name, after, before):
+    return any(
+        after < node.lineno < before and name in _bound_names(node)
+        for node in nodes
+        if isinstance(
+            node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr, ast.Delete)
+        )
+    )
 
 
 def _mock_self_check(node: ast.Call) -> bool:
@@ -2438,7 +2576,67 @@ def _direct_nested_helper_calls(
                 continue
             if _effective_assertion(call, aliases):
                 direct.add(name)
+    direct.update(
+        _directly_invoked_callback_names(body_nodes, definitions, effective, aliases)
+    )
     return direct
+
+
+def _directly_invoked_callback_names(body_nodes, definitions, effective, aliases):
+    invoked = set()
+    for name, function in definitions.items():
+        parameter = _direct_callback_parameter(function)
+        if parameter is None:
+            continue
+        for call in body_nodes:
+            if not isinstance(call, ast.Call) or _call_name(call) != name:
+                continue
+            if call.lineno <= function.lineno:
+                continue
+            if not _effective_assertion(call, aliases):
+                continue
+            callback = _callback_argument(call, function, parameter)
+            if callback in effective and definitions[callback].lineno < call.lineno:
+                invoked.add(callback)
+                invoked.add(name)
+    return invoked
+
+
+def _direct_callback_parameter(function):
+    statements = [
+        item
+        for item in function.body
+        if not (
+            isinstance(item, ast.Expr)
+            and isinstance(item.value, ast.Constant)
+            and isinstance(item.value.value, str)
+        )
+    ]
+    if len(statements) != 1 or not isinstance(statements[0], ast.Expr):
+        return None
+    call = statements[0].value
+    if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
+        return None
+    if call.args or call.keywords:
+        return None
+    return call.func.id if call.func.id in _scope_parameters(function) else None
+
+
+def _callback_argument(call, function, parameter):
+    positional = [*function.args.posonlyargs, *function.args.args]
+    names = [argument.arg for argument in positional]
+    if parameter in names:
+        index = names.index(parameter)
+        if index < len(call.args) and isinstance(call.args[index], ast.Name):
+            return call.args[index].id
+    return next(
+        (
+            keyword.value.id
+            for keyword in call.keywords
+            if keyword.arg == parameter and isinstance(keyword.value, ast.Name)
+        ),
+        None,
+    )
 
 
 def _invoked_nested_assertion_helpers(
@@ -2691,7 +2889,7 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _is_oracle_helper_name,
     )
     identity = {
-        "schema": "factory.security-oracle-context-cache.v1",
+        "schema": "factory.security-oracle-context-cache.v3",
         "root": root.resolve().as_posix(),
         "sources": manifest,
         "config": config_identity,
@@ -2761,8 +2959,60 @@ def _imported_unittest_mixins(tree: ast.Module, aliases: dict, imports: dict) ->
     return references
 
 
+def _imported_pytest_bases(tree, imports):
+    references = []
+    for cls in (item for item in tree.body if isinstance(item, ast.ClassDef)):
+        if not cls.name.startswith("Test") or any(
+            isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and member.name == "__init__"
+            for member in cls.body
+        ):
+            continue
+        for base in cls.bases:
+            reference = imports.get(_name(base).rsplit(".", 1)[-1])
+            if reference and reference[1]:
+                references.append(reference)
+    return references
+
+
+def _bind_imported_pytest_bases(tree, imports, snapshots, contexts):
+    for source, symbol in _imported_pytest_bases(tree, imports):
+        target_tree = snapshots.get(source)
+        target_class = next(
+            (
+                item
+                for item in getattr(target_tree, "body", ())
+                if isinstance(item, ast.ClassDef) and item.name == symbol
+            ),
+            None,
+        )
+        if target_class is None or source not in contexts:
+            continue
+        contexts[source]["pytest_inherited"].update(
+            f"{symbol}.{method.name}"
+            for method in target_class.body
+            if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and method.name.startswith("test_")
+        )
+
+
+def _pytest_inherited_method_ids(tree, inherited_names):
+    return {
+        id(method)
+        for cls in tree.body
+        if isinstance(cls, ast.ClassDef)
+        for method in cls.body
+        if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and f"{cls.name}.{method.name}" in inherited_names
+    }
+
+
 def _project_oracle_context(
-    root: Path, files: list[Path], *, cache_enabled: bool = True
+    root: Path,
+    files: list[Path],
+    *,
+    cache_enabled: bool = True,
+    collection_identity: dict | None = None,
 ) -> tuple[dict, list, list]:
     """Resolve one local import hop without executing repository code; bind every read."""
     source_bytes, source_bindings, manifest, source_cacheable = _oracle_source_inputs(
@@ -2771,6 +3021,10 @@ def _project_oracle_context(
     typecheck_sources, config_bindings, config_identity, config_cacheable = (
         _declared_typecheck_sources(root, files)
     )
+    config_identity = {
+        **config_identity,
+        "pytest_collection": collection_identity or {"state": "default"},
+    }
     bindings = source_bindings + config_bindings
     cache_key = _oracle_context_cache_key(root, manifest, config_identity)
     cacheable = source_cacheable and config_cacheable
@@ -2802,7 +3056,12 @@ def _build_oracle_context(
     ]
     fixture_sources.sort(key=lambda item: len(item[0].parts))
     contexts = {
-        path: {"helpers": set(), "weak_helpers": set(), "mixins": set()}
+        path: {
+            "helpers": set(),
+            "weak_helpers": set(),
+            "mixins": set(),
+            "pytest_inherited": set(),
+        }
         for path in snapshots
     }
     edges = set()
@@ -2880,6 +3139,7 @@ def _build_oracle_context(
                         "trusted",
                     )
                 )
+        _bind_imported_pytest_bases(tree, imports, snapshots, contexts)
     edges = [
         {
             "caller": caller,
@@ -3650,8 +3910,8 @@ def _undeclared_tenant_read_findings(
                     relative,
                     call,
                     (
-                        f"Potential ORM read {call_name} is outside the declared tenant-read contract. "
-                        "Add the read to --tenant-read-call and bind its tenant scope, or document why tenant isolation does not apply."
+                        f"Potential ORM read {call_name} needs review for tenant scope. "
+                        "If tenant isolation applies, declare the read in --tenant-read-call and bind its tenant scope."
                     ),
                     "HIGH",
                     call=call_name,
@@ -3670,6 +3930,8 @@ def _test_oracle_findings(
     weak_helper_names: set[str] | None = None,
     click_runners: set[str] | None = None,
     typecheck: bool = False,
+    test_file_patterns: set[str] | None = None,
+    inherited_pytest_methods: set[int] | None = None,
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     parents = _oracle_ancestor_map(nodes[0].body)
@@ -3677,6 +3939,19 @@ def _test_oracle_findings(
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or any(
             isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
             for parent, _child in parents.get(id(node), ())
+        ):
+            continue
+        if not _collected_test_function(
+            relative,
+            node,
+            parents,
+            unittest_methods,
+            aliases,
+            test_file_patterns
+            if test_file_patterns is not None
+            else set(_TEST_FILE_PATTERNS),
+            inherited_pytest_methods or set(),
+            nodes,
         ):
             continue
         node._oracle_click_runners = click_runners or set()
@@ -3713,6 +3988,230 @@ def _test_oracle_findings(
         if weak is not None:
             findings.append(weak)
     return findings
+
+
+def _collected_test_function(
+    relative,
+    node,
+    parents,
+    unittest_methods,
+    aliases,
+    test_file_patterns,
+    inherited_pytest_methods,
+    nodes,
+):
+    """Match pytest/unittest collection context instead of function spelling alone."""
+    path = Path(relative)
+    pytest_file = any(fnmatchcase(path.name, pattern) for pattern in test_file_patterns)
+    unittest_file = path.name.startswith("test") and path.name.endswith(".py")
+    if not node.name.startswith("test_"):
+        return False
+    inherited = id(node) in inherited_pytest_methods
+    if (
+        not inherited
+        and not pytest_file
+        and not (unittest_file and id(node) in unittest_methods)
+    ):
+        return False
+    if any(
+        _resolved_ast_name(
+            decorator.func if isinstance(decorator, ast.Call) else decorator,
+            aliases,
+        )
+        == "pytest.fixture"
+        for decorator in node.decorator_list
+    ):
+        return False
+    if inherited:
+        return True
+    enclosing = [
+        parent
+        for parent, _child in parents.get(id(node), ())
+        if isinstance(parent, ast.ClassDef)
+    ]
+    if not enclosing:
+        return pytest_file
+    if unittest_file and id(node) in unittest_methods:
+        return True
+    cls = enclosing[-1]
+    return pytest_file and (
+        _pytest_collects_class(cls, parents)
+        or _pytest_inherited_by_collected_class(cls, nodes)
+    )
+
+
+def _pytest_collects_class(cls, parents):
+    if not cls.name.startswith("Test") or any(
+        isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and member.name == "__init__"
+        for member in cls.body
+    ):
+        return False
+    enclosing = [
+        parent
+        for parent, _child in parents.get(id(cls), ())
+        if isinstance(parent, ast.ClassDef)
+    ]
+    return not enclosing or _pytest_collects_class(enclosing[-1], parents)
+
+
+def _pytest_inherited_by_collected_class(base, nodes):
+    classes = {node.name: node for node in nodes if isinstance(node, ast.ClassDef)}
+    for child in classes.values():
+        if not child.name.startswith("Test") or any(
+            isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and member.name == "__init__"
+            for member in child.body
+        ):
+            continue
+        if _pytest_class_inherits(child, base.name, classes, set()):
+            return True
+    return False
+
+
+def _pytest_class_inherits(cls, target, classes, seen):
+    if cls.name in seen:
+        return False
+    seen.add(cls.name)
+    for parent in cls.bases:
+        name = _name(parent).rsplit(".", 1)[-1]
+        if name == target or (
+            name in classes
+            and _pytest_class_inherits(classes[name], target, classes, seen)
+        ):
+            return True
+    return False
+
+
+_TEST_FILE_PATTERNS = ("test_*.py", "*_test.py")
+
+
+def _pytest_collection_config(root):
+    """Read pytest selected root config; malformed config is incomplete."""
+    defaults = set(_TEST_FILE_PATTERNS)
+    candidates = (
+        ("pytest.toml", "toml-pytest"),
+        (".pytest.toml", "toml-pytest"),
+        ("pytest.ini", "pytest"),
+        (".pytest.ini", "pytest"),
+        ("pyproject.toml", "pyproject"),
+        ("tox.ini", "pytest"),
+        ("setup.cfg", "tool:pytest"),
+    )
+    for relative, section in candidates:
+        result = _pytest_config_file(root, relative, section, defaults)
+        if result is not None and result[1].get("state") != "absent-section":
+            if result[1].get("state") in {
+                "invalid",
+                "oversized",
+                "unreadable",
+                "unsupported",
+            }:
+                raise ReviewAuditError(
+                    f"Cannot determine pytest test collection from {relative}: "
+                    f"{result[1]['state']} configuration."
+                )
+            return result
+    return defaults, {"path": None, "state": "missing"}
+
+
+def _pytest_config_file(root, relative, section, defaults):
+    try:
+        path = local_file(root, relative)
+        size = path.stat().st_size
+        if size > MAX_BYTES:
+            return set(), {"path": relative, "state": "oversized", "bytes": size}
+        data = path.read_bytes()
+    except RuntimeAuditError as exc:
+        if exc.code == "E_SOURCE_MISSING":
+            return None
+        return set(), {"path": relative, "state": "unreadable"}
+    except OSError:
+        return set(), {"path": relative, "state": "unreadable"}
+    return _pytest_config_data(data, relative, section, defaults)
+
+
+def _pytest_config_data(data, relative, section, defaults):
+    identity = {
+        "path": relative,
+        "sha256": sha256(data).hexdigest(),
+        "bytes": len(data),
+        "state": "read",
+    }
+    if len(data) > MAX_BYTES:
+        return set(), {**identity, "state": "oversized"}
+    try:
+        text = data.decode("utf-8")
+        configured = _pytest_pattern_value(text, section)
+    except (UnicodeError, ValueError, configparser.Error):
+        return set(), {**identity, "state": "invalid"}
+    if configured is _INVALID_PYTEST_CONFIG:
+        return set(), {**identity, "state": "invalid"}
+    if configured is _UNSUPPORTED_PYTEST_CONFIG:
+        return defaults, {**identity, "state": "unsupported"}
+    if configured is _ABSENT_PYTEST_SECTION:
+        if relative in {"pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini"}:
+            return defaults, identity
+        return defaults, {**identity, "state": "absent-section"}
+    patterns = set(defaults)
+    if configured is not None:
+        patterns = set(configured)
+    return patterns, identity
+
+
+def _pytest_pattern_value(text, section):
+    if section in {"pyproject", "toml-pytest"}:
+        return _toml_pytest_pattern_value(text, section)
+    parser = configparser.ConfigParser()
+    parser.read_string(text)
+    if section not in parser:
+        return _ABSENT_PYTEST_SECTION
+    options = dict(parser.items(section))
+    if not _supported_pytest_function_patterns(options):
+        return _UNSUPPORTED_PYTEST_CONFIG
+    value = parser.get(section, "python_files", fallback=None)
+    return value.split() if value is not None else None
+
+
+def _toml_pytest_pattern_value(text, section):
+    document = tomllib.loads(text)
+    pytest = (
+        document.get("pytest")
+        if section == "toml-pytest"
+        else document.get("tool", {}).get("pytest")
+    )
+    if pytest is None:
+        return _ABSENT_PYTEST_SECTION
+    options = pytest.get("ini_options", pytest)
+    if not isinstance(options, dict):
+        return _INVALID_PYTEST_CONFIG
+    if not _supported_pytest_function_patterns(options):
+        return _UNSUPPORTED_PYTEST_CONFIG
+    value = options.get("python_files")
+    if isinstance(value, str):
+        return value.split()
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return value
+    return None if "python_files" not in options else _INVALID_PYTEST_CONFIG
+
+
+def _supported_pytest_function_patterns(options):
+    functions = options.get("python_functions")
+    classes = options.get("python_classes")
+    if functions is not None and _pytest_pattern_list(functions) != ["test_*"]:
+        return False
+    if classes is not None and _pytest_pattern_list(classes) != ["Test*"]:
+        return False
+    return True
+
+
+def _pytest_pattern_list(value):
+    return value.split() if isinstance(value, str) else value
+
+
+_ABSENT_PYTEST_SECTION = object()
+_INVALID_PYTEST_CONFIG = object()
+_UNSUPPORTED_PYTEST_CONFIG = object()
 
 
 def _security_node_findings(
@@ -3803,6 +4302,7 @@ def _security_scan_tree(
     tenant_read_calls: tuple[str, ...] = (),
     tenant_read_bindings: dict[str, tuple[str, ...]] | None = None,
     oracle_context: dict | None = None,
+    test_file_patterns: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     relative = path.relative_to(root).as_posix()
     nodes = list(ast.walk(tree))
@@ -3839,6 +4339,8 @@ def _security_scan_tree(
             weak_helper_names,
             context.get("click_runners", set()),
             context.get("typecheck", False),
+            test_file_patterns,
+            _pytest_inherited_method_ids(tree, context.get("pytest_inherited", set())),
         )
     )
     roundtrip_aliases = _unmodified_serialization_aliases(nodes, aliases)
@@ -3875,6 +4377,7 @@ def _security_scan_file(
     tenant_read_calls: tuple[str, ...] = (),
     tenant_read_bindings: dict[str, tuple[str, ...]] | None = None,
     oracle_context: dict | None = None,
+    test_file_patterns: set[str] | None = None,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]], str]:
     """Scan one bounded Python source and return its byte binding and findings."""
     relative = path.relative_to(workspace).as_posix()
@@ -3958,6 +4461,7 @@ def _security_scan_file(
             tenant_read_calls,
             tenant_read_bindings,
             oracle_context,
+            test_file_patterns,
         ),
         "audited",
     )
@@ -4081,6 +4585,7 @@ def _scan_security_sources(
     scoped_reads: dict | None = None,
     *,
     cache_enabled: bool = True,
+    test_file_patterns: set[str] | None = None,
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
@@ -4092,8 +4597,34 @@ def _scan_security_sources(
     findings: list[dict[str, Any]] = []
     bindings: list[dict[str, Any]] = []
     outcomes = {"syntax_error": 0, "unreadable": 0, "too_large": 0, "audited": 0}
+    if test_file_patterns is None:
+        test_file_patterns, collection_identity = _pytest_collection_config(workspace)
+    else:
+        collection_identity = {
+            "state": "supplied",
+            "patterns": sorted(test_file_patterns),
+        }
+    if collection_identity.get("state") in {
+        "invalid",
+        "oversized",
+        "unreadable",
+        "unsupported",
+    }:
+        findings.append(
+            _security_finding(
+                "QUALITY_TEST_COLLECTION_CONFIG_INCOMPLETE",
+                collection_identity.get("path") or "pytest configuration",
+                ast.Module(),
+                "Pytest collection configuration could not be fully interpreted; hollow-test coverage is incomplete.",
+                "INFO",
+                state=collection_identity["state"],
+            )
+        )
     contexts, context_bindings, oracle_edges = _project_oracle_context(
-        workspace, files, cache_enabled=cache_enabled
+        workspace,
+        files,
+        cache_enabled=cache_enabled,
+        collection_identity=collection_identity,
     )
     for path in files:
         scope = (scoped_reads or {}).get(path.relative_to(workspace).as_posix(), {})
@@ -4105,6 +4636,7 @@ def _scan_security_sources(
             calls,
             scoped_bindings,
             contexts.get(path, {}),
+            test_file_patterns,
         )
         if binding is not None:
             bindings.append(binding)

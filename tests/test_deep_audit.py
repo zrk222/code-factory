@@ -2998,6 +2998,16 @@ def test_signed_execution_threshold_and_idempotent_receipt(tmp_path):
     args, plan, targets, canaries = inputs(tmp_path)
     result = execute_deep_audit(*args)
     receipt = result["receipt"]
+    packet = result["review_evidence"]
+    assert packet["candidate_sha256"] == receipt["candidate_sha256"]
+    assert packet["receipt_sha256"] == receipt["receipt_sha256"]
+    assert result["review_evidence_path"].startswith(".factory/review-evidence/")
+    assert (tmp_path / result["review_evidence_path"]).is_file()
+    assert packet["authority"] == "none"
+    assert any(
+        "six distinct required audit lanes" in row["verification_action"]
+        for row in packet["unknowns"]
+    )
     assert receipt["decision"] == "BLOCKED"
     assert codes(receipt) == {"DEEP_RULE_THRESHOLD"}
     assert receipt["repair_queue"][0]["remediation"] == "Close owned resources"
@@ -3011,6 +3021,65 @@ def test_signed_execution_threshold_and_idempotent_receipt(tmp_path):
     assert status["state"] == "BLOCKED"
     assert status["agent_actions"] == receipt["agent_actions"]
     assert evaluate_deep_audit(plan, targets, canaries)["authority"] == "none"
+
+
+def test_native_execution_outer_packet_uses_persisted_populated_lanes(tmp_path):
+    from factoryline.deep_audit import _attach_execution_review_evidence
+    from factoryline.deep_audit_io import write_run_json
+
+    candidate = "a" * 64
+    plan_lanes = []
+    lanes = []
+    for index in range(6):
+        lane_id, engine = f"lane-{index}", f"engine-{index}"
+        plan_lanes.append({"id": lane_id, "engine": engine})
+        lanes.append(
+            {
+                "lane_id": lane_id,
+                "family": "runtime" if index == 0 else "static",
+                "engine": engine,
+                "state": "OBSERVED",
+                "gaps": [],
+                "report_sha256": str(index) * 64,
+                "coverage_sha256": str(index + 1) * 64,
+                "native_execution": (
+                    {"source_candidate_sha256": candidate, "cleanup_confirmed": True}
+                    if index == 0
+                    else None
+                ),
+                "findings": (
+                    [
+                        {
+                            "rule_id": "R1",
+                            "finding_id": "native-finding-1",
+                            "kind": "fail",
+                            "level": "warning",
+                            "locations": [
+                                {"path": "src/app.py", "source_sha256": "f" * 64}
+                            ],
+                            "flows": [],
+                        }
+                    ]
+                    if index == 0
+                    else []
+                ),
+            }
+        )
+    state = {"run_id": "native-test", "candidate_sha256": candidate, "lanes": lanes}
+    root = tmp_path.resolve()
+    run_dir = root / ".factory" / "deep-runs" / "native-test"
+    run_dir.mkdir(parents=True)
+    write_run_json(run_dir, "evidence.json", state)
+    result = _attach_execution_review_evidence(
+        root, run_dir, state, {"lanes": plan_lanes}
+    )
+    assert result["review_evidence"]["candidate_sha256"] == candidate
+    assert len(result["review_evidence"]["claims"]) == 1
+    assert (root / result["review_evidence_path"]).is_file()
+    assert any(
+        item["id"].startswith("source_link:")
+        for item in result["review_evidence"]["unknowns"]
+    )
 
 
 def test_clean_with_detected_canary_requires_human_review(tmp_path):
@@ -8356,3 +8425,61 @@ def test_osv_native_lookup_budgets_reject_oversized_query_inventory():
         _osv_source_accounting(
             report, {"requirements.txt": "a" * 64}, "offline-pypi-snapshot"
         )
+
+
+def test_deep_audit_io_moved_exports_keep_monkeypatch_seams(monkeypatch, tmp_path):
+    import factoryline.deep_audit as audit
+    import factoryline.deep_audit_attestation as attestation
+    import factoryline.deep_audit_contract as contract
+    import factoryline.deep_audit_io as audit_io
+    import factoryline.deep_audit_loop as loop
+    import factoryline.deep_audit_sarif as sarif
+
+    assert audit_io._adapter_invocation is contract._adapter_invocation
+    assert audit_io._native_sarif_metadata is sarif._native_sarif_metadata
+    assert (
+        audit_io.verify_codeql_retained_evidence
+        is attestation.verify_codeql_retained_evidence
+    )
+    assert audit_io.execute_fuzz_native_replay is loop.execute_fuzz_native_replay
+    assert audit_io._run_zap_native_scan is audit._run_zap_native_scan
+
+    monkeypatch.setattr(audit_io, "digest", lambda _value: "patched-digest")
+    facts = {
+        "timed_out": False,
+        "launch_error": False,
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": True,
+        "exit_code": 0,
+    }
+    invocation = contract._adapter_invocation(
+        lambda *_args, **_kwargs: facts,
+        {"argv": ["scanner"], "accepted_exit_codes": [0]},
+        {"engine": "other", "tool_version": "1"},
+        tmp_path,
+        tmp_path,
+        1,
+        time.monotonic() + 10,
+    )
+    assert invocation["argv_sha256"] == "patched-digest"
+
+    report = {"runs": [{"tool": {"driver": {"version": "1"}}}]}
+    enriched = sarif._native_sarif_metadata(report, {"tool_version": "1"}, [])
+    assert (
+        enriched["runs"][0]["invocations"][0]["properties"]["factory_execution_sha256"]
+        == "patched-digest"
+    )
+
+    monkeypatch.setattr(audit_io.time, "monotonic", lambda: 2)
+    assert loop._codeql_replay_remaining(10) == 8
+
+    def stop_at_challenge(_request):
+        raise LookupError("challenge seam")
+
+    monkeypatch.setattr(audit_io, "_fuzz_replay_control_evidence", stop_at_challenge)
+    with pytest.raises(LookupError, match="challenge seam"):
+        loop.execute_fuzz_native_replay({}, tmp_path, tmp_path, 1)
+
+    monkeypatch.setattr(audit_io, "_zap_native_request", stop_at_challenge)
+    with pytest.raises(LookupError, match="challenge seam"):
+        audit._run_zap_native_scan({})

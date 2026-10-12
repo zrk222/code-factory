@@ -5,7 +5,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import factoryline.architecture_health as architecture_health
+import factoryline.architecture_guard as architecture_guard
 from factoryline.architecture_guard import (
+    SIZE_COVERAGE_MAX_BYTES,
+    SIZE_COVERAGE_MAX_LINES,
     default_policy_guard_is_pinned,
     file_size_guard_is_pinned,
     is_code_factory_root,
@@ -235,6 +238,84 @@ def test_self_guard_blocks_when_path_and_budget_are_both_removed(
     assert "E_ARCH_FILE_SIZE_POLICY_INVALID" in {
         finding["code"] for finding in result["regressions"]
     }
+
+
+def test_large_tracked_modules_cannot_be_omitted_from_size_guard(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from factoryline.architecture_guard import file_size_report
+
+    source = tmp_path / "factoryline"
+    source.mkdir()
+    (source / "architecture_health.py").write_text("pass\n", encoding="utf-8")
+    line_target = source / "nested" / "line_heavy.py"
+    line_target.parent.mkdir()
+    line_target.write_text("x\n" * (SIZE_COVERAGE_MAX_LINES + 1), encoding="utf-8")
+    byte_target = source / "byte_heavy.py"
+    byte_target.write_bytes(b"x" * (SIZE_COVERAGE_MAX_BYTES + 1))
+    unreadable_target = source / "unreadable.py"
+    unreadable_target.write_bytes(b"\xff")
+    init_target = source / "nested" / "__init__.py"
+    init_target.write_text("x\n" * (SIZE_COVERAGE_MAX_LINES + 1), encoding="utf-8")
+    missing_target = source / "missing.py"
+    outside_target = tmp_path.parent / "factoryline" / "escape.py"
+    policy_path = _policy(tmp_path / "policy.json")
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+
+    monkeypatch.setattr(architecture_guard, "file_size_guard_is_pinned", lambda _: True)
+    monkeypatch.setattr(
+        architecture_guard, "default_policy_guard_is_pinned", lambda _: True
+    )
+    tracked_paths = [
+        policy_path,
+        source / "architecture_health.py",
+        line_target,
+        byte_target,
+        unreadable_target,
+        init_target,
+        missing_target,
+        outside_target,
+    ]
+
+    report, findings = file_size_report(
+        tmp_path,
+        policy,
+        tracked_paths=tracked_paths,
+        finding=architecture_health._finding,
+    )
+
+    assert report["coverage_thresholds"] == {
+        "max_lines": 6_000,
+        "max_bytes": 240_000,
+    }
+    assert {gap["path"] for gap in report["coverage_gaps"]} == {
+        "factoryline/nested/line_heavy.py",
+        "factoryline/byte_heavy.py",
+        "factoryline/unreadable.py",
+        "factoryline/nested/__init__.py",
+        "factoryline/missing.py",
+        outside_target.as_posix(),
+    }
+    assert any(
+        finding["code"] == "E_ARCH_FILE_SIZE_COVERAGE_GAP" for finding in findings
+    )
+
+
+def test_size_guard_discovery_thresholds_are_pinned(monkeypatch) -> None:
+    root = Path(__file__).resolve().parents[1]
+    guard = json.loads((root / "architecture-policy.json").read_text())[
+        "file_size_guard"
+    ]
+
+    assert SIZE_COVERAGE_MAX_LINES == 6_000
+    assert SIZE_COVERAGE_MAX_BYTES == 240_000
+    assert file_size_guard_is_pinned(guard)
+    monkeypatch.setattr(
+        architecture_guard,
+        "SIZE_COVERAGE_MAX_LINES",
+        SIZE_COVERAGE_MAX_LINES + 1,
+    )
+    assert not file_size_guard_is_pinned(guard)
 
 
 def test_self_guard_blocks_when_file_size_ceiling_is_raised(tmp_path: Path) -> None:
@@ -1111,6 +1192,35 @@ def test_architecture_guard_recognizes_repo_and_rejects_policy_drift():
     assert is_code_factory_root(root)
     assert file_size_guard_is_pinned(guard)
     assert default_policy_guard_is_pinned(root)
+
+    existing_caps = {
+        "factoryline/architecture_health.py": (1414, 50993),
+        "factoryline/audit_taxonomy.py": (814, 49071),
+        "factoryline/audit_trace.py": (709, 24995),
+        "factoryline/benchmark_lab.py": (521, 20093),
+        "factoryline/cli.py": (4932, 182806),
+        "factoryline/github_account_overview.py": (821, 27663),
+        "factoryline/graph_ops.py": (5842, 220566),
+        "factoryline/junie_review.py": (1879, 81706),
+        "factoryline/junie_taxonomy.py": (910, 38638),
+        "factoryline/mcp.py": (4556, 196619),
+    }
+    assert {
+        path: (guard["files"][path]["max_lines"], guard["files"][path]["max_bytes"])
+        for path in existing_caps
+    } == existing_caps
+    assert {
+        path: (guard["files"][path]["max_lines"], guard["files"][path]["max_bytes"])
+        for path in guard["required_paths"]
+        if path.startswith("factoryline/deep_audit")
+    } == {
+        "factoryline/deep_audit.py": (6000, 240000),
+        "factoryline/deep_audit_attestation.py": (6000, 240000),
+        "factoryline/deep_audit_contract.py": (6000, 240000),
+        "factoryline/deep_audit_io.py": (2000, 80000),
+        "factoryline/deep_audit_loop.py": (6000, 240000),
+        "factoryline/deep_audit_sarif.py": (6000, 240000),
+    }
 
     changed = json.loads(json.dumps(guard))
     first_file = next(iter(changed["files"].values()))

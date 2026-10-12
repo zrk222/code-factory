@@ -339,7 +339,7 @@ def _public_pair(
 ) -> tuple[list, list, list]:
     observed, hashes, sources = [], [], []
     for label, source in (("buggy", case["source"]), ("fixed", case["fixed_source"])):
-        path = root / f"{index}-{label}.py"
+        path = root / f"test_{index}_{label}.py"
         path.write_text(source, encoding="utf-8")
         digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
         hashes.append(digest)
