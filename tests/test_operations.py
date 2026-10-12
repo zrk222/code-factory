@@ -121,7 +121,9 @@ def _calibration_bundle(
                 "labels": [] if abstain_predictions else labels,
                 "abstained": abstain_predictions,
                 "input_sha256": input_digest,
-                **{f"{role}_sha256": digest for role, digest in identity_hashes.items()},
+                **{
+                    f"{role}_sha256": digest for role, digest in identity_hashes.items()
+                },
             }
         )
     bodies["judgments"] = {

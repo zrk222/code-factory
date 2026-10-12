@@ -1226,3 +1226,67 @@ def test_architecture_guard_recognizes_repo_and_rejects_policy_drift():
     first_file = next(iter(changed["files"].values()))
     first_file["max_lines"] += 1
     assert not file_size_guard_is_pinned(changed)
+
+
+def test_large_module_coverage_gaps_detects_unpinned_production_and_respects_inventory(
+    tmp_path,
+):
+    from factoryline.architecture_guard import (
+        large_module_coverage_gaps,
+        SIZE_COVERAGE_MAX_LINES,
+    )
+
+    production = tmp_path / "factoryline" / "large.py"
+    production.parent.mkdir()
+    production.write_bytes(b"# line\r\n" * (SIZE_COVERAGE_MAX_LINES + 1))
+    test_file = tmp_path / "tests" / "large.py"
+    test_file.parent.mkdir()
+    test_file.write_bytes(production.read_bytes())
+    gaps = large_module_coverage_gaps(tmp_path, [production, test_file], set())
+    assert gaps == [
+        {
+            "path": "factoryline/large.py",
+            "lines": SIZE_COVERAGE_MAX_LINES + 1,
+            "bytes": len(b"# line\n") * (SIZE_COVERAGE_MAX_LINES + 1),
+        }
+    ]
+    assert (
+        large_module_coverage_gaps(tmp_path, [production], {"factoryline/large.py"})
+        == []
+    )
+
+
+def test_large_module_coverage_gaps_fails_closed_for_missing_or_outside_production(
+    tmp_path,
+):
+    from factoryline.architecture_guard import large_module_coverage_gaps
+
+    missing = tmp_path / "factoryline" / "missing.py"
+    outside = tmp_path.parent / "factoryline" / "outside.py"
+    gaps = large_module_coverage_gaps(tmp_path, [missing, outside], set())
+    assert gaps[0] == {"path": "factoryline/missing.py", "error": "unreadable"}
+    assert gaps[1]["error"] == "outside_root"
+
+
+def test_trace_and_jev_file_limits_are_pinned_before_growth():
+    root = Path(__file__).resolve().parents[1]
+    guard = json.loads((root / "architecture-policy.json").read_text())[
+        "file_size_guard"
+    ]
+    caps = {
+        "factoryline/analysis_evidence.py": (2000, 72000),
+        "factoryline/jev_classifier.py": (1300, 51000),
+        "factoryline/operations.py": (1300, 46000),
+        "scripts/evaluate_jev.mjs": (1100, 63000),
+        "scripts/evaluate_jev.test.mjs": (1100, 65000),
+    }
+    assert file_size_guard_is_pinned(guard)
+    for name, expected in caps.items():
+        budget = guard["files"][name]
+        assert (budget["max_lines"], budget["max_bytes"]) == expected
+        text = (root / name).read_text(encoding="utf-8")
+        assert len(text.splitlines()) <= expected[0]
+        assert len(text.encode("utf-8")) <= expected[1]
+        drift = json.loads(json.dumps(guard))
+        drift["files"][name]["max_lines"] += 1
+        assert not file_size_guard_is_pinned(drift)

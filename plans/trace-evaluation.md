@@ -19,6 +19,12 @@ Architect verdict: PASS
 
 - [ ] T11 | slice=factoryline | files=factoryline/jev_classifier.py,tests/test_audit_rule_search.py | verify=`python -m pytest -p no:cacheprovider tests/test_audit_rule_search.py -k span_review_batch` | Partition full review inputs into bounded complete batches and verify exact aggregate response coverage.
 
+- [ ] T12 | slice=scripts | files=scripts/evaluate_jev.mjs,scripts/evaluate_jev.test.mjs | verify=`node --test --test-name-pattern="dispatch budget|budget journal" scripts/evaluate_jev.test.mjs` | Enforce policy-bound admission before live Jev requests, durable reservation events, denied/unscored denominators and unknown/overrun stop conditions.
+
+- [ ] T13 | slice=factoryline | files=factoryline/analysis_evidence.py,tests/test_analysis_evidence.py | verify=`python -m pytest -p no:cacheprovider tests/test_analysis_evidence.py -k applicability` | Bind per-span applicability reasons/source evidence, reject hidden facts, report evaluated and exempt denominators without false PASS.
+
+- [ ] T14 | slice=tests | files=tests/test_architecture_health.py | verify=`python -m pytest -p no:cacheprovider tests/test_architecture_health.py -k large_module_coverage_gaps` | Prove strict file guard detects unpinned oversized production, respects pinned inventory, and fails closed on missing/outside files.
+
 ## Delivery evidence
 New/changed/failed tests only locally; scoped lint/C901/architecture checks, independent AI source review, hash-bound workflow gate and required CI. Production calibration and rollout evidence require their real authorized environments. File budgets cannot be raised; extract/consolidate existing modules when needed. This plan does not establish implementation or empirical accuracy.
 
@@ -68,3 +74,13 @@ Local checkpoint: three CI-failing taxonomy/protocol/inventory tests repaired an
 The review identified four concrete defects, now repaired in source with focused tests: calibration prediction rows bind model/prompt/rubric artifact digests; saved status recomputes the exact bound request; span results include the exact canonical request digest; tool requirement flags reject non-booleans. Failure recovery replays current bindings before creating a case, records the private request digest/span index and before-evidence digest, and supplies four reproducible next actions. Development cases retain their private evidence outside the exported receipt and cannot become holdout data. Holdout label exposure and producer independence remain UNVERIFIED until externally established.
 
 The native evaluator SSAT now enumerates the current analysis, operations and Jev interfaces rather than the older function snapshot. This is an interface inventory, not operational acceptance. Current CI failures must be repaired before merge.
+
+## Pre-edit size admission
+
+Before editing any touched production module or Jev script, measure current normalized UTF-8 bytes and lines against architecture-policy.json. Reserve enough headroom for the proposed change before writing; do not write an oversized intermediate file. Reuse or consolidate existing modules when the change cannot fit, preserving the 460-file cap. The new trace/Jev pins are tighter than the existing discovery ceilings; all older pinned ceilings remain unchanged.
+
+## Native dispatch and applicability checkpoint
+
+The live Jev operator now requires an explicit policy bound to case content and the selected rubric; admissions are synced before requests, denied/halted cases remain in denominators, malformed-answer costs are retained, and unknown usage/overrun stops later dispatch. The policy is per trial and its reference is not authenticated release/spend authority. Exact provider billing ceilings and production approval verification remain separate acceptance requirements.
+
+Optional bound criterion applicability distinguishes NOT_APPLICABLE from PASS, requires current source references and exact coverage, rejects exemptions hiding present facts, and cannot pass a wholly unevaluated trace. New direct dispatch/size-guard tests address the two attribution gaps without changing grading thresholds. Current-head CI and independent final acceptance remain pending.

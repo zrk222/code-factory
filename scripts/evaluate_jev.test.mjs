@@ -7,7 +7,8 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import {
-  ENDPOINT, MODEL, evaluateCases, loadTrial, parseArgs, runCli, summarizeCosts, summarizeLatency, verifyJournal, recordOperatorFeedback,
+  ENDPOINT, MODEL, evaluateCases as evaluateCasesRaw, loadTrial, parseArgs, runCli as runCliRaw,
+  summarizeCosts, summarizeLatency, verifyJournal, recordOperatorFeedback,
 } from './evaluate_jev.mjs';
 
 const rubric = { instructions: 'Does the supplied state show a real finding?' };
@@ -25,6 +26,36 @@ function answer(probability, extra = {}, evidenceProbability = 0.99) {
   }), { status: 200 });
 }
 const mock = (responses) => async () => responses.shift();
+function fixtureBudget(corpus, question = rubric) {
+  const rows = corpus.map((item) => ({ id: item.id,
+    case_sha256: createHash('sha256').update(JSON.stringify(item)).digest('hex'), risk: 'high',
+    upper_bound_cost_usd: 0.001, upper_bound_latency_ms: 10_000 }));
+  return { schema: 'factory.jev-dispatch-budget.v1', version: 1, approval_reference: 'declared-test-fixture',
+    rubric_sha256: createHash('sha256').update(JSON.stringify(question)).digest('hex'),
+    seed: 'fixed-test-seed', max_cases: 100, max_cost_usd: 1, max_latency_ms: 120_000,
+    fractions: { low: 1, medium: 1, high: 1 }, cases: rows };
+}
+async function evaluateCases(corpus, question, options = {}) {
+  const supplied = options.live && options.budgetPolicy === undefined
+    ? { ...options, budgetPolicy: fixtureBudget(corpus, question) } : options;
+  return evaluateCasesRaw(corpus, question, supplied);
+}
+async function runCli(args, context = {}) {
+  if (!args.includes('--live') || args.includes('--budget-policy')) return runCliRaw(args, context);
+  const index = args.indexOf('--cases');
+  const casePath = index >= 0 ? args[index + 1] : undefined;
+  if (!casePath) return runCliRaw(args, context);
+  const value = JSON.parse(await readFile(casePath, 'utf8'));
+  const corpus = Array.isArray(value) ? value : value.cases;
+  const policyDir = await mkdtemp(join(tmpdir(), 'cf-jev-explicit-policy-'));
+  const policyPath = join(policyDir, 'budget.json');
+  const questionPath = args[args.indexOf('--rubric') + 1];
+  const profile = args.includes('--profile') ? args[args.indexOf('--profile') + 1] : undefined;
+  const trial = await loadTrial(casePath, questionPath, profile);
+  await writeFile(policyPath, JSON.stringify(fixtureBudget(corpus, trial.rubric)));
+  try { return await runCliRaw([...args, '--budget-policy', policyPath], context); }
+  finally { await rm(policyDir, { recursive: true, force: true }); }
+}
 
 test('preflight rejection is durable, sanitized and verified without a provider call', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cf-jev-rejected-'));
@@ -156,9 +187,9 @@ test('operator journal checkpoints every answer and error without copying raw st
     });
     const text = await readFile(join(root, report.tracking.journal_filename), 'utf8');
     const events = text.trim().split('\n').map(JSON.parse);
-    assert.deepEqual(events.map((event) => event.event), ['start', 'result', 'result', 'report']);
-    assert.deepEqual(events.slice(1, 3).map((event) => event.result.status), ['abstain', 'error']);
-    assert.equal(events[1].result.response_sha256.length, 64);
+    assert.deepEqual(events.map((event) => event.event), ['start', 'admission', 'result', 'admission', 'result', 'report']);
+    assert.deepEqual(events.filter(event => event.event === 'result').map((event) => event.result.status), ['abstain', 'error']);
+    assert.equal(events[2].result.response_sha256.length, 64);
     assert.equal(text.includes('unsafe operation'), false);
     assert.equal(text.includes('private-test-key'), false);
     let previous = null;
@@ -168,9 +199,9 @@ test('operator journal checkpoints every answer and error without copying raw st
       assert.equal(createHash('sha256').update(JSON.stringify(record)).digest('hex'), digest);
       previous = digest;
     }
-    assert.equal(report.tracking.results_chain_sha256, events[2].event_sha256);
-    assert.deepEqual(events[3].report, report);
-    assert.equal(events[3].report_sha256, createHash('sha256').update(JSON.stringify(report)).digest('hex'));
+    assert.equal(report.tracking.results_chain_sha256, events[4].event_sha256);
+    assert.deepEqual(events[5].report, report);
+    assert.equal(events[5].report_sha256, createHash('sha256').update(JSON.stringify(report)).digest('hex'));
     const path = join(root, report.tracking.journal_filename);
     const verification = await verifyJournal(path);
     assert.equal(verification.state, 'VERIFIED');
@@ -807,8 +838,9 @@ test('unknown cost remains unknown rather than an invented zero', async () => {
     ]),
   });
   assert.equal(report.cost.total_usd, null);
-  assert.equal(report.cost.reported_sum_usd, 0.00001);
+  assert.equal(report.cost.reported_sum_usd, null);
   assert.equal(report.cost.unknown_requests, 1);
+  assert.equal(report.results[1].status, 'halted');
 });
 
 test('invalid corpus, rubric and thresholds block before transport', async () => {
@@ -837,6 +869,67 @@ test('CLI accepts only the explicit contract and rejects arbitrary URLs', () => 
   assert.throws(() => parseArgs(['--cases', 'cases.json', '--rubric', 'rubric.json', '--grade', '--grade']), /invalid_arguments/);
   assert.throws(() => parseArgs(['--endpoint', 'https://attacker.test']), /invalid_arguments/);
   assert.throws(() => parseArgs(['--live']), /invalid_arguments/);
+});
+
+test('dispatch budget denies before fetch, preserves usage on invalid answers, and halts on overrun', async () => {
+  const makePolicy = (corpus, overrides = {}) => ({ ...fixtureBudget(corpus), ...overrides });
+  let calls = 0;
+  const denied = await evaluateCasesRaw(cases, rubric, { live: true, apiKey: 'mock',
+    budgetPolicy: makePolicy(cases, { max_cost_usd: 0.0005 }),
+    fetchImpl: async () => { calls++; return answer(0.99); } });
+  assert.equal(calls, 0);
+  assert.equal(denied.results.length, cases.length);
+  assert.ok(denied.results.every((result) => result.status === 'denied'));
+  assert.equal(denied.dispatch_budget.authority.includes('not authenticated'), true);
+
+  const malformed = new Response(JSON.stringify({ providerMetadata: { gateway: { cost: '0.00002' } } }), { status: 200 });
+  const overrun = await evaluateCasesRaw(cases, rubric, { live: true, apiKey: 'mock',
+    budgetPolicy: { ...makePolicy(cases, { max_cost_usd: 0.00001 }), cases: fixtureBudget(cases).cases.map(row => ({ ...row, upper_bound_cost_usd: 0.000005 })) },
+    fetchImpl: async () => { calls++; return malformed.clone(); } });
+  assert.equal(calls, 1);
+  assert.equal(overrun.results[0].status, 'error');
+  assert.equal(overrun.results[0].error, 'invalid_answer');
+  assert.equal(overrun.results[0].reported_cost_usd, 0.00002);
+  assert.equal(overrun.results[1].status, 'halted');
+  assert.equal(overrun.results.length, 2);
+  assert.equal(overrun.dispatch_budget.state, 'FAIL');
+  assert.equal(overrun.dispatch_budget.breached, true);
+
+  const unknownPolicy = makePolicy(cases);
+  unknownPolicy.cases[0].upper_bound_cost_usd = Number.NaN;
+  calls = 0;
+  await assert.rejects(evaluateCasesRaw(cases, rubric, { live: true, apiKey: 'mock',
+    budgetPolicy: unknownPolicy, fetchImpl: async () => { calls++; return answer(0.99); } }), /invalid_budget_case/);
+  assert.equal(calls, 0);
+});
+
+test('budget journal fsyncs each admission before fetch and verifies complete ordered corpus', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cf-jev-budget-journal-'));
+  try {
+    const input = join(dir, 'cases.json'), questions = join(dir, 'rubric.json');
+    await writeFile(input, JSON.stringify(cases)); await writeFile(questions, JSON.stringify(rubric));
+    let fetches = 0;
+    const report = await runCli(['--cases', input, '--rubric', questions, '--live'], {
+      env: { AI_GATEWAY_API_KEY: 'mock' }, archiveRoot: join(dir, 'runs'), archiveBoundary: dir,
+      fetchImpl: async () => {
+        fetches++;
+        const names = await readdir(join(dir, 'runs'));
+        const journal = join(dir, 'runs', names.find(name => name.endsWith('.jsonl')));
+        const events = (await readFile(journal, 'utf8')).trim().split('\n').map(JSON.parse);
+        assert.equal(events.at(-1)?.event, 'admission');
+        assert.equal(events.at(-1)?.admission.disposition, 'admitted');
+        return answer(0.99);
+      },
+    });
+    const journal = join(dir, 'runs', report.tracking.journal_filename);
+    const lines = (await readFile(journal, 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(fetches, 2);
+    assert.ok(report.results.every(result => result.status === 'decided'));
+    assert.equal(lines[0].hashes.budget_policy.length, 64);
+    assert.deepEqual(lines.slice(1, -1).map((event) => event.event), ['admission', 'result', 'admission', 'result']);
+    assert.equal((await verifyJournal(journal)).state, 'VERIFIED');
+    assert.equal(report.results.length, cases.length);
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
 test('CLI help states opt-in grading, unresolved score and live authorization boundaries', () => {
@@ -907,4 +1000,57 @@ test('framework loader binds the entire contract and judges its nested rubric on
       await assert.rejects(loadTrial(casesPath, rubricPath), /invalid_framework/);
     }
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test('dispatch budget halts unknown usage and rejects missing policy or failed admission persistence', async () => {
+  let calls = 0;
+  await assert.rejects(evaluateCasesRaw(cases, rubric, { live: true, apiKey: 'mock',
+    fetchImpl: async () => { calls++; return answer(0.99); } }), /invalid_budget_policy/);
+  assert.equal(calls, 0);
+  await assert.rejects(evaluateCasesRaw(cases, rubric, { live: true, apiKey: 'mock',
+    budgetPolicy: fixtureBudget(cases), onAdmission: async () => { throw new Error('disk unavailable'); },
+    fetchImpl: async () => { calls++; return answer(0.99); } }), /disk unavailable/);
+  assert.equal(calls, 0);
+  const report = await evaluateCasesRaw(cases, rubric, { live: true, apiKey: 'mock',
+    budgetPolicy: fixtureBudget(cases), fetchImpl: async () => {
+      calls++; return answer(0.99, { providerMetadata: {} });
+    } });
+  assert.equal(calls, 1);
+  assert.equal(report.cost.total_usd, null);
+  assert.equal(report.cost.unknown_requests, 1);
+  assert.equal(report.results[1].status, 'halted');
+  assert.equal(report.metrics.total, 2);
+});
+
+test('budget journal preserves legacy incomplete result chains', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cf-jev-legacy-'));
+  try {
+    const records = [
+      { schema: 'factory.jev-journal.v1', event: 'start', run_id: 'legacy', total_criteria: 2 },
+      { event: 'result', run_id: 'legacy', result: { id: 'positive', status: 'decided' } },
+    ];
+    let previous = null;
+    const events = records.map(value => {
+      const record = { ...value, previous_sha256: previous };
+      const event_sha256 = createHash('sha256').update(JSON.stringify(record)).digest('hex');
+      previous = event_sha256; return { ...record, event_sha256 };
+    });
+    const path = join(dir, 'legacy.jsonl');
+    await writeFile(path, events.map(JSON.stringify).join('\n') + '\n');
+    const result = await verifyJournal(path);
+    assert.equal(result.state, 'INCOMPLETE');
+    assert.equal(result.recorded_results, 1);
+    assert.equal(result.expected_results, 2);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+
+test('dispatch budget rejects rubric drift before any transport', async () => {
+  let calls = 0;
+  await assert.rejects(evaluateCasesRaw(cases, { instructions: 'Different criteria' }, {
+    live: true, apiKey: 'mock', budgetPolicy: fixtureBudget(cases),
+    fetchImpl: async () => { calls++; return answer(0.99); },
+  }), /invalid_budget_policy/);
+  assert.equal(calls, 0);
 });

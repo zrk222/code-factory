@@ -154,6 +154,39 @@ def _span_fixture(root: Path) -> tuple[dict, list[dict]]:
     }, artifacts
 
 
+def _attach_span_policy(root: Path, request: dict, criteria: dict) -> None:
+    policy = {"schema": "factory.span-applicability.v1", "rules": criteria}
+    path = root / "span-policy.json"
+    path.write_text(json.dumps(policy), encoding="utf-8")
+    request["binding_request"]["artifacts"]["span_policy"] = {
+        "path": path.name,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+
+
+def _applicability_rule(span_id: str, overrides: dict | None = None) -> dict:
+    criteria = {
+        name: {
+            "applicable": True,
+            "reason": f"{name} applies to this span",
+            "references": [{"path": "src/sample.py", "sha256": ""}],
+        }
+        for name in ("numeric", "context", "tool", "redundancy")
+    }
+    if overrides:
+        for name, entry in overrides.items():
+            criteria[name].update(entry)
+    return {"span_id": span_id, "criteria": criteria}
+
+
+def _bind_policy_source_hash(request: dict, rules: list[dict]) -> list[dict]:
+    source_hash = request["binding_request"]["sources"][0]["sha256"]
+    for rule in rules:
+        for entry in rule["criteria"].values():
+            entry["references"][0]["sha256"] = source_hash
+    return rules
+
+
 def test_span_evaluation_binds_artifacts_and_returns_four_closed_criteria(
     tmp_path: Path,
 ) -> None:
@@ -162,9 +195,12 @@ def test_span_evaluation_binds_artifacts_and_returns_four_closed_criteria(
     assert bound["state"] == "BOUND_LOCAL_EVIDENCE"
     result = evaluate_spans(tmp_path, request)
     assert result["schema"] == "factory.span-evaluation.v1"
-    assert result["request_sha256"] == hashlib.sha256(
-        json.dumps(request, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    assert (
+        result["request_sha256"]
+        == hashlib.sha256(
+            json.dumps(request, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
     assert result["provenance"] == "BOUND_LOCAL_EVIDENCE"
     assert result["semantic_correctness"] == "UNKNOWN_PENDING_JEV"
     assert [
@@ -230,6 +266,139 @@ def test_span_evaluation_file_hash_and_stale_binding_fail_closed(
         == "factory.span-evaluation.v1"
     )
     assert evaluate_spans_file(tmp_path, path, "0" * 64)["state"] == "INCOMPLETE"
+
+
+def test_evaluate_trace_file_replays_exact_request_and_dispatches_kind(
+    tmp_path: Path,
+) -> None:
+    from factoryline.analysis_evidence import evaluate_trace_file
+
+    request, _ = _span_fixture(tmp_path)
+    raw = json.dumps(request, sort_keys=True, separators=(",", ":")).encode()
+    path = tmp_path / "span-request.json"
+    path.write_bytes(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+
+    result = evaluate_trace_file(tmp_path, path, digest, kind="spans")
+
+    assert result["state"] == "PASS"
+    assert result["request_sha256"] == digest
+    assert (
+        evaluate_trace_file(tmp_path, path, "0" * 64, kind="spans")["state"]
+        == "INCOMPLETE"
+    )
+    assert (
+        evaluate_trace_file(tmp_path, path, digest, kind="unknown")["state"]
+        == "INCOMPLETE"
+    )
+
+
+def test_span_applicability_accepts_bound_partial_exemption(tmp_path: Path) -> None:
+    request, _ = _span_fixture(tmp_path)
+    request["spans"][0]["context_refs"] = []
+    rule = _applicability_rule(
+        "s1",
+        {
+            "context": {
+                "applicable": False,
+                "reason": "No contextual claim exists on this span.",
+            }
+        },
+    )
+    _attach_span_policy(tmp_path, request, _bind_policy_source_hash(request, [rule]))
+
+    result = evaluate_spans(tmp_path, request)
+
+    assert result["state"] == "PASS"
+    assert result["spans"][0]["context"] == {
+        "state": "NOT_APPLICABLE",
+        "code": "CRITERION_NOT_APPLICABLE",
+        "reason": "No contextual claim exists on this span.",
+        "references": [request["binding_request"]["sources"][0]],
+    }
+    assert result["criteria_coverage"] == {
+        "evaluated": 3,
+        "not_applicable": 1,
+        "incomplete": 0,
+        "failed": 0,
+        "total": 4,
+    }
+
+
+@pytest.mark.parametrize("mutation", ["reason", "reference", "coverage"])
+def test_span_applicability_rejects_forged_or_incomplete_policy(
+    tmp_path: Path, mutation: str
+) -> None:
+    request, _ = _span_fixture(tmp_path)
+    rule = _applicability_rule("s1")
+    rules = _bind_policy_source_hash(request, [rule])
+    if mutation == "reason":
+        rules[0]["criteria"]["tool"]["reason"] = "  "
+    elif mutation == "reference":
+        rules[0]["criteria"]["tool"]["references"][0]["sha256"] = "0" * 64
+    else:
+        del rules[0]["criteria"]["tool"]
+    _attach_span_policy(tmp_path, request, rules)
+
+    result = evaluate_spans(tmp_path, request)
+
+    assert result["state"] == "INCOMPLETE"
+    assert result["errors"][0]["code"] == "TRACE_UNBOUND"
+
+
+@pytest.mark.parametrize("hidden", ["numeric", "tool"])
+def test_span_applicability_cannot_hide_present_facts(
+    tmp_path: Path, hidden: str
+) -> None:
+    request, _ = _span_fixture(tmp_path)
+    rule = _applicability_rule(
+        "s1",
+        {
+            hidden: {
+                "applicable": False,
+                "reason": f"{hidden} is not relevant",
+            }
+        },
+    )
+    _attach_span_policy(tmp_path, request, _bind_policy_source_hash(request, [rule]))
+
+    result = evaluate_spans(tmp_path, request)
+
+    assert result["state"] == "INCOMPLETE"
+    assert result["errors"][0]["code"] == "TRACE_UNBOUND"
+
+
+def test_span_applicability_all_not_applicable_is_incomplete(tmp_path: Path) -> None:
+    request, _ = _span_fixture(tmp_path)
+    span = request["spans"][0]
+    span.update(
+        numeric=None,
+        context_refs=[],
+        contradicted_context_ids=[],
+        tool=None,
+        call=None,
+    )
+    overrides = {
+        name: {"applicable": False, "reason": f"{name} is absent."}
+        for name in ("numeric", "context", "tool", "redundancy")
+    }
+    rule = _applicability_rule("s1", overrides)
+    _attach_span_policy(tmp_path, request, _bind_policy_source_hash(request, [rule]))
+
+    result = evaluate_spans(tmp_path, request)
+
+    assert result["state"] == "INCOMPLETE"
+    assert all(
+        result["spans"][0][name]["state"] == "NOT_APPLICABLE"
+        for name in ("numeric", "context", "tool", "redundancy")
+    )
+    assert result["criteria_coverage"] == {
+        "evaluated": 0,
+        "not_applicable": 4,
+        "incomplete": 0,
+        "failed": 0,
+        "total": 4,
+    }
 
 
 @pytest.mark.parametrize("field", ["result_required", "state_required"])

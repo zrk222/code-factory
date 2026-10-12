@@ -52,6 +52,7 @@ _SPAN_OPTIONAL_ROLES = {
     "killswitch_control",
     "rollback_control",
     "semantic_evidence",
+    "span_policy",
 }
 _SPAN_ARTIFACT_LIMIT = 2_000_000
 _SPAN_TOTAL_LIMIT = 20_000_000
@@ -536,6 +537,117 @@ def _span_redundancy(
     }
 
 
+_SPAN_CRITERIA = ("numeric", "context", "tool", "redundancy")
+
+
+def _span_policy_reference(
+    reference: object, source_hashes: Mapping[str, str], seen: set[str]
+) -> dict[str, str]:
+    if not isinstance(reference, Mapping) or set(reference) != {"path", "sha256"}:
+        raise ValueError("span applicability source reference is invalid")
+    path, digest = reference.get("path"), reference.get("sha256")
+    if not isinstance(path, str) or source_hashes.get(path) != digest or path in seen:
+        raise ValueError("span applicability source reference is invalid")
+    seen.add(path)
+    return {"path": path, "sha256": digest}
+
+
+def _span_policy_entry(
+    entry: object, source_hashes: Mapping[str, str]
+) -> dict[str, Any]:
+    if not isinstance(entry, Mapping) or set(entry) != {
+        "applicable",
+        "reason",
+        "references",
+    }:
+        raise ValueError("span applicability entry is invalid")
+    reason, references = entry.get("reason"), entry.get("references")
+    if type(entry.get("applicable")) is not bool:
+        raise ValueError("span applicability flag is invalid")
+    if (
+        not isinstance(reason, str)
+        or not reason.strip()
+        or len(reason.encode("utf-8")) > 1024
+    ):
+        raise ValueError("span applicability reason is invalid")
+    if not isinstance(references, list) or not 1 <= len(references) <= 8:
+        raise ValueError("span applicability references are invalid")
+    seen: set[str] = set()
+    checked = [_span_policy_reference(ref, source_hashes, seen) for ref in references]
+    return {"applicable": entry["applicable"], "reason": reason, "references": checked}
+
+
+def _span_policy_rules(
+    spans: list[Mapping[str, Any]],
+    artifacts: Mapping[str, Any],
+    bound: Mapping[str, Any],
+) -> dict[str, dict[str, Any]] | None:
+    if "span_policy" not in artifacts:
+        return None
+    body = artifacts["span_policy"]["body"]
+    rules = body.get("rules") if isinstance(body, Mapping) else None
+    if (
+        not isinstance(body, Mapping)
+        or set(body) != {"schema", "rules"}
+        or body.get("schema") != "factory.span-applicability.v1"
+        or not isinstance(rules, list)
+        or len(rules) != len(spans)
+    ):
+        raise ValueError("span applicability policy is invalid")
+    expected_ids = {span["span_id"] for span in spans}
+    parsed = {}
+    source_hashes = bound["source_hashes"]
+    for rule in rules:
+        if (
+            not isinstance(rule, Mapping)
+            or set(rule) != {"span_id", "criteria"}
+            or rule.get("span_id") not in expected_ids
+            or rule["span_id"] in parsed
+            or not isinstance(rule.get("criteria"), Mapping)
+            or set(rule["criteria"]) != set(_SPAN_CRITERIA)
+        ):
+            raise ValueError("span applicability coverage is invalid")
+        criteria = {
+            name: _span_policy_entry(entry, source_hashes)
+            for name, entry in rule["criteria"].items()
+        }
+        parsed[rule["span_id"]] = criteria
+    if set(parsed) != expected_ids:
+        raise ValueError("span applicability coverage is incomplete")
+    return parsed
+
+
+def _span_not_applicable(
+    span: Mapping[str, Any], criterion: str, entry: Mapping[str, Any]
+) -> dict[str, Any]:
+    empty = {
+        "numeric": span.get("numeric") is None,
+        "context": span.get("context_refs") == []
+        and span.get("contradicted_context_ids") == [],
+        "tool": span.get("tool") is None,
+        "redundancy": span.get("call") is None,
+    }
+    if not empty[criterion]:
+        raise ValueError("not-applicable policy hides present criterion facts")
+    return {
+        "state": "NOT_APPLICABLE",
+        "code": "CRITERION_NOT_APPLICABLE",
+        "reason": entry["reason"],
+        "references": entry["references"],
+    }
+
+
+def _span_criterion(
+    span: Mapping[str, Any],
+    name: str,
+    entry: Mapping[str, Any] | None,
+    evaluator: Any,
+) -> dict[str, Any]:
+    if entry is not None and entry["applicable"] is False:
+        return _span_not_applicable(span, name, entry)
+    return evaluator()
+
+
 def evaluate_spans(root: Path, request: Mapping[str, Any]) -> dict[str, Any]:
     """Contain malformed local facts without disclosing artifact contents."""
     try:
@@ -584,6 +696,7 @@ def _evaluate_spans(root: Path, request: Mapping[str, Any]) -> dict[str, Any]:
             "TRACE_UNBOUND", "spans exceed bounds or contain invalid/duplicate IDs"
         )
     artifacts = bound["artifacts"]
+    policy = _span_policy_rules(spans, artifacts, bound)
     rows = []
     previous_calls = {}
     for index, span in enumerate(spans):
@@ -603,22 +716,43 @@ def _evaluate_spans(root: Path, request: Mapping[str, Any]) -> dict[str, Any]:
         candidate_sha = sha256(canonical_bytes(bound["candidate"])).hexdigest()
         call_key = canonical_bytes(span.get("call"))
         prior = previous_calls.get(call_key)
+        applicability = policy.get(span["span_id"]) if policy is not None else None
         rows.append(
             {
                 "span_id": span["span_id"],
-                "numeric": _span_numeric(span, artifacts["dataset"]["body"]),
-                "context": _span_context(
+                "numeric": _span_criterion(
                     span,
-                    artifacts["rubric"]["body"],
-                    artifacts["dataset"]["body"],
-                    bound,
+                    "numeric",
+                    applicability.get("numeric") if applicability else None,
+                    lambda: _span_numeric(span, artifacts["dataset"]["body"]),
                 ),
-                "tool": _span_tool(span, artifacts["tool"]["body"]),
-                "redundancy": _span_redundancy(
+                "context": _span_criterion(
                     span,
-                    [prior] if prior else [],
-                    artifacts["tool"]["body"],
-                    candidate_sha,
+                    "context",
+                    applicability.get("context") if applicability else None,
+                    lambda: _span_context(
+                        span,
+                        artifacts["rubric"]["body"],
+                        artifacts["dataset"]["body"],
+                        bound,
+                    ),
+                ),
+                "tool": _span_criterion(
+                    span,
+                    "tool",
+                    applicability.get("tool") if applicability else None,
+                    lambda: _span_tool(span, artifacts["tool"]["body"]),
+                ),
+                "redundancy": _span_criterion(
+                    span,
+                    "redundancy",
+                    applicability.get("redundancy") if applicability else None,
+                    lambda: _span_redundancy(
+                        span,
+                        [prior] if prior else [],
+                        artifacts["tool"]["body"],
+                        candidate_sha,
+                    ),
                 ),
             }
         )
@@ -633,11 +767,18 @@ def _evaluate_spans(root: Path, request: Mapping[str, Any]) -> dict[str, Any]:
             row["redundancy"],
         )
     ]
+    coverage = {
+        "evaluated": sum(state in {"PASS", "FAIL"} for state in states),
+        "not_applicable": states.count("NOT_APPLICABLE"),
+        "incomplete": states.count("INCOMPLETE"),
+        "failed": states.count("FAIL"),
+        "total": len(states),
+    }
     overall = (
         "FAIL"
         if "FAIL" in states
         else "INCOMPLETE"
-        if "INCOMPLETE" in states
+        if "INCOMPLETE" in states or coverage["evaluated"] == 0
         else "PASS"
     )
     core = {
@@ -651,6 +792,7 @@ def _evaluate_spans(root: Path, request: Mapping[str, Any]) -> dict[str, Any]:
         "provenance": "BOUND_LOCAL_EVIDENCE",
         "semantic_correctness": "UNKNOWN_PENDING_JEV",
         "spans": rows,
+        "criteria_coverage": coverage,
         "authority": "none",
         "next_actions": [
             "Obtain semantic review separately; local artifact integrity does not authenticate producer identity."
@@ -781,10 +923,9 @@ def trace_evaluation_status(root: Path) -> dict[str, Any]:
             manifest["request"]["sha256"],
             kind=kind,
         )
-        if (
-            recomputed.get("state") == "INCOMPLETE"
-            or canonical_bytes(recomputed) != canonical_bytes(receipt)
-        ):
+        if recomputed.get("state") == "INCOMPLETE" or canonical_bytes(
+            recomputed
+        ) != canonical_bytes(receipt):
             raise ValueError("saved result differs from deterministic reevaluation")
         return {
             **result,
