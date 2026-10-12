@@ -26,6 +26,8 @@ Integrate the supplied trace-evaluation and eval-driven-development requirements
 
 - The system shall return Jev semantic review evidence only from bound task inputs, outputs, rubric criteria and byte-range source excerpts, with at most 8192 bytes per input or output and at most 32768 bytes per excerpt; mismatched digests, invalid ranges and absent semantic evidence shall not establish semantic correctness.
 
+- The system shall emit ordered Jev review batches covering every requested span exactly once with at most 8 spans, 128 claims and 256000 packet bytes per batch, retaining the full evaluation identity; a single oversized span shall reject batching rather than silently omit evidence.
+
 ### Acceptance criteria (Gherkin)
 ```gherkin
 Scenario: input binding and span metrics

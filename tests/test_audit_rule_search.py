@@ -390,6 +390,64 @@ def test_trace_span_review_reuses_closed_evidence_contract_and_keeps_failures_im
     assert failed_result["evaluation_sha256"] == failed["evaluation_sha256"]
 
 
+def test_span_review_batches_cover_all_spans_and_reject_partial_or_reordered_responses(
+    tmp_path,
+):
+    from test_analysis_evidence import _span_fixture
+    from factoryline.jev_classifier import (
+        build_span_review_batches,
+        normalize_span_review_batches,
+        JevClassificationError,
+    )
+
+    request, _ = _span_fixture(tmp_path)
+    original = request["spans"][0]
+    request["spans"] = [{**original, "span_id": f"case_{i}"} for i in range(17)]
+    batches = build_span_review_batches(tmp_path, request)
+    assert [len(batch["allowed_span_ids"]) for batch in batches["batches"]] == [8, 8, 1]
+    assert [
+        ident for batch in batches["batches"] for ident in batch["allowed_span_ids"]
+    ] == batches["span_ids"]
+    assert all("spans" not in batch["evaluation"] for batch in batches["batches"])
+    reviews = []
+    for batch in batches["batches"]:
+        review_request = batch["review_request"]
+        reviews.append(
+            {
+                "context_sha256": batch["context_sha256"],
+                "review": {
+                    "context_sha256": review_request["context_sha256"],
+                    "claims": [
+                        {
+                            "claim_id": claim["id"],
+                            "label": "INSUFFICIENT_EVIDENCE",
+                            "supporting_evidence_ids": [],
+                            "contradicting_evidence_ids": [],
+                            "rationale": "Missing runtime observation.",
+                            "verification_action": "Obtain bound observed evidence.",
+                        }
+                        for claim in review_request["packet"]["claims"]
+                    ],
+                },
+            }
+        )
+    raw = {"batch_set_sha256": batches["batch_set_sha256"], "reviews": reviews}
+    result = normalize_span_review_batches(
+        raw, root=tmp_path, binding_request=request, request=batches
+    )
+    assert result["span_ids"] == batches["span_ids"]
+    assert result["semantic_correctness"] == "UNKNOWN_MISSING_TASK_EVIDENCE"
+    assert result["provider_call"] is False
+    for invalid in (reviews[:-1], list(reversed(reviews))):
+        with pytest.raises(JevClassificationError):
+            normalize_span_review_batches(
+                {**raw, "reviews": invalid},
+                root=tmp_path,
+                binding_request=request,
+                request=batches,
+            )
+
+
 def _span_semantic_fixture(root):
     from test_analysis_evidence import _span_fixture
     import hashlib

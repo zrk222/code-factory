@@ -17,6 +17,8 @@ Architect verdict: PASS
 
 - [ ] T10 | slice=factoryline | files=factoryline/analysis_evidence.py,factoryline/jev_classifier.py,tests/test_audit_rule_search.py | verify=`python -m pytest -p no:cacheprovider tests/test_audit_rule_search.py -k span_review` | Bind actual semantic task evidence and exact source excerpts, preserving explicit missing-evidence states and provider authority.
 
+- [ ] T11 | slice=factoryline | files=factoryline/jev_classifier.py,tests/test_audit_rule_search.py | verify=`python -m pytest -p no:cacheprovider tests/test_audit_rule_search.py -k span_review_batch` | Partition full review inputs into bounded complete batches and verify exact aggregate response coverage.
+
 ## Delivery evidence
 New/changed/failed tests only locally; scoped lint/C901/architecture checks, independent AI source review, hash-bound workflow gate and required CI. Production calibration and rollout evidence require their real authorized environments. File budgets cannot be raised; extract/consolidate existing modules when needed. This plan does not establish implementation or empirical accuracy.
 
@@ -54,3 +56,9 @@ The optional `semantic_evidence` binding references a local JSON artifact with s
 The bound rubric additionally supplies 1..8 `semantic_criteria` (`id`, `predicate`). These become unresolved binary claims for the reviewer; receiving source bytes is not a semantic pass. Missing task evidence remains UNKNOWN_MISSING_TASK_EVIDENCE. Raw task/source content is untrusted data and is not sent anywhere by these local builders. Provider execution remains separately authorized. Larger review collections still need bounded batching and complete aggregate coverage before this requirement is complete.
 
 Local checkpoint: three CI-failing taxonomy/protocol/inventory tests repaired and passed. The newly observed ABSTAIN, BOUND_LOCAL_EVIDENCE and REGRESSION_GATES strings are observation/dispatch labels, not additional rejection conditions. Ten affected semantic/dashboard checks pass. Scoped Forge QA returns A/PASS with no findings after complexity refactoring; cross-platform CI must confirm the new commit.
+
+### Complete batch review protocol
+
+`build_span_review_batches(root, request)` emits an ordered `factory.span-semantic-review-batches.v1` collection, preserving one full evaluation digest and exact span coverage. Each batch has at most eight spans, 128 claims and 256000 packet bytes. Oversized groups split; a single span exceeding packet limits rejects the request. The complete batch set is limited to 20000000 bytes. Full evaluation spans are not copied into every batch.
+
+`normalize_span_review_batches` revalidates current evidence and the batch-set digest, requires every response in exact context order, and preserves deterministic FAIL/INCOMPLETE plus missing semantic-evidence states. This local protocol prepares evidence; provider calls, budget admission and empirical calibration remain separate unfinished acceptance items.

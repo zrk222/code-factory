@@ -434,16 +434,24 @@ def _append_deterministic_span_review(span, evaluation, evidence, claims, unknow
 def build_span_review_input(
     root: Any, binding_request: Mapping[str, Any]
 ) -> dict[str, Any]:
-    """Build advisory semantic review from revalidated trace artifacts, without provider calls."""
     evaluation, bound = _span_review_material(root, binding_request)
+    spans = evaluation.get("spans", [])
+    material = _semantic_records(root, bound, {span["span_id"] for span in spans})
+    return _build_span_review_input(evaluation, bound, spans, material)
+
+
+def _build_span_review_input(
+    evaluation, bound, selected_spans, semantic_material
+) -> dict[str, Any]:
+    """Build advisory semantic review from revalidated trace artifacts, without provider calls."""
     candidate_sha = sha256(
         json.dumps(bound["candidate"], sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     evidence, claims, unknowns = [], [], []
-    semantic, semantic_criteria = _semantic_records(
-        root, bound, {span["span_id"] for span in evaluation.get("spans", [])}
-    )
-    for span in evaluation.get("spans", []):
+    semantic, semantic_criteria = semantic_material
+    selected_ids = {span["span_id"] for span in selected_spans}
+    semantic = {key: value for key, value in semantic.items() if key in selected_ids}
+    for span in selected_spans:
         span_id = span["span_id"]
         _append_semantic_review(
             span_id,
@@ -514,18 +522,109 @@ def build_span_review_input(
         "rubric_version": rubric.get("version"),
         "context": context,
         "context_sha256": _digest(context),
-        "allowed_span_ids": [item["span_id"] for item in evaluation.get("spans", [])],
+        "allowed_span_ids": [item["span_id"] for item in selected_spans],
         "authority": "none",
         "provider_call": False,
         "deterministic_failures_immutable": True,
         "semantic_evidence_coverage": {
-            "eligible": len(evaluation.get("spans", [])),
+            "eligible": len(selected_spans),
             "provided": len(semantic),
             "state": "BOUND_TASK_EVIDENCE"
-            if len(semantic) == len(evaluation.get("spans", []))
+            if len(semantic) == len(selected_spans)
             else "INCOMPLETE",
         },
     }
+
+
+def _bounded_span_batches(evaluation, bound, spans, material):
+    try:
+        return [_build_span_review_input(evaluation, bound, spans, material)]
+    except JevClassificationError as exc:
+        if "exceeds" not in str(exc) or len(spans) <= 1:
+            raise
+        midpoint = len(spans) // 2
+        return _bounded_span_batches(
+            evaluation, bound, spans[:midpoint], material
+        ) + _bounded_span_batches(evaluation, bound, spans[midpoint:], material)
+
+
+def build_span_review_batches(root, binding_request):
+    """Partition every span without dropping evidence or making provider calls."""
+    evaluation, bound = _span_review_material(root, binding_request)
+    spans = evaluation.get("spans", [])
+    if not spans:
+        raise JevClassificationError("batch review requires evaluated spans")
+    material = _semantic_records(root, bound, {span["span_id"] for span in spans})
+    evaluation_summary = {
+        key: value for key, value in evaluation.items() if key != "spans"
+    }
+    batches = []
+    total_bytes = 0
+    for offset in range(0, len(spans), 8):
+        group = _bounded_span_batches(
+            evaluation_summary, bound, spans[offset : offset + 8], material
+        )
+        total_bytes += sum(len(json.dumps(batch).encode("utf-8")) for batch in group)
+        if total_bytes > 20_000_000:
+            raise JevClassificationError("batch set exceeds 20000000 bytes")
+        batches.extend(group)
+    core = {
+        "schema": "factory.span-semantic-review-batches.v1",
+        "evaluation_sha256": evaluation["evaluation_sha256"],
+        "span_ids": [span["span_id"] for span in spans],
+        "batches": batches,
+        "authority": "none",
+        "provider_call": False,
+    }
+    return {**core, "batch_set_sha256": _digest(core)}
+
+
+def normalize_span_review_batches(raw, *, root, binding_request, request):
+    """Reject partial, reordered or stale responses before aggregate reporting."""
+    expected = build_span_review_batches(root, binding_request)
+    if (
+        request != expected
+        or not isinstance(raw, Mapping)
+        or set(raw) != {"batch_set_sha256", "reviews"}
+    ):
+        raise JevClassificationError("batch request or response contract differs")
+    reviews = raw["reviews"]
+    if (
+        raw["batch_set_sha256"] != expected["batch_set_sha256"]
+        or not isinstance(reviews, list)
+        or len(reviews) != len(expected["batches"])
+    ):
+        raise JevClassificationError("batch response coverage or identity differs")
+    normalized = []
+    for response, batch in zip(reviews, expected["batches"]):
+        if (
+            not isinstance(response, Mapping)
+            or set(response) != {"context_sha256", "review"}
+            or response["context_sha256"] != batch["context_sha256"]
+        ):
+            raise JevClassificationError("batch response order or context differs")
+        normalized.append(
+            normalize_evidence_review(
+                response["review"], request=batch["review_request"]
+            )
+        )
+    core = {
+        "schema": "factory.span-semantic-review-batch-result.v1",
+        "batch_set_sha256": expected["batch_set_sha256"],
+        "evaluation_sha256": expected["evaluation_sha256"],
+        "span_ids": expected["span_ids"],
+        "reviews": normalized,
+        "deterministic_state": expected["batches"][0]["evaluation"]["state"],
+        "semantic_correctness": "ADVISORY_REVIEW"
+        if all(
+            batch["semantic_evidence_coverage"]["state"] == "BOUND_TASK_EVIDENCE"
+            for batch in expected["batches"]
+        )
+        else "UNKNOWN_MISSING_TASK_EVIDENCE",
+        "authority": "none",
+        "provider_call": False,
+    }
+    return {**core, "receipt_sha256": _digest(core)}
 
 
 def normalize_span_review(
