@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from importlib import resources
 import json
 import os
@@ -20,7 +21,7 @@ from .hosted_control import (
 )
 from .hosted_identity import HttpxTransport, JwksCache, get_jwks
 from .hosted_storage import PostgresAssuranceStore
-from .control_plane import ControlPlaneError, Principal
+from .control_plane import ControlPlaneError, Principal, canonical_json
 from .integrations import principal_from_verified_oidc
 from .pr_assurance import (
     MAX_WEBHOOK_BYTES,
@@ -274,6 +275,236 @@ def _current_repair_principal(principal, tenant_id, resolver, require_admin):
     return current
 
 
+def _recovery_result(repair_id, status, recovery_status, reason, attempt_sha, facts):
+    body = {
+        "schema": "factory.hosted.repair-recovery.v1",
+        "repair_id": repair_id,
+        "status": status,
+        "recovery_status": recovery_status,
+        "reason_code": reason,
+        "attempt_sha256": attempt_sha,
+        "evidence_sha256": hashlib.sha256(canonical_json(facts)).hexdigest(),
+    }
+    body["recovery_sha256"] = hashlib.sha256(canonical_json(body)).hexdigest()
+    return body
+
+
+def _recovery_attempt_evidence(workspace, approval_path, binding):
+    from .repair_sandbox import (
+        _load_host_repair_approval,
+        _attempt_directory,
+        verify_repair_attempt_journal,
+    )
+
+    loaded = _load_host_repair_approval(workspace, approval_path)
+    approval, approval_sha, file_sha, origin = (
+        loaded[2],
+        loaded[3],
+        loaded[4],
+        loaded[6],
+    )
+    if (
+        approval_sha != binding["repair_approval_sha256"]
+        or file_sha != binding["repair_approval_file_sha256"]
+        or approval["patch_sha256"] != binding["patch_sha256"]
+        or origin != binding.get("origin_audit")
+    ):
+        raise PRAssuranceError("E_REPAIR_CHANGED", "registered repair changed")
+    journal = verify_repair_attempt_journal(workspace, approval_sha)
+    state = journal["state"]
+    _require_terminal_recovery_state(state, approval_sha, origin)
+    attempt_dir = _attempt_directory(workspace, approval_sha)
+    log_hashes = _verify_recovery_attempt_artifacts(
+        workspace, attempt_dir, approval, approval_sha, state
+    )
+    _require_recovery_cleanup(workspace, attempt_dir, approval)
+    facts = {
+        "approval_sha256": approval_sha,
+        "approval_file_sha256": file_sha,
+        "patch_sha256": binding["patch_sha256"],
+        "journal_sha256": journal["event_sha256"],
+        "event_sequence": state["event_sequence"],
+        "candidate_after_sha256": state.get("candidate_after_sha256"),
+        "log_sha256s": log_hashes,
+    }
+    return journal["event_sha256"], facts
+
+
+def _require_terminal_recovery_state(state, approval_sha, origin):
+    expected_before = origin["candidate_sha256"] if origin else None
+    expected_after = origin is not None
+    if not _recovery_state_binding_valid(
+        state, approval_sha, origin, expected_before
+    ) or not _recovery_state_candidate_valid(state, expected_after):
+        raise PRAssuranceError(
+            "E_REPAIR_RECOVERY_INCOMPLETE", "attempt evidence is not terminal"
+        )
+
+
+def _recovery_state_binding_valid(state, approval_sha, origin, expected_before):
+    return (
+        state.get("approval_sha256") == approval_sha
+        and state.get("origin_audit") == origin
+        and state.get("candidate_before_sha256") == expected_before
+        and state.get("cleanup_confirmed") is True
+        and state.get("primary_checkout_unchanged") is True
+    )
+
+
+def _recovery_state_candidate_valid(state, expected_after):
+    return (
+        state.get("status") == "VERIFIED"
+        and state.get("phase") == "VERIFIED"
+        and (
+            _is_digest(state.get("candidate_after_sha256"))
+            if expected_after
+            else state.get("candidate_after_sha256") is None
+        )
+    )
+
+
+def _verify_recovery_attempt_artifacts(
+    workspace, attempt, approval, approval_sha, state
+):
+    from .deep_audit_io import local_file
+
+    patch_rel = f".factory/repair-attempts/{approval_sha}/candidate.patch"
+    patch = local_file(workspace, patch_rel).read_bytes()
+    if hashlib.sha256(patch).hexdigest() != approval["patch_sha256"]:
+        raise PRAssuranceError("E_REPAIR_PATCH_DRIFT", "attempt patch changed")
+    expected = {
+        (stage, check["id"]): _expected_recovery_check(stage, check)
+        for stage in ("baseline", "repaired")
+        for check in approval["tool_contract"]["checks"]
+    }
+    rows = state.get("checks")
+    if not isinstance(rows, list) or len(rows) != len(expected):
+        raise PRAssuranceError(
+            "E_REPAIR_CHECK_EVIDENCE", "attempt checks are incomplete"
+        )
+    return _verify_recovery_check_logs(workspace, approval_sha, expected, rows)
+
+
+def _expected_recovery_check(stage, check):
+    failing = stage == "baseline" or check["kind"] == "negative"
+    return {
+        "log": f"{stage}-{check['id']}.log",
+        "expected": "failure" if failing else "success",
+        "exit_code": check["failure"]["exit_code"] if failing else 0,
+        "signature": check["failure"]["signature"] if failing else None,
+    }
+
+
+def _verify_recovery_check_logs(workspace, approval_sha, expected, rows):
+    observed, log_hashes, total = set(), [], 0
+    for row in rows:
+        key, name, actual, size = _recovery_check_log(
+            workspace, approval_sha, expected, row
+        )
+        if key in observed:
+            raise PRAssuranceError(
+                "E_REPAIR_CHECK_EVIDENCE", "attempt checks are duplicated"
+            )
+        total += size
+        if size > 2_000_000 or total > 32_000_000:
+            raise PRAssuranceError(
+                "E_REPAIR_CHECK_EVIDENCE", "attempt check logs exceed limits"
+            )
+        observed.add(key)
+        log_hashes.append(actual)
+    if observed != set(expected):
+        raise PRAssuranceError(
+            "E_REPAIR_CHECK_EVIDENCE", "attempt checks are incomplete"
+        )
+    return sorted(log_hashes)
+
+
+def _recovery_check_log(workspace, approval_sha, expected, row):
+    from .deep_audit_io import local_file
+
+    if not isinstance(row, dict):
+        raise PRAssuranceError("E_REPAIR_CHECK_EVIDENCE", "attempt check is invalid")
+    key = (row.get("stage"), row.get("check_id"))
+    if key not in expected or not _recovery_check_record_matches(row, expected[key]):
+        raise PRAssuranceError("E_REPAIR_CHECK_EVIDENCE", "attempt check is invalid")
+    name = expected[key]["log"]
+    path = local_file(workspace, f".factory/repair-attempts/{approval_sha}/{name}")
+    size = path.stat().st_size
+    if size > 2_000_000:
+        raise PRAssuranceError(
+            "E_REPAIR_CHECK_EVIDENCE", "attempt check log exceeds limit"
+        )
+    raw = path.read_bytes()
+    actual = hashlib.sha256(raw).hexdigest()
+    if actual != row["log_sha256"] or not _expected_check_signature(raw, expected[key]):
+        raise PRAssuranceError("E_REPAIR_CHECK_EVIDENCE", "attempt check log changed")
+    return key, name, actual, size
+
+
+def _recovery_check_record_matches(row, expected):
+    return (
+        row.get("result") == "PASS"
+        and row.get("expected") == expected["expected"]
+        and row.get("exit_code") == expected["exit_code"]
+        and row.get("log") == expected["log"]
+        and _is_digest(row.get("log_sha256"))
+        and row.get("process_cleanup_confirmed") is True
+        and row.get("container_cleanup_confirmed") is True
+        and row.get("worktree_unchanged") is True
+    )
+
+
+def _expected_check_signature(raw, expected):
+    signature = expected["signature"]
+    return signature is None or signature.encode("utf-8") in raw
+
+
+def _require_recovery_cleanup(workspace, attempt, approval):
+    from .repair_sandbox import _clean_base, _git
+
+    execution = attempt / "execution"
+    if _recovery_path_present(execution):
+        raise PRAssuranceError("E_REPAIR_CLEANUP", "attempt worktree remains")
+    worktrees = _git(workspace, ["worktree", "list", "--porcelain"])
+    path_text = str(execution.resolve()).replace("\\", "/").casefold()
+    output = bytes(worktrees.get("stdout", b"")).decode("utf-8", errors="replace")
+    registered_paths = _registered_worktree_paths(output)
+    if not worktrees.get("ok") or path_text in registered_paths:
+        raise PRAssuranceError(
+            "E_REPAIR_CLEANUP", "attempt worktree is still registered"
+        )
+    _clean_base(workspace, approval["base_commit"])
+
+
+def _registered_worktree_paths(output):
+    paths = set()
+    for line in output.splitlines():
+        if line.startswith("worktree "):
+            paths.add(str(Path(line[9:]).resolve()).replace("\\", "/").casefold())
+    return paths
+
+
+def _recovery_path_present(path):
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _is_digest(value):
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def _safe_recovery_code(exc):
+    code = getattr(exc, "code", "")
+    return (
+        code
+        if isinstance(code, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{1,79}", code)
+        else "E_REPAIR_RECOVERY_INVALID"
+    )
+
+
 @dataclass(frozen=True)
 class HostedConfig:
     """Secret-bearing hosted configuration loaded by the deployment boundary."""
@@ -435,6 +666,14 @@ class HostedPRAssuranceService:
     def _dispatch_registered_repair(
         self, principal, current, resolver, tenant_id, repair_id
     ):
+        with self.control.hosted_repair_session_lock(tenant_id, repair_id):
+            return self._dispatch_registered_repair_locked(
+                principal, current, resolver, tenant_id, repair_id
+            )
+
+    def _dispatch_registered_repair_locked(
+        self, principal, current, resolver, tenant_id, repair_id
+    ):
         target, workspace, approval = self._registered_repair_inputs(
             current, tenant_id, repair_id
         )
@@ -492,6 +731,111 @@ class HostedPRAssuranceService:
         if binding != target["binding"]:
             raise PRAssuranceError("E_REPAIR_CHANGED", "registered repair changed")
         return target, workspace, approval
+
+    def reconcile_registered_repair(
+        self, token: str, tenant_id: str, repair_id: str, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Inspect an interrupted dispatch as a current tenant admin; never rerun it."""
+        if body != {}:
+            raise PRAssuranceError("E_REPAIR_BODY", "request body must be empty")
+        _principal, current, resolver = self._repair_context(
+            token, tenant_id, require_admin=True
+        )
+        from .control_plane import authorize
+
+        authorize(current, "repair.execute", tenant_id)
+        with self.control.hosted_repair_session_lock(tenant_id, repair_id):
+            return self._reconcile_registered_repair_locked(
+                current, resolver, tenant_id, repair_id
+            )
+
+    def _reconcile_registered_repair_locked(
+        self, current, resolver, tenant_id, repair_id
+    ):
+        target = self.control.get_hosted_repair(tenant_id, repair_id)
+        previous = target.get("recovery")
+        if previous is not None:
+            if previous.get("repair_id") != repair_id:
+                raise PRAssuranceError(
+                    "E_REPAIR_REGISTRY", "repair recovery record is invalid"
+                )
+            return previous
+        if target["status"] != "executing":
+            raise PRAssuranceError(
+                "E_REPAIR_RECOVERY_STATE", "repair is not awaiting recovery"
+            )
+        try:
+            outcome = self._inspect_repair_recovery(
+                target, resolver, tenant_id, repair_id
+            )
+        except Exception as exc:
+            if getattr(exc, "code", "").startswith("E_DATABASE"):
+                raise
+            reason = _safe_recovery_code(exc)
+            refusal_sha = hashlib.sha256(
+                canonical_json(
+                    {
+                        "binding_sha256": hashlib.sha256(
+                            canonical_json(target["binding"])
+                        ).hexdigest(),
+                        "reason_code": reason,
+                        "status": "executing",
+                    }
+                )
+            ).hexdigest()
+            raise PRAssuranceError(
+                "E_REPAIR_RECOVERY_PENDING",
+                f"executor stop is unverified; repair remains executing; "
+                f"evidence review required ({reason}, {refusal_sha})",
+            )
+        return self.control.reconcile_hosted_repair(
+            tenant_id, repair_id, actor=current.subject, recovery=outcome
+        )
+
+    def _inspect_repair_recovery(self, target, resolver, tenant_id, repair_id):
+        workspace = _trusted_repair_path(
+            self.repair_root, target["workspace_path"], directory=True
+        )
+        approval = _trusted_repair_path(
+            workspace, target["approval_path"], directory=False
+        )
+        binding = _repair_dispatch_binding_or_error(
+            workspace, approval, tenant_id, target["requester"]
+        )
+        if binding != target["binding"]:
+            raise PRAssuranceError("E_REPAIR_CHANGED", "registered repair changed")
+        self._verify_recovery_approval(target, resolver, tenant_id, binding)
+        attempt_sha, facts = _recovery_attempt_evidence(workspace, approval, binding)
+        return _recovery_result(
+            repair_id,
+            "completed",
+            "reconciled_completed",
+            "REPAIR_RECOVERED_VERIFIED",
+            attempt_sha,
+            facts,
+        )
+
+    def _verify_recovery_approval(self, target, resolver, tenant_id, binding):
+        requester = resolver(target["requester"], tenant_id)
+        if (
+            not isinstance(requester, Principal)
+            or requester.subject != target["requester"]
+            or requester.tenant_id != tenant_id
+        ):
+            raise ControlPlaneError(
+                "E_IDENTITY_REQUIRED", "current repair requester identity differs"
+            )
+        from .control_plane import authorize
+
+        authorize(requester, "repair.execute", tenant_id)
+        verifier = self.control.workflow_approval_verifier(
+            requester,
+            tenant_id,
+            target["workflow_approval_id"],
+            resolve_principal=resolver,
+            require_requester=True,
+        )
+        verifier(binding)
 
     def _emit(self, operation: str, **fields: Any) -> None:
         allowed = {
@@ -791,6 +1135,7 @@ class HostedPRAssuranceAPI:
             self._webhook_route,
             self._approval_route,
             self._repair_execute_route,
+            self._repair_reconcile_route,
             self._installation_callback_route,
             self._tenant_create_route,
         ):
@@ -821,6 +1166,32 @@ class HostedPRAssuranceAPI:
             start_response,
             "200 OK",
             self.service.execute_registered_repair(
+                _bearer(environ), path[2], path[4], body
+            ),
+        )
+
+    def _repair_reconcile_route(
+        self,
+        method: str,
+        path: list[str],
+        environ: dict[str, Any],
+        start_response: Callable,
+    ) -> list[bytes] | None:
+        if (
+            method != "POST"
+            or len(path) != 6
+            or path[:2] != ["v1", "tenants"]
+            or path[3] != "repairs"
+            or path[5] != "reconcile"
+        ):
+            return None
+        body = _json_body(environ)
+        if body != {}:
+            raise PRAssuranceError("E_REPAIR_BODY", "request body must be empty")
+        return _finish(
+            start_response,
+            "200 OK",
+            self.service.reconcile_registered_repair(
                 _bearer(environ), path[2], path[4], body
             ),
         )
@@ -1053,6 +1424,10 @@ def _status_for(code: str) -> str:
         "E_REPAIR_EXISTS",
         "E_REPAIR_REPLAY",
         "E_REPAIR_CHANGED",
+        "E_REPAIR_BUSY",
+        "E_REPAIR_RECOVERY_STATE",
+        "E_REPAIR_RECOVERY_CONFLICT",
+        "E_REPAIR_RECOVERY_PENDING",
     }:
         return "409 Conflict"
     if code in {"E_INSTALLATION_STATE", "E_INSTALLATION_TENANT", "E_TENANT_CONFLICT"}:

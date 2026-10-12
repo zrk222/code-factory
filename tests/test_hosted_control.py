@@ -18,6 +18,8 @@ from factoryline.hosted_api import (
     HostedConfig,
     HostedPRAssuranceService,
     _trusted_repair_path,
+    _verify_recovery_check_logs,
+    _require_terminal_recovery_state,
     create_hosted_app,
 )
 from factoryline.hosted_control import (
@@ -191,6 +193,19 @@ class _HostedRepairRouteService:
             "status": "completed",
         }
 
+    def reconcile_registered_repair(self, token, tenant, repair_id, body):
+        self.calls.append((token, tenant, repair_id, body, "reconcile"))
+        return {
+            "schema": "factory.hosted.repair-recovery.v1",
+            "repair_id": repair_id,
+            "status": "failed",
+            "recovery_status": "interrupted",
+            "reason_code": "REPAIR_ATTEMPT_MISSING",
+            "attempt_sha256": None,
+            "evidence_sha256": "a" * 64,
+            "recovery_sha256": "b" * 64,
+        }
+
     def _emit(self, *_args, **_kwargs):
         return None
 
@@ -237,6 +252,272 @@ def test_hosted_repair_route_rejects_extra_fields_and_missing_bearer():
     )
     assert status == "401 Unauthorized"
     assert payload["error"]["code"] == "E_AUTH_REQUIRED"
+
+
+def test_hosted_repair_reconcile_route_uses_bearer_and_empty_body():
+    service = _HostedRepairRouteService()
+    app = HostedPRAssuranceAPI(service)
+    status, payload = _hosted_repair_call(
+        app,
+        path="/v1/tenants/acme/repairs/opaqueRepairId_123456/reconcile",
+        body=b"{}",
+    )
+    assert status == "200 OK"
+    assert payload["recovery_status"] == "interrupted"
+    assert service.calls == [
+        ("token", "acme", "opaqueRepairId_123456", {}, "reconcile")
+    ]
+
+
+def test_hosted_repair_reconcile_rejects_nonempty_body():
+    service = _HostedRepairRouteService()
+    status, payload = _hosted_repair_call(
+        HostedPRAssuranceAPI(service),
+        path="/v1/tenants/acme/repairs/opaqueRepairId_123456/reconcile",
+        body=b'{"retry":true}',
+    )
+    assert status == "400 Bad Request"
+    assert payload["error"]["code"] == "E_REPAIR_BODY"
+    assert service.calls == []
+
+
+def _recovery_registry(binding, *, busy=False):
+    class Registry:
+        def __init__(self):
+            self.target = {
+                "workspace_path": "workspace",
+                "approval_path": "approval.json",
+                "workflow_approval_id": "workflow_12345678",
+                "requester": "repair-operator",
+                "binding": binding,
+                "binding_sha256": "a" * 64,
+                "status": "executing",
+                "recovery": None,
+            }
+            self.audits = 0
+
+        @contextmanager
+        def hosted_repair_session_lock(self, *_args):
+            if busy:
+                raise PRAssuranceError("E_REPAIR_BUSY", "dispatch is active")
+            yield
+
+        def get_hosted_repair(self, _tenant, _repair_id):
+            return self.target
+
+        def workflow_approval_verifier(self, *_args, **_kwargs):
+            def verify(expected):
+                assert expected == binding
+                return expected
+
+            return verify
+
+        def reconcile_hosted_repair(self, _tenant, repair_id, *, actor, recovery):
+            assert actor == "tenant-admin"
+            if self.target["recovery"] is not None:
+                assert self.target["recovery"] == recovery
+                return recovery
+            self.target["status"] = recovery["status"]
+            self.target["recovery"] = recovery
+            self.audits += 1
+            return recovery
+
+    return Registry()
+
+
+def test_registered_repair_recovery_reconciles_verified_journal_without_executor(
+    tmp_path: Path, monkeypatch
+):
+    import factoryline.hosted_api as api
+
+    binding = {
+        "schema": "factory.repair.dispatch.v1",
+        "repair_approval_sha256": "a" * 64,
+    }
+    root = tmp_path / "repair-root"
+    workspace = root / "workspace"
+    workspace.mkdir(parents=True)
+    approval = workspace / "approval.json"
+    approval.write_text("{}", encoding="utf-8")
+    admin = Principal("tenant-admin", "acme", ("admin",))
+    operator = Principal("repair-operator", "acme", ("operator",))
+    registry = _recovery_registry(binding)
+    service = object.__new__(HostedPRAssuranceService)
+    service.control = registry
+    service.repair_root = root
+    service.current_principal_resolver = lambda subject, tenant: {
+        admin.subject: admin,
+        operator.subject: operator,
+    }.get(subject)
+    service.authenticate = lambda _token: (admin, {"sub": admin.subject}, None)
+    monkeypatch.setattr(api, "_repair_dispatch_binding_or_error", lambda *_a: binding)
+    monkeypatch.setattr(
+        "factoryline.repair_sandbox.execute_workflow_approved_repair",
+        lambda *_a, **_kw: pytest.fail("recovery must never execute the repair"),
+    )
+    monkeypatch.setattr(
+        api,
+        "_recovery_attempt_evidence",
+        lambda *_a: ("c" * 64, {"journal_sha256": "c" * 64}),
+    )
+    first = service.reconcile_registered_repair(
+        "admin-token", "acme", "opaqueRepairId_123456", {}
+    )
+    second = service.reconcile_registered_repair(
+        "admin-token", "acme", "opaqueRepairId_123456", {}
+    )
+    assert first == second
+    assert first["status"] == "completed"
+    assert registry.audits == 1
+    assert registry.target["status"] == "completed"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        PRAssuranceError("E_REPAIR_PATCH_DRIFT", "patch changed"),
+        PRAssuranceError("E_REPAIR_RECOVERY_INCOMPLETE", "attempt is running"),
+        FileNotFoundError("missing attempt"),
+        RuntimeError("unknown evidence failure"),
+    ],
+)
+def test_registered_repair_recovery_refuses_unverified_evidence_without_mutation(
+    tmp_path: Path, monkeypatch, failure
+):
+    import factoryline.hosted_api as api
+
+    binding = {
+        "schema": "factory.repair.dispatch.v1",
+        "repair_approval_sha256": "a" * 64,
+    }
+    root = tmp_path / "repair-root"
+    workspace = root / "workspace"
+    workspace.mkdir(parents=True)
+    (workspace / "approval.json").write_text("{}", encoding="utf-8")
+    admin = Principal("tenant-admin", "acme", ("admin",))
+    operator = Principal("repair-operator", "acme", ("operator",))
+    registry = _recovery_registry(binding)
+    service = object.__new__(HostedPRAssuranceService)
+    service.control = registry
+    service.repair_root = root
+    service.current_principal_resolver = lambda subject, tenant: {
+        admin.subject: admin,
+        operator.subject: operator,
+    }.get(subject)
+    service.authenticate = lambda _token: (admin, {"sub": admin.subject}, None)
+    monkeypatch.setattr(api, "_repair_dispatch_binding_or_error", lambda *_a: binding)
+
+    def invalid_evidence(*_args):
+        raise failure
+
+    monkeypatch.setattr(api, "_recovery_attempt_evidence", invalid_evidence)
+    with pytest.raises(PRAssuranceError) as refused:
+        service.reconcile_registered_repair(
+            "admin-token", "acme", "opaqueRepairId_123456", {}
+        )
+    assert refused.value.code == "E_REPAIR_RECOVERY_PENDING"
+    assert "E_REPAIR_RECOVERY_PENDING" == refused.value.code
+    assert (
+        "E_REPAIR_PATCH_DRIFT" in refused.value.message
+        or "E_REPAIR_RECOVERY_INCOMPLETE" in refused.value.message
+        or "E_REPAIR_RECOVERY_INVALID" in refused.value.message
+    )
+    assert len(refused.value.message.rsplit(" ", 1)[-1]) == 65
+    assert registry.target["status"] == "executing"
+    assert registry.target["recovery"] is None
+    assert registry.audits == 0
+
+
+def test_recovery_check_log_tampering_is_rejected(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    log = workspace / ".factory" / "repair-attempts" / ("a" * 64)
+    log.mkdir(parents=True)
+    path = log / "repaired-check.log"
+    path.write_bytes(b"original")
+    row = {
+        "stage": "repaired",
+        "check_id": "check",
+        "result": "PASS",
+        "expected": "success",
+        "exit_code": 0,
+        "log": "repaired-check.log",
+        "log_sha256": __import__("hashlib").sha256(b"original").hexdigest(),
+        "process_cleanup_confirmed": True,
+        "container_cleanup_confirmed": True,
+        "worktree_unchanged": True,
+    }
+    expected = {
+        ("repaired", "check"): {
+            "log": "repaired-check.log",
+            "expected": "success",
+            "exit_code": 0,
+            "signature": None,
+        }
+    }
+    assert _verify_recovery_check_logs(workspace, "a" * 64, expected, [row])
+    row["container_cleanup_confirmed"] = False
+    with pytest.raises(PRAssuranceError) as unclean:
+        _verify_recovery_check_logs(workspace, "a" * 64, expected, [row])
+    assert unclean.value.code == "E_REPAIR_CHECK_EVIDENCE"
+    row["container_cleanup_confirmed"] = True
+    path.write_bytes(b"changed")
+    with pytest.raises(PRAssuranceError) as error:
+        _verify_recovery_check_logs(workspace, "a" * 64, expected, [row])
+    assert error.value.code == "E_REPAIR_CHECK_EVIDENCE"
+
+
+def test_recovery_requires_terminal_attempt_and_confirmed_cleanup():
+    state = {
+        "approval_sha256": "a" * 64,
+        "status": "VERIFIED",
+        "phase": "VERIFIED",
+        "origin_audit": None,
+        "candidate_before_sha256": None,
+        "cleanup_confirmed": True,
+        "primary_checkout_unchanged": True,
+    }
+    assert _require_terminal_recovery_state(state, "a" * 64, None) is None
+    state["candidate_after_sha256"] = "b" * 64
+    with pytest.raises(PRAssuranceError) as unexpected_candidate:
+        _require_terminal_recovery_state(state, "a" * 64, None)
+    assert unexpected_candidate.value.code == "E_REPAIR_RECOVERY_INCOMPLETE"
+    state.pop("candidate_after_sha256")
+    state["phase"] = "PATCH_APPLY"
+    with pytest.raises(PRAssuranceError) as incomplete:
+        _require_terminal_recovery_state(state, "a" * 64, None)
+    assert incomplete.value.code == "E_REPAIR_RECOVERY_INCOMPLETE"
+
+
+def test_recovery_cleanup_normalizes_windows_worktree_paths():
+    from factoryline.hosted_api import _registered_worktree_paths
+
+    paths = _registered_worktree_paths(
+        "worktree C:\\repo\\.factory\\repair\\execution\n"
+    )
+    assert "c:/repo/.factory/repair/execution" in paths
+
+
+def test_registered_repair_recovery_refuses_while_dispatch_lock_is_held(
+    tmp_path: Path,
+):
+    binding = {
+        "schema": "factory.repair.dispatch.v1",
+        "repair_approval_sha256": "a" * 64,
+    }
+    admin = Principal("tenant-admin", "acme", ("admin",))
+    registry = _recovery_registry(binding, busy=True)
+    service = object.__new__(HostedPRAssuranceService)
+    service.control = registry
+    service.repair_root = tmp_path
+    service.current_principal_resolver = lambda subject, tenant: admin
+    service.authenticate = lambda _token: (admin, {"sub": admin.subject}, None)
+    with pytest.raises(PRAssuranceError) as busy:
+        service.reconcile_registered_repair(
+            "admin-token", "acme", "opaqueRepairId_123456", {}
+        )
+    assert busy.value.code == "E_REPAIR_BUSY"
+    assert registry.audits == 0
 
 
 def test_trusted_repair_path_rejects_escape_and_symlink(tmp_path: Path):
@@ -312,6 +593,10 @@ def test_registered_dispatch_rechecks_binding_and_scrubs_executor_paths(
         def get_hosted_repair(self, _tenant, _repair_id):
             return self.target
 
+        @contextmanager
+        def hosted_repair_session_lock(self, *_args):
+            yield
+
         def claim_hosted_repair(self, *_args):
             self.claimed = True
 
@@ -381,6 +666,10 @@ def test_hosted_repair_preflight_error_is_redacted_before_claim(tmp_path, monkey
                 "requester": "requester",
                 "binding": binding,
             }
+
+        @contextmanager
+        def hosted_repair_session_lock(self, *_args):
+            yield
 
         def claim_hosted_repair(self, *_args):
             self.claimed = True

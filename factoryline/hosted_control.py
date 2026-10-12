@@ -33,6 +33,85 @@ PURPOSE_RE = re.compile(r"[a-z][a-z0-9_]{1,62}\Z")
 ENV_REFERENCE_RE = re.compile(r"env://([A-Z][A-Z0-9_]{1,126})\Z")
 ALLOWED_ROLES = frozenset({"viewer", "operator", "approver", "admin"})
 INSTALLATION_STATE_SECONDS = 600
+
+
+def _hosted_repair_lock_key(tenant_id: str, repair_id: str) -> tuple[int, int]:
+    material = f"factory.hosted.repair.lock.v1\0{tenant_id}\0{repair_id}".encode()
+    digest = hashlib.sha256(material).digest()
+    return (
+        int.from_bytes(digest[:4], "big", signed=True),
+        int.from_bytes(digest[4:8], "big", signed=True),
+    )
+
+
+def _valid_repair_recovery(value: object) -> bool:
+    if not isinstance(value, dict) or set(value) != _REPAIR_RECOVERY_FIELDS:
+        return False
+    return (
+        _valid_repair_recovery_identity(value)
+        and _valid_repair_recovery_evidence(value)
+        and _valid_repair_recovery_digest(value)
+    )
+
+
+_REPAIR_RECOVERY_FIELDS = frozenset(
+    {
+        "schema",
+        "repair_id",
+        "status",
+        "recovery_status",
+        "reason_code",
+        "attempt_sha256",
+        "evidence_sha256",
+        "recovery_sha256",
+    }
+)
+
+
+def _valid_repair_recovery_identity(value: dict[str, Any]) -> bool:
+    return (
+        value.get("schema") == "factory.hosted.repair-recovery.v1"
+        and isinstance(value.get("repair_id"), str)
+        and re.fullmatch(r"[A-Za-z0-9_-]{16,96}", value["repair_id"]) is not None
+        and re.fullmatch(r"[A-Z][A-Z0-9_]{1,79}", str(value.get("reason_code", "")))
+        is not None
+    )
+
+
+def _valid_repair_recovery_evidence(value: dict[str, Any]) -> bool:
+    status = value.get("status")
+    recovery_status = value.get("recovery_status")
+    attempt_sha = value.get("attempt_sha256")
+    return (
+        isinstance(status, str)
+        and status in {"completed", "failed"}
+        and isinstance(recovery_status, str)
+        and recovery_status in {"reconciled_completed", "interrupted"}
+        and (
+            (status == "failed" and attempt_sha is None)
+            or (
+                isinstance(attempt_sha, str)
+                and re.fullmatch(r"[0-9a-f]{64}", attempt_sha) is not None
+            )
+        )
+        and re.fullmatch(r"[0-9a-f]{64}", str(value.get("evidence_sha256", "")))
+        is not None
+        and (value["status"], value["recovery_status"])
+        in {("completed", "reconciled_completed"), ("failed", "interrupted")}
+    )
+
+
+def _valid_repair_recovery_digest(value: dict[str, Any]) -> bool:
+    core = {key: item for key, item in value.items() if key != "recovery_sha256"}
+    return (
+        value.get("recovery_sha256") == hashlib.sha256(canonical_json(core)).hexdigest()
+    )
+
+
+def _repair_recovery_valid_for(recovery: dict[str, Any], repair_id: str) -> bool:
+    return _valid_repair_recovery(recovery) and recovery["repair_id"] == repair_id
+
+
 WORKFLOW_EVIDENCE_COLUMNS = (
     "evidence_id",
     "tenant_id",
@@ -161,8 +240,10 @@ CREATE TABLE IF NOT EXISTS factory_hosted_repairs (
     registered_at TIMESTAMPTZ NOT NULL,
     claimed_at TIMESTAMPTZ,
     finished_at TIMESTAMPTZ,
+    recovery_json JSONB,
     PRIMARY KEY (tenant_id, repair_id)
 );
+ALTER TABLE factory_hosted_repairs ADD COLUMN IF NOT EXISTS recovery_json JSONB;
 CREATE INDEX IF NOT EXISTS factory_admin_audit_tenant_sequence
   ON factory_admin_audit(tenant_id, sequence);
 CREATE INDEX IF NOT EXISTS factory_workflow_evidence_tenant_created
@@ -376,6 +457,43 @@ class PostgresControlStore:
             raise PRAssuranceError(
                 "E_DATABASE", "hosted workflow operation failed"
             ) from exc
+
+    @contextmanager
+    def hosted_repair_session_lock(self, tenant_id: str, repair_id: str):
+        """Hold the shared dispatch/reconcile lock until this context exits."""
+        key = _hosted_repair_lock_key(tenant_id, repair_id)
+        db = None
+        acquired = False
+        try:
+            db = self.assurance_store.connect(self.assurance_store.dsn)
+            with db.cursor() as cursor:
+                cursor.execute("SELECT pg_try_advisory_lock(%s,%s)", key)
+                acquired = bool(cursor.fetchone()[0])
+            db.commit()
+        except Exception as exc:
+            if db is not None:
+                db.close()
+            raise PRAssuranceError(
+                "E_DATABASE", "repair execution guard is unavailable"
+            ) from exc
+        if not acquired:
+            db.close()
+            raise PRAssuranceError(
+                "E_REPAIR_BUSY", "repair execution is active or guarded"
+            )
+        try:
+            yield
+        finally:
+            try:
+                with db.cursor() as cursor:
+                    cursor.execute("SELECT pg_advisory_unlock(%s,%s)", key)
+                    if cursor.fetchone()[0] is not True:
+                        raise PRAssuranceError(
+                            "E_DATABASE", "repair execution guard was lost"
+                        )
+                db.commit()
+            finally:
+                db.close()
 
     def initialize(self) -> None:
         """Apply the idempotent control schema or raise a classified database refusal."""
@@ -786,7 +904,7 @@ class PostgresControlStore:
         with self._workflow_transaction(tenant_id) as (_db, cursor):
             cursor.execute(
                 """SELECT workspace_path,approval_path,workflow_approval_id,
-                          requester,binding_json,binding_sha256,status
+                          requester,binding_json,binding_sha256,status,recovery_json
                    FROM factory_hosted_repairs
                    WHERE tenant_id=%s AND repair_id=%s""",
                 (tenant_id, repair_id),
@@ -802,6 +920,7 @@ class PostgresControlStore:
             "binding",
             "binding_sha256",
             "status",
+            "recovery",
         )
         value = dict(zip(names, row, strict=True))
         if isinstance(value["binding"], str):
@@ -811,6 +930,19 @@ class PostgresControlStore:
                 raise PRAssuranceError(
                     "E_REPAIR_REGISTRY", "repair registration is invalid"
                 ) from exc
+        if isinstance(value["recovery"], str):
+            try:
+                value["recovery"] = json.loads(value["recovery"])
+            except json.JSONDecodeError as exc:
+                raise PRAssuranceError(
+                    "E_REPAIR_REGISTRY", "repair recovery record is invalid"
+                ) from exc
+        if value["recovery"] is not None and not _valid_repair_recovery(
+            value["recovery"]
+        ):
+            raise PRAssuranceError(
+                "E_REPAIR_REGISTRY", "repair recovery record is invalid"
+            )
         if (
             hashlib.sha256(canonical_json(value["binding"])).hexdigest()
             != value["binding_sha256"]
@@ -819,6 +951,73 @@ class PostgresControlStore:
                 "E_REPAIR_REGISTRY", "repair registration integrity check failed"
             )
         return value
+
+    def reconcile_hosted_repair(
+        self, tenant_id: str, repair_id: str, *, actor: str, recovery: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Atomically store one verified terminal recovery result without dispatch."""
+        if not _repair_recovery_valid_for(recovery, repair_id):
+            raise PRAssuranceError(
+                "E_REPAIR_RECOVERY", "repair recovery result is invalid"
+            )
+        final_status = (
+            "completed"
+            if recovery["recovery_status"] == "reconciled_completed"
+            else "failed"
+        )
+        with self._workflow_transaction(tenant_id) as (_db, cursor):
+            cursor.execute(
+                """SELECT status,recovery_json FROM factory_hosted_repairs
+                   WHERE tenant_id=%s AND repair_id=%s FOR UPDATE""",
+                (tenant_id, repair_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise PRAssuranceError(
+                    "E_REPAIR_NOT_FOUND", "repair target is unavailable"
+                )
+            current_recovery = row[1]
+            if isinstance(current_recovery, str):
+                current_recovery = json.loads(current_recovery)
+            if current_recovery is not None:
+                if current_recovery == recovery:
+                    return current_recovery
+                raise PRAssuranceError(
+                    "E_REPAIR_RECOVERY_CONFLICT", "repair recovery is already sealed"
+                )
+            if row[0] != "executing":
+                raise PRAssuranceError(
+                    "E_REPAIR_RECOVERY_STATE", "repair is not awaiting recovery"
+                )
+            cursor.execute(
+                """UPDATE factory_hosted_repairs
+                   SET status=%s,recovery_json=%s::jsonb,finished_at=%s
+                   WHERE tenant_id=%s AND repair_id=%s AND status='executing'
+                     AND recovery_json IS NULL""",
+                (
+                    final_status,
+                    canonical_json(recovery).decode("utf-8"),
+                    self.clock(),
+                    tenant_id,
+                    repair_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise PRAssuranceError(
+                    "E_REPAIR_RECOVERY_CONFLICT", "repair recovery state changed"
+                )
+            self._audit(
+                cursor,
+                tenant_id=tenant_id,
+                action="repair.dispatch.reconcile",
+                actor=actor,
+                resource_id=repair_id,
+                payload={
+                    "status": final_status,
+                    "recovery_sha256": recovery["recovery_sha256"],
+                },
+            )
+        return recovery
 
     def claim_hosted_repair(
         self, tenant_id: str, repair_id: str, requester: str

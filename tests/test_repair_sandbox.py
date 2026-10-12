@@ -1144,6 +1144,89 @@ def test_repair_attempt_journal_detects_reorder_and_missing_events(
         repair_sandbox.verify_repair_attempt_journal(tmp_path, approval_sha)
 
 
+def _recovery_attempt_case(root, monkeypatch, *, terminal=True):
+    approval = _approval(root, monkeypatch)
+    approval_path = root / approval["path"]
+    binding = repair_dispatch_evidence(
+        root, approval_path, tenant_id="tenant-a", requester="repair-operator"
+    )
+    attempt = root / ".factory" / "repair-attempts" / approval["approval_sha256"]
+    state = repair_sandbox._begin_attempt(attempt, approval["approval_sha256"])
+    approved = json.loads(approval_path.read_text(encoding="utf-8"))
+    patch = (root / approved["patch_path"]).read_bytes()
+    (attempt / "candidate.patch").write_bytes(patch)
+    if terminal:
+        _record_recovery_checks(attempt, state, approved["tool_contract"]["checks"])
+        state.update(
+            status="VERIFIED",
+            phase="VERIFIED",
+            cleanup_confirmed=True,
+            primary_checkout_unchanged=True,
+        )
+        repair_sandbox._persist_attempt(attempt, state)
+    return approval_path, binding, attempt, state
+
+
+def _record_recovery_checks(attempt, state, checks):
+    for stage in ("baseline", "repaired"):
+        state["phase"] = "BASELINE" if stage == "baseline" else "REPAIRED_CHECKS"
+        repair_sandbox._persist_attempt(attempt, state)
+        for check in checks:
+            failing = stage == "baseline" or check["kind"] == "negative"
+            output = check["failure"]["signature"].encode() if failing else b"passed"
+            outcome = {
+                "result": {
+                    "stdout": output,
+                    "stderr": b"",
+                    "exit_code": check["failure"]["exit_code"] if failing else 0,
+                    "cleanup_confirmed": True,
+                    "reason": None,
+                },
+                "container_cleanup_confirmed": True,
+            }
+            assert repair_sandbox._record_check(
+                attempt, state, check, stage, outcome, True
+            )
+
+
+def test_host_recovery_verifies_real_repair_approval_and_journal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from factoryline.hosted_api import _recovery_attempt_evidence
+
+    approval_path, binding, _attempt, state = _recovery_attempt_case(
+        tmp_path, monkeypatch
+    )
+    attempt_sha, facts = _recovery_attempt_evidence(tmp_path, approval_path, binding)
+    assert attempt_sha == state["event_sha256"]
+    assert facts["approval_sha256"] == binding["repair_approval_sha256"]
+    assert facts["approval_file_sha256"] == binding["repair_approval_file_sha256"]
+    assert facts["event_sequence"] == state["event_sequence"]
+
+
+def test_host_recovery_rejects_running_and_semantically_tampered_attempts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from factoryline.hosted_api import _recovery_attempt_evidence
+    from factoryline.pr_assurance import PRAssuranceError
+
+    approval_path, binding, _attempt, _state = _recovery_attempt_case(
+        tmp_path, monkeypatch, terminal=False
+    )
+    with pytest.raises(PRAssuranceError) as running:
+        _recovery_attempt_evidence(tmp_path, approval_path, binding)
+    assert running.value.code == "E_REPAIR_RECOVERY_INCOMPLETE"
+
+    other = tmp_path / "other"
+    other.mkdir()
+    approval_path, binding, attempt, state = _recovery_attempt_case(other, monkeypatch)
+    state["checks"][0]["exit_code"] = 0
+    repair_sandbox._persist_attempt(attempt, state)
+    with pytest.raises(PRAssuranceError) as tampered:
+        _recovery_attempt_evidence(other, approval_path, binding)
+    assert tampered.value.code == "E_REPAIR_CHECK_EVIDENCE"
+
+
 def test_repair_check_receipt_states_expected_result(tmp_path: Path) -> None:
     approval_sha = "b" * 64
     directory = tmp_path / ".factory" / "repair-attempts" / approval_sha

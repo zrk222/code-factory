@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+import hashlib
 import os
 import uuid
 
@@ -288,3 +289,116 @@ def test_postgres_hosted_repair_registry_is_tenant_scoped_immutable_and_single_u
     control.finish_hosted_repair(
         tenant, repair_id, succeeded=True, actor="repair-requester"
     )
+
+
+def test_postgres_hosted_repair_session_lock_blocks_active_reconcile_and_releases():
+    assurance = PostgresAssuranceStore(DSN)
+    control = PostgresControlStore(assurance)
+    control.initialize()
+    tenant = "repair-lock-" + uuid.uuid4().hex[:12]
+    repair_id = "repair_" + uuid.uuid4().hex
+    with control.hosted_repair_session_lock(tenant, repair_id):
+        with pytest.raises(PRAssuranceError) as busy:
+            with control.hosted_repair_session_lock(tenant, repair_id):
+                pytest.fail("second session unexpectedly acquired repair guard")
+        assert busy.value.code == "E_REPAIR_BUSY"
+    with control.hosted_repair_session_lock(tenant, repair_id):
+        pass
+
+
+def _executing_postgres_repair_for_recovery():
+    from factoryline.hosted_api import _recovery_result
+
+    assurance = PostgresAssuranceStore(DSN)
+    assurance.initialize()
+    control = PostgresControlStore(assurance)
+    control.initialize()
+    platform = Principal("recovery-platform", "*", ("platform_admin",))
+    tenant = "repair-recovery-" + uuid.uuid4().hex[:12]
+    control.create_tenant(platform, tenant, "Repair Recovery Test")
+    repair_id = "repair_" + uuid.uuid4().hex
+    binding = {"schema": "factory.repair.dispatch.v1", "candidate_sha256": "a" * 64}
+    control.register_hosted_repair(
+        tenant_id=tenant,
+        repair_id=repair_id,
+        workspace_path="workspace",
+        approval_path="approval.json",
+        workflow_approval_id="workflow_" + uuid.uuid4().hex[:16],
+        requester="repair-requester",
+        binding=binding,
+        registered_by="tenant-admin",
+    )
+    control.claim_hosted_repair(tenant, repair_id, "repair-requester")
+    outcome = _recovery_result(
+        repair_id,
+        "failed",
+        "interrupted",
+        "REPAIR_ATTEMPT_MISSING",
+        None,
+        {"binding_sha256": hashlib.sha256(b"binding").hexdigest()},
+    )
+    return control, tenant, repair_id, outcome
+
+
+def test_postgres_hosted_repair_recovery_rejects_identity_mismatch():
+    control, tenant, repair_id, outcome = _executing_postgres_repair_for_recovery()
+    wrong_id = dict(outcome, repair_id="repair_other_12345678")
+    with pytest.raises(PRAssuranceError) as mismatched:
+        control.reconcile_hosted_repair(
+            tenant, repair_id, actor="tenant-admin", recovery=wrong_id
+        )
+    assert mismatched.value.code == "E_REPAIR_RECOVERY"
+    malformed = dict(outcome, status=[])
+    with pytest.raises(PRAssuranceError) as invalid:
+        control.reconcile_hosted_repair(
+            tenant, repair_id, actor="tenant-admin", recovery=malformed
+        )
+    assert invalid.value.code == "E_REPAIR_RECOVERY"
+
+
+def _assert_postgres_recovery_audit_and_scope(control, tenant, repair_id):
+    assert control.get_hosted_repair(tenant, repair_id)["status"] == "failed"
+    with control._workflow_transaction(tenant) as (_db, cursor):
+        cursor.execute(
+            """SELECT count(*) FROM factory_admin_audit
+               WHERE tenant_id=%s AND action='repair.dispatch.reconcile'
+                 AND resource_id=%s""",
+            (tenant, repair_id),
+        )
+        assert cursor.fetchone()[0] == 1
+    with pytest.raises(PRAssuranceError) as hidden:
+        control.get_hosted_repair(tenant + "-other", repair_id)
+    assert hidden.value.code == "E_REPAIR_NOT_FOUND"
+
+
+def _assert_postgres_recovery_conflict(control, tenant, repair_id):
+    from factoryline.hosted_api import _recovery_result
+
+    changed = _recovery_result(
+        repair_id,
+        "failed",
+        "interrupted",
+        "REPAIR_JOURNAL_INVALID",
+        None,
+        {"binding_sha256": hashlib.sha256(b"different").hexdigest()},
+    )
+    with pytest.raises(PRAssuranceError) as conflict:
+        control.reconcile_hosted_repair(
+            tenant, repair_id, actor="tenant-admin", recovery=changed
+        )
+    assert conflict.value.code == "E_REPAIR_RECOVERY_CONFLICT"
+
+
+def test_postgres_hosted_repair_recovery_is_atomic_idempotent_and_tenant_scoped():
+    control, tenant, repair_id, outcome = _executing_postgres_repair_for_recovery()
+
+    def reconcile():
+        return control.reconcile_hosted_repair(
+            tenant, repair_id, actor="tenant-admin", recovery=outcome
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _index: reconcile(), range(2)))
+    assert results == [outcome, outcome]
+    _assert_postgres_recovery_audit_and_scope(control, tenant, repair_id)
+    _assert_postgres_recovery_conflict(control, tenant, repair_id)
