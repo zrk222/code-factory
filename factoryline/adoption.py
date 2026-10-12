@@ -1295,7 +1295,7 @@ def run_repo_scan(
 
     This is intentionally an honest first verdict: static evidence can block a
     workspace, but a clean result remains incomplete until the project supplies
-    its tenant contract and runtime/test evidence.
+    applicable runtime/test evidence.
     """
     if worker_config is not None and not deep:
         raise ValueError("--worker-config requires --deep")
@@ -1309,6 +1309,22 @@ def run_repo_scan(
         workspace, inventory, deep, worker_config, oracle_options
     )
     state, verdict = _repo_scan_state(deep_audit, static_security, deep, inventory)
+    next_actions = (
+        list(deep_audit["next_actions"])
+        if deep_audit is not None
+        else [
+            "Run applicable workers and bind clean, commit-scoped receipts before treating the result as complete.",
+            "Review every finding and unmeasured lane before making a merge or release decision.",
+        ]
+    )
+    if any(
+        finding.get("code") == "SECURITY_TENANT_READ_UNDECLARED"
+        for finding in static_security.get("findings", [])
+    ):
+        next_actions.insert(
+            0,
+            "Review the observed potential ORM read for tenant scope; if tenant isolation applies, declare it in .factory/tenant-read-contract.json and bind its tenant scope.",
+        )
     result = {
         "schema": "factory.repo-scan.v1",
         "state": state,
@@ -1319,19 +1335,11 @@ def run_repo_scan(
         "evidence_limits": [
             "Inventory and Python AST findings are local observations, not runtime coverage or certification.",
             "The default scan runs bounded Python AST security and quality checks; --deep runs all applicable local audit lanes and reports every unmeasured lane.",
-            "A missing tenant-read contract keeps the Python security lane incomplete even when no static finding is raised.",
+            "Tenant-read guidance follows a potential ORM read and asks whether tenant scope applies; framework imports alone are not a tenant contract.",
             "Tests, dependency analysis, runtime behavior, and deployment behavior require explicit project evidence and are not inferred.",
             "Deep orchestration is not a penetration test, runtime certification, or release approval.",
         ],
-        "next_actions": (
-            deep_audit["next_actions"]
-            if deep_audit is not None
-            else [
-                "Add .factory/tenant-read-contract.json for every tenant-scoped read, or explicitly declare an empty set.",
-                "Run every applicable worker lane and bind clean, commit-scoped receipts before treating the result as complete.",
-                "Review every finding and every unmeasured lane before treating the result as a merge or release decision.",
-            ]
-        ),
+        "next_actions": next_actions,
     }
     if security_error:
         result["static_security_error"] = security_error

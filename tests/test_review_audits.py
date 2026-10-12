@@ -178,6 +178,254 @@ def test_security_scan_keeps_self_checks_and_swallowed_failures_flagged(tmp_path
     assert security_scan(tmp_path)["findings"]
 
 
+def test_url_reserved_character_assignment_is_not_reported_as_a_secret(tmp_path):
+    (tmp_path / "test_url_charset.py").write_text(
+        'USER = PASSWORD = "%!*\'();:@&=+$,/?#[] "\n', encoding="utf-8"
+    )
+    assert not any(
+        finding["code"] == "SECURITY_HARDCODED_SECRET"
+        for finding in security_scan(tmp_path)["findings"]
+    )
+
+
+def test_reserved_alphabet_outside_test_source_remains_a_secret(tmp_path):
+    (tmp_path / "credentials.py").write_text(
+        'PASSWORD = "%!*\'();:@&=+$,/?#[] "\n', encoding="utf-8"
+    )
+    assert any(
+        finding["code"] == "SECURITY_HARDCODED_SECRET"
+        for finding in security_scan(tmp_path)["findings"]
+    )
+
+
+@pytest.mark.parametrize("value", ["!!!!!!!!!!!!", "!@#$%&*()_+"])
+def test_punctuation_only_passwords_remain_secrets(tmp_path, value):
+    (tmp_path / "test_credentials.py").write_text(
+        f"PASSWORD = {value!r}\n", encoding="utf-8"
+    )
+    assert any(
+        finding["code"] == "SECURITY_HARDCODED_SECRET"
+        for finding in security_scan(tmp_path)["findings"]
+    )
+
+
+@pytest.mark.parametrize(
+    "assertion",
+    [
+        "assert_not_called()",
+        "assert_not_awaited()",
+        "assert_awaited()",
+        "assert_awaited_once()",
+    ],
+)
+def test_mock_state_oracle_requires_an_invoked_injected_dependency(tmp_path, assertion):
+    source = (
+        "from unittest.mock import AsyncMock\n"
+        "from starlette.requests import Request\n"
+        "async def test_request():\n"
+        "    send = AsyncMock()\n"
+        "    request = Request({'type': 'http'}, send=send)\n"
+        "    await request.send_early_hints([])\n"
+        f"    send.{assertion}\n"
+    )
+    (tmp_path / "test_request.py").write_text(source, encoding="utf-8")
+    assert not security_scan(tmp_path)["findings"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "send = AsyncMock()\n    send.assert_not_awaited()",
+        "send = AsyncMock()\n    request = Request({'type': 'http'}, send=send)\n"
+        "    if False:\n        await request.send_early_hints([])\n"
+        "    send.assert_not_awaited()",
+        "send = AsyncMock()\n    def unused():\n"
+        "        request = Request({'type': 'http'}, send=send)\n"
+        "        request.send_early_hints([])\n"
+        "    send.assert_not_awaited()",
+    ],
+)
+def test_mock_state_oracle_does_not_credit_unused_or_unreachable_dependencies(
+    tmp_path, body
+):
+    (tmp_path / "test_request.py").write_text(
+        "from unittest.mock import AsyncMock\n"
+        "from starlette.requests import Request\n"
+        "async def test_request():\n    " + body + "\n",
+        encoding="utf-8",
+    )
+    assert any(
+        finding["code"] == "QUALITY_HOLLOW_TEST"
+        for finding in security_scan(tmp_path)["findings"]
+    )
+
+
+def test_callback_oracle_requires_direct_invocation_not_callback_passing(tmp_path):
+    (tmp_path / "test_callback.py").write_text(
+        "def test_direct_callback():\n"
+        "    def callback():\n        assert compute() == 3\n"
+        "    callback()\n"
+        "def test_first_party_invoker():\n"
+        "    def callback():\n        assert compute() == 3\n"
+        "    def invoke(check):\n        check()\n"
+        "    invoke(callback)\n"
+        "def test_conditional_invoker():\n"
+        "    def callback():\n        assert compute() == 3\n"
+        "    def invoke(check):\n        if enabled:\n            check()\n"
+        "    invoke(callback)\n"
+        "def test_swallowed_invoker():\n"
+        "    def callback():\n        assert compute() == 3\n"
+        "    def invoke(check):\n        try:\n            check()\n"
+        "        except AssertionError:\n            pass\n"
+        "    invoke(callback)\n"
+        "def test_unproven_callback():\n"
+        "    def callback():\n        assert compute() == 3\n"
+        "    register(callback)\n",
+        encoding="utf-8",
+    )
+    findings = security_scan(tmp_path)["findings"]
+    hollow = {
+        finding["facts"]["symbol"]
+        for finding in findings
+        if finding["code"] == "QUALITY_HOLLOW_TEST"
+    }
+    assert hollow == {
+        "test_conditional_invoker",
+        "test_swallowed_invoker",
+        "test_unproven_callback",
+    }
+
+
+def test_library_methods_and_pytest_fixtures_are_not_collected_tests(tmp_path):
+    library = tmp_path / "src" / "library.py"
+    library.parent.mkdir()
+    library.write_text(
+        "class Client:\n"
+        "    def test_client(self):\n        pass\n"
+        "    def test_request_context(self):\n        pass\n",
+        encoding="utf-8",
+    )
+    tests = tmp_path / "test_helpers.py"
+    tests.write_text(
+        "import pytest\n@pytest.fixture\ndef test_client_factory():\n    pass\n",
+        encoding="utf-8",
+    )
+    assert not any(
+        finding["code"] == "QUALITY_HOLLOW_TEST"
+        for finding in security_scan(tmp_path)["findings"]
+    )
+
+
+def test_pytest_collects_inherited_test_methods_from_non_test_base(tmp_path):
+    (tmp_path / "test_inherited.py").write_text(
+        "class Base:\n    def test_inherited(self):\n        pass\n"
+        "class TestChild(Base):\n    pass\n",
+        encoding="utf-8",
+    )
+    assert any(
+        finding["code"] == "QUALITY_HOLLOW_TEST"
+        and finding["facts"]["symbol"] == "test_inherited"
+        for finding in security_scan(tmp_path)["findings"]
+    )
+
+
+def test_pytest_custom_collection_pattern_is_respected_and_cache_bound(tmp_path):
+    from factoryline.review_audits import (
+        _oracle_context_cache_clear,
+        _oracle_context_cache_info,
+    )
+
+    _oracle_context_cache_clear()
+    (tmp_path / "check_feature.py").write_text(
+        "def test_empty():\n    pass\n", encoding="utf-8"
+    )
+    assert not any(
+        finding["code"] == "QUALITY_HOLLOW_TEST"
+        for finding in security_scan(tmp_path)["findings"]
+    )
+    misses_before = _oracle_context_cache_info()["misses"]
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\npython_files = check_*.py\n", encoding="utf-8"
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pytest.ini_options]\npython_files = ["ignored_*.py"]\n',
+        encoding="utf-8",
+    )
+    assert any(
+        finding["code"] == "QUALITY_HOLLOW_TEST"
+        for finding in security_scan(tmp_path)["findings"]
+    )
+    assert _oracle_context_cache_info()["misses"] > misses_before
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        "[pytest]\npython_functions = check_*\n",
+        "[pytest\npython_files = test_*.py\n",
+    ],
+)
+def test_unsupported_or_malformed_pytest_collection_config_fails_closed(
+    tmp_path, config
+):
+    from factoryline.review_audits import ReviewAuditError
+
+    (tmp_path / "pytest.ini").write_text(config, encoding="utf-8")
+    with pytest.raises(ReviewAuditError, match="pytest test collection"):
+        security_scan(tmp_path)
+
+
+@pytest.mark.parametrize("filename", ["pytest.toml", ".pytest.toml"])
+def test_toml_pytest_config_file_patterns_are_honored(tmp_path, filename):
+    (tmp_path / filename).write_text(
+        '[pytest]\npython_files = ["check_*.py"]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "check_hollow.py").write_text(
+        "def test_empty():\n    pass\n", encoding="utf-8"
+    )
+    assert any(
+        finding["code"] == "QUALITY_HOLLOW_TEST"
+        for finding in security_scan(tmp_path)["findings"]
+    )
+
+
+def test_dot_pytest_ini_and_native_pyproject_pytest_table_are_honored(tmp_path):
+    (tmp_path / ".pytest.ini").write_text(
+        "[pytest]\npython_files = check_*.py\n", encoding="utf-8"
+    )
+    (tmp_path / "check_hollow.py").write_text(
+        "def test_empty():\n    pass\n", encoding="utf-8"
+    )
+    assert any(
+        finding["code"] == "QUALITY_HOLLOW_TEST"
+        for finding in security_scan(tmp_path)["findings"]
+    )
+    (tmp_path / ".pytest.ini").unlink()
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pytest]\npython_files = ["check_*.py"]\n', encoding="utf-8"
+    )
+    assert any(
+        finding["code"] == "QUALITY_HOLLOW_TEST"
+        for finding in security_scan(tmp_path)["findings"]
+    )
+
+
+@pytest.mark.parametrize("filename", ["pytest.ini", ".pytest.ini"])
+def test_empty_pytest_ini_takes_precedence_over_lower_pyproject(tmp_path, filename):
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pytest]\npython_files = ["check_*.py"]\n', encoding="utf-8"
+    )
+    (tmp_path / filename).write_text("", encoding="utf-8")
+    (tmp_path / "check_hollow.py").write_text(
+        "def test_empty():\n    pass\n", encoding="utf-8"
+    )
+    assert not any(
+        finding["code"] == "QUALITY_HOLLOW_TEST"
+        for finding in security_scan(tmp_path)["findings"]
+    )
+
+
 @pytest.mark.parametrize("library", ["pickle", "dill"])
 def test_security_scan_classifies_test_roundtrip_as_nonblocking(tmp_path, library):
     (tmp_path / "test_roundtrip.py").write_text(
@@ -817,6 +1065,9 @@ def test_oracle_context_cache_invalidates_source_and_configuration_changes(tmp_p
         "def test_type():\n    assert_type(compute(), int)\n",
         encoding="utf-8",
     )
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\npython_files = typing_probe.py\n", encoding="utf-8"
+    )
     unconfigured = security_scan(tmp_path, cache_enabled=True)
     assert unconfigured["finding_counts"].get("QUALITY_HOLLOW_TEST") == 1
     (tmp_path / "pyproject.toml").write_text(
@@ -1117,7 +1368,7 @@ def test_security_evals_kill_all_adversarial_fixtures_and_keep_safe_control_clea
     ],
 )
 def test_security_scan_detects_local_hollow_test_oracles(tmp_path, body):
-    (tmp_path / "case.py").write_text("def test_behavior():\n    " + body + "\n")
+    (tmp_path / "test_case.py").write_text("def test_behavior():\n    " + body + "\n")
     result = security_scan(tmp_path)
     assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
     assert result["findings"][0]["facts"]["symbol"] == "test_behavior"
@@ -1134,7 +1385,7 @@ def test_security_scan_detects_local_hollow_test_oracles(tmp_path, body):
     ],
 )
 def test_security_scan_detects_constant_and_boolean_tautologies(tmp_path, body):
-    (tmp_path / "case.py").write_text("def test_behavior():\n    " + body + "\n")
+    (tmp_path / "test_case.py").write_text("def test_behavior():\n    " + body + "\n")
     result = security_scan(tmp_path)
     assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
 
@@ -1157,7 +1408,7 @@ def test_security_scan_preserves_real_assertions_and_exception_controls(tmp_path
         )
     else:
         source = "def test_behavior():\n    " + body + "\n"
-    (tmp_path / "case.py").write_text(source)
+    (tmp_path / "test_case.py").write_text(source)
     assert security_scan(tmp_path)["findings"] == []
 
 
@@ -1173,12 +1424,12 @@ def test_security_scan_preserves_real_assertions_and_exception_controls(tmp_path
     ],
 )
 def test_security_scan_preserves_runtime_and_branch_rebound_oracles(tmp_path, body):
-    (tmp_path / "case.py").write_text("def test_behavior():\n    " + body + "\n")
+    (tmp_path / "test_case.py").write_text("def test_behavior():\n    " + body + "\n")
     assert security_scan(tmp_path)["findings"] == []
 
 
 def test_security_scan_does_not_use_a_constant_reassigned_after_assertion(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "def test_behavior():\n"
         "    result = 3\n"
         "    assert result == 3\n"
@@ -1205,7 +1456,7 @@ def test_security_scan_does_not_use_a_constant_reassigned_after_assertion(tmp_pa
 def test_security_scan_preserves_python_boolean_operand_semantics(
     tmp_path, body, finding
 ):
-    (tmp_path / "case.py").write_text("def test_behavior():\n    " + body + "\n")
+    (tmp_path / "test_case.py").write_text("def test_behavior():\n    " + body + "\n")
     result = security_scan(tmp_path)
     assert bool(result["findings"]) is finding
 
@@ -1228,14 +1479,14 @@ def test_security_scan_preserves_python_boolean_operand_semantics(
     ],
 )
 def test_security_scan_reports_weak_only_test_oracles(tmp_path, body, reason):
-    (tmp_path / "case.py").write_text("def test_behavior():\n    " + body + "\n")
+    (tmp_path / "test_case.py").write_text("def test_behavior():\n    " + body + "\n")
     result = security_scan(tmp_path)
     assert result["finding_counts"] == {"QUALITY_WEAK_TEST_ORACLE": 1}
     assert reason in result["findings"][0]["message"]
 
 
 def test_security_scan_accepts_local_helper_with_independent_assertion(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "def assert_expected(actual, expected):\n"
         "    assert actual == expected\n\n"
         "def test_behavior():\n"
@@ -1250,7 +1501,7 @@ def test_security_scan_accepts_imported_helper_with_independent_assertion(tmp_pa
         "def assert_expected(actual, expected):\n    assert actual == expected\n",
         encoding="utf-8",
     )
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from helpers import assert_expected\n"
         "def test_behavior():\n"
         "    assert_expected(compute_value(), 4)\n",
@@ -1269,7 +1520,7 @@ def test_security_scan_rejects_imported_helper_that_swallows_assertion(tmp_path)
         "    except AssertionError:\n        return\n",
         encoding="utf-8",
     )
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from helpers import assert_expected\n"
         "def test_behavior():\n    assert_expected(compute(), 4)\n",
         encoding="utf-8",
@@ -1278,7 +1529,7 @@ def test_security_scan_rejects_imported_helper_that_swallows_assertion(tmp_path)
 
 
 def test_security_scan_recognizes_test_named_assertion_helper(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "def test_expected(actual, expected):\n    assert actual == expected\n\n"
         "def test_behavior():\n    test_expected(compute(), 4)\n",
         encoding="utf-8",
@@ -1291,7 +1542,7 @@ def test_security_scan_recognizes_imported_test_named_assertion_helper(tmp_path)
         "def test_expected(actual, expected):\n    assert actual == expected\n",
         encoding="utf-8",
     )
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from helpers import test_expected\n"
         "def test_behavior():\n    test_expected(compute(), 4)\n",
         encoding="utf-8",
@@ -1300,7 +1551,7 @@ def test_security_scan_recognizes_imported_test_named_assertion_helper(tmp_path)
 
 
 def test_security_scan_recognizes_assertion_hidden_by_warning_policy(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import warnings\n"
         "def test_warning():\n"
         "    with warnings.catch_warnings():\n"
@@ -1321,7 +1572,7 @@ def test_security_scan_recognizes_assertion_hidden_by_warning_policy(tmp_path):
     ],
 )
 def test_security_scan_does_not_trust_inactive_warning_filter(tmp_path, filters):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import warnings\n"
         "def test_warning():\n"
         "    with warnings.catch_warnings():\n"
@@ -1333,7 +1584,7 @@ def test_security_scan_does_not_trust_inactive_warning_filter(tmp_path, filters)
 
 
 def test_security_scan_does_not_credit_unrelated_call_after_swallowed_warning(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import warnings\n"
         "def test_warning():\n"
         "    with warnings.catch_warnings():\n"
@@ -1349,7 +1600,7 @@ def test_security_scan_does_not_credit_unrelated_call_after_swallowed_warning(tm
 
 
 def test_security_scan_ignores_manual_raise_after_unconditional_return(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "def test_behavior():\n    return\n    raise AssertionError('unreachable')\n",
         encoding="utf-8",
     )
@@ -1360,7 +1611,7 @@ def test_security_scan_ignores_manual_raise_after_unconditional_return(tmp_path)
     "handler", ["UserWarning", "Warning", "(ValueError, UserWarning)"]
 )
 def test_security_scan_rejects_warning_swallowed_outside_context(tmp_path, handler):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import warnings\ndef test_warning():\n"
         "    try:\n        with warnings.catch_warnings():\n"
         "            warnings.simplefilter('error', UserWarning)\n"
@@ -1381,7 +1632,7 @@ def test_security_scan_rejects_warning_swallowed_outside_context(tmp_path, handl
 def test_security_scan_does_not_execute_nested_warning_filter_syntax(
     tmp_path, hidden_filter
 ):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import warnings\n"
         "def test_warning():\n"
         "    with warnings.catch_warnings():\n"
@@ -1400,7 +1651,7 @@ def test_security_scan_rejects_helper_swallowing_broad_assertion(tmp_path, handl
         f"    except {handler}:\n        pass\n",
         encoding="utf-8",
     )
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from helpers import assert_expected\n"
         "def test_behavior():\n    assert_expected(compute(), 4)\n",
         encoding="utf-8",
@@ -1409,7 +1660,7 @@ def test_security_scan_rejects_helper_swallowing_broad_assertion(tmp_path, handl
 
 
 def test_security_scan_accepts_assertion_reraised_from_handler(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "def test_behavior():\n"
         "    try:\n        assert compute() == 4\n"
         "    except Exception:\n        raise\n",
@@ -1427,7 +1678,7 @@ def test_security_scan_accepts_assertion_reraised_from_handler(tmp_path):
     ],
 )
 def test_security_scan_detects_aliased_exception_catch(tmp_path, imports, handler):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         imports
         + "def test_behavior():\n"
         + "    try:\n        assert compute() == 4\n"
@@ -1447,7 +1698,7 @@ def test_security_scan_detects_aliased_exception_catch(tmp_path, imports, handle
 def test_security_scan_detects_suppress_context_for_assertion(
     tmp_path, imports, suppress
 ):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         imports
         + "def test_behavior():\n"
         + f"    with {suppress}(AssertionError):\n"
@@ -1458,7 +1709,7 @@ def test_security_scan_detects_suppress_context_for_assertion(
 
 
 def test_security_scan_detects_assertion_suppressed_in_finally(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "def test_behavior():\n"
         "    try:\n        assert compute() == 4\n"
         "    finally:\n        return None\n",
@@ -1468,7 +1719,7 @@ def test_security_scan_detects_assertion_suppressed_in_finally(tmp_path):
 
 
 def test_security_scan_accepts_tuple_handler_with_named_reraise(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "def test_behavior():\n"
         "    try:\n        assert compute() == 4\n"
         "    except (AssertionError, ValueError) as error:\n        raise error\n",
@@ -1486,7 +1737,7 @@ def test_security_scan_rejects_assertion_swallowed_by_finally_return(tmp_path):
         "        finally:\n            return\n",
         encoding="utf-8",
     )
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from helpers import assert_expected\n"
         "def test_behavior():\n    assert_expected(compute(), 4)\n",
         encoding="utf-8",
@@ -1502,7 +1753,7 @@ def test_security_scan_rejects_assertion_swallowed_by_finally_return(tmp_path):
     ],
 )
 def test_security_scan_recognizes_conditional_manual_assertion(tmp_path, body):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "def test_behavior():\n    " + body + "\n", encoding="utf-8"
     )
     assert security_scan(tmp_path)["findings"] == []
@@ -1513,8 +1764,8 @@ def test_security_scan_finds_hollow_inherited_test_in_helper_module(tmp_path):
         "class SharedCases:\n    def test_inherited(self):\n        pass\n",
         encoding="utf-8",
     )
-    (tmp_path / "case.py").write_text(
-        "from base import SharedCases\nclass ConcreteCases(SharedCases):\n    pass\n",
+    (tmp_path / "test_case.py").write_text(
+        "from base import SharedCases\nclass TestConcreteCases(SharedCases):\n    pass\n",
         encoding="utf-8",
     )
     result = security_scan(tmp_path)
@@ -1526,7 +1777,7 @@ def test_security_scan_finds_hollow_inherited_test_in_helper_module(tmp_path):
 
 
 def test_security_scan_does_not_trust_assertion_caught_in_nested_try(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "def test_behavior():\n"
         "    try:\n"
         "        if condition:\n            assert compute() == 4\n"
@@ -1537,7 +1788,7 @@ def test_security_scan_does_not_trust_assertion_caught_in_nested_try(tmp_path):
 
 
 def test_security_scan_rejects_builtin_exception_alias_and_finally_return(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from builtins import Exception as Ignore\n"
         "def test_alias():\n"
         "    try:\n        assert compute() == 4\n"
@@ -1553,7 +1804,7 @@ def test_security_scan_rejects_builtin_exception_alias_and_finally_return(tmp_pa
 def test_security_scan_rejects_contextlib_suppress_and_unreachable_manual_raise(
     tmp_path,
 ):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from contextlib import suppress\n"
         "def test_suppress():\n"
         "    with suppress(AssertionError):\n        assert compute() == 4\n\n"
@@ -1569,7 +1820,7 @@ def test_security_scan_does_not_trust_imported_production_function(tmp_path):
         "def render(value):\n    assert value is not None\n    return value\n",
         encoding="utf-8",
     )
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from library import render\n"
         "def test_behavior():\n"
         "    render(compute_value())\n",
@@ -1583,7 +1834,7 @@ def test_security_scan_does_not_trust_imported_noop_helper(tmp_path):
         "def assert_expected(actual, expected):\n    pass\n",
         encoding="utf-8",
     )
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from helpers import assert_expected\n"
         "def test_behavior():\n"
         "    assert_expected(compute_value(), 4)\n",
@@ -1600,7 +1851,7 @@ def test_security_scan_accepts_testcase_mixin_assertions(tmp_path):
         "        self.assertEqual(compute_value(), 4)\n",
         encoding="utf-8",
     )
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import unittest\n"
         "from helpers import SharedMixin\n"
         "class Case(unittest.TestCase, SharedMixin):\n"
@@ -1617,7 +1868,7 @@ def test_security_scan_accepts_aliased_indirect_testcase_mixin(tmp_path):
         "        self.assertEqual(compute_value(), 4)\n",
         encoding="utf-8",
     )
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import unittest as ut\n"
         "from helpers import SharedMixin\n"
         "class Base(ut.TestCase):\n"
@@ -1637,7 +1888,7 @@ def test_security_scan_resolves_assertion_submodule_imports(tmp_path):
         "def assert_expected(actual, expected):\n    assert actual == expected\n",
         encoding="utf-8",
     )
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from checks import assertions\n"
         "def test_behavior():\n"
         "    assertions.assert_expected(compute_value(), 4)\n",
@@ -1654,7 +1905,7 @@ def test_security_scan_resolves_relative_assertion_submodule_imports(tmp_path):
         "def assert_expected(actual, expected):\n    assert actual == expected\n",
         encoding="utf-8",
     )
-    (package / "case.py").write_text(
+    (package / "test_case.py").write_text(
         "from . import assertions\n"
         "def test_behavior():\n"
         "    assertions.assert_expected(compute_value(), 4)\n",
@@ -1668,7 +1919,7 @@ def test_security_scan_does_not_trust_imported_weak_helper(tmp_path):
         "def assert_present(value):\n    assert value is not None\n",
         encoding="utf-8",
     )
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from helpers import assert_present\n"
         "def test_behavior():\n"
         "    assert_present(compute_value())\n",
@@ -1679,7 +1930,7 @@ def test_security_scan_does_not_trust_imported_weak_helper(tmp_path):
 
 
 def test_security_scan_ignores_performance_benchmark_oracles(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from pytest_codspeed import BenchmarkFixture\n"
         "def test_speed(benchmark: BenchmarkFixture):\n"
         "    benchmark(compute_value)\n",
@@ -1689,7 +1940,7 @@ def test_security_scan_ignores_performance_benchmark_oracles(tmp_path):
 
 
 def test_security_scan_ignores_call_form_benchmark_marker(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from pytest import mark as marks\n"
         "@marks.benchmark(group='throughput')\n"
         "def test_speed(benchmark):\n"
@@ -1700,7 +1951,7 @@ def test_security_scan_ignores_call_form_benchmark_marker(tmp_path):
 
 
 def test_security_scan_ignores_pedantic_benchmark_fixture(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from pytest_benchmark.fixture import BenchmarkFixture\n"
         "def test_speed(benchmark: BenchmarkFixture):\n"
         "    benchmark.pedantic(compute_value, iterations=5, rounds=2)\n",
@@ -1710,7 +1961,7 @@ def test_security_scan_ignores_pedantic_benchmark_fixture(tmp_path):
 
 
 def test_security_scan_ignores_decorator_form_benchmark_with_marker(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import pytest\n"
         "@pytest.mark.benchmark(group='throughput')\n"
         "def test_speed(benchmark):\n"
@@ -1723,7 +1974,7 @@ def test_security_scan_ignores_decorator_form_benchmark_with_marker(tmp_path):
 
 
 def test_security_scan_ignores_decorator_form_benchmark_with_typed_fixture(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from pytest_benchmark.fixture import BenchmarkFixture\n"
         "def test_speed(benchmark: BenchmarkFixture):\n"
         "    @benchmark\n"
@@ -1772,7 +2023,7 @@ def test_security_scan_ignores_decorator_form_benchmark_with_typed_fixture(tmp_p
     ],
 )
 def test_security_scan_rejects_lookalike_decorator_form_benchmarks(tmp_path, source):
-    (tmp_path / "case.py").write_text(source, encoding="utf-8")
+    (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
     assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
 
 
@@ -1785,7 +2036,7 @@ def test_security_scan_rejects_lookalike_decorator_form_benchmarks(tmp_path, sou
     ],
 )
 def test_security_scan_rejects_rebound_benchmark_decorator(tmp_path, binding):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import pytest\n@pytest.mark.benchmark\ndef test_speed(benchmark):\n"
         f"    {binding}\n    @benchmark\n    def run():\n        compute_value()\n",
         encoding="utf-8",
@@ -1800,7 +2051,7 @@ def test_security_scan_preserves_benchmark_use_before_rebinding(tmp_path, nested
         body = "    if flag:\n" + "".join(
             "    " + line for line in body.splitlines(keepends=True)
         )
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import pytest\n@pytest.mark.benchmark\ndef test_speed(benchmark):\n" + body,
         encoding="utf-8",
     )
@@ -1815,7 +2066,7 @@ def test_security_scan_preserves_benchmark_use_before_rebinding(tmp_path, nested
     ],
 )
 def test_security_scan_preserves_benchmark_evaluation_order(tmp_path, body):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import pytest\n@pytest.mark.benchmark\ndef test_speed(benchmark):\n" + body,
         encoding="utf-8",
     )
@@ -1823,7 +2074,7 @@ def test_security_scan_preserves_benchmark_evaluation_order(tmp_path, body):
 
 
 def test_security_scan_does_not_skip_untyped_benchmark_named_security_test(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "def test_security_invariant(benchmark):\n"
         "    benchmark(lambda: dangerous_operation())\n",
         encoding="utf-8",
@@ -1832,7 +2083,7 @@ def test_security_scan_does_not_skip_untyped_benchmark_named_security_test(tmp_p
 
 
 def test_security_scan_does_not_exempt_untyped_benchmark_parameter_alone(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "def test_behavior(benchmark):\n    pass\n",
         encoding="utf-8",
     )
@@ -1847,7 +2098,7 @@ def test_security_scan_does_not_exempt_untyped_benchmark_parameter_alone(tmp_pat
     ],
 )
 def test_security_scan_rejects_lookalike_benchmark_signals(tmp_path, declaration):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         f"{declaration}\n    benchmark(lambda: dangerous_operation())\n",
         encoding="utf-8",
     )
@@ -1867,7 +2118,7 @@ def test_security_scan_rejects_unrelated_benchmark_imports(tmp_path, imports):
         if imports.startswith("import custom")
         else ""
     )
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         f"{imports}\n{decorator}"
         "def test_security_invariant(benchmark):\n"
         "    benchmark(lambda: dangerous_operation())\n",
@@ -1877,7 +2128,7 @@ def test_security_scan_rejects_unrelated_benchmark_imports(tmp_path, imports):
 
 
 def test_security_scan_rejects_noop_assertion_named_helper(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "def assert_nothing():\n"
         "    pass\n\n"
         "def test_behavior():\n"
@@ -1889,7 +2140,7 @@ def test_security_scan_rejects_noop_assertion_named_helper(tmp_path):
 
 
 def test_security_scan_does_not_trust_local_noop_unittest_named_method(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "class NoOp:\n"
         "    def assertEqual(self, actual, expected):\n"
         "        pass\n\n"
@@ -1902,7 +2153,7 @@ def test_security_scan_does_not_trust_local_noop_unittest_named_method(tmp_path)
 
 
 def test_security_scan_reports_unittest_non_null_only_oracle(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import unittest\n"
         "class Checks(unittest.TestCase):\n"
         "    def test_behavior(self):\n"
@@ -1914,7 +2165,7 @@ def test_security_scan_reports_unittest_non_null_only_oracle(tmp_path):
 
 
 def test_security_scan_accepts_unittest_isinstance_assertion(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import unittest\n"
         "class Checks(unittest.TestCase):\n"
         "    def test_behavior(self):\n"
@@ -1925,7 +2176,7 @@ def test_security_scan_accepts_unittest_isinstance_assertion(tmp_path):
 
 
 def test_security_scan_accepts_inherited_unittest_case_assertions(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import unittest\n"
         "class ProjectTestCase(unittest.TestCase):\n"
         "    pass\n\n"
@@ -1938,7 +2189,7 @@ def test_security_scan_accepts_inherited_unittest_case_assertions(tmp_path):
 
 
 def test_security_scan_ignores_explicitly_skipped_hollow_test(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import pytest\n"
         "@pytest.mark.skip(reason='requires external service')\n"
         "def test_behavior():\n"
@@ -1951,7 +2202,7 @@ def test_security_scan_ignores_explicitly_skipped_hollow_test(tmp_path):
 def test_security_scan_keeps_strong_oracle_when_weak_assertion_is_also_present(
     tmp_path,
 ):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "def test_behavior():\n"
         "    assert result is not None\n"
         "    assert result == expected\n",
@@ -2236,7 +2487,7 @@ def test_security_scan_keeps_negative_callback_and_import_alias_controls(tmp_pat
 
 
 def test_security_scan_accepts_test_scoped_pytest_raises_import(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "def test_expected_error():\n"
         "    from pytest import raises as expect_error\n"
         "    with expect_error(ValueError):\n"
@@ -2247,7 +2498,7 @@ def test_security_scan_accepts_test_scoped_pytest_raises_import(tmp_path):
 
 
 def test_security_scan_restores_module_alias_after_later_pytest_import(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import contextlib\n"
         "raises = contextlib.nullcontext\n"
         "from pytest import raises\n"
@@ -2260,7 +2511,7 @@ def test_security_scan_restores_module_alias_after_later_pytest_import(tmp_path)
 
 
 def test_security_scan_restores_local_alias_after_later_pytest_import(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from contextlib import nullcontext as expect_error\n"
         "def test_expected_error():\n"
         "    expect_error = nullcontext\n"
@@ -2273,7 +2524,7 @@ def test_security_scan_restores_local_alias_after_later_pytest_import(tmp_path):
 
 
 def test_security_scan_does_not_trust_helper_with_rebound_assertion_alias(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from pytest import raises as expect_error\n"
         "import contextlib\n"
         "def assert_expected():\n"
@@ -2289,7 +2540,7 @@ def test_security_scan_does_not_trust_helper_with_rebound_assertion_alias(tmp_pa
 
 
 def test_security_scan_keeps_pytest_alias_across_nested_local_bindings(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from pytest import raises\n"
         "def test_expected_error():\n"
         "    def helper():\n"
@@ -2305,7 +2556,7 @@ def test_security_scan_keeps_pytest_alias_across_nested_local_bindings(tmp_path)
 def test_security_scan_does_not_trust_assertion_alias_call_inside_comprehension(
     tmp_path,
 ):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from pytest import raises\n"
         "def test_behavior():\n"
         "    results = [raises(ValueError) for raises in factories]\n",
@@ -2316,7 +2567,7 @@ def test_security_scan_does_not_trust_assertion_alias_call_inside_comprehension(
 
 
 def test_security_scan_does_not_trust_rebound_pytest_raises_alias(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from pytest import raises as expect_error\n"
         "import contextlib\n"
         "def test_behavior():\n"
@@ -2330,7 +2581,7 @@ def test_security_scan_does_not_trust_rebound_pytest_raises_alias(tmp_path):
 
 
 def test_security_scan_does_not_trust_module_rebound_pytest_alias(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from pytest import raises as expect_error\n"
         "import contextlib\n"
         "expect_error = contextlib.nullcontext\n"
@@ -2344,7 +2595,7 @@ def test_security_scan_does_not_trust_module_rebound_pytest_alias(tmp_path):
 
 
 def test_security_scan_does_not_trust_imports_from_other_scopes(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from contextlib import nullcontext as expect_error\n"
         "def unrelated():\n"
         "    from pytest import raises as expect_error\n"
@@ -2361,7 +2612,7 @@ def test_security_scan_invalidates_oracle_alias_after_module_star_import(tmp_pat
     (tmp_path / "helpers.py").write_text(
         "from contextlib import nullcontext as raises\n", encoding="utf-8"
     )
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from pytest import raises\n"
         "from helpers import *\n"
         "def test_behavior():\n"
@@ -2377,7 +2628,7 @@ def test_security_scan_invalidates_oracle_alias_after_branch_star_import(tmp_pat
     (tmp_path / "helpers.py").write_text(
         "from contextlib import nullcontext as raises\n", encoding="utf-8"
     )
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from pytest import raises\n"
         "if USE_HELPERS:\n"
         "    from helpers import *\n"
@@ -2398,7 +2649,7 @@ def test_security_scan_invalidates_oracle_alias_after_branch_star_import(tmp_pat
     ],
 )
 def test_security_scan_does_not_trust_captured_pytest_raises_alias(tmp_path, binding):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "from pytest import raises as expect_error\n"
         "def test_behavior(event):\n"
         f"    {binding.replace(chr(10), chr(10) + '    ')}\n"
@@ -2411,7 +2662,7 @@ def test_security_scan_does_not_trust_captured_pytest_raises_alias(tmp_path, bin
 
 
 def test_security_scan_does_not_trust_unused_assertion_callback(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "def test_behavior():\n"
         "    def fail_on_read(*args):\n"
         "        raise AssertionError('unexpected read')\n"
@@ -2718,12 +2969,12 @@ def test_rebinds_identity_distinguishes_local_data_from_guard_alias_changes(tmp_
     ],
 )
 def test_mutable_test_state_is_not_folded_across_calls(tmp_path, body):
-    (tmp_path / "case.py").write_text("def test_behavior():\n    " + body + "\n")
+    (tmp_path / "test_case.py").write_text("def test_behavior():\n    " + body + "\n")
     assert security_scan(tmp_path)["findings"] == []
 
 
 def test_unmodified_container_constant_assertion_remains_hollow(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "def test_behavior():\n    errors = []\n    assert errors == []\n"
     )
     assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
@@ -2731,7 +2982,7 @@ def test_unmodified_container_constant_assertion_remains_hollow(tmp_path):
 
 @pytest.mark.parametrize("nested", ["def", "async def"])
 def test_security_scan_does_not_collect_nested_test_named_helper(tmp_path, nested):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         f"def test_behavior():\n    {nested} test_prompt():\n        pass\n"
         "    assert compute() == 4\n",
         encoding="utf-8",
@@ -2775,7 +3026,7 @@ def test_security_scan_does_not_collect_nested_test_named_helper(tmp_path, neste
 def test_security_scan_follows_only_invoked_noncatching_click_callback(
     tmp_path, invoke, assertion, expected
 ):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import click\nfrom click.testing import CliRunner\ndef test_behavior():\n"
         "    @click.command()\n    def cli():\n        " + assertion + "\n"
         "    runner = CliRunner()\n    " + invoke + "\n",
@@ -2801,7 +3052,7 @@ def test_security_scan_follows_only_invoked_noncatching_click_callback(
     ],
 )
 def test_security_scan_keeps_swallowed_or_rebound_click_callback_hollow(tmp_path, body):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import click\nfrom click.testing import CliRunner\n"
         "from contextlib import suppress\ndef test_behavior():\n"
         "    @click.command()\n    def cli():\n        assert compute() == 4\n"
@@ -2830,7 +3081,7 @@ def test_security_scan_keeps_swallowed_or_rebound_click_callback_hollow(tmp_path
 def test_security_scan_rejects_unproven_click_callback_propagation(
     tmp_path, decorators, assertion
 ):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import click\nimport contextlib\nfrom click.testing import CliRunner\ndef test_behavior():\n    "
         + decorators
         + "\n    def cli():\n        "
@@ -2850,7 +3101,7 @@ def test_security_scan_rejects_unproven_click_callback_propagation(
     ],
 )
 def test_security_scan_keeps_escaping_click_callback_failure_oracles(tmp_path, oracle):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import click\nimport pytest\nfrom click.testing import CliRunner\n"
         "def test_behavior():\n    @click.command()\n    def cli():\n        "
         + oracle
@@ -2880,7 +3131,7 @@ def test_security_scan_binds_click_runner_fixture_source(
         "@pytest.fixture\ndef runner():\n    " + fixture_body + "\n",
         encoding="utf-8",
     )
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import click\ndef test_behavior(runner):\n"
         "    @click.command()\n    def cli():\n        assert compute() == 4\n"
         "    runner.invoke(cli, catch_exceptions=False)\n",
@@ -2901,7 +3152,7 @@ def test_security_scan_nearer_fixture_override_invalidates_click_runner(tmp_path
         "import pytest\n@pytest.fixture\ndef runner():\n    return fake_runner\n",
         encoding="utf-8",
     )
-    (suite / "case.py").write_text(
+    (suite / "test_case.py").write_text(
         "import click\ndef test_behavior(runner):\n"
         "    @click.command()\n    def cli():\n        assert compute() == 4\n"
         "    runner.invoke(cli, catch_exceptions=False)\n",
@@ -2911,7 +3162,7 @@ def test_security_scan_nearer_fixture_override_invalidates_click_runner(tmp_path
 
 
 def test_security_scan_keeps_uninvoked_command_with_recursive_invoke_hollow(tmp_path):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import click\nfrom click.testing import CliRunner\ndef test_behavior():\n"
         "    runner = CliRunner()\n    @click.command()\n    def cli():\n"
         "        result = runner.invoke(cli, catch_exceptions=False)\n"
@@ -2959,6 +3210,10 @@ def test_security_scan_recognizes_individual_declared_static_type_oracle(
         "def test_runtime_without_oracle():\n    compute()\n",
         encoding="utf-8",
     )
+    if filename == "typing_probe.py":
+        (tmp_path / "pytest.ini").write_text(
+            "[pytest]\npython_files = typing_probe.py\n", encoding="utf-8"
+        )
     result = security_scan(tmp_path)
     counts = dict(expected)
     counts["QUALITY_HOLLOW_TEST"] = counts.get("QUALITY_HOLLOW_TEST", 0) + 1
@@ -2991,7 +3246,7 @@ def test_security_scan_recognizes_individual_declared_static_type_oracle(
 def test_security_scan_recognizes_warning_policy_during_class_construction(
     tmp_path, body, expected
 ):
-    (tmp_path / "case.py").write_text(
+    (tmp_path / "test_case.py").write_text(
         "import warnings\ndef test_silent(base):\n    with warnings.catch_warnings():\n"
         "        warnings.simplefilter('error', DeprecationWarning)\n        "
         + body
@@ -3002,23 +3257,31 @@ def test_security_scan_recognizes_warning_policy_during_class_construction(
 
 
 @pytest.mark.parametrize(
-    "config",
+    ("config", "collection_error"),
     [
-        '[tool.mypy]\nfiles = ["../typing"]\n',
-        '[tool.mypy]\nfiles = "typing"\n',
-        "broken = [\n",
-        "#" * 1_000_001,
+        ('[tool.mypy]\nfiles = ["../typing"]\n', False),
+        ('[tool.mypy]\nfiles = "typing"\n', False),
+        ("broken = [\n", True),
+        ("#" * 1_000_001, True),
     ],
     ids=["escaping-root", "wrong-type", "malformed", "oversized"],
 )
-def test_security_scan_does_not_trust_invalid_typecheck_configuration(tmp_path, config):
+def test_security_scan_does_not_trust_invalid_typecheck_configuration(
+    tmp_path, config, collection_error
+):
     (tmp_path / "pyproject.toml").write_text(config, encoding="utf-8")
-    (tmp_path / "typing_probe.py").write_text(
+    (tmp_path / "test_typing_probe.py").write_text(
         "from typing_extensions import assert_type\ndef test_type():\n"
         "    assert_type(compute(), int)\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    if collection_error:
+        from factoryline.review_audits import ReviewAuditError
+
+        with pytest.raises(ReviewAuditError, match="pytest test collection"):
+            security_scan(tmp_path)
+    else:
+        assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
 
 
 def test_security_scan_rejects_typecheck_configuration_race(tmp_path, monkeypatch):
@@ -3026,6 +3289,9 @@ def test_security_scan_rejects_typecheck_configuration_race(tmp_path, monkeypatc
 
     config = tmp_path / "pyproject.toml"
     config.write_text('[tool.mypy]\nfiles = ["typing_probe.py"]\n', encoding="utf-8")
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\npython_files = typing_probe.py\n", encoding="utf-8"
+    )
     (tmp_path / "typing_probe.py").write_text(
         "from typing_extensions import assert_type\ndef test_type():\n"
         "    assert_type(compute(), int)\n",
@@ -3117,7 +3383,7 @@ def test_scoped_tenant_contract_keeps_other_files_in_security_scan(tmp_path):
         "def read(principal):\n    return store.fetch(principal.tenant_id)\n",
         encoding="utf-8",
     )
-    (tmp_path / "other.py").write_text(
+    (tmp_path / "test_other.py").write_text(
         "def test_hollow():\n    assert True\n", encoding="utf-8"
     )
     path = tmp_path / ".factory"

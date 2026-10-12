@@ -139,7 +139,7 @@ def test_first_proof_cli_is_successful_because_detection_is_the_demo_outcome(
     assert output["activation"]["assessment"]["state"] == "INCOMPLETE"
 
 
-def test_repo_scan_is_zero_config_and_fails_closed_without_project_contract(
+def test_repo_scan_is_zero_config_without_inventing_tenant_contract_advice(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
@@ -151,6 +151,23 @@ def test_repo_scan_is_zero_config_and_fails_closed_without_project_contract(
     assert result["state"] == "INCOMPLETE"
     assert result["verdict"] == "INCOMPLETE"
     assert result["static_security"]["state"] == "CLEAN"
+    assert not any(
+        "tenant-read-contract" in action for action in result["next_actions"]
+    )
+
+
+def test_repo_scan_recommends_tenant_contract_for_observed_orm_reads(tmp_path: Path):
+    (tmp_path / "app.py").write_text(
+        "from sqlalchemy.orm import Session\n"
+        "def users(session: Session):\n"
+        "    return session.query(User).all()\n",
+        encoding="utf-8",
+    )
+    result = run_repo_scan(tmp_path)
+    assert any(
+        finding["code"] == "SECURITY_TENANT_READ_UNDECLARED"
+        for finding in result["static_security"]["findings"]
+    )
     assert any("tenant-read-contract" in action for action in result["next_actions"])
 
 
