@@ -128,6 +128,9 @@ test('decision digest is recomputed from canonical evidence', () => {
 test('missing database case requires its native database diagnostic', () => {
   assert.equal(validateExpectedFailure('missing_database', 2, null,
     'open /opt/factory/osv-db/osv-scanner/PyPI/all.zip: no such file or directory'), null);
+  assert.equal(validateExpectedFailure('missing_database', 2, null,
+    'could not load db for PyPI ecosystem: unable to fetch OSV database: no offline version of the OSV database is available\n'
+    + 'cannot execute native OSV query: unable to fetch OSV database: no offline version of the OSV database is available'), null);
   assert.throws(() => validateExpectedFailure('missing_database', 2, null, 'permission denied'));
   assert.throws(() => validateExpectedFailure('missing_database', 2, null, 'database operation failed'));
   assert.throws(() => validateExpectedFailure('missing_database', 1, null, 'vulnerability found'));

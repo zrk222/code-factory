@@ -320,7 +320,7 @@ function hasFailedExtractorStatus(ledger) {
 
 function expectedFailurePattern(key) {
   const patterns = {
-    missing_database: /(?:open|stat) .*\/all\.zip: no such file or directory|cannot find .*all\.zip/i,
+    missing_database: /(?:open|stat) .*\/all\.zip: no such file or directory|cannot find .*all\.zip|cannot execute native OSV query: unable to fetch OSV database: no offline version of the OSV database is available/i,
     malformed_database: /zip: not a valid zip file|not valid OSV JSON|OSV database contains no advisories/i,
     extractor_failure: /extractor [a-z0-9._-]+ failed:/i,
   };
