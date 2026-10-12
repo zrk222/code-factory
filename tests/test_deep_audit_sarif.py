@@ -1545,6 +1545,70 @@ def test_trivy_terraform_root_and_local_module_keep_native_target_scopes():
     }
 
 
+def test_trivy_terraform_challenge_directory_keeps_root_and_module_members():
+    from factoryline.deep_audit_io import _trivy_target_bindings
+
+    raw = {
+        "positive/main.tf": (b'module "bucket" {\n  source = "./modules/bucket"\n}\n'),
+        "positive/variables.tf": b'variable "bucket_name" { type = string }\n',
+        "positive/modules/bucket/main.tf": b'resource "aws_s3_bucket" "sample" {}\n',
+        "positive/modules/bucket/variables.tf": b'variable "name" { type = string }\n',
+    }
+    sources = {path: sha256_bytes(content) for path, content in raw.items()}
+    report = {
+        "Results": [
+            {
+                "Target": "positive",
+                "Type": "terraform",
+                "Misconfigurations": [{"ID": "ROOT-CHECK", "Status": "PASS"}],
+            },
+            {
+                "Target": "positive/modules/bucket/main.tf",
+                "Type": "terraform",
+                "Misconfigurations": [
+                    {"ID": "AVD-AWS-0086", "Status": "FAIL"},
+                    {"ID": "s3-bucket-logging", "Status": "FAIL"},
+                ],
+            },
+        ],
+    }
+
+    bindings = _trivy_target_bindings(report, sources, raw)
+
+    assert [row["path"] for row in bindings["positive"]["members"]] == sorted(raw)
+    assert bindings["positive/modules/bucket/main.tf"]["members"] == [
+        {
+            "path": "positive/modules/bucket/main.tf",
+            "sha256": sources["positive/modules/bucket/main.tf"],
+        }
+    ]
+
+
+def test_trivy_dot_target_does_not_infer_candidate_directory_as_scan_root():
+    from factoryline.deep_audit_io import _trivy_target_bindings
+
+    raw = {
+        "infra/main.tf": b'resource "aws_s3_bucket" "sample" {}\n',
+        "infra/variables.tf": b'variable "name" { type = string }\n',
+    }
+    sources = {path: sha256_bytes(content) for path, content in raw.items()}
+    report = {
+        "SchemaVersion": 2,
+        "Results": [
+            {
+                "Target": ".",
+                "Class": "config",
+                "Type": "terraform",
+                "Misconfigurations": [{"ID": "AVD-TEST", "Status": "PASS"}],
+                "MisconfSummary": {"Successes": 1, "Failures": 0},
+            }
+        ],
+    }
+
+    with pytest.raises(Exception, match="no source members"):
+        _trivy_target_bindings(report, sources, raw)
+
+
 @pytest.mark.parametrize(
     "source", ["../outside", "https://registry.example/module", "${var.module_path}"]
 )
@@ -1907,6 +1971,72 @@ def test_trivy_plain_native_ignore_mutation_has_only_target():
     assert _trivy_ignore_ids(b"DS001\n") == ["DS001"]
     with pytest.raises(RuntimeAuditError):
         _trivy_mutation(b"DS002\n", "DS001")
+
+
+@pytest.mark.parametrize("rule_id", ["DS001", "AVD-AWS-0086", "s3-bucket-logging"])
+def test_trivy_mutation_accepts_bounded_native_rule_ids(rule_id):
+    from factoryline.deep_audit_io import _trivy_mutation, _trivy_ignore_ids
+
+    mutated = _trivy_mutation(b"\n", rule_id)
+    assert mutated == f"{rule_id}\n".encode("ascii")
+    assert _trivy_ignore_ids(mutated) == [rule_id]
+
+
+@pytest.mark.parametrize(
+    "rule_id",
+    ["", "-leading", "id with spaces", "id/with/slash", "id\nDS002", "x" * 257],
+)
+def test_trivy_mutation_rejects_unsafe_or_unbounded_rule_ids(rule_id):
+    from factoryline.deep_audit_io import _trivy_mutation
+
+    with pytest.raises(RuntimeAuditError, match="unsupported Trivy check ID"):
+        _trivy_mutation(b"\n", rule_id)
+
+
+@pytest.mark.parametrize(
+    "ignore",
+    [
+        b"AVD-AWS-0086\nAVD-AWS-0086\n",
+        b"s3-bucket-logging\nAVD-AWS-0086\n",
+    ],
+)
+def test_trivy_ignore_rejects_duplicate_or_unsorted_native_ids(ignore):
+    from factoryline.deep_audit_io import _trivy_ignore_ids
+
+    with pytest.raises(RuntimeAuditError, match="ignore IDs are invalid"):
+        _trivy_ignore_ids(ignore)
+
+
+def test_trivy_matrix_preserves_distinct_root_and_module_applicability():
+    from factoryline.deep_audit_io import _trivy_matrix_ids
+
+    root_ids = {f"ROOT-CHECK-{index:02}" for index in range(40)}
+    module_ids = {
+        "AVD-AWS-0086",
+        "AVD-AWS-0087",
+        "AVD-AWS-0088",
+        "s3-bucket-logging",
+        "AVD-AWS-0090",
+        "AVD-AWS-0091",
+        "AVD-AWS-0093",
+        "AVD-AWS-0094",
+        "AVD-AWS-0132",
+    }
+    matrix = {
+        ".": {rule_id: "PASS" for rule_id in root_ids},
+        "modules/bucket/main.tf": {rule_id: "FAIL" for rule_id in module_ids},
+    }
+    expected = sorted(root_ids | module_ids)
+
+    _trivy_matrix_ids(matrix, expected)
+    assert len(matrix["."]) == 40
+    assert len(matrix["modules/bucket/main.tf"]) == 9
+    assert all(status == "PASS" for status in matrix["."].values())
+    assert all(status == "FAIL" for status in matrix["modules/bucket/main.tf"].values())
+    with pytest.raises(RuntimeAuditError, match="signed Trivy check IDs differ"):
+        _trivy_matrix_ids(matrix, expected[:-1])
+    with pytest.raises(RuntimeAuditError, match="signed Trivy check IDs differ"):
+        _trivy_matrix_ids(matrix, sorted([*expected, "EXTRA-CHECK"]))
 
 
 def _codeql_inventory_fixture(*, changed=False):

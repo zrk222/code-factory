@@ -4418,8 +4418,6 @@ def _trivy_policy_inputs(config, ignore, lane):
 
 
 def _trivy_ignore_ids(config):
-    import re
-
     try:
         text = config.decode("ascii")
     except (AttributeError, UnicodeDecodeError) as exc:
@@ -4430,18 +4428,25 @@ def _trivy_ignore_ids(config):
     if not text.strip():
         return []
     if ids != sorted(set(ids)) or any(
-        re.fullmatch(r"DS[0-9]{3}", item) is None for item in ids
+        _trivy_rule_id_valid(item) is False for item in ids
     ):
         raise RuntimeAuditError("E_TRIVY_POLICY", "Trivy ignore IDs are invalid")
     return ids
 
 
-def _trivy_mutation(ignore, rule_id):
+def _trivy_rule_id_valid(rule_id):
     import re
 
+    return (
+        isinstance(rule_id, str)
+        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,255}", rule_id) is not None
+    )
+
+
+def _trivy_mutation(ignore, rule_id):
     if _trivy_ignore_ids(ignore):
         raise RuntimeAuditError("E_TRIVY_MUTATION", "baseline ignorefile is not empty")
-    if not isinstance(rule_id, str) or re.fullmatch(r"DS[0-9]{3}", rule_id) is None:
+    if not _trivy_rule_id_valid(rule_id):
         raise RuntimeAuditError("E_TRIVY_MUTATION", "unsupported Trivy check ID")
     return f"{rule_id}\n".encode("ascii")
 
@@ -4705,29 +4710,65 @@ def _trivy_target_bindings(report, sources, source_bytes=None):
     if not isinstance(results, list):
         raise RuntimeAuditError("E_TRIVY_REPORT", "Trivy target inventory malformed")
     paths = set(sources)
-    root_scan = any(
-        result.get("Type") == "terraform"
-        and _trivy_target_name(result.get("Target")) == "."
-        for result in results
-        if isinstance(result, dict)
+    root_members, root_edges, root_prefixes = _trivy_root_module_graphs(
+        results, paths, source_bytes
     )
-    root_members, edges = _trivy_root_module_graph(paths, source_bytes, root_scan)
     bindings = _trivy_bind_report_targets(
-        results, paths, sources, root_members, edges, source_bytes
+        results, paths, sources, root_members, root_edges, source_bytes, root_prefixes
     )
     _trivy_validate_target_coverage(bindings, paths)
     return bindings
 
 
-def _trivy_root_module_graph(paths, source_bytes, root_scan):
+def _trivy_root_module_graphs(results, paths, source_bytes):
+    members_by_target, edges_by_target, prefixes = {}, {}, {}
+    if source_bytes is None:
+        return members_by_target, edges_by_target, prefixes
+    for result in results:
+        if not isinstance(result, dict) or result.get("Type") != "terraform":
+            continue
+        target = _trivy_target_name(result.get("Target"))
+        prefix = _trivy_root_target_prefix(target, paths)
+        if prefix is None:
+            continue
+        members, edges = _trivy_root_module_graph(paths, source_bytes, True, prefix)
+        if not members:
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform root target has no source members"
+            )
+        members_by_target[target] = members
+        edges_by_target[target] = edges
+        prefixes[target] = prefix
+    return members_by_target, edges_by_target, prefixes
+
+
+def _trivy_root_target_prefix(target, paths):
+    if target == ".":
+        # A dot target is the scan root. Candidate paths are already relative
+        # to that root; never infer a hidden root from a shared path prefix.
+        return ""
+    if target.lower().endswith((".tf", ".tf.json")):
+        return None
+    direct_members = [
+        path
+        for path in paths
+        if Path(path).parent.as_posix() == target
+        and path.lower().endswith((".tf", ".tf.json"))
+    ]
+    return target if direct_members else None
+
+
+def _trivy_root_module_graph(paths, source_bytes, root_scan, root_prefix=""):
     root_members = set()
     edges = []
     if source_bytes is None or not root_scan:
         return root_members, edges
+    root_directory = root_prefix or "."
     pending = [
         path
         for path in paths
-        if "/" not in path and path.lower().endswith((".tf", ".tf.json"))
+        if Path(path).parent.as_posix() == root_directory
+        and path.lower().endswith((".tf", ".tf.json"))
     ]
     while pending:
         parent = pending.pop()
@@ -4765,7 +4806,13 @@ def _trivy_local_module_members(owner, source, paths):
 
 
 def _trivy_bind_report_targets(
-    results, paths, sources, root_members, edges, source_bytes
+    results,
+    paths,
+    sources,
+    root_members,
+    root_edges,
+    source_bytes,
+    root_prefixes,
 ):
     bindings = {}
     for result in results:
@@ -4776,7 +4823,7 @@ def _trivy_bind_report_targets(
         if target in bindings:
             raise RuntimeAuditError("E_TRIVY_REPORT", "duplicate Trivy target")
         members, scope = _trivy_target_members(
-            target, kind, paths, root_members, source_bytes
+            target, kind, paths, root_members, source_bytes, root_prefixes
         )
         if not members:
             raise RuntimeAuditError(
@@ -4788,29 +4835,50 @@ def _trivy_bind_report_targets(
             "members": [{"path": path, "sha256": sources[path]} for path in members],
         }
     if source_bytes is not None:
-        for item in bindings.values():
+        for target, item in bindings.items():
             if item["scope"] == "terraform_root":
                 item["module_edges"] = sorted(
-                    edges, key=lambda edge: (edge["from"], edge["source"])
+                    root_edges[target], key=lambda edge: (edge["from"], edge["source"])
                 )
     return bindings
 
 
-def _trivy_target_members(target, kind, paths, root_members, source_bytes):
-    if kind == "terraform" and target == ".":
-        members = (
-            sorted(root_members)
-            if source_bytes is not None
-            else sorted(
-                path
-                for path in paths
-                if "/" not in path and path.lower().endswith((".tf", ".tf.json"))
-            )
+def _trivy_target_members(
+    target, kind, paths, root_members, source_bytes, root_prefixes
+):
+    if kind != "terraform":
+        return ([target] if target in paths else []), "file"
+    if target in root_members:
+        members = sorted(root_members[target])
+        return members, "terraform_root"
+    if target == "." and source_bytes is None:
+        members = sorted(
+            path
+            for path in paths
+            if "/" not in path and path.lower().endswith((".tf", ".tf.json"))
         )
         return members, "terraform_root"
-    if kind == "terraform" and target.lower().endswith((".tf", ".tf.json")):
-        return ([target] if target in paths else []), "terraform_file"
+    if target.lower().endswith((".tf", ".tf.json")):
+        return _trivy_terraform_file_target_members(
+            target, paths, root_members, root_prefixes
+        )
     return ([target] if target in paths else []), "file"
+
+
+def _trivy_terraform_file_target_members(target, paths, root_members, root_prefixes):
+    prefixes = [
+        root_prefixes.get(root_target, "")
+        for root_target in root_members
+        if root_target == "." or target.startswith(root_target + "/")
+    ]
+    candidates = {target}
+    candidates.update(f"{prefix}/{target}" for prefix in prefixes if prefix)
+    found = sorted(candidates & paths)
+    if len(found) > 1:
+        raise RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "Terraform file target mapping is ambiguous"
+        )
+    return found, "terraform_file"
 
 
 def _trivy_validate_target_coverage(bindings, paths):
@@ -5203,11 +5271,11 @@ def _trivy_closed_argv(argv):
 
 
 def _trivy_matrix_ids(matrix, expected_ids):
-    for rows in matrix.values():
-        if sorted(rows) != expected_ids:
-            raise RuntimeAuditError(
-                "E_TRIVY_APPLICABILITY", "signed Trivy check IDs differ"
-            )
+    observed_ids = set().union(*(set(rows) for rows in matrix.values()))
+    if observed_ids != set(expected_ids):
+        raise RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "signed Trivy check IDs differ"
+        )
 
 
 def _trivy_sarif_failures(report, sources, source_root=None):
