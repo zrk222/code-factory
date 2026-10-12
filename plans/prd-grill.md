@@ -1,26 +1,15 @@
-# Plan: prd-grill
+# Remaining plan: guided building and audit
 Spec: specs/prd-grill.md
-Architect verdict: PASS
 
-## Logical decomposition (phases)
-1. Expose a no-write Product Graph analysis and derive a bounded PRD decision frontier.
-2. Write source-bound JSON and Markdown clarification artifacts through a local CLI.
-3. Test deterministic ordering, deferred dependencies, source immutability, and invalid-input rejection.
-4. Update public and editor surfaces with evidence-safe activation copy.
+Completed steps are retained in Git history, not this active plan.
 
-## Tasks (atomic — each independently shippable)
-<!-- Rules enforced by `specline tasks`: one slice each, <=4 files,
-     explicit verify command, no forward references. -->
-- [x] T1 | slice=prd-analysis | files=<=4 | verify=`python -m pytest -q tests/test_prd_grill.py` | Add no-write Product Graph analysis and deterministic PRD Grill artifact generation.
-- [x] T2 | slice=prd-cli | files=<=4 | verify=`python -m pytest -q tests/test_prd_grill.py tests/test_product_missions.py` | Add the bounded local CLI with JSON output and confirmation handling.
-- [x] T3 | slice=public-surfaces | files=<=4 | verify=`python -m pytest -q tests/test_publication_metadata.py` | Update root, editor, and Marketplace-facing documentation with truthful PRD Grill activation copy.
-- [x] T4 | slice=release-proof | files=<=4 | verify=`python -m pytest -q` | Run strict specifications, architecture checks, full suite, and prepare a reviewed PR.
+## Remaining goal: guided building with lower-capability agents
 
-## Accepted goal expansion: guided building with lower-capability agents
-
-Status: research and design accepted into the active goal; implementation and
-effectiveness validation remain pending. The historical architect verdict above
-applies to the original PRD Grill scope, not this expansion.
+Status: implementation and effectiveness validation remain incomplete.
+Read the delivery requirements below first; completed slices do not prove the
+whole journey. Current approved-handoff, candidate-binding and isolated repair
+foundations are implemented; worker generation, app preview and end-to-end
+acceptance integration remain required.
 
 ### Outcome
 
@@ -164,3 +153,48 @@ verified repair, human interventions, and total model/tool cost including retrie
 Benchmark against the same candidate and defect corpus before claiming a
 competitive speed or quality advantage. This section is accepted design scope;
 the current generated task packet alone does not implement automatic repair.
+
+
+## REA-informed beginner operations integration (2026-10-12)
+
+Reuse the existing mission, approval, isolated repair and evidence surfaces.
+The operator journey is Describe, Review, Approve, Try, Repair. Technical
+workspace declarations, tool arguments, profiles and hashes belong to the agent.
+Offer scenario choices and a custom answer, with concrete expected outcomes
+derived from the confirmed PRD. Suggested scenarios cover first screen, main
+task, saved data after reload, invalid-input recovery and account boundaries
+where applicable. Never treat a generic scenario label as a complete oracle.
+
+1. **Current-plan approval.** Targeted changes produce a new reviewable revision.
+   Only the current exact revision can authorize a slice; restoring an older
+   plan creates a new revision requiring approval. Preserve saved interview
+   answers and expose recovery without asking the user to reconstruct context.
+2. **Try the exact build.** A preview must identify its candidate/build and
+   runtime profile. Compile success is distinct from browser/API/device behavior.
+   Use isolated test data, explicit actors and observable state assertions.
+   An already-authenticated session does not prove the login journey.
+3. **Issues to bounded repair.** Show what failed, expected versus actual,
+   reproduction steps and proposed repair. Preserve a no-repair choice and
+   require the existing exact patch/scope/check approval before execution.
+   Retest failed and impacted checks; reuse unrelated passes only when the
+   existing proof verifier confirms their complete bindings.
+4. **Recover without hiding failures.** Retain ordered attempts, evidence and
+   checkpoints. Pause/resume revalidates authority, candidate and budgets.
+   Restoring code or a preview does not roll back external or database effects.
+5. **Portable beginner handoff.** For authorized exports from app builders,
+   detect supported stack/profile and prepare the same mission and audit route.
+   Never assume access to private builder APIs or hosted backend data.
+
+Acceptance: a first-time operator can choose/customize scenarios without entering
+technical identifiers; see which exact build was tested; inspect failure steps;
+reject or approve a scoped repair; and resume a verified checkpoint. Measure
+completion, interventions, failures, time and cost in an operator trial before
+claiming improved conversion, speed or reliability. These are acceptance targets,
+not measured outcomes. The current handoff guidance is not an execution engine.
+
+Research: official Lovable Plan Mode and Browser Testing docs; Base44 Testing
+Agent docs; Rork FAQ. REA 6.4.0 analyzed bounded public Rork scripts and Base44
+landing-page inline scripts. Rork semantic coverage was partial due to a worker
+heap limit; Lovable artifact retrieval returned HTTP 403. Private builder/runtime
+behavior was not tested. Preserve REA evidence IDs and limitations in the local
+research ledger; documentation claims do not become observed runtime evidence.

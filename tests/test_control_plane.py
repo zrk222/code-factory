@@ -11,6 +11,7 @@ from factoryline.control_plane import (
     ControlPlaneError,
     EvidenceStore,
     Principal,
+    authorize,
 )
 from factoryline.cli import main
 from factoryline.control_api import ControlPlaneAPI
@@ -74,6 +75,19 @@ def test_unknown_role_is_denied(tmp_path):
     with pytest.raises(ControlPlaneError) as error:
         store.put(Principal("guest", "tenant-a", ("unknown",)), _evidence())
     assert error.value.code == "E_ACTION_DENIED"
+
+
+def test_repair_execute_grant_is_limited_to_operator_and_admin():
+    authorize(_operator(), "repair.execute", "tenant-a")
+    authorize(_admin(), "repair.execute", "tenant-a")
+    for principal in (
+        Principal("reader", "tenant-a", ("viewer",)),
+        Principal("approver", "tenant-a", ("approver",)),
+        Principal("platform", "*", ("platform_admin",)),
+    ):
+        with pytest.raises(ControlPlaneError) as error:
+            authorize(principal, "repair.execute", "tenant-a")
+        assert error.value.code == "E_ACTION_DENIED"
 
 
 def test_approval_requires_distinct_approver_and_records_reason(tmp_path):
@@ -314,6 +328,21 @@ def test_workflow_approval_verifier_survives_restart_and_exact_retry(tmp_path):
             == 1
         )
     assert store.verify_audit(_operator(), "tenant-a")["valid"]
+
+
+def test_workflow_repair_dispatch_requires_authenticated_requester(tmp_path):
+    store, approval_id, expected = workflow_approval_setup(tmp_path)
+    other = Principal("other-operator", "tenant-a", ("operator",))
+    verifier = store.workflow_approval_verifier(
+        other,
+        "tenant-a",
+        approval_id,
+        resolve_principal=lambda subject, tenant: _approver(tenant, subject),
+        require_requester=True,
+    )
+    with pytest.raises(ControlPlaneError) as error:
+        verifier(expected)
+    assert error.value.code == "E_APPROVAL_REQUESTER"
 
 
 @pytest.mark.parametrize("decision", ["pending", "rejected"])

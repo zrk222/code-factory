@@ -1,0 +1,61 @@
+name: OSV native lookup operator controls
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/osv-native-operator.yml
+      - deploy/deep-adapters/Dockerfile
+      - deploy/deep-adapters/bin/osv-offline
+      - deploy/deep-adapters/osv-lookup-ledger.patch
+      - deploy/deep-adapters/profiles/osv.json
+      - scripts/verify_osv_native_ledger.mjs
+      - scripts/verify_osv_native_ledger.test.mjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osv-native-operator-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  osv-native-operator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check focused operator verifier controls
+        run: node --test scripts/verify_osv_native_ledger.test.mjs
+      - name: Capture runner and exact source identity
+        run: |
+          mkdir -p osv-native-operator
+          {
+            printf 'commit='; git rev-parse HEAD
+            printf 'docker='; docker version --format '{{.Server.Version}}'
+            printf 'platform='; docker info --format '{{.OSType}}/{{.Architecture}}'
+          } > osv-native-operator/runner-identity.txt 2>&1
+      - name: Build only the pinned OSV worker
+        id: build
+        run: |
+          set -o pipefail
+          docker build --platform linux/amd64 --progress=plain --target osv-worker -f deploy/deep-adapters/Dockerfile -t factory-osv-native-operator:candidate . > osv-native-operator/build.log 2>&1
+          image_id="$(docker image inspect factory-osv-native-operator:candidate --format '{{.Id}}')"
+          printf '%s\n' "$image_id" > osv-native-operator/image-id.txt
+          printf 'image_id=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
+      - name: Run bounded native positive, zero-match, failure and replay controls
+        if: success()
+        env:
+          OSV_WORKER_IMAGE_ID: ${{ steps.build.outputs.image_id }}
+        run: node scripts/verify_osv_native_ledger.mjs "$OSV_WORKER_IMAGE_ID"
+      - name: Preserve build logs, native reports and operator receipt
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: osv-native-operator-${{ github.run_id }}
+          path: osv-native-operator/
+          if-no-files-found: error
+          retention-days: 30

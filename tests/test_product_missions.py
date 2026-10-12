@@ -3,11 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 import hashlib
 import json
+import subprocess
 
 import pytest
 
 from factoryline.product_missions import (
     ProductMissionError,
+    bind_mission_candidate,
     compile_product_prd,
     close_mission,
     create_mission,
@@ -17,6 +19,7 @@ from factoryline.product_missions import (
     plan_value_slices,
     record_outcome,
     verify_mission,
+    verify_mission_candidate,
     verify_mission_completion,
     verify_product_graph,
 )
@@ -75,6 +78,7 @@ Scenario: Review the most important signal
 
 
 def _pipeline(tmp_path: Path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     prd = tmp_path / "PRD.md"
     prd.write_text(PRD, encoding="utf-8")
     graph = compile_product_prd(prd, tmp_path)
@@ -83,6 +87,100 @@ def _pipeline(tmp_path: Path):
         Path(slices["path"]), slices["slices"][-1]["id"], tmp_path, "release-owner"
     )
     return graph, slices, mission
+
+
+def _candidate_workspace(root: Path, workspace: str = "candidate") -> tuple[Path, dict]:
+    candidate = root / workspace
+    candidate.mkdir(parents=True)
+    (candidate / "README.md").write_text("candidate base\n", encoding="utf-8")
+    (candidate / ".gitignore").write_text("src/signal-review.py\n", encoding="utf-8")
+
+    def git(*args: str) -> str:
+        result = subprocess.run(
+            ["git", "-C", str(candidate), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
+
+    git("init", "--quiet")
+    git("add", "README.md", ".gitignore")
+    git(
+        "-c",
+        "user.name=Test Owner",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "--quiet",
+        "-m",
+        "candidate base",
+    )
+    lanes = {
+        lane: {"applicable": True, "reason": f"{lane} applies to this candidate"}
+        for lane in (
+            "static",
+            "secrets",
+            "configuration",
+            "dependencies",
+            "runtime",
+            "fuzz",
+        )
+    }
+    declaration = {
+        "schema": "factory.mission.candidate-declaration.v1",
+        "workspace": workspace,
+        "base_commit": git("rev-parse", "HEAD"),
+        # The target is intentionally absent at binding time; it is an exact path.
+        "paths": ["src/signal-review.py"],
+        "interfaces": ["GET /signals returns prioritized signals"],
+        "profiles": ["python-3.11-windows"],
+        "commands": [{"id": "unit", "argv": ["python", "-m", "pytest", "-q"]}],
+        "audit_lanes": lanes,
+    }
+    return candidate, declaration
+
+
+def _approved_binding_inputs(tmp_path: Path):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    decision = decide_mission(
+        Path(mission["path"]),
+        tmp_path,
+        owner="release-owner",
+        decision="approved_execution",
+        rationale="Approve this bounded candidate slice.",
+    )
+    candidate, declaration = _candidate_workspace(tmp_path)
+    return mission, decision, candidate, declaration
+
+
+def _bound_candidate(tmp_path: Path):
+    mission, decision, candidate, declaration = _approved_binding_inputs(tmp_path)
+    declaration["commands"][0]["argv"] = [
+        "python",
+        "-c",
+        "from pathlib import Path; "
+        f"Path({str(candidate / 'executed-marker')!r}).write_text('ran')",
+    ]
+    binding = bind_mission_candidate(
+        Path(mission["path"]),
+        Path(decision["path"]),
+        tmp_path,
+        owner="release-owner",
+        declaration=declaration,
+    )
+    return mission, decision, candidate, declaration, binding
+
+
+def _reseal_candidate_binding(path: Path, mutate) -> None:
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+    mutate(receipt)
+    core = {key: value for key, value in receipt.items() if key != "binding_sha256"}
+    canonical = json.dumps(
+        core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    receipt["binding_sha256"] = hashlib.sha256(canonical).hexdigest()
+    path.write_text(json.dumps(receipt), encoding="utf-8")
 
 
 def test_product_graph_is_stable_bound_and_ux_complete(tmp_path: Path):
@@ -246,6 +344,504 @@ def test_mission_decision_is_owner_bound_and_cannot_authorize_release(tmp_path: 
         "connector_grant": False,
         "credential_access": False,
     }
+
+
+def test_candidate_binding_is_hash_bound_and_does_not_dispatch(tmp_path: Path):
+    mission, decision, candidate, declaration = _approved_binding_inputs(tmp_path)
+    mission_before = Path(mission["path"]).read_bytes()
+    decision_before = Path(decision["path"]).read_bytes()
+
+    binding = bind_mission_candidate(
+        Path(mission["path"]),
+        Path(decision["path"]),
+        tmp_path,
+        owner="release-owner",
+        declaration=declaration,
+    )
+
+    assert binding["schema"] == "factory.mission.candidate-binding.v1"
+    assert binding["state"] == "bound_not_executed"
+    assert binding["execution_authorized"] is False
+    assert binding["dispatched"] is False
+    assert len(binding["candidate_sha256"]) == 64
+    assert len(binding["binding_sha256"]) == 64
+    assert Path(binding["path"]).is_file()
+    assert candidate.joinpath("src", "signal-review.py").exists() is False
+    assert Path(mission["path"]).read_bytes() == mission_before
+    assert Path(decision["path"]).read_bytes() == decision_before
+
+
+def test_candidate_binding_rejects_missing_approval_and_owner_mismatch(tmp_path: Path):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    decision = decide_mission(
+        Path(mission["path"]),
+        tmp_path,
+        owner="release-owner",
+        decision="deferred",
+        rationale="Wait for candidate inspection.",
+    )
+    _candidate, declaration = _candidate_workspace(tmp_path)
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            Path(decision["path"]),
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+
+    _mission, approved, _candidate, approved_declaration = _approved_binding_inputs(
+        tmp_path / "owner-mismatch"
+    )
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(_mission["path"]),
+            Path(approved["path"]),
+            tmp_path / "owner-mismatch",
+            owner="another-owner",
+            declaration=approved_declaration,
+        )
+
+
+@pytest.mark.parametrize(
+    "path_value",
+    [
+        "../outside.py",
+        "src/*.py",
+        ".git/config",
+        ".factory/state.json",
+        ".GIT/config",
+        ".Factory/state.json",
+        ".git./config",
+        ".factory./state.json",
+        str(Path.cwd() / "outside.py"),
+    ],
+)
+def test_candidate_binding_rejects_unsafe_scope_paths(tmp_path: Path, path_value: str):
+    mission, decision, _candidate, declaration = _approved_binding_inputs(tmp_path)
+    declaration["paths"] = [path_value]
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            Path(decision["path"]),
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+
+
+@pytest.mark.parametrize(
+    "path_value",
+    [".GIT/config", ".Factory/state.json", ".git./config", ".factory./state.json"],
+)
+def test_candidate_binding_rejects_casefolded_and_trailing_dot_reserved_paths(
+    tmp_path: Path, path_value: str
+):
+    mission, decision, _candidate, declaration = _approved_binding_inputs(tmp_path)
+    declaration["paths"] = [path_value]
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            Path(decision["path"]),
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+
+
+@pytest.mark.parametrize("dirty_kind", ["tracked", "untracked"])
+def test_candidate_binding_rejects_dirty_candidate(tmp_path: Path, dirty_kind: str):
+    mission, decision, candidate, declaration = _approved_binding_inputs(tmp_path)
+    if dirty_kind == "tracked":
+        (candidate / "README.md").write_text("changed after base\n", encoding="utf-8")
+    else:
+        (candidate / "untracked.txt").write_text("untracked\n", encoding="utf-8")
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            Path(decision["path"]),
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+
+
+def test_candidate_binding_rejects_base_commit_and_mission_drift(tmp_path: Path):
+    mission, decision, _candidate, declaration = _approved_binding_inputs(tmp_path)
+    declaration["base_commit"] = "0" * 40
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            Path(decision["path"]),
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+    declaration["base_commit"] = _candidate_workspace_head(tmp_path / "candidate")
+    Path(mission["path"]).write_text("{}\n", encoding="utf-8")
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            Path(decision["path"]),
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+
+
+@pytest.mark.parametrize("invalid_part", ["audit_lanes", "commands", "workspace"])
+def test_candidate_binding_rejects_incomplete_declaration(
+    tmp_path: Path, invalid_part: str
+):
+    mission, decision, candidate, declaration = _approved_binding_inputs(tmp_path)
+    if invalid_part == "audit_lanes":
+        declaration["audit_lanes"].pop("fuzz")
+    elif invalid_part == "commands":
+        declaration["commands"] = []
+    else:
+        nested = candidate / "nested"
+        nested.mkdir()
+        declaration["workspace"] = "candidate/nested"
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            Path(decision["path"]),
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+
+
+def test_candidate_binding_rejects_decision_hash_drift_and_symlink_scope(
+    tmp_path: Path,
+):
+    mission, decision, candidate, declaration = _approved_binding_inputs(tmp_path)
+    decision_path = Path(decision["path"])
+    changed_decision = json.loads(decision_path.read_text(encoding="utf-8"))
+    changed_decision["rationale"] = "tampered after approval"
+    decision_path.write_text(json.dumps(changed_decision), encoding="utf-8")
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            decision_path,
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+
+    # Recreate an approved, clean binding context for the filesystem-link case.
+    linked_root = tmp_path / "symlink-case"
+    linked_mission, linked_decision, linked_candidate, linked_declaration = (
+        _approved_binding_inputs(linked_root)
+    )
+    source = tmp_path / "outside-target.py"
+    source.write_text("outside\n", encoding="utf-8")
+    source_dir = linked_candidate / "src"
+    source_dir.mkdir()
+    try:
+        (source_dir / "linked.py").symlink_to(source)
+    except OSError as exc:
+        pytest.skip(f"symlink creation unavailable: {exc}")
+    linked_declaration["paths"] = ["src/linked.py"]
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(linked_mission["path"]),
+            Path(linked_decision["path"]),
+            linked_root,
+            owner="release-owner",
+            declaration=linked_declaration,
+        )
+
+
+def test_candidate_binding_accepts_worktree_under_factory_worktrees(tmp_path: Path):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    decision = decide_mission(
+        Path(mission["path"]),
+        tmp_path,
+        owner="release-owner",
+        decision="approved_execution",
+        rationale="Approve a candidate below the designated worktree directory.",
+    )
+    candidate, declaration = _candidate_workspace(
+        tmp_path, ".factory/worktrees/candidate"
+    )
+    declaration["commands"][0]["argv"] = ["python", "-m", "pytest", "-q", "-q"]
+
+    binding = bind_mission_candidate(
+        Path(mission["path"]),
+        Path(decision["path"]),
+        tmp_path,
+        owner="release-owner",
+        declaration=declaration,
+    )
+
+    assert binding["workspace"] == str(candidate.resolve())
+    assert binding["state"] == "bound_not_executed"
+    assert binding["dispatched"] is False
+
+
+def test_candidate_binding_rejects_other_factory_workspace(tmp_path: Path):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    decision = decide_mission(
+        Path(mission["path"]),
+        tmp_path,
+        owner="release-owner",
+        decision="approved_execution",
+        rationale="Approve the mission before checking workspace scope.",
+    )
+    _candidate, declaration = _candidate_workspace(
+        tmp_path, ".factory/private-candidate"
+    )
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            Path(decision["path"]),
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+
+
+def test_candidate_binding_rejects_scope_beneath_file_ancestor(tmp_path: Path):
+    mission, decision, _candidate, declaration = _approved_binding_inputs(tmp_path)
+    declaration["paths"] = ["README.md/child.py"]
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            Path(decision["path"]),
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
+
+
+def test_mission_candidate_verification_is_read_only_and_bound(tmp_path: Path):
+    mission, decision, candidate, _declaration, binding = _bound_candidate(tmp_path)
+    before = {
+        path: Path(path).read_bytes()
+        for path in (
+            mission["path"],
+            decision["path"],
+            binding["path"],
+            candidate / "README.md",
+        )
+    }
+    candidate_files = sorted(
+        path.relative_to(candidate).as_posix()
+        for path in candidate.rglob("*")
+        if path.is_file()
+    )
+
+    result = verify_mission_candidate(
+        Path(binding["path"]), tmp_path, owner="release-owner"
+    )
+
+    assert result["schema"] == "factory.mission.candidate-verification.v1"
+    assert result["valid"] is True
+    assert result["state"] == "bound_not_executed"
+    assert result["execution_authorized"] is False
+    assert result["dispatched"] is False
+    assert result["binding_sha256"] == binding["binding_sha256"]
+    assert result["candidate_sha256"] == binding["candidate_sha256"]
+    assert all(Path(path).read_bytes() == value for path, value in before.items())
+    assert candidate_files == sorted(
+        path.relative_to(candidate).as_posix()
+        for path in candidate.rglob("*")
+        if path.is_file()
+    )
+    assert not (candidate / "executed-marker").exists()
+
+
+@pytest.mark.parametrize("tamper", ["binding_hash", "authority", "snapshot"])
+def test_mission_candidate_verification_rejects_binding_tampering(
+    tmp_path: Path, tamper: str
+):
+    _mission, _decision, _candidate, _declaration, binding = _bound_candidate(tmp_path)
+    path = Path(binding["path"])
+    if tamper == "binding_hash":
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+        receipt["binding_sha256"] = "0" * 64
+        path.write_text(json.dumps(receipt), encoding="utf-8")
+    elif tamper == "authority":
+        _reseal_candidate_binding(
+            path, lambda receipt: receipt.update(execution_authorized=True)
+        )
+    else:
+        _reseal_candidate_binding(
+            path,
+            lambda receipt: receipt["files"][0].update(sha256="a" * 64),
+        )
+    with pytest.raises(ProductMissionError, match="MISSION_CANDIDATE_INVALID"):
+        verify_mission_candidate(path, tmp_path, owner="release-owner")
+
+
+@pytest.mark.parametrize("artifact", ["mission", "decision"])
+def test_mission_candidate_verification_rejects_approval_drift(
+    tmp_path: Path, artifact: str
+):
+    mission, decision, _candidate, _declaration, binding = _bound_candidate(tmp_path)
+    path = Path(mission["path"] if artifact == "mission" else decision["path"])
+    value = path.read_text(encoding="utf-8")
+    path.write_text(value + "\n", encoding="utf-8")
+    with pytest.raises(ProductMissionError, match="MISSION_CANDIDATE_INVALID"):
+        verify_mission_candidate(Path(binding["path"]), tmp_path, owner="release-owner")
+
+
+def test_mission_candidate_verification_rejects_wrong_owner(tmp_path: Path):
+    _mission, _decision, _candidate, _declaration, binding = _bound_candidate(tmp_path)
+    with pytest.raises(ProductMissionError, match="MISSION_CANDIDATE_INVALID"):
+        verify_mission_candidate(Path(binding["path"]), tmp_path, owner="another-owner")
+
+
+@pytest.mark.parametrize("change", ["tracked", "untracked", "head"])
+def test_mission_candidate_verification_rejects_git_drift(tmp_path: Path, change: str):
+    _mission, _decision, candidate, _declaration, binding = _bound_candidate(tmp_path)
+    if change == "tracked":
+        (candidate / "README.md").write_text(
+            "changed after binding\n", encoding="utf-8"
+        )
+    elif change == "untracked":
+        (candidate / "new-untracked.txt").write_text(
+            "changed after binding\n", encoding="utf-8"
+        )
+    else:
+        (candidate / "README.md").write_text("new committed base\n", encoding="utf-8")
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(candidate),
+                "-c",
+                "user.name=Test Owner",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "--all",
+                "--quiet",
+                "-m",
+                "changed base",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    with pytest.raises(ProductMissionError, match="MISSION_CANDIDATE_INVALID"):
+        verify_mission_candidate(Path(binding["path"]), tmp_path, owner="release-owner")
+
+
+def test_mission_candidate_verification_detects_ignored_scoped_file_change(
+    tmp_path: Path,
+):
+    _mission, _decision, candidate, _declaration, binding = _bound_candidate(tmp_path)
+    scoped = candidate / "src" / "signal-review.py"
+    scoped.parent.mkdir()
+    scoped.write_text("ignored but scope-bound\n", encoding="utf-8")
+    status = subprocess.run(
+        ["git", "-C", str(candidate), "status", "--porcelain=v1"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert status.stdout.strip() == ""
+    with pytest.raises(ProductMissionError, match="MISSION_CANDIDATE_INVALID"):
+        verify_mission_candidate(Path(binding["path"]), tmp_path, owner="release-owner")
+
+
+def test_mission_candidate_cli_binds_verifies_and_rejects_tampering(
+    tmp_path: Path, capsys
+):
+    mission, decision, _candidate, declaration = _approved_binding_inputs(tmp_path)
+    declaration_path = tmp_path / "candidate-declaration.json"
+    declaration_path.write_text(json.dumps(declaration), encoding="utf-8")
+    bad_declaration = json.loads(json.dumps(declaration))
+    bad_declaration["paths"] = ["../outside.py"]
+    bad_declaration_path = tmp_path / "bad-candidate-declaration.json"
+    bad_declaration_path.write_text(json.dumps(bad_declaration), encoding="utf-8")
+    assert (
+        main(
+            [
+                "mission",
+                "bind-candidate",
+                mission["path"],
+                decision["path"],
+                str(bad_declaration_path),
+                "--root",
+                str(tmp_path),
+                "--owner",
+                "release-owner",
+                "--json",
+            ]
+        )
+        != 0
+    )
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "mission",
+                "bind-candidate",
+                mission["path"],
+                decision["path"],
+                str(declaration_path),
+                "--root",
+                str(tmp_path),
+                "--owner",
+                "release-owner",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    binding = json.loads(capsys.readouterr().out)
+    assert (
+        main(
+            [
+                "mission",
+                "verify-candidate",
+                binding["path"],
+                "--root",
+                str(tmp_path),
+                "--owner",
+                "release-owner",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    verified = json.loads(capsys.readouterr().out)
+    assert verified["valid"] is True
+
+    tampered = json.loads(Path(binding["path"]).read_text(encoding="utf-8"))
+    tampered["dispatched"] = True
+    Path(binding["path"]).write_text(json.dumps(tampered), encoding="utf-8")
+    assert (
+        main(
+            [
+                "mission",
+                "verify-candidate",
+                binding["path"],
+                "--root",
+                str(tmp_path),
+                "--owner",
+                "release-owner",
+                "--json",
+            ]
+        )
+        != 0
+    )
+    failure = capsys.readouterr()
+    assert failure.err or failure.out
+
+
+def _candidate_workspace_head(candidate: Path) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(candidate), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
 
 
 def test_product_graph_blocks_slicing_when_acceptance_is_missing(tmp_path: Path):
@@ -683,3 +1279,416 @@ def test_product_mission_cli_runs_the_local_compile_chain(tmp_path: Path, capsys
     mission = json.loads(capsys.readouterr().out)
     assert main(["mission", "verify", mission["path"], "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["valid"] is True
+
+
+def _mission_repair_inputs(tmp_path: Path):
+    mission, decision, candidate, declaration = _approved_binding_inputs(tmp_path)
+    with (candidate / ".gitignore").open("a", encoding="utf-8") as stream:
+        stream.write(".factory/\n")
+    subprocess.run(["git", "-C", str(candidate), "add", ".gitignore"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(candidate),
+            "-c",
+            "user.name=Test Owner",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "ignore evidence",
+        ],
+        check=True,
+    )
+    declaration["base_commit"] = _candidate_workspace_head(candidate)
+    declaration["paths"] = ["README.md"]
+    declaration["profiles"] = ["docker-linux"]
+    checks = [
+        {
+            "id": "repaired",
+            "kind": "positive",
+            "argv": [
+                "python",
+                "-c",
+                "from pathlib import Path; assert Path('README.md').read_text() == 'candidate repaired\\n', 'repair not applied'",
+            ],
+            "failure": {"exit_code": 1, "signature": "repair not applied"},
+        },
+        {
+            "id": "baseline-removed",
+            "kind": "negative",
+            "argv": [
+                "python",
+                "-c",
+                "from pathlib import Path; assert Path('README.md').read_text() == 'candidate base\\n', 'old value absent'",
+            ],
+            "failure": {"exit_code": 1, "signature": "old value absent"},
+        },
+    ]
+    declaration["commands"] = [{"id": row["id"], "argv": row["argv"]} for row in checks]
+    binding = bind_mission_candidate(
+        Path(mission["path"]),
+        Path(decision["path"]),
+        tmp_path,
+        owner="release-owner",
+        declaration=declaration,
+    )
+    approval = {
+        "workspace": str(candidate).casefold(),
+        "base_commit": declaration["base_commit"],
+        "touched_paths": ["README.md"],
+        "tool_contract": {"checks": checks, "total_timeout_seconds": 600},
+    }
+    return candidate, binding, approval
+
+
+def test_mission_repair_binding_matches_exact_scope_commands_and_budget(tmp_path: Path):
+    from factoryline.product_missions import verify_mission_repair_binding
+
+    candidate, binding, approval = _mission_repair_inputs(tmp_path)
+    result = verify_mission_repair_binding(
+        Path(binding["path"]), tmp_path, owner="release-owner", approval=approval
+    )
+    assert result["schema"] == "factory.mission.repair-binding.v1"
+    assert result["workspace"] == str(candidate)
+    assert result["binding_sha256"] == binding["binding_sha256"]
+    assert result["mission_sha256"] == binding["mission"]["mission_sha256"]
+    assert (
+        result["binding_file_sha256"]
+        == hashlib.sha256(Path(binding["path"]).read_bytes()).hexdigest()
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation", ["workspace", "base", "paths", "empty", "command", "budget"]
+)
+def test_mission_repair_binding_rejects_contract_expansion(
+    tmp_path: Path, mutation: str
+):
+    from factoryline.product_missions import verify_mission_repair_binding
+
+    _candidate, binding, approval = _mission_repair_inputs(tmp_path)
+    if mutation == "workspace":
+        approval["workspace"] += "-other"
+    elif mutation == "base":
+        approval["base_commit"] = "0" * 40
+    elif mutation == "paths":
+        approval["touched_paths"] = ["unapproved.py"]
+    elif mutation == "empty":
+        approval["touched_paths"] = []
+    elif mutation == "command":
+        approval["tool_contract"]["checks"][0]["argv"] = ["unapproved"]
+    else:
+        approval["tool_contract"]["total_timeout_seconds"] = 3601
+    with pytest.raises(ProductMissionError, match="MISSION_CANDIDATE_INVALID"):
+        verify_mission_repair_binding(
+            Path(binding["path"]), tmp_path, owner="release-owner", approval=approval
+        )
+
+
+def test_mission_repair_cli_dispatches_existing_approval_without_synthesis(
+    tmp_path: Path, monkeypatch, capsys
+):
+    import factoryline.repair_sandbox as sandbox
+
+    candidate, binding, _approval = _mission_repair_inputs(tmp_path)
+    approval_path = candidate / ".factory" / "exact-approval.json"
+    calls = []
+
+    def execute(root, path, *, mission_binding):
+        calls.append((root, path, mission_binding))
+        return {"state": "TEST_DISPATCH", "mission_binding": mission_binding}
+
+    monkeypatch.setattr(sandbox, "execute_approved_repair", execute)
+    assert (
+        main(
+            [
+                "mission",
+                "execute-repair",
+                binding["path"],
+                str(approval_path),
+                "--root",
+                str(tmp_path),
+                "--owner",
+                "release-owner",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["state"] == "TEST_DISPATCH"
+    assert calls == [
+        (
+            candidate,
+            approval_path,
+            {"path": binding["path"], "root": str(tmp_path), "owner": "release-owner"},
+        )
+    ]
+    assert not approval_path.exists()
+
+
+def test_mission_repair_cli_rejects_wrong_owner_before_dispatch(
+    tmp_path: Path, monkeypatch, capsys
+):
+    import factoryline.repair_sandbox as sandbox
+
+    _candidate, binding, _approval = _mission_repair_inputs(tmp_path)
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("unapproved owner reached executor")
+
+    monkeypatch.setattr(sandbox, "execute_approved_repair", forbidden)
+    assert (
+        main(
+            [
+                "mission",
+                "execute-repair",
+                binding["path"],
+                "missing-approval.json",
+                "--root",
+                str(tmp_path),
+                "--owner",
+                "another-owner",
+                "--json",
+            ]
+        )
+        != 0
+    )
+    assert "MISSION_CANDIDATE_INVALID" in capsys.readouterr().err
+
+
+def test_mission_repair_real_docker_preserves_primary_and_bound_journal(tmp_path: Path):
+    import os
+    from datetime import datetime, timedelta, timezone
+    from factoryline.product_missions import execute_mission_repair
+    from factoryline.repair_sandbox import (
+        create_repair_scope,
+        write_repair_scope_artifacts,
+        inspect_repair_candidate,
+        create_repair_approval,
+        verify_repair_attempt_journal,
+    )
+
+    image, digest = (
+        os.environ.get("FACTORY_REPAIR_TEST_IMAGE"),
+        os.environ.get("FACTORY_REPAIR_TEST_DIGEST"),
+    )
+    if not image or not digest:
+        pytest.skip("explicit local digest-pinned operator image required")
+    candidate, binding, contract = _mission_repair_inputs(tmp_path)
+    scope = create_repair_scope(candidate, "Mission repair", ["README.md"])
+    artifacts = write_repair_scope_artifacts(
+        scope, candidate, candidate / ".factory" / "scope"
+    )
+    scope_path = Path(artifacts["paths"]["json"])
+    patch = candidate / ".factory" / "candidate.patch"
+    patch.write_text(
+        "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-candidate base\n+candidate repaired\n",
+        encoding="utf-8",
+    )
+    inspected = inspect_repair_candidate(candidate, scope_path, patch)
+    approval = create_repair_approval(
+        candidate,
+        scope_path,
+        patch,
+        approved_by="authorized disposable operator test",
+        confirmation="APPROVE REPAIR " + inspected["candidate_sha256"],
+        expires_at=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        container_image=image,
+        container_digest=digest,
+        checks=contract["tool_contract"]["checks"],
+    )
+    result = execute_mission_repair(
+        Path(binding["path"]),
+        candidate / approval["path"],
+        tmp_path,
+        owner="release-owner",
+    )
+    assert result["status"] == "VERIFIED", result
+    assert result["cleanup_confirmed"] is True
+    assert result["primary_checkout_unchanged"] is True
+    assert (candidate / "README.md").read_text(encoding="utf-8") == "candidate base\n"
+    assert result["mission_binding"]["binding_sha256"] == binding["binding_sha256"]
+    assert result["mission_budget"]["admission"]["action"]["status"] == "ADMITTED"
+    assert result["mission_budget"]["settlement"]["action"]["status"] == "SETTLED"
+    assert result["mission_budget"]["settlement"]["usage"]["iterations"] == 1
+    assert float(result["mission_budget"]["settlement"]["usage"]["wall_seconds"]) > 0
+    journal = verify_repair_attempt_journal(candidate, approval["approval_sha256"])
+    assert journal["state"]["mission_binding"] == result["mission_binding"]
+    assert journal["state"]["mission_budget"] == result["mission_budget"]
+    assert [row["stage"] for row in result["checks"]] == [
+        "baseline",
+        "repaired",
+        "repaired",
+    ]
+
+
+def test_mission_repair_binding_requires_declared_docker_profile(tmp_path: Path):
+    from factoryline.product_missions import verify_mission_repair_binding
+
+    _candidate, binding, approval = _mission_repair_inputs(tmp_path)
+    path = Path(binding["path"])
+    _reseal_candidate_binding(
+        path, lambda value: value["declaration"].update(profiles=["windows-only"])
+    )
+    with pytest.raises(ProductMissionError, match="docker-linux"):
+        verify_mission_repair_binding(
+            path, tmp_path, owner="release-owner", approval=approval
+        )
+
+
+def _mission_repair_budget_context(
+    tmp_path: Path, *, max_iterations=3, max_wall_seconds=1600
+):
+    from factoryline.product_missions import verify_mission_repair_binding
+
+    _candidate, binding, approval = _mission_repair_inputs(tmp_path)
+    context = verify_mission_repair_binding(
+        Path(binding["path"]), tmp_path, owner="release-owner", approval=approval
+    )
+    # Keep the mission and binding hash gates untouched. Build a separate valid
+    # passport/manifest pair with tight runtime limits for ledger boundary cases.
+    from factoryline.loop_passport import build_loop_passport
+
+    source = json.loads(
+        Path(context["budget_passport_path"]).read_text(encoding="utf-8")
+    )
+    source_manifest = Path(source["manifest_path"])
+    manifest = json.loads(source_manifest.read_text(encoding="utf-8"))
+    manifest["id"] = f"test-{max_iterations}-{max_wall_seconds}"
+    manifest["budgets"].update(
+        max_iterations=max_iterations, max_wall_seconds=max_wall_seconds
+    )
+    manifest_path = tmp_path / f"{manifest['id']}.manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    passport = build_loop_passport(tmp_path, manifest_path)
+    context["budget_passport_path"] = passport["paths"]["json"]
+    return context, approval
+
+
+def test_mission_repair_budget_pending_and_replay_are_durable(tmp_path: Path):
+    import factoryline.repair_sandbox as sandbox
+
+    context, approval = _mission_repair_budget_context(tmp_path)
+    approval_one, approval_two = "1" * 64, "2" * 64
+    first = sandbox._admit_mission_repair(context, approval_one, approval)
+    assert first["status"] == "ADMITTED"
+    assert first["usage"]["wall_seconds"] == 1200
+    with pytest.raises(sandbox.RepairSandboxError) as blocked:
+        sandbox._admit_mission_repair(context, approval_two, approval)
+    assert blocked.value.code == "MISSION_BUDGET_BLOCKED"
+    # A helper re-entry simulates process restart; the SQLite reservation remains.
+    with pytest.raises(sandbox.RepairSandboxError) as blocked:
+        sandbox._admit_mission_repair(context, approval_two, approval)
+    assert blocked.value.code == "MISSION_BUDGET_BLOCKED"
+    with pytest.raises(sandbox.RepairSandboxError) as blocked:
+        sandbox._admit_mission_repair(context, approval_one, approval)
+    assert blocked.value.code == "MISSION_BUDGET_BLOCKED"
+
+
+def test_mission_repair_budget_enforces_iterations_and_wall_reservation(
+    tmp_path: Path, monkeypatch
+):
+    import factoryline.repair_sandbox as sandbox
+
+    context, approval = _mission_repair_budget_context(
+        tmp_path, max_iterations=1, max_wall_seconds=1201
+    )
+    monkeypatch.setattr(sandbox, "_persist_attempt", lambda *_args: None)
+    monkeypatch.setattr(sandbox.time, "monotonic", lambda: 10.0)
+    approval_sha = "3" * 64
+    admission = sandbox._admit_mission_repair(context, approval_sha, approval)
+    state = {
+        "cleanup_confirmed": True,
+        "mission_budget": {"admission": admission},
+        "status": "VERIFIED",
+    }
+    sandbox._settle_mission_repair("attempt", state, context, approval_sha, 9.0)
+    assert state["mission_budget"]["settlement"]["status"] == "SETTLED"
+    with pytest.raises(sandbox.RepairSandboxError) as blocked:
+        sandbox._admit_mission_repair(context, "4" * 64, approval)
+    assert blocked.value.code == "MISSION_BUDGET_BLOCKED"
+
+    wall_context, wall_approval = _mission_repair_budget_context(
+        tmp_path / "wall", max_iterations=3, max_wall_seconds=1199
+    )
+    with pytest.raises(sandbox.RepairSandboxError) as blocked:
+        sandbox._admit_mission_repair(wall_context, "5" * 64, wall_approval)
+    assert blocked.value.code == "MISSION_BUDGET_BLOCKED"
+
+
+def test_mission_repair_budget_rejects_altered_passport_budget(tmp_path: Path):
+    import factoryline.repair_sandbox as sandbox
+
+    context, approval = _mission_repair_budget_context(tmp_path)
+    passport_path = Path(context["budget_passport_path"])
+    passport = json.loads(passport_path.read_text(encoding="utf-8"))
+    passport["budgets"]["max_iterations"] += 1
+    passport_path.write_text(json.dumps(passport), encoding="utf-8")
+    with pytest.raises(sandbox.RepairSandboxError) as blocked:
+        sandbox._admit_mission_repair(context, "6" * 64, approval)
+    assert blocked.value.code == "MISSION_BUDGET_BLOCKED"
+
+
+def test_mission_repair_binding_rejects_passport_budget_mismatch(
+    tmp_path: Path, monkeypatch
+):
+    _candidate, binding, approval = _mission_repair_inputs(tmp_path)
+    from factoryline.product_missions import verify_mission_repair_binding
+
+    _reseal_candidate_binding(
+        Path(binding["path"]),
+        lambda value: value["budgets"].update(max_iterations=999),
+    )
+    with pytest.raises(ProductMissionError, match="MISSION_CANDIDATE_INVALID"):
+        verify_mission_repair_binding(
+            Path(binding["path"]), tmp_path, owner="release-owner", approval=approval
+        )
+
+
+def test_mission_repair_budget_serializes_competing_approvals(tmp_path: Path):
+    from concurrent.futures import ThreadPoolExecutor
+    import factoryline.repair_sandbox as sandbox
+
+    context, approval = _mission_repair_budget_context(tmp_path)
+
+    def reserve(approval_sha):
+        try:
+            return sandbox._admit_mission_repair(context, approval_sha, approval)[
+                "status"
+            ]
+        except sandbox.RepairSandboxError as error:
+            return error.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(reserve, ("7" * 64, "8" * 64)))
+    assert sorted(results) == ["ADMITTED", "MISSION_BUDGET_BLOCKED"]
+
+
+def test_mission_repair_budget_records_cleanup_overrun_and_stops(
+    tmp_path: Path, monkeypatch
+):
+    import factoryline.repair_sandbox as sandbox
+
+    context, approval = _mission_repair_budget_context(tmp_path, max_wall_seconds=1200)
+    admission = sandbox._admit_mission_repair(context, "9" * 64, approval)
+    state = {
+        "cleanup_confirmed": True,
+        "mission_budget": {"admission": admission},
+        "status": "VERIFIED",
+    }
+    monkeypatch.setattr(sandbox, "_persist_attempt", lambda *_: None)
+    monkeypatch.setattr(sandbox.time, "monotonic", lambda: 1201.0000001)
+    sandbox._settle_mission_repair("attempt", state, context, "9" * 64, 0)
+    receipt = state["mission_budget"]["settlement"]
+    assert receipt["status"] == "BUDGET_EXCEEDED"
+    assert receipt["usage"]["wall_seconds"] == "1201.000001"
+    assert state["status"] == "STOPPED"
+    with pytest.raises(sandbox.RepairSandboxError) as blocked:
+        sandbox._admit_mission_repair(context, "a" * 64, approval)
+    assert blocked.value.code == "MISSION_BUDGET_BLOCKED"

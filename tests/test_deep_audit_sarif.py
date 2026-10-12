@@ -479,6 +479,168 @@ def test_zap_runtime_completion_cannot_substitute_for_native_rule_execution(
     ]
 
 
+def _zap_ledger_fixture():
+    from factoryline.deep_audit_sarif import _verify_zap_native_rule_ledger
+
+    bindings = {
+        "run_id": "run-123",
+        "candidate_sha256": "a" * 64,
+        "profile_sha256": "b" * 64,
+        "host_id": "c" * 64,
+    }
+    rows = []
+    for plugin_id in [40012, 40013]:
+        base = {
+            "schema": "factory.zap-rule-ledger.v1",
+            **bindings,
+            "plugin_id": plugin_id,
+            "plugin_name": f"plugin-{plugin_id}",
+            "message_count": 0,
+            "alert_count": 0,
+        }
+        rows.extend(
+            [
+                {
+                    **base,
+                    "invocation": 1,
+                    "event": "invocation_started",
+                    "status": "started",
+                },
+                {
+                    **base,
+                    "invocation": 1,
+                    "event": "invocation_returned",
+                    "status": "returned",
+                },
+                {
+                    **base,
+                    "invocation": 0,
+                    "event": "plugin_completed",
+                    "status": "completed",
+                    "message_count": 3,
+                    "alert_count": 1,
+                },
+            ]
+        )
+    raw = b"".join(canonical_bytes(row) + b"\n" for row in rows)
+    return (
+        _verify_zap_native_rule_ledger,
+        raw,
+        {"engine": "zap", "rule_ids": ["40012", "40013"]},
+        bindings,
+    )
+
+
+def test_zap_native_rule_ledger_verifier_accepts_complete_bound_inventory():
+    verify, raw, lane, bindings = _zap_ledger_fixture()
+
+    result = verify(raw, lane, bindings)
+
+    assert result == {
+        "schema": "factory.zap-rule-verification.v1",
+        "state": "VERIFIED",
+        **bindings,
+        "plugin_ids": [40012, 40013],
+        "invocation_count": 2,
+        "plugin_count": 2,
+        "ledger_sha256": sha256_bytes(raw),
+    }
+
+
+def test_zap_native_rule_ledger_allows_concurrent_start_order_but_requires_contiguous_ids():
+    verify, raw, lane, bindings = _zap_ledger_fixture()
+    rows = [strict_json(line) for line in raw.splitlines()]
+    start_one, return_one, terminal = rows[:3]
+    start_two = {**start_one, "invocation": 2}
+    return_two = {**return_one, "invocation": 2}
+    rows[:3] = [start_two, start_one, return_one, return_two, terminal]
+    valid = b"".join(canonical_bytes(row) + b"\n" for row in rows)
+
+    assert verify(valid, lane, bindings)["invocation_count"] == 3
+
+    rows[0]["invocation"] = 3
+    rows[3]["invocation"] = 3
+    missing_id = b"".join(canonical_bytes(row) + b"\n" for row in rows)
+    with pytest.raises(RuntimeAuditError):
+        verify(missing_id, lane, bindings)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_return",
+        "failed_invocation",
+        "plugin_skipped",
+        "unknown_plugin",
+        "binding_drift",
+        "status_drift",
+        "bool_count",
+        "zero_messages",
+        "duplicate_terminal",
+        "duplicate_json_key",
+        "missing_newline",
+        "invalid_plugin_name",
+        "non_object_root",
+    ],
+)
+def test_zap_native_rule_ledger_verifier_rejects_incomplete_or_forged_evidence(
+    mutation,
+):
+    verify, raw, lane, bindings = _zap_ledger_fixture()
+    raw = _zap_ledger_tamper(raw, mutation)
+
+    with pytest.raises(RuntimeAuditError):
+        verify(raw, lane, bindings)
+
+
+def _zap_ledger_tamper(raw, mutation):
+    if mutation == "duplicate_json_key":
+        return raw.replace(
+            b'"event":"invocation_started"',
+            b'"event":"invocation_started","event":"invocation_started"',
+            1,
+        )
+    if mutation == "non_object_root":
+        return b"[]\n"
+    rows = [strict_json(line) for line in raw.splitlines()]
+    changes = {
+        "missing_return": lambda: rows.pop(1),
+        "failed_invocation": lambda: rows[1].update(
+            event="invocation_failed",
+            status="failed",
+            exception_class="java.lang.IllegalStateException",
+        ),
+        "plugin_skipped": lambda: rows[2].update(
+            event="plugin_skipped", status="skipped"
+        ),
+        "unknown_plugin": lambda: rows[0].update(plugin_id=49999),
+        "binding_drift": lambda: rows[0].update(candidate_sha256="d" * 64),
+        "status_drift": lambda: rows[0].update(status="returned"),
+        "bool_count": lambda: rows[2].update(message_count=True),
+        "invalid_plugin_name": lambda: rows[0].update(
+            plugin_name="https://host/plugin"
+        ),
+        "zero_messages": lambda: rows[2].update(message_count=0),
+        "duplicate_terminal": lambda: rows.insert(3, deepcopy(rows[2])),
+    }
+    if mutation == "missing_newline":
+        return raw[:-1]
+    changes[mutation]()
+    return b"".join(canonical_bytes(row) + b"\n" for row in rows)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [b"x" * (4 * 1024 * 1024 + 1), b" " * 4097 + b"\n", b"\n"],
+    ids=["byte_cap", "row_cap", "empty_record"],
+)
+def test_zap_native_rule_ledger_verifier_enforces_byte_and_record_bounds(bad):
+    verify, _, lane, bindings = _zap_ledger_fixture()
+
+    with pytest.raises(RuntimeAuditError):
+        verify(bad, lane, bindings)
+
+
 def test_zap_normalization_preserves_native_rule_gap_despite_other_complete_checks(
     monkeypatch,
 ):
@@ -886,6 +1048,152 @@ def ingest(tmp_path, payload):
     )
 
 
+def _zap_source_trace_fixture(tmp_path):
+    from factoryline.deep_audit_io import digest
+
+    source = b"def handler():\n    return 'ok'\n"
+    (tmp_path / "app.py").write_bytes(source)
+    source_sha = sha256_bytes(source)
+    target = {
+        "schema": "factory.zap-target.v1",
+        "image": "sha256:" + "a" * 64,
+        "argv": ["/usr/local/bin/python", "/src/app.py"],
+        "port": 8765,
+        "readiness_path": "/health",
+        "routes": [
+            {
+                "id": "home",
+                "method": "GET",
+                "path": "/",
+                "query": {},
+                "source_bindings": {"app.py": source_sha},
+            }
+        ],
+        "source_trace": {
+            "schema": "factory.zap-source-trace.config.v1",
+            "provider": "python-stdlib-http.v1",
+            "max_events": 100,
+        },
+    }
+    request = {
+        "schema": "factory.zap-native-request.v2",
+        "run_id": "run-1",
+        "candidate_sha256": "b" * 64,
+        "profile_sha256": "c" * 64,
+        "rule_ids": ["40012"],
+        "timeout_seconds": 30,
+        "target": target,
+        "route_id": "home",
+    }
+    inventory = {"files": [{"path": "app.py", "sha256": source_sha}]}
+    header = {
+        "kind": "header",
+        "schema": "factory.zap-source-trace.v1",
+        "run_id": request["run_id"],
+        "candidate_sha256": request["candidate_sha256"],
+        "profile_sha256": request["profile_sha256"],
+        "target_sha256": digest(target),
+        "provider": "python-stdlib-http.v1",
+        "route_ids": ["home"],
+        "max_events": 100,
+    }
+    event = {
+        "route_id": "home",
+        "path": "app.py",
+        "source_sha256": source_sha,
+        "line": 2,
+    }
+    raw = canonical_bytes(header) + b"\n" + canonical_bytes(event) + b"\n"
+    return request, inventory, raw, source_sha
+
+
+def test_zap_source_trace_bootstrap_compiles_and_binds_routes(tmp_path):
+    from factoryline.deep_audit_io import zap_source_trace_bootstrap
+
+    request, inventory, _, _ = _zap_source_trace_fixture(tmp_path)
+    bootstrap = zap_source_trace_bootstrap(request, inventory)
+    compile(bootstrap, "<zap-source-trace-bootstrap>", "exec")
+    assert "runpy.run_path" in bootstrap
+    assert "threading.settrace" in bootstrap
+    assert "routes.get((self.command, urlsplit(self.path).path))" in bootstrap
+    assert "sys.path.insert(0, os.path.dirname(script))" in bootstrap
+    assert '"/trace/events.jsonl"' in bootstrap
+
+
+def test_zap_source_trace_validator_returns_bound_normalized_observations(tmp_path):
+    from factoryline.deep_audit_io import zap_validate_source_trace
+
+    request, inventory, raw, source_sha = _zap_source_trace_fixture(tmp_path)
+    result = zap_validate_source_trace(raw, request, inventory, tmp_path)
+    assert result["schema"] == "factory.zap-source-trace.normalized.v1"
+    assert result["raw_sha256"] == sha256_bytes(raw)
+    assert result["observations"] == [
+        {
+            "route_id": "home",
+            "path": "app.py",
+            "source_sha256": source_sha,
+            "lines": [2],
+        }
+    ]
+    assert result["claim_boundary"].startswith("in-process observed")
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "header",
+        "overflow",
+        "duplicate",
+        "line",
+        "noncanonical",
+        "route_type",
+        "event_budget",
+    ],
+)
+def test_zap_source_trace_validator_rejects_tampered_rows(tmp_path, mutation):
+    from factoryline.deep_audit_io import zap_validate_source_trace
+
+    request, inventory, raw, _ = _zap_source_trace_fixture(tmp_path)
+    header, event = [json.loads(line) for line in raw.splitlines()]
+    if mutation == "header":
+        header["candidate_sha256"] = "d" * 64
+        rows = [canonical_bytes(header), canonical_bytes(event)]
+    elif mutation == "overflow":
+        rows = [
+            raw.splitlines()[0],
+            canonical_bytes({"overflow": True, "reason": "test"}),
+        ]
+    elif mutation == "duplicate":
+        rows = [raw.splitlines()[0], raw.splitlines()[1], raw.splitlines()[1]]
+    elif mutation == "line":
+        event["line"] = 99
+        rows = [raw.splitlines()[0], canonical_bytes(event)]
+    elif mutation == "route_type":
+        event["route_id"] = []
+        rows = [raw.splitlines()[0], canonical_bytes(event)]
+    elif mutation == "event_budget":
+        request["target"]["source_trace"]["max_events"] = 1
+        header["target_sha256"] = digest(request["target"])
+        header["max_events"] = 1
+        event["line"] = 1
+        second = dict(event, line=2)
+        rows = [
+            canonical_bytes(header),
+            canonical_bytes(event),
+            canonical_bytes(second),
+        ]
+    else:
+        rows = [
+            raw.splitlines()[0],
+            b'{ "line":2,"path":"app.py","route_id":"home","source_sha256":"'
+            + event["source_sha256"].encode()
+            + b'"}',
+        ]
+    tampered = b"\n".join(rows) + b"\n"
+    with pytest.raises(RuntimeAuditError):
+        zap_validate_source_trace(tampered, request, inventory, tmp_path)
+
+
 def test_trace_native_identity_and_hashes(tmp_path):
     before = ingest(tmp_path, report())
     changed = report()
@@ -1068,7 +1376,11 @@ def test_semgrep_config_inventory_is_derived_from_signed_config(disabled):
 
 def trivy_execution_evidence():
     import base64
-    from factoryline.deep_audit_io import canonical_bytes, _trivy_observation
+    from factoryline.deep_audit_io import (
+        canonical_bytes,
+        _trivy_observation,
+        _trivy_target_bindings,
+    )
 
     config, ignore = b"# pinned config\n", b"\n"
     lane = {
@@ -1083,7 +1395,8 @@ def trivy_execution_evidence():
             "baseline_ignore_sha256": sha256_bytes(ignore),
         },
     }
-    sources = {"Dockerfile": "b" * 64}
+    source_bytes = b"FROM scratch\n"
+    sources = {"Dockerfile": sha256_bytes(source_bytes)}
     sarif = {"runs": [{"results": []}]}
     native = {
         "SchemaVersion": 2,
@@ -1137,6 +1450,10 @@ def trivy_execution_evidence():
         "config_base64": base64.b64encode(config).decode(),
         "ignore_base64": base64.b64encode(ignore).decode(),
         "sources": sources,
+        "source_bytes_base64": {"Dockerfile": base64.b64encode(source_bytes).decode()},
+        "target_bindings": _trivy_target_bindings(
+            native, sources, {"Dockerfile": source_bytes}
+        ),
         "observations": [
             _trivy_observation("sarif", argv, dict(facts), canonical_bytes(sarif)),
             _trivy_observation("json", json_argv, dict(facts), canonical_bytes(native)),
@@ -1155,6 +1472,340 @@ def test_trivy_host_rederives_explicit_native_statuses():
     )
     assert _rule_accounting_gaps({}, lane, sources, report) == [
         "TRIVY_NATIVE_RULE_EXECUTION_UNVERIFIED"
+    ]
+
+
+def test_trivy_terraform_root_and_local_module_keep_native_target_scopes():
+    from factoryline.deep_audit_io import (
+        _trivy_expected_failures,
+        _trivy_native_checks,
+        _trivy_target_bindings,
+    )
+
+    source_bytes = {
+        "main.tf": b'module "bucket" {\n  source = "./modules/bucket"\n}\n',
+        "variables.tf": b'variable "bucket_name" { type = string }\n',
+        "modules/bucket/main.tf": b'resource "aws_s3_bucket" "sample" {}\n',
+        "modules/bucket/variables.tf": b'variable "name" { type = string }\n',
+    }
+    sources = {path: sha256_bytes(raw) for path, raw in source_bytes.items()}
+    report = {
+        "SchemaVersion": 2,
+        "Results": [
+            {
+                "Target": ".",
+                "Class": "config",
+                "Type": "terraform",
+                "Misconfigurations": [{"ID": "AVD-ROOT", "Status": "PASS"}],
+                "MisconfSummary": {"Successes": 1, "Failures": 0},
+            },
+            {
+                "Target": "modules/bucket/main.tf",
+                "Class": "config",
+                "Type": "terraform",
+                "Misconfigurations": [
+                    {
+                        "ID": "s3-bucket-logging",
+                        "AVDID": "AVD-AWS-0089",
+                        "Status": "FAIL",
+                    }
+                ],
+                "MisconfSummary": {"Successes": 0, "Failures": 1},
+            },
+        ],
+    }
+    bindings = _trivy_target_bindings(report, sources, source_bytes)
+    assert bindings["."]["scope"] == "terraform_root"
+    assert [row["path"] for row in bindings["."]["members"]] == sorted(source_bytes)
+    assert bindings["modules/bucket/main.tf"]["scope"] == "terraform_file"
+    matrix = _trivy_native_checks(report, sources, bindings)
+    assert set(matrix) == {".", "modules/bucket/main.tf"}
+    sarif = {
+        "runs": [
+            {
+                "results": [
+                    {
+                        "ruleId": "s3-bucket-logging",
+                        "locations": [
+                            {
+                                "physicalLocation": {
+                                    "artifactLocation": {
+                                        "uri": "modules/bucket/main.tf"
+                                    }
+                                }
+                            }
+                        ],
+                    }
+                ]
+            }
+        ]
+    }
+    assert _trivy_expected_failures(report, bindings, sarif, sources) == {
+        ("modules/bucket/main.tf", "s3-bucket-logging")
+    }
+
+
+def test_trivy_terraform_challenge_directory_keeps_root_and_module_members():
+    from factoryline.deep_audit_io import _trivy_target_bindings
+
+    raw = {
+        "positive/main.tf": (b'module "bucket" {\n  source = "./modules/bucket"\n}\n'),
+        "positive/variables.tf": b'variable "bucket_name" { type = string }\n',
+        "positive/modules/bucket/main.tf": b'resource "aws_s3_bucket" "sample" {}\n',
+        "positive/modules/bucket/variables.tf": b'variable "name" { type = string }\n',
+    }
+    sources = {path: sha256_bytes(content) for path, content in raw.items()}
+    report = {
+        "Results": [
+            {
+                "Target": "positive",
+                "Type": "terraform",
+                "Misconfigurations": [{"ID": "ROOT-CHECK", "Status": "PASS"}],
+            },
+            {
+                "Target": "positive/modules/bucket/main.tf",
+                "Type": "terraform",
+                "Misconfigurations": [
+                    {"ID": "AVD-AWS-0086", "Status": "FAIL"},
+                    {"ID": "s3-bucket-logging", "Status": "FAIL"},
+                ],
+            },
+        ],
+    }
+
+    bindings = _trivy_target_bindings(report, sources, raw)
+
+    assert [row["path"] for row in bindings["positive"]["members"]] == sorted(raw)
+    assert bindings["positive/modules/bucket/main.tf"]["members"] == [
+        {
+            "path": "positive/modules/bucket/main.tf",
+            "sha256": sources["positive/modules/bucket/main.tf"],
+        }
+    ]
+
+
+def test_trivy_dot_target_does_not_infer_candidate_directory_as_scan_root():
+    from factoryline.deep_audit_io import _trivy_target_bindings
+
+    raw = {
+        "infra/main.tf": b'resource "aws_s3_bucket" "sample" {}\n',
+        "infra/variables.tf": b'variable "name" { type = string }\n',
+    }
+    sources = {path: sha256_bytes(content) for path, content in raw.items()}
+    report = {
+        "SchemaVersion": 2,
+        "Results": [
+            {
+                "Target": ".",
+                "Class": "config",
+                "Type": "terraform",
+                "Misconfigurations": [{"ID": "AVD-TEST", "Status": "PASS"}],
+                "MisconfSummary": {"Successes": 1, "Failures": 0},
+            }
+        ],
+    }
+
+    with pytest.raises(Exception, match="no source members"):
+        _trivy_target_bindings(report, sources, raw)
+
+
+@pytest.mark.parametrize(
+    "source", ["../outside", "https://registry.example/module", "${var.module_path}"]
+)
+def test_trivy_terraform_module_mapping_fails_closed_on_unresolved_sources(source):
+    from factoryline.deep_audit_io import _trivy_target_bindings
+
+    source_bytes = {
+        "main.tf": f'module "bucket" {{\n  source = "{source}"\n}}\n'.encode(),
+        "modules/bucket/main.tf": b'resource "aws_s3_bucket" "sample" {}\n',
+    }
+    sources = {path: sha256_bytes(raw) for path, raw in source_bytes.items()}
+    report = {
+        "SchemaVersion": 2,
+        "Results": [
+            {
+                "Target": ".",
+                "Class": "config",
+                "Type": "terraform",
+                "Misconfigurations": [{"ID": "AVD-ROOT", "Status": "PASS"}],
+                "MisconfSummary": {"Successes": 1, "Failures": 0},
+            }
+        ],
+    }
+    with pytest.raises(Exception, match="Terraform"):
+        _trivy_target_bindings(report, sources, source_bytes)
+
+
+def test_trivy_exact_terraform_json_file_without_modules_remains_supported():
+    from factoryline.deep_audit_io import _trivy_target_bindings
+
+    source_bytes = {"standalone.tf.json": b'{"resource":{"aws_s3_bucket":{"x":{}}}}'}
+    sources = {path: sha256_bytes(raw) for path, raw in source_bytes.items()}
+    report = {
+        "SchemaVersion": 2,
+        "Results": [
+            {
+                "Target": "standalone.tf.json",
+                "Class": "config",
+                "Type": "terraform",
+                "Misconfigurations": [{"ID": "AVD-TEST", "Status": "PASS"}],
+                "MisconfSummary": {"Successes": 1, "Failures": 0},
+            }
+        ],
+    }
+    binding = _trivy_target_bindings(report, sources, source_bytes)
+    assert binding["standalone.tf.json"]["scope"] == "terraform_file"
+
+
+def test_trivy_terraform_json_root_resolves_literal_local_module_graph():
+    from factoryline.deep_audit_io import _trivy_target_bindings
+
+    source_bytes = {
+        "main.tf.json": b'{"module":{"bucket":{"source":"./modules/bucket"}}}',
+        "modules/bucket/main.tf": b'resource "aws_s3_bucket" "x" {}',
+    }
+    sources = {path: sha256_bytes(raw) for path, raw in source_bytes.items()}
+    report = {
+        "SchemaVersion": 2,
+        "Results": [
+            {
+                "Target": ".",
+                "Class": "config",
+                "Type": "terraform",
+                "Misconfigurations": [{"ID": "AVD-TEST", "Status": "PASS"}],
+                "MisconfSummary": {"Successes": 1, "Failures": 0},
+            }
+        ],
+    }
+    binding = _trivy_target_bindings(report, sources, source_bytes)
+    assert [row["path"] for row in binding["."]["members"]] == sorted(source_bytes)
+
+
+def test_trivy_terraform_graph_rejects_module_text_hidden_in_block_comment():
+    from factoryline.deep_audit_io import _trivy_target_bindings
+
+    source_bytes = {
+        "main.tf": b'/*\nmodule "fake" {\n source = "./modules/fake"\n}\n*/\n',
+        "modules/fake/main.tf": b'resource "aws_s3_bucket" "x" {}',
+    }
+    sources = {path: sha256_bytes(raw) for path, raw in source_bytes.items()}
+    report = {
+        "SchemaVersion": 2,
+        "Results": [
+            {
+                "Target": ".",
+                "Class": "config",
+                "Type": "terraform",
+                "Misconfigurations": [{"ID": "AVD-TEST", "Status": "PASS"}],
+                "MisconfSummary": {"Successes": 1, "Failures": 0},
+            }
+        ],
+    }
+    with pytest.raises(Exception, match="block comments"):
+        _trivy_target_bindings(report, sources, source_bytes)
+
+
+def _trivy_snapshot_inputs(sizes, tmp_path=None):
+    import base64
+
+    source_bytes = {
+        f"source-{index}.tf": b"x" * size for index, size in enumerate(sizes)
+    }
+    sources = {path: sha256_bytes(raw) for path, raw in source_bytes.items()}
+    if tmp_path is not None:
+        for path, raw in source_bytes.items():
+            (tmp_path / path).write_bytes(raw)
+    encoded = {
+        path: base64.b64encode(raw).decode("ascii")
+        for path, raw in source_bytes.items()
+    }
+    return sources, source_bytes, encoded
+
+
+@pytest.mark.parametrize("size,accepted", [(1_000_000, True), (1_000_001, False)])
+def test_trivy_producer_snapshot_enforces_per_file_byte_boundary(
+    tmp_path, size, accepted
+):
+    from factoryline.deep_audit_io import _trivy_source_bytes
+
+    sources, source_bytes, _ = _trivy_snapshot_inputs([size], tmp_path)
+    if accepted:
+        assert _trivy_source_bytes(tmp_path, sources) == source_bytes
+    else:
+        with pytest.raises(Exception, match="snapshot"):
+            _trivy_source_bytes(tmp_path, sources)
+
+
+@pytest.mark.parametrize("size,accepted", [(1_000_000, True), (1_000_001, False)])
+def test_trivy_host_decoder_enforces_per_file_byte_boundary(size, accepted):
+    from factoryline.deep_audit_io import _trivy_decode_source_bytes
+
+    sources, source_bytes, encoded = _trivy_snapshot_inputs([size])
+    evidence = {"source_bytes_base64": encoded}
+    if accepted:
+        assert _trivy_decode_source_bytes(evidence, sources) == source_bytes
+    else:
+        with pytest.raises(Exception, match="snapshot"):
+            _trivy_decode_source_bytes(evidence, sources)
+
+
+@pytest.mark.parametrize("extra_byte,accepted", [(False, True), (True, False)])
+@pytest.mark.parametrize("consumer", ["producer", "host"])
+def test_trivy_source_snapshot_enforces_total_byte_boundary(
+    tmp_path, extra_byte, accepted, consumer
+):
+    from factoryline.deep_audit_io import (
+        _trivy_decode_source_bytes,
+        _trivy_source_bytes,
+    )
+
+    sizes = [1_000_000] * 8 + ([1] if extra_byte else [])
+    sources, source_bytes, encoded = _trivy_snapshot_inputs(
+        sizes, tmp_path if consumer == "producer" else None
+    )
+
+    def load():
+        if consumer == "producer":
+            return _trivy_source_bytes(tmp_path, sources)
+        return _trivy_decode_source_bytes({"source_bytes_base64": encoded}, sources)
+
+    if accepted:
+        assert load() == source_bytes
+    else:
+        with pytest.raises(Exception, match="snapshot"):
+            load()
+
+
+def test_trivy_local_module_cycles_terminate_and_unrelated_targets_stay_separate():
+    import time
+    from factoryline.deep_audit_io import _trivy_target_bindings
+
+    source_bytes = {
+        "main.tf": b'module "a" {\n source = "./modules/a"\n}\n',
+        "modules/a/main.tf": b'module "self" {\n source = "./"\n}\n',
+        "modules/unused/main.tf": b'resource "aws_s3_bucket" "x" {}\n',
+    }
+    sources = {path: sha256_bytes(raw) for path, raw in source_bytes.items()}
+    report = {
+        "SchemaVersion": 2,
+        "Results": [
+            {"Target": ".", "Class": "config", "Type": "terraform"},
+            {
+                "Target": "modules/unused/main.tf",
+                "Class": "config",
+                "Type": "terraform",
+            },
+        ],
+    }
+    started = time.perf_counter()
+    bindings = _trivy_target_bindings(report, sources, source_bytes)
+    elapsed = time.perf_counter() - started
+    print(f"synthetic_module_graph_elapsed_seconds={elapsed:.6f}")
+    assert elapsed < 5.0
+    root_members = {row["path"] for row in bindings["."]["members"]}
+    assert root_members == {"main.tf", "modules/a/main.tf"}
+    assert bindings["modules/unused/main.tf"]["members"] == [
+        {"path": "modules/unused/main.tf", "sha256": sources["modules/unused/main.tf"]}
     ]
 
 
@@ -1199,6 +1850,43 @@ def test_trivy_host_rejects_resealed_incomplete_native_checks(tamper):
         raw_report_base64=base64.b64encode(raw).decode(),
         raw_report_sha256=sha256_bytes(raw),
     )
+    assert _rule_accounting_gaps(
+        {"trivy_rule_execution": evidence}, lane, sources, report
+    ) == ["TRIVY_NATIVE_RULE_EXECUTION_UNVERIFIED"]
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "target_binding_hash",
+        "source_snapshot_hash",
+        "missing_binding",
+        "duplicate_target",
+    ],
+)
+def test_trivy_host_rejects_unbound_target_membership(tamper):
+    import base64
+    from factoryline.deep_audit_io import canonical_bytes
+    from factoryline.deep_audit_sarif import _rule_accounting_gaps
+
+    evidence, lane, sources, report = trivy_execution_evidence()
+    observation = evidence["observations"][1]
+    native = json.loads(base64.b64decode(observation["raw_report_base64"]))
+    if tamper == "target_binding_hash":
+        evidence["target_bindings"]["Dockerfile"]["members"][0]["sha256"] = "0" * 64
+    elif tamper == "source_snapshot_hash":
+        evidence["source_bytes_base64"]["Dockerfile"] = base64.b64encode(
+            b"FROM busybox\n"
+        ).decode()
+    elif tamper == "missing_binding":
+        evidence["target_bindings"] = {}
+    else:
+        native["Results"].append(dict(native["Results"][0]))
+        raw = canonical_bytes(native)
+        observation.update(
+            raw_report_base64=base64.b64encode(raw).decode(),
+            raw_report_sha256=sha256_bytes(raw),
+        )
     assert _rule_accounting_gaps(
         {"trivy_rule_execution": evidence}, lane, sources, report
     ) == ["TRIVY_NATIVE_RULE_EXECUTION_UNVERIFIED"]
@@ -1283,6 +1971,72 @@ def test_trivy_plain_native_ignore_mutation_has_only_target():
     assert _trivy_ignore_ids(b"DS001\n") == ["DS001"]
     with pytest.raises(RuntimeAuditError):
         _trivy_mutation(b"DS002\n", "DS001")
+
+
+@pytest.mark.parametrize("rule_id", ["DS001", "AVD-AWS-0086", "s3-bucket-logging"])
+def test_trivy_mutation_accepts_bounded_native_rule_ids(rule_id):
+    from factoryline.deep_audit_io import _trivy_mutation, _trivy_ignore_ids
+
+    mutated = _trivy_mutation(b"\n", rule_id)
+    assert mutated == f"{rule_id}\n".encode("ascii")
+    assert _trivy_ignore_ids(mutated) == [rule_id]
+
+
+@pytest.mark.parametrize(
+    "rule_id",
+    ["", "-leading", "id with spaces", "id/with/slash", "id\nDS002", "x" * 257],
+)
+def test_trivy_mutation_rejects_unsafe_or_unbounded_rule_ids(rule_id):
+    from factoryline.deep_audit_io import _trivy_mutation
+
+    with pytest.raises(RuntimeAuditError, match="unsupported Trivy check ID"):
+        _trivy_mutation(b"\n", rule_id)
+
+
+@pytest.mark.parametrize(
+    "ignore",
+    [
+        b"AVD-AWS-0086\nAVD-AWS-0086\n",
+        b"s3-bucket-logging\nAVD-AWS-0086\n",
+    ],
+)
+def test_trivy_ignore_rejects_duplicate_or_unsorted_native_ids(ignore):
+    from factoryline.deep_audit_io import _trivy_ignore_ids
+
+    with pytest.raises(RuntimeAuditError, match="ignore IDs are invalid"):
+        _trivy_ignore_ids(ignore)
+
+
+def test_trivy_matrix_preserves_distinct_root_and_module_applicability():
+    from factoryline.deep_audit_io import _trivy_matrix_ids
+
+    root_ids = {f"ROOT-CHECK-{index:02}" for index in range(40)}
+    module_ids = {
+        "AVD-AWS-0086",
+        "AVD-AWS-0087",
+        "AVD-AWS-0088",
+        "s3-bucket-logging",
+        "AVD-AWS-0090",
+        "AVD-AWS-0091",
+        "AVD-AWS-0093",
+        "AVD-AWS-0094",
+        "AVD-AWS-0132",
+    }
+    matrix = {
+        ".": {rule_id: "PASS" for rule_id in root_ids},
+        "modules/bucket/main.tf": {rule_id: "FAIL" for rule_id in module_ids},
+    }
+    expected = sorted(root_ids | module_ids)
+
+    _trivy_matrix_ids(matrix, expected)
+    assert len(matrix["."]) == 40
+    assert len(matrix["modules/bucket/main.tf"]) == 9
+    assert all(status == "PASS" for status in matrix["."].values())
+    assert all(status == "FAIL" for status in matrix["modules/bucket/main.tf"].values())
+    with pytest.raises(RuntimeAuditError, match="signed Trivy check IDs differ"):
+        _trivy_matrix_ids(matrix, expected[:-1])
+    with pytest.raises(RuntimeAuditError, match="signed Trivy check IDs differ"):
+        _trivy_matrix_ids(matrix, sorted([*expected, "EXTRA-CHECK"]))
 
 
 def _codeql_inventory_fixture(*, changed=False):
@@ -1441,3 +2195,560 @@ def test_verify_trivy_rule_execution_rederives_native_pass_matrix():
     evidence["observations"][1]["raw_report_sha256"] = "0" * 64
     with pytest.raises(RuntimeAuditError, match="report bytes differ"):
         verify_trivy_rule_execution(evidence, lane, sources, report)
+
+
+def test_zap_native_rule_ledger_accepts_real_core_plugin_zero():
+    verify, raw, lane, bindings = _zap_ledger_fixture()
+    rows = [json.loads(line) for line in raw.splitlines()]
+    rows = [
+        dict(row, plugin_id=0, plugin_name="directory-browsing")
+        for row in rows
+        if row["plugin_id"] == 40012
+    ]
+    raw = b"".join(canonical_bytes(row) + b"\n" for row in rows)
+    assert verify(raw, {"engine": "zap", "rule_ids": ["0"]}, bindings)[
+        "plugin_ids"
+    ] == [0]
+
+
+def _host_zap_lane_fixture():
+    return {
+        "id": "zap",
+        "engine": "zap",
+        "image": "sha256:" + "a" * 64,
+        "argv": ["/opt/factory/bin/audit-adapter", "zap", "--mode", "active"],
+        "memory_mib": 1024,
+        "timeout_seconds": 60,
+        "rule_ids": ["40012"],
+        "native_target": {
+            "schema": "factory.zap-target.v1",
+            "image": "sha256:" + "b" * 64,
+            "argv": ["/opt/factory/bin/candidate-app"],
+            "port": 8765,
+            "readiness_path": "/health",
+            "routes": [
+                {
+                    "id": "home",
+                    "method": "GET",
+                    "path": "/",
+                    "query": {"input": "seed"},
+                    "source_bindings": {"app.py": "c" * 64},
+                }
+            ],
+        },
+    }
+
+
+def test_host_zap_app_isolated_from_output_contract_and_host(tmp_path):
+    from factoryline.deep_audit import _zap_app_argv
+
+    argv = _zap_app_argv(
+        ["docker"], _host_zap_lane_fixture(), tmp_path, "app", "private-net"
+    )
+    assert "--network=private-net" in argv
+    assert "--network-alias=factory-target" in argv
+    assert "--detach" in argv and "--read-only" in argv
+    assert not any("/out:" in item or "/factory-contract" in item for item in argv)
+    assert not any(
+        "FACTORY_CANDIDATE" in item or "FACTORY_RUN_ID" in item for item in argv
+    )
+    assert argv[-1] == "sha256:" + "b" * 64 or "sha256:" + "b" * 64 in argv
+    assert "readonly,bind-recursive=readonly" in next(
+        item for item in argv if "target=/src," in item
+    )
+    assert "--pull=never" in argv and "--cap-drop=ALL" in argv
+    assert not any("docker.sock" in item or "--publish" in item for item in argv)
+
+
+def test_host_zap_worker_mounts_request_readonly_and_uses_internal_network(tmp_path):
+    from factoryline.deep_audit import _zap_worker_argv
+
+    argv = _zap_worker_argv(
+        ["docker"],
+        _host_zap_lane_fixture(),
+        tmp_path,
+        "worker",
+        "private-net",
+        {"run_id": "run-1"},
+        {"candidate_sha256": "c" * 64},
+        tmp_path / "contract",
+        tmp_path / "request",
+    )
+    assert "--network=private-net" in argv
+    assert "--network=none" not in argv
+    assert any(
+        item.endswith("target=/factory-zap-request.json,readonly") for item in argv
+    )
+    assert any(item.endswith("target=/factory-contract.json,readonly") for item in argv)
+    assert "native-zap" in argv and "/factory-zap-request.json" in argv
+    assert "--entrypoint" in argv and "/usr/local/bin/python" in argv
+    assert not any("docker.sock" in item or "--publish" in item for item in argv)
+
+
+def test_host_zap_request_binds_whole_signed_lane_and_deadline(monkeypatch):
+    import factoryline.deep_audit as host
+
+    monkeypatch.setattr(host.time, "monotonic", lambda: 10.0)
+    lane = _host_zap_lane_fixture()
+    request = host._zap_target_request(
+        {"run_id": "run-1"},
+        {"candidate_sha256": "c" * 64},
+        lane,
+        lane["native_target"]["routes"][0],
+        20.0,
+    )
+    assert request["profile_sha256"] == digest(lane)
+    assert request["target"] == lane["native_target"] and request["route_id"] == "home"
+    assert request["timeout_seconds"] == 10
+    with pytest.raises(RuntimeAuditError, match="budget exhausted"):
+        host._zap_target_request(
+            {"run_id": "run-1"},
+            {"candidate_sha256": "c" * 64},
+            lane,
+            lane["native_target"]["routes"][0],
+            10.1,
+        )
+
+
+def test_host_zap_network_requires_actual_internal_flag(monkeypatch):
+    import factoryline.deep_audit as host
+
+    responses = iter([({"exit_code": 0}, b"net"), ({"exit_code": 0}, b"false")])
+    calls = []
+
+    def control(base, args):
+        calls.append(args)
+        return next(responses)
+
+    monkeypatch.setattr(host, "_docker_control", control)
+    with pytest.raises(RuntimeAuditError, match="routing boundary"):
+        host._zap_internal_network(["docker"], "net")
+    assert calls[0] == ["network", "create", "--internal", "net"]
+
+
+@pytest.mark.parametrize("failure", ["route", "network", "cleanup"])
+def test_host_zap_failure_always_removes_app_and_network(
+    tmp_path, monkeypatch, failure
+):
+    import factoryline.deep_audit as host
+    import factoryline.deep_audit_contract as contract
+
+    lane = _host_zap_lane_fixture()
+    cleaned = []
+    monkeypatch.setattr(contract, "_validate_zap_target", lambda *args: None)
+    monkeypatch.setattr(host, "_docker_base", lambda: ["docker"])
+    monkeypatch.setattr(host, "_docker_preflight", lambda *args: None)
+
+    def create(*args):
+        if failure == "network":
+            raise RuntimeAuditError("E_ZAP_NETWORK", "network failure")
+
+    monkeypatch.setattr(host, "_zap_internal_network", create)
+    monkeypatch.setattr(
+        host, "_docker_control", lambda *args: ({"exit_code": 0}, b"true")
+    )
+
+    def route(*args):
+        if failure == "route":
+            raise RuntimeAuditError("E_ZAP_WORKER", "route failure")
+        return {"route_id": "home"}
+
+    monkeypatch.setattr(host, "_zap_target_route", route)
+    monkeypatch.setattr(
+        host, "_container_cleanup", lambda base, name: cleaned.append("app") or True
+    )
+    monkeypatch.setattr(
+        host,
+        "_zap_network_cleanup",
+        lambda base, name: cleaned.append("network") or failure != "cleanup",
+    )
+    with pytest.raises(RuntimeAuditError):
+        host._execute_zap_target(
+            tmp_path,
+            {"run_id": "run-1", "active_lane": "zap"},
+            tmp_path,
+            lane,
+            {"candidate_sha256": "c" * 64},
+            {"obligations": []},
+            None,
+        )
+    assert cleaned == ["app", "network"]
+
+
+def test_host_zap_completed_routes_keep_control_and_replay_gaps(tmp_path, monkeypatch):
+    import factoryline.deep_audit as host
+    import factoryline.deep_audit_contract as contract
+
+    monkeypatch.setattr(contract, "_validate_zap_target", lambda *args: None)
+    monkeypatch.setattr(host, "_docker_base", lambda: ["docker"])
+    monkeypatch.setattr(host, "_docker_preflight", lambda *args: None)
+    monkeypatch.setattr(host, "_zap_internal_network", lambda *args: None)
+    monkeypatch.setattr(
+        host, "_docker_control", lambda *args: ({"exit_code": 0}, b"true")
+    )
+    monkeypatch.setattr(host, "_zap_target_route", lambda *args: {"route_id": "home"})
+    monkeypatch.setattr(host, "_container_cleanup", lambda *args: True)
+    monkeypatch.setattr(host, "_zap_network_cleanup", lambda *args: True)
+    result = host._execute_zap_target(
+        tmp_path,
+        {"run_id": "run-1", "active_lane": "zap"},
+        tmp_path,
+        _host_zap_lane_fixture(),
+        {"candidate_sha256": "c" * 64},
+        {"obligations": []},
+        None,
+    )
+    assert result["state"] == "INCOMPLETE"
+    assert result["gaps"] == [
+        "ZAP_SIGNED_CONTROLS_REQUIRED",
+        "ZAP_INDEPENDENT_REPLAY_REQUIRED",
+    ]
+    assert result["native_execution"]["cleanup_confirmed"] is True
+    assert result["native_execution"]["routes"] == [{"route_id": "home"}]
+
+
+def test_host_zap_rejects_monitor_that_does_not_terminate(tmp_path, monkeypatch):
+    import factoryline.deep_audit as host
+    import factoryline.deep_audit_contract as contract
+
+    class StuckMonitor:
+        ident = 1
+
+        def __init__(self, **kwargs):
+            pass
+
+        def start(self):
+            pass
+
+        def join(self, timeout=None):
+            pass
+
+        def is_alive(self):
+            return True
+
+    monkeypatch.setattr(contract, "_validate_zap_target", lambda *args: None)
+    monkeypatch.setattr(host.threading, "Thread", StuckMonitor)
+    monkeypatch.setattr(host, "_docker_base", lambda: ["docker"])
+    monkeypatch.setattr(host, "_docker_preflight", lambda *args: None)
+    monkeypatch.setattr(host, "_zap_internal_network", lambda *args: None)
+    monkeypatch.setattr(
+        host, "_docker_control", lambda *args: ({"exit_code": 0}, b"true")
+    )
+    monkeypatch.setattr(host, "_zap_target_route", lambda *args: {"route_id": "home"})
+    cleaned = []
+    monkeypatch.setattr(
+        host, "_container_cleanup", lambda *args: cleaned.append("app") or True
+    )
+    monkeypatch.setattr(
+        host, "_zap_network_cleanup", lambda *args: cleaned.append("network") or True
+    )
+    with pytest.raises(RuntimeAuditError, match="cleanup unverified"):
+        host._execute_zap_target(
+            tmp_path,
+            {"run_id": "run-1", "active_lane": "zap"},
+            tmp_path,
+            _host_zap_lane_fixture(),
+            {"candidate_sha256": "c" * 64},
+            {"obligations": []},
+            None,
+        )
+    assert cleaned == ["app", "network"]
+
+
+@pytest.mark.parametrize("tamper", [None, "binding", "ledger", "cleanup"])
+def test_host_zap_rechecks_native_ledger_and_exact_route_identity(tamper):
+    import factoryline.deep_audit as host
+    from factoryline.deep_audit_contract import _zap_target_url
+
+    lane = _host_zap_lane_fixture()
+    lane["rule_ids"] = ["40012", "40013"]
+    target = lane["native_target"]
+    route = target["routes"][0]
+    request = {
+        "run_id": "run-1",
+        "candidate_sha256": "a" * 64,
+        "profile_sha256": digest(lane),
+        "rule_ids": lane["rule_ids"],
+        "target": target,
+        "route_id": "home",
+    }
+    bindings = {
+        key: request[key] for key in ("run_id", "candidate_sha256", "profile_sha256")
+    }
+    bindings["host_id"] = sha256_bytes(b"http://factory-target:8765")
+    _, raw, _, _ = _zap_ledger_fixture()
+    rows = [{**json.loads(line), **bindings} for line in raw.splitlines()]
+    observation = {
+        "schema": "factory.zap-native-observation.v1",
+        **bindings,
+        "target_sha256": digest(target),
+        "route_sha256": digest(route),
+        "target_url": _zap_target_url(target, route),
+        "version": {"version": "2.17.0"},
+        "scan_status": {"status": "100"},
+        "native_ledger": "".join(canonical_bytes(row).decode() + "\n" for row in rows),
+        "effective_inventory_before": {
+            "scanners": [{"id": item, "enabled": "true"} for item in lane["rule_ids"]]
+        },
+        "effective_inventory_after": {
+            "scanners": [{"id": item, "enabled": "true"} for item in lane["rule_ids"]]
+        },
+        "cleanup_complete": True,
+        "process_facts": {"cleanup_confirmed": True},
+    }
+    if tamper == "binding":
+        observation["route_sha256"] = "d" * 64
+    elif tamper == "ledger":
+        observation["native_ledger"] = ""
+        observation["native_verification"] = {"state": "VERIFIED"}
+    elif tamper == "cleanup":
+        observation["process_facts"]["cleanup_confirmed"] = "false"
+    if tamper:
+        with pytest.raises(RuntimeAuditError):
+            host._zap_host_observation(observation, request)
+    else:
+        assert host._zap_host_observation(observation, request) is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (b"E_ZAP_SCAN\n", "E_ZAP_SCAN"),
+        (b"Traceback (most recent call last):\n/host/private.py", None),
+        (b"E_ZAP_SCAN /host/private.py", None),
+        (b"E_" + b"A" * 255, None),
+    ],
+)
+def test_zap_worker_diagnostic_retains_only_bounded_codes(tmp_path, raw, expected):
+    from factoryline.deep_audit import _zap_worker_diagnostic
+
+    path = tmp_path / "worker-errors.txt"
+    path.write_bytes(raw)
+
+    assert _zap_worker_diagnostic(path) == expected
+
+
+def test_zap_control_tree_copies_only_bound_fixture_bytes(tmp_path):
+    from factoryline.deep_audit import _zap_control_tree
+    from factoryline.runtime_audit_common import sha256_bytes
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "app.py").write_bytes(b"fixture")
+    (source / "secret.txt").write_bytes(b"not mounted")
+    destination = tmp_path / "case"
+    destination.mkdir()
+    inventory = _zap_control_tree(
+        source, destination, {"app.py": sha256_bytes(b"fixture")}
+    )
+    assert (destination / "app.py").read_bytes() == b"fixture"
+    assert not (destination / "secret.txt").exists()
+    assert [item["path"] for item in inventory["files"]] == ["app.py"]
+    with pytest.raises(RuntimeAuditError, match="E_REPORT_DRIFT"):
+        _zap_control_tree(source, tmp_path / "changed", {"app.py": "0" * 64})
+
+
+def test_zap_control_projection_binds_effective_rules_not_volatile_ids():
+    from factoryline.deep_audit import _zap_report_projection
+
+    observation = {
+        "alerts": {
+            "alerts": [
+                {
+                    "id": "1",
+                    "pluginId": "40012",
+                    "risk": "High",
+                    "url": "http://factory-target:8765/",
+                    "param": "input",
+                }
+            ]
+        },
+        "effective_inventory_after": {"scanners": [{"id": "40012", "enabled": "true"}]},
+    }
+    before = _zap_report_projection(observation)
+    observation["alerts"]["alerts"][0]["id"] = "999"
+    assert _zap_report_projection(observation) == before
+    observation["effective_inventory_after"]["scanners"][0]["enabled"] = "false"
+    assert _zap_report_projection(observation) != before
+
+
+def test_zap_control_request_requires_exact_signed_disabled_policy(monkeypatch):
+    import factoryline.deep_audit as host
+
+    lane = _host_zap_lane_fixture()
+    monkeypatch.setattr(host.time, "monotonic", lambda: 10)
+    args = (
+        {"run_id": "run"},
+        {"candidate_sha256": "c" * 64},
+        lane,
+        lane["native_target"]["routes"][0],
+        20,
+    )
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_MUTATION"):
+        host._zap_target_request(*args, disabled_rule_id="40012")
+    lane["mutation_config_sha256"] = {
+        "40012": digest(
+            {
+                "schema": "factory.zap-disabled-policy.v1",
+                "rule_ids": ["40012"],
+                "disabled_rule_id": "40012",
+            }
+        )
+    }
+    request = host._zap_target_request(*args, disabled_rule_id="40012")
+    assert host._zap_host_expected_rules(request) == []
+    assert request["rule_ids"] == ["40012"]
+
+
+def test_zap_controls_replay_every_case_in_fresh_directories(tmp_path, monkeypatch):
+    import factoryline.deep_audit as host
+
+    calls = []
+
+    def execute(directory, *args):
+        calls.append(directory)
+        return {"report_sha256": "a" * 64}
+
+    monkeypatch.setattr(host, "_zap_execute_control", execute)
+    obligation = {
+        "id": "xss",
+        "detector_rule_id": "40012",
+        "challenges": [{"kind": kind} for kind in ("positive", "negative", "mutation")],
+    }
+    receipts = host._zap_execute_controls(
+        tmp_path, {}, tmp_path, {}, [obligation], 100, None
+    )
+    assert len(calls) == len(set(calls)) == 6
+    assert {item["kind"] for item in receipts} == {"positive", "negative", "mutation"}
+    assert all(item["primary"] == item["replay"] for item in receipts)
+
+
+def test_zap_controls_reject_disagreeing_independent_replay(tmp_path, monkeypatch):
+    import factoryline.deep_audit as host
+
+    results = iter(({"report_sha256": "a" * 64}, {"report_sha256": "b" * 64}))
+    monkeypatch.setattr(host, "_zap_execute_control", lambda *args: next(results))
+    obligation = {
+        "id": "xss",
+        "detector_rule_id": "40012",
+        "challenges": [{"kind": "positive"}],
+    }
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_REPLAY"):
+        host._zap_execute_controls(tmp_path, {}, tmp_path, {}, [obligation], 100, None)
+
+
+def test_zap_candidate_findings_report_route_binding_without_claiming_exact_line():
+    from factoryline.deep_audit import _zap_candidate_findings
+
+    lane = _host_zap_lane_fixture()
+    reports = [
+        {
+            "route_id": "home",
+            "report": {
+                "alerts": [
+                    {
+                        "pluginId": "40012",
+                        "risk": "High",
+                        "url": "http://factory-target:8765/",
+                        "param": "input",
+                    }
+                ]
+            },
+        }
+    ]
+    findings = _zap_candidate_findings(
+        reports, lane, {"files": [{"path": "app.py", "sha256": "c" * 64}]}
+    )
+    assert len(findings) == 1 and findings[0]["severity"] == "high"
+    assert findings[0]["exact_source_line"] is False
+    assert findings[0]["location_kind"] == "declared_route_source_binding"
+
+
+def test_zap_control_failure_retains_actionable_candidate_findings(
+    tmp_path, monkeypatch
+):
+    import factoryline.deep_audit as host
+    from factoryline.deep_audit_io import read_run_json
+
+    monkeypatch.setattr(
+        host,
+        "_execute_zap_target",
+        lambda *args, **kwargs: {
+            "state": "INCOMPLETE",
+            "gaps": [],
+            "native_execution": {},
+        },
+    )
+    monkeypatch.setattr(
+        host, "_zap_candidate_report", lambda *args: [{"route_id": "home"}]
+    )
+    monkeypatch.setattr(
+        host, "_zap_candidate_findings", lambda *args: [{"finding_id": "native-xss"}]
+    )
+
+    def fail(*args):
+        raise RuntimeAuditError("E_ZAP_CONTROL_REPORT", "private output path")
+
+    monkeypatch.setattr(host, "_zap_finish_controls", fail)
+    result = host._execute_zap_controlled_lane(
+        tmp_path,
+        {},
+        tmp_path,
+        _host_zap_lane_fixture(),
+        {"candidate_sha256": "c" * 64},
+        {},
+        None,
+    )
+    assert result["findings"] == [{"finding_id": "native-xss"}]
+    assert result["state"] == "INCOMPLETE" and result["gaps"] == [
+        "E_ZAP_CONTROL_REPORT"
+    ]
+    receipt = read_run_json(tmp_path, "zap-control-failure-zap.json")
+    assert receipt["code"] == "E_ZAP_CONTROL_REPORT"
+    assert "private output path" not in str(receipt)
+
+
+def test_zap_docker_control_caps_timeout_to_remaining_deadline(monkeypatch):
+    import factoryline.deep_audit as host
+
+    calls = []
+    monkeypatch.setattr(host.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(
+        host,
+        "_docker_control",
+        lambda *args: calls.append(args) or ({"exit_code": 0}, b"ok"),
+    )
+
+    host._zap_docker_control(["docker"], ["info"], 100.0)
+
+    assert calls == [(["docker"], ["info"], 15)]
+
+
+def test_zap_docker_control_uses_remaining_integer_seconds(monkeypatch):
+    import factoryline.deep_audit as host
+
+    calls = []
+    times = iter((10.0, 12.0))
+    monkeypatch.setattr(host.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(
+        host,
+        "_docker_control",
+        lambda *args: calls.append(args) or ({"exit_code": 0}, b"true"),
+    )
+
+    host._zap_internal_network(["docker"], "net", deadline=20.0)
+
+    assert [call[2] for call in calls] == [10, 8]
+
+
+def test_zap_docker_control_rejects_expired_deadline_before_api(monkeypatch):
+    import factoryline.deep_audit as host
+
+    calls = []
+    monkeypatch.setattr(host.time, "monotonic", lambda: 10.1)
+    monkeypatch.setattr(host, "_docker_control", lambda *args: calls.append(args))
+
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_TIMEOUT"):
+        host._zap_docker_control(["docker"], ["network", "create"], 10.9)
+
+    assert calls == []

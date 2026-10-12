@@ -136,3 +136,40 @@ Reproduce the native rule tests in a temporary folder by copying
 pinned Semgrep image with `semgrep --test --metrics=off
 --disable-version-check <folder>`. Set `HOME=/tmp` and
 `SEMGREP_SETTINGS_FILE=/tmp/settings.yml` when the container is read-only.
+
+### Signed ZAP request-associated source tracing
+
+ZAP target execution uses a separately digest-pinned app container and scanner
+on a private internal Docker network. It is an explicit signed-target route,
+not an additional preconfigured profile in the ten-profile inventory above.
+For a Python script using stdlib `http.server`, add this optional descriptor to
+the signed `native_target` before signing its manifest:
+
+```json
+"source_trace": {
+  "schema": "factory.zap-source-trace.config.v1",
+  "provider": "python-stdlib-http.v1",
+  "max_events": 50000
+}
+```
+
+The target argv must begin with an absolute Python executable followed by a
+canonical `/src/<bound-script.py>` path; optional script arguments follow.
+Each route must have a unique method/path pair and current source hashes.
+Read the shared `factory audit taxonomy --json` contract at
+`agent_usage_contract.six_lane_review.zap_source_trace` for agent and Junie
+requirements. Existing signed authorization and trust-root requirements apply.
+
+The host retains raw and normalized trace digests and observed line IDs for
+each route/source pair, verifies retained source bytes and fresh replay, and
+reports missing pairs or invalid traces as actionable incomplete evidence.
+Signed positive, safe and exact-disabled controls remain separately required.
+Trace capture uses bounded `docker exec` with the signed isolated interpreter;
+no writable host output is mounted. All containers and private networks are
+removed after the run.
+
+This provider covers Python stdlib HTTP request-associated lines only.
+In-process instrumentation can be forged or disabled by candidate code;
+observed line hits do not prove authenticity, complete branches, vulnerability
+causality or detection accuracy. ASGI, WSGI and other runtimes need separate
+providers and remain unsupported by this tracing provider.

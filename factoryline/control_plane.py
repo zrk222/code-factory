@@ -56,6 +56,7 @@ ROLE_ACTIONS: dict[str, frozenset[str]] = {
             "evidence.list",
             "evidence.write",
             "approval.request",
+            "repair.execute",
             "audit.verify",
         }
     ),
@@ -69,6 +70,7 @@ ROLE_ACTIONS: dict[str, frozenset[str]] = {
             "evidence.write",
             "approval.request",
             "approval.decide",
+            "repair.execute",
             "audit.verify",
         }
     ),
@@ -447,6 +449,7 @@ class EvidenceStore:
         approval_id: str,
         *,
         resolve_principal,
+        require_requester: bool = False,
     ):
         """Build a host-registered phase verifier from a durable approval.
 
@@ -462,6 +465,11 @@ class EvidenceStore:
 
         def verify(expected):
             approval = self.get_approval(principal, tenant_id, approval_id)
+            if require_requester and approval["requester"] != principal.subject:
+                raise ControlPlaneError(
+                    "E_APPROVAL_REQUESTER",
+                    "only the authenticated approval requester may dispatch this action",
+                )
             _workflow_approver(approval, tenant_id, resolve_principal)
             return self._consume_workflow_approval(
                 principal, tenant_id, approval, expected

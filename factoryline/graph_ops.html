@@ -33,6 +33,9 @@
     .audit-lane-list,.test-case-list { display:grid; gap:8px; margin-top:12px; }
     .audit-lane,.test-case { display:grid; grid-template-columns:minmax(120px,.7fr) minmax(100px,.4fr) minmax(0,2fr); gap:12px; padding:10px 12px; border:1px solid var(--line); border-radius:9px; background:#0d1727; align-items:start; font-size:.83rem; }
     .audit-lane strong,.test-case strong { overflow-wrap:anywhere; }.audit-lane span,.test-case span { color:var(--muted); overflow-wrap:anywhere; }
+    .audit-lane details { grid-column:1 / -1; min-width:0; overflow-wrap:anywhere; }
+    .audit-lane details summary { cursor:pointer; min-height:44px; }
+    .audit-lane details p { line-height:1.6; margin:8px 0 0; }
     .test-case[data-status="failed"],.test-case[data-status="error"] { border-color:#a05a65; }.test-case[data-status="passed"] { border-color:#427f63; }
     .audit-subsection { margin-top:20px; padding-top:18px; border-top:1px solid var(--line); }.audit-subsection h3 { margin:0; font-size:1rem; }.audit-subsection p { margin:6px 0 0; }
     .repair-metric { color:var(--green)!important; font-family:ui-monospace,"Cascadia Code",monospace; font-variant-numeric:tabular-nums; }
@@ -658,8 +661,16 @@
       setText("runtime-assurance-badge",String(runtime.state||"NOT_RUN").replaceAll("_"," "));
       const container=byId("runtime-assurance-lanes");
       if(container&&lanes.length){container.replaceChildren(...lanes.map(lane=>{const card=document.createElement("div");card.className="revenue-step";const title=document.createElement("strong");title.textContent=`${String(lane.state||"unknown")} · ${String(lane.lane||"lane").replaceAll("_"," ")}`;const detail=document.createElement("span");detail.textContent=`${lane.consequence||lane.finding||"No result"} Next: ${lane.remediation||"inspect evidence"}`;card.append(title,detail);return card;}));}
+      setText("runtime-assurance-next",runtimeLaneSummary(lanes));
+    }
+    function runtimeLaneSummary(lanes){
+      const expected=['stateful_invariant','tenant_isolation','failure_recovery','consumer_compatibility','migration_integrity','performance_regression'];
       const first=lanes.find(lane=>lane.state!=="PASS");
-      setText("runtime-assurance-next",first?`Next repair: ${first.remediation||first.consequence}. Evidence: ${String(first.evidence_digest||"missing").slice(0,12)}…`:(lanes.length?"All six lanes passed their signed bounds. Human release review is still required.":"No self-hash-verified receipt yet. Run an externally signed six-lane plan; this screen cannot invent thresholds or execute tests."));
+      if(first)return `Next repair: ${first.remediation||first.consequence||'inspect the lane receipt'}. Evidence: ${String(first.evidence_digest||"missing").slice(0,12)}…`;
+      if(!lanes.length)return 'No self-hash-verified receipt yet. Run an externally signed six-lane plan; this screen cannot invent thresholds or execute tests.';
+      const kinds=new Set(lanes.map(lane=>lane.lane));
+      if(lanes.length!==6||kinds.size!==6||!expected.every(kind=>kinds.has(kind)))return 'Reported lanes passed, but the complete six-lane set is missing or invalid. Inspect the runtime receipt.';
+      return 'All six reported lanes passed their recorded bounds. This view verifies a local self-hash, not signer identity or freshness. Human release review is still required.';
     }
     function renderAgenticControl(payload){
       const value=payload.agentic_control||{},names=Array.isArray(value.features)?value.features:[],authority=value.authority||{};
@@ -702,7 +713,7 @@
       setText('deep-evaluation-state',evaluation.state||'NOT_RUN');setText('deep-evaluation-detail',evaluation.receipt_path?`${chains.length} finding chain(s) shown${evaluation.truncated?' (more remain in receipt)':''} · ${evaluation.receipt_path} · self-hash only, not signer or freshness proof.`:'No evaluated deep-audit receipt has been projected.');
       setText('runtime-lane-state',runtime.state||'NOT_RUN');setText('runtime-lane-detail',runtimeLanes.length?`${runtimeLanes.length} signed runtime lane outcome(s) projected. Review the exact evidence digest and remediation below.`:'Six runtime lanes are available; no signed lane result is projected.');
       const laneList=byId('audit-lane-list');laneList.replaceChildren();
-      scanLanes.forEach(lane=>{const row=document.createElement('div');row.className='audit-lane';addText(row,`Deep scan · ${lane.lane_id||'lane'}`,'strong');addText(row,lane.state||'unknown','strong');addText(row,`${lane.finding_count??0} findings · ${Array.isArray(lane.gaps)?lane.gaps.length:0} gap(s)`,'span');laneList.appendChild(row);});
+      scanLanes.forEach(lane=>{const row=document.createElement('div');row.className='audit-lane';addText(row,`Deep scan · ${lane.lane_id||'lane'}`,'strong');addText(row,lane.state||'unknown','strong');addText(row,`${lane.finding_count??0} findings · ${Array.isArray(lane.gaps)?lane.gaps.length:0} gap(s)`,'span');renderSourceTrace(row,lane.source_trace);laneList.appendChild(row);});
       runtimeLanes.forEach(lane=>{const row=document.createElement('div');row.className='audit-lane';addText(row,`Runtime · ${String(lane.lane||'lane').replaceAll('_',' ')}`,'strong');addText(row,lane.state||'unknown','strong');addText(row,`${lane.consequence||lane.finding||'No detail supplied'} · Next: ${lane.remediation||'inspect evidence'} · Digest: ${String(lane.evidence_digest||'missing').slice(0,12)}`,'span');laneList.appendChild(row);});
       if(!scanLanes.length&&!runtimeLanes.length)addText(laneList,'No executed audit lanes are reported in this workspace snapshot.','p');
       setText('audit-lanes-summary',`${scanLanes.length} native deep-scan lane(s) · ${runtimeLanes.length} signed runtime lane(s). Unreported checks remain not run in this view.`);
@@ -715,6 +726,18 @@
       setText('test-report-summary',report.state==='OBSERVED'?`${report.total_count??0} reported tests · ${counts.passed??0} passed · ${counts.failed??0} failed · ${counts.error??0} errors · ${counts.skipped??0} skipped. Source: ${report.source||'unknown'} (${String(report.source_sha256||'no digest').slice(0,12)}). Candidate binding: ${report.candidate_binding||'UNBOUND'}. ${loadedTestHash===reportHash?'Individual cases available below.':'Loading individual cases.'}`:report.state==='INCOMPLETE'?`Test report incomplete: ${report.reason||'invalid or over limits'}. No suite result is inferred.`:'No JUnit report loaded. Save a local report at .factory/test-reports/pytest.xml to show every recorded test here.');
       loadTestCases(report);
       renderRuntimeCoverage(coverage);
+    }
+    function renderSourceTrace(row,trace){
+      if(!trace)return;
+      const detail=document.createElement('details');
+      addText(detail,`Request-associated source trace · ${trace.observation_count??0} route/source observation(s) · ${trace.missing_binding_count??0} missing binding(s)`,'summary');
+      addText(detail,`Provider: ${trace.provider||'missing'} · Raw digest: ${trace.raw_sha256||'missing'} · Replay observations: ${trace.replay_matches?'match':'not established'} · Cleanup: ${trace.cleanup_confirmed?'confirmed':'not confirmed'}`,'p');
+      if(trace.error)addText(detail,`Trace error: ${trace.error}. Inspect retained evidence and rerun the affected signed lane.`,'p');
+      (Array.isArray(trace.observations)?trace.observations:[]).slice(0,20).forEach(item=>addText(detail,`${item.route_id||'unknown route'} · ${item.path||'unknown source'} · lines ${(Array.isArray(item.lines)?item.lines:[]).slice(0,100).join(', ')}${item.truncated?' (more in retained trace)':''} · Source digest: ${item.source_sha256||'missing'}`,'p'));
+      (Array.isArray(trace.missing_bindings)?trace.missing_bindings:[]).slice(0,20).forEach(item=>addText(detail,`Missing request evidence: ${item.route_id||'unknown route'} · ${item.path||'unknown source'}`,'p'));
+      if(trace.truncated)addText(detail,'Display bounded; inspect the retained trace for remaining observations and bindings.','p');
+      addText(detail,trace.claim_boundary||'Observed lines do not prove complete coverage or authenticity.','p');
+      row.appendChild(detail);
     }
     function renderGraphLanes(nodes,selectedId){
       const lanes=byId("lanes");lanes.replaceChildren();byId("graph-empty").hidden=nodes.length!==0;

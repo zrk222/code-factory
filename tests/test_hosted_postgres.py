@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+import hashlib
 import os
+import uuid
 
 import pytest
 
 from factoryline.hosted_storage import PostgresAssuranceStore
 from factoryline.hosted_control import PostgresControlStore
-from factoryline.control_plane import Principal
+from factoryline.control_plane import ControlPlaneError, Principal
 from factoryline.pr_assurance import PRAssuranceError
 
 
@@ -43,18 +46,72 @@ def test_postgres_control_plane_binds_tenant_identity_state_audit_and_redacted_o
         audience="factory",
         jwks_url="https://id.integration.test/jwks",
     )
+    workflow_operator = Principal(
+        "workflow-operator", "integration-control", ("operator",)
+    )
+    workflow_approver = Principal(
+        "workflow-approver", "integration-control", ("approver",)
+    )
+    workflow_binding = {"run_id": "rls-seeded"}
+    workflow_evidence = control.put(
+        workflow_operator,
+        {
+            "schema": "factory.workflow-approval.v1",
+            "tenant_id": "integration-control",
+            "expires_at": (
+                datetime.now(timezone.utc) + timedelta(minutes=5)
+            ).isoformat(),
+            "phase_evidence": workflow_binding,
+        },
+        evidence_id="rls-workflow-evidence",
+    )
+    workflow_approval = control.request_approval(
+        workflow_operator,
+        "integration-control",
+        workflow_evidence["evidence_id"],
+        "seed workflow rows for RLS verification",
+    )
+    control.decide_approval(
+        workflow_approver,
+        "integration-control",
+        workflow_approval["approval_id"],
+        "approved",
+        "independent test approval",
+    )
+    control.workflow_approval_verifier(
+        workflow_operator,
+        "integration-control",
+        workflow_approval["approval_id"],
+        resolve_principal=lambda subject, tenant: workflow_approver
+        if subject == workflow_approver.subject
+        else workflow_operator,
+    )(workflow_binding)
     with assurance._transaction("different-tenant") as (_db, cursor):
         cursor.execute(
             "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='factory_rls_test') "
             "THEN CREATE ROLE factory_rls_test NOLOGIN; END IF; END $$"
         )
-        cursor.execute("GRANT SELECT ON factory_tenant_identity TO factory_rls_test")
+        for table in (
+            "factory_tenant_identity",
+            "factory_workflow_evidence",
+            "factory_workflow_approvals",
+            "factory_workflow_approval_uses",
+            "factory_hosted_repairs",
+        ):
+            cursor.execute(f"GRANT SELECT ON {table} TO factory_rls_test")
         cursor.execute("SET LOCAL ROLE factory_rls_test")
-        cursor.execute(
-            "SELECT tenant_id FROM factory_tenant_identity WHERE tenant_id=%s",
-            ("integration-control",),
-        )
-        assert cursor.fetchone() is None
+        for table in (
+            "factory_tenant_identity",
+            "factory_workflow_evidence",
+            "factory_workflow_approvals",
+            "factory_workflow_approval_uses",
+            "factory_hosted_repairs",
+        ):
+            cursor.execute(
+                f"SELECT tenant_id FROM {table} WHERE tenant_id=%s",
+                ("integration-control",),
+            )
+            assert cursor.fetchone() is None
     control.replace_roles(
         platform, "integration-control", {"release": "approver", "owners": "admin"}
     )
@@ -90,3 +147,258 @@ def test_postgres_control_plane_binds_tenant_identity_state_audit_and_redacted_o
             jwks_url="https://id.other.test/jwks",
         )
     assert boundary.value.code == "E_TENANT_BOUNDARY"
+
+
+def test_postgres_workflow_approval_keeps_evidence_independent_and_exactly_replayable():
+    assurance = PostgresAssuranceStore(DSN)
+    assurance.initialize()
+    control = PostgresControlStore(assurance)
+    control.initialize()
+    platform = Principal("workflow-platform", "*", ("platform_admin",))
+    tenant_id = "workflow-" + uuid.uuid4().hex[:12]
+    control.create_tenant(platform, tenant_id, "Workflow approval integration")
+    requester = Principal("repair-requester", tenant_id, ("operator",))
+    approver = Principal("independent-approver", tenant_id, ("approver",))
+    expected = {"candidate_sha256": "a" * 64, "phase": "repair.dispatch"}
+    payload = {
+        "schema": "factory.workflow-approval.v1",
+        "tenant_id": tenant_id,
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+        "phase_evidence": expected,
+        "verdict": "APPROVED_FOR_REVIEW",
+    }
+    evidence = control.put(requester, payload, evidence_id="repair-evidence")
+    assert evidence["payload_sha256"]
+    with pytest.raises(ControlPlaneError) as immutable:
+        control.put(
+            requester,
+            {**payload, "phase_evidence": {"phase": "changed"}},
+            evidence_id="repair-evidence",
+        )
+    assert immutable.value.code == "E_EVIDENCE_IMMUTABLE"
+
+    approval = control.request_approval(
+        requester, tenant_id, evidence["evidence_id"], "dispatch exact repair"
+    )
+    control.decide_approval(
+        approver, tenant_id, approval["approval_id"], "approved", "independent review"
+    )
+
+    def resolve(subject, resolved_tenant):
+        assert resolved_tenant == tenant_id
+        return approver if subject == approver.subject else requester
+
+    verifier = control.workflow_approval_verifier(
+        requester,
+        tenant_id,
+        approval["approval_id"],
+        resolve_principal=resolve,
+        require_requester=True,
+    )
+    with ThreadPoolExecutor(max_workers=8) as workers:
+        outcomes = list(workers.map(lambda _index: verifier(expected), range(8)))
+    assert outcomes == [expected] * 8
+    with assurance._transaction(tenant_id) as (_db, cursor):
+        cursor.execute(
+            "SELECT count(*) FROM factory_admin_audit "
+            "WHERE tenant_id=%s AND action='approval.workflow.consume' AND resource_id=%s",
+            (tenant_id, approval["approval_id"]),
+        )
+        assert cursor.fetchone()[0] == 1
+    with pytest.raises(ControlPlaneError) as changed_binding:
+        verifier({**expected, "phase": "different"})
+    assert changed_binding.value.code == "E_APPROVAL_EVIDENCE"
+    with assurance._transaction(tenant_id) as (_db, cursor):
+        cursor.execute(
+            "UPDATE factory_workflow_approval_uses SET fingerprint=%s "
+            "WHERE tenant_id=%s AND approval_id=%s",
+            ("0" * 64, tenant_id, approval["approval_id"]),
+        )
+    with pytest.raises(ControlPlaneError) as changed_replay:
+        verifier(expected)
+    assert changed_replay.value.code == "E_APPROVAL_REPLAY"
+
+    expired_payload = {
+        **payload,
+        "expires_at": (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+        "phase_evidence": {"candidate_sha256": "b" * 64},
+    }
+    expired_evidence = control.put(
+        requester, expired_payload, evidence_id="expired-repair-evidence"
+    )
+    expired_approval = control.request_approval(
+        requester,
+        tenant_id,
+        expired_evidence["evidence_id"],
+        "expired dispatch test",
+    )
+    control.decide_approval(
+        approver,
+        tenant_id,
+        expired_approval["approval_id"],
+        "approved",
+        "test approval",
+    )
+    expired_verifier = control.workflow_approval_verifier(
+        requester,
+        tenant_id,
+        expired_approval["approval_id"],
+        resolve_principal=resolve,
+        require_requester=True,
+    )
+    with pytest.raises(ControlPlaneError) as expired_binding:
+        expired_verifier(expired_payload["phase_evidence"])
+    assert expired_binding.value.code == "E_APPROVAL_EVIDENCE"
+    assert control.overview(platform, tenant_id)["audit"]["valid"] is True
+
+
+def test_postgres_hosted_repair_registry_is_tenant_scoped_immutable_and_single_use():
+    assurance = PostgresAssuranceStore(DSN)
+    assurance.initialize()
+    control = PostgresControlStore(assurance)
+    control.initialize()
+    platform = Principal("repair-registry-platform", "*", ("platform_admin",))
+    tenant = "repair-registry-" + uuid.uuid4().hex[:12]
+    control.create_tenant(platform, tenant, "Repair Registry Test")
+    binding = {"schema": "factory.repair.dispatch.v1", "candidate_sha256": "a" * 64}
+    repair_id = "repair_" + uuid.uuid4().hex
+    registration = {
+        "tenant_id": tenant,
+        "repair_id": repair_id,
+        "workspace_path": "workspace",
+        "approval_path": "approval.json",
+        "workflow_approval_id": "workflow_" + uuid.uuid4().hex[:16],
+        "requester": "repair-requester",
+        "binding": binding,
+        "registered_by": "tenant-admin",
+    }
+    registered = control.register_hosted_repair(**registration)
+    target = control.get_hosted_repair(tenant, repair_id)
+    assert target["binding"] == binding
+    assert target["binding_sha256"] == registered["binding_sha256"]
+    with pytest.raises(PRAssuranceError) as duplicate:
+        control.register_hosted_repair(**{**registration, "workspace_path": "other"})
+    assert duplicate.value.code == "E_REPAIR_EXISTS"
+    with pytest.raises(PRAssuranceError) as cross_tenant:
+        control.get_hosted_repair("different-tenant", repair_id)
+    assert cross_tenant.value.code == "E_REPAIR_NOT_FOUND"
+    control.claim_hosted_repair(tenant, repair_id, "repair-requester")
+    with pytest.raises(PRAssuranceError) as replay:
+        control.claim_hosted_repair(tenant, repair_id, "repair-requester")
+    assert replay.value.code == "E_REPAIR_REPLAY"
+    control.finish_hosted_repair(
+        tenant, repair_id, succeeded=True, actor="repair-requester"
+    )
+
+
+def test_postgres_hosted_repair_session_lock_blocks_active_reconcile_and_releases():
+    assurance = PostgresAssuranceStore(DSN)
+    control = PostgresControlStore(assurance)
+    control.initialize()
+    tenant = "repair-lock-" + uuid.uuid4().hex[:12]
+    repair_id = "repair_" + uuid.uuid4().hex
+    with control.hosted_repair_session_lock(tenant, repair_id):
+        with pytest.raises(PRAssuranceError) as busy:
+            with control.hosted_repair_session_lock(tenant, repair_id):
+                pytest.fail("second session unexpectedly acquired repair guard")
+        assert busy.value.code == "E_REPAIR_BUSY"
+    with control.hosted_repair_session_lock(tenant, repair_id):
+        pass
+
+
+def _executing_postgres_repair_for_recovery():
+    from factoryline.hosted_api import _recovery_result
+
+    assurance = PostgresAssuranceStore(DSN)
+    assurance.initialize()
+    control = PostgresControlStore(assurance)
+    control.initialize()
+    platform = Principal("recovery-platform", "*", ("platform_admin",))
+    tenant = "repair-recovery-" + uuid.uuid4().hex[:12]
+    control.create_tenant(platform, tenant, "Repair Recovery Test")
+    repair_id = "repair_" + uuid.uuid4().hex
+    binding = {"schema": "factory.repair.dispatch.v1", "candidate_sha256": "a" * 64}
+    control.register_hosted_repair(
+        tenant_id=tenant,
+        repair_id=repair_id,
+        workspace_path="workspace",
+        approval_path="approval.json",
+        workflow_approval_id="workflow_" + uuid.uuid4().hex[:16],
+        requester="repair-requester",
+        binding=binding,
+        registered_by="tenant-admin",
+    )
+    control.claim_hosted_repair(tenant, repair_id, "repair-requester")
+    outcome = _recovery_result(
+        repair_id,
+        "failed",
+        "interrupted",
+        "REPAIR_ATTEMPT_MISSING",
+        None,
+        {"binding_sha256": hashlib.sha256(b"binding").hexdigest()},
+    )
+    return control, tenant, repair_id, outcome
+
+
+def test_postgres_hosted_repair_recovery_rejects_identity_mismatch():
+    control, tenant, repair_id, outcome = _executing_postgres_repair_for_recovery()
+    wrong_id = dict(outcome, repair_id="repair_other_12345678")
+    with pytest.raises(PRAssuranceError) as mismatched:
+        control.reconcile_hosted_repair(
+            tenant, repair_id, actor="tenant-admin", recovery=wrong_id
+        )
+    assert mismatched.value.code == "E_REPAIR_RECOVERY"
+    malformed = dict(outcome, status=[])
+    with pytest.raises(PRAssuranceError) as invalid:
+        control.reconcile_hosted_repair(
+            tenant, repair_id, actor="tenant-admin", recovery=malformed
+        )
+    assert invalid.value.code == "E_REPAIR_RECOVERY"
+
+
+def _assert_postgres_recovery_audit_and_scope(control, tenant, repair_id):
+    assert control.get_hosted_repair(tenant, repair_id)["status"] == "failed"
+    with control._workflow_transaction(tenant) as (_db, cursor):
+        cursor.execute(
+            """SELECT count(*) FROM factory_admin_audit
+               WHERE tenant_id=%s AND action='repair.dispatch.reconcile'
+                 AND resource_id=%s""",
+            (tenant, repair_id),
+        )
+        assert cursor.fetchone()[0] == 1
+    with pytest.raises(PRAssuranceError) as hidden:
+        control.get_hosted_repair(tenant + "-other", repair_id)
+    assert hidden.value.code == "E_REPAIR_NOT_FOUND"
+
+
+def _assert_postgres_recovery_conflict(control, tenant, repair_id):
+    from factoryline.hosted_api import _recovery_result
+
+    changed = _recovery_result(
+        repair_id,
+        "failed",
+        "interrupted",
+        "REPAIR_JOURNAL_INVALID",
+        None,
+        {"binding_sha256": hashlib.sha256(b"different").hexdigest()},
+    )
+    with pytest.raises(PRAssuranceError) as conflict:
+        control.reconcile_hosted_repair(
+            tenant, repair_id, actor="tenant-admin", recovery=changed
+        )
+    assert conflict.value.code == "E_REPAIR_RECOVERY_CONFLICT"
+
+
+def test_postgres_hosted_repair_recovery_is_atomic_idempotent_and_tenant_scoped():
+    control, tenant, repair_id, outcome = _executing_postgres_repair_for_recovery()
+
+    def reconcile():
+        return control.reconcile_hosted_repair(
+            tenant, repair_id, actor="tenant-admin", recovery=outcome
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _index: reconcile(), range(2)))
+    assert results == [outcome, outcome]
+    _assert_postgres_recovery_audit_and_scope(control, tenant, repair_id)
+    _assert_postgres_recovery_conflict(control, tenant, repair_id)

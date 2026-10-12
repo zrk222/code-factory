@@ -6,15 +6,20 @@ from io import BytesIO
 import json
 import socket
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from factoryline.control_plane import Principal
+from factoryline.control_plane import ControlPlaneError, Principal
 from factoryline.hosted_api import (
+    HostedPRAssuranceAPI,
     HostedConfig,
     HostedPRAssuranceService,
+    _trusted_repair_path,
+    _verify_recovery_check_logs,
+    _require_terminal_recovery_state,
     create_hosted_app,
 )
 from factoryline.hosted_control import (
@@ -147,8 +152,15 @@ def _token(private, *, tenant_id="acme"):
 
 
 def test_control_schema_forces_rls_and_stores_references_and_state_digests_only():
-    assert CONTROL_SCHEMA_SQL.count("FORCE ROW LEVEL SECURITY") == 4
-    assert CONTROL_SCHEMA_SQL.count("current_setting('factory.tenant_id', true)") == 8
+    assert CONTROL_SCHEMA_SQL.count("FORCE ROW LEVEL SECURITY") == 8
+    assert CONTROL_SCHEMA_SQL.count("current_setting('factory.tenant_id', true)") == 16
+    assert "factory_hosted_repairs" in CONTROL_SCHEMA_SQL
+    assert "PRIMARY KEY (tenant_id, repair_id)" in CONTROL_SCHEMA_SQL
+    assert (
+        "status IN ('registered','executing','completed','failed')"
+        in CONTROL_SCHEMA_SQL
+    )
+    assert "ON CONFLICT (tenant_id,repair_id) DO NOTHING" not in CONTROL_SCHEMA_SQL
     assert "state_sha256 TEXT PRIMARY KEY" in CONTROL_SCHEMA_SQL
     assert "secret_ref TEXT NOT NULL" in CONTROL_SCHEMA_SQL
     lowered = CONTROL_SCHEMA_SQL.lower()
@@ -167,6 +179,734 @@ def test_control_schema_forces_rls_and_stores_references_and_state_digests_only(
     wrapped = Initializable()
     initialize_control_schema(wrapped)
     assert wrapped.initialized is True
+
+
+class _HostedRepairRouteService:
+    def __init__(self):
+        self.calls = []
+
+    def execute_registered_repair(self, token, tenant, repair_id, body):
+        self.calls.append((token, tenant, repair_id, body))
+        return {
+            "schema": "factory.hosted.repair.v1",
+            "repair_id": repair_id,
+            "status": "completed",
+        }
+
+    def reconcile_registered_repair(self, token, tenant, repair_id, body):
+        self.calls.append((token, tenant, repair_id, body, "reconcile"))
+        return {
+            "schema": "factory.hosted.repair-recovery.v1",
+            "repair_id": repair_id,
+            "status": "failed",
+            "recovery_status": "interrupted",
+            "reason_code": "REPAIR_ATTEMPT_MISSING",
+            "attempt_sha256": None,
+            "evidence_sha256": "a" * 64,
+            "recovery_sha256": "b" * 64,
+        }
+
+    def _emit(self, *_args, **_kwargs):
+        return None
+
+
+def _hosted_repair_call(app, *, path, body=b"{}", authorization="Bearer token"):
+    status = []
+    environ = {
+        "REQUEST_METHOD": "POST",
+        "PATH_INFO": path,
+        "CONTENT_LENGTH": str(len(body)),
+        "wsgi.input": BytesIO(body),
+        "HTTP_AUTHORIZATION": authorization,
+    }
+    response = b"".join(app(environ, lambda value, _headers: status.append(value)))
+    return status[0], json.loads(response)
+
+
+def test_hosted_repair_route_uses_bearer_and_strict_empty_body():
+    service = _HostedRepairRouteService()
+    app = HostedPRAssuranceAPI(service)
+    status, payload = _hosted_repair_call(
+        app, path="/v1/tenants/acme/repairs/opaqueRepairId_123456/execute"
+    )
+    assert status == "200 OK"
+    assert payload["status"] == "completed"
+    assert service.calls == [("token", "acme", "opaqueRepairId_123456", {})]
+
+
+def test_hosted_repair_route_rejects_extra_fields_and_missing_bearer():
+    service = _HostedRepairRouteService()
+    app = HostedPRAssuranceAPI(service)
+    status, payload = _hosted_repair_call(
+        app,
+        path="/v1/tenants/acme/repairs/opaqueRepairId_123456/execute",
+        body=b'{"workspace":"C:/private"}',
+    )
+    assert status == "400 Bad Request"
+    assert payload["error"]["code"] == "E_REPAIR_BODY"
+    assert not service.calls
+    status, payload = _hosted_repair_call(
+        app,
+        path="/v1/tenants/acme/repairs/opaqueRepairId_123456/execute",
+        authorization="",
+    )
+    assert status == "401 Unauthorized"
+    assert payload["error"]["code"] == "E_AUTH_REQUIRED"
+
+
+def test_hosted_repair_reconcile_route_uses_bearer_and_empty_body():
+    service = _HostedRepairRouteService()
+    app = HostedPRAssuranceAPI(service)
+    status, payload = _hosted_repair_call(
+        app,
+        path="/v1/tenants/acme/repairs/opaqueRepairId_123456/reconcile",
+        body=b"{}",
+    )
+    assert status == "200 OK"
+    assert payload["recovery_status"] == "interrupted"
+    assert service.calls == [
+        ("token", "acme", "opaqueRepairId_123456", {}, "reconcile")
+    ]
+
+
+def test_hosted_repair_reconcile_rejects_nonempty_body():
+    service = _HostedRepairRouteService()
+    status, payload = _hosted_repair_call(
+        HostedPRAssuranceAPI(service),
+        path="/v1/tenants/acme/repairs/opaqueRepairId_123456/reconcile",
+        body=b'{"retry":true}',
+    )
+    assert status == "400 Bad Request"
+    assert payload["error"]["code"] == "E_REPAIR_BODY"
+    assert service.calls == []
+
+
+def _recovery_registry(binding, *, busy=False):
+    class Registry:
+        def __init__(self):
+            self.target = {
+                "workspace_path": "workspace",
+                "approval_path": "approval.json",
+                "workflow_approval_id": "workflow_12345678",
+                "requester": "repair-operator",
+                "binding": binding,
+                "binding_sha256": "a" * 64,
+                "status": "executing",
+                "recovery": None,
+            }
+            self.audits = 0
+
+        @contextmanager
+        def hosted_repair_session_lock(self, *_args):
+            if busy:
+                raise PRAssuranceError("E_REPAIR_BUSY", "dispatch is active")
+            yield
+
+        def get_hosted_repair(self, _tenant, _repair_id):
+            return self.target
+
+        def workflow_approval_verifier(self, *_args, **_kwargs):
+            def verify(expected):
+                assert expected == binding
+                return expected
+
+            return verify
+
+        def reconcile_hosted_repair(self, _tenant, repair_id, *, actor, recovery):
+            assert actor == "tenant-admin"
+            if self.target["recovery"] is not None:
+                assert self.target["recovery"] == recovery
+                return recovery
+            self.target["status"] = recovery["status"]
+            self.target["recovery"] = recovery
+            self.audits += 1
+            return recovery
+
+    return Registry()
+
+
+def test_registered_repair_recovery_reconciles_verified_journal_without_executor(
+    tmp_path: Path, monkeypatch
+):
+    import factoryline.hosted_api as api
+
+    binding = {
+        "schema": "factory.repair.dispatch.v1",
+        "repair_approval_sha256": "a" * 64,
+    }
+    root = tmp_path / "repair-root"
+    workspace = root / "workspace"
+    workspace.mkdir(parents=True)
+    approval = workspace / "approval.json"
+    approval.write_text("{}", encoding="utf-8")
+    admin = Principal("tenant-admin", "acme", ("admin",))
+    operator = Principal("repair-operator", "acme", ("operator",))
+    registry = _recovery_registry(binding)
+    service = object.__new__(HostedPRAssuranceService)
+    service.control = registry
+    service.repair_root = root
+    service.current_principal_resolver = lambda subject, tenant: {
+        admin.subject: admin,
+        operator.subject: operator,
+    }.get(subject)
+    service.authenticate = lambda _token: (admin, {"sub": admin.subject}, None)
+    monkeypatch.setattr(api, "_repair_dispatch_binding_or_error", lambda *_a: binding)
+    monkeypatch.setattr(
+        "factoryline.repair_sandbox.execute_workflow_approved_repair",
+        lambda *_a, **_kw: pytest.fail("recovery must never execute the repair"),
+    )
+    monkeypatch.setattr(
+        api,
+        "_recovery_attempt_evidence",
+        lambda *_a: ("c" * 64, {"journal_sha256": "c" * 64}),
+    )
+    first = service.reconcile_registered_repair(
+        "admin-token", "acme", "opaqueRepairId_123456", {}
+    )
+    second = service.reconcile_registered_repair(
+        "admin-token", "acme", "opaqueRepairId_123456", {}
+    )
+    assert first == second
+    assert first["status"] == "completed"
+    assert registry.audits == 1
+    assert registry.target["status"] == "completed"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        PRAssuranceError("E_REPAIR_PATCH_DRIFT", "patch changed"),
+        PRAssuranceError("E_REPAIR_RECOVERY_INCOMPLETE", "attempt is running"),
+        FileNotFoundError("missing attempt"),
+        RuntimeError("unknown evidence failure"),
+    ],
+)
+def test_registered_repair_recovery_refuses_unverified_evidence_without_mutation(
+    tmp_path: Path, monkeypatch, failure
+):
+    import factoryline.hosted_api as api
+
+    binding = {
+        "schema": "factory.repair.dispatch.v1",
+        "repair_approval_sha256": "a" * 64,
+    }
+    root = tmp_path / "repair-root"
+    workspace = root / "workspace"
+    workspace.mkdir(parents=True)
+    (workspace / "approval.json").write_text("{}", encoding="utf-8")
+    admin = Principal("tenant-admin", "acme", ("admin",))
+    operator = Principal("repair-operator", "acme", ("operator",))
+    registry = _recovery_registry(binding)
+    service = object.__new__(HostedPRAssuranceService)
+    service.control = registry
+    service.repair_root = root
+    service.current_principal_resolver = lambda subject, tenant: {
+        admin.subject: admin,
+        operator.subject: operator,
+    }.get(subject)
+    service.authenticate = lambda _token: (admin, {"sub": admin.subject}, None)
+    monkeypatch.setattr(api, "_repair_dispatch_binding_or_error", lambda *_a: binding)
+
+    def invalid_evidence(*_args):
+        raise failure
+
+    monkeypatch.setattr(api, "_recovery_attempt_evidence", invalid_evidence)
+    with pytest.raises(PRAssuranceError) as refused:
+        service.reconcile_registered_repair(
+            "admin-token", "acme", "opaqueRepairId_123456", {}
+        )
+    assert refused.value.code == "E_REPAIR_RECOVERY_PENDING"
+    assert "E_REPAIR_RECOVERY_PENDING" == refused.value.code
+    assert (
+        "E_REPAIR_PATCH_DRIFT" in refused.value.message
+        or "E_REPAIR_RECOVERY_INCOMPLETE" in refused.value.message
+        or "E_REPAIR_RECOVERY_INVALID" in refused.value.message
+    )
+    assert len(refused.value.message.rsplit(" ", 1)[-1]) == 65
+    assert registry.target["status"] == "executing"
+    assert registry.target["recovery"] is None
+    assert registry.audits == 0
+
+
+def test_recovery_check_log_tampering_is_rejected(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    log = workspace / ".factory" / "repair-attempts" / ("a" * 64)
+    log.mkdir(parents=True)
+    path = log / "repaired-check.log"
+    path.write_bytes(b"original")
+    row = {
+        "stage": "repaired",
+        "check_id": "check",
+        "result": "PASS",
+        "expected": "success",
+        "exit_code": 0,
+        "log": "repaired-check.log",
+        "log_sha256": __import__("hashlib").sha256(b"original").hexdigest(),
+        "process_cleanup_confirmed": True,
+        "container_cleanup_confirmed": True,
+        "worktree_unchanged": True,
+    }
+    expected = {
+        ("repaired", "check"): {
+            "log": "repaired-check.log",
+            "expected": "success",
+            "exit_code": 0,
+            "signature": None,
+        }
+    }
+    assert _verify_recovery_check_logs(workspace, "a" * 64, expected, [row])
+    row["container_cleanup_confirmed"] = False
+    with pytest.raises(PRAssuranceError) as unclean:
+        _verify_recovery_check_logs(workspace, "a" * 64, expected, [row])
+    assert unclean.value.code == "E_REPAIR_CHECK_EVIDENCE"
+    row["container_cleanup_confirmed"] = True
+    path.write_bytes(b"changed")
+    with pytest.raises(PRAssuranceError) as error:
+        _verify_recovery_check_logs(workspace, "a" * 64, expected, [row])
+    assert error.value.code == "E_REPAIR_CHECK_EVIDENCE"
+
+
+def test_recovery_requires_terminal_attempt_and_confirmed_cleanup():
+    state = {
+        "approval_sha256": "a" * 64,
+        "status": "VERIFIED",
+        "phase": "VERIFIED",
+        "origin_audit": None,
+        "candidate_before_sha256": None,
+        "cleanup_confirmed": True,
+        "primary_checkout_unchanged": True,
+    }
+    assert _require_terminal_recovery_state(state, "a" * 64, None) is None
+    state["candidate_after_sha256"] = "b" * 64
+    with pytest.raises(PRAssuranceError) as unexpected_candidate:
+        _require_terminal_recovery_state(state, "a" * 64, None)
+    assert unexpected_candidate.value.code == "E_REPAIR_RECOVERY_INCOMPLETE"
+    state.pop("candidate_after_sha256")
+    state["phase"] = "PATCH_APPLY"
+    with pytest.raises(PRAssuranceError) as incomplete:
+        _require_terminal_recovery_state(state, "a" * 64, None)
+    assert incomplete.value.code == "E_REPAIR_RECOVERY_INCOMPLETE"
+
+
+def test_recovery_cleanup_normalizes_windows_worktree_paths():
+    from factoryline.hosted_api import (
+        _normalize_worktree_path,
+        _registered_worktree_paths,
+    )
+
+    paths = _registered_worktree_paths(
+        "worktree C:\\repo\\.factory\\repair\\execution\n"
+        "worktree C:\\repo\\.factory\\repair\\temporary\\..\\execution\n"
+    )
+    assert "c:/repo/.factory/repair/execution" in paths
+    assert len(paths) == 1
+    assert _normalize_worktree_path("\\\\server\\share\\repair") == (
+        "//server/share/repair"
+    )
+
+
+def test_recovery_cleanup_resolves_native_worktree_paths():
+    from factoryline.hosted_api import _normalize_worktree_path
+
+    assert _normalize_worktree_path("/tmp/repo/repair/../execution") == (
+        _normalize_worktree_path("/tmp/repo/execution")
+    )
+
+
+def test_registered_repair_recovery_refuses_while_dispatch_lock_is_held(
+    tmp_path: Path,
+):
+    binding = {
+        "schema": "factory.repair.dispatch.v1",
+        "repair_approval_sha256": "a" * 64,
+    }
+    admin = Principal("tenant-admin", "acme", ("admin",))
+    registry = _recovery_registry(binding, busy=True)
+    service = object.__new__(HostedPRAssuranceService)
+    service.control = registry
+    service.repair_root = tmp_path
+    service.current_principal_resolver = lambda subject, tenant: admin
+    service.authenticate = lambda _token: (admin, {"sub": admin.subject}, None)
+    with pytest.raises(PRAssuranceError) as busy:
+        service.reconcile_registered_repair(
+            "admin-token", "acme", "opaqueRepairId_123456", {}
+        )
+    assert busy.value.code == "E_REPAIR_BUSY"
+    assert registry.audits == 0
+
+
+def test_trusted_repair_path_rejects_escape_and_symlink(tmp_path: Path):
+    root = tmp_path / "root"
+    root.mkdir()
+    target = root / "workspace"
+    target.mkdir()
+    with pytest.raises(PRAssuranceError):
+        _trusted_repair_path(root, "../outside", directory=True)
+    link = root / "linked"
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink creation unavailable: {exc}")
+    with pytest.raises(PRAssuranceError):
+        _trusted_repair_path(root, "linked", directory=True)
+
+
+def test_trusted_repair_path_rejects_windows_reparse_attribute(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    root.mkdir()
+    directory = root / "workspace"
+    directory.mkdir()
+    original_lstat = Path.lstat
+
+    def reparse_lstat(path):
+        if path == directory:
+            return SimpleNamespace(
+                st_mode=directory.stat().st_mode, st_file_attributes=0x400
+            )
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", reparse_lstat)
+    with pytest.raises(PRAssuranceError) as error:
+        _trusted_repair_path(root, "workspace", directory=True)
+    assert error.value.code == "E_REPAIR_PATH"
+
+
+def test_service_fails_closed_without_current_identity_resolver():
+    service = object.__new__(HostedPRAssuranceService)
+    service.control = object()
+    service.repair_root = Path(".")
+    service.current_principal_resolver = None
+    with pytest.raises(PRAssuranceError) as error:
+        service.execute_registered_repair("token", "acme", "repair1234567890", {})
+    assert error.value.code == "E_REPAIR_UNAVAILABLE"
+
+
+def test_registered_dispatch_rechecks_binding_and_scrubs_executor_paths(
+    tmp_path: Path, monkeypatch
+):
+    import factoryline.repair_sandbox as repair
+
+    root = tmp_path / "repair-root"
+    workspace = root / "workspace"
+    workspace.mkdir(parents=True)
+    (workspace / "approval.json").write_text("{}", encoding="utf-8")
+    principal = Principal("requester", "acme", ("operator",))
+    binding = {"schema": "factory.repair.dispatch.v1", "candidate_sha256": "a" * 64}
+
+    class Registry:
+        def __init__(self, registered_binding):
+            self.target = {
+                "workspace_path": "workspace",
+                "approval_path": "approval.json",
+                "workflow_approval_id": "workflow_12345678",
+                "requester": "requester",
+                "binding": registered_binding,
+            }
+            self.claimed = False
+            self.finished = []
+
+        def get_hosted_repair(self, _tenant, _repair_id):
+            return self.target
+
+        @contextmanager
+        def hosted_repair_session_lock(self, *_args):
+            yield
+
+        def claim_hosted_repair(self, *_args):
+            self.claimed = True
+
+        def finish_hosted_repair(self, *_args, **kwargs):
+            self.finished.append(kwargs)
+
+    registry = Registry(binding)
+    service = object.__new__(HostedPRAssuranceService)
+    service.control = registry
+    service.repair_root = root
+    service.current_principal_resolver = lambda subject, tenant: Principal(
+        subject, tenant, ("operator",)
+    )
+    service.authenticate = lambda _token: (principal, {"sub": "requester"}, None)
+    service._emit = lambda *_args, **_kwargs: None
+    monkeypatch.setattr(repair, "repair_dispatch_evidence", lambda *_a, **_kw: binding)
+    monkeypatch.setattr(
+        repair,
+        "execute_workflow_approved_repair",
+        lambda *_a, **_kw: {
+            "status": "VERIFIED",
+            "attempt_path": "C:/private/attempt.json",
+            "origin_audit": {"private_path": "C:/private/source"},
+        },
+    )
+    result = service.execute_registered_repair(
+        "verified-token", "acme", "opaqueRepairId_123456", {}
+    )
+    assert result == {
+        "schema": "factory.hosted.repair.v1",
+        "repair_id": "opaqueRepairId_123456",
+        "status": "completed",
+    }
+    assert registry.claimed is True
+    assert registry.finished == [{"succeeded": True, "actor": "requester"}]
+
+    registry = Registry({**binding, "candidate_sha256": "b" * 64})
+    service.control = registry
+    with pytest.raises(PRAssuranceError) as changed:
+        service.execute_registered_repair(
+            "verified-token", "acme", "opaqueRepairId_123456", {}
+        )
+    assert changed.value.code == "E_REPAIR_CHANGED"
+    assert registry.claimed is False
+
+
+def test_hosted_repair_preflight_error_is_redacted_before_claim(tmp_path, monkeypatch):
+    import factoryline.repair_sandbox as repair
+
+    from factoryline.repair_sandbox import RepairSandboxError
+
+    root = tmp_path / "repair-root"
+    workspace = root / "workspace"
+    workspace.mkdir(parents=True)
+    (workspace / "approval.json").write_text("{}", encoding="utf-8")
+    principal = Principal("requester", "acme", ("operator",))
+    binding = {"schema": "factory.repair.dispatch.v1", "candidate_sha256": "a" * 64}
+
+    class Registry:
+        claimed = False
+
+        def get_hosted_repair(self, _tenant, _repair_id):
+            return {
+                "workspace_path": "workspace",
+                "approval_path": "approval.json",
+                "workflow_approval_id": "workflow_12345678",
+                "requester": "requester",
+                "binding": binding,
+            }
+
+        @contextmanager
+        def hosted_repair_session_lock(self, *_args):
+            yield
+
+        def claim_hosted_repair(self, *_args):
+            self.claimed = True
+
+    registry = Registry()
+    service = object.__new__(HostedPRAssuranceService)
+    service.control = registry
+    service.repair_root = root
+    service.current_principal_resolver = lambda subject, tenant: Principal(
+        subject, tenant, ("operator",)
+    )
+    service.authenticate = lambda _token: (principal, {"sub": "requester"}, None)
+    service._emit = lambda *_args, **_kwargs: None
+
+    def malformed_approval(*_args, **_kwargs):
+        raise RepairSandboxError(
+            "REPAIR_APPROVAL_INVALID", "invalid approval at C:/private/approval.json"
+        )
+
+    monkeypatch.setattr(repair, "repair_dispatch_evidence", malformed_approval)
+    status, payload = _hosted_repair_call(
+        HostedPRAssuranceAPI(service),
+        path="/v1/tenants/acme/repairs/opaqueRepairId_123456/execute",
+    )
+    assert status == "400 Bad Request"
+    assert payload["error"] == {
+        "code": "REPAIR_APPROVAL_INVALID",
+        "message": "repair dispatch was rejected",
+    }
+    assert "C:/private" not in json.dumps(payload)
+    assert registry.claimed is False
+
+
+def test_repair_provisioning_binds_existing_workflow_requester_not_admin(
+    tmp_path: Path, monkeypatch
+):
+    import factoryline.repair_sandbox as repair
+
+    admin = Principal("tenant-admin", "acme", ("admin",))
+    operator = Principal("repair-operator", "acme", ("operator",))
+    root = tmp_path / "repairs"
+    workspace = root / "workspace"
+    workspace.mkdir(parents=True)
+    (workspace / "approval.json").write_text("{}", encoding="utf-8")
+
+    class Registry:
+        registration = None
+
+        def get_approval(self, _principal, _tenant, _approval_id):
+            return {"requester": operator.subject}
+
+        def register_hosted_repair(self, **values):
+            self.registration = values
+            return {"repair_id": values["repair_id"]}
+
+    registry = Registry()
+    service = object.__new__(HostedPRAssuranceService)
+    service.control = registry
+    service.repair_root = root
+    service.current_principal_resolver = lambda subject, tenant: {
+        admin.subject: admin,
+        operator.subject: operator,
+    }.get(subject)
+    service.authenticate = lambda _token: (admin, {"sub": admin.subject}, None)
+    monkeypatch.setattr(
+        repair,
+        "repair_dispatch_evidence",
+        lambda *_args, **kwargs: {"requester": kwargs["requester"]},
+    )
+    service.provision_repair_target(
+        "admin-token",
+        "acme",
+        repair_id="opaqueRepairId_123456",
+        workspace_relative="workspace",
+        approval_relative="approval.json",
+        workflow_approval_id="workflow_12345678",
+    )
+    assert registry.registration["requester"] == operator.subject
+    assert registry.registration["registered_by"] == admin.subject
+    assert registry.registration["binding"] == {"requester": operator.subject}
+
+
+def test_repair_provisioning_redacts_preflight_error_before_registration(
+    tmp_path: Path, monkeypatch
+):
+    import factoryline.repair_sandbox as repair
+
+    from factoryline.repair_sandbox import RepairSandboxError
+
+    admin = Principal("tenant-admin", "acme", ("admin",))
+    operator = Principal("repair-operator", "acme", ("operator",))
+    root = tmp_path / "repairs"
+    workspace = root / "workspace"
+    workspace.mkdir(parents=True)
+    (workspace / "approval.json").write_text("{}", encoding="utf-8")
+
+    class Registry:
+        registration = None
+
+        def get_approval(self, _principal, _tenant, _approval_id):
+            return {"requester": operator.subject}
+
+        def register_hosted_repair(self, **values):
+            self.registration = values
+
+    registry = Registry()
+    service = object.__new__(HostedPRAssuranceService)
+    service.control = registry
+    service.repair_root = root
+    service.current_principal_resolver = lambda subject, tenant: {
+        admin.subject: admin,
+        operator.subject: operator,
+    }.get(subject)
+    service.authenticate = lambda _token: (admin, {"sub": admin.subject}, None)
+
+    def invalid_approval(*_args, **_kwargs):
+        raise RepairSandboxError(
+            "REPAIR_APPROVAL_INVALID", "C:/private/approval-secret.json"
+        )
+
+    monkeypatch.setattr(repair, "repair_dispatch_evidence", invalid_approval)
+    with pytest.raises(PRAssuranceError) as error:
+        service.provision_repair_target(
+            "admin-token",
+            "acme",
+            repair_id="opaqueRepairId_123456",
+            workspace_relative="workspace",
+            approval_relative="approval.json",
+            workflow_approval_id="workflow_12345678",
+        )
+    assert error.value.code == "REPAIR_APPROVAL_INVALID"
+    assert str(error.value) == "repair preflight validation failed"
+    assert "C:/private" not in str(error.value)
+    assert registry.registration is None
+
+
+def test_postgres_workflow_verifier_preserves_requester_and_current_approver_checks(
+    monkeypatch,
+):
+    store = object.__new__(PostgresControlStore)
+    requester = Principal("requester", "acme", ("operator",))
+    approval = {
+        "approval_id": "approval-1",
+        "tenant_id": "acme",
+        "evidence_id": "evidence-1",
+        "requester": requester.subject,
+        "reason": "dispatch repair",
+        "status": "approved",
+        "requested_at": "2026-10-11T12:00:00+00:00",
+        "decided_at": "2026-10-11T12:01:00+00:00",
+        "approver": "approver",
+        "decision_reason": "reviewed",
+    }
+    monkeypatch.setattr(store, "get_approval", lambda *args, **kwargs: approval)
+    consumed = []
+    monkeypatch.setattr(
+        store,
+        "_consume_workflow_approval",
+        lambda principal, tenant, record, expected: consumed.append(
+            (principal, tenant, record, expected)
+        )
+        or dict(expected),
+    )
+
+    def resolver(subject, tenant):
+        roles = ("operator",) if subject == requester.subject else ("approver",)
+        return Principal(subject, tenant, roles)
+
+    verifier = store.workflow_approval_verifier(
+        requester,
+        "acme",
+        "approval-1",
+        resolve_principal=resolver,
+        require_requester=True,
+    )
+    expected = {"candidate_sha256": "a" * 64}
+    assert verifier(expected) == expected
+    assert consumed == [(requester, "acme", approval, expected)]
+
+    def stale_requester(subject, tenant):
+        roles = () if subject == requester.subject else ("approver",)
+        return Principal(subject, tenant, roles)
+
+    revoked = store.workflow_approval_verifier(
+        requester, "acme", "approval-1", resolve_principal=stale_requester
+    )
+    with pytest.raises(ControlPlaneError) as caller_role_error:
+        revoked(expected)
+    assert caller_role_error.value.code == "E_ACTION_DENIED"
+
+    def moved_requester(subject, _tenant):
+        return Principal(subject, "other-tenant", ("operator",))
+
+    moved = store.workflow_approval_verifier(
+        requester, "acme", "approval-1", resolve_principal=moved_requester
+    )
+    with pytest.raises(ControlPlaneError) as tenant_error:
+        moved(expected)
+    assert tenant_error.value.code == "E_TENANT_BOUNDARY"
+
+    def stale_role(subject, tenant):
+        return Principal(subject, tenant, ("viewer",))
+
+    denied = store.workflow_approval_verifier(
+        requester, "acme", "approval-1", resolve_principal=stale_role
+    )
+    with pytest.raises(ControlPlaneError) as role_error:
+        denied(expected)
+    assert role_error.value.code == "E_ACTION_DENIED"
+
+    other = Principal("other-requester", "acme", ("operator",))
+    wrong_requester = store.workflow_approval_verifier(
+        other,
+        "acme",
+        "approval-1",
+        resolve_principal=resolver,
+        require_requester=True,
+    )
+    with pytest.raises(ControlPlaneError) as requester_error:
+        wrong_requester(expected)
+    assert requester_error.value.code == "E_APPROVAL_REQUESTER"
 
 
 def test_env_secret_resolver_accepts_only_scoped_references_and_never_returns_reference_text():

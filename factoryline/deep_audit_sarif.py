@@ -31,6 +31,20 @@ _NATIVE_REPORT_ROLES = {
     "zap": "zap_report",
 }
 
+_ZAP_LEDGER_BYTES = 4 * 1024 * 1024
+_ZAP_LEDGER_RECORD_BYTES = 4096
+_ZAP_LEDGER_RECORDS = 100_000
+_ZAP_LEDGER_COUNT_MAX = 1_000_000
+_ZAP_LEDGER_EVENTS = {
+    "invocation_started": ("started", "invocation"),
+    "invocation_returned": ("returned", "invocation"),
+    "invocation_failed": ("failed", "invocation_failure"),
+    "plugin_completed": ("completed", "plugin_terminal"),
+    "plugin_failed": ("failed", "plugin_terminal"),
+    "plugin_skipped": ("skipped", "plugin_terminal"),
+    "plugin_stopped": ("stopped", "plugin_terminal"),
+}
+
 
 def _safe_text(value: object, maximum: int = 2048) -> str:
     text = require_str(value, "display text", maximum=maximum)
@@ -477,7 +491,138 @@ def _osv_source_accounting(report, required, mode):
             "packages_sha256": digest(packages),
             "packages": packages,
         }
-    return _osv_accounting_result(report, required, sources, errors)
+    accounting = _osv_accounting_result(report, required, sources, errors)
+    if "factory_lookup_execution" in report:
+        accounting["lookup_execution"] = _osv_lookup_execution(report, sources)
+    return accounting
+
+
+def _osv_lookup_fields(value, fields):
+    value = _object(value)
+    if set(value) != set(fields.split()):
+        raise RuntimeAuditError("E_OSV_LOOKUPS", "native lookup fields differ")
+    return value
+
+
+def _osv_lookup_targets(report):
+    targets = {}
+    for result in report["results"]:
+        path = result["source"]["path"]
+        for row in result["packages"]:
+            key = canonical_bytes(
+                {
+                    field: row["package"][field]
+                    for field in ("name", "version", "ecosystem")
+                }
+            )
+            target = targets.setdefault(key, {"locations": set(), "matched": set()})
+            target["locations"].add(path)
+            target["matched"].update(
+                require_str(_object(item).get("id"), "advisory id", maximum=256)
+                for item in _list(row.get("vulnerabilities", []), 0, 20_000)
+            )
+    return targets
+
+
+def _osv_lookup_extractors(runs):
+    for run in _list(runs, 1, 1024):
+        run = _osv_lookup_fields(run, "plugins statuses")
+        plugins = _list(run["plugins"], 1, 1024)
+        for name in plugins:
+            require_str(name, "extractor name", maximum=256)
+        statuses = _list(run["statuses"], 1, 1024)
+        names = []
+        for row in statuses:
+            row = _osv_lookup_fields(row, "name state")
+            names.append(require_str(row["name"], "extractor name", maximum=256))
+            if row["state"] != "SUCCEEDED":
+                raise RuntimeAuditError("E_OSV_LOOKUPS", "extractor did not succeed")
+        if plugins != sorted(set(plugins)) or sorted(names) != plugins:
+            raise RuntimeAuditError("E_OSV_LOOKUPS", "extractor execution set differs")
+
+
+def _osv_lookup_query(row, ledger, targets):
+    row = _osv_lookup_fields(
+        row,
+        "name version ecosystem locations state evaluated_advisories "
+        "evaluated_sha256 decision_sha256 matched_advisories",
+    )
+    identity = {
+        key: require_str(row[key], f"query.{key}", maximum=256)
+        for key in ("name", "version", "ecosystem")
+    }
+    key = canonical_bytes(identity)
+    if key not in targets or row["state"] != "EXECUTED":
+        raise RuntimeAuditError("E_OSV_LOOKUPS", "query is unbound or did not execute")
+    paths = [relative_path(path) for path in _list(row["locations"], 1, 20_000)]
+    matched = _list(row["matched_advisories"], 0, 20_000)
+    for advisory in matched:
+        require_str(advisory, "matched advisory", maximum=256)
+    evaluated = require_int(
+        row["evaluated_advisories"], "evaluated advisories", minimum=1, maximum=10**6
+    )
+    expected_decision = digest(
+        {
+            **identity,
+            "catalog_sha256": ledger["catalog_sha256"],
+            "evaluated_advisories": evaluated,
+            "matched_advisories": matched,
+        }
+    )
+    if require_digest(row["decision_sha256"], "decision hash") != expected_decision:
+        raise RuntimeAuditError("E_OSV_LOOKUPS", "native decision hash differs")
+    if (
+        paths != sorted(targets[key]["locations"])
+        or matched != sorted(targets[key]["matched"])
+        or evaluated != ledger["catalog_advisories"]
+        or row["evaluated_sha256"] != ledger["catalog_sha256"]
+    ):
+        raise RuntimeAuditError("E_OSV_LOOKUPS", "query decisions or input set differ")
+    return key, row
+
+
+def _osv_lookup_execution(report, sources):
+    ledger = _osv_lookup_fields(
+        report["factory_lookup_execution"],
+        "schema upstream_commit database_sha256 catalog_advisories catalog_sha256 "
+        "queries extractor_runs",
+    )
+    if (
+        ledger["schema"] != "factory.osv-lookup-execution.v1"
+        or ledger["upstream_commit"] != "a14aa98ab8408547083d4411091c5fbaf5b47d8e"
+    ):
+        raise RuntimeAuditError("E_OSV_LOOKUPS", "unrecognized native lookup producer")
+    require_digest(ledger["database_sha256"], "lookup database hash")
+    require_digest(ledger["catalog_sha256"], "advisory catalog hash")
+    require_int(ledger["catalog_advisories"], "catalog size", minimum=1, maximum=10**6)
+    _osv_lookup_extractors(ledger["extractor_runs"])
+    targets = _osv_lookup_targets(report)
+    observed = {}
+    for row in _list(ledger["queries"], 1, 20_000):
+        key, row = _osv_lookup_query(row, ledger, targets)
+        if key in observed:
+            raise RuntimeAuditError("E_OSV_LOOKUPS", "duplicate native package query")
+        observed[key] = row
+    if set(observed) != set(targets):
+        raise RuntimeAuditError(
+            "E_OSV_LOOKUPS", "package queries were not all executed"
+        )
+    return {
+        **ledger,
+        "queries": [observed[key] for key in sorted(observed)],
+        "source_sha256": {path: row["sha256"] for path, row in sorted(sources.items())},
+    }
+
+
+def _osv_lookup_binding_gaps(report, lane):
+    ledger = report.get("factory_lookup_execution")
+    if ledger is None:
+        return ["OSV_NATIVE_LOOKUPS_REQUIRED"]
+    ledger = _object(ledger)
+    expected = lane.get("native_policy", {}).get("database_sha256")
+    if not expected or ledger.get("database_sha256") != expected:
+        return ["OSV_NATIVE_LOOKUP_DATABASE_DRIFT"]
+    return []
 
 
 def _osv_accounting_packages(result):
@@ -757,6 +902,7 @@ def _coverage_source_gaps(report, coverage, lane, required):
         gaps.append("COVERAGE_REPORT_DRIFT")
     if lane["engine"] == "osv" and lane["mode"] == "offline-pypi-snapshot":
         expected = _osv_source_accounting(report, required, lane["mode"])
+        gaps.extend(_osv_lookup_binding_gaps(report, lane))
         if expected["state"] != "COMPLETE":
             gaps.append("OSV_SOURCE_ACCOUNTING_INCOMPLETE")
         if canonical_bytes(coverage.get("source_accounting")) != canonical_bytes(
@@ -1137,6 +1283,204 @@ def _rule_accounting_gaps(coverage, lane, required, report=None):
     if lane["engine"] != "gitleaks":
         return []
     return _gitleaks_rule_accounting_gaps(coverage, lane, required, report)
+
+
+def _verify_zap_native_rule_ledger(raw: bytes, lane: dict, bindings: dict) -> dict:
+    """Validate bounded native ZAP plugin lifecycle records against signed bindings."""
+    if not isinstance(raw, bytes) or len(raw) > _ZAP_LEDGER_BYTES:
+        raise RuntimeAuditError("E_ZAP_LEDGER_SIZE", "ledger byte budget exceeded")
+    if not isinstance(lane, dict) or lane.get("engine") != "zap":
+        raise RuntimeAuditError("E_ZAP_LEDGER_LANE", "ZAP lane required")
+    if not raw or not raw.endswith(b"\n"):
+        raise RuntimeAuditError(
+            "E_ZAP_LEDGER_JSONL", "newline-terminated records required"
+        )
+    lines = raw[:-1].split(b"\n")
+    if not 1 <= len(lines) <= _ZAP_LEDGER_RECORDS or any(not line for line in lines):
+        raise RuntimeAuditError("E_ZAP_LEDGER_SIZE", "ledger record budget exceeded")
+    if any(len(line) > _ZAP_LEDGER_RECORD_BYTES for line in lines):
+        raise RuntimeAuditError(
+            "E_ZAP_LEDGER_SIZE", "ledger record byte budget exceeded"
+        )
+    _zap_exact_keys(
+        bindings, {"run_id", "candidate_sha256", "profile_sha256", "host_id"}
+    )
+    _zap_ledger_bindings(bindings)
+    expected_plugins = _zap_ledger_plugins(lane)
+    plugin_state = {
+        plugin_id: {"name": None, "terminal": None, "started": {}, "returned": set()}
+        for plugin_id in expected_plugins
+    }
+    for line in lines:
+        _zap_ledger_record(line, bindings, plugin_state)
+    _zap_ledger_complete(plugin_state)
+    return {
+        "schema": "factory.zap-rule-verification.v1",
+        "state": "VERIFIED",
+        **bindings,
+        "plugin_ids": expected_plugins,
+        "invocation_count": sum(
+            len(state["returned"]) for state in plugin_state.values()
+        ),
+        "plugin_count": len(expected_plugins),
+        "ledger_sha256": sha256_bytes(raw),
+    }
+
+
+def _zap_ledger_bindings(bindings):
+    run_id = require_str(bindings["run_id"], "run_id", maximum=128)
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", run_id) is None:
+        raise RuntimeAuditError("E_ZAP_LEDGER_BINDING", "run_id is not canonical")
+    for name in ("candidate_sha256", "profile_sha256", "host_id"):
+        require_digest(bindings[name], name)
+
+
+def _zap_ledger_plugins(lane):
+    rule_ids = lane.get("rule_ids")
+    if not isinstance(rule_ids, list) or not rule_ids or len(rule_ids) > 4096:
+        raise RuntimeAuditError(
+            "E_ZAP_LEDGER_INVENTORY", "enabled plugin inventory required"
+        )
+    plugin_ids = []
+    for rule_id in rule_ids:
+        if (
+            not isinstance(rule_id, str)
+            or re.fullmatch(r"(?:0|[1-9][0-9]{0,9})", rule_id) is None
+        ):
+            raise RuntimeAuditError(
+                "E_ZAP_LEDGER_INVENTORY", "numeric plugin IDs required"
+            )
+        plugin_ids.append(int(rule_id))
+    if rule_ids != sorted(set(rule_ids)):
+        raise RuntimeAuditError(
+            "E_ZAP_LEDGER_INVENTORY", "sorted unique plugin inventory required"
+        )
+    return sorted(plugin_ids)
+
+
+def _zap_ledger_record(line, bindings, plugin_state):
+    row = strict_json(line)
+    event = row.get("event")
+    if not isinstance(event, str) or event not in _ZAP_LEDGER_EVENTS:
+        raise RuntimeAuditError("E_ZAP_LEDGER_EVENT", "unknown ledger event")
+    status, kind = _ZAP_LEDGER_EVENTS[event]
+    fields = {
+        "schema",
+        "run_id",
+        "candidate_sha256",
+        "profile_sha256",
+        "host_id",
+        "plugin_id",
+        "plugin_name",
+        "invocation",
+        "status",
+        "event",
+        "message_count",
+        "alert_count",
+    }
+    if kind == "invocation_failure":
+        fields.add("exception_class")
+    _zap_exact_keys(row, fields)
+    _zap_ledger_record_binding(row, bindings, status)
+    plugin_id = require_int(
+        row["plugin_id"], "plugin_id", minimum=0, maximum=2_147_483_647
+    )
+    if plugin_id not in plugin_state:
+        raise RuntimeAuditError("E_ZAP_LEDGER_PLUGIN", "undeclared plugin ID")
+    state = plugin_state[plugin_id]
+    name = require_str(row["plugin_name"], "plugin_name", maximum=200)
+    if not _zap_plugin_name_valid(name) or (
+        state["name"] is not None and state["name"] != name
+    ):
+        raise RuntimeAuditError(
+            "E_ZAP_LEDGER_PLUGIN", "plugin name is invalid or changed"
+        )
+    state["name"] = name
+    require_int(
+        row["message_count"], "message_count", minimum=0, maximum=_ZAP_LEDGER_COUNT_MAX
+    )
+    require_int(
+        row["alert_count"], "alert_count", minimum=0, maximum=_ZAP_LEDGER_COUNT_MAX
+    )
+    if kind == "invocation":
+        _zap_ledger_invocation(row, state, event)
+    elif kind == "invocation_failure":
+        require_str(row["exception_class"], "exception_class", maximum=256)
+        _zap_ledger_invocation(row, state, event)
+        raise RuntimeAuditError("E_ZAP_LEDGER_FAILURE", "plugin invocation failed")
+    else:
+        _zap_ledger_terminal(row, state, event)
+
+
+def _zap_ledger_record_binding(row, bindings, status):
+    if row.get("schema") != "factory.zap-rule-ledger.v1" or row.get("status") != status:
+        raise RuntimeAuditError(
+            "E_ZAP_LEDGER_BINDING", "ledger schema or event status differs"
+        )
+    if any(row.get(key) != value for key, value in bindings.items()):
+        raise RuntimeAuditError(
+            "E_ZAP_LEDGER_BINDING", "ledger execution binding differs"
+        )
+
+
+def _zap_exact_keys(value, expected):
+    if not isinstance(value, dict) or set(value) != expected:
+        raise RuntimeAuditError("E_ZAP_LEDGER_FIELDS", "ledger fields differ")
+
+
+def _zap_plugin_name_valid(name):
+    return re.fullmatch(r"[A-Za-z0-9._-]{1,128}", name) is not None
+
+
+def _zap_ledger_invocation(row, state, event):
+    invocation = require_int(
+        row["invocation"], "invocation", minimum=1, maximum=_ZAP_LEDGER_RECORDS
+    )
+    if state["terminal"] is not None:
+        raise RuntimeAuditError(
+            "E_ZAP_LEDGER_ORDER", "plugin event follows terminal event"
+        )
+    if event == "invocation_started":
+        if invocation in state["started"]:
+            raise RuntimeAuditError("E_ZAP_LEDGER_ORDER", "duplicate invocation start")
+        state["started"][invocation] = True
+        return
+    if invocation not in state["started"] or invocation in state["returned"]:
+        raise RuntimeAuditError(
+            "E_ZAP_LEDGER_ORDER", "invocation return has no unique start"
+        )
+    if event == "invocation_returned":
+        state["returned"].add(invocation)
+
+
+def _zap_ledger_terminal(row, state, event):
+    if (
+        require_int(row["invocation"], "invocation", minimum=0, maximum=0) != 0
+        or state["terminal"] is not None
+    ):
+        raise RuntimeAuditError(
+            "E_ZAP_LEDGER_ORDER", "plugin terminal event is duplicated or malformed"
+        )
+    if event != "plugin_completed":
+        raise RuntimeAuditError("E_ZAP_LEDGER_FAILURE", "plugin did not complete")
+    if row["message_count"] == 0:
+        raise RuntimeAuditError(
+            "E_ZAP_LEDGER_INCOMPLETE", "plugin has no request messages"
+        )
+    state["terminal"] = event
+
+
+def _zap_ledger_complete(plugin_state):
+    if any(
+        state["terminal"] != "plugin_completed"
+        or not state["started"]
+        or set(state["started"]) != state["returned"]
+        or sorted(state["started"]) != list(range(1, len(state["started"]) + 1))
+        for state in plugin_state.values()
+    ):
+        raise RuntimeAuditError(
+            "E_ZAP_LEDGER_INCOMPLETE", "plugin execution evidence is incomplete"
+        )
 
 
 def _gitleaks_rule_accounting_gaps(coverage, lane, required, report):

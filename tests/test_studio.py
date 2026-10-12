@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import socket
 import threading
@@ -297,6 +298,145 @@ def test_studio_compiles_a_contained_supervised_product_mission(tmp_path: Path):
     assert dashboard["receipt_comparison"]["status"] == "insufficient_runs"
 
 
+def test_approved_studio_mission_returns_exact_bound_agent_handoff(tmp_path: Path):
+    from test_product_missions import PRD
+
+    planned = create_product_mission_from_studio(
+        tmp_path,
+        {
+            "action": "product-mission",
+            "prompt": PRD,
+            "name": "handoff-proof",
+            "executor": "codex",
+            "owner": "owner",
+        },
+    )
+    mission_path = Path(planned["mission"]["path"])
+    source = json.loads(mission_path.read_bytes())
+    decision = decide_product_mission_from_studio(
+        tmp_path,
+        {
+            "action": "mission-decision",
+            "mission": str(mission_path),
+            "owner": "owner",
+            "decision": "approved_execution",
+            "rationale": "Implement this bounded slice.",
+        },
+    )
+    handoff = decision["agent_handoff"]
+    assert (
+        handoff["candidate_binding"]["bind_command"] == "factory mission bind-candidate"
+    )
+    assert (
+        handoff["candidate_binding"]["verify_command"]
+        == "factory mission verify-candidate"
+    )
+    assert handoff["candidate_binding"]["operator_input_required"] is False
+    assert handoff["candidate_binding"]["execution_authorized"] is False
+    assert handoff["task_packet"] == source["task_packet"]
+    assert handoff["mission"] == decision["mission"]
+    assert handoff["decision"]["sha256"] == decision["decision_sha256"]
+    assert handoff["executor"] == "codex"
+    assert handoff["dispatched"] is False
+    assert handoff["state"] == "approved_needs_candidate_binding"
+    assert (
+        handoff["candidate_binding"]["repair_command"]
+        == "factory mission execute-repair"
+    )
+    assert "Separate exact" in handoff["candidate_binding"]["repair_prerequisite"]
+    guidance = handoff["acceptance_guidance"]
+    assert len(guidance["starter_scenarios"]) == 5
+    assert "reload" in guidance["starter_scenarios"][2].lower()
+    assert "account or workspace" in guidance["custom_scenarios"]
+    assert any("disposable test data" in step for step in guidance["protocol"])
+    assert any("exact candidate" in step for step in guidance["protocol"])
+    assert any("Invalidate prior results" in step for step in guidance["protocol"])
+    assert handoff["verify_argv"] == [
+        "factory",
+        "mission",
+        "verify",
+        str(mission_path),
+        "--json",
+    ]
+    assert "exact permitted paths" in handoff["instructions"][1]
+    persisted = json.loads(Path(decision["path"]).read_bytes())
+    assert "agent_handoff" not in persisted
+
+
+def test_studio_handoff_requires_approval_and_exact_mission_bytes():
+    from factoryline.studio import _mission_agent_handoff
+
+    assert (
+        _mission_agent_handoff(Path("mission.json"), b"", {"decision": "deferred"})
+        is None
+    )
+    assert (
+        _mission_agent_handoff(Path("mission.json"), b"", {"decision": "rejected"})
+        is None
+    )
+    with pytest.raises(StudioRequestError, match="MISSION_INPUT_DRIFT"):
+        _mission_agent_handoff(
+            Path("mission.json"),
+            b"changed",
+            {
+                "decision": "approved_execution",
+                "mission": {"file_sha256": "0" * 64},
+            },
+        )
+
+
+def test_studio_handoff_ui_is_explicit_readonly_and_never_dispatches():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("token")
+    assert "renderAgentHandoff(payload.agent_handoff)" in page
+    assert "Nothing has been dispatched" in page
+    assert "input.readOnly=true" in page
+    assert "input.value=JSON.stringify(handoff,null,2)" in page
+    assert "input.onclick=()=>input.select()" in page
+    assert "Beginner acceptance checks:" in page
+    assert "This page does not run or preview the product." in page
+    assert "guidedButton('Run'" not in page
+
+
+def test_guided_resume_renders_restored_agent_handoff():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("token")
+    render_guided = page.split("function renderGuided(payload)", 1)[1].split(
+        "async function confirmGuided", 1
+    )[0]
+    assert "renderAgentHandoff(payload.agent_handoff)" in render_guided
+
+
+def test_studio_mission_decision_uses_inline_required_rationale():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("token")
+    decision_function = page.split("async function decideMission(decision)", 1)[
+        1
+    ].split("function renderAgentHandoff", 1)[0]
+    assert "window.prompt(" not in decision_function
+    assert "rationaleLabel.htmlFor='mission-rationale'" in page
+    assert "rationaleInput.maxLength=4000" in page
+    assert "Explain this decision before continuing" in page
+    assert "rationaleInput.oninput=()=>rationaleInput.setCustomValidity('')" in page
+
+
+def test_studio_decision_serializes_requests_and_ignores_stale_responses():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("token")
+    action = page.split("async function decideMission(decision)", 1)[1].split(
+        "function renderAgentHandoff", 1
+    )[0]
+    assert "if(missionDecisionBusy||!currentMission||!rationaleInput)return" in action
+    assert "generation!==guidedGeneration||currentMission!==mission" in action
+    assert "finally{missionDecisionBusy=false" in action
+    assert "DECISION_STATUS_UNKNOWN" in action
+    assert "may have been recorded" in action
+
+
 def test_studio_gap_feedback_is_actionable_and_never_auto_invents_product_facts(
     tmp_path: Path,
 ):
@@ -317,6 +457,814 @@ def test_studio_gap_feedback_is_actionable_and_never_auto_invents_product_facts(
         for item in result["resolution"]["items"]
     )
     assert "cannot be invented" in result["resolution"]["why_auto_stopped"]
+
+
+def test_studio_guided_prd_requires_bound_confirmation_before_mission_compile(
+    tmp_path: Path,
+):
+    from test_product_missions import PRD
+    from factoryline.studio import product_grill_from_studio
+
+    draft = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": "guided-demo",
+            "mode": "quick",
+        },
+    )
+    assert draft["status"] == "ready_for_confirmation"
+    assert draft["confirmation_required"] is True
+    with pytest.raises(StudioRequestError, match="CONFIRMATION_REQUIRED"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-grill-confirm",
+                "session_path": draft["session"]["path"],
+                "session_sha256": draft["session"]["session_sha256"],
+                "confirmed": False,
+            },
+        )
+    confirmed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-confirm",
+            "session_path": draft["session"]["path"],
+            "session_sha256": draft["session"]["session_sha256"],
+            "confirmed": True,
+        },
+    )
+    compiled = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-guided-compile",
+            "confirmation_path": confirmed["confirmation"]["path"],
+            "confirmation_sha256": confirmed["confirmation"]["sha256"],
+            "owner": "product-owner",
+            "executor": "manual",
+            "resolution_mode": "human_approval",
+        },
+    )
+    assert compiled["studio_marker"] == "STUDIO_PRODUCT_MISSION_CONTAINED"
+    assert compiled["guided_source_sha256"] == draft["source_sha256"]
+    assert compiled["mission"]["approval_state"] == "required_before_execution"
+    with pytest.raises(StudioRequestError, match="CONFIRMATION_BINDING_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-guided-compile",
+                "confirmation_path": confirmed["confirmation"]["path"],
+                "confirmation_sha256": "0" * 64,
+                "owner": "product-owner",
+                "executor": "manual",
+                "resolution_mode": "human_approval",
+            },
+        )
+    session_document = json.loads(
+        (tmp_path / Path(draft["session"]["path"])).read_text(encoding="utf-8")
+    )
+    (tmp_path / Path(session_document["source_path"])).write_text(
+        PRD + "\nChanged after confirmation.\n", encoding="utf-8"
+    )
+    with pytest.raises(StudioRequestError, match="SOURCE_BINDING_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-guided-compile",
+                "confirmation_path": confirmed["confirmation"]["path"],
+                "confirmation_sha256": confirmed["confirmation"]["sha256"],
+            },
+        )
+
+
+def test_guided_resume_restores_verified_approval_and_handoff(tmp_path: Path):
+    from test_product_missions import PRD
+    from factoryline.studio import product_grill_from_studio
+
+    draft = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": "resume-ok",
+            "mode": "quick",
+        },
+    )
+    confirmed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-confirm",
+            "session_path": draft["session"]["path"],
+            "session_sha256": draft["session"]["session_sha256"],
+            "confirmed": True,
+        },
+    )
+    mission = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-guided-compile",
+            "confirmation_path": confirmed["confirmation"]["path"],
+            "confirmation_sha256": confirmed["confirmation"]["sha256"],
+            "owner": "resume-owner",
+            "executor": "manual",
+        },
+    )
+    decide_product_mission_from_studio(
+        tmp_path,
+        {
+            "action": "mission-decision",
+            "mission": mission["mission"]["path"],
+            "owner": "resume-owner",
+            "decision": "approved_execution",
+            "rationale": "Resume this approved bounded mission.",
+        },
+    )
+    resumed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-resume",
+            "session_path": draft["session"]["path"],
+            "session_sha256": draft["session"]["session_sha256"],
+        },
+    )
+    assert resumed["agent_handoff"]["mission"]["path"] == mission["mission"]["path"]
+    assert resumed["agent_handoff"]["state"] == "approved_needs_candidate_binding"
+    assert resumed["agent_handoff"]["dispatched"] is False
+
+
+def test_guided_resume_ignores_approved_mission_from_other_project(tmp_path: Path):
+    from test_product_missions import PRD
+    from factoryline.studio import product_grill_from_studio
+
+    current = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": "current-project",
+            "mode": "quick",
+        },
+    )
+    other = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": "other-project",
+            "mode": "quick",
+        },
+    )
+    assert other["source_sha256"] == current["source_sha256"]
+    confirmed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-confirm",
+            "session_path": other["session"]["path"],
+            "session_sha256": other["session"]["session_sha256"],
+            "confirmed": True,
+        },
+    )
+    mission = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-guided-compile",
+            "confirmation_path": confirmed["confirmation"]["path"],
+            "confirmation_sha256": confirmed["confirmation"]["sha256"],
+            "owner": "other-owner",
+            "executor": "manual",
+        },
+    )
+    decide_product_mission_from_studio(
+        tmp_path,
+        {
+            "action": "mission-decision",
+            "mission": mission["mission"]["path"],
+            "owner": "other-owner",
+            "decision": "approved_execution",
+            "rationale": "Approve only the other project's bounded mission.",
+        },
+    )
+    resumed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-resume",
+            "session_path": current["session"]["path"],
+            "session_sha256": current["session"]["session_sha256"],
+        },
+    )
+    assert "agent_handoff" not in resumed
+
+
+@pytest.mark.parametrize(
+    "sabotage",
+    ["decision_tamper", "mission_stale", "wrong_owner", "graph_source_stale"],
+)
+def test_guided_resume_never_restores_unverified_approval(
+    tmp_path: Path, sabotage: str
+):
+    from test_product_missions import PRD
+    from factoryline.studio import product_grill_from_studio
+
+    draft = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": f"resume-{sabotage}",
+            "mode": "quick",
+        },
+    )
+    confirmed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-confirm",
+            "session_path": draft["session"]["path"],
+            "session_sha256": draft["session"]["session_sha256"],
+            "confirmed": True,
+        },
+    )
+    mission = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-guided-compile",
+            "confirmation_path": confirmed["confirmation"]["path"],
+            "confirmation_sha256": confirmed["confirmation"]["sha256"],
+            "owner": "resume-owner",
+            "executor": "manual",
+        },
+    )
+    decision = decide_product_mission_from_studio(
+        tmp_path,
+        {
+            "action": "mission-decision",
+            "mission": mission["mission"]["path"],
+            "owner": "resume-owner",
+            "decision": "approved_execution",
+            "rationale": "Resume this approved bounded mission.",
+        },
+    )
+    if sabotage == "decision_tamper":
+        receipt_path = Path(decision["path"])
+        receipt = json.loads(receipt_path.read_bytes())
+        receipt["rationale"] = "Tampered without updating the decision hash."
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    elif sabotage == "wrong_owner":
+        receipt_path = Path(decision["path"])
+        receipt = json.loads(receipt_path.read_bytes())
+        receipt["owner"] = "other-owner"
+        core = {
+            key: value
+            for key, value in receipt.items()
+            if key not in {"decision_sha256", "generated_at"}
+        }
+        receipt["decision_sha256"] = hashlib.sha256(
+            json.dumps(
+                core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    elif sabotage == "mission_stale":
+        mission_path = Path(mission["mission"]["path"])
+        mission_path.write_bytes(mission_path.read_bytes() + b" ")
+    else:
+        graph_path = Path(mission["mission"]["inputs"]["graph_path"])
+        source_path = graph_path.parent / "source.md"
+        source_path.write_bytes(source_path.read_bytes() + b" tampered")
+    resumed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-resume",
+            "session_path": draft["session"]["path"],
+            "session_sha256": draft["session"]["session_sha256"],
+        },
+    )
+    assert "agent_handoff" not in resumed
+
+
+def test_studio_guided_prd_answers_are_explicit_bounded_and_linked(tmp_path: Path):
+    from factoryline.studio import product_grill_from_studio
+
+    draft = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": "# Idea\n\nA useful dashboard.",
+            "name": "answered-demo",
+            "mode": "quick",
+        },
+    )
+    assert draft["status"] == "needs_answers"
+    question_id = draft["questions"][0]["id"]
+    request = {
+        "action": "product-grill-answer",
+        "session_path": draft["session"]["path"],
+        "session_sha256": draft["session"]["session_sha256"],
+        "answers": [
+            {
+                "question_id": question_id,
+                "answer": "The operator must be able to review a prioritized dashboard.",
+            }
+        ],
+    }
+    answered = product_grill_from_studio(tmp_path, request)
+    assert answered["session"]["session_sha256"] != draft["session"]["session_sha256"]
+    assert answered["session"]["path"] != draft["session"]["path"]
+    assert question_id not in {item["id"] for item in answered["questions"]}
+    session_path = tmp_path / Path(answered["session"]["path"])
+    session = json.loads(session_path.read_text(encoding="utf-8"))
+    answered_source = tmp_path / Path(session["source_path"])
+    assert "## Requirements" in answered_source.read_text(encoding="utf-8")
+    assert session["previous"]["path"] == draft["session"]["path"]
+    assert session["answers"] == [
+        {
+            "question_id": question_id,
+            "answer": "The operator must be able to review a prioritized dashboard.",
+        }
+    ]
+    with pytest.raises(StudioRequestError, match="QUESTION_ID_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                **request,
+                "answers": [{"question_id": "Q-NOT-DECLARED", "answer": "invented"}],
+            },
+        )
+    with pytest.raises(StudioRequestError, match="QUESTION_ID_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                **request,
+                "answers": [
+                    {"question_id": question_id, "answer": "one"},
+                    {"question_id": question_id, "answer": "two"},
+                ],
+            },
+        )
+    with pytest.raises(StudioRequestError, match="ANSWER_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                **request,
+                "answers": [{"question_id": question_id, "answer": "\ud800"}],
+            },
+        )
+
+
+def test_studio_guided_receipts_reject_hash_consistent_bad_shape_and_source_binding(
+    tmp_path: Path,
+):
+    import hashlib
+
+    from test_product_missions import PRD
+    from factoryline.studio import product_grill_from_studio
+
+    draft = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": "receipt-shape",
+            "mode": "quick",
+        },
+    )
+    session_file = tmp_path / Path(draft["session"]["path"])
+    session = json.loads(session_file.read_text(encoding="utf-8"))
+    session.pop("project")
+    core = {key: value for key, value in session.items() if key != "session_sha256"}
+    session["session_sha256"] = hashlib.sha256(
+        json.dumps(
+            core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    session_file.write_text(json.dumps(session), encoding="utf-8")
+    with pytest.raises(StudioRequestError, match="ARTIFACT_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-grill-confirm",
+                "session_path": draft["session"]["path"],
+                "session_sha256": session["session_sha256"],
+                "confirmed": True,
+            },
+        )
+
+    typed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": "receipt-type",
+            "mode": "quick",
+        },
+    )
+    typed_file = tmp_path / Path(typed["session"]["path"])
+    typed_session = json.loads(typed_file.read_text(encoding="utf-8"))
+    typed_session["mode"] = []
+    typed_core = {
+        key: value for key, value in typed_session.items() if key != "session_sha256"
+    }
+    typed_session["session_sha256"] = hashlib.sha256(
+        json.dumps(
+            typed_core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    typed_file.write_text(json.dumps(typed_session), encoding="utf-8")
+    with pytest.raises(StudioRequestError, match="SESSION_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-grill-confirm",
+                "session_path": typed["session"]["path"],
+                "session_sha256": typed_session["session_sha256"],
+                "confirmed": True,
+            },
+        )
+
+    bound = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": "receipt-source",
+            "mode": "quick",
+        },
+    )
+    bound_file = tmp_path / Path(bound["session"]["path"])
+    bound_session = json.loads(bound_file.read_text(encoding="utf-8"))
+    changed_source = (
+        tmp_path / ".factory" / "studio-guided" / "receipt-source" / "changed.md"
+    )
+    changed_source.write_text(PRD + "\nAdditional text.", encoding="utf-8")
+    changed_bytes = changed_source.read_bytes()
+    bound_session["source_path"] = changed_source.relative_to(tmp_path).as_posix()
+    bound_session["source_sha256"] = hashlib.sha256(changed_bytes).hexdigest()
+    bound_core = {
+        key: value for key, value in bound_session.items() if key != "session_sha256"
+    }
+    bound_session["session_sha256"] = hashlib.sha256(
+        json.dumps(
+            bound_core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    bound_file.write_text(json.dumps(bound_session), encoding="utf-8")
+    with pytest.raises(StudioRequestError, match="RECEIPT_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-grill-confirm",
+                "session_path": bound["session"]["path"],
+                "session_sha256": bound_session["session_sha256"],
+                "confirmed": True,
+            },
+        )
+
+
+def test_studio_guided_malformed_grill_and_surrogate_session_fail_closed(
+    tmp_path: Path,
+):
+    from test_product_missions import PRD
+    from factoryline.studio import (
+        _guided_canonical,
+        _guided_digest,
+        product_grill_from_studio,
+    )
+
+    draft = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": "malformed-grill",
+            "mode": "quick",
+        },
+    )
+    session_path = tmp_path / Path(draft["session"]["path"])
+    session = json.loads(session_path.read_text(encoding="utf-8"))
+    grill_path = tmp_path / Path(session["grill_path"])
+    grill = json.loads(grill_path.read_text(encoding="utf-8"))
+    grill["source"] = []
+    grill_core = {
+        key: value
+        for key, value in grill.items()
+        if key not in {"grill_sha256", "generated_at"}
+    }
+    grill["grill_sha256"] = _guided_digest(_guided_canonical(grill_core))
+    grill_bytes = json.dumps(grill, sort_keys=True).encode("utf-8") + b"\n"
+    grill_path.write_bytes(grill_bytes)
+    session["grill_sha256"] = _guided_digest(grill_bytes)
+    session_core = {
+        key: value for key, value in session.items() if key != "session_sha256"
+    }
+    session["session_sha256"] = _guided_digest(_guided_canonical(session_core))
+    session_path.write_text(json.dumps(session), encoding="utf-8")
+    with pytest.raises(StudioRequestError, match="RECEIPT_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-grill-confirm",
+                "session_path": draft["session"]["path"],
+                "session_sha256": session["session_sha256"],
+                "confirmed": True,
+            },
+        )
+
+    unicode_draft = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": PRD,
+            "name": "surrogate-session",
+            "mode": "quick",
+        },
+    )
+    unicode_file = tmp_path / Path(unicode_draft["session"]["path"])
+    raw_session = json.loads(unicode_file.read_text(encoding="utf-8"))
+    raw_session["project"] = "\ud800"
+    unicode_file.write_text(json.dumps(raw_session), encoding="utf-8")
+    with pytest.raises(StudioRequestError, match="ARTIFACT_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-grill-confirm",
+                "session_path": unicode_draft["session"]["path"],
+                "session_sha256": unicode_draft["session"]["session_sha256"],
+                "confirmed": True,
+            },
+        )
+
+
+def test_studio_guided_acceptance_answer_reaches_confirmed_compile(tmp_path: Path):
+    from test_product_missions import PRD
+    from factoryline.studio import product_grill_from_studio
+
+    prompt = PRD.split("\n## Acceptance\n", 1)[0]
+    draft = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": prompt,
+            "name": "acceptance-answer",
+            "mode": "quick",
+        },
+    )
+    assert [item["id"] for item in draft["questions"]] == ["Q-ACCEPTANCE"]
+    scenario = """Scenario: Review a signal
+  Given an authenticated operator has prioritized signals
+  When the operator opens the dashboard
+  Then the highest-priority signal and its reason are visible"""
+    answered = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-answer",
+            "session_path": draft["session"]["path"],
+            "session_sha256": draft["session"]["session_sha256"],
+            "answers": [{"question_id": "Q-ACCEPTANCE", "answer": scenario}],
+        },
+    )
+    assert answered["status"] == "ready_for_confirmation"
+    answered_session = json.loads(
+        (tmp_path / Path(answered["session"]["path"])).read_text(encoding="utf-8")
+    )
+    saved_prd = (tmp_path / Path(answered_session["source_path"])).read_text(
+        encoding="utf-8"
+    )
+    assert "Scenario: Review a signal" in saved_prd
+    assert "- Scenario: Review a signal" not in saved_prd
+    confirmed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-confirm",
+            "session_path": answered["session"]["path"],
+            "session_sha256": answered["session"]["session_sha256"],
+            "confirmed": True,
+        },
+    )
+    compiled = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-guided-compile",
+            "confirmation_path": confirmed["confirmation"]["path"],
+            "confirmation_sha256": confirmed["confirmation"]["sha256"],
+        },
+    )
+    assert compiled["studio_marker"] == "STUDIO_PRODUCT_MISSION_CONTAINED"
+
+
+def test_studio_guided_quick_mode_escalates_remaining_deep_gaps(tmp_path: Path):
+    from test_product_missions import PRD
+    from factoryline.studio import product_grill_from_studio
+
+    prefix, remainder = PRD.split("\n## Experience states\n", 1)
+    acceptance = "\n## Acceptance\n" + remainder.split("\n## Acceptance\n", 1)[1]
+    prompt = prefix + acceptance
+    quick = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": prompt,
+            "name": "quick-escalation",
+            "mode": "quick",
+        },
+    )
+    assert quick["status"] == "deep_review_required"
+    assert quick["next_action"] == "start_deep_review"
+    with pytest.raises(StudioRequestError, match="PRD_UNRESOLVED"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-grill-confirm",
+                "session_path": quick["session"]["path"],
+                "session_sha256": quick["session"]["session_sha256"],
+                "confirmed": True,
+            },
+        )
+    deep = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": prompt,
+            "name": "quick-escalation-deep",
+            "mode": "deep",
+        },
+    )
+    assert deep["questions"]
+
+
+def test_legacy_product_endpoint_labels_direct_compile_compatibility(tmp_path: Path):
+    from test_product_missions import PRD
+
+    result = create_product_mission_from_studio(
+        tmp_path,
+        {"action": "product-mission", "prompt": PRD, "name": "legacy-demo"},
+    )
+    assert result["compatibility_path"] == "legacy-product-mission-v1"
+
+
+def test_http_guided_prd_route_is_token_bound(tmp_path: Path):
+    server, token = create_server(tmp_path)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        connection.request(
+            "POST",
+            "/api/product-grill",
+            body=json.dumps(
+                {
+                    "action": "product-grill-start",
+                    "prompt": "# Product\n\nA dashboard for private team notes.",
+                    "name": "http-guided",
+                    "mode": "quick",
+                }
+            ),
+            headers={"Content-Type": "application/json"},
+        )
+        denied = connection.getresponse()
+        denied.read()
+        assert denied.status == 403
+        connection.close()
+        connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        connection.request(
+            "POST",
+            "/api/product-grill",
+            body=json.dumps(
+                {
+                    "action": "product-grill-start",
+                    "prompt": "# Product\n\nA dashboard for private team notes.",
+                    "name": "http-guided",
+                    "mode": "quick",
+                }
+            ),
+            headers={
+                "Content-Type": "application/json",
+                "X-Factory-Studio-Token": token,
+            },
+        )
+        response = connection.getresponse()
+        result = json.loads(response.read())
+        assert response.status == 201
+        assert result["schema"] == "factory.studio.guided-prd.v1"
+        assert result["confirmation_required"] is True
+        assert (
+            hashlib.sha256(result["source_text"].encode("utf-8")).hexdigest()
+            == result["source_sha256"]
+        )
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_studio_guided_ui_consumes_questions_confirmation_compile_and_source_safely():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("session-token")
+    assert "fetch('/api/product-grill'" in page
+    assert "action:'product-grill-start'" in page
+    assert "/api/product/product-mission" not in page
+    assert "renderGuided" in page
+    assert "sendGuided" in page
+    assert "confirmGuided" in page
+    assert "compileGuided" in page
+    assert "payload.questions" in page
+    assert "product-grill-confirm" in page
+    assert "product-guided-compile" in page
+    assert "payload.source_text" in page
+    assert "textContent" in page
+    assert "innerHTML" not in page
+
+
+def test_guided_ui_offers_multiple_choice_and_editable_custom_answers_without_saving():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("session-token")
+    assert "guidedAnswerOptions(question)" in page
+    assert "Custom answer" in page
+    assert "choice.onchange" in page
+    assert "input.value=guidedAnswerOptions(question)[Number(choice.value)]" in page
+    assert "input.addEventListener('input'" in page
+    assert "action:'product-grill-answer'" in page
+    assert "guidedButton('Save my answers'" in page
+    assert "guidedButton('Confirm this PRD'" in page
+    assert "choice.onchange" in page
+    change_handler = page.split("choice.onchange=", 1)[1].split(";field.append", 1)[0]
+    assert "sendGuided" not in change_handler
+    assert "confirmGuided" not in change_handler
+
+
+def test_guided_ui_question_stepper_keeps_answers_local_until_validated_save():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("session-token")
+    assert "guidedStepper(answers,save)" in page
+    assert "Question " in page and " of " in page
+    assert "Back" in page
+    assert "Next" in page
+    assert "field.hidden" in page
+    assert "validateGuidedAnswer(answers[active].input)" in page
+    assert "input.value.trim()" in page
+    assert "guidedButton('Save my answers'" in page
+
+    stepper = page.split("function guidedStepper(answers,save)", 1)[1].split(
+        "function sendGuided", 1
+    )[0]
+    assert "guidedButton('Back',()=>show(active-1))" in stepper
+    assert (
+        "guidedButton('Next question',()=>{if(validateGuidedAnswer(answers[active].input))show(active+1);})"
+        in stepper
+    )
+    assert "sendGuided" not in stepper
+
+
+def test_http_guided_answer_returns_explicit_answer_source(tmp_path: Path):
+    server, token = create_server(tmp_path)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        headers = {
+            "Content-Type": "application/json",
+            "X-Factory-Studio-Token": token,
+        }
+        prompt = "# Product\n\nA dashboard for private team notes."
+        connection.request(
+            "POST",
+            "/api/product-grill",
+            body=json.dumps(
+                {
+                    "action": "product-grill-start",
+                    "prompt": prompt,
+                    "name": "answer-source",
+                    "mode": "quick",
+                }
+            ),
+            headers=headers,
+        )
+        start = json.loads(connection.getresponse().read())
+        question = start["questions"][0]
+        answer_text = "Keep notes private and searchable by their owners."
+        connection.request(
+            "POST",
+            "/api/product-grill",
+            body=json.dumps(
+                {
+                    "action": "product-grill-answer",
+                    "session_path": start["session"]["path"],
+                    "session_sha256": start["session"]["session_sha256"],
+                    "answers": [{"question_id": question["id"], "answer": answer_text}],
+                }
+            ),
+            headers=headers,
+        )
+        answer = json.loads(connection.getresponse().read())
+        assert answer_text in answer["source_text"]
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_http_surface_requires_session_token_and_enforces_body_limit(tmp_path: Path):
@@ -770,3 +1718,178 @@ def test_handler_binding_and_serve_lifecycle(tmp_path: Path, monkeypatch, capsys
     assert "http://127.0.0.1:43117/" in events
     assert events[-1] == "closed"
     assert "Factory Studio: http://127.0.0.1:43117/" in capsys.readouterr().out
+
+
+def test_guided_ui_explains_required_actor_and_experience_answer_formats():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("local-contract")
+    assert "Use Role: responsibility" in page
+    assert "question.id.startsWith('Q-UX-')" in page
+    assert "question.id.slice(5).toLowerCase()" in page
+    assert "guidedAnswerFormat(question)" in page
+
+
+def test_guided_resume_restores_saved_frontier_and_rejects_changed_source(
+    tmp_path: Path,
+):
+    from factoryline.studio import product_grill_from_studio
+
+    started = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": "Build a private dashboard.",
+            "name": "resume-proof",
+            "mode": "deep",
+        },
+    )
+    saved = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-answer",
+            "session_path": started["session"]["path"],
+            "session_sha256": started["session"]["session_sha256"],
+            "answers": [
+                {
+                    "question_id": "Q-ACTORS",
+                    "answer": "Operator: reviews private records.",
+                }
+            ],
+        },
+    )
+    request = {
+        "action": "product-grill-resume",
+        "session_path": saved["session"]["path"],
+        "session_sha256": saved["session"]["session_sha256"],
+    }
+    resumed = product_grill_from_studio(tmp_path, request)
+    assert resumed["project"] == "resume-proof"
+    assert resumed["session"] == saved["session"]
+    assert resumed["source_text"] == saved["source_text"]
+    assert resumed["questions"] == saved["questions"]
+    assert "Q-ACTORS" not in [q["id"] for q in resumed["questions"]]
+    assert resumed["confirmation_required"] is True
+    assert resumed["implementation_authorized"] is False
+    session = json.loads(
+        (tmp_path / saved["session"]["path"]).read_text(encoding="utf-8")
+    )
+    (tmp_path / session["source_path"]).write_text("changed", encoding="utf-8")
+    with pytest.raises(StudioRequestError, match="SOURCE_BINDING_INVALID"):
+        product_grill_from_studio(tmp_path, request)
+
+
+def test_guided_resume_rejects_extra_fields_and_escape(tmp_path: Path):
+    from factoryline.studio import product_grill_from_studio
+
+    with pytest.raises(StudioRequestError, match="REQUEST_INVALID"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-grill-resume",
+                "session_path": "x",
+                "session_sha256": "0" * 64,
+                "confirmed": True,
+            },
+        )
+    with pytest.raises(StudioRequestError, match="PATH_REJECTED"):
+        product_grill_from_studio(
+            tmp_path,
+            {
+                "action": "product-grill-resume",
+                "session_path": "../foreign.json",
+                "session_sha256": "0" * 64,
+            },
+        )
+
+
+def test_guided_resume_ui_stores_only_locator_and_requires_explicit_resume():
+    from factoryline.studio import _studio_html
+
+    html = _studio_html("local-contract")
+    bookmark = html.split("function saveGuidedBookmark(payload)", 1)[1].split(
+        "async function resumeGuided", 1
+    )[0]
+    assert "project:payload.project,session:payload.session" in bookmark
+    assert "source_text" not in bookmark
+    assert "token" not in bookmark
+    assert "sessionStorage" in bookmark
+    assert "Resume saved interview" in html
+    assert "Unsaved answers are not restored" in html
+    assert "action:'product-grill-resume'" in html
+    assert "document.getElementById('prompt').value=payload.source_text" in html
+
+
+def test_guided_resume_reads_verified_snapshot_without_regrilling(
+    tmp_path: Path, monkeypatch
+):
+    from factoryline.studio import product_grill_from_studio
+
+    saved = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-start",
+            "prompt": "Build a private dashboard.",
+            "name": "resume-snapshot",
+            "mode": "deep",
+        },
+    )
+    before = {
+        p.relative_to(tmp_path).as_posix(): p.read_bytes()
+        for p in tmp_path.rglob("*")
+        if p.is_file()
+    }
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Resume must not regenerate immutable Grill evidence")
+
+    monkeypatch.setattr("factoryline.studio.grill_prd", forbidden)
+    resumed = product_grill_from_studio(
+        tmp_path,
+        {
+            "action": "product-grill-resume",
+            "session_path": saved["session"]["path"],
+            "session_sha256": saved["session"]["session_sha256"],
+        },
+    )
+    after = {
+        p.relative_to(tmp_path).as_posix(): p.read_bytes()
+        for p in tmp_path.rglob("*")
+        if p.is_file()
+    }
+    assert resumed == saved
+    assert after == before
+
+
+def test_guided_product_advanced_controls_are_optional_and_collapsed():
+    from html.parser import HTMLParser
+    from factoryline.studio import _studio_html
+
+    class Controls(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.advanced = False
+            self.collapsed = False
+            self.inside = []
+            self.outside = []
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if tag == "details" and attrs.get("id") == "mission-advanced":
+                self.advanced = True
+                self.collapsed = "open" not in attrs
+            if tag in {"input", "select", "textarea"}:
+                (self.inside if self.advanced else self.outside).append(attrs.get("id"))
+
+        def handle_endtag(self, tag):
+            if tag == "details":
+                self.advanced = False
+
+    html = _studio_html("simple-ux-contract")
+    controls = Controls()
+    controls.feed(html)
+    assert controls.collapsed
+    assert controls.inside == ["executor", "owner", "resolution-mode"]
+    assert {"name", "prompt"}.issubset(controls.outside)
+    assert "Advanced options" in html
+    assert "The defaults are ready to use." in html

@@ -84,11 +84,11 @@ _NATIVE_WORKERS = {
 _NATIVE_WORKER_CONTRACT = {
     "discovery": "deploy/deep-adapters/README.md and profiles; build final targets on Linux/amd64.",
     "execution": "Explicit authorized CLI execution; MCP status tools are read-only and never launch workers.",
-    "isolation": "Image-owned Python -I startup; network none, read-only source, non-root, bounded memory/time/output and cleanup.",
+    "isolation": "Image-owned Python -I startup; network none for ordinary workers, private internal network for signed ZAP app/worker targets; read-only source, non-root, bounded memory/time/output and cleanup.",
     "evidence": "Candidate and source hashes, exact image digest, tool/rules versions, invocation facts, native report digest, source-bound normalized findings and runtime counts.",
     "admission": "Successful native execution is INCOMPLETE until source accounting, applicable obligations and independent challenges are validated; never infer complete=true.",
     "agent_action": "Return path, rule, severity, evidence digest, concrete repair and exact rerun; route missing accounting/challenge evidence as an actionable gap.",
-    "tracing": "Preserve native and normalized digests separately, source binding, deadlines, output exhaustion and cleanup failures.",
+    "tracing": "Preserve native and normalized digests separately, source binding, deadlines, output exhaustion and cleanup failures. Discover signed optional Python HTTP request-associated tracing in agent_usage_contract.six_lane_review.zap_source_trace; declared routes alone do not prove line execution.",
     "unified_cli": "factory scan --root PATH --deep --worker-config .factory/worker-config.json --json; configure signed manifest, authorization and SHA-pinned trust root before execution.",
     "selection": "Use Python CodeQL for Python, JavaScript CodeQL for JS/TS and Actions CodeQL for GitHub workflows; reuse exact image and candidate-bound evidence only. Do not launch all workers for every edit.",
 }

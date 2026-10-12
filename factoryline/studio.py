@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
 import re
 import secrets
 import socket
+import stat
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,11 +31,14 @@ from .live_activity import activity_snapshot, request_stop
 from .meter import MeterLog, live_snapshot
 from .product_missions import (
     ProductMissionError,
+    _candidate_approval,
     compile_product_text,
     create_mission,
     decide_mission,
     plan_value_slices,
+    verify_product_graph,
 )
+from .prd_grill import grill_prd, verify_prd_grill
 from .run_metrics import public_metrics
 from .runtime_coverage import read_runtime_coverage_report
 from .savings import SavingsError, public_savings_report, record_savings_pair
@@ -40,6 +46,12 @@ from .target_compiler import TARGETS, TargetCompileError, create_target_from_pro
 
 STUDIO_SCHEMA = "factory.studio.v1"
 MAX_BODY_BYTES = 64 * 1024
+MAX_GUIDED_PRD_BYTES = 64 * 1024
+MAX_GUIDED_ANSWER_BYTES = 2_000
+MAX_GUIDED_ANSWERS = 5
+MAX_GUIDED_ARTIFACT_BYTES = 32 * 1024
+GUIDED_SESSION_SCHEMA = "factory.studio.guided-prd-session.v1"
+GUIDED_CONFIRMATION_SCHEMA = "factory.studio.guided-prd-confirmation.v1"
 UNAUTHORIZED_DRAIN_TIMEOUT_SECONDS = 0.25
 LOOPBACK_HOST = "127.0.0.1"
 NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,47}")
@@ -612,6 +624,882 @@ def create_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     return {**result, "studio_marker": "STUDIO_CONTAINED"}
 
 
+def _guided_digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _guided_is_digest(value: Any) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def _guided_canonical(value: dict[str, Any]) -> bytes:
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+
+
+def _guided_relative(relative: Any) -> Path:
+    if (
+        not isinstance(relative, str)
+        or not relative
+        or "\\" in relative
+        or "\x00" in relative
+    ):
+        raise StudioRequestError("PATH_REJECTED", "artifact path must be relative")
+    rel = Path(relative)
+    if rel.is_absolute() or rel.drive or any(part in {".", ".."} for part in rel.parts):
+        raise StudioRequestError(
+            "PATH_REJECTED", "artifact path must stay in Studio root"
+        )
+    return rel
+
+
+def _guided_path(root: Path, relative: Any, *, required: bool = False) -> Path:
+    rel = _guided_relative(relative)
+    base = Path(root).resolve()
+    path = base
+    for part in rel.parts:
+        path /= part
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            continue
+        if path.is_symlink() or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise StudioRequestError("PATH_REJECTED", "artifact path contains a link")
+    if not path.is_relative_to(base) or (required and not path.is_file()):
+        raise StudioRequestError(
+            "ARTIFACT_NOT_FOUND",
+            "guided artifact is missing or outside Studio root",
+            409,
+        )
+    return path
+
+
+def _guided_read(path: Path, limit: int = 32 * 1024) -> bytes:
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+                raise StudioRequestError(
+                    "ARTIFACT_SIZE_INVALID",
+                    "guided artifact exceeds its regular-file bound",
+                    409,
+                )
+            data = stream.read(limit + 1)
+    except OSError as exc:
+        raise StudioRequestError(
+            "ARTIFACT_INVALID", "guided artifact cannot be read", 409
+        ) from exc
+    if len(data) > limit:
+        raise StudioRequestError(
+            "ARTIFACT_SIZE_INVALID", "guided artifact exceeds its byte bound", 409
+        )
+    return data
+
+
+def _guided_write(root: Path, relative: str, data: bytes) -> Path:
+    path = _guided_path(root, relative)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _guided_path(root, relative)
+    if path.exists():
+        if _guided_read(path, max(len(data), 64 * 1024)) == data:
+            return path
+        raise StudioRequestError(
+            "ARTIFACT_EXISTS", "refusing to replace immutable guided artifact", 409
+        )
+    try:
+        descriptor = os.open(
+            path,
+            os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except FileExistsError as exc:
+        raise StudioRequestError(
+            "ARTIFACT_EXISTS", "guided artifact already exists", 409
+        ) from exc
+    _guided_path(root, relative, required=True)
+    return path
+
+
+def _guided_rel(root: Path, path: Path) -> str:
+    return path.resolve().relative_to(Path(root).resolve()).as_posix()
+
+
+def _guided_record(
+    root: Path,
+    relative: Any,
+    expected: Any,
+    schema: str,
+    field: str,
+    binding_code: str = "ARTIFACT_BINDING_INVALID",
+) -> dict[str, Any]:
+    path = _guided_path(root, relative, required=True)
+    try:
+        record = json.loads(_guided_read(path))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise StudioRequestError(
+            "ARTIFACT_INVALID", "guided receipt is invalid", 409
+        ) from exc
+    if not isinstance(record, dict) or record.get("schema") != schema:
+        raise StudioRequestError(
+            "ARTIFACT_INVALID", "guided receipt schema is invalid", 409
+        )
+    core = {key: value for key, value in record.items() if key != field}
+    try:
+        digest = _guided_digest(_guided_canonical(core))
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        raise StudioRequestError(
+            "ARTIFACT_INVALID", "guided receipt contains invalid text", 409
+        ) from exc
+    if record.get(field) != digest or expected != digest:
+        raise StudioRequestError(binding_code, "guided receipt hash mismatch", 409)
+    return record
+
+
+def _guided_shape(record: dict[str, Any], fields: set[str]) -> None:
+    if set(record) != fields:
+        raise StudioRequestError(
+            "ARTIFACT_INVALID", "guided receipt fields are invalid", 409
+        )
+
+
+def _guided_verified_grill(path: Path, payload: bytes) -> dict[str, Any]:
+    try:
+        receipt = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise StudioRequestError(
+            "RECEIPT_INVALID", "PRD Grill receipt is invalid", 409
+        ) from exc
+    if (
+        not isinstance(receipt, dict)
+        or not isinstance(receipt.get("source"), dict)
+        or not _guided_is_digest(receipt["source"].get("sha256"))
+    ):
+        raise StudioRequestError(
+            "RECEIPT_INVALID", "PRD Grill receipt fields are invalid", 409
+        )
+    try:
+        verified = verify_prd_grill(path)
+    except (ProductMissionError, KeyError, TypeError, ValueError, UnicodeError) as exc:
+        raise StudioRequestError(
+            "RECEIPT_INVALID", "PRD Grill receipt failed verification", 409
+        ) from exc
+    if not verified.get("valid"):
+        raise StudioRequestError(
+            "RECEIPT_INVALID", "PRD Grill receipt failed verification", 409
+        )
+    return receipt
+
+
+def _guided_saved_answers(answers: Any) -> None:
+    if not isinstance(answers, list) or len(answers) > MAX_GUIDED_ANSWERS:
+        raise StudioRequestError("SESSION_INVALID", "saved answer list is invalid", 409)
+    seen: set[str] = set()
+    for item in answers:
+        seen.add(_guided_saved_answer(item, seen))
+
+
+def _guided_saved_answer(item: Any, seen: set[str]) -> str:
+    if not isinstance(item, dict) or set(item) != {"question_id", "answer"}:
+        raise StudioRequestError(
+            "SESSION_INVALID", "saved answer record is invalid", 409
+        )
+    question_id = item["question_id"]
+    if (
+        not isinstance(question_id, str)
+        or not question_id
+        or len(question_id) > 128
+        or question_id in seen
+    ):
+        raise StudioRequestError("SESSION_INVALID", "saved question id is invalid", 409)
+    try:
+        _guided_answer_text(item["answer"])
+    except StudioRequestError as exc:
+        raise StudioRequestError(
+            "SESSION_INVALID", "saved answer text is invalid", 409
+        ) from exc
+    return question_id
+
+
+def _guided_source_and_grill(
+    root: Path, record: dict[str, Any]
+) -> tuple[Path, Path, dict[str, Any]]:
+    source = _guided_path(root, record["source_path"], required=True)
+    grill_path = _guided_path(root, record["grill_path"], required=True)
+    source_bytes = _guided_read(source, MAX_GUIDED_PRD_BYTES)
+    grill_bytes = _guided_read(grill_path)
+    if (
+        _guided_digest(source_bytes) != record["source_sha256"]
+        or _guided_digest(grill_bytes) != record["grill_sha256"]
+    ):
+        raise StudioRequestError(
+            "SOURCE_BINDING_INVALID", "guided PRD or Grill receipt changed", 409
+        )
+    grill_record = _guided_verified_grill(grill_path, grill_bytes)
+    if grill_record["source"]["sha256"] != record["source_sha256"]:
+        raise StudioRequestError(
+            "RECEIPT_INVALID", "PRD Grill receipt failed verification", 409
+        )
+    return source, grill_path, json.loads(grill_bytes)
+
+
+def _guided_session(
+    root: Path, relative: Any, expected: Any
+) -> tuple[dict[str, Any], Path, dict[str, Any]]:
+    session = _guided_record(
+        root, relative, expected, GUIDED_SESSION_SCHEMA, "session_sha256"
+    )
+    _guided_shape(
+        session,
+        {
+            "schema",
+            "project",
+            "mode",
+            "source_path",
+            "source_sha256",
+            "grill_path",
+            "grill_sha256",
+            "answers",
+            "previous",
+            "session_sha256",
+        },
+    )
+    _guided_session_identity(session)
+    _guided_saved_answers(session["answers"])
+    _guided_previous_session(root, session.get("previous"))
+    source, _, grill = _guided_source_and_grill(root, session)
+    return session, source, grill
+
+
+def _guided_session_identity(session: dict[str, Any]) -> None:
+    if (
+        not isinstance(session["project"], str)
+        or not NAME_PATTERN.fullmatch(session["project"])
+        or not isinstance(session["mode"], str)
+        or session["mode"] not in {"quick", "deep"}
+        or not isinstance(session["source_path"], str)
+        or not _guided_is_digest(session["source_sha256"])
+        or not isinstance(session["grill_path"], str)
+        or not _guided_is_digest(session["grill_sha256"])
+    ):
+        raise StudioRequestError(
+            "SESSION_INVALID", "guided session identity is invalid", 409
+        )
+
+
+def _guided_previous_session(root: Path, previous: Any) -> None:
+    if previous is not None:
+        if (
+            not isinstance(previous, dict)
+            or set(previous) != {"path", "sha256"}
+            or not isinstance(previous["path"], str)
+            or not isinstance(previous["sha256"], str)
+            or not _guided_is_digest(previous["sha256"])
+        ):
+            raise StudioRequestError(
+                "SESSION_INVALID", "prior session link is invalid", 409
+            )
+        prior_path = _guided_path(root, previous["path"], required=True)
+        if _guided_digest(_guided_read(prior_path)) != previous["sha256"]:
+            raise StudioRequestError(
+                "SESSION_INVALID", "prior session link changed", 409
+            )
+
+
+def _guided_run_grill(
+    root: Path,
+    project: str,
+    mode: str,
+    source: Path,
+    answers: list[dict[str, str]],
+    previous: dict[str, str] | None,
+) -> dict[str, Any]:
+    _guided_path(root, f".factory/prd-grills/{project}")
+    try:
+        grill = grill_prd(source, root, mode=mode, project=project)
+    except ProductMissionError as exc:
+        raise StudioRequestError(
+            exc.code, str(exc), 409 if exc.code.endswith("EXISTS") else 400
+        ) from exc
+    grill_path = _guided_path(
+        root, _guided_rel(root, Path(grill["path"])), required=True
+    )
+    grill_bytes = _guided_read(grill_path)
+    grill_record = _guided_verified_grill(grill_path, grill_bytes)
+    if grill_record["source"]["sha256"] != grill["source"]["sha256"]:
+        raise StudioRequestError(
+            "RECEIPT_INVALID", "new PRD Grill receipt failed verification", 409
+        )
+    core = {
+        "schema": GUIDED_SESSION_SCHEMA,
+        "project": project,
+        "mode": mode,
+        "source_path": _guided_rel(root, source),
+        "source_sha256": grill["source"]["sha256"],
+        "grill_path": _guided_rel(root, grill_path),
+        "grill_sha256": _guided_digest(grill_bytes),
+        "answers": answers,
+        "previous": previous,
+    }
+    digest = _guided_digest(_guided_canonical(core))
+    session_path = _guided_write(
+        root,
+        f".factory/studio-guided/{project}/{digest}.json",
+        json.dumps({**core, "session_sha256": digest}, sort_keys=True).encode("utf-8")
+        + b"\n",
+    )
+    return _guided_response(root, core, source, grill, session_path, digest)
+
+
+def _guided_response(
+    root: Path,
+    core: dict[str, Any],
+    source: Path,
+    grill: dict[str, Any],
+    session_path: Path,
+    digest: str,
+) -> dict[str, Any]:
+    response = {
+        "schema": "factory.studio.guided-prd.v1",
+        "project": core["project"],
+        "status": _guided_grill_status(grill),
+        "next_action": _guided_grill_next_action(grill),
+        "session": {"path": _guided_rel(root, session_path), "session_sha256": digest},
+        "source_sha256": core["source_sha256"],
+        "source_text": _guided_source_text(source, core["source_sha256"]),
+        "grill": {
+            "path": core["grill_path"],
+            "sha256": core["grill_sha256"],
+            "status": grill["status"],
+        },
+        "questions": grill["questions"],
+        "deferred_questions": grill["deferred_questions"],
+        "confirmation_required": True,
+        "implementation_authorized": False,
+    }
+    handoff = _guided_approved_handoff(root, core)
+    if handoff is not None:
+        response["agent_handoff"] = handoff
+    return response
+
+
+def _guided_approved_handoff(
+    root: Path, session: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Restore only a verified approval for the current guided PRD."""
+    mission_root = Path(root).resolve() / ".factory" / "missions"
+    for mission_path in sorted(mission_root.glob("*/mission.json")):
+        graph_path = _guided_mission_graph_path(root, mission_path)
+        if graph_path is None or not _guided_graph_matches_source(
+            graph_path, session["source_sha256"], session["project"]
+        ):
+            continue
+        handoff = _guided_mission_handoff(mission_path)
+        if handoff is not None:
+            return handoff
+    return None
+
+
+def _guided_mission_graph_path(root: Path, mission_path: Path) -> Path | None:
+    mission = _json_or_none(mission_path)
+    inputs = mission.get("inputs") if mission is not None else None
+    graph_value = inputs.get("graph_path") if isinstance(inputs, dict) else None
+    if not isinstance(graph_value, str):
+        return None
+    graph_path = Path(graph_value).resolve()
+    try:
+        graph_path.relative_to(Path(root).resolve())
+    except ValueError:
+        return None
+    return graph_path
+
+
+def _guided_graph_matches_source(
+    graph_path: Path, source_sha256: str, project: str
+) -> bool:
+    try:
+        verified = verify_product_graph(graph_path)
+    except (OSError, ProductMissionError, ValueError):
+        return False
+    graph = _json_or_none(graph_path)
+    source = graph.get("source") if graph is not None else None
+    return bool(
+        verified["valid"]
+        and isinstance(source, dict)
+        and source.get("sha256") == source_sha256
+        and graph.get("project") == project
+    )
+
+
+def _guided_mission_handoff(mission_path: Path) -> dict[str, Any] | None:
+    mission = _json_or_none(mission_path)
+    owner = mission.get("owner") if mission is not None else None
+    if not isinstance(owner, str) or not owner:
+        return None
+    decision_path = mission_path.parent / "execution_decision.json"
+    try:
+        _, decision = _candidate_approval(mission_path, decision_path, owner)
+        mission_bytes = _guided_read(mission_path, 1024 * 1024)
+        return _mission_agent_handoff(
+            mission_path, mission_bytes, {**decision, "path": str(decision_path)}
+        )
+    except (OSError, ProductMissionError, StudioRequestError, ValueError):
+        return None
+
+
+def _guided_source_text(source: Path, expected: str) -> str:
+    data = _guided_read(source, MAX_GUIDED_PRD_BYTES)
+    if _guided_digest(data) != expected:
+        raise StudioRequestError(
+            "SOURCE_BINDING_INVALID", "guided PRD changed before display", 409
+        )
+    return data.decode("utf-8")
+
+
+def _guided_grill_status(grill: dict[str, Any]) -> str:
+    if grill["status"] == "ready_for_confirmation":
+        return "ready_for_confirmation"
+    if (
+        not grill["questions"]
+        and not grill["deferred_questions"]
+        and grill["observed_gaps"]
+    ):
+        return "deep_review_required"
+    return "needs_answers"
+
+
+def _guided_grill_next_action(grill: dict[str, Any]) -> str:
+    return {
+        "ready_for_confirmation": "confirm",
+        "needs_answers": "answer_current_questions",
+        "deep_review_required": "start_deep_review",
+    }[_guided_grill_status(grill)]
+
+
+def _guided_start(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    if set(payload) != {"action", "prompt", "name", "mode"}:
+        raise StudioRequestError("REQUEST_INVALID", "guided start fields are invalid")
+    prompt, mode = payload.get("prompt"), payload.get("mode")
+    if (
+        not isinstance(prompt, str)
+        or not prompt.strip()
+        or not isinstance(mode, str)
+        or mode not in {"quick", "deep"}
+    ):
+        raise StudioRequestError("REQUEST_INVALID", "prompt and mode are required")
+    try:
+        source_bytes = prompt.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise StudioRequestError("SOURCE_INVALID", "PRD must be valid UTF-8") from exc
+    if len(source_bytes) > MAX_GUIDED_PRD_BYTES:
+        raise StudioRequestError("SOURCE_TOO_LARGE", "PRD exceeds the 65536-byte limit")
+    project = _output_name(payload, prompt)
+    _contained_output(root, project)
+    digest = _guided_digest(source_bytes)
+    source = _guided_write(
+        root, f".factory/studio-guided/{project}/sources/{digest}.md", source_bytes
+    )
+    return _guided_run_grill(root, project, mode, source, [], None)
+
+
+def _guided_resume(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    if set(payload) != {"action", "session_path", "session_sha256"}:
+        raise StudioRequestError("REQUEST_INVALID", "guided resume fields are invalid")
+    session, source, grill = _guided_session(
+        root, payload.get("session_path"), payload.get("session_sha256")
+    )
+    return _guided_response(
+        root,
+        session,
+        source,
+        grill,
+        _guided_path(root, payload["session_path"], required=True),
+        session["session_sha256"],
+    )
+
+
+def _guided_answer_text(answer: Any) -> str:
+    if not isinstance(answer, str) or not answer.strip():
+        raise StudioRequestError("ANSWER_INVALID", "answer must be non-empty text")
+    try:
+        answer_size = len(answer.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise StudioRequestError(
+            "ANSWER_INVALID", "answer must be valid UTF-8"
+        ) from exc
+    if answer_size > MAX_GUIDED_ANSWER_BYTES:
+        raise StudioRequestError("ANSWER_INVALID", "answer must be 1-2000 UTF-8 bytes")
+    return answer.strip()
+
+
+def _guided_answer_row(item: Any, known: set[Any], seen: set[str]) -> dict[str, str]:
+    if not isinstance(item, dict) or set(item) != {"question_id", "answer"}:
+        raise StudioRequestError("ANSWERS_INVALID", "answer record fields are invalid")
+    question_id, answer = item["question_id"], item["answer"]
+    if (
+        not isinstance(question_id, str)
+        or question_id not in known
+        or question_id in seen
+    ):
+        raise StudioRequestError(
+            "QUESTION_ID_INVALID", "unknown or duplicate question id"
+        )
+    seen.add(question_id)
+    return {"question_id": question_id, "answer": _guided_answer_text(answer)}
+
+
+def _guided_answers(
+    answers: Any, questions: list[dict[str, Any]]
+) -> list[dict[str, str]]:
+    if not isinstance(answers, list) or not 1 <= len(answers) <= MAX_GUIDED_ANSWERS:
+        raise StudioRequestError(
+            "ANSWERS_INVALID", "provide 1-5 explicit answer records"
+        )
+    known, seen = {item.get("id") for item in questions}, set()
+    return [_guided_answer_row(item, known, seen) for item in answers]
+
+
+def _guided_insert_section_answer(text: str, section: str, answer: str) -> str:
+    lines = text.splitlines()
+    heading = re.compile(r"^(#{1,6})\s+" + re.escape(section) + r"\s*#*\s*$", re.I)
+    for index, line in enumerate(lines):
+        match = heading.match(line)
+        if match:
+            level = len(match.group(1))
+            end = next(
+                (
+                    position
+                    for position in range(index + 1, len(lines))
+                    if re.match(r"^#{1," + str(level) + r"}\s+", lines[position])
+                ),
+                len(lines),
+            )
+            rendered = _guided_section_answer_lines(section, answer)
+            lines[end:end] = ["", *rendered]
+            return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+    rendered = "\n".join(_guided_section_answer_lines(section, answer))
+    addition = f"## {section}\n\n" + rendered
+    return text.rstrip() + "\n\n" + addition + "\n"
+
+
+def _guided_section_answer_lines(section: str, answer: str) -> list[str]:
+    lines = answer.splitlines()
+    if section.casefold() == "acceptance":
+        return lines
+    return ["- " + lines[0], *("  " + line if line else "" for line in lines[1:])]
+
+
+def _guided_apply_answers(
+    text: str, answers: list[dict[str, str]], questions: list[dict[str, Any]]
+) -> str:
+    targets = {item["id"]: item["section"] for item in questions}
+    for answer in answers:
+        question_id = answer["question_id"]
+        if question_id not in targets:
+            raise StudioRequestError("QUESTION_ID_INVALID", "unknown question id")
+        text = _guided_insert_section_answer(
+            text, targets[question_id], answer["answer"]
+        )
+    return text
+
+
+def _guided_answer(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    if set(payload) != {"action", "session_path", "session_sha256", "answers"}:
+        raise StudioRequestError("REQUEST_INVALID", "guided answer fields are invalid")
+    session, source, grill = _guided_session(
+        root, payload.get("session_path"), payload.get("session_sha256")
+    )
+    if not grill.get("questions"):
+        raise StudioRequestError(
+            "ANSWERS_NOT_AVAILABLE", "session has no current questions", 409
+        )
+    answers = _guided_answers(payload.get("answers"), grill["questions"])
+    source_bytes = _guided_read(source, MAX_GUIDED_PRD_BYTES)
+    if _guided_digest(source_bytes) != session["source_sha256"]:
+        raise StudioRequestError(
+            "SOURCE_BINDING_INVALID", "guided PRD changed before answer", 409
+        )
+    text = _guided_apply_answers(
+        source_bytes.decode("utf-8"), answers, grill["questions"]
+    )
+    data = text.encode("utf-8")
+    if len(data) > MAX_GUIDED_PRD_BYTES:
+        raise StudioRequestError(
+            "SOURCE_TOO_LARGE", "answered PRD exceeds the 65536-byte limit"
+        )
+    digest = _guided_digest(data)
+    next_source = _guided_write(
+        root, f".factory/studio-guided/{session['project']}/sources/{digest}.md", data
+    )
+    previous = {
+        "path": payload["session_path"],
+        "sha256": _guided_digest(
+            _guided_read(_guided_path(root, payload["session_path"], required=True))
+        ),
+    }
+    return _guided_run_grill(
+        root, session["project"], session["mode"], next_source, answers, previous
+    )
+
+
+def _guided_confirm(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    if set(payload) != {"action", "session_path", "session_sha256", "confirmed"}:
+        raise StudioRequestError(
+            "REQUEST_INVALID", "guided confirmation fields are invalid"
+        )
+    if payload.get("confirmed") is not True:
+        raise StudioRequestError(
+            "CONFIRMATION_REQUIRED", "explicit confirmation is required"
+        )
+    session, source, grill = _guided_session(
+        root, payload.get("session_path"), payload.get("session_sha256")
+    )
+    if (
+        grill.get("questions")
+        or grill.get("deferred_questions")
+        or grill.get("status") != "ready_for_confirmation"
+    ):
+        raise StudioRequestError(
+            "PRD_UNRESOLVED",
+            "answer all current Grill questions before confirmation",
+            409,
+        )
+    project = f"{session['project'][:27]}-confirmed-{session['source_sha256'][:8]}"
+    _guided_path(root, f".factory/prd-grills/{project}")
+    try:
+        confirmed = grill_prd(
+            source, root, mode=session["mode"], project=project, confirm=True
+        )
+    except ProductMissionError as exc:
+        raise StudioRequestError(
+            exc.code, str(exc), 409 if exc.code.endswith("EXISTS") else 400
+        ) from exc
+    confirmed_path = _guided_path(
+        root, _guided_rel(root, Path(confirmed["path"])), required=True
+    )
+    confirmed_bytes = _guided_read(confirmed_path)
+    confirmed_record = _guided_verified_grill(confirmed_path, confirmed_bytes)
+    if (
+        confirmed_record["source"]["sha256"] != session["source_sha256"]
+        or "PRD_GRILL_SHARED_UNDERSTANDING_CONFIRMED" not in confirmed["markers"]
+    ):
+        raise StudioRequestError(
+            "CONFIRMATION_INVALID", "confirmed Grill receipt failed verification", 409
+        )
+    core = {
+        "schema": GUIDED_CONFIRMATION_SCHEMA,
+        "confirmed": True,
+        "session_path": payload["session_path"],
+        "session_sha256": session["session_sha256"],
+        "source_path": session["source_path"],
+        "source_sha256": session["source_sha256"],
+        "grill_path": session["grill_path"],
+        "grill_sha256": session["grill_sha256"],
+        "confirmed_grill_path": _guided_rel(root, confirmed_path),
+        "confirmed_grill_sha256": _guided_digest(confirmed_bytes),
+        "confirmed_grill_id": confirmed["grill_sha256"],
+    }
+    digest = _guided_digest(_guided_canonical(core))
+    path = _guided_write(
+        root,
+        f".factory/studio-guided/{session['project']}/confirmations/{digest}.json",
+        json.dumps({**core, "confirmation_sha256": digest}, sort_keys=True).encode(
+            "utf-8"
+        )
+        + b"\n",
+    )
+    return {
+        "schema": "factory.studio.guided-prd-confirmed.v1",
+        "status": "confirmed",
+        "confirmation": {"path": _guided_rel(root, path), "sha256": digest},
+        "source_sha256": session["source_sha256"],
+        "implementation_authorized": False,
+    }
+
+
+def _guided_confirmation(
+    root: Path, payload: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any], Path]:
+    confirmation = _guided_record(
+        root,
+        payload.get("confirmation_path"),
+        payload.get("confirmation_sha256"),
+        GUIDED_CONFIRMATION_SCHEMA,
+        "confirmation_sha256",
+        "CONFIRMATION_BINDING_INVALID",
+    )
+    _guided_shape(
+        confirmation,
+        {
+            "schema",
+            "confirmed",
+            "session_path",
+            "session_sha256",
+            "source_path",
+            "source_sha256",
+            "grill_path",
+            "grill_sha256",
+            "confirmed_grill_path",
+            "confirmed_grill_sha256",
+            "confirmed_grill_id",
+            "confirmation_sha256",
+        },
+    )
+    if confirmation.get("confirmed") is not True:
+        raise StudioRequestError(
+            "CONFIRMATION_REQUIRED", "confirmation state is not true", 409
+        )
+    session, source, _ = _guided_session(
+        root, confirmation["session_path"], confirmation["session_sha256"]
+    )
+    if any(
+        confirmation.get(key) != session.get(key)
+        for key in ("source_path", "source_sha256", "grill_path", "grill_sha256")
+    ):
+        raise StudioRequestError(
+            "CONFIRMATION_BINDING_INVALID",
+            "confirmation does not match the current PRD",
+            409,
+        )
+    confirmed_path = _guided_path(
+        root, confirmation["confirmed_grill_path"], required=True
+    )
+    confirmed_bytes = _guided_read(confirmed_path)
+    if _guided_digest(confirmed_bytes) != confirmation.get("confirmed_grill_sha256"):
+        raise StudioRequestError(
+            "CONFIRMATION_INVALID", "confirmed Grill receipt failed verification", 409
+        )
+    confirmed = _guided_verified_grill(confirmed_path, confirmed_bytes)
+    if (
+        confirmed.get("status") != "confirmed"
+        or confirmed.get("source", {}).get("sha256") != session["source_sha256"]
+        or confirmed.get("grill_sha256") != confirmation.get("confirmed_grill_id")
+    ):
+        raise StudioRequestError(
+            "CONFIRMATION_INVALID", "confirmed receipt is not bound to the source", 409
+        )
+    return confirmation, session, source
+
+
+def _guided_compile_owner_executor(payload: dict[str, Any]) -> tuple[str, str]:
+    owner, executor = (
+        payload.get("owner", "local-studio-user"),
+        payload.get("executor", "manual"),
+    )
+    if (
+        not isinstance(owner, str)
+        or not owner.strip()
+        or len(owner) > 80
+        or not isinstance(executor, str)
+        or not executor.strip()
+        or len(executor) > 64
+    ):
+        raise StudioRequestError(
+            "REQUEST_INVALID", "owner/executor lengths are invalid"
+        )
+    return owner.strip(), executor.strip()
+
+
+def _guided_compile_options(payload: dict[str, Any]) -> tuple[str, str, str]:
+    required, optional = (
+        {"action", "confirmation_path", "confirmation_sha256"},
+        {"owner", "executor", "resolution_mode"},
+    )
+    if not required <= set(payload) or set(payload) - required - optional:
+        raise StudioRequestError("REQUEST_INVALID", "guided compile fields are invalid")
+    owner, executor = _guided_compile_owner_executor(payload)
+    resolution = payload.get("resolution_mode", "human_approval")
+    if not isinstance(resolution, str) or resolution not in RESOLUTION_MODES:
+        raise StudioRequestError(
+            "RESOLUTION_MODE_INVALID", "resolution mode is unsupported"
+        )
+    return owner, executor, resolution
+
+
+def _guided_compile_graph(
+    root: Path,
+    session: dict[str, Any],
+    source: Path,
+    resolution: str,
+    confirmation: dict[str, Any],
+) -> dict[str, Any]:
+    source_bytes = _guided_read(source, MAX_GUIDED_PRD_BYTES)
+    if _guided_digest(source_bytes) != session["source_sha256"]:
+        raise StudioRequestError(
+            "SOURCE_BINDING_INVALID", "guided PRD changed before compile", 409
+        )
+    graph = compile_product_text(
+        source_bytes.decode("utf-8"),
+        root=Path(root),
+        source_name=source.name,
+        project=session["project"],
+    )
+    if graph["status"] != "ready":
+        return {
+            **_product_gap_response(graph, resolution),
+            "guided_confirmation_sha256": confirmation["confirmation_sha256"],
+        }
+    return graph
+
+
+def _guided_compile_ready(
+    root: Path,
+    graph: dict[str, Any],
+    owner: str,
+    executor: str,
+    resolution: str,
+    confirmation: dict[str, Any],
+    session: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        slices, mission = _first_product_mission(Path(root), graph, owner, executor)
+    except ProductMissionError as exc:
+        raise StudioRequestError(
+            exc.code, str(exc), 409 if exc.code.endswith("EXISTS") else 400
+        ) from exc
+    response = _planned_product_mission_response(graph, slices, mission, resolution)
+    response["guided_confirmation_sha256"] = confirmation["confirmation_sha256"]
+    response["guided_source_sha256"] = session["source_sha256"]
+    return response
+
+
+def _guided_compile(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    owner, executor, resolution = _guided_compile_options(payload)
+    confirmation, session, source = _guided_confirmation(root, payload)
+    try:
+        graph = _guided_compile_graph(root, session, source, resolution, confirmation)
+    except ProductMissionError as exc:
+        raise StudioRequestError(
+            exc.code, str(exc), 409 if exc.code.endswith("EXISTS") else 400
+        ) from exc
+    if graph.get("status") != "ready":
+        return graph
+    return _guided_compile_ready(
+        root, graph, owner, executor, resolution, confirmation, session
+    )
+
+
+def product_grill_from_studio(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """Handle the explicit Grill, answer, confirmation and guided compile stages."""
+    handlers = {
+        "product-grill-start": _guided_start,
+        "product-grill-answer": _guided_answer,
+        "product-grill-resume": _guided_resume,
+        "product-grill-confirm": _guided_confirm,
+        "product-guided-compile": _guided_compile,
+    }
+    action = payload.get("action")
+    handler = handlers.get(action) if isinstance(action, str) else None
+    if handler is None:
+        raise StudioRequestError("ACTION_UNSUPPORTED", "unknown guided product action")
+    return handler(root, payload)
+
+
 def _validated_product_mission_request(
     root: Path, payload: dict[str, Any]
 ) -> tuple[str, str, str, str, str]:
@@ -738,7 +1626,7 @@ def _planned_product_mission_response(
 def create_product_mission_from_studio(
     root: Path, payload: dict[str, Any]
 ) -> dict[str, Any]:
-    """Compile a PRD to the first dependency-ready supervised mission."""
+    """Legacy compatibility endpoint; guided clients must use product-grill."""
     prompt, name, owner, executor, resolution_mode = _validated_product_mission_request(
         root, payload
     )
@@ -747,12 +1635,18 @@ def create_product_mission_from_studio(
             prompt, root=Path(root), source_name="studio-prd.md", project=name
         )
         if graph["status"] != "ready":
-            return _product_gap_response(graph, resolution_mode)
+            return {
+                **_product_gap_response(graph, resolution_mode),
+                "compatibility_path": "legacy-product-mission-v1",
+            }
         slices, mission = _first_product_mission(Path(root), graph, owner, executor)
     except ProductMissionError as exc:
         status = 409 if exc.code.endswith("EXISTS") else 400
         raise StudioRequestError(exc.code, exc.message, status) from exc
-    return _planned_product_mission_response(graph, slices, mission, resolution_mode)
+    return {
+        **_planned_product_mission_response(graph, slices, mission, resolution_mode),
+        "compatibility_path": "legacy-product-mission-v1",
+    }
 
 
 def decide_product_mission_from_studio(
@@ -775,15 +1669,90 @@ def decide_product_mission_from_studio(
             "PATH_REJECTED", "mission must be beneath the Studio root", 403
         ) from exc
     try:
-        return decide_mission(
+        mission_bytes = _guided_read(mission, 1024 * 1024)
+        receipt = decide_mission(
             mission,
             root,
             owner=str(payload.get("owner", "")),
             decision=str(payload.get("decision", "")),
             rationale=str(payload.get("rationale", "")),
         )
+        return {
+            **receipt,
+            "agent_handoff": _mission_agent_handoff(mission, mission_bytes, receipt),
+        }
     except ProductMissionError as exc:
         raise StudioRequestError(exc.code, exc.message, 400) from exc
+
+
+def _mission_agent_handoff(
+    mission_path: Path, mission_bytes: bytes, decision: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Expose the exact approved packet without dispatching an executor."""
+    if decision["decision"] != "approved_execution":
+        return None
+    if hashlib.sha256(mission_bytes).hexdigest() != decision["mission"]["file_sha256"]:
+        raise StudioRequestError(
+            "MISSION_INPUT_DRIFT", "mission changed during approval"
+        )
+    mission = json.loads(mission_bytes)
+    return {
+        "schema": "factory.studio.agent-handoff.v1",
+        "state": "approved_needs_candidate_binding",
+        "executor": mission["executor"],
+        "mission": decision["mission"],
+        "decision": {"path": decision["path"], "sha256": decision["decision_sha256"]},
+        "verify_argv": ["factory", "mission", "verify", str(mission_path), "--json"],
+        "candidate_binding": {
+            "declaration_schema": "factory.mission.candidate-declaration.v1",
+            "bind_command": "factory mission bind-candidate",
+            "verify_command": "factory mission verify-candidate",
+            "repair_command": "factory mission execute-repair",
+            "repair_prerequisite": "Separate exact patch/scope/check approval and docker-linux profile; never synthesize repair approval from this handoff.",
+            "required_fields": [
+                "schema",
+                "workspace",
+                "base_commit",
+                "paths",
+                "interfaces",
+                "profiles",
+                "commands",
+                "audit_lanes",
+            ],
+            "operator_input_required": False,
+            "execution_authorized": False,
+        },
+        "instructions": [
+            "Verify the mission and execution decision against their bound hashes before work.",
+            "Inspect the candidate repository and declare exact permitted paths, interfaces and execution profiles before edits.",
+            "Use factory mission bind-candidate with the approved decision and declaration, then factory mission verify-candidate before editing. A binding is a snapshot, not an executor or sandbox.",
+            "Implement only this slice within its budgets; run each applicable audit lane and independent acceptance checks.",
+            "Record failures and actionable repair evidence; stop on drift, missing authority or exhausted budget.",
+            "Return the running preview and hash-bound completion evidence. Merge, publication, deployment and external effects require separate approval.",
+        ],
+        "acceptance_guidance": {
+            "purpose": "Turn the confirmed PRD and mission acceptance criteria into concrete expected behavior before implementation.",
+            "starter_scenarios": [
+                "Open the main screen and confirm its expected content and available actions.",
+                "Complete the main task with valid input and confirm the expected result.",
+                "Reload and confirm saved work remains available when persistence is required.",
+                "Submit invalid input and confirm a clear recovery path without losing valid work.",
+                "When accounts or workspaces apply, confirm one account cannot see another account's data.",
+            ],
+            "custom_scenarios": "Add product-specific scenarios from the confirmed PRD; mark account isolation not applicable when the product has no account or workspace boundary.",
+            "protocol": [
+                "Use isolated, disposable test data; never use real user data.",
+                "Bind the exact candidate and build before browser, API, or device runs; record their identities.",
+                "For each scenario record reproducible steps, screenshots where visual behavior matters, state assertions, and failure evidence.",
+                "Rerun failed and impacted checks only, then review their fresh evidence.",
+                "Invalidate prior results whenever the candidate changes and bind the new candidate before rerunning.",
+                "Make bounded repairs only with the exact required approval; stop when approval or a capable executor is unavailable.",
+                "This handoff does not provide a runner or preview; do not claim either is available unless one is actually provided.",
+            ],
+        },
+        "task_packet": mission["task_packet"],
+        "dispatched": False,
+    }
 
 
 def authorize_graph_ops_from_studio(
@@ -872,7 +1841,8 @@ button:disabled {{ opacity:.55; cursor:wait; }} #result {{ min-height:48px; padd
 @media(max-width:900px) {{ .targets {{ grid-template-columns:1fr 1fr; }} .inputs {{ grid-template-columns:1fr; }} .intro {{ grid-template-columns:1fr; }} }}
 @media(max-width:900px) {{ .stats {{ grid-template-columns:1fr 1fr; }} .dash-grid {{ grid-template-columns:1fr; }} .memory-studio-flow,.memory-studio-actions {{ grid-template-columns:1fr 1fr; }} }}
 @media(max-width:560px) {{ .targets,.stats,.memory-studio-flow,.memory-studio-actions {{ grid-template-columns:1fr; }} h1 {{ font-size:31px; }} }}
-.panel,.field,fieldset {{ min-width:0; }} .data-row {{ overflow-wrap:anywhere; }}
+[hidden] {{ display:none !important; }}
+.panel,.field,fieldset,#result {{ min-width:0; }} .data-row,.result-row {{ overflow-wrap:anywhere; }}
 @media(max-width:560px) {{ .topbar {{ min-height:64px; height:auto; flex-wrap:wrap; gap:8px; padding:12px 5vw; }} .modes {{ display:flex; flex-wrap:wrap; max-width:100%; }} .data-row {{ flex-wrap:wrap; }} }}
 :focus-visible {{ outline:3px solid #166534; outline-offset:3px; }} .empty-data {{ max-width:75ch; }}
 </style></head><body>
@@ -883,15 +1853,15 @@ button:disabled {{ opacity:.55; cursor:wait; }} #result {{ min-height:48px; padd
 <section id="assembly" class="dashboard hidden"><div class="panel"><h2>Continue an assembly</h2><p class="empty-data">Runs safe local stages, then stops with one explicit human action. Leave feature blank only when exactly one is discoverable.</p><label class="field">Feature<input id="assembly-feature" type="text" maxlength="80" placeholder="feature-name (optional)"></label><button id="assembly-continue" type="button">Continue to next boundary</button><div id="assembly-result" role="status">No continuation started.</div></div></section>
 <section id="savings" class="dashboard hidden"><div class="panel"><h2>Record paired savings</h2><p class="empty-data">Compare exact baseline and Factory observations. Productivity stays unavailable unless you explicitly assert equivalent outcomes and provide a validation receipt beneath this workspace.</p><div class="inputs"><label class="field">Pair ID<input id="savings-pair" type="text" maxlength="80" placeholder="checkout-2026-07-25"></label><label class="field">Baseline ms<input id="baseline-ms" type="number" min="1"></label><label class="field">Factory ms<input id="factory-ms" type="number" min="1"></label><label class="field">Evidence path<input id="savings-evidence" type="text" placeholder=".factory/receipts/validation.json"></label></div><div class="inputs"><label class="field">Baseline tokens<input id="baseline-tokens" type="number" min="0"></label><label class="field">Factory tokens<input id="factory-tokens" type="number" min="0"></label><label class="field">Baseline cost USD<input id="baseline-cost" type="number" min="0" step="0.0001"></label><label class="field">Factory cost USD<input id="factory-cost" type="number" min="0" step="0.0001"></label></div><label class="field"><span><input id="equivalent-outcome" type="checkbox"> Outcomes are equivalent and the evidence file proves it</span></label><button id="savings-record" type="button">Record exact pair</button><div id="savings-result" role="status">No pair recorded.</div></div></section>
 <form id="builder" class="hidden"><fieldset id="target-fieldset"><legend>Target</legend><div class="targets">{target_buttons}</div></fieldset>
-<div class="inputs"><label class="field">Project name<input id="name" type="text" maxlength="48" placeholder="derived from intent"></label><label class="field starter-only">Purpose<select id="purpose"><option>auto</option><option>developer</option><option>healthcare</option><option>fintech</option><option>marketplace</option><option>saas</option></select></label><label class="field starter-only">Trigger<select id="trigger"><option>manual</option><option>cron</option><option>hook</option><option>goal</option><option>heartbeat</option></select></label><label class="field starter-only">Deployment route<select id="deployment-profile"></select></label><label class="field mission-only hidden">Executor<select id="executor"><option>manual</option><option>codex</option><option>copilot</option><option>claude</option><option>custom</option></select></label><label class="field mission-only hidden">Mission owner<input id="owner" type="text" maxlength="120" value="local-studio-user"></label><label class="field mission-only hidden">Resolution mode<select id="resolution-mode"><option value="human_approval">Human approval</option><option value="auto_resolve_safe">Auto-resolve safe gaps</option></select></label></div>
+<div class="inputs"><label class="field">Project name<input id="name" type="text" maxlength="48" placeholder="derived from intent"></label><label class="field starter-only">Purpose<select id="purpose"><option>auto</option><option>developer</option><option>healthcare</option><option>fintech</option><option>marketplace</option><option>saas</option></select></label><label class="field starter-only">Trigger<select id="trigger"><option>manual</option><option>cron</option><option>hook</option><option>goal</option><option>heartbeat</option></select></label><label class="field starter-only">Deployment route<select id="deployment-profile"></select></label><details class="mission-only hidden" id="mission-advanced"><summary>Advanced options</summary><p>Optional settings for your coding agent. The defaults are ready to use.</p><label class="field mission-only hidden">Executor<select id="executor"><option>manual</option><option>codex</option><option>copilot</option><option>claude</option><option>custom</option></select></label><label class="field mission-only hidden">Mission owner<input id="owner" type="text" maxlength="120" value="local-studio-user"></label><label class="field mission-only hidden">Resolution mode<select id="resolution-mode"><option value="human_approval">Human approval</option><option value="auto_resolve_safe">Auto-resolve safe gaps</option></select></label></details></div>
 <div id="deployment-detail" class="boundary starter-only"></div>
 <label class="field">Intent<textarea id="prompt" maxlength="60000" required placeholder="Describe the worker, app, mobile experience, or operator workflow."></textarea></label>
-<button id="compile" type="submit">Compile starter</button><div id="result" role="status">Ready. Generated targets begin blocked until their proof gates pass.</div></form></main>
+<button id="compile" type="submit">Compile starter</button><button id="resume-guided" type="button" hidden>Resume saved interview</button><p id="resume-note" class="result-row" hidden>Resume your last saved step in this tab. Unsaved answers are not restored.</p><div id="result" role="status">Ready. Generated targets begin blocked until their proof gates pass.</div></form></main>
 <script>
 const token={json.dumps(token)}; const targetInventory={target_inventory_json}; const form=document.getElementById('builder'); const dashboard=document.getElementById('dashboard'); const assembly=document.getElementById('assembly'); const savings=document.getElementById('savings'); const result=document.getElementById('result'); const button=document.getElementById('compile'); let mode='dashboard'; let currentMission=null;
 function updateDeploymentProfiles(){{const target=new FormData(form).get('target')||'web';const profiles=targetInventory[target].deployment_profiles;const select=document.getElementById('deployment-profile');const previous=select.value;select.textContent='';profiles.forEach((profile,index)=>{{const option=document.createElement('option');option.value=profile.id;option.textContent=`${{profile.label}} (${{profile.approval}})`;option.selected=profile.id===previous||(!previous&&index===0);select.appendChild(option);}});updateDeploymentDetail();}}
 function updateDeploymentDetail(){{const target=new FormData(form).get('target')||'web';const selected=document.getElementById('deployment-profile').value;const profile=targetInventory[target].deployment_profiles.find(item=>item.id===selected);document.getElementById('deployment-detail').textContent=profile?`Build: ${{profile.build}} | Verify: ${{profile.verify}} | Release: ${{profile.release}} | Approval: ${{profile.approval}}`:'';}}
-function setMode(next){{const mission=next==='mission';const dash=next==='dashboard';const assemblyMode=next==='assembly';const savingsMode=next==='savings';const instantMvp=next==='starter';mode=next;document.getElementById('dashboard-mode').classList.toggle('active',dash);document.getElementById('assembly-mode').classList.toggle('active',assemblyMode);document.getElementById('savings-mode').classList.toggle('active',savingsMode);document.getElementById('starter-mode').classList.toggle('active',instantMvp);document.getElementById('mission-mode').classList.toggle('active',mission);dashboard.classList.toggle('hidden',!dash);assembly.classList.toggle('hidden',!assemblyMode);savings.classList.toggle('hidden',!savingsMode);form.classList.toggle('hidden',dash||assemblyMode||savingsMode);document.getElementById('target-fieldset').classList.toggle('hidden',mission||instantMvp);document.querySelectorAll('.starter-only').forEach(el=>el.classList.toggle('hidden',mission||instantMvp));document.querySelectorAll('.mission-only').forEach(el=>el.classList.toggle('hidden',!mission));document.getElementById('surface-label').textContent=dash?'Professional evidence workflow':assemblyMode?'State-aware local assembly':savingsMode?'Exact paired measurement':mission?'Local product compiler':'Instant local MVP';document.getElementById('workflow-label').textContent=dash?'PROFESSIONAL EVIDENCE WORKFLOW':assemblyMode?'SAFE STAGES TO EXPLICIT HUMAN BOUNDARY':savingsMode?'BASELINE TO HASH-BOUND SAVINGS RECEIPT':mission?'PRD TO SUPERVISED VALUE MISSION':'OUTCOME TO CONTAINED WEB MVP';document.getElementById('workflow-title').textContent=dash?'Inspect and advance proven work.':assemblyMode?'Resume without reconstructing state.':savingsMode?'Measure savings without inventing them.':mission?'Compile the next reviewable value slice.':'Describe the outcome. Get a local MVP.';button.textContent=mission?'Compile product mission':instantMvp?'Build my MVP':'Compile starter';if(dash)refreshDashboard();}}
+function setMode(next){{const mission=next==='mission';const dash=next==='dashboard';const assemblyMode=next==='assembly';const savingsMode=next==='savings';const instantMvp=next==='starter';mode=next;document.getElementById('dashboard-mode').classList.toggle('active',dash);document.getElementById('assembly-mode').classList.toggle('active',assemblyMode);document.getElementById('savings-mode').classList.toggle('active',savingsMode);document.getElementById('starter-mode').classList.toggle('active',instantMvp);document.getElementById('mission-mode').classList.toggle('active',mission);dashboard.classList.toggle('hidden',!dash);assembly.classList.toggle('hidden',!assemblyMode);savings.classList.toggle('hidden',!savingsMode);form.classList.toggle('hidden',dash||assemblyMode||savingsMode);document.getElementById('target-fieldset').classList.toggle('hidden',mission||instantMvp);document.querySelectorAll('.starter-only').forEach(el=>el.classList.toggle('hidden',mission||instantMvp));document.querySelectorAll('.mission-only').forEach(el=>el.classList.toggle('hidden',!mission));document.getElementById('surface-label').textContent=dash?'Professional evidence workflow':assemblyMode?'State-aware local assembly':savingsMode?'Exact paired measurement':mission?'Guided product plan':'Instant local MVP';document.getElementById('workflow-label').textContent=dash?'PROFESSIONAL EVIDENCE WORKFLOW':assemblyMode?'SAFE STAGES TO EXPLICIT HUMAN BOUNDARY':savingsMode?'BASELINE TO HASH-BOUND SAVINGS RECEIPT':mission?'PRD TO SUPERVISED VALUE MISSION':'OUTCOME TO CONTAINED WEB MVP';document.getElementById('workflow-title').textContent=dash?'Inspect and advance proven work.':assemblyMode?'Resume without reconstructing state.':savingsMode?'Measure savings without inventing them.':mission?'Clarify your idea. Confirm the plan.':'Describe the outcome. Get a local MVP.';button.textContent=mission?'Start PRD interview':instantMvp?'Build my MVP':'Compile starter';document.getElementById('resume-guided').hidden=!mission||!readGuidedBookmark();document.getElementById('resume-note').hidden=!mission||!readGuidedBookmark();if(dash)refreshDashboard();}}
 document.getElementById('dashboard-mode').onclick=()=>setMode('dashboard');document.getElementById('assembly-mode').onclick=()=>setMode('assembly');document.getElementById('savings-mode').onclick=()=>setMode('savings');document.getElementById('starter-mode').onclick=()=>setMode('starter');document.getElementById('mission-mode').onclick=()=>setMode('mission');const requestedMode=new URLSearchParams(location.search).get('mode');if(requestedMode==='dashboard')setMode('dashboard');else if(requestedMode==='product')setMode('mission');else if(requestedMode==='assembly')setMode('assembly');else if(requestedMode==='savings')setMode('savings');else setMode('starter');
 document.getElementById('assembly-continue').onclick=async()=>{{const host=document.getElementById('assembly-result');host.textContent='Continuing safe local stages...';const response=await fetch('/api/continue',{{method:'POST',headers:{{'Content-Type':'application/json','X-Factory-Studio-Token':token}},body:JSON.stringify({{action:'continue',feature:document.getElementById('assembly-feature').value}})}});const payload=await response.json();host.textContent=response.ok?`Status: ${{payload.status}}\nFeature: ${{payload.feature}}\nNext: ${{payload.next_action?.label||'Assembly complete'}}\nReceipt: ${{payload.receipt||'dry run'}}`:`${{payload.code}}: ${{payload.message}}`;}}
 document.getElementById('savings-record').onclick=async()=>{{const host=document.getElementById('savings-result');host.textContent='Recording exact pair...';const numberOrNull=id=>{{const value=document.getElementById(id).value;return value===''?null:Number(value);}};const body={{action:'savings-record',pair_id:document.getElementById('savings-pair').value,baseline_elapsed_ms:numberOrNull('baseline-ms'),factory_elapsed_ms:numberOrNull('factory-ms'),baseline_tokens:numberOrNull('baseline-tokens'),factory_tokens:numberOrNull('factory-tokens'),baseline_cost_usd:numberOrNull('baseline-cost'),factory_cost_usd:numberOrNull('factory-cost'),equivalent_outcome:document.getElementById('equivalent-outcome').checked,evidence:document.getElementById('savings-evidence').value}};const response=await fetch('/api/savings',{{method:'POST',headers:{{'Content-Type':'application/json','X-Factory-Studio-Token':token}},body:JSON.stringify(body)}});const payload=await response.json();host.textContent=response.ok?`Time saved: ${{payload.savings.time_saved_ms}} ms\nTokens saved: ${{textValue(payload.savings.tokens_saved)}}\nCost saved: ${{textValue(payload.savings.cost_saved_usd)}}\nProductivity gain: ${{payload.savings.productivity_gain_rate===null?'withheld':(payload.savings.productivity_gain_rate*100).toFixed(1)+'%'}}\nReceipt: ${{payload.receipt}}`:`${{payload.code}}: ${{payload.message}}`;}}
@@ -924,11 +1894,53 @@ setInterval(()=>{{if(mode==='dashboard'&&dashboardAutoRefresh)refreshDashboard()
 function addText(className,text){{const el=document.createElement('div');el.className=className;el.textContent=text;result.appendChild(el);return el;}}
 function renderFailure(payload){{result.className='error';result.textContent='';addText('result-title',`${{payload.code||'FAILED'}} at ${{payload.failure?.point_of_failure||'workflow'}}`);addText('result-row',payload.failure?.why||payload.message||'The workflow failed.');addText('result-row',`Next: ${{payload.failure?.next_action||'Inspect the failure evidence and retry.'}}`);}}
 async function decideDashboardMission(item,decision){{const rationale=window.prompt(`Rationale for ${{decision.replace('_',' ')}} on ${{item.id}}:`);if(!rationale)return;const response=await fetch('/api/mission-decision',{{method:'POST',headers:{{'Content-Type':'application/json','X-Factory-Studio-Token':token}},body:JSON.stringify({{action:'mission-decision',mission:item.path,owner:item.owner,decision,rationale}})}});const payload=await response.json();if(!response.ok){{window.alert(`${{payload.code||'FAILED'}}: ${{payload.failure?.why||payload.message}} Next: ${{payload.failure?.next_action||'inspect evidence'}}`);return;}}await refreshDashboard();}}
-async function decideMission(decision){{const rationale=window.prompt(`Rationale for ${{decision.replace('_',' ')}}:`);if(!rationale)return;const response=await fetch('/api/mission-decision',{{method:'POST',headers:{{'Content-Type':'application/json','X-Factory-Studio-Token':token}},body:JSON.stringify({{action:'mission-decision',mission:currentMission,owner:document.getElementById('owner').value,decision,rationale}})}});const payload=await response.json();if(!response.ok){{renderFailure(payload);return;}}result.className='';result.textContent='';addText('result-title',decision==='approved_execution'?'Bounded execution approved':decision==='deferred'?'Mission deferred':'Mission rejected');addText('result-row',`Decision receipt: ${{payload.path}}`);addText('result-row','Merge, publish, deploy, connectors, credentials, and external messages remain unauthorized.');}}
-function renderMission(payload){{result.className='';result.textContent='';if(!payload.mission){{addText('result-title','Product Graph needs human input');addText('result-row',payload.resolution.next_action);const list=document.createElement('div');list.className='resolution-list';payload.resolution.items.forEach(item=>{{const el=document.createElement('div');el.className='resolution-item';el.textContent=`${{item.code}}: ${{item.next_action}}`;list.appendChild(el);}});result.appendChild(list);addText('result-row',payload.resolution.why_auto_stopped);return;}}currentMission=payload.mission.path;addText('result-title',`Approval ready: ${{payload.mission.id}}`);addText('result-row',`Slice ${{payload.mission.slice_id}} | Risk ${{payload.approval.risk}} | Owner ${{payload.approval.owner}}`);addText('result-row',`Budget: ${{payload.approval.budgets.max_iterations}} iterations, ${{payload.approval.budgets.max_wall_seconds}}s, ${{payload.approval.budgets.max_tokens}} tokens, $${{payload.approval.budgets.max_cost_usd}}`);addText('result-row',`${{payload.approval.completion_criteria.length}} completion criteria require independent evidence.`);const bar=document.createElement('div');bar.className='decision-bar';[['approved_execution','Approve execution',''],['deferred','Defer','defer'],['rejected','Reject','reject']].forEach(([value,label,kind])=>{{const b=document.createElement('button');b.type='button';b.className=kind;b.textContent=label;b.onclick=()=>decideMission(value);bar.appendChild(b);}});result.appendChild(bar);addText('result-row','Approval authorizes only the bounded executor; release effects stay human-owned.');}}
-form.addEventListener('submit',async(event)=>{{event.preventDefault();button.disabled=true;result.className='';result.textContent='Compiling locally...';
-const target=new FormData(form).get('target'); const body=mode==='mission'?{{action:'product-mission',prompt:document.getElementById('prompt').value,name:document.getElementById('name').value,executor:document.getElementById('executor').value,owner:document.getElementById('owner').value,resolution_mode:document.getElementById('resolution-mode').value}}:{{action:'create',target,prompt:document.getElementById('prompt').value,name:document.getElementById('name').value,purpose:document.getElementById('purpose').value,trigger:document.getElementById('trigger').value,deployment_profile:document.getElementById('deployment-profile').value}};
-try{{const response=await fetch(mode==='mission'?'/api/product':'/api/create',{{method:'POST',headers:{{'Content-Type':'application/json','X-Factory-Studio-Token':token}},body:JSON.stringify(body)}});const payload=await response.json();if(!response.ok){{renderFailure(payload);return;}}if(mode==='mission')renderMission(payload);else result.textContent=`Compiled ${{payload.target_kind}}\n${{payload.out_dir}}\nDeployment: ${{payload.deployment.profile.label}}\nApproval: ${{payload.deployment.profile.approval}}\nExternal effects authorized: ${{payload.deployment.external_effects_authorized}}\nReceipt: ${{payload.receipt}}\nState: ${{payload.status}}`;}}
+let missionDecisionBusy=false;
+async function decideMission(decision){{
+ const rationaleInput=document.getElementById('mission-rationale');
+ if(missionDecisionBusy||!currentMission||!rationaleInput)return;
+ const rationale=rationaleInput.value.trim();
+ if(!rationale){{rationaleInput.setCustomValidity('Explain this decision before continuing.');rationaleInput.reportValidity();rationaleInput.focus();return;}}
+ const mission=currentMission;const generation=guidedGeneration;
+ const controls=Array.from(result.querySelectorAll('.decision-bar button'));controls.forEach(control=>control.disabled=true);missionDecisionBusy=true;
+ try{{
+  const response=await fetch('/api/mission-decision',{{method:'POST',headers:{{'Content-Type':'application/json','X-Factory-Studio-Token':token}},body:JSON.stringify({{action:'mission-decision',mission,owner:document.getElementById('owner').value,decision,rationale}})}});
+  const payload=await response.json();
+  if(mode!=='mission'||generation!==guidedGeneration||currentMission!==mission)return;
+  if(!response.ok){{renderFailure(payload);return;}}
+  result.className='';result.textContent='';addText('result-title',decision==='approved_execution'?'Bounded execution approved':decision==='deferred'?'Mission deferred':'Mission rejected');addText('result-row',`Decision receipt: ${{payload.path}}`);addText('result-row','Merge, publish, deploy, connectors, credentials, and external messages remain unauthorized.');renderAgentHandoff(payload.agent_handoff);
+ }}catch(_error){{if(mode==='mission'&&generation===guidedGeneration&&currentMission===mission)renderFailure({{code:'DECISION_STATUS_UNKNOWN',message:'The response was interrupted. Inspect the saved decision receipt before retrying; the decision may have been recorded.'}});}}
+ finally{{missionDecisionBusy=false;controls.forEach(control=>control.disabled=false);}}
+}}
+function renderAgentHandoff(handoff){{if(!handoff)return;addText('result-row','Next: give this brief to your coding agent. Nothing has been dispatched. The agent must bind the candidate scope before editing.');addText('result-row','After approval: your agent binds the exact candidate, implements the confirmed behavior, and records evidence from checks. This page does not run or preview the product.');const guidance=handoff.acceptance_guidance;if(guidance){{addText('result-row','Beginner acceptance checks:');const list=document.createElement('ol');guidance.starter_scenarios.forEach(text=>{{const item=document.createElement('li');item.textContent=text;list.appendChild(item);}});result.appendChild(list);addText('result-row',guidance.custom_scenarios);}}const details=document.createElement('details');const summary=document.createElement('summary');summary.textContent='Agent handoff: ready to paste';const label=document.createElement('label');label.className='field';label.htmlFor='agent-handoff';label.textContent='Select and copy this verified mission brief into your coding agent';const input=document.createElement('textarea');input.id='agent-handoff';input.readOnly=true;input.rows=12;input.value=JSON.stringify(handoff,null,2);input.onclick=()=>input.select();label.appendChild(input);details.append(summary,label);result.appendChild(details);}}
+function renderMission(payload){{result.className='';result.textContent='';if(!payload.mission){{addText('result-title','Product Graph needs human input');addText('result-row',payload.resolution.next_action);const list=document.createElement('div');list.className='resolution-list';payload.resolution.items.forEach(item=>{{const el=document.createElement('div');el.className='resolution-item';el.textContent=`${{item.code}}: ${{item.next_action}}`;list.appendChild(el);}});result.appendChild(list);addText('result-row',payload.resolution.why_auto_stopped);return;}}currentMission=payload.mission.path;addText('result-title',`Approval ready: ${{payload.mission.id}}`);addText('result-row',`Slice ${{payload.mission.slice_id}} | Risk ${{payload.approval.risk}} | Owner ${{payload.approval.owner}}`);addText('result-row',`Budget: ${{payload.approval.budgets.max_iterations}} iterations, ${{payload.approval.budgets.max_wall_seconds}}s, ${{payload.approval.budgets.max_tokens}} tokens, $${{payload.approval.budgets.max_cost_usd}}`);addText('result-row',`${{payload.approval.completion_criteria.length}} completion criteria require independent evidence.`);const rationaleLabel=document.createElement('label');rationaleLabel.className='field';rationaleLabel.htmlFor='mission-rationale';rationaleLabel.textContent='Why is this decision appropriate?';const rationaleInput=document.createElement('textarea');rationaleInput.id='mission-rationale';rationaleInput.maxLength=4000;rationaleInput.placeholder='For example: the scope and budget are clear; proceed with this slice.';rationaleInput.oninput=()=>rationaleInput.setCustomValidity('');rationaleLabel.appendChild(rationaleInput);result.appendChild(rationaleLabel);const bar=document.createElement('div');bar.className='decision-bar';[['approved_execution','Approve execution',''],['deferred','Defer','defer'],['rejected','Reject','reject']].forEach(([value,label,kind])=>{{const b=document.createElement('button');b.type='button';b.className=kind;b.textContent=label;b.onclick=()=>decideMission(value);bar.appendChild(b);}});result.appendChild(bar);addText('result-row','Approval authorizes only the bounded executor; release effects stay human-owned.');}}
+let guidedSession=null, guidedConfirmation=null, guidedDraft=null, guidedBusy=false, guidedGeneration=0;
+function readGuidedBookmark(){{try{{const saved=JSON.parse(sessionStorage.getItem('factory-guided-interview')||'null');return saved&&typeof saved.project==='string'&&saved.session&&typeof saved.session.path==='string'&&typeof saved.session.session_sha256==='string'?saved:null;}}catch(_error){{return null;}}}}
+function saveGuidedBookmark(payload){{try{{sessionStorage.setItem('factory-guided-interview',JSON.stringify({{project:payload.project,session:payload.session}}));document.getElementById('resume-guided').hidden=mode!=='mission';document.getElementById('resume-note').hidden=mode!=='mission';}}catch(_error){{/* Storage is optional; the server-side saved receipt remains intact. */}}}}
+async function resumeGuided(){{const saved=readGuidedBookmark();if(!saved)return;guidedGeneration++;const payload=await sendGuided({{action:'product-grill-resume',session_path:saved.session.path,session_sha256:saved.session.session_sha256}});if(!payload)return;document.getElementById('name').value=payload.project;document.getElementById('prompt').value=payload.source_text;renderGuided(payload);}}
+function guidedButton(label,action){{const control=document.createElement('button');control.type='button';control.textContent=label;control.onclick=action;result.appendChild(control);return control;}}
+function validateGuidedAnswer(input){{if(input.value.trim())return true;input.setCustomValidity('Choose an answer or write your own before continuing.');input.focus();input.reportValidity();return false;}}
+function guidedStepper(answers,save){{let active=0;const progress=document.createElement('p');progress.className='result-row';progress.setAttribute('aria-live','polite');result.insertBefore(progress,answers[0].field);const back=guidedButton('Back',()=>show(active-1));const next=guidedButton('Next question',()=>{{if(validateGuidedAnswer(answers[active].input))show(active+1);}});function show(index){{active=index;answers.forEach((row,i)=>row.field.hidden=i!==active);progress.textContent=`Question ${{active+1}} of ${{answers.length}} in this step`;back.hidden=active===0;next.hidden=active===answers.length-1;save.hidden=active!==answers.length-1;}}show(0);}}
+function guidedAnswerOptions(question){{const choices={{
+'Q-REQUIREMENTS':['REQ-CORE: The user must create, view, edit, and delete their own records.','REQ-CORE: The user must submit an input and receive a reviewable result.','REQ-CORE: The operator must review a prioritized list and export a selected report.'],
+'Q-ACTORS':['User: performs the main task. Owner: approves irreversible actions.','Operator: reviews results. Reviewer: independently checks evidence. Owner: approves release.','Workspace member: manages their own records. Administrator: manages access.'],
+'Q-OUTCOMES':['The primary user completes the main task within five minutes; validate this target with users.','At least 9 of 10 trial users complete the primary task without assistance; measure before claiming success.','Record task completion and errors first; the target remains undecided until a baseline is measured.'],
+'Q-JOURNEY':['Journey: User opens the app, provides an input, reviews the result, and confirms completion.','Journey: Operator opens the dashboard, selects an item, reviews its evidence, and exports a local report.'],
+'Q-ACCEPTANCE':['Scenario: Complete the primary task\\n  Given a signed-in user with permission\\n  When the user submits valid input\\n  Then the expected result is visible and saved','Scenario: Reject invalid input\\n  Given a user completing the primary form\\n  When required input is missing\\n  Then the app explains the error and preserves the draft'],
+'Q-DATA-OWNERSHIP':['The workspace owner controls data retention, export, and deletion; users can export their own data.','The individual user owns their records and controls export and deletion; retention must be agreed before release.'],
+'Q-TRUST':['Trust boundary: authenticated users can access only records in their own workspace.','Trust boundary: data stays on the local device; network access requires explicit approval.'],
+'Q-APPROVAL':['Publishing, deployment, deletion, payments, credentials, and external messages require human approval.','This first release only reads local data; any future external or destructive action requires separate human approval.'],
+'Q-SUCCESS-EVENT':['task_completed: record completion, elapsed time, and errors within the selected workspace.','report_exported: record a successful local export and its elapsed time without logging private report contents.']
+}};if(question.id.startsWith('Q-UX-')){{const state=question.id.slice(5).toLowerCase();const states={{loading:['Show progress and keep the layout stable.','Show the current step and offer cancellation where safe.'],empty:['Explain how to add the first item.','Show a clearly labelled example and a button to create a real item.'],error:['Preserve the draft, explain the problem, and offer retry.','Keep the last safe result and provide a safe recovery action.'],success:['Confirm what completed and show the next useful action.','Show the saved result and how to review or undo it where possible.'],permission:['Explain the required role and how to request access.','Hide private data and provide a safe route back.'],offline:['Preserve read-only cached data and explain how to reconnect.','Preserve the draft locally and require reconnection before submission.'],recovery:['Resume the interrupted action without duplication.','Restore the last safe draft and require confirmation before retry.'],accessibility:['Expose control names, roles, keyboard focus order, and status announcements.','Support keyboard operation, visible focus, readable contrast, and associated form errors.']}};return (states[state]||['Explain the current state and the next safe action.']).map(answer=>`${{state}}: ${{answer}}`);}}return choices[question.id]||['This decision needs clarification from the product owner before implementation.'];}}
+function guidedAnswerFormat(question){{if(question.id==='Q-ACTORS')return ' Use Role: responsibility, for example Operator: reviews signals.';if(question.id.startsWith('Q-UX-'))return ` Begin with ${{question.id.slice(5).toLowerCase()}}: followed by the visible state and next safe action.`;return '';}}
+async function sendGuided(body){{if(guidedBusy)return null;guidedBusy=true;const generation=guidedGeneration,requestedMode=mode;button.disabled=true;const controls=[...result.querySelectorAll('button')];controls.forEach(control=>control.disabled=true);try{{const response=await fetch('/api/product-grill',{{method:'POST',headers:{{'Content-Type':'application/json','X-Factory-Studio-Token':token}},body:JSON.stringify(body)}});const payload=await response.json();if(generation!==guidedGeneration||mode!==requestedMode)return null;if(!response.ok){{renderFailure(payload);return null;}}return payload;}}catch(error){{if(generation===guidedGeneration&&mode===requestedMode)renderFailure({{code:'NETWORK_ERROR',message:String(error)}});return null;}}finally{{guidedBusy=false;button.disabled=false;controls.forEach(control=>control.disabled=false);}}}}
+function renderGuided(payload){{saveGuidedBookmark(payload);guidedSession=payload.session;guidedConfirmation=null;guidedDraft=payload;currentMission=null;result.className='';result.textContent='';addText('result-title',payload.status==='ready_for_confirmation'?'Review your PRD before confirming':'Clarify your product, one decision at a time');addText('result-row','Choose a starting point, then edit it to fit your app. Choices are examples, not verified facts. Your answers become the PRD; confirmation does not approve execution or release.');const preview=document.createElement('details');preview.open=payload.status==='ready_for_confirmation';const summary=document.createElement('summary');summary.textContent='Review the exact current PRD';const source=document.createElement('pre');source.style.whiteSpace='pre-wrap';source.style.overflowWrap='anywhere';source.textContent=payload.source_text;preview.append(summary,source);result.appendChild(preview);addText('result-row',`PRD SHA-256: ${{payload.source_sha256}}`);const answers=[];payload.questions.forEach((question,index)=>{{const field=document.createElement('div');field.className='field';const label=document.createElement('label');const input=document.createElement('textarea');input.id=`guided-answer-${{index}}`;input.maxLength=2000;label.htmlFor=input.id;label.textContent=question.title;const explanation=document.createElement('p');explanation.className='result-row';explanation.textContent=question.prompt;const hint=document.createElement('p');hint.className='result-row';hint.textContent=`Suggested starting point: ${{question.recommendation}}${{guidedAnswerFormat(question)}}`;input.setAttribute('aria-describedby',`guided-hint-${{index}}`);hint.id=`guided-hint-${{index}}`;const choiceLabel=document.createElement('label');const choice=document.createElement('select');choice.id=`guided-choice-${{index}}`;choiceLabel.htmlFor=choice.id;choiceLabel.textContent='Choose a starting point or write your own';const custom=document.createElement('option');custom.value='';custom.textContent='Custom answer / edit a choice';choice.appendChild(custom);guidedAnswerOptions(question).forEach((answer,optionIndex)=>{{const option=document.createElement('option');option.value=String(optionIndex);option.textContent=answer;choice.appendChild(option);}});choice.setAttribute('aria-describedby',hint.id);choice.onchange=()=>{{if(choice.value!=='')input.value=guidedAnswerOptions(question)[Number(choice.value)];input.setCustomValidity('');input.focus();}};input.addEventListener('input',()=>{{choice.value='';input.setCustomValidity('');}});field.append(label,explanation,hint,choiceLabel,choice,input);result.appendChild(field);answers.push({{question,input,field}});}});if(payload.deferred_questions.length)addText('result-row',`${{payload.deferred_questions.length}} dependent questions will follow after these decisions.`);if(answers.length){{const save=guidedButton('Save my answers',async()=>{{const invalid=answers.find(row=>!row.input.value.trim());if(invalid){{invalid.field.hidden=false;validateGuidedAnswer(invalid.input);return;}}const rows=answers.filter(row=>row.input.value.trim()).map(row=>({{question_id:row.question.id,answer:row.input.value}}));if(!rows.length){{answers[0].input.focus();answers[0].input.setCustomValidity('Write at least one answer.');answers[0].input.reportValidity();answers[0].input.oninput=()=>answers[0].input.setCustomValidity('');return;}}const next=await sendGuided({{action:'product-grill-answer',session_path:guidedSession.path,session_sha256:guidedSession.session_sha256,answers:rows}});if(next)renderGuided(next);}});guidedStepper(answers,save);}}else if(payload.status==='ready_for_confirmation')guidedButton('Confirm this PRD',confirmGuided);else if(payload.status==='deep_review_required')guidedButton('Continue with deeper questions',async()=>{{const next=await sendGuided({{action:'product-grill-start',prompt:payload.source_text,name:document.getElementById('name').value,mode:'deep'}});if(next)renderGuided(next);}});renderAgentHandoff(payload.agent_handoff);result.scrollIntoView({{block:'start'}});}}
+async function confirmGuided(){{const payload=await sendGuided({{action:'product-grill-confirm',session_path:guidedSession.path,session_sha256:guidedSession.session_sha256,confirmed:true}});if(!payload)return;guidedConfirmation=payload.confirmation;result.textContent='';addText('result-title','PRD confirmed. Prepare the first mission.');addText('result-row',`Confirmed PRD: ${{payload.source_sha256}}`);addText('result-row','The next step prepares a bounded mission for separate execution approval.');guidedButton('Compile reviewed PRD',compileGuided);}}
+async function compileGuided(){{const payload=await sendGuided({{action:'product-guided-compile',confirmation_path:guidedConfirmation.path,confirmation_sha256:guidedConfirmation.sha256,owner:document.getElementById('owner').value,executor:document.getElementById('executor').value,resolution_mode:document.getElementById('resolution-mode').value}});if(payload)renderMission(payload);}}
+document.getElementById('resume-guided').onclick=resumeGuided;
+['prompt','name'].forEach(id=>document.getElementById(id).addEventListener('input',()=>{{guidedGeneration++;guidedSession=null;guidedConfirmation=null;guidedDraft=null;if(mode==='mission'){{result.textContent='Draft changed. Start the PRD interview again before confirming.';currentMission=null;}}}}));
+form.addEventListener('submit',async(event)=>{{event.preventDefault();button.disabled=true;result.className='';result.textContent=mode==='mission'?'Preparing your PRD questions...':'Compiling locally...';
+const target=new FormData(form).get('target'); const body=mode==='mission'?{{action:'product-grill-start',prompt:document.getElementById('prompt').value,name:document.getElementById('name').value,mode:'deep'}}:{{action:'create',target,prompt:document.getElementById('prompt').value,name:document.getElementById('name').value,purpose:document.getElementById('purpose').value,trigger:document.getElementById('trigger').value,deployment_profile:document.getElementById('deployment-profile').value}};
+try{{if(mode==='mission'){{guidedGeneration++;const payload=await sendGuided(body);if(payload)renderGuided(payload);return;}}const response=await fetch('/api/create',{{method:'POST',headers:{{'Content-Type':'application/json','X-Factory-Studio-Token':token}},body:JSON.stringify(body)}});const payload=await response.json();if(!response.ok){{renderFailure(payload);return;}}result.textContent=`Compiled ${{payload.target_kind}}\n${{payload.out_dir}}\nDeployment: ${{payload.deployment.profile.label}}\nApproval: ${{payload.deployment.profile.approval}}\nExternal effects authorized: ${{payload.deployment.external_effects_authorized}}\nReceipt: ${{payload.receipt}}\nState: ${{payload.status}}`;}}
 catch(error){{renderFailure({{code:'NETWORK_ERROR',message:String(error)}});}}finally{{button.disabled=false;}}}});
 </script></body></html>"""
 
@@ -1050,6 +2062,7 @@ class _StudioHandler(BaseHTTPRequestHandler):
         return self.path in {
             "/api/create",
             "/api/product",
+            "/api/product-grill",
             "/api/mission-decision",
             "/api/continue",
             "/api/savings",
@@ -1106,6 +2119,7 @@ class _StudioHandler(BaseHTTPRequestHandler):
         handlers: dict[str, Callable[[Path, dict[str, Any]], dict[str, Any]]] = {
             "/api/create": create_from_studio,
             "/api/product": create_product_mission_from_studio,
+            "/api/product-grill": product_grill_from_studio,
             "/api/mission-decision": decide_product_mission_from_studio,
             "/api/continue": continue_from_studio,
             "/api/savings": savings_from_studio,

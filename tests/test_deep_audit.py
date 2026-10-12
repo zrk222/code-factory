@@ -19,6 +19,146 @@ from factoryline.deep_audit_io import digest
 from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
 
 
+def test_zap_source_trace_mount_preserves_isolation_and_signed_python(tmp_path):
+    from factoryline.deep_audit import _zap_app_argv
+    from test_deep_audit_sarif import _host_zap_lane_fixture
+
+    lane = _host_zap_lane_fixture()
+    lane["native_target"]["argv"] = ["/usr/local/bin/python", "/src/app.py", "arg"]
+    bootstrap = tmp_path / "bootstrap.txt"
+    argv = _zap_app_argv(["docker"], lane, tmp_path, "app", "internal", bootstrap)
+    assert argv[-2:] == ["-I", "/factory-source-trace.py"]
+    assert argv[argv.index("--entrypoint") + 1] == "/usr/local/bin/python"
+    assert any(item.endswith("/factory-source-trace.py,readonly") for item in argv)
+    assert "/trace:rw,nosuid,nodev,noexec,size=4m,mode=1777" in argv
+    assert "--read-only" in argv and "--network=internal" in argv
+    assert not any("target=/out" in item or "docker.sock" in item for item in argv)
+
+
+def test_zap_prepare_trace_activates_only_signed_bound_python_provider(tmp_path):
+    from factoryline.deep_audit import _zap_prepare_trace
+    from test_deep_audit_sarif import _zap_source_trace_fixture
+
+    request, inventory, _, _ = _zap_source_trace_fixture(tmp_path)
+    inventory["candidate_sha256"] = digest(inventory["files"])
+    lane = {
+        "id": "zap",
+        "rule_ids": request["rule_ids"],
+        "timeout_seconds": request["timeout_seconds"],
+        "native_target": request["target"],
+    }
+    state = {
+        "run_id": request["run_id"],
+        "manifest_sha256": "d" * 64,
+        "active_lane": "zap",
+    }
+
+    prepared = _zap_prepare_trace(
+        tmp_path, state, inventory, lane, time.monotonic() + 30
+    )
+
+    assert prepared is not None
+    path, prepared_request = prepared
+    assert path.is_file()
+    assert prepared_request["target"] == lane["native_target"]
+    assert prepared_request["profile_sha256"] == digest(lane)
+    assert b"/trace/events.jsonl" in path.read_bytes()
+
+
+@pytest.mark.parametrize("mode", ["valid", "missing", "replay", "unmeasured"])
+def test_zap_source_trace_cannot_clear_unobserved_or_unreplayed_sources(mode):
+    from copy import deepcopy
+    from factoryline.deep_audit import _zap_source_trace_gaps
+    from test_deep_audit_sarif import _host_zap_lane_fixture
+
+    trace = {"observations": [{"route_id": "home", "path": "app.py", "lines": [3]}]}
+    primary = {"native_execution": {"source_trace": trace}}
+    replay = deepcopy(primary)
+    if mode == "missing":
+        primary["native_execution"]["source_trace"] = None
+    if mode == "replay":
+        replay["native_execution"]["source_trace"]["observations"][0]["lines"] = [4]
+    lane = _host_zap_lane_fixture()
+    if mode == "unmeasured":
+        lane["native_target"]["routes"][0]["source_bindings"]["other.py"] = "d" * 64
+    gaps = _zap_source_trace_gaps(primary, replay, lane)
+    assert bool(gaps) == (mode != "valid")
+    if mode == "unmeasured":
+        assert primary["native_execution"]["source_trace_missing"] == [
+            {"route_id": "home", "path": "other.py"}
+        ]
+
+
+@pytest.mark.parametrize("unsafe", ["symlink", "oversize"])
+def test_zap_source_trace_capture_rejects_unsafe_copied_artifact(tmp_path, unsafe):
+    from factoryline.deep_audit import _zap_read_trace
+
+    path = tmp_path / "trace.jsonl"
+    if unsafe == "oversize":
+        with path.open("wb") as stream:
+            stream.truncate(4 * 1024 * 1024 + 1)
+    else:
+        target = tmp_path / "real"
+        target.write_text("{}\n")
+        try:
+            path.symlink_to(target)
+        except OSError:
+            pytest.skip("symlink privilege unavailable")
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_SOURCE_TRACE"):
+        _zap_read_trace(path)
+
+
+def test_zap_invalid_trace_becomes_actionable_gap_without_discarding_reports(
+    tmp_path, monkeypatch
+):
+    import factoryline.deep_audit as host
+
+    def failed_capture(*args):
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "private host path must not leak")
+
+    monkeypatch.setattr(host, "_zap_capture_trace", failed_capture)
+    trace, code = host._zap_capture_trace_or_gap([], "app", tmp_path)
+    assert trace is None and code == "E_ZAP_SOURCE_TRACE"
+    from factoryline.deep_audit_io import read_run_json
+
+    retained = read_run_json(tmp_path, "zap-source-trace-failure.json")
+    assert retained["code"] == "E_ZAP_SOURCE_TRACE"
+    assert "private" not in json.dumps(retained)
+
+
+def test_zap_trace_capture_streams_fixed_tmpfs_path_with_signed_interpreter(
+    tmp_path, monkeypatch
+):
+    import factoryline.deep_audit as host
+    import factoryline.deep_audit_io as io
+
+    calls = []
+
+    def control(base, args, deadline):
+        calls.append((args, deadline))
+        return {"exit_code": 0}, b'{"sample":1}\n'
+
+    monkeypatch.setattr(host, "_zap_docker_control", control)
+    monkeypatch.setattr(
+        io, "zap_validate_source_trace", lambda *args: {"observations": []}
+    )
+    request = {"target": {"argv": ["/usr/local/bin/python", "/src/app.py"]}}
+    result = host._zap_capture_trace(
+        ["docker"],
+        "app",
+        tmp_path,
+        (tmp_path / "bootstrap", request),
+        {},
+        tmp_path,
+        123,
+    )
+    args, deadline = calls[0]
+    assert args[:5] == ["exec", "app", "/usr/local/bin/python", "-I", "-c"]
+    assert "os.O_NOFOLLOW" in args[-1] and "/trace/events.jsonl" in args[-1]
+    assert deadline == 123
+    assert (tmp_path / result["artifact"]).read_bytes() == b'{"sample":1}\n'
+
+
 def test_semgrep_signed_mutation_preserves_every_other_rule(tmp_path):
     import yaml
     from factoryline.deep_audit_io import (
@@ -1629,7 +1769,10 @@ def test_osv_native_worker_dispatch_and_coverage_keep_challenge_gap():
     )
     assert coverage["source_accounting"] == direct
     assert coverage["complete"] is False
-    assert coverage["errors"] == ["NATIVE_CHALLENGES_REQUIRED"]
+    assert coverage["errors"] == [
+        "OSV_NATIVE_LOOKUPS_REQUIRED",
+        "NATIVE_CHALLENGES_REQUIRED",
+    ]
 
 
 def test_osv_empty_native_accounting_keeps_both_worker_gaps():
@@ -1672,6 +1815,7 @@ def test_osv_empty_native_accounting_keeps_both_worker_gaps():
     assert coverage["source_accounting"]["state"] == "UNAVAILABLE"
     assert coverage["complete"] is False
     assert coverage["errors"] == [
+        "OSV_NATIVE_LOOKUPS_REQUIRED",
         "NATIVE_SOURCE_ACCOUNTING_REQUIRED",
         "NATIVE_CHALLENGES_REQUIRED",
     ]
@@ -7182,3 +7326,1033 @@ def test_atheris_dispatcher_rejects_unbounded_obligations_before_execution(count
     assert not result["observations"] and covered == []
     assert len(result["gaps"]) == count
     assert {gap["reason"] for gap in result["gaps"]} == {"E_FUZZ_CHALLENGE_BUDGET"}
+
+
+def _native_zap_request_fixture():
+    return {
+        "schema": "factory.zap-native-request.v1",
+        "run_id": "zap-native-test",
+        "candidate_sha256": "a" * 64,
+        "profile_sha256": "b" * 64,
+        "rule_ids": ["40012"],
+        "timeout_seconds": 120,
+    }
+
+
+def test_zap_native_request_binds_fixed_loopback_target():
+    from factoryline.deep_audit_io import _zap_native_request
+
+    request = _native_zap_request_fixture()
+    result = _zap_native_request(request)
+    assert result["host_id"] == sha256_bytes(b"http://127.0.0.1:8765")
+    assert result["candidate_sha256"] == request["candidate_sha256"]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("schema", "other"),
+        ("run_id", "../escape"),
+        ("candidate_sha256", "x" * 64),
+        ("profile_sha256", None),
+        ("rule_ids", []),
+        ("rule_ids", ["040012"]),
+        ("rule_ids", ["40012", "40012"]),
+        ("timeout_seconds", True),
+        ("timeout_seconds", 0),
+        ("target", "https://external.invalid"),
+        ("passed", True),
+    ],
+)
+def test_zap_native_request_rejects_unbound_inputs(field, value):
+    from factoryline.deep_audit_io import _zap_native_request
+
+    request = _native_zap_request_fixture()
+    request[field] = value
+    with pytest.raises(RuntimeAuditError):
+        _zap_native_request(request)
+
+
+def test_zap_native_inventory_requires_exact_unique_dispositions():
+    from factoryline.deep_audit_io import _zap_enabled_inventory
+
+    raw = {
+        "scanners": [
+            {"id": "40012", "enabled": "true"},
+            {"id": "40013", "enabled": "false"},
+        ]
+    }
+    assert _zap_enabled_inventory(raw) == ["40012"]
+    raw["scanners"].append({"id": "40012", "enabled": "false"})
+    with pytest.raises(RuntimeAuditError):
+        _zap_enabled_inventory(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {},
+        {"scanners": []},
+        {"scanners": [None]},
+        {"scanners": [{"id": "40012", "enabled": True}]},
+        {"scanners": [{"id": "40012", "enabled": "maybe"}]},
+        {"scanners": [{"id": "../other", "enabled": "true"}]},
+    ],
+)
+def test_zap_native_inventory_rejects_invalid_native_rows(raw):
+    from factoryline.deep_audit_io import _zap_enabled_inventory
+
+    with pytest.raises(RuntimeAuditError):
+        _zap_enabled_inventory(raw)
+
+
+def test_zap_native_environment_drops_operator_secrets(monkeypatch):
+    from factoryline.deep_audit_io import _zap_daemon_environment, _zap_native_request
+
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "must-not-propagate")
+    monkeypatch.setenv("HTTP_PROXY", "http://external.invalid")
+    env = _zap_daemon_environment(
+        _zap_native_request(_native_zap_request_fixture()), "/tmp/zap"
+    )
+    assert "AI_GATEWAY_API_KEY" not in env and "HTTP_PROXY" not in env
+    assert env["FACTORY_ZAP_LEDGER_ENABLED"] == "1"
+
+
+def test_zap_native_api_rejects_unapproved_action_before_network():
+    from factoryline.deep_audit_io import _zap_api
+
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_API"):
+        _zap_api("core", "action", "shutdown", time.monotonic() + 10)
+
+
+@pytest.mark.parametrize(
+    "state,code",
+    [
+        ("overflow", "E_ZAP_OUTPUT"),
+        ("deadline", "E_ZAP_TIMEOUT"),
+        ("dead", "E_ZAP_PROCESS"),
+    ],
+)
+def test_zap_daemon_watch_fails_closed_before_api_use(state, code, monkeypatch):
+    import threading
+
+    import factoryline.deep_audit_io as audit_io
+
+    class Child:
+        def poll(self):
+            return 1 if state == "dead" else None
+
+    overflow = threading.Event()
+    if state == "overflow":
+        overflow.set()
+    deadline = time.monotonic() - 1 if state == "deadline" else time.monotonic() + 10
+    watch = audit_io._zap_watch(Child(), deadline, overflow)
+    monkeypatch.setattr(
+        audit_io,
+        "build_opener",
+        lambda *_args, **_kwargs: pytest.fail("API request must not be opened"),
+        raising=False,
+    )
+
+    with pytest.raises(RuntimeAuditError, match=code):
+        audit_io._zap_api("core", "view", "version", deadline, watch=watch)
+
+
+def test_zap_native_process_facts_include_bounded_stream_and_cleanup_evidence():
+    import hashlib
+
+    from factoryline.deep_audit_io import _zap_process_facts
+
+    class Child:
+        pid = 321
+        returncode = -9
+
+        def poll(self):
+            return self.returncode
+
+    stdout = b"bounded daemon output"
+    stderr = b""
+    streams = {
+        "stdout": (hashlib.sha256(stdout).hexdigest(), len(stdout)),
+        "stderr": (hashlib.sha256(stderr).hexdigest(), len(stderr)),
+    }
+    facts = _zap_process_facts(Child(), time.monotonic() - 0.1, streams, True, True)
+
+    assert facts == {
+        "pid": 321,
+        "return_code": -9,
+        "duration_ms": facts["duration_ms"],
+        "stdout_bytes": len(stdout),
+        "stdout_sha256": hashlib.sha256(stdout).hexdigest(),
+        "stderr_bytes": 0,
+        "stderr_sha256": hashlib.sha256(b"").hexdigest(),
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": True,
+        "termination_reason": "intentional_stop",
+    }
+
+
+def test_zap_daemon_stream_drain_sets_overflow_without_retaining_unbounded_output(
+    monkeypatch,
+):
+    import io
+    import threading
+
+    import factoryline.runtime_audit_process as process
+
+    monkeypatch.setattr(process, "MAX_OUTPUT", 32)
+
+    class Child:
+        stdout = io.BytesIO(b"x" * 33)
+        stderr = io.BytesIO(b"y")
+
+    overflow = threading.Event()
+    streams = {}
+    readers = process._start_stream_readers(Child(), overflow, streams)
+    for reader in readers:
+        reader.join(timeout=1)
+
+    assert not any(reader.is_alive() for reader in readers)
+    assert overflow.is_set()
+    assert streams["stdout"][1] == 33
+    assert streams["stderr"][1] == 1
+
+
+def test_zap_native_inventory_accounts_for_core_rule_zero():
+    from factoryline.deep_audit_io import _zap_enabled_inventory
+
+    rows = {
+        "scanners": [
+            {"id": "0", "enabled": "false"},
+            {"id": "40012", "enabled": "true"},
+        ]
+    }
+    assert _zap_enabled_inventory(rows) == ["40012"]
+    rows["scanners"][0]["enabled"] = "true"
+    assert _zap_enabled_inventory(rows) == ["0", "40012"]
+
+
+@pytest.mark.parametrize(
+    "endpoint,arguments",
+    [
+        (
+            ("core", "action", "accessUrl"),
+            {"url": "https://external.invalid", "followRedirects": "false"},
+        ),
+        (
+            ("core", "action", "accessUrl"),
+            {"url": "http://127.0.0.1:8765/?input=seed", "followRedirects": "true"},
+        ),
+        (
+            ("ascan", "action", "scan"),
+            {
+                "url": "http://127.0.0.1:8765/?input=seed",
+                "recurse": "true",
+                "inScopeOnly": "false",
+            },
+        ),
+        (("core", "view", "alerts"), {"baseurl": "http://127.0.0.1:9999"}),
+        (("ascan", "view", "status"), {"scanId": "../../escape"}),
+        (("ascan", "action", "enableScanners"), {"ids": "40012,40012"}),
+        (("core", "view", "version"), {"url": "https://external.invalid"}),
+    ],
+)
+def test_zap_native_api_rejects_target_and_scope_drift(endpoint, arguments):
+    from factoryline.deep_audit_io import _zap_api_arguments
+
+    with pytest.raises(RuntimeAuditError):
+        _zap_api_arguments(*endpoint, arguments)
+
+
+def _native_zap_v2_fixture():
+    from factoryline.deep_audit_io import digest
+
+    source_sha = "c" * 64
+    target = {
+        "schema": "factory.zap-target.v1",
+        "image": "sha256:" + "d" * 64,
+        "argv": ["/app/server"],
+        "port": 8765,
+        "readiness_path": "/health",
+        "routes": [
+            {
+                "id": "health_query",
+                "method": "GET",
+                "path": "/lookup",
+                "query": {"input": "seed"},
+                "source_bindings": {"app.py": source_sha},
+            }
+        ],
+    }
+    lane = {
+        "engine": "zap",
+        "timeout_seconds": 120,
+        "rule_ids": ["40012"],
+        "native_target": target,
+    }
+    inventory = {
+        "candidate_sha256": "a" * 64,
+        "files": [{"path": "app.py", "sha256": source_sha}],
+    }
+    contract = {
+        "schema": "factory.deep-adapter-input.v1",
+        "run_id": "e" * 32,
+        "manifest_sha256": "f" * 64,
+        "inventory": inventory,
+        "lane": lane,
+        "obligations": [],
+    }
+    request = {
+        "schema": "factory.zap-native-request.v2",
+        "run_id": contract["run_id"],
+        "candidate_sha256": inventory["candidate_sha256"],
+        "profile_sha256": digest(lane),
+        "rule_ids": lane["rule_ids"],
+        "timeout_seconds": 90,
+        "target": deepcopy(target),
+        "route_id": "health_query",
+    }
+    return request, contract
+
+
+def test_zap_native_v2_request_binds_target_route_inventory_and_profile():
+    from factoryline.deep_audit_io import _zap_native_v2_context, digest
+
+    request, contract = _native_zap_v2_fixture()
+    result = _zap_native_v2_context(request, contract)
+
+    assert result["target_url"] == "http://factory-target:8765/lookup?input=seed"
+    assert result["base_url"] == "http://factory-target:8765"
+    assert result["route_id"] == "health_query"
+    assert result["target_sha256"] == digest(request["target"])
+    assert result["route_sha256"] == digest(request["target"]["routes"][0])
+    assert result["bindings"]["host_id"] == sha256_bytes(result["base_url"].encode())
+    assert result["bindings"]["profile_sha256"] == request["profile_sha256"]
+    assert "disabled_rule_id" not in request
+    assert result["disabled_rule_id"] is None
+
+
+def test_zap_native_v2_disabled_control_requires_signed_exact_policy():
+    from factoryline.deep_audit_io import _zap_native_v2_context, digest
+
+    request, contract = _native_zap_v2_fixture()
+    disabled = request["rule_ids"][0]
+    policy = {
+        "schema": "factory.zap-disabled-policy.v1",
+        "rule_ids": request["rule_ids"],
+        "disabled_rule_id": disabled,
+    }
+    contract["lane"]["mutation_config_sha256"] = {disabled: digest(policy)}
+    request["profile_sha256"] = digest(contract["lane"])
+    request["disabled_rule_id"] = disabled
+
+    result = _zap_native_v2_context(request, contract)
+
+    assert result["disabled_rule_id"] == disabled
+    assert request["rule_ids"] == contract["lane"]["rule_ids"]
+
+    contract["lane"]["mutation_config_sha256"][disabled] = "0" * 64
+    request["profile_sha256"] = digest(contract["lane"])
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_MUTATION"):
+        _zap_native_v2_context(request, contract)
+
+
+def test_zap_rule_selection_supports_exact_zero_enabled_control(monkeypatch):
+    import factoryline.deep_audit_io as audit_io
+
+    calls = []
+
+    def fake_api(component, kind, name, _deadline, *, watch=None, **kwargs):
+        calls.append((component, kind, name, kwargs))
+        if name == "scanners":
+            return {"scanners": [{"id": "40012", "enabled": "false"}]}
+        return {}
+
+    monkeypatch.setattr(audit_io, "_zap_api", fake_api)
+    raw = audit_io._zap_select_rules(["40012"], time.monotonic() + 10, {}, "40012")
+
+    assert raw == {"scanners": [{"id": "40012", "enabled": "false"}]}
+    assert [call[2] for call in calls] == ["disableAllScanners", "scanners"]
+
+
+def test_zap_passive_scan_wait_requires_stable_zero_and_resets_on_pending(
+    monkeypatch,
+):
+    import factoryline.deep_audit_io as audit_io
+
+    values = iter(["2", "0", "1", "0", "0"])
+    calls = []
+    sleeps = []
+    monkeypatch.setattr(audit_io, "_zap_check_daemon", lambda *_args: None)
+
+    def api(component, kind, name, _deadline, *, watch=None, **kwargs):
+        calls.append((component, kind, name))
+        return {"recordsToScan": next(values)}
+
+    monkeypatch.setattr(audit_io, "_zap_api", api)
+    monkeypatch.setattr(audit_io.time, "sleep", sleeps.append)
+    result = audit_io._zap_wait_passive_scan(object(), time.monotonic() + 10, {})
+
+    assert result == {"recordsToScan": "0"}
+    assert calls == [("pscan", "view", "recordsToScan")] * 5
+    assert sleeps == [0.2] * 4
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"recordsToScan": 0},
+        {"recordsToScan": ""},
+        {"recordsToScan": "01"},
+        {"recordsToScan": "-1"},
+        {"recordsToScan": "0", "extra": "0"},
+        [],
+    ],
+)
+def test_zap_passive_scan_rejects_malformed_queue_counts(monkeypatch, response):
+    import factoryline.deep_audit_io as audit_io
+
+    monkeypatch.setattr(audit_io, "_zap_check_daemon", lambda *_args: None)
+    monkeypatch.setattr(audit_io, "_zap_api", lambda *_args, **_kwargs: response)
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_PASSIVE"):
+        audit_io._zap_wait_passive_scan(object(), time.monotonic() + 10, {})
+
+
+def test_zap_passive_scan_wait_fails_when_deadline_is_exhausted():
+    import threading
+    import factoryline.deep_audit_io as audit_io
+
+    class Child:
+        def poll(self):
+            return None
+
+    child = Child()
+    watch = {
+        "child": child,
+        "deadline": time.monotonic() - 1,
+        "overflow": threading.Event(),
+    }
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_TIMEOUT"):
+        audit_io._zap_wait_passive_scan(child, watch["deadline"], watch)
+
+
+@pytest.mark.parametrize("ledger_state", ["absent", "empty"])
+def test_zap_measurement_marks_zero_enabled_as_disabled_control_without_ledger(
+    monkeypatch, ledger_state
+):
+    import factoryline.deep_audit_io as audit_io
+
+    class LedgerPath:
+        def __init__(self, value):
+            assert value == "/out"
+
+        def __truediv__(self, _name):
+            return self
+
+        def lstat(self):
+            if ledger_state == "absent":
+                raise FileNotFoundError
+            return object()
+
+    monkeypatch.setattr(audit_io, "Path", LedgerPath)
+    monkeypatch.setattr(
+        audit_io, "_zap_wait_ready", lambda *_args: {"version": "2.17.0"}
+    )
+    monkeypatch.setattr(audit_io, "_zap_start_scan", lambda *_args: ("1", {}))
+    monkeypatch.setattr(audit_io, "_zap_wait_scan", lambda *_args: {"status": "100"})
+    monkeypatch.setattr(audit_io, "_zap_check_daemon", lambda *_args: None)
+
+    def fake_api(component, kind, name, _deadline, *, watch=None, **_kwargs):
+        if (component, kind, name) == ("ascan", "view", "scanners"):
+            return {"scanners": [{"id": "40012", "enabled": "false"}]}
+        if (component, kind, name) == ("pscan", "view", "recordsToScan"):
+            return {"recordsToScan": "0"}
+        if (component, kind, name) == ("core", "view", "alerts"):
+            return {"alerts": []}
+        return {}
+
+    monkeypatch.setattr(audit_io, "_zap_api", fake_api)
+    retained = []
+
+    def retained_ledger(path):
+        retained.append(path)
+        return b"" if ledger_state == "empty" else b"nonempty"
+
+    monkeypatch.setattr(audit_io, "_zap_retained_ledger", retained_ledger)
+    request = {"rule_ids": ["40012"]}
+    watch = {"disabled_rule_id": "40012"}
+    result = audit_io._zap_measure_scan(
+        request,
+        {
+            "run_id": "run",
+            "candidate_sha256": "a" * 64,
+            "profile_sha256": "b" * 64,
+            "host_id": "c" * 64,
+        },
+        object(),
+        time.monotonic() + 10,
+        watch,
+    )
+
+    assert result["native_ledger"] == ""
+    assert result["native_verification"] == {
+        "state": "DISABLED_CONTROL",
+        "expected_rule_ids": [],
+        "disabled_rule_id": "40012",
+    }
+    assert result["disabled_rule_id"] == "40012"
+    assert bool(retained) is (ledger_state == "empty")
+
+
+def test_zap_zero_enabled_control_rejects_nonempty_or_unsafe_ledger(monkeypatch):
+    import factoryline.deep_audit_io as audit_io
+
+    class PresentLedgerPath:
+        def __init__(self, value):
+            assert value == "/out"
+
+        def __truediv__(self, _name):
+            return self
+
+        def lstat(self):
+            return object()
+
+    def prepare(state):
+        monkeypatch.setattr(audit_io, "Path", PresentLedgerPath)
+        monkeypatch.setattr(
+            audit_io, "_zap_wait_ready", lambda *_args: {"version": "2.17.0"}
+        )
+        monkeypatch.setattr(audit_io, "_zap_start_scan", lambda *_args: ("1", {}))
+        monkeypatch.setattr(
+            audit_io, "_zap_wait_scan", lambda *_args: {"status": "100"}
+        )
+        monkeypatch.setattr(audit_io, "_zap_check_daemon", lambda *_args: None)
+
+        def fake_api(component, kind, name, _deadline, *, watch=None, **_kwargs):
+            return {
+                ("ascan", "view", "scanners"): {
+                    "scanners": [{"id": "40012", "enabled": "false"}]
+                },
+                ("pscan", "view", "recordsToScan"): {"recordsToScan": "0"},
+                ("core", "view", "alerts"): {"alerts": []},
+            }.get((component, kind, name), {})
+
+        monkeypatch.setattr(audit_io, "_zap_api", fake_api)
+        if state == "unsafe":
+
+            def read_unsafe(_path):
+                raise RuntimeAuditError("E_PATH_ESCAPE", "symlink rejected")
+
+            monkeypatch.setattr(audit_io, "_zap_retained_ledger", read_unsafe)
+        else:
+            monkeypatch.setattr(
+                audit_io, "_zap_retained_ledger", lambda _path: b"row\n"
+            )
+
+    for state, expected in (("nonempty", "E_ZAP_LEDGER"), ("unsafe", "E_PATH_ESCAPE")):
+        prepare(state)
+        with pytest.raises(RuntimeAuditError, match=expected):
+            audit_io._zap_measure_scan(
+                {"rule_ids": ["40012"]},
+                {
+                    "run_id": "run",
+                    "candidate_sha256": "a" * 64,
+                    "profile_sha256": "b" * 64,
+                    "host_id": "c" * 64,
+                },
+                object(),
+                time.monotonic() + 10,
+                {"disabled_rule_id": "40012"},
+            )
+
+
+def test_zap_native_v2_api_watch_rejects_rewritten_target_before_network():
+    import threading
+
+    from factoryline.deep_audit_io import _zap_api, _zap_native_v2_context, _zap_watch
+
+    request, contract = _native_zap_v2_fixture()
+    context = _zap_native_v2_context(request, contract)
+
+    class Child:
+        def poll(self):
+            return None
+
+    watch = _zap_watch(Child(), time.monotonic() + 10, threading.Event(), context)
+    watch.update(context)
+    watch["target_url"] = "http://127.0.0.1:8765/unsafe"
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_TARGET"):
+        _zap_api("core", "action", "accessUrl", watch["deadline"], watch=watch)
+
+
+@pytest.mark.parametrize(
+    "expected_base",
+    [
+        "http://127.0.0.1:8765",
+        "http://factory-target:8765",
+    ],
+)
+def test_zap_measurement_alerts_api_uses_worker_contract_origin(
+    expected_base, monkeypatch
+):
+    import factoryline.deep_audit_io as audit_io
+
+    captured = {}
+    monkeypatch.setattr(
+        audit_io,
+        "_zap_wait_ready",
+        lambda *_args: {"version": "2.17.0"},
+    )
+    monkeypatch.setattr(
+        audit_io,
+        "_zap_select_rules",
+        lambda *_args: {"scanners": [{"id": "40012", "enabled": "true"}]},
+    )
+    monkeypatch.setattr(
+        audit_io,
+        "_zap_start_scan",
+        lambda *_args: ("1", {"accessed": "ok"}),
+    )
+    monkeypatch.setattr(audit_io, "_zap_wait_scan", lambda *_args: {"status": "100"})
+
+    def fake_api(component, kind, name, _deadline, *, watch=None, **kwargs):
+        if (component, kind, name) == ("core", "view", "alerts"):
+            captured.update(kwargs)
+            return {"alerts": []}
+        if (component, kind, name) == ("pscan", "view", "recordsToScan"):
+            return {"recordsToScan": "0"}
+        return {"scanners": [{"id": "40012", "enabled": "true"}]}
+
+    monkeypatch.setattr(audit_io, "_zap_api", fake_api)
+    monkeypatch.setattr(audit_io, "_zap_enabled_inventory", lambda _raw: ["40012"])
+    monkeypatch.setattr(audit_io, "_zap_retained_ledger", lambda _path: b"{}\n")
+    monkeypatch.setattr(
+        "factoryline.deep_audit_sarif._verify_zap_native_rule_ledger",
+        lambda *_args: {"state": "VERIFIED"},
+    )
+    monkeypatch.setattr(audit_io, "_zap_check_daemon", lambda *_args: None)
+    watch = {
+        "base_url": expected_base,
+        "target_url": "http://127.0.0.1:8765/?input=seed",
+    }
+    request = {"rule_ids": ["40012"]}
+    bindings = {
+        "run_id": "run-123",
+        "candidate_sha256": "a" * 64,
+        "profile_sha256": "b" * 64,
+        "host_id": "c" * 64,
+    }
+
+    audit_io._zap_measure_scan(
+        request, bindings, object(), time.monotonic() + 20, watch
+    )
+
+    assert captured["baseurl"] == expected_base
+
+
+def test_native_zap_cli_rejects_operator_selected_request_path(capsys):
+    from factoryline.deep_audit_io import adapter_main
+
+    assert adapter_main(["native-zap", "--request", "/tmp/untrusted.json"]) == 2
+    assert capsys.readouterr().err.strip() == "E_ZAP_REQUEST"
+
+
+def test_zap_native_driver_rejects_non_object_request_before_dispatch():
+    from factoryline.deep_audit_io import _run_zap_native_scan
+
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_REQUEST"):
+        _run_zap_native_scan([])
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "source_binding",
+        "route_id",
+        "candidate",
+        "profile",
+        "rules",
+        "timeout",
+        "target_url",
+    ],
+)
+def test_zap_native_v2_request_rejects_target_or_binding_drift(mutation):
+    from factoryline.deep_audit_io import _zap_native_v2_context
+
+    request, contract = _native_zap_v2_fixture()
+    if mutation == "source_binding":
+        request["target"]["routes"][0]["source_bindings"]["app.py"] = "0" * 64
+        contract["lane"]["native_target"] = deepcopy(request["target"])
+    elif mutation == "route_id":
+        request["route_id"] = "other"
+    elif mutation == "candidate":
+        request["candidate_sha256"] = "0" * 64
+    elif mutation == "profile":
+        request["profile_sha256"] = "0" * 64
+    elif mutation == "rules":
+        request["rule_ids"] = ["40013"]
+    elif mutation == "timeout":
+        request["timeout_seconds"] = 121
+    else:
+        request["target"]["routes"][0]["path"] = "https://external.invalid/"
+        contract["lane"]["native_target"] = deepcopy(request["target"])
+
+    with pytest.raises(RuntimeAuditError):
+        _zap_native_v2_context(request, contract)
+
+
+def _osv_lookup_execution_fixture():
+    from factoryline.deep_audit_io import digest
+
+    report = _osv_package_accounting_fixture()
+    report["factory_lookup_execution"] = {
+        "schema": "factory.osv-lookup-execution.v1",
+        "upstream_commit": "a14aa98ab8408547083d4411091c5fbaf5b47d8e",
+        "database_sha256": "c" * 64,
+        "catalog_advisories": 120,
+        "catalog_sha256": "d" * 64,
+        "extractor_runs": [
+            {
+                "plugins": ["python/requirements"],
+                "statuses": [{"name": "python/requirements", "state": "SUCCEEDED"}],
+            }
+        ],
+        "queries": [
+            {
+                "name": "werkzeug",
+                "version": "0.1",
+                "ecosystem": "PyPI",
+                "locations": ["requirements.txt"],
+                "state": "EXECUTED",
+                "evaluated_advisories": 120,
+                "evaluated_sha256": "d" * 64,
+                "decision_sha256": "e" * 64,
+                "matched_advisories": [],
+            }
+        ],
+    }
+    query = report["factory_lookup_execution"]["queries"][0]
+    query["decision_sha256"] = digest(
+        {
+            **{
+                key: query[key]
+                for key in (
+                    "name",
+                    "version",
+                    "ecosystem",
+                    "evaluated_advisories",
+                    "matched_advisories",
+                )
+            },
+            "catalog_sha256": report["factory_lookup_execution"]["catalog_sha256"],
+        }
+    )
+    return report
+
+
+def test_osv_native_lookup_zero_match_is_explicit_and_source_bound():
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    report = _osv_lookup_execution_fixture()
+    report["results"][0]["packages"] *= 2  # Repeated package rows are legal.
+    observed = _osv_source_accounting(
+        report, {"requirements.txt": "a" * 64}, "offline-pypi-snapshot"
+    )
+    ledger = observed["lookup_execution"]
+    assert ledger["queries"][0]["evaluated_advisories"] == 120
+    assert ledger["queries"][0]["matched_advisories"] == []
+    assert ledger["source_sha256"] == {"requirements.txt": "a" * 64}
+    changed = _osv_source_accounting(
+        report, {"requirements.txt": "b" * 64}, "offline-pypi-snapshot"
+    )
+    assert changed["lookup_execution"]["source_sha256"] != ledger["source_sha256"]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("state", "FAILED"),
+        ("state", "NOT_RUN"),
+        ("evaluated_advisories", 119),
+        ("evaluated_advisories", True),
+        ("evaluated_sha256", "f" * 64),
+        ("decision_sha256", "invalid"),
+        ("locations", []),
+        ("locations", ["unbound.txt"]),
+        ("locations", ["requirements.txt", "requirements.txt"]),
+        ("matched_advisories", ["CVE-unreported"]),
+        ("name", "other"),
+    ],
+)
+def test_osv_native_lookup_rejects_missing_failed_or_contradictory_query(field, value):
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    report = _osv_lookup_execution_fixture()
+    report["factory_lookup_execution"]["queries"][0][field] = value
+    with pytest.raises(RuntimeAuditError):
+        _osv_source_accounting(
+            report, {"requirements.txt": "a" * 64}, "offline-pypi-snapshot"
+        )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("queries", []),
+        ("catalog_advisories", 0),
+        ("catalog_advisories", True),
+        ("catalog_sha256", "invalid"),
+        ("database_sha256", "invalid"),
+        ("upstream_commit", "f" * 40),
+        ("schema", "unknown"),
+        ("extractor_runs", []),
+        ("extractor_runs", [{"plugins": ["python/requirements"], "statuses": []}]),
+        (
+            "extractor_runs",
+            [
+                {
+                    "plugins": ["python/requirements"],
+                    "statuses": [{"name": "python/requirements", "state": "PARTIAL"}],
+                }
+            ],
+        ),
+    ],
+)
+def test_osv_native_lookup_rejects_empty_or_incomplete_execution(field, value):
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    report = _osv_lookup_execution_fixture()
+    report["factory_lookup_execution"][field] = value
+    with pytest.raises(RuntimeAuditError):
+        _osv_source_accounting(
+            report, {"requirements.txt": "a" * 64}, "offline-pypi-snapshot"
+        )
+
+
+def test_osv_native_lookup_rejects_duplicate_and_omitted_queries():
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    report = _osv_lookup_execution_fixture()
+    report["factory_lookup_execution"]["queries"] *= 2
+    with pytest.raises(RuntimeAuditError, match="duplicate native"):
+        _osv_source_accounting(
+            report, {"requirements.txt": "a" * 64}, "offline-pypi-snapshot"
+        )
+    report = _osv_lookup_execution_fixture()
+    report["results"][0]["packages"].append(
+        {
+            "package": {"name": "other", "version": "1", "ecosystem": "PyPI"},
+            "vulnerabilities": [],
+        }
+    )
+    with pytest.raises(RuntimeAuditError, match="not all executed"):
+        _osv_source_accounting(
+            report, {"requirements.txt": "a" * 64}, "offline-pypi-snapshot"
+        )
+
+
+def test_osv_native_lookup_database_and_missing_evidence_remain_gaps():
+    from factoryline.deep_audit_sarif import _osv_lookup_binding_gaps
+
+    report = _osv_lookup_execution_fixture()
+    lane = {"native_policy": {"database_sha256": "c" * 64}}
+    assert _osv_lookup_binding_gaps(report, lane) == []
+    lane["native_policy"]["database_sha256"] = "f" * 64
+    assert _osv_lookup_binding_gaps(report, lane) == [
+        "OSV_NATIVE_LOOKUP_DATABASE_DRIFT"
+    ]
+    assert _osv_lookup_binding_gaps({}, lane) == ["OSV_NATIVE_LOOKUPS_REQUIRED"]
+
+
+def test_osv_native_lookup_paths_normalize_primary_and_retained_reports():
+    from copy import deepcopy
+    from factoryline.deep_audit_io import (
+        _native_dependency_paths,
+        _osv_normalize_retained_paths,
+    )
+
+    report = _osv_lookup_execution_fixture()
+    report["results"][0]["source"]["path"] = "/src/requirements.txt"
+    report["factory_lookup_execution"]["queries"][0]["locations"] = [
+        "/src/requirements.txt"
+    ]
+    retained = deepcopy(report)
+    sources = {"requirements.txt": "a" * 64}
+    _native_dependency_paths(report, "osv-json", sources)
+    _osv_normalize_retained_paths(retained, "/src", sources)
+    assert retained == report
+    assert report["factory_lookup_execution"]["queries"][0]["locations"] == [
+        "requirements.txt"
+    ]
+
+
+@pytest.mark.parametrize("change", ["decision", "missing", "database"])
+def test_osv_fresh_replay_requires_independent_lookup_evidence(
+    tmp_path, monkeypatch, change
+):
+    import time
+    from copy import deepcopy
+    import factoryline.deep_audit_io as module
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    request = _osv_replay_request_fixture()
+    report = _osv_lookup_execution_fixture()
+    required = {"requirements.txt": "a" * 64}
+    request["report"] = report
+    request["coverage"]["source_accounting"] = _osv_source_accounting(
+        report, required, "offline-pypi-snapshot"
+    )
+    fresh = deepcopy(report)
+    if change == "decision":
+        fresh["factory_lookup_execution"]["queries"][0]["decision_sha256"] = "f" * 64
+    elif change == "database":
+        fresh["factory_lookup_execution"]["database_sha256"] = "f" * 64
+    else:
+        del fresh["factory_lookup_execution"]
+    monkeypatch.setattr(module, "_osv_database_identity", lambda *args: {})
+    monkeypatch.setattr(
+        module, "_adapter_output_paths", lambda *args, **kwargs: ["report.json"]
+    )
+    monkeypatch.setattr(
+        module,
+        "_run_native_profile",
+        lambda *args: {"raw_report": fresh, "invocations": []},
+    )
+    monkeypatch.setattr(module, "_native_report", lambda raw, *args: raw)
+    with pytest.raises(
+        RuntimeAuditError, match="decision hash|independent source accounting differs"
+    ):
+        module._osv_replay_primary(
+            request,
+            {},
+            tmp_path,
+            tmp_path,
+            request["lane"],
+            request["inventory"],
+            required,
+            time.monotonic() + 60,
+        )
+
+
+@pytest.mark.parametrize("value", [[], 1, "ledger"])
+def test_osv_present_malformed_lookup_ledger_never_becomes_missing(value):
+    from factoryline.deep_audit_sarif import _osv_lookup_binding_gaps
+
+    with pytest.raises(RuntimeAuditError):
+        _osv_lookup_binding_gaps({"factory_lookup_execution": value}, {})
+
+
+def test_osv_native_lookup_reported_match_must_have_native_match_evidence():
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    report = _osv_lookup_execution_fixture()
+    report["results"][0]["packages"][0]["vulnerabilities"] = [{"id": "CVE-2026-1234"}]
+    required = {"requirements.txt": "a" * 64}
+    with pytest.raises(RuntimeAuditError, match="decisions"):
+        _osv_source_accounting(report, required, "offline-pypi-snapshot")
+    report["factory_lookup_execution"]["queries"][0]["matched_advisories"] = [
+        "CVE-2026-1234"
+    ]
+    from factoryline.deep_audit_io import digest
+
+    query = report["factory_lookup_execution"]["queries"][0]
+    query["decision_sha256"] = digest(
+        {
+            **{
+                key: query[key]
+                for key in (
+                    "name",
+                    "version",
+                    "ecosystem",
+                    "evaluated_advisories",
+                    "matched_advisories",
+                )
+            },
+            "catalog_sha256": report["factory_lookup_execution"]["catalog_sha256"],
+        }
+    )
+    result = _osv_source_accounting(report, required, "offline-pypi-snapshot")
+    assert result["lookup_execution"]["queries"][0]["matched_advisories"] == [
+        "CVE-2026-1234"
+    ]
+
+
+def test_osv_complete_manifest_claim_cannot_bypass_lookup_execution_gate():
+    from factoryline.deep_audit_io import digest
+    from factoryline.deep_audit_sarif import (
+        _coverage_source_gaps,
+        _osv_source_accounting,
+    )
+
+    report = _osv_package_accounting_fixture()
+    required = {"requirements.txt": "a" * 64}
+    lane = {
+        "engine": "osv",
+        "mode": "offline-pypi-snapshot",
+        "native_policy": {"database_sha256": "c" * 64},
+    }
+    coverage = {
+        "schema": "factory.deep-coverage.v1",
+        "sources": required,
+        "complete": True,
+        "errors": [],
+        "mode": lane["mode"],
+        "fallback": False,
+        "report_sha256": digest(report),
+        "source_accounting": _osv_source_accounting(report, required, lane["mode"]),
+    }
+    assert _coverage_source_gaps(report, coverage, lane, required) == [
+        "OSV_NATIVE_LOOKUPS_REQUIRED"
+    ]
+    report = _osv_lookup_execution_fixture()
+    coverage.update(
+        report_sha256=digest(report),
+        source_accounting=_osv_source_accounting(report, required, lane["mode"]),
+    )
+    assert _coverage_source_gaps(report, coverage, lane, required) == []
+    lane["native_policy"]["database_sha256"] = "f" * 64
+    assert _coverage_source_gaps(report, coverage, lane, required) == [
+        "OSV_NATIVE_LOOKUP_DATABASE_DRIFT"
+    ]
+
+
+@pytest.mark.parametrize(
+    "locations",
+    [
+        ["file:///src/requirements.txt"],
+        ["/outside/requirements.txt"],
+        ["/src/../requirements.txt"],
+        ["/src/requirements.txt", "requirements.txt"],
+    ],
+)
+def test_osv_lookup_path_aliases_cannot_hide_unbound_or_duplicate_sources(locations):
+    from factoryline.deep_audit_io import _osv_normalize_retained_paths
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    report = _osv_lookup_execution_fixture()
+    report["factory_lookup_execution"]["queries"][0]["locations"] = locations
+    required = {"requirements.txt": "a" * 64}
+    if locations == ["file:///src/requirements.txt"]:
+        result = _osv_normalize_retained_paths(report, "/src", required)
+        assert result["factory_lookup_execution"]["queries"][0]["locations"] == [
+            "requirements.txt"
+        ]
+        assert (
+            _osv_source_accounting(result, required, "offline-pypi-snapshot")["state"]
+            == "COMPLETE"
+        )
+    else:
+        with pytest.raises(RuntimeAuditError):
+            result = _osv_normalize_retained_paths(report, "/src", required)
+            _osv_source_accounting(result, required, "offline-pypi-snapshot")
+
+
+def test_osv_native_lookup_budgets_reject_oversized_query_inventory():
+    from factoryline.deep_audit_sarif import _osv_source_accounting
+
+    report = _osv_lookup_execution_fixture()
+    report["factory_lookup_execution"]["queries"] *= 20_001
+    with pytest.raises(RuntimeAuditError):
+        _osv_source_accounting(
+            report, {"requirements.txt": "a" * 64}, "offline-pypi-snapshot"
+        )

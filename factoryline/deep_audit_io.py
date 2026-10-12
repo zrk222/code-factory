@@ -12,6 +12,7 @@ import threading
 import uuid
 import tempfile
 import time
+import tokenize
 from collections import Counter
 from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote
@@ -2393,12 +2394,29 @@ def _native_dependency_paths(report: dict, kind: str, sources: dict) -> None:
             result["source"]["path"] = _native_source_path(
                 result["source"]["path"], sources
             )
+        _osv_lookup_paths(report, lambda path: _native_source_path(path, sources))
     elif kind == "syft-json":
         for artifact in report.get("artifacts", []):
             for location in artifact.get("locations", []):
                 location["path"] = _native_source_path(
                     location["path"], sources, scan_root=True
                 )
+
+
+def _osv_lookup_paths(report, normalize):
+    if "factory_lookup_execution" not in report:
+        return
+    ledger = report["factory_lookup_execution"]
+    if not isinstance(ledger, dict) or not isinstance(ledger.get("queries"), list):
+        raise RuntimeAuditError("E_OSV_LOOKUPS", "native lookup object required")
+    if len(ledger["queries"]) > 20_000:
+        raise RuntimeAuditError("E_OSV_LOOKUPS", "native query budget exceeded")
+    for row in ledger["queries"]:
+        if not isinstance(row, dict) or not isinstance(row.get("locations"), list):
+            raise RuntimeAuditError("E_OSV_LOOKUPS", "native query locations required")
+        if not 0 < len(row["locations"]) <= 20_000:
+            raise RuntimeAuditError("E_OSV_LOOKUPS", "native location budget exceeded")
+        row["locations"] = sorted(normalize(path) for path in row["locations"])
 
 
 def execute_native_profile(
@@ -3431,7 +3449,7 @@ def _run_osv_challenge(
         scratch / "database-identity.json",
     )
     ledger_path = scratch / "unused-ledger.json"
-    bindings = _osv_challenge_bindings(
+    bindings = _native_challenge_bindings(
         challenge_root, scratch, report_path, ledger_path, config_path, challenge_sha
     )
     summary = {}
@@ -3514,7 +3532,7 @@ def _run_osv_challenge(
     return observation, summary
 
 
-def _osv_challenge_bindings(source, scratch, report, ledger, config, candidate_sha):
+def _native_challenge_bindings(source, scratch, report, ledger, config, candidate_sha):
     return {
         "source": str(source),
         "output": str(scratch),
@@ -3577,6 +3595,21 @@ def _osv_challenge_source_paths(report, source_root, manifest):
             raise RuntimeAuditError(
                 "E_OSV_REPORT", "native source path malformed"
             ) from exc
+    _osv_lookup_paths(
+        report,
+        lambda path: _osv_normalize_lookup_path(path, prefix, manifest),
+    )
+
+
+def _osv_normalize_lookup_path(path, prefix, manifest):
+    path = require_str(path, "lookup source path", maximum=2048)
+    path = path.removeprefix("file://")
+    if path.startswith(prefix):
+        path = path[len(prefix) :]
+    path = relative_path(path)
+    if path not in manifest:
+        raise RuntimeAuditError("E_OSV_LOOKUPS", "lookup source path is unbound")
+    return path
 
 
 def _osv_mutation_path(case, baseline, lane, obligation):
@@ -3860,6 +3893,9 @@ def _osv_normalize_retained_paths(report, source_root, manifest):
     root = _osv_source_root_prefix(source_root)
     for item in report["results"]:
         _osv_normalize_result_source(item, root, manifest)
+    _osv_lookup_paths(
+        report, lambda path: _osv_normalize_lookup_path(path, root, manifest)
+    )
     return report
 
 
@@ -4382,8 +4418,6 @@ def _trivy_policy_inputs(config, ignore, lane):
 
 
 def _trivy_ignore_ids(config):
-    import re
-
     try:
         text = config.decode("ascii")
     except (AttributeError, UnicodeDecodeError) as exc:
@@ -4394,18 +4428,25 @@ def _trivy_ignore_ids(config):
     if not text.strip():
         return []
     if ids != sorted(set(ids)) or any(
-        re.fullmatch(r"DS[0-9]{3}", item) is None for item in ids
+        _trivy_rule_id_valid(item) is False for item in ids
     ):
         raise RuntimeAuditError("E_TRIVY_POLICY", "Trivy ignore IDs are invalid")
     return ids
 
 
-def _trivy_mutation(ignore, rule_id):
+def _trivy_rule_id_valid(rule_id):
     import re
 
+    return (
+        isinstance(rule_id, str)
+        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,255}", rule_id) is not None
+    )
+
+
+def _trivy_mutation(ignore, rule_id):
     if _trivy_ignore_ids(ignore):
         raise RuntimeAuditError("E_TRIVY_MUTATION", "baseline ignorefile is not empty")
-    if not isinstance(rule_id, str) or re.fullmatch(r"DS[0-9]{3}", rule_id) is None:
+    if not _trivy_rule_id_valid(rule_id):
         raise RuntimeAuditError("E_TRIVY_MUTATION", "unsupported Trivy check ID")
     return f"{rule_id}\n".encode("ascii")
 
@@ -4465,12 +4506,21 @@ def _trivy_full_source_execution(
     if _adapter_command_failed(facts, [0], deadline):
         raise RuntimeAuditError("E_TRIVY_EXECUTION", "Trivy JSON inventory failed")
     raw_json = _trivy_read_raw(local_file(scratch, "trivy-full.json"))
-    _trivy_native_checks(strict_json(raw_json), _trivy_source_map(inventory, lane))
+    sources = _trivy_source_map(inventory, lane)
+    native_report = strict_json(raw_json)
+    source_bytes = _trivy_source_bytes(source, sources)
+    bindings = _trivy_target_bindings(native_report, sources, source_bytes)
+    _trivy_native_checks(native_report, sources, bindings)
     return {
         "schema": "factory.trivy-rule-execution.v1",
         "config_base64": base64.b64encode(config).decode("ascii"),
         "ignore_base64": base64.b64encode(ignore).decode("ascii"),
         "sources": _trivy_source_map(inventory, lane),
+        "target_bindings": bindings,
+        "source_bytes_base64": {
+            path: base64.b64encode(raw).decode("ascii")
+            for path, raw in sorted(source_bytes.items())
+        },
         "observations": [
             _trivy_observation("sarif", sarif_argv, invocation["execution"], raw_sarif),
             _trivy_observation("json", argv, facts, raw_json),
@@ -4505,7 +4555,357 @@ def _trivy_source_map(inventory, lane):
     }
 
 
-def _trivy_native_checks(report, sources):
+def _trivy_source_bytes(root, sources):
+    result = {}
+    total = 0
+    for path, expected in sorted(sources.items()):
+        raw = (root / path).read_bytes()
+        total += len(raw)
+        if len(raw) > 1_000_000 or total > 8_000_000 or sha256_bytes(raw) != expected:
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform source snapshot differs"
+            )
+        result[path] = raw
+    return result
+
+
+def _trivy_module_sources(raw, path):
+    import re
+    import json
+
+    text = raw.decode("utf-8", errors="strict")
+    if path.lower().endswith(".tf.json"):
+        try:
+            document = json.loads(text)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform JSON source is malformed"
+            ) from exc
+        modules = document.get("module", {}) if isinstance(document, dict) else None
+        if modules is None:
+            return []
+        if not isinstance(modules, dict):
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform JSON modules are malformed"
+            )
+        sources = []
+        for module in modules.values():
+            source = module.get("source") if isinstance(module, dict) else None
+            if not isinstance(source, str) or "$" in source:
+                raise RuntimeAuditError(
+                    "E_TRIVY_APPLICABILITY",
+                    "Terraform JSON module source is dynamic or missing",
+                )
+            sources.append((path, source))
+        return sources
+    text = _trivy_clean_hcl_comments(text)
+    return [(path, source) for source in _trivy_parse_module_blocks(text, re)]
+
+
+def _trivy_clean_hcl_comments(text):
+    lines = []
+    for line in text.splitlines():
+        out = []
+        quoted = False
+        escaped = False
+        index = 0
+        while index < len(line):
+            char = line[index]
+            pair = line[index : index + 2]
+            if not quoted and pair in {"/*", "*/", "<<"}:
+                raise RuntimeAuditError(
+                    "E_TRIVY_APPLICABILITY",
+                    "Terraform block comments and heredocs are unsupported",
+                )
+            if quoted:
+                out.append(char)
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    quoted = False
+            elif char == '"':
+                quoted = True
+                out.append(char)
+            elif char == "#" or pair == "//":
+                break
+            else:
+                out.append(char)
+            index += 2 if not quoted and pair == "//" else 1
+        lines.append("".join(out))
+    return "\n".join(lines)
+
+
+def _trivy_parse_module_blocks(text, regex):
+    lines = text.splitlines()
+    modules = []
+    index = 0
+    while index < len(lines):
+        if not regex.match(r'^\s*module\s+"[^"\n]+"\s*\{', lines[index]):
+            index += 1
+            continue
+        block, index = _trivy_hcl_block(lines, index)
+        match = regex.search(r'^\s*source\s*=\s*"([^"$]+)"\s*$', block, regex.MULTILINE)
+        if match is None:
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform module source is dynamic or missing"
+            )
+        modules.append(match.group(1))
+    return modules
+
+
+def _trivy_hcl_block(lines, start):
+    depth = 0
+    in_string = False
+    escaped = False
+    block = []
+    cursor = start
+    while cursor < len(lines):
+        line = lines[cursor]
+        block.append(line)
+        depth, in_string, escaped = _trivy_hcl_line_depth(
+            line, depth, in_string, escaped
+        )
+        if depth == 0:
+            return "\n".join(block), cursor + 1
+        cursor += 1
+    raise RuntimeAuditError(
+        "E_TRIVY_APPLICABILITY", "Terraform module block is unclosed"
+    )
+
+
+def _trivy_hcl_line_depth(line, depth, in_string, escaped):
+    comment = False
+    for char in line:
+        if comment:
+            break
+        depth, in_string, escaped, comment = _trivy_hcl_char(
+            char, depth, in_string, escaped
+        )
+    return depth, in_string, escaped
+
+
+def _trivy_hcl_char(char, depth, in_string, escaped):
+    if in_string:
+        return _trivy_hcl_string_char(char, depth, escaped)
+    if char == '"':
+        return depth, True, False, False
+    if char == "#":
+        return depth, False, False, True
+    return depth + (char == "{") - (char == "}"), False, False, False
+
+
+def _trivy_hcl_string_char(char, depth, escaped):
+    if escaped:
+        return depth, True, False, False
+    if char == "\\":
+        return depth, True, True, False
+    return depth, char != '"', False, False
+
+
+def _trivy_target_bindings(report, sources, source_bytes=None):
+    """Bind native Terraform Targets to exact candidate members and hashes."""
+    results = report.get("Results") if isinstance(report, dict) else None
+    if not isinstance(results, list):
+        raise RuntimeAuditError("E_TRIVY_REPORT", "Trivy target inventory malformed")
+    paths = set(sources)
+    root_members, root_edges, root_prefixes = _trivy_root_module_graphs(
+        results, paths, source_bytes
+    )
+    bindings = _trivy_bind_report_targets(
+        results, paths, sources, root_members, root_edges, source_bytes, root_prefixes
+    )
+    _trivy_validate_target_coverage(bindings, paths)
+    return bindings
+
+
+def _trivy_root_module_graphs(results, paths, source_bytes):
+    members_by_target, edges_by_target, prefixes = {}, {}, {}
+    if source_bytes is None:
+        return members_by_target, edges_by_target, prefixes
+    for result in results:
+        if not isinstance(result, dict) or result.get("Type") != "terraform":
+            continue
+        target = _trivy_target_name(result.get("Target"))
+        prefix = _trivy_root_target_prefix(target, paths)
+        if prefix is None:
+            continue
+        members, edges = _trivy_root_module_graph(paths, source_bytes, True, prefix)
+        if not members:
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform root target has no source members"
+            )
+        members_by_target[target] = members
+        edges_by_target[target] = edges
+        prefixes[target] = prefix
+    return members_by_target, edges_by_target, prefixes
+
+
+def _trivy_root_target_prefix(target, paths):
+    if target == ".":
+        # A dot target is the scan root. Candidate paths are already relative
+        # to that root; never infer a hidden root from a shared path prefix.
+        return ""
+    if target.lower().endswith((".tf", ".tf.json")):
+        return None
+    direct_members = [
+        path
+        for path in paths
+        if Path(path).parent.as_posix() == target
+        and path.lower().endswith((".tf", ".tf.json"))
+    ]
+    return target if direct_members else None
+
+
+def _trivy_root_module_graph(paths, source_bytes, root_scan, root_prefix=""):
+    root_members = set()
+    edges = []
+    if source_bytes is None or not root_scan:
+        return root_members, edges
+    root_directory = root_prefix or "."
+    pending = [
+        path
+        for path in paths
+        if Path(path).parent.as_posix() == root_directory
+        and path.lower().endswith((".tf", ".tf.json"))
+    ]
+    while pending:
+        parent = pending.pop()
+        if parent in root_members:
+            continue
+        root_members.add(parent)
+        for owner, source in _trivy_module_sources(source_bytes[parent], parent):
+            members = _trivy_local_module_members(owner, source, paths)
+            edges.append({"from": owner, "source": source, "members": members})
+            pending.extend(members)
+    return root_members, edges
+
+
+def _trivy_local_module_members(owner, source, paths):
+    if not source.startswith("./"):
+        raise RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "non-local Terraform module source is unsupported"
+        )
+    resolved = Path(os.path.normpath(str(Path(owner).parent / source))).as_posix()
+    if resolved == ".." or resolved.startswith("../") or resolved.startswith("/"):
+        raise RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "Terraform module source escapes candidate root"
+        )
+    members = sorted(
+        path
+        for path in paths
+        if Path(path).parent.as_posix() == resolved
+        and path.lower().endswith((".tf", ".tf.json"))
+    )
+    if not members:
+        raise RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "Terraform local module has no inventoried sources"
+        )
+    return members
+
+
+def _trivy_bind_report_targets(
+    results,
+    paths,
+    sources,
+    root_members,
+    root_edges,
+    source_bytes,
+    root_prefixes,
+):
+    bindings = {}
+    for result in results:
+        if not isinstance(result, dict):
+            raise RuntimeAuditError("E_TRIVY_REPORT", "Trivy target malformed")
+        target = _trivy_target_name(result.get("Target"))
+        kind = result.get("Type")
+        if target in bindings:
+            raise RuntimeAuditError("E_TRIVY_REPORT", "duplicate Trivy target")
+        members, scope = _trivy_target_members(
+            target, kind, paths, root_members, source_bytes, root_prefixes
+        )
+        if not members:
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Trivy target has no bound members"
+            )
+        bindings[target] = {
+            "kind": kind,
+            "scope": scope,
+            "members": [{"path": path, "sha256": sources[path]} for path in members],
+        }
+    if source_bytes is not None:
+        for target, item in bindings.items():
+            if item["scope"] == "terraform_root":
+                item["module_edges"] = sorted(
+                    root_edges[target], key=lambda edge: (edge["from"], edge["source"])
+                )
+    return bindings
+
+
+def _trivy_target_members(
+    target, kind, paths, root_members, source_bytes, root_prefixes
+):
+    if kind != "terraform":
+        return ([target] if target in paths else []), "file"
+    if target in root_members:
+        members = sorted(root_members[target])
+        return members, "terraform_root"
+    if target == "." and source_bytes is None:
+        members = sorted(
+            path
+            for path in paths
+            if "/" not in path and path.lower().endswith((".tf", ".tf.json"))
+        )
+        return members, "terraform_root"
+    if target.lower().endswith((".tf", ".tf.json")):
+        return _trivy_terraform_file_target_members(
+            target, paths, root_members, root_prefixes
+        )
+    return ([target] if target in paths else []), "file"
+
+
+def _trivy_terraform_file_target_members(target, paths, root_members, root_prefixes):
+    prefixes = [
+        root_prefixes.get(root_target, "")
+        for root_target in root_members
+        if root_target == "." or target.startswith(root_target + "/")
+    ]
+    candidates = {target}
+    candidates.update(f"{prefix}/{target}" for prefix in prefixes if prefix)
+    found = sorted(candidates & paths)
+    if len(found) > 1:
+        raise RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "Terraform file target mapping is ambiguous"
+        )
+    return found, "terraform_file"
+
+
+def _trivy_validate_target_coverage(bindings, paths):
+    covered = {row["path"] for item in bindings.values() for row in item["members"]}
+    if covered != paths:
+        raise RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "Trivy target membership is incomplete"
+        )
+    for path in paths:
+        owners = [
+            item
+            for item in bindings.values()
+            if any(row["path"] == path for row in item["members"])
+        ]
+        if len(owners) > 1 and not (
+            len(owners) == 2
+            and "terraform_root" in {item["scope"] for item in owners}
+            and all(
+                item["scope"] in {"terraform_root", "terraform_file"} for item in owners
+            )
+        ):
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Trivy target membership overlaps"
+            )
+
+
+def _trivy_native_checks(report, sources, target_bindings=None):
     if not isinstance(report, dict) or report.get("SchemaVersion") != 2:
         raise RuntimeAuditError("E_TRIVY_REPORT", "Trivy JSON schema version differs")
     results = report.get("Results")
@@ -4513,12 +4913,13 @@ def _trivy_native_checks(report, sources):
         raise RuntimeAuditError(
             "E_TRIVY_APPLICABILITY", "Trivy reported no applicable sources"
         )
+    target_bindings = target_bindings or _trivy_target_bindings(report, sources)
     matrix = {}
     for result in results:
         if not isinstance(result, dict) or result.get("Class") != "config":
             raise RuntimeAuditError("E_TRIVY_REPORT", "Trivy config result malformed")
-        path = relative_path(result.get("Target"))
-        if path not in sources:
+        target = _trivy_target_name(result.get("Target"))
+        if target not in target_bindings:
             raise RuntimeAuditError("E_TRIVY_APPLICABILITY", "Trivy source is unbound")
         rows = result.get("Misconfigurations")
         if not isinstance(rows, list) or not rows:
@@ -4526,12 +4927,12 @@ def _trivy_native_checks(report, sources):
                 "E_TRIVY_APPLICABILITY", "Trivy check inventory missing"
             )
         statuses = _trivy_check_statuses(result, rows)
-        if path in matrix:
+        if target in matrix:
             raise RuntimeAuditError("E_TRIVY_REPORT", "duplicate Trivy source result")
-        matrix[path] = statuses
-    if set(matrix) != set(sources):
+        matrix[target] = statuses
+    if set(matrix) != set(target_bindings):
         raise RuntimeAuditError(
-            "E_TRIVY_APPLICABILITY", "Trivy omitted a required source"
+            "E_TRIVY_APPLICABILITY", "Trivy omitted a required target"
         )
     return matrix
 
@@ -4566,6 +4967,10 @@ def _trivy_check_statuses(result, rows):
     return statuses
 
 
+def _trivy_target_name(value):
+    return "." if value == "." else relative_path(value)
+
+
 def verify_trivy_rule_execution(
     evidence, lane, sources, report, *, disabled_rule_id=None
 ):
@@ -4594,20 +4999,24 @@ def verify_trivy_rule_execution(
             raise RuntimeAuditError(
                 "E_TRIVY_EXECUTION", "paired Trivy command did not complete"
             )
-    matrix = _trivy_native_checks(strict_json(decoded[1]), sources)
+    native_report = strict_json(decoded[1])
+    source_bytes = _trivy_decode_source_bytes(evidence, sources)
+    bindings = _trivy_target_bindings(native_report, sources, source_bytes)
+    if evidence.get("target_bindings") != bindings:
+        raise RuntimeAuditError("E_TRIVY_APPLICABILITY", "Trivy target bindings differ")
+    matrix = _trivy_native_checks(native_report, sources, bindings)
     _trivy_matrix_ids(matrix, expected_ids)
-    fail_rows = {
-        (path, rule)
-        for path, rows in matrix.items()
-        for rule, status in rows.items()
-        if status == "FAIL"
-    }
     sarif = strict_json(decoded[0])
+    fail_rows = _trivy_expected_failures(
+        native_report, bindings, sarif, sources, observations[0]["argv"][-1]
+    )
     if _trivy_sarif_failures(sarif, sources, observations[0]["argv"][-1]) != fail_rows:
         raise RuntimeAuditError(
             "E_TRIVY_EXECUTION", "native JSON and SARIF findings differ"
         )
-    if _trivy_sarif_failures(report, sources) != fail_rows:
+    if _trivy_expected_failures(
+        native_report, bindings, report, sources
+    ) != _trivy_sarif_failures(report, sources):
         raise RuntimeAuditError(
             "E_TRIVY_EXECUTION", "normalized report differs from native status"
         )
@@ -4620,7 +5029,15 @@ def _trivy_evidence_inputs(evidence, lane, sources, disabled_rule_id):
     if (
         not isinstance(evidence, dict)
         or set(evidence)
-        != {"schema", "config_base64", "ignore_base64", "sources", "observations"}
+        != {
+            "schema",
+            "config_base64",
+            "ignore_base64",
+            "sources",
+            "observations",
+            "target_bindings",
+            "source_bytes_base64",
+        }
         or evidence["schema"] != "factory.trivy-rule-execution.v1"
         or evidence["sources"] != sources
         or not isinstance(lane.get("native_policy"), dict)
@@ -4655,6 +5072,97 @@ def _trivy_evidence_inputs(evidence, lane, sources, disabled_rule_id):
     ):
         raise RuntimeAuditError("E_TRIVY_MUTATION", "Trivy target ignore differs")
     return config, ignore, observations
+
+
+def _trivy_decode_source_bytes(evidence, sources):
+    import base64
+
+    encoded = evidence.get("source_bytes_base64")
+    if not isinstance(encoded, dict) or set(encoded) != set(sources):
+        raise RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "Terraform source snapshot set differs"
+        )
+    decoded = {}
+    total = 0
+    for path, value in encoded.items():
+        try:
+            raw = base64.b64decode(value, validate=True)
+        except (ValueError, TypeError) as exc:
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform source snapshot malformed"
+            ) from exc
+        total += len(raw)
+        if (
+            len(raw) > 1_000_000
+            or total > 8_000_000
+            or sha256_bytes(raw) != sources[path]
+        ):
+            raise RuntimeAuditError(
+                "E_TRIVY_APPLICABILITY", "Terraform source snapshot hash differs"
+            )
+        decoded[path] = raw
+    return decoded
+
+
+def _trivy_expected_failures(native, bindings, sarif, sources, source_root=None):
+    report = _trivy_normalized_sarif(sarif, sources, source_root)
+    rows = _trivy_native_failure_rows(native, bindings)
+    expected = _trivy_match_failure_rows(rows, report)
+    actual = _trivy_sarif_failures(sarif, sources, source_root)
+    if actual != expected:
+        raise RuntimeAuditError(
+            "E_TRIVY_EXECUTION", "native JSON and SARIF findings differ"
+        )
+    return expected
+
+
+def _trivy_normalized_sarif(sarif, sources, source_root):
+    _trivy_sarif_failures(sarif, sources, source_root)
+    report = strict_json(canonical_bytes(sarif))
+    if source_root is not None:
+        for run in report["runs"]:
+            _normalize_challenge_run(run, source_root.rstrip("/"))
+    return _native_sarif_paths(report, sources)
+
+
+def _trivy_native_failure_rows(native, bindings):
+    rows = []
+    for result in native["Results"]:
+        binding = bindings[_trivy_target_name(result["Target"])]
+        rows.extend(
+            (binding, row)
+            for row in result["Misconfigurations"]
+            if row["Status"] == "FAIL"
+        )
+    return rows
+
+
+def _trivy_match_failure_rows(rows, report):
+    expected = set()
+    used = set()
+    for binding, row in rows:
+        candidates = []
+        accepted_ids = {row.get("ID"), row.get("AVDID")}
+        for run_index, run in enumerate(report["runs"]):
+            for result_index, result in enumerate(run.get("results", [])):
+                if result.get("ruleId") not in accepted_ids:
+                    continue
+                location = result["locations"][0]["physicalLocation"][
+                    "artifactLocation"
+                ]
+                path = relative_path(location.get("uri"))
+                if path in {item["path"] for item in binding["members"]}:
+                    key = (run_index, result_index)
+                    if key not in used:
+                        candidates.append((key, path, result["ruleId"]))
+        if len(candidates) != 1:
+            raise RuntimeAuditError(
+                "E_TRIVY_EXECUTION", "failed Trivy target has ambiguous SARIF ownership"
+            )
+        key, path, rule = candidates[0]
+        used.add(key)
+        expected.add((path, rule))
+    return expected
 
 
 def _trivy_expected_ids(lane, disabled_rule_id):
@@ -4763,11 +5271,11 @@ def _trivy_closed_argv(argv):
 
 
 def _trivy_matrix_ids(matrix, expected_ids):
-    for rows in matrix.values():
-        if sorted(rows) != expected_ids:
-            raise RuntimeAuditError(
-                "E_TRIVY_APPLICABILITY", "signed Trivy check IDs differ"
-            )
+    observed_ids = set().union(*(set(rows) for rows in matrix.values()))
+    if observed_ids != set(expected_ids):
+        raise RuntimeAuditError(
+            "E_TRIVY_APPLICABILITY", "signed Trivy check IDs differ"
+        )
 
 
 def _trivy_sarif_failures(report, sources, source_root=None):
@@ -5179,7 +5687,9 @@ def _native_profile_coverage(
         )
         complete = not errors
     elif lane["engine"] == "osv":
-        errors = []
+        from .deep_audit_sarif import _osv_lookup_binding_gaps
+
+        errors = _osv_lookup_binding_gaps(report, lane)
         if (
             _native_source_accounting(execution, report, inventory, lane)["state"]
             != "COMPLETE"
@@ -6632,7 +7142,7 @@ def _execute_codeql_challenge(
         scratch / "unused-ledger.json",
         scratch / "query-inventory.json",
     )
-    bindings = _semgrep_challenge_bindings(
+    bindings = _native_challenge_bindings(
         root, scratch, report, ledger, selected, digest(manifest)
     )
     commands = _codeql_challenge_steps(profile, bindings, selected)
@@ -7023,7 +7533,14 @@ def _run_trivy_challenge(
 
     def report_parser(raw):
         paired["sarif_raw"] = raw
-        matrix = _trivy_native_checks(strict_json(paired["json_raw"]), fixture_map)
+        source_bytes = _trivy_source_bytes(challenge_root, fixture_map)
+        matrix = _trivy_native_checks(
+            strict_json(paired["json_raw"]),
+            fixture_map,
+            _trivy_target_bindings(
+                strict_json(paired["json_raw"]), fixture_map, source_bytes
+            ),
+        )
         return _trivy_challenge_report(
             raw, profile, challenge_root, fixture_map, matrix
         )
@@ -7066,7 +7583,7 @@ def _run_trivy_challenge(
         mutation_ruleset_sha256=lane["mutation_config_sha256"],
     )
     observation["trivy_rule_execution"] = _trivy_challenge_evidence(
-        config, effective.read_bytes(), fixture_map, paired, observation
+        config, effective.read_bytes(), fixture_map, paired, observation, challenge_root
     )
     checked = verify_trivy_rule_execution(
         observation["trivy_rule_execution"],
@@ -7176,7 +7693,9 @@ def _trivy_challenge_report(raw, profile, source_root, sources, matrix):
     return report
 
 
-def _trivy_challenge_evidence(config, ignore, sources, paired, observation):
+def _trivy_challenge_evidence(
+    config, ignore, sources, paired, observation, source_root
+):
     import base64
 
     sarif_raw = paired.get("sarif_raw")
@@ -7195,11 +7714,18 @@ def _trivy_challenge_evidence(config, ignore, sources, paired, observation):
         raise RuntimeAuditError(
             "E_TRIVY_EXECUTION", "native policy artifact binding differs"
         )
+    source_bytes = _trivy_source_bytes(source_root, sources)
+    native = strict_json(json_raw)
     return {
         "schema": "factory.trivy-rule-execution.v1",
         "config_base64": base64.b64encode(config).decode("ascii"),
         "ignore_base64": base64.b64encode(ignore).decode("ascii"),
         "sources": sources,
+        "source_bytes_base64": {
+            path: base64.b64encode(raw).decode("ascii")
+            for path, raw in sorted(source_bytes.items())
+        },
+        "target_bindings": _trivy_target_bindings(native, sources, source_bytes),
         "observations": [
             _trivy_observation(
                 "sarif", paired["sarif_argv"], paired["sarif_facts"], sarif_raw
@@ -7586,7 +8112,7 @@ def _run_semgrep_challenge(
     report_path = scratch / "report.sarif"
     inventory_path = scratch / "rule-inventory.json"
     ledger_path = scratch / "unused-ledger.json"
-    bindings = _semgrep_challenge_bindings(
+    bindings = _native_challenge_bindings(
         challenge_root, scratch, report_path, ledger_path, config_path, challenge_sha
     )
     effective = config_path.read_bytes()
@@ -7659,18 +8185,6 @@ def _semgrep_fixture_binding(manifest, obligation, source, fixture_path):
         )
     for path, source_sha in manifest.items():
         bound_bytes(source, {"path": relative_path(path), "sha256": source_sha})
-
-
-def _semgrep_challenge_bindings(source, scratch, report, ledger, config, candidate_sha):
-    return {
-        "source": str(source),
-        "output": str(scratch),
-        "report": str(report),
-        "scratch": str(scratch),
-        "candidate_sha256": candidate_sha,
-        "factory_ledger": str(ledger),
-        "config": str(config),
-    }
 
 
 def _semgrep_challenge_report(raw, profile, source_root, sources):
@@ -8286,14 +8800,681 @@ def _challenge_source_uri(uri, root):
     return uri
 
 
+def _zap_native_request(request):
+    fields = {
+        "schema",
+        "run_id",
+        "candidate_sha256",
+        "profile_sha256",
+        "rule_ids",
+        "timeout_seconds",
+    }
+    exact_keys(request, fields)
+    if set(request) != fields:
+        raise RuntimeAuditError("E_ZAP_REQUEST", "native request fields differ")
+    if request["schema"] != "factory.zap-native-request.v1":
+        raise RuntimeAuditError("E_ZAP_REQUEST", "native request schema differs")
+    from .deep_audit_sarif import _zap_ledger_bindings, _zap_ledger_plugins
+
+    bindings = {
+        key: request[key] for key in ("run_id", "candidate_sha256", "profile_sha256")
+    }
+    bindings["host_id"] = sha256_bytes(b"http://127.0.0.1:8765")
+    _zap_ledger_bindings(bindings)
+    _zap_ledger_plugins({"rule_ids": request["rule_ids"]})
+    require_int(request["timeout_seconds"], "ZAP timeout", minimum=1, maximum=3600)
+    return bindings
+
+
+def _zap_native_v2_context(request, contract):
+    from .deep_audit_contract import _validate_zap_target, _zap_target_url
+
+    fields = {
+        "schema",
+        "run_id",
+        "candidate_sha256",
+        "profile_sha256",
+        "rule_ids",
+        "timeout_seconds",
+        "target",
+        "route_id",
+        "disabled_rule_id",
+    }
+    required_fields = fields - {"disabled_rule_id"}
+    exact_keys(request, required_fields, {"disabled_rule_id"})
+    if (
+        set(request) not in (required_fields, fields)
+        or request["schema"] != "factory.zap-native-request.v2"
+    ):
+        raise RuntimeAuditError("E_ZAP_REQUEST", "native v2 request fields differ")
+    inventory, lane = _adapter_contract_parts(contract)
+    if lane.get("engine") != "zap" or "native_target" not in lane:
+        raise RuntimeAuditError("E_ZAP_REQUEST", "signed ZAP target required")
+    target = request["target"]
+    if target != lane["native_target"]:
+        raise RuntimeAuditError("E_ZAP_TARGET", "request target differs from contract")
+    _validate_zap_target(target, inventory)
+    route_id = require_str(request["route_id"], "route_id", maximum=64)
+    routes = [route for route in target["routes"] if route["id"] == route_id]
+    if len(routes) != 1:
+        raise RuntimeAuditError("E_ZAP_ROUTE", "declared route required")
+    route = routes[0]
+    from .deep_audit_sarif import _zap_ledger_bindings, _zap_ledger_plugins
+
+    bindings = {
+        "run_id": contract["run_id"],
+        "candidate_sha256": inventory["candidate_sha256"],
+        "profile_sha256": digest(lane),
+        "host_id": sha256_bytes(_zap_target_base_url(target).encode("utf-8")),
+    }
+    _zap_ledger_bindings(bindings)
+    if any(
+        request[key] != bindings[key]
+        for key in ("run_id", "candidate_sha256", "profile_sha256")
+    ):
+        raise RuntimeAuditError("E_ZAP_BINDING", "request differs from signed contract")
+    expected_rule_ids = lane.get("rule_ids")
+    if request["rule_ids"] != expected_rule_ids:
+        raise RuntimeAuditError("E_ZAP_INVENTORY", "request rules differ from lane")
+    _zap_ledger_plugins({"rule_ids": request["rule_ids"]})
+    disabled_rule_id = request.get("disabled_rule_id")
+    if disabled_rule_id is not None:
+        mutations = lane.get("mutation_config_sha256")
+        if (
+            disabled_rule_id not in expected_rule_ids
+            or not isinstance(mutations, dict)
+            or disabled_rule_id not in mutations
+            or digest(
+                {
+                    "schema": "factory.zap-disabled-policy.v1",
+                    "rule_ids": expected_rule_ids,
+                    "disabled_rule_id": disabled_rule_id,
+                }
+            )
+            != mutations[disabled_rule_id]
+        ):
+            raise RuntimeAuditError(
+                "E_ZAP_MUTATION", "disabled rule lacks its exact signed policy hash"
+            )
+    timeout = require_int(
+        request["timeout_seconds"], "ZAP timeout", minimum=1, maximum=3600
+    )
+    lane_timeout = require_int(
+        lane.get("timeout_seconds"), "lane timeout", minimum=1, maximum=3600
+    )
+    if timeout > lane_timeout:
+        raise RuntimeAuditError("E_ZAP_TIMEOUT", "request exceeds signed timeout")
+    return {
+        "bindings": bindings,
+        "target": target,
+        "route": route,
+        "route_id": route_id,
+        "target_url": _zap_target_url(target, route),
+        "base_url": _zap_target_base_url(target),
+        "target_sha256": digest(target),
+        "route_sha256": digest(route),
+        "disabled_rule_id": disabled_rule_id,
+    }
+
+
+def _zap_api(component, kind, name, deadline, *, watch=None, **arguments):
+    from urllib.request import ProxyHandler, build_opener
+    from urllib.parse import urlencode
+
+    if (component, kind, name) not in {
+        ("core", "view", "version"),
+        ("core", "view", "alerts"),
+        ("core", "action", "accessUrl"),
+        ("pscan", "view", "recordsToScan"),
+        ("ascan", "view", "scanners"),
+        ("ascan", "view", "status"),
+        ("ascan", "action", "scan"),
+        ("ascan", "action", "disableAllScanners"),
+        ("ascan", "action", "enableScanners"),
+    }:
+        raise RuntimeAuditError("E_ZAP_API", "unapproved API action")
+    if watch is not None and watch.get("target") is not None:
+        _zap_validate_target_watch(watch)
+    _zap_api_arguments(
+        component,
+        kind,
+        name,
+        arguments,
+        target_url=watch.get("target_url") if watch else None,
+        base_url=watch.get("base_url") if watch else None,
+    )
+    if watch is not None:
+        _zap_check_daemon(watch)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise RuntimeAuditError("E_ZAP_TIMEOUT", "native scan deadline exhausted")
+    url = (
+        "http://127.0.0.1:8090/JSON/"
+        + "/".join((component, kind, name))
+        + "/?"
+        + urlencode(arguments)
+    )
+    with build_opener(ProxyHandler({})).open(
+        url, timeout=min(5, remaining)
+    ) as response:
+        raw = response.read(NATIVE_COVERAGE_LIMIT + 1)
+    if len(raw) > NATIVE_COVERAGE_LIMIT:
+        raise RuntimeAuditError("E_ZAP_OUTPUT", "native API output budget exceeded")
+    value = strict_json(raw)
+    if not isinstance(value, dict) or "code" in value:
+        raise RuntimeAuditError("E_ZAP_API", "native API request failed")
+    if watch is not None:
+        _zap_check_daemon(watch)
+    return value
+
+
+def _zap_api_arguments(
+    component, kind, name, arguments, *, target_url=None, base_url=None
+):
+    target_url = target_url or "http://127.0.0.1:8765/?input=seed"
+    base_url = base_url or "http://127.0.0.1:8765"
+    fixed = {
+        ("pscan", "view", "recordsToScan"): {},
+        ("core", "action", "accessUrl"): {
+            "url": target_url,
+            "followRedirects": "false",
+        },
+        ("ascan", "action", "scan"): {
+            "url": target_url,
+            "recurse": "false",
+            "inScopeOnly": "false",
+        },
+        ("core", "view", "alerts"): {"baseurl": base_url},
+    }
+    endpoint = (component, kind, name)
+    if endpoint in fixed:
+        if arguments != fixed[endpoint]:
+            raise RuntimeAuditError("E_ZAP_TARGET", "native target or scope differs")
+        return
+    if endpoint == ("ascan", "view", "status"):
+        value = arguments.get("scanId")
+        if (
+            set(arguments) != {"scanId"}
+            or not isinstance(value, str)
+            or re.fullmatch(r"[0-9]{1,20}", value) is None
+        ):
+            raise RuntimeAuditError("E_ZAP_SCAN", "native scan ID required")
+        return
+    if endpoint == ("ascan", "action", "enableScanners"):
+        value = arguments.get("ids")
+        if (
+            set(arguments) != {"ids"}
+            or not isinstance(value, str)
+            or len(value) > 45_056
+        ):
+            raise RuntimeAuditError("E_ZAP_INVENTORY", "bounded plugin IDs required")
+        from .deep_audit_sarif import _zap_ledger_plugins
+
+        _zap_ledger_plugins({"rule_ids": value.split(",")})
+        return
+    if arguments:
+        raise RuntimeAuditError("E_ZAP_API", "unexpected API arguments")
+
+
+def _zap_validate_target_watch(watch):
+    from .deep_audit_contract import _validate_zap_target, _zap_target_url
+
+    target, route = watch["target"], watch["route"]
+    _validate_zap_target(target)
+    if route not in target["routes"]:
+        raise RuntimeAuditError("E_ZAP_ROUTE", "watch route is not declared")
+    if (
+        watch.get("target_url") != _zap_target_url(target, route)
+        or watch.get("base_url") != _zap_target_base_url(target)
+        or watch.get("target_sha256") != digest(target)
+        or watch.get("route_sha256") != digest(route)
+    ):
+        raise RuntimeAuditError("E_ZAP_TARGET", "watch target binding differs")
+
+
+def _zap_target_base_url(target):
+    from .deep_audit_contract import _zap_target_url
+
+    readiness_url = _zap_target_url(target)
+    return readiness_url.removesuffix(target["readiness_path"])
+
+
+def _zap_daemon_argv(home):
+    return [
+        "/opt/factory/java/bin/java",
+        "-Xmx512m",
+        "-Djava.awt.headless=true",
+        "-jar",
+        "/zap/zap-2.17.0.jar",
+        "-daemon",
+        "-host",
+        "127.0.0.1",
+        "-port",
+        "8090",
+        "-dir",
+        str(home),
+        "-config",
+        "api.disablekey=true",
+        "-config",
+        "autoupdate.checkOnStart=false",
+        "-config",
+        "autoupdate.installAddonUpdates=false",
+        "-config",
+        "autoupdate.downloadNewRelease=false",
+    ]
+
+
+def _zap_daemon_environment(bindings, home):
+    return {
+        "PATH": "/opt/factory/java/bin:/usr/local/bin:/usr/bin:/bin",
+        "JAVA_HOME": "/opt/factory/java",
+        "HOME": str(home),
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "FACTORY_ZAP_LEDGER_ENABLED": "1",
+        "FACTORY_RUN_ID": bindings["run_id"],
+        "FACTORY_CANDIDATE_SHA256": bindings["candidate_sha256"],
+        "FACTORY_PROFILE_SHA256": bindings["profile_sha256"],
+    }
+
+
+def _zap_check_daemon(watch):
+    if watch["overflow"].is_set():
+        raise RuntimeAuditError("E_ZAP_OUTPUT", "native daemon output budget exceeded")
+    if time.monotonic() >= watch["deadline"]:
+        raise RuntimeAuditError("E_ZAP_TIMEOUT", "native scan deadline exhausted")
+    if watch["child"].poll() is not None:
+        raise RuntimeAuditError("E_ZAP_PROCESS", "native daemon exited unexpectedly")
+
+
+def _zap_watch(child, deadline, overflow, context=None):
+    context = context or {}
+    return {
+        "child": child,
+        "deadline": deadline,
+        "overflow": overflow,
+        "target_url": context.get("target_url"),
+        "base_url": context.get("base_url"),
+    }
+
+
+def _zap_wait_ready(child, deadline, watch):
+    from urllib.error import URLError
+
+    while True:
+        _zap_check_daemon(watch)
+        try:
+            version = _zap_api("core", "view", "version", deadline, watch=watch)
+            if version != {"version": "2.17.0"}:
+                raise RuntimeAuditError("E_ZAP_VERSION", "native core version differs")
+            return version
+        except URLError:
+            time.sleep(min(0.2, max(0, deadline - time.monotonic())))
+
+
+def _zap_enabled_inventory(raw):
+    scanners = raw.get("scanners")
+    if not isinstance(scanners, list) or not 1 <= len(scanners) <= 4096:
+        raise RuntimeAuditError("E_ZAP_INVENTORY", "native scanner inventory missing")
+    identities, enabled = set(), []
+    for row in scanners:
+        if not isinstance(row, dict) or row.get("enabled") not in {"true", "false"}:
+            raise RuntimeAuditError("E_ZAP_INVENTORY", "invalid scanner disposition")
+        identifier = row.get("id")
+        if (
+            not isinstance(identifier, str)
+            or re.fullmatch(r"(?:0|[1-9][0-9]{0,9})", identifier) is None
+            or identifier in identities
+        ):
+            raise RuntimeAuditError(
+                "E_ZAP_INVENTORY", "invalid or duplicate scanner ID"
+            )
+        identities.add(identifier)
+        if row["enabled"] == "true":
+            enabled.append(identifier)
+    return sorted(enabled)
+
+
+def _zap_select_rules(rule_ids, deadline, watch, disabled_rule_id=None):
+    effective_rule_ids = [
+        rule_id for rule_id in rule_ids if rule_id != disabled_rule_id
+    ]
+    _zap_api("ascan", "action", "disableAllScanners", deadline, watch=watch)
+    if effective_rule_ids:
+        _zap_api(
+            "ascan",
+            "action",
+            "enableScanners",
+            deadline,
+            watch=watch,
+            ids=",".join(effective_rule_ids),
+        )
+    raw = _zap_api("ascan", "view", "scanners", deadline, watch=watch)
+    if _zap_enabled_inventory(raw) != effective_rule_ids:
+        raise RuntimeAuditError("E_ZAP_INVENTORY", "effective enabled rules differ")
+    return raw
+
+
+def _zap_start_scan(child, deadline, watch):
+    from urllib.error import HTTPError
+
+    target = watch["target_url"] or "http://127.0.0.1:8765/?input=seed"
+    access = _zap_api(
+        "core",
+        "action",
+        "accessUrl",
+        deadline,
+        watch=watch,
+        url=target,
+        followRedirects="false",
+    )
+    while True:
+        _zap_check_daemon(watch)
+        try:
+            scan = _zap_api(
+                "ascan",
+                "action",
+                "scan",
+                deadline,
+                watch=watch,
+                url=target,
+                recurse="false",
+                inScopeOnly="false",
+            )
+            identifier = require_str(scan.get("scan"), "scan ID", maximum=20)
+            if re.fullmatch(r"[0-9]+", identifier) is None:
+                raise RuntimeAuditError("E_ZAP_SCAN", "invalid scan identifier")
+            return identifier, access
+        except HTTPError as exc:
+            raw = exc.read(4097)
+            if (
+                exc.code != 400
+                or len(raw) > 4096
+                or strict_json(raw).get("code") != "url_not_found"
+            ):
+                raise RuntimeAuditError(
+                    "E_ZAP_SCAN", "native scan start rejected"
+                ) from exc
+            time.sleep(min(0.2, max(0, deadline - time.monotonic())))
+
+
+def _zap_wait_scan(child, identifier, deadline, watch):
+    while True:
+        _zap_check_daemon(watch)
+        status = _zap_api(
+            "ascan", "view", "status", deadline, watch=watch, scanId=identifier
+        )
+        value = status.get("status")
+        if (
+            not isinstance(value, str)
+            or re.fullmatch(r"[0-9]{1,3}", value) is None
+            or int(value) > 100
+        ):
+            raise RuntimeAuditError("E_ZAP_SCAN", "invalid native scan status")
+        if value == "100":
+            return status
+        time.sleep(min(0.2, max(0, deadline - time.monotonic())))
+
+
+def _zap_wait_passive_scan(child, deadline, watch):
+    """Wait for two consecutive empty passive queues before reading alerts."""
+    empty_observations = 0
+    while True:
+        _zap_check_daemon(watch)
+        pending = _zap_api("pscan", "view", "recordsToScan", deadline, watch=watch)
+        if time.monotonic() >= deadline:
+            raise RuntimeAuditError(
+                "E_ZAP_TIMEOUT", "passive scan queue did not settle before deadline"
+            )
+        count = pending.get("recordsToScan") if isinstance(pending, dict) else None
+        if (
+            not isinstance(pending, dict)
+            or set(pending) != {"recordsToScan"}
+            or not isinstance(count, str)
+            or re.fullmatch(r"(?:0|[1-9][0-9]{0,9})", count) is None
+        ):
+            raise RuntimeAuditError("E_ZAP_PASSIVE", "invalid passive scan queue count")
+        if count == "0":
+            empty_observations += 1
+            if empty_observations == 2:
+                return pending
+        else:
+            empty_observations = 0
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeAuditError(
+                "E_ZAP_TIMEOUT", "passive scan queue did not settle before deadline"
+            )
+        time.sleep(min(0.2, remaining))
+
+
+def _zap_measure_scan(request, bindings, child, deadline, watch):
+    from .deep_audit_sarif import _verify_zap_native_rule_ledger
+
+    version = _zap_wait_ready(child, deadline, watch)
+    if watch.get("target") is not None:
+        _zap_probe_target(watch)
+    disabled_rule_id = watch.get("disabled_rule_id")
+    effective_rule_ids = [
+        rule_id for rule_id in request["rule_ids"] if rule_id != disabled_rule_id
+    ]
+    before = _zap_select_rules(request["rule_ids"], deadline, watch, disabled_rule_id)
+    _zap_check_daemon(watch)
+    identifier, access = _zap_start_scan(child, deadline, watch)
+    status = _zap_wait_scan(child, identifier, deadline, watch)
+    after = _zap_api("ascan", "view", "scanners", deadline, watch=watch)
+    if _zap_enabled_inventory(after) != effective_rule_ids:
+        raise RuntimeAuditError("E_ZAP_INVENTORY", "effective enabled rules drifted")
+    _zap_wait_passive_scan(child, deadline, watch)
+    alerts = _zap_api(
+        "core",
+        "view",
+        "alerts",
+        deadline,
+        watch=watch,
+        baseurl=watch.get("base_url") or "http://127.0.0.1:8765",
+    )
+    _zap_check_daemon(watch)
+    if effective_rule_ids:
+        ledger = _zap_retained_ledger(Path("/out"))
+        verification = _verify_zap_native_rule_ledger(
+            ledger, {"engine": "zap", "rule_ids": effective_rule_ids}, bindings
+        )
+    else:
+        ledger_path = Path("/out") / "zap-rule-ledger.jsonl"
+        try:
+            ledger_path.lstat()
+        except FileNotFoundError:
+            ledger = b""
+        else:
+            # Use the same no-follow, bounded reader as nonempty ledgers; lstat
+            # only distinguishes an absent file from a present unsafe one.
+            ledger = _zap_retained_ledger(Path("/out"))
+        if ledger:
+            raise RuntimeAuditError(
+                "E_ZAP_LEDGER", "disabled-only control must not emit a ledger"
+            )
+        verification = {
+            "state": "DISABLED_CONTROL",
+            "expected_rule_ids": [],
+            "disabled_rule_id": disabled_rule_id,
+        }
+    _zap_check_daemon(watch)
+    return {
+        "schema": "factory.zap-native-observation.v1",
+        **bindings,
+        "version": version,
+        "effective_inventory_before": before,
+        "effective_inventory_after": after,
+        "scan_status": status,
+        "access": access,
+        "alerts": alerts,
+        "native_ledger": ledger.decode("utf-8"),
+        "native_verification": verification,
+        "disabled_rule_id": disabled_rule_id,
+        **(
+            {
+                "target_sha256": watch["target_sha256"],
+                "route_sha256": watch["route_sha256"],
+                "target_url": watch["target_url"],
+            }
+            if watch.get("target") is not None
+            else {}
+        ),
+    }
+
+
+def _zap_probe_target(watch):
+    from urllib.error import HTTPError
+    from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+
+    class RejectRedirect(HTTPRedirectHandler):
+        def redirect_request(self, _request, _fp, _code, _message, _headers, _url):
+            return None
+
+    _zap_check_daemon(watch)
+    target = watch["target"]
+    readiness = target["readiness_path"]
+    url = watch["base_url"] + readiness
+    remaining = watch["deadline"] - time.monotonic()
+    if remaining <= 0:
+        raise RuntimeAuditError("E_ZAP_TIMEOUT", "target readiness deadline exhausted")
+    try:
+        opener = build_opener(ProxyHandler({}), RejectRedirect())
+        with opener.open(
+            Request(url, method="GET"), timeout=min(5, remaining)
+        ) as response:
+            response.read(1)
+            if not 200 <= response.status < 300:
+                raise RuntimeAuditError("E_ZAP_TARGET_READY", "target readiness failed")
+    except HTTPError as exc:
+        raise RuntimeAuditError(
+            "E_ZAP_TARGET_READY", "target readiness failed"
+        ) from exc
+    _zap_check_daemon(watch)
+
+
+def _zap_retained_ledger(output):
+    path = local_file(output, "zap-rule-ledger.jsonl")
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, "rb") as stream:
+        before = os.fstat(stream.fileno())
+        raw = stream.read(4 * 1024 * 1024 + 1)
+        after = os.fstat(stream.fileno())
+    current = path.lstat()
+    if _zap_file_signature(before) != _zap_file_signature(after) or _zap_file_signature(
+        after
+    ) != _zap_file_signature(current):
+        raise RuntimeAuditError(
+            "E_ZAP_LEDGER_DRIFT", "native ledger changed during read"
+        )
+    if len(raw) > 4 * 1024 * 1024:
+        raise RuntimeAuditError("E_ZAP_OUTPUT", "native ledger byte budget exceeded")
+    return raw
+
+
+def _zap_file_signature(info):
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+
+
+def _zap_process_facts(child, started, streams, cleanup_confirmed, streams_closed):
+    from .runtime_audit_process import _cleanup_is_confirmed
+
+    confirmed = _cleanup_is_confirmed(child, cleanup_confirmed, streams_closed)
+    return {
+        "pid": child.pid,
+        "return_code": child.returncode,
+        "duration_ms": max(0, round((time.monotonic() - started) * 1000)),
+        "stdout_bytes": streams.get("stdout", (sha256_bytes(b""), 0))[1],
+        "stdout_sha256": streams.get("stdout", (sha256_bytes(b""), 0))[0],
+        "stderr_bytes": streams.get("stderr", (sha256_bytes(b""), 0))[1],
+        "stderr_sha256": streams.get("stderr", (sha256_bytes(b""), 0))[0],
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": confirmed,
+        "termination_reason": "intentional_stop",
+    }
+
+
+def _run_zap_native_scan(request):
+    from .runtime_audit_process import _await_cleanup, _start_stream_readers
+    import socket
+
+    if not isinstance(request, dict):
+        raise RuntimeAuditError("E_ZAP_REQUEST", "native request object required")
+    context = None
+    if request.get("schema") == "factory.zap-native-request.v2":
+        with Path("/factory-contract.json").open("rb") as stream:
+            contract = strict_json(stream.read(LIMIT + 1))
+        context = _zap_native_v2_context(request, contract)
+        bindings = context["bindings"]
+    else:
+        bindings = _zap_native_request(request)
+    output = Path("/out")
+    if output.is_symlink() or not output.is_dir() or os.name != "posix":
+        raise RuntimeAuditError(
+            "E_ZAP_BOUNDARY", "isolated Linux worker output required"
+        )
+    if (output / "zap-rule-ledger.jsonl").exists():
+        raise RuntimeAuditError("E_ZAP_OUTPUT", "native ledger must not preexist")
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 8090))
+    with tempfile.TemporaryDirectory(prefix="factory-zap-") as root:
+        started = time.monotonic()
+        child = subprocess.Popen(
+            _zap_daemon_argv(root),
+            cwd="/zap",
+            env=_zap_daemon_environment(bindings, root),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        overflow = threading.Event()
+        streams = {}
+        readers = []
+        deadline = started + request["timeout_seconds"]
+        watch = _zap_watch(child, deadline, overflow, context)
+        if context:
+            watch.update(context)
+        try:
+            readers = _start_stream_readers(child, overflow, streams)
+            result = _zap_measure_scan(request, bindings, child, deadline, watch)
+            _zap_check_daemon(watch)
+        finally:
+            cleanup, streams_closed = _await_cleanup(child, readers)
+        process_facts = _zap_process_facts(
+            child, started, streams, cleanup, streams_closed
+        )
+        if overflow.is_set():
+            raise RuntimeAuditError(
+                "E_ZAP_OUTPUT", "native daemon output budget exceeded"
+            )
+        if not process_facts["cleanup_confirmed"] or child.poll() is None:
+            raise RuntimeAuditError(
+                "E_ZAP_CLEANUP", "native process cleanup unconfirmed"
+            )
+        result["process_facts"] = process_facts
+    result["cleanup_complete"] = True
+    result["claim_boundary"] = (
+        "Native active-rule observations; not source line coverage, accuracy or release approval."
+    )
+    return result
+
+
 def adapter_main(argv: list[str] | None = None) -> int:
     """Fixed in-image endpoint; Docker isolation and host validation remain mandatory."""
-    import argparse
     import sys
 
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "native-fuzz":
         return native_fuzz_main(argv[1:])
+    if argv and argv[0] == "native-zap":
+        return _native_zap_main(argv[1:])
+    return _profile_adapter_main(argv)
+
+
+def _profile_adapter_main(argv):
+    import argparse
 
     parser = argparse.ArgumentParser()
     parser.add_argument("engine")
@@ -8320,6 +9501,338 @@ def adapter_main(argv: list[str] | None = None) -> int:
 
         print(getattr(exc, "code", "E_ADAPTER_INPUT"), file=sys.stderr)
         return 2
+
+
+def _native_zap_main(argv):
+    import sys
+
+    if argv != ["--request", "/factory-zap-request.json"]:
+        print("E_ZAP_REQUEST", file=sys.stderr)
+        return 2
+    try:
+        with Path("/factory-zap-request.json").open("rb") as stream:
+            request = strict_json(stream.read(LIMIT + 1))
+        result = _run_zap_native_scan(request)
+        raw = _bounded_json_bytes(result, LIMIT, "E_WORKER_BUNDLE_SIZE")
+        print(raw.decode("utf-8"))
+        return 0
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(getattr(exc, "code", "E_ADAPTER_INPUT"), file=sys.stderr)
+        return 2
+
+
+def zap_source_trace_bootstrap(request: dict, inventory: dict) -> str:
+    """Build the bounded in-process Python HTTP trace runner for a signed target."""
+    from .deep_audit_contract import _validate_zap_target
+
+    fields = {
+        "schema",
+        "run_id",
+        "candidate_sha256",
+        "profile_sha256",
+        "rule_ids",
+        "timeout_seconds",
+        "target",
+        "route_id",
+    }
+    exact_keys(request, fields, {"disabled_rule_id"})
+    if not fields <= set(request) or set(request) - fields - {"disabled_rule_id"}:
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "native request fields differ")
+    target = request["target"]
+    _validate_zap_target(target, inventory)
+    config = target.get("source_trace")
+    if not isinstance(config, dict):
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "signed trace config required")
+    sources = _zap_trace_sources(inventory)
+    routes = _zap_trace_routes(target, sources)
+    argv = target["argv"]
+    script = argv[1]
+    script_path = relative_path(script.removeprefix("/src/"))
+    if script != "/src/" + script_path or script_path not in sources:
+        raise RuntimeAuditError(
+            "E_ZAP_SOURCE_TRACE", "bound Python entrypoint required"
+        )
+    body = {
+        "run_id": request["run_id"],
+        "candidate_sha256": request["candidate_sha256"],
+        "profile_sha256": request["profile_sha256"],
+        "target_sha256": digest(target),
+        "provider": config["provider"],
+        "max_events": config["max_events"],
+        "routes": routes,
+        "script": script,
+        "argv": argv[2:],
+    }
+    embedded = repr(json.dumps(body, sort_keys=True, separators=(",", ":")))
+    return _ZAP_TRACE_BOOTSTRAP.replace("__TRACE_CONFIG__", embedded)
+
+
+def _zap_trace_sources(inventory: dict) -> dict[str, str]:
+    from .deep_audit_contract import _zap_inventory_sources
+
+    return _zap_inventory_sources(inventory)
+
+
+def _zap_trace_routes(target: dict, sources: dict[str, str]) -> list[dict]:
+    routes = []
+    seen = set()
+    for route in target["routes"]:
+        identity = (route["method"], route["path"])
+        if identity in seen:
+            raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "duplicate method and path")
+        seen.add(identity)
+        bindings = route["source_bindings"]
+        if any(
+            path not in sources or sources[path] != sha
+            for path, sha in bindings.items()
+        ):
+            raise RuntimeAuditError(
+                "E_ZAP_SOURCE_TRACE", "route source binding differs"
+            )
+        routes.append(
+            {
+                "id": route["id"],
+                "method": route["method"],
+                "path": route["path"],
+                "bindings": bindings,
+            }
+        )
+    return routes
+
+
+def zap_validate_source_trace(
+    raw: bytes, request: dict, inventory: dict, snapshot: Path
+) -> dict:
+    """Validate bounded request-associated trace lines against retained candidate bytes."""
+    target, config, routes, parsed = _zap_trace_document(raw, request, inventory)
+    observations = _zap_trace_observations(parsed, routes, inventory, snapshot)
+    if not observations:
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "nonempty trace required")
+    normalized = [
+        {
+            "route_id": route,
+            "path": path,
+            "source_sha256": sha,
+            "lines": sorted(numbers),
+        }
+        for (route, path, sha), numbers in sorted(observations.items())
+    ]
+    return {
+        "schema": "factory.zap-source-trace.normalized.v1",
+        "run_id": request["run_id"],
+        "candidate_sha256": request["candidate_sha256"],
+        "profile_sha256": request["profile_sha256"],
+        "target_sha256": digest(target),
+        "provider": config["provider"],
+        "raw_sha256": sha256_bytes(raw),
+        "observations": normalized,
+        "claim_boundary": "in-process observed request-associated lines, not authenticity/full branches",
+    }
+
+
+def _zap_trace_document(raw: bytes, request: dict, inventory: dict):
+    from .deep_audit_contract import _validate_zap_target
+
+    if not isinstance(raw, bytes) or not 1 <= len(raw) <= 4 * 1024 * 1024:
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "trace byte budget exceeded")
+    if not raw.endswith(b"\n") or not isinstance(request, dict):
+        raise RuntimeAuditError(
+            "E_ZAP_SOURCE_TRACE", "complete trace and request required"
+        )
+    target = request.get("target")
+    _validate_zap_target(target, inventory)
+    config = target.get("source_trace", {})
+    sources = _zap_trace_sources(inventory)
+    routes = _zap_trace_routes(target, sources)
+    lines = raw.splitlines()
+    if not lines or len(lines) > config["max_events"] + 1:
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "trace row budget exceeded")
+    parsed = []
+    for line in lines:
+        row = strict_json(line)
+        if canonical_bytes(row) != line:
+            raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "noncanonical trace row")
+        parsed.append(row)
+    expected = {
+        "kind": "header",
+        "schema": "factory.zap-source-trace.v1",
+        "run_id": request["run_id"],
+        "candidate_sha256": request["candidate_sha256"],
+        "profile_sha256": request["profile_sha256"],
+        "target_sha256": digest(target),
+        "provider": config["provider"],
+        "route_ids": sorted(r["id"] for r in routes),
+        "max_events": config["max_events"],
+    }
+    if parsed[0] != expected:
+        raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "trace header binding differs")
+    return target, config, routes, parsed[1:]
+
+
+def _zap_trace_observations(rows, routes, inventory, snapshot):
+    sources = _zap_trace_sources(inventory)
+    route_map = {route["id"]: route for route in routes}
+    source_lines = {}
+    seen = set()
+    observations = {}
+    for row in rows:
+        if row.get("overflow") is True:
+            raise RuntimeAuditError(
+                "E_ZAP_SOURCE_TRACE", "trace overflow marker present"
+            )
+        exact_keys(row, {"route_id", "path", "source_sha256", "line"})
+        route_id = require_str(row["route_id"], "route_id", maximum=64)
+        path = relative_path(row["path"])
+        source_hash = require_digest(row["source_sha256"], "source_sha256")
+        line_no = row["line"]
+        route = route_map.get(route_id)
+        if (
+            route is None
+            or route["bindings"].get(path) != source_hash
+            or sources.get(path) != source_hash
+            or type(line_no) is not int
+            or line_no < 1
+        ):
+            raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "trace event binding differs")
+        key = (route_id, path, source_hash, line_no)
+        if key in seen:
+            raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "duplicate trace event")
+        seen.add(key)
+        binding = (path, source_hash)
+        if binding not in source_lines:
+            source = bound_bytes(snapshot, {"path": path, "sha256": source_hash})
+            try:
+                encoding, _ = tokenize.detect_encoding(
+                    iter(source.splitlines(keepends=True)).__next__
+                )
+                source_lines[binding] = len(source.decode(encoding).splitlines())
+            except (SyntaxError, UnicodeError, StopIteration) as exc:
+                raise RuntimeAuditError(
+                    "E_ZAP_SOURCE_TRACE", "invalid bound Python source"
+                ) from exc
+        if line_no > source_lines[binding]:
+            raise RuntimeAuditError("E_ZAP_SOURCE_TRACE", "trace line exceeds source")
+        observations.setdefault((route_id, path, source_hash), set()).add(line_no)
+    return observations
+
+
+_ZAP_TRACE_BOOTSTRAP = r"""import json, os, runpy, sys, threading
+from http.server import BaseHTTPRequestHandler
+from urllib.parse import urlsplit
+
+CONFIG = json.loads(__TRACE_CONFIG__)
+LIMIT = 4 * 1024 * 1024
+TRACE_PATH = "/trace/events.jsonl"
+if os.path.islink("/trace") or not os.path.isdir("/trace"):
+    raise RuntimeError("trace directory unavailable")
+fd = os.open(TRACE_PATH, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+if not __import__("stat").S_ISREG(os.fstat(fd).st_mode):
+    raise RuntimeError("trace file is not regular")
+routes = {(r["method"], r["path"]): r for r in CONFIG["routes"]}
+route_by_id = {r["id"]: r for r in CONFIG["routes"]}
+header = {"kind":"header", "schema":"factory.zap-source-trace.v1", "run_id":CONFIG["run_id"],
+ "candidate_sha256":CONFIG["candidate_sha256"], "profile_sha256":CONFIG["profile_sha256"],
+ "target_sha256":CONFIG["target_sha256"], "provider":CONFIG["provider"],
+ "route_ids":sorted(route_by_id), "max_events":CONFIG["max_events"]}
+lock = threading.Lock()
+context = threading.local()
+seen = set()
+path_cache = {}
+size = 0
+count = 0
+failed = False
+
+def encoded(row):
+    return json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8") + b"\n"
+
+def invalidate(reason):
+    global failed
+    failed = True
+    try:
+        marker = encoded({"overflow": True, "reason": reason})
+        if size + len(marker) <= LIMIT:
+            os.write(fd, marker)
+    finally:
+        os._exit(70)
+
+def write_row(row, counted):
+    global size, count
+    raw = encoded(row)
+    with lock:
+        if failed:
+            return
+        if (counted and count >= CONFIG["max_events"]) or size + len(raw) > LIMIT - 256:
+            invalidate("event_budget")
+        try:
+            written = os.write(fd, raw)
+            if written != len(raw):
+                invalidate("short_write")
+        except BaseException:
+            invalidate("write_failure")
+        size += len(raw)
+        if counted:
+            count += 1
+
+write_row(header, False)
+local = threading.local()
+original_parse = BaseHTTPRequestHandler.parse_request
+original_handle = BaseHTTPRequestHandler.handle_one_request
+
+def parse_request(self):
+    ok = original_parse(self)
+    if ok:
+        route = routes.get((self.command, urlsplit(self.path).path))
+        local.route_id = route["id"] if route else None
+    return ok
+
+def handle_one_request(self):
+    try:
+        return original_handle(self)
+    finally:
+        local.route_id = None
+
+BaseHTTPRequestHandler.parse_request = parse_request
+BaseHTTPRequestHandler.handle_one_request = handle_one_request
+
+def trace(frame, event, arg):
+    route_id = getattr(local, "route_id", None)
+    if event == "call":
+        if not route_id:
+            return None
+        filename = frame.f_code.co_filename
+        path = path_cache.get(filename)
+        if path is None:
+            canonical = os.path.realpath(filename)
+            path = canonical[5:] if canonical.startswith("/src/") else ""
+            path_cache[filename] = path
+        return trace if path in route_by_id[route_id]["bindings"] else None
+    if event == "line" and route_id:
+        filename = frame.f_code.co_filename
+        path = path_cache.get(filename)
+        if path is None:
+            canonical = os.path.realpath(filename)
+            path = canonical[5:] if canonical.startswith("/src/") else ""
+            path_cache[filename] = path
+        sha = route_by_id[route_id]["bindings"].get(path)
+        if sha:
+            key = (route_id, path, frame.f_lineno)
+            with lock:
+                fresh = key not in seen
+                if fresh:
+                    seen.add(key)
+            if fresh:
+                write_row({"route_id":route_id, "path":path, "source_sha256":sha, "line":frame.f_lineno}, True)
+    return trace
+
+script = CONFIG["script"]
+if os.path.realpath(script) != script or not script.startswith("/src/"):
+    raise RuntimeError("entrypoint path differs")
+sys.path.insert(0, os.path.dirname(script))
+sys.argv = [script] + CONFIG["argv"]
+sys.settrace(trace)
+threading.settrace(trace)
+runpy.run_path(script, run_name="__main__")
+"""
 
 
 if __name__ == "__main__":

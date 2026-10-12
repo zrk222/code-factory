@@ -1,0 +1,336 @@
+diff --git a/internal/clients/clientimpl/localmatcher/localmatcher.go b/internal/clients/clientimpl/localmatcher/localmatcher.go
+index f3d2775..f3c53a8 100644
+--- a/internal/clients/clientimpl/localmatcher/localmatcher.go
++++ b/internal/clients/clientimpl/localmatcher/localmatcher.go
+@@ -11,6 +11,7 @@ import (
+ 
+ 	"github.com/google/osv-scalibr/extractor"
+ 	"github.com/google/osv-scanner/v2/internal/cmdlogger"
++	"github.com/google/osv-scanner/v2/internal/factorylookup"
+ 	"github.com/google/osv-scanner/v2/internal/imodels"
+ 	"github.com/google/osv-scanner/v2/internal/imodels/ecosystem"
+ 	"github.com/ossf/osv-schema/bindings/go/osvschema"
+@@ -71,14 +72,12 @@ func (matcher *LocalMatcher) MatchVulnerabilities(ctx context.Context, invs []*e
+ 
+ 		db, err := matcher.loadDBFromCache(ctx, pkg.Ecosystem())
+ 
+-		if err != nil {
+-			// no logging here as the loader will have already done that
+-			results = append(results, []*osvschema.Vulnerability{})
+-
+-			continue
+-		}
+-
+-		results = append(results, VulnerabilitiesAffectingPackage(db.Vulnerabilities(false), pkg))
++		if err != nil { return nil, fmt.Errorf("cannot execute native OSV query: %w", err) }
++		all := db.Vulnerabilities(false)
++		var evaluated []string
++		matched := matchWithEvidence(all, pkg, &evaluated)
++		if err := factorylookup.RecordLookup(inv, pkg, evaluated, matched); err != nil { return nil, err }
++		results = append(results, matched)
+ 	}
+ 
+ 	return results, nil
+diff --git a/internal/clients/clientimpl/localmatcher/zip.go b/internal/clients/clientimpl/localmatcher/zip.go
+index 56b5885..cd48df5 100644
+--- a/internal/clients/clientimpl/localmatcher/zip.go
++++ b/internal/clients/clientimpl/localmatcher/zip.go
+@@ -15,8 +15,10 @@ import (
+ 	"os"
+ 	"path"
+ 	"strings"
++	"sort"
+ 
+ 	"github.com/google/osv-scanner/v2/internal/cmdlogger"
++	"github.com/google/osv-scanner/v2/internal/factorylookup"
+ 	"github.com/google/osv-scanner/v2/internal/imodels"
+ 	"github.com/google/osv-scanner/v2/internal/utility/vulns"
+ 	"github.com/ossf/osv-schema/bindings/go/osvschema"
+@@ -145,31 +147,27 @@ func (db *ZipDB) fetchZip(ctx context.Context) ([]byte, error) {
+ 
+ // Loads the given zip file into the database as an OSV.
+ // It is assumed that the file is JSON and in the working directory of the db
+-func (db *ZipDB) loadZipFile(zipFile *zip.File) {
++func (db *ZipDB) loadZipFile(zipFile *zip.File) error {
+ 	file, err := zipFile.Open()
+ 	if err != nil {
+-		cmdlogger.Warnf("Could not read %s: %v", zipFile.Name, err)
+-
+-		return
++		return fmt.Errorf("could not read %s: %w", zipFile.Name, err)
+ 	}
+ 	defer file.Close()
+ 
+ 	content, err := io.ReadAll(file)
+ 	if err != nil {
+-		cmdlogger.Warnf("Could not read %s: %v", zipFile.Name, err)
+-
+-		return
++		return fmt.Errorf("could not read %s: %w", zipFile.Name, err)
+ 	}
+ 
+ 	var vulnerability osvschema.Vulnerability
+ 
+ 	if err := json.Unmarshal(content, &vulnerability); err != nil {
+-		cmdlogger.Warnf("%s is not a valid JSON file: %v", zipFile.Name, err)
+-
+-		return
++		return fmt.Errorf("%s is not valid OSV JSON: %w", zipFile.Name, err)
+ 	}
+ 
++	if vulnerability.ID == "" { return fmt.Errorf("%s has no advisory ID", zipFile.Name) }
+ 	db.vulnerabilities = append(db.vulnerabilities, vulnerability)
++	return nil
+ }
+ 
+ // load fetches a zip archive of the OSV database and loads known vulnerabilities
+@@ -193,14 +191,19 @@ func (db *ZipDB) load(ctx context.Context) error {
+ 	}
+ 
+ 	// Read all the files from the zip archive
++	seen := make(map[string]bool)
+ 	for _, zipFile := range zipReader.File {
+-		if !strings.HasSuffix(zipFile.Name, ".json") {
+-			continue
+-		}
+-
+-		db.loadZipFile(zipFile)
++		if !strings.HasSuffix(zipFile.Name, ".json") { continue }
++		if err := db.loadZipFile(zipFile); err != nil { return err }
++		last := db.vulnerabilities[len(db.vulnerabilities)-1].ID
++		if seen[last] { return fmt.Errorf("duplicate OSV advisory ID %s", last) }; seen[last] = true
++	}
++	if len(db.vulnerabilities)==0 { return errors.New("OSV database contains no advisories") }
++	sort.Slice(db.vulnerabilities, func(i, j int) bool { return db.vulnerabilities[i].ID < db.vulnerabilities[j].ID })
++	if factorylookup.Active() {
++		usable := db.Vulnerabilities(false)
++		if err := factorylookup.SetCatalog(body, usable); err != nil { return err }
+ 	}
+-
+ 	return nil
+ }
+ 
+@@ -225,7 +228,6 @@ func (db *ZipDB) Vulnerabilities(includeWithdrawn bool) []osvschema.Vulnerabilit
+ 	}
+ 
+ 	var vulnerabilities []osvschema.Vulnerability
+-
+ 	for _, vulnerability := range db.vulnerabilities {
+ 		if vulnerability.Withdrawn.IsZero() {
+ 			vulnerabilities = append(vulnerabilities, vulnerability)
+@@ -237,13 +239,14 @@ func (db *ZipDB) Vulnerabilities(includeWithdrawn bool) []osvschema.Vulnerabilit
+ 
+ // TODO: Move this to another file.
+ func VulnerabilitiesAffectingPackage(allVulns []osvschema.Vulnerability, pkg imodels.PackageInfo) []*osvschema.Vulnerability {
+-	var vulnerabilities []*osvschema.Vulnerability
++	return matchWithEvidence(allVulns, pkg, nil)
++}
+ 
++func matchWithEvidence(allVulns []osvschema.Vulnerability, pkg imodels.PackageInfo, evaluated *[]string) []*osvschema.Vulnerability {
++	var vulnerabilities []*osvschema.Vulnerability
+ 	for _, vulnerability := range allVulns {
+-		if vulns.IsAffected(vulnerability, pkg) && !vulns.Include(vulnerabilities, vulnerability) {
+-			vulnerabilities = append(vulnerabilities, &vulnerability)
+-		}
++		if evaluated != nil { *evaluated = append(*evaluated, vulnerability.ID) }
++		if vulns.IsAffected(vulnerability, pkg) && !vulns.Include(vulnerabilities, vulnerability) { vulnerabilities = append(vulnerabilities, &vulnerability) }
+ 	}
+-
+ 	return vulnerabilities
+ }
+diff --git a/internal/factorylookup/ledger.go b/internal/factorylookup/ledger.go
+new file mode 100644
+index 0000000..ca33f52
+--- /dev/null
++++ b/internal/factorylookup/ledger.go
+@@ -0,0 +1,119 @@
++// Package factorylookup records native OSV lookup and extraction evidence.
++package factorylookup
++
++import (
++	"bytes"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"os"
++	"sort"
++	"strings"
++	"sync"
++
++	"github.com/google/osv-scalibr/extractor"
++	"github.com/google/osv-scanner/v2/internal/imodels"
++	"github.com/ossf/osv-schema/bindings/go/osvschema"
++)
++
++const Schema = "factory.osv-lookup-execution.v1"
++const upstreamCommit = "a14aa98ab8408547083d4411091c5fbaf5b47d8e"
++const maxLedgerBytes = 16 << 20
++const maxQueries = 20000
++
++type query struct {
++	Name string `json:"name"`
++	Version string `json:"version"`
++	Ecosystem string `json:"ecosystem"`
++	Locations []string `json:"locations"`
++	State string `json:"state"`
++	EvaluatedAdvisories int `json:"evaluated_advisories"`
++	EvaluatedSHA256 string `json:"evaluated_sha256"`
++	DecisionSHA256 string `json:"decision_sha256"`
++	MatchedAdvisories []string `json:"matched_advisories"`
++}
++type extractorStatus struct { Name string `json:"name"`; State string `json:"state"` }
++type extractorRun struct { Plugins []string `json:"plugins"`; Statuses []extractorStatus `json:"statuses"` }
++type ledger struct {
++	Schema string `json:"schema"`
++	UpstreamCommit string `json:"upstream_commit"`
++	DatabaseSHA256 string `json:"database_sha256"`
++	CatalogAdvisories int `json:"catalog_advisories"`
++	CatalogSHA256 string `json:"catalog_sha256"`
++	Queries []query `json:"queries"`
++	ExtractorRuns []extractorRun `json:"extractor_runs"`
++}
++type state struct { mu sync.Mutex; out string; data ledger; catalogIDs []string; queries map[string]query }
++var current *state
++
++func Begin() error {
++	path := os.Getenv("FACTORY_OSV_LEDGER_PATH")
++	if path == "" { return errors.New("factory lookup ledger path is required") }
++	if current != nil { return errors.New("factory lookup ledger already active") }
++	current = &state{out:path, data:ledger{Schema:Schema, UpstreamCommit:upstreamCommit, Queries:[]query{}, ExtractorRuns:[]extractorRun{}}, queries:map[string]query{}}
++	return nil
++}
++func Active() bool { return current != nil }
++func hashJSON(v any) (string, []byte, error) {
++	var b bytes.Buffer
++	enc:=json.NewEncoder(&b); enc.SetEscapeHTML(false)
++	if err:=enc.Encode(v); err!=nil { return "",nil,err }
++	raw:=bytes.TrimSuffix(b.Bytes(),[]byte("\n")); sum:=sha256.Sum256(raw)
++	return hex.EncodeToString(sum[:]),raw,nil
++}
++func SetCatalog(archive []byte, vulns []osvschema.Vulnerability) error {
++	if current==nil { return nil }
++	ids:=make([]string,0,len(vulns)); seen:=map[string]bool{}
++	for _,v:=range vulns { if v.ID=="" || seen[v.ID] { return fmt.Errorf("invalid or duplicate OSV advisory ID") }; seen[v.ID]=true; ids=append(ids,v.ID) }
++	sort.Strings(ids); if len(ids)==0 || len(ids)>1000000 { return errors.New("OSV advisory catalog outside bounds") }
++	catalog,_,err:=hashJSON(ids); if err!=nil{return err}; db:=sha256.Sum256(archive)
++	current.mu.Lock(); defer current.mu.Unlock()
++	if current.data.DatabaseSHA256!="" && current.data.DatabaseSHA256!=hex.EncodeToString(db[:]) { return errors.New("multiple OSV databases are unsupported") }
++	current.data.DatabaseSHA256=hex.EncodeToString(db[:]); current.data.CatalogSHA256=catalog; current.data.CatalogAdvisories=len(ids); current.catalogIDs=ids
++	return nil
++}
++func RecordLookup(inv *extractor.Package, pkg imodels.PackageInfo, evaluatedIDs []string, matched []*osvschema.Vulnerability) error {
++	if current==nil{return nil}
++	if len(current.catalogIDs)==0 || len(evaluatedIDs)!=len(current.catalogIDs) { return errors.New("native advisory catalog is unavailable") }
++	ids:=append([]string(nil),evaluatedIDs...)
++	for i,id:=range ids { if id!=current.catalogIDs[i] { return errors.New("native evaluation order differs from catalog") } }
++	hash,_,err:=hashJSON(ids); if err!=nil{return err}
++	matchIDs:=make([]string,0,len(matched)); for _,v:=range matched { matchIDs=append(matchIDs,v.ID) }; sort.Strings(matchIDs)
++	for i:=1;i<len(matchIDs);i++ { if matchIDs[i]==matchIDs[i-1] { return errors.New("duplicate matched OSV advisory") } }
++	identity:=map[string]any{"name":pkg.Name(),"version":pkg.Version(),"ecosystem":string(pkg.Ecosystem().Ecosystem),"catalog_sha256":current.data.CatalogSHA256,"evaluated_advisories":len(ids),"matched_advisories":matchIDs}
++	decision,_,err:=hashJSON(identity); if err!=nil{return err}
++	locations:=[]string{pkg.Location()}
++	if len(locations[0])==0 { return errors.New("native package query lacks source location") }
++	row:=query{Name:identity["name"].(string),Version:identity["version"].(string),Ecosystem:identity["ecosystem"].(string),Locations:locations,State:"EXECUTED",EvaluatedAdvisories:len(ids),EvaluatedSHA256:hash,DecisionSHA256:decision,MatchedAdvisories:matchIDs}
++	key,_,err:=hashJSON([]string{row.Name,row.Version,row.Ecosystem}); if err!=nil{return err}
++	current.mu.Lock(); defer current.mu.Unlock()
++	if prior,ok:=current.queries[key]; ok {
++		if prior.DecisionSHA256!=row.DecisionSHA256 { return errors.New("duplicate OSV package query changed decision") }
++		prior.Locations=unique(append(prior.Locations,row.Locations...)); current.queries[key]=prior; return nil
++	}
++	if len(current.queries)>=maxQueries{return errors.New("too many native OSV package queries")}; current.queries[key]=row
++	return nil
++}
++func RecordExtractor(plugins []string, statuses map[string]string) error {
++	if current==nil{return nil}
++	p:=append([]string(nil),plugins...); sort.Strings(p); p=unique(p)
++	if len(p)==0 || len(p)!=len(statuses) { return errors.New("native extractor status set differs") }
++	rows:=make([]extractorStatus,0,len(p))
++	for _,name:=range p { status,ok:=statuses[name]; if !ok || status!="SUCCEEDED" { return fmt.Errorf("native extractor %s did not succeed",name) }; rows=append(rows,extractorStatus{name,status}) }
++	current.mu.Lock(); defer current.mu.Unlock(); current.data.ExtractorRuns=append(current.data.ExtractorRuns,extractorRun{Plugins:p,Statuses:rows}); return nil
++}
++func Finalize() error {
++	if current==nil{return nil}
++	st:=current; current=nil; st.mu.Lock(); defer st.mu.Unlock()
++	if st.data.DatabaseSHA256=="" || len(st.queries)==0 || len(st.data.ExtractorRuns)==0 { return errors.New("incomplete native OSV ledger") }
++	keys:=make([]string,0,len(st.queries)); for k:=range st.queries{keys=append(keys,k)}; sort.Strings(keys)
++	for _,k:=range keys{st.data.Queries=append(st.data.Queries,st.queries[k])}
++	raw,err:=json.Marshal(st.data); if err!=nil{return err}; raw=append(raw,'\n')
++	if len(raw)>maxLedgerBytes{return errors.New("native OSV ledger exceeds size limit")}
++	f,err:=os.OpenFile(st.out,os.O_WRONLY|os.O_CREATE|os.O_EXCL,0600); if err!=nil{return err}; defer f.Close()
++	if _,err=f.Write(raw); err!=nil{return err}; return f.Sync()
++}
++func unique(v []string) []string { sort.Strings(v); out:=v[:0]; for _,s:=range v { if s!="" && (len(out)==0 || out[len(out)-1]!=s) { out=append(out,s) } }; return out }
++func CleanIdentity(s string) bool { return s!="" && !strings.ContainsAny(s,"\r\n") }
+diff --git a/pkg/osvscanner/osvscanner.go b/pkg/osvscanner/osvscanner.go
+index 65a633e..88dfa28 100644
+--- a/pkg/osvscanner/osvscanner.go
++++ b/pkg/osvscanner/osvscanner.go
+@@ -26,6 +26,7 @@ import (
+ 	"github.com/google/osv-scanner/v2/internal/clients/clientimpl/osvmatcher"
+ 	"github.com/google/osv-scanner/v2/internal/clients/clientinterfaces"
+ 	"github.com/google/osv-scanner/v2/internal/cmdlogger"
++	"github.com/google/osv-scanner/v2/internal/factorylookup"
+ 	"github.com/google/osv-scanner/v2/internal/config"
+ 	"github.com/google/osv-scanner/v2/internal/depsdev"
+ 	"github.com/google/osv-scanner/v2/internal/imodels"
+@@ -190,6 +191,12 @@ func initializeExternalAccessors(actions ScannerActions) (ExternalAccessors, err
+ 
+ // DoScan performs the osv scanner action, with optional reporter to output information
+ func DoScan(actions ScannerActions) (models.VulnerabilityResults, error) {
++	if os.Getenv("FACTORY_OSV_LEDGER_PATH") != "" {
++		if err := factorylookup.Begin(); err != nil { return models.VulnerabilityResults{}, err }
++		if len(actions.DirectoryPaths) != 1 || len(actions.LockfilePaths) != 0 || len(actions.SBOMPaths) != 0 || !actions.Recursive {
++			return models.VulnerabilityResults{}, errors.New("native ledger supports only one recursive directory scan")
++		}
++	}
+ 	// --- Sanity check flags ----
+ 	// TODO(v2): Move the logic of the offline flag changing other flags into here from the main.go/scan.go
+ 	if actions.CompareOffline {
+@@ -271,7 +278,9 @@ func DoScan(actions ScannerActions) (models.VulnerabilityResults, error) {
+ 		)
+ 	}
+ 
+-	return vulnerabilityResults, determineReturnErr(vulnerabilityResults, actions.ShowAllVulns, false)
++	resultErr := determineReturnErr(vulnerabilityResults, actions.ShowAllVulns, false)
++	if factorylookup.Active() { if err := factorylookup.Finalize(); err != nil { return models.VulnerabilityResults{}, err } }
++	return vulnerabilityResults, resultErr
+ }
+ 
+ func DoContainerScan(actions ScannerActions) (models.VulnerabilityResults, error) {
+diff --git a/pkg/osvscanner/scan.go b/pkg/osvscanner/scan.go
+index 577250c..6d1b92f 100644
+--- a/pkg/osvscanner/scan.go
++++ b/pkg/osvscanner/scan.go
+@@ -18,6 +18,7 @@ import (
+ 	"github.com/google/osv-scalibr/inventory"
+ 	"github.com/google/osv-scalibr/plugin"
+ 	"github.com/google/osv-scanner/v2/internal/cmdlogger"
++	"github.com/google/osv-scanner/v2/internal/factorylookup"
+ 	"github.com/google/osv-scanner/v2/internal/imodels"
+ 	"github.com/google/osv-scanner/v2/internal/scalibrextract"
+ 	"github.com/google/osv-scanner/v2/internal/scalibrextract/filesystem/vendored"
+@@ -196,14 +197,16 @@ func scan(accessors ExternalAccessors, actions ScannerActions) (*imodels.ScanRes
+ 			PrintDurationAnalysis: false,
+ 			ErrorOnFSErrors:       false,
+ 		})
+-		if sr.Status.Status != plugin.ScanStatusSucceeded {
+-			return nil, errors.New(sr.Status.FailureReason)
+-		}
++		if sr.Status.Status != plugin.ScanStatusSucceeded { return nil, errors.New(sr.Status.FailureReason) }
++		selected := plugin.FilterByCapabilities(plugins, &capabilities)
++		pluginNames := make([]string, 0, len(selected))
++		for _, plug := range selected { pluginNames = append(pluginNames, plug.Name()) }
++		statuses := make(map[string]string, len(sr.PluginStatus))
+ 		for _, status := range sr.PluginStatus {
+-			if status.Status.Status != plugin.ScanStatusSucceeded {
+-				cmdlogger.Errorf("Error during extraction: (extracting as %s) %s", status.Name, status.Status.FailureReason)
+-			}
++			if status.Status.Status != plugin.ScanStatusSucceeded { return nil, fmt.Errorf("extractor %s failed: %s", status.Name, status.Status.FailureReason) }
++			statuses[status.Name] = "SUCCEEDED"
+ 		}
++		if factorylookup.Active() { if err := factorylookup.RecordExtractor(pluginNames, statuses); err != nil { return nil, err } }
+ 		genericFindings = append(genericFindings, sr.Inventory.GenericFindings...)
+ 		scannedInventories = append(scannedInventories, sr.Inventory.Packages...)
+ 	}

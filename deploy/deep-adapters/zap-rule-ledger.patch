@@ -1,0 +1,451 @@
+diff --git a/zap/src/main/java/org/parosproxy/paros/core/scanner/AbstractPlugin.java b/zap/src/main/java/org/parosproxy/paros/core/scanner/AbstractPlugin.java
+index 44b9a23..6c6e096 100644
+--- a/zap/src/main/java/org/parosproxy/paros/core/scanner/AbstractPlugin.java
++++ b/zap/src/main/java/org/parosproxy/paros/core/scanner/AbstractPlugin.java
+@@ -404,6 +404,12 @@ public abstract class AbstractPlugin implements Plugin, Comparable<Object> {
+ 
+         } catch (Exception e) {
+             getLog().error(e.getMessage(), e);
++            if (HostProcess.isNativeRuleLedgerEnabled()) {
++                if (e instanceof RuntimeException) {
++                    throw (RuntimeException) e;
++                }
++                throw new RuntimeException(e);
++            }
+         } finally {
+             notifyPluginCompleted(getParent());
+             this.finished = new Date();
+diff --git a/zap/src/main/java/org/parosproxy/paros/core/scanner/HostProcess.java b/zap/src/main/java/org/parosproxy/paros/core/scanner/HostProcess.java
+index aeecba8..4a5d149 100644
+--- a/zap/src/main/java/org/parosproxy/paros/core/scanner/HostProcess.java
++++ b/zap/src/main/java/org/parosproxy/paros/core/scanner/HostProcess.java
+@@ -109,6 +109,16 @@
+ package org.parosproxy.paros.core.scanner;
+ 
+ import java.io.IOException;
++import java.nio.ByteBuffer;
++import java.nio.channels.FileChannel;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.LinkOption;
++import java.nio.file.Path;
++import java.nio.file.Paths;
++import java.nio.file.StandardOpenOption;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
+ import java.text.DecimalFormat;
+ import java.util.ArrayList;
+ import java.util.HashMap;
+@@ -118,6 +128,8 @@ import java.util.LinkedHashMap;
+ import java.util.List;
+ import java.util.Map;
+ import java.util.Set;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.atomic.AtomicInteger;
+ import java.util.concurrent.TimeUnit;
+ import org.apache.commons.httpclient.URI;
+ import org.apache.logging.log4j.LogManager;
+@@ -176,6 +188,20 @@ public class HostProcess implements Runnable {
+ 
+     private long hostProcessStartTime = 0;
+ 
++    private final Map<Integer, AtomicInteger> nativeInvocationSequence =
++            new ConcurrentHashMap<>();
++    private final Map<Integer, AtomicInteger> nativeInvocationStarted =
++            new ConcurrentHashMap<>();
++    private final Map<Integer, AtomicInteger> nativeInvocationReturned =
++            new ConcurrentHashMap<>();
++    private final Map<Integer, AtomicInteger> nativeInvocationFailed =
++            new ConcurrentHashMap<>();
++    private final Map<Integer, AtomicInteger> nativeInvocationActive =
++            new ConcurrentHashMap<>();
++    private final Set<Integer> nativeCompletionRequested = ConcurrentHashMap.newKeySet();
++    private final Set<Integer> nativePluginTerminals = ConcurrentHashMap.newKeySet();
++    private final Set<Integer> nativePluginFailures = ConcurrentHashMap.newKeySet();
++
+     // ZAP: progress related
+     private int nodeInScopeCount = 0;
+     private int percentage = 0;
+@@ -342,6 +368,7 @@ public class HostProcess implements Runnable {
+         LOGGER.debug("HostProcess.run");
+ 
+         try {
++            NativeRuleLedger.begin();
+             hostProcessStartTime = System.currentTimeMillis();
+ 
+             // Initialise plugin factory to report the state of the plugins ASAP.
+@@ -412,8 +439,12 @@ public class HostProcess implements Runnable {
+             LOGGER.error("An error occurred while active scanning:", e);
+             stop();
+         } finally {
+-            notifyHostProgress(null);
+-            notifyHostComplete();
++            try {
++                recordUnscheduledNativePlugins();
++            } finally {
++                notifyHostProgress(null);
++                notifyHostComplete();
++            }
+         }
+     }
+ 
+@@ -635,6 +666,7 @@ public class HostProcess implements Runnable {
+         } catch (HttpMalformedHeaderException | DatabaseException e) {
+             LOGGER.warn(
+                     "Failed to read message with ID [{}], cause: {}", messageId, e.getMessage());
++            nativePluginFailures.add(plugin.getId());
+             return false;
+         }
+ 
+@@ -645,6 +677,7 @@ public class HostProcess implements Runnable {
+             if (msg.getResponseHeader().isEmpty()) {
+                 msg = msg.cloneRequest();
+                 if (!obtainResponse(historyReference, msg)) {
++                    nativePluginFailures.add(plugin.getId());
+                     return false;
+                 }
+             }
+@@ -672,15 +705,19 @@ public class HostProcess implements Runnable {
+ 
+         } catch (Exception e) {
+             LOGGER.error("{} {}", e.getMessage(), historyReference.getURI(), e);
++            nativePluginFailures.add(plugin.getId());
+             return false;
+         }
+ 
+         Thread thread;
++        int invocation = nativeNextInvocation(plugin);
+         do {
+             if (this.isStop()) {
++                nativePluginFailures.add(plugin.getId());
+                 return false;
+             }
+-            thread = threadPool.getFreeThreadAndRun(test);
++            Runnable trackedTest = () -> runTrackedPlugin(plugin, test, invocation);
++            thread = threadPool.getFreeThreadAndRun(trackedTest);
+             if (thread == null) {
+                 Util.sleep(200);
+             }
+@@ -691,6 +728,127 @@ public class HostProcess implements Runnable {
+         return true;
+     }
+ 
++    private int nativeNextInvocation(Plugin plugin) {
++        return nativeInvocationSequence
++                .computeIfAbsent(plugin.getId(), ignored -> new AtomicInteger())
++                .incrementAndGet();
++    }
++
++    private void runTrackedPlugin(Plugin plugin, Plugin test, int invocation) {
++        int pluginId = plugin.getId();
++        nativeInvocationActive
++                .computeIfAbsent(pluginId, ignored -> new AtomicInteger())
++                .incrementAndGet();
++        nativeInvocationStarted
++                .computeIfAbsent(pluginId, ignored -> new AtomicInteger())
++                .incrementAndGet();
++        try {
++            NativeRuleLedger.record(this, plugin, invocation, "invocation_started", null, null);
++        } catch (RuntimeException e) {
++            stop();
++            nativeInvocationActive.get(pluginId).decrementAndGet();
++            throw e;
++        }
++
++        Throwable failure = null;
++        try {
++            test.run();
++        } catch (RuntimeException | Error e) {
++            failure = e;
++            nativePluginFailures.add(pluginId);
++            nativeInvocationFailed
++                    .computeIfAbsent(pluginId, ignored -> new AtomicInteger())
++                    .incrementAndGet();
++        }
++
++        try {
++            if (failure == null) {
++                nativeInvocationReturned
++                        .computeIfAbsent(pluginId, ignored -> new AtomicInteger())
++                        .incrementAndGet();
++                NativeRuleLedger.record(
++                        this, plugin, invocation, "invocation_returned", null, null);
++            } else {
++                NativeRuleLedger.record(
++                        this,
++                        plugin,
++                        invocation,
++                        "invocation_failed",
++                        failure.getClass().getName(),
++                        null);
++            }
++        } catch (RuntimeException e) {
++            stop();
++            if (failure != null) {
++                failure.addSuppressed(e);
++            } else {
++                failure = e;
++            }
++        } finally {
++            nativeInvocationActive.get(pluginId).decrementAndGet();
++            maybeRecordNativePluginTerminal(plugin);
++        }
++        if (failure instanceof Error) {
++            throw (Error) failure;
++        }
++        if (failure instanceof RuntimeException) {
++            throw (RuntimeException) failure;
++        }
++    }
++
++    private void maybeRecordNativePluginTerminal(Plugin plugin) {
++        int pluginId = plugin.getId();
++        if (!nativeCompletionRequested.contains(pluginId)
++                || nativeInvocationActive
++                                .computeIfAbsent(pluginId, ignored -> new AtomicInteger())
++                                .get()
++                        != 0
++                || !nativePluginTerminals.add(pluginId)) {
++            return;
++        }
++        PluginStats stats = mapPluginStats.get(pluginId);
++        String event;
++        String failureClass = null;
++        if (stats != null && stats.isSkipped()) {
++            event = "plugin_skipped";
++        } else if (isStop()) {
++            event = "plugin_stopped";
++        } else if (nativePluginFailures.contains(pluginId)
++                || nativeInvocationStarted.getOrDefault(pluginId, new AtomicInteger()).get() == 0
++                || nativeInvocationReturned.getOrDefault(pluginId, new AtomicInteger()).get()
++                        != nativeInvocationStarted.getOrDefault(pluginId, new AtomicInteger()).get()) {
++            event = "plugin_failed";
++        } else {
++            event = "plugin_completed";
++        }
++        NativeRuleLedger.record(this, plugin, 0, event, failureClass, stats);
++    }
++
++    private void recordUnscheduledNativePlugins() {
++        if (!NativeRuleLedger.enabled()) {
++            return;
++        }
++        for (Plugin plugin : pluginFactory.getPending()) {
++            recordNativePluginEnd(plugin, isStop() ? "plugin_stopped" : "plugin_failed");
++        }
++        for (Plugin plugin : pluginFactory.getRunning()) {
++            recordNativePluginEnd(plugin, isStop() ? "plugin_stopped" : "plugin_failed");
++        }
++        for (Plugin plugin : pluginFactory.getCompleted()) {
++            if (!nativePluginTerminals.contains(plugin.getId())) {
++                recordNativePluginEnd(plugin, "plugin_failed");
++            }
++        }
++    }
++
++    private void recordNativePluginEnd(Plugin plugin, String event) {
++        if (!nativePluginTerminals.add(plugin.getId())) {
++            return;
++        }
++        NativeRuleLedger.record(
++                this, plugin, 0, event, null, mapPluginStats.get(plugin.getId()));
++    }
++
+     @SuppressWarnings("removal")
+     private static void applyDeprecatedProperties(ScannerParam source, Plugin dest) {
+         dest.setDelayInMs(source.getDelayInMs());
+@@ -1142,6 +1300,7 @@ public class HostProcess implements Runnable {
+             // Plugin was not processed
+             return;
+         }
++        nativeCompletionRequested.add(plugin.getId());
+         pluginStats.stopped();
+ 
+         StringBuilder sb = new StringBuilder();
+@@ -1173,6 +1332,7 @@ public class HostProcess implements Runnable {
+ 
+         // ZAP: update progress as finished
+         pluginStats.setProgress(nodeInScopeCount);
++        maybeRecordNativePluginTerminal(plugin);
+     }
+ 
+     /**
+@@ -1388,4 +1548,178 @@ public class HostProcess implements Runnable {
+          */
+         void apply(StructuralNode node);
+     }
++
++    private static final class NativeRuleLedger {
++
++        private static final String ENV_ENABLED = "FACTORY_ZAP_LEDGER_ENABLED";
++        private static final String ENV_RUN_ID = "FACTORY_RUN_ID";
++        private static final String ENV_CANDIDATE = "FACTORY_CANDIDATE_SHA256";
++        private static final String ENV_PROFILE = "FACTORY_PROFILE_SHA256";
++        private static final Path OUTPUT_DIR = Paths.get("/out");
++        private static final Path OUTPUT = OUTPUT_DIR.resolve("zap-rule-ledger.jsonl");
++        private static final long MAX_BYTES = 4 * 1024 * 1024;
++        private static final int MAX_RECORD_BYTES = 4096;
++
++        private static boolean initialized;
++        private static boolean enabled;
++        private static String runId;
++        private static String candidateSha256;
++        private static String profileSha256;
++        private static FileChannel channel;
++        private static long writtenBytes;
++
++        private NativeRuleLedger() {}
++
++        private static synchronized void begin() {
++            if (initialized) {
++                return;
++            }
++            String requested = System.getenv(ENV_ENABLED);
++            if (requested == null || requested.isEmpty() || "0".equals(requested)) {
++                initialized = true;
++                return;
++            }
++            if (!"1".equals(requested)) {
++                throw new IllegalStateException("invalid native rule-ledger enable flag");
++            }
++            runId = requiredEnv(ENV_RUN_ID, "[A-Za-z0-9._-]{1,128}");
++            candidateSha256 = requiredEnv(ENV_CANDIDATE, "[0-9a-f]{64}");
++            profileSha256 = requiredEnv(ENV_PROFILE, "[0-9a-f]{64}");
++            try {
++                if (!Files.isDirectory(OUTPUT_DIR, LinkOption.NOFOLLOW_LINKS)
++                        || Files.isSymbolicLink(OUTPUT_DIR)
++                        || !OUTPUT_DIR.toRealPath(LinkOption.NOFOLLOW_LINKS).equals(OUTPUT_DIR)) {
++                    throw new IllegalStateException("native rule-ledger output directory invalid");
++                }
++                if (Files.exists(OUTPUT, LinkOption.NOFOLLOW_LINKS)) {
++                    throw new IllegalStateException("native rule-ledger output already exists");
++                }
++                channel = FileChannel.open(
++                        OUTPUT,
++                        StandardOpenOption.CREATE_NEW,
++                        StandardOpenOption.WRITE,
++                        LinkOption.NOFOLLOW_LINKS);
++            } catch (IOException e) {
++                throw new IllegalStateException("native rule-ledger output unavailable", e);
++            }
++            enabled = true;
++            initialized = true;
++        }
++
++        private static String requiredEnv(String name, String pattern) {
++            String value = System.getenv(name);
++            if (value == null || !value.matches(pattern)) {
++                throw new IllegalStateException("invalid native rule-ledger binding: " + name);
++            }
++            return value;
++        }
++
++        private static synchronized boolean enabled() {
++            return enabled;
++        }
++
++        private static synchronized void record(
++                HostProcess owner,
++                Plugin plugin,
++                int invocation,
++                String event,
++                String exceptionClass,
++                PluginStats stats) {
++            if (!enabled) {
++                return;
++            }
++            String hostId = sha256(owner.hostAndPort.getBytes(StandardCharsets.UTF_8));
++            StringBuilder json = new StringBuilder(512);
++            json.append("{\"schema\":\"factory.zap-rule-ledger.v1\"")
++                    .append(",\"run_id\":").append(jsonString(runId))
++                    .append(",\"candidate_sha256\":").append(jsonString(candidateSha256))
++                    .append(",\"profile_sha256\":").append(jsonString(profileSha256))
++                    .append(",\"host_id\":").append(jsonString(hostId))
++                    .append(",\"plugin_id\":").append(plugin.getId())
++                    .append(",\"plugin_name\":")
++                    .append(jsonString(safePluginName(plugin.getCodeName())))
++                    .append(",\"invocation\":").append(invocation)
++                    .append(",\"event\":").append(jsonString(event))
++                    .append(",\"status\":").append(jsonString(status(event)));
++            PluginStats recordStats = stats == null ? owner.mapPluginStats.get(plugin.getId()) : stats;
++            json.append(",\"message_count\":")
++                    .append(recordStats == null ? 0 : recordStats.getMessageCount())
++                    .append(",\"alert_count\":")
++                    .append(recordStats == null ? 0 : recordStats.getAlertCount());
++            if ("invocation_failed".equals(event)) {
++                json.append(",\"exception_class\":")
++                        .append(jsonString(exceptionClass));
++            }
++            json.append("}\n");
++            byte[] raw = json.toString().getBytes(StandardCharsets.UTF_8);
++            if (raw.length > MAX_RECORD_BYTES || writtenBytes + raw.length > MAX_BYTES) {
++                throw new IllegalStateException("native rule-ledger byte budget exceeded");
++            }
++            try {
++                ByteBuffer buffer = ByteBuffer.wrap(raw);
++                while (buffer.hasRemaining()) {
++                    channel.write(buffer);
++                }
++                channel.force(false);
++                writtenBytes += raw.length;
++            } catch (IOException e) {
++                throw new IllegalStateException("native rule-ledger write failed", e);
++            }
++        }
++
++        private static String status(String event) {
++            return event.substring(event.indexOf('_') + 1);
++        }
++
++        private static String safePluginName(String name) {
++            if (name == null || name.isEmpty()) {
++                return "unknown";
++            }
++            StringBuilder result = new StringBuilder(Math.min(name.length(), 128));
++            for (int i = 0; i < name.length() && result.length() < 128; i++) {
++                char ch = name.charAt(i);
++                result.append((ch >= 'A' && ch <= 'Z')
++                                || (ch >= 'a' && ch <= 'z')
++                                || (ch >= '0' && ch <= '9')
++                                || ch == '.'
++                                || ch == '_'
++                                || ch == '-'
++                        ? ch
++                        : '_');
++            }
++            return result.toString();
++        }
++
++        private static String jsonString(String value) {
++            StringBuilder result = new StringBuilder(value.length() + 2).append('"');
++            for (int i = 0; i < value.length(); i++) {
++                char ch = value.charAt(i);
++                if (ch == '"' || ch == '\\') {
++                    result.append('\\').append(ch);
++                } else if (ch < 0x20) {
++                    result.append(String.format("\\u%04x", (int) ch));
++                } else {
++                    result.append(ch);
++                }
++            }
++            return result.append('"').toString();
++        }
++
++        private static String sha256(byte[] raw) {
++            try {
++                byte[] hash = MessageDigest.getInstance("SHA-256").digest(raw);
++                StringBuilder result = new StringBuilder(64);
++                for (byte value : hash) {
++                    result.append(String.format("%02x", value & 0xff));
++                }
++                return result.toString();
++            } catch (NoSuchAlgorithmException e) {
++                throw new IllegalStateException("SHA-256 unavailable", e);
++            }
++        }
++    }
++
++    static boolean isNativeRuleLedgerEnabled() {
++        return NativeRuleLedger.enabled();
++    }
+ }

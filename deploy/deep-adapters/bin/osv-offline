@@ -1,4 +1,93 @@
 #!/bin/sh
 set -eu
 export OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY=/opt/factory/osv-db
-exec /usr/local/bin/osv-scanner "$@"
+
+# Evidence mode supports one signed recursive source-directory scan.
+[ "$#" -ge 9 ] && [ "$1" = scan ] && [ "$2" = source ] || exit 64
+case " $* " in *" --offline "*) ;; *) exit 64 ;; esac
+case " $* " in *" --offline-vulnerabilities "*) ;; *) exit 64 ;; esac
+case " $* " in *" --all-packages "*) ;; *) exit 64 ;; esac
+case " $* " in *" --format json "*) ;; *) exit 64 ;; esac
+case " $* " in *" --lockfile "*|*" --sbom "*) exit 64 ;; esac
+source_dir=
+report=
+need=
+for arg do
+  if [ -n "$need" ]; then
+    if [ "$need" = source ]; then [ -z "$source_dir" ] || exit 64; source_dir=$arg; else [ -z "$report" ] || exit 64; report=$arg; fi
+    need=
+    continue
+  fi
+  case "$arg" in -r) need=source ;; --output) need=report ;; esac
+done
+[ -z "$need" ] && [ -n "$source_dir" ] && [ -n "$report" ] || exit 64
+case "$source_dir" in /*) ;; *) exit 64 ;; esac
+case "$report" in /*) ;; *) exit 64 ;; esac
+case "$source_dir" in *"/../"*|*"/..") exit 64 ;; esac
+case "$report" in *"/../"*|*"/..") exit 64 ;; esac
+case "$source_dir" in /src|/src/*|/out|/out/*|/tmp/*|/home/factory/*) ;; *) exit 64 ;; esac
+case "$report" in /src/*|/out/*|/tmp/*|/home/factory/*) ;; *) exit 64 ;; esac
+[ -d "$source_dir" ] && [ ! -L "$source_dir" ] || exit 64
+ledger="${report}.factory-lookup"
+[ ! -e "$report" ] && [ ! -L "$report" ] && [ ! -e "$ledger" ] && [ ! -L "$ledger" ] || exit 73
+export FACTORY_OSV_LEDGER_PATH="$ledger"
+set +e
+/usr/local/bin/osv-scanner "$@"
+status=$?
+set -e
+[ "$status" -eq 0 ] || [ "$status" -eq 1 ] || exit "$status"
+/usr/local/bin/python -I - "$report" "$ledger" <<'PY'
+import json, os, stat, sys, tempfile
+report, ledger = sys.argv[1:]
+def read_regular(path, limit):
+    st = os.lstat(path)
+    if not stat.S_ISREG(st.st_mode) or st.st_size > limit:
+        raise SystemExit(65)
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if not stat.S_ISREG(opened.st_mode) or opened.st_size > limit:
+            raise SystemExit(65)
+        data = stream.read(limit + 1)
+    if len(data) > limit:
+        raise SystemExit(65)
+    return data
+def unique(pairs):
+    out = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError("duplicate JSON key")
+        out[key] = value
+    return out
+try:
+    report_bytes = read_regular(report, 10_000_000)
+    ledger_bytes = read_regular(ledger, 16 << 20)
+    document = json.loads(report_bytes, object_pairs_hook=unique)
+    execution = json.loads(ledger_bytes, object_pairs_hook=unique)
+    if not isinstance(document, dict) or "factory_lookup_execution" in document:
+        raise ValueError("report shape invalid")
+    if not isinstance(execution, dict) or execution.get("schema") != "factory.osv-lookup-execution.v1":
+        raise ValueError("native ledger shape invalid")
+    document["factory_lookup_execution"] = execution
+    encoded = json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
+    if len(encoded) > 10_000_000:
+        raise ValueError("report too large")
+    directory = os.path.dirname(report)
+    fd, temporary = tempfile.mkstemp(prefix=".osv-report-", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as output:
+            output.write(encoded)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, report)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+    os.unlink(ledger)
+except Exception as error:
+    print("factory OSV evidence transport failed:", type(error).__name__, file=sys.stderr)
+    raise SystemExit(65)
+PY
+exit "$status"

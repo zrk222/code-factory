@@ -1027,6 +1027,315 @@ def test_v2_role_tables_match_native_helper_and_report_roles():
     assert _NATIVE_REPORT_ROLES == NATIVE_REPORT_ROLE
 
 
+def _zap_target_fixture(inventory):
+    source = inventory["files"][0]
+    return {
+        "schema": "factory.zap-target.v1",
+        "image": "example.test/app@sha256:" + "a" * 64,
+        "argv": ["/opt/app/bin/server", "--port", "8080"],
+        "port": 8080,
+        "readiness_path": "/health/ready",
+        "routes": [
+            {
+                "id": "health",
+                "method": "GET",
+                "path": "/health/ready",
+                "query": {"probe": "ready"},
+                "source_bindings": {source["path"]: source["sha256"]},
+            }
+        ],
+    }
+
+
+def test_zap_target_contract_binds_sorted_routes_and_inventory_sources(tmp_path):
+    from factoryline.deep_audit_contract import _validate_zap_target, _zap_target_url
+
+    _, _, _, _, _, _, inventory, _ = execution_fixture(tmp_path)
+    target = _zap_target_fixture(inventory)
+    route = target["routes"][0]
+
+    assert _validate_zap_target(target, inventory) is None
+    assert _zap_target_url(target) == "http://factory-target:8080/health/ready"
+    assert _zap_target_url(target, route) == (
+        "http://factory-target:8080/health/ready?probe=ready"
+    )
+
+
+def _python_trace_target(inventory):
+    target = _zap_target_fixture(inventory)
+    source = next(iter(target["routes"][0]["source_bindings"]))
+    target["argv"] = ["/usr/bin/python3.11", f"/src/{source}", "--serve"]
+    target["source_trace"] = {
+        "schema": "factory.zap-source-trace.config.v1",
+        "provider": "python-stdlib-http.v1",
+        "max_events": 1000,
+    }
+    return target
+
+
+def test_zap_source_trace_is_opt_in_and_accepts_bound_python_script(tmp_path):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import _validate_zap_target
+
+    _, _, _, _, _, _, inventory, _ = execution_fixture(tmp_path)
+    legacy = _zap_target_fixture(inventory)
+    assert _validate_zap_target(legacy, inventory) is None
+    assert _validate_zap_target(_python_trace_target(inventory), inventory) is None
+
+    duplicate = deepcopy(legacy)
+    duplicate_route = deepcopy(duplicate["routes"][0])
+    duplicate_route["id"] = "health_copy"
+    duplicate_route["query"] = {"probe": "different"}
+    duplicate["routes"].append(duplicate_route)
+    duplicate["routes"].sort(key=lambda route: route["id"])
+    assert _validate_zap_target(duplicate, inventory) is None
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda config: config.update(extra=True),
+        lambda config: config.update(schema="factory.zap-source-trace.config.v2"),
+        lambda config: config.update(provider="python-framework.v1"),
+        lambda config: config.update(max_events=0),
+        lambda config: config.update(max_events=50_001),
+        lambda config: config.update(max_events=True),
+    ],
+)
+def test_zap_source_trace_rejects_invalid_exact_config(tmp_path, mutate):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import _validate_zap_target
+
+    _, _, _, _, _, _, inventory, _ = execution_fixture(tmp_path)
+    target = deepcopy(_python_trace_target(inventory))
+    mutate(target["source_trace"])
+
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_SOURCE_TRACE|E_FIELD"):
+        _validate_zap_target(target, inventory)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["/usr/bin/node", "/src/app.py"],
+        ["python3", "/src/app.py"],
+        ["/usr/bin/python2", "/src/app.py"],
+        ["/usr/bin/python3", "-m", "app"],
+        ["/usr/bin/python3", "/src/../app.py"],
+        ["/usr/bin/python3", "/src/app.txt"],
+    ],
+)
+def test_zap_source_trace_rejects_noncanonical_python_argv(tmp_path, argv):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import _validate_zap_target
+
+    _, _, _, _, _, _, inventory, _ = execution_fixture(tmp_path)
+    target = deepcopy(_python_trace_target(inventory))
+    target["argv"] = argv
+
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_SOURCE_TRACE|E_ZAP_TARGET"):
+        _validate_zap_target(target, inventory)
+
+
+def test_zap_source_trace_script_must_be_route_bound_and_routes_unique(tmp_path):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import _validate_zap_target
+
+    _, _, _, _, _, _, inventory, _ = execution_fixture(tmp_path)
+    target = _python_trace_target(inventory)
+    target["argv"][1] = "/src/clean.py"
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_SOURCE_TRACE"):
+        _validate_zap_target(target, inventory)
+
+    target = deepcopy(_python_trace_target(inventory))
+    duplicate_route = deepcopy(target["routes"][0])
+    duplicate_route["id"] = "health_copy"
+    duplicate_route["query"] = {"probe": "different"}
+    target["routes"].append(duplicate_route)
+    target["routes"].sort(key=lambda route: route["id"])
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_SOURCE_TRACE"):
+        _validate_zap_target(target, inventory)
+
+
+@pytest.mark.parametrize(
+    "mutate,code",
+    [
+        (lambda target: target.update(extra=True), "E_ZAP_TARGET"),
+        (lambda target: target.update(image="app:latest"), "E_IMAGE_PIN"),
+        (lambda target: target.update(argv=["app"]), "E_ZAP_TARGET"),
+        (lambda target: target.update(port=65536), "E_FIELD"),
+        (lambda target: target.update(readiness_path="/health/%2e%2e"), "E_ZAP_PATH"),
+        (lambda target: target["routes"][0].update(method="POST"), "E_ZAP_ROUTE"),
+        (lambda target: target["routes"][0].update(path="/a/../b"), "E_ZAP_PATH"),
+        (lambda target: target["routes"][0].update(path="/a?x=1"), "E_ZAP_PATH"),
+        (
+            lambda target: target["routes"][0].update(query={"z": "1", "a": "2"}),
+            "E_ZAP_ROUTE",
+        ),
+        (
+            lambda target: target["routes"][0].update(
+                source_bindings={"app.py": "0" * 64}
+            ),
+            "E_ZAP_TARGET_SOURCE",
+        ),
+    ],
+)
+def test_zap_target_rejects_invalid_descriptor_and_route_bindings(
+    tmp_path, mutate, code
+):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import _validate_zap_target
+
+    _, _, _, _, _, _, inventory, _ = execution_fixture(tmp_path)
+    target = deepcopy(_zap_target_fixture(inventory))
+    mutate(target)
+
+    with pytest.raises(RuntimeAuditError, match=code):
+        _validate_zap_target(target, inventory)
+
+
+def test_zap_target_url_rejects_route_outside_signed_descriptor(tmp_path):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import _zap_target_url
+
+    _, _, _, _, _, _, inventory, _ = execution_fixture(tmp_path)
+    target = _zap_target_fixture(inventory)
+    route = deepcopy(target["routes"][0])
+    route["path"] = "/different"
+
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_ROUTE"):
+        _zap_target_url(target, route)
+
+
+def test_native_target_is_optional_only_for_v2_zap_lane(tmp_path):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import _execution_lane
+
+    _, _, _, _, _, plan, inventory, _ = execution_fixture(tmp_path)
+    _v2_execution_plan(plan, inventory)
+    lane = {
+        "id": "zap",
+        "engine": "zap",
+        "family": "runtime",
+        "image": "example.test/zap@sha256:" + "b" * 64,
+        "argv": ["/opt/factory/bin/audit-adapter", "zap", "--mode", "full"],
+        "report": "zap.json",
+        "coverage": "zap-coverage.json",
+        "challenge_report": "zap-challenges.json",
+        "languages": ["python"],
+        "mode": "full",
+        "timeout_seconds": 10,
+        "memory_mib": 256,
+        "tool_version": "2.17.0",
+        "ruleset_sha256": "c" * 64,
+        "native_artifact_roles": ["zap_report"],
+        "rule_ids": ["40012"],
+        "mutation_config_sha256": {"40012": "d" * 64},
+    }
+    _execution_lane(lane, 2)
+    lane["native_target"] = _zap_target_fixture(inventory)
+
+    assert _execution_lane(lane, 2, inventory) is None
+    with pytest.raises(RuntimeAuditError, match="E_EXECUTION_LANE"):
+        _execution_lane(lane, 1)
+    non_zap = deepcopy(lane)
+    non_zap["engine"] = "runtime"
+    non_zap["argv"] = ["/opt/factory/bin/audit-adapter", "runtime", "--mode", "full"]
+    with pytest.raises(RuntimeAuditError, match="E_EXECUTION_LANE"):
+        _execution_lane(non_zap, 2)
+
+
+def test_signed_execution_manifest_binds_zap_target_and_route_sources(tmp_path):
+    from copy import deepcopy
+    from factoryline.deep_audit_attestation import verify_execution_authorization
+    from factoryline.deep_audit_contract import load_execution_manifest
+
+    _, manifest, _, _, trust, plan, inventory, material = execution_fixture(tmp_path)
+    _v2_execution_plan(plan, inventory)
+    runtime_obligation = next(
+        item for item in plan["obligations"] if item["engine"] == "runtime"
+    )
+    route_source = inventory["files"][0]
+    lane = {
+        "id": "zap",
+        "engine": "zap",
+        "family": "runtime",
+        "image": "example.test/zap@sha256:" + "b" * 64,
+        "argv": ["/opt/factory/bin/audit-adapter", "zap", "--mode", "full"],
+        "report": "zap.json",
+        "coverage": "zap-coverage.json",
+        "challenge_report": "zap-challenges.json",
+        "languages": ["python"],
+        "mode": "full",
+        "timeout_seconds": 10,
+        "memory_mib": 256,
+        "tool_version": "2.17.0",
+        "ruleset_sha256": "c" * 64,
+        "native_artifact_roles": ["zap_report"],
+        "rule_ids": ["40012"],
+        "mutation_config_sha256": {"40012": "d" * 64},
+        "native_target": {
+            "schema": "factory.zap-target.v1",
+            "image": "example.test/app@sha256:" + "e" * 64,
+            "argv": ["/opt/app/bin/server", "--port", "8080"],
+            "port": 8080,
+            "readiness_path": "/health/ready",
+            "routes": [
+                {
+                    "id": "health",
+                    "method": "GET",
+                    "path": "/health/ready",
+                    "query": {"probe": "ready"},
+                    "source_bindings": {route_source["path"]: route_source["sha256"]},
+                }
+            ],
+        },
+    }
+    plan["lanes"].append(lane)
+    zap_obligation = deepcopy(runtime_obligation)
+    zap_obligation.update(id="zap-route", engine="zap", detector_rule_id="40012")
+    plan["obligations"].append(zap_obligation)
+
+    manifest.write_text(json.dumps(plan), encoding="utf-8")
+    pin = sha256_bytes(manifest.read_bytes())
+    now = datetime.now(timezone.utc)
+    payload = {
+        "schema": "factory.deep-execution-authorization.v1",
+        "manifest_sha256": pin,
+        "candidate_sha256": plan["candidate_sha256"],
+        "manifest_content_sha256": digest(plan),
+        "adapter_images": {item["id"]: item["image"] for item in plan["lanes"]},
+        "issued_at": (now - timedelta(seconds=5)).isoformat(),
+        "expires_at": (now + timedelta(minutes=50)).isoformat(),
+        "authority": "none",
+    }
+    authorization = execution_sign(
+        tmp_path / "control" / "authorization-zap.json",
+        payload,
+        material["coordinator"],
+    )
+
+    assert load_execution_manifest(manifest, pin, inventory) == plan
+    assert (
+        verify_execution_authorization(
+            plan, pin, authorization, trust, plan["trust_root_sha256"]
+        )["manifest_sha256"]
+        == pin
+    )
+
+    lane["native_target"]["routes"][0]["path"] = "/changed"
+    manifest.write_text(json.dumps(plan), encoding="utf-8")
+    changed_pin = sha256_bytes(manifest.read_bytes())
+    with pytest.raises(RuntimeAuditError, match="E_EXECUTION_AUTHORIZATION"):
+        verify_execution_authorization(
+            plan,
+            changed_pin,
+            authorization,
+            trust,
+            plan["trust_root_sha256"],
+        )
+
+
 def test_semgrep_pattern_limited_is_supplemental_to_full_static_lane(tmp_path):
     from copy import deepcopy
     from factoryline.deep_audit_contract import _execution_lanes
@@ -1129,6 +1438,169 @@ def test_execution_manifest_v2_rejects_fixture_drift_and_syft_detector(tmp_path)
     manifest.write_text(json.dumps(plan), encoding="utf-8")
     with pytest.raises(RuntimeAuditError, match="E_CHALLENGE_ENGINE"):
         load_execution_manifest(manifest, sha256_bytes(manifest.read_bytes()))
+
+
+def _zap_control_fixture(tmp_path):
+    image = "example.test/app@sha256:" + "a" * 64
+    native_target = {
+        "schema": "factory.zap-target.v1",
+        "image": image,
+        "argv": ["/opt/app/bin/server"],
+        "port": 8080,
+        "readiness_path": "/ready",
+        "routes": [
+            {
+                "id": "candidate",
+                "method": "GET",
+                "path": "/candidate",
+                "query": {},
+                "source_bindings": {"app.py": "b" * 64},
+            }
+        ],
+    }
+    lane = {
+        "id": "zap",
+        "engine": "zap",
+        "family": "runtime",
+        "rule_ids": ["40012"],
+        "native_target": native_target,
+    }
+    challenges = []
+    for kind, path, raw, route_id in (
+        ("positive", "safe/positive.py", b"positive fixture", "safe-positive"),
+        ("negative", "safe/negative.py", b"negative fixture", "safe-negative"),
+        ("mutation", "safe/positive.py", b"positive fixture", "safe-positive"),
+    ):
+        source_sha = sha256_bytes(raw)
+        if not (tmp_path / path).exists():
+            (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / path).write_bytes(raw)
+        route = {
+            "id": route_id,
+            "method": "GET",
+            "path": "/probe",
+            "query": {},
+            "source_bindings": {path: source_sha},
+        }
+        target = {
+            "schema": "factory.zap-target.v1",
+            "image": image,
+            "argv": ["/opt/app/bin/server", "--fixture", path],
+            "port": 8080,
+            "readiness_path": "/ready",
+            "routes": [route],
+        }
+        manifest = {path: source_sha}
+        challenges.append(
+            {
+                "kind": kind,
+                "fixture_path": path,
+                "fixture_sha256": source_sha,
+                "expected_report_sha256": sha256_bytes(kind.encode()),
+                "expected_exit_code": 0,
+                "fixture_manifest": manifest,
+                "fixture_manifest_sha256": digest(manifest),
+                "zap_target": target,
+                "zap_route_id": route_id,
+            }
+        )
+    obligation = {
+        "id": "zap-40012",
+        "engine": "zap",
+        "family": "runtime",
+        "detector_rule_id": "40012",
+        "paths": ["safe/positive.py"],
+        "requirements": ["safe/positive.py"],
+        "remediation": "Fix the detected issue.",
+        "challenges": challenges,
+    }
+    return lane, obligation
+
+
+def test_signed_zap_controls_bind_each_rule_route_and_fixture_tree(tmp_path):
+    from factoryline.deep_audit_contract import (
+        _validate_obligation,
+        _zap_control_obligations,
+        zap_signed_controls,
+    )
+
+    lane, obligation = _zap_control_fixture(tmp_path)
+    _validate_obligation(obligation, [lane], 2)
+
+    controls = _zap_control_obligations(lane, [obligation], tmp_path)
+
+    assert controls == [obligation]
+    assert controls[0]["challenges"][0]["zap_route_id"] == "safe-positive"
+    assert zap_signed_controls(lane, [obligation], tmp_path) == {
+        "40012": {
+            "challenges": {item["kind"]: item for item in obligation["challenges"]}
+        }
+    }
+
+
+def _mutate_zap_fixture_manifest(item):
+    challenge = item["challenges"][1]
+    challenge["fixture_manifest"]["safe/negative.py"] = "a" * 64
+    challenge["fixture_sha256"] = "a" * 64
+    item["challenges"][1]["fixture_manifest_sha256"] = digest(
+        challenge["fixture_manifest"]
+    )
+
+
+def _mutate_zap_control_image(item):
+    image = "example.test/other@sha256:" + "c" * 64
+    item["challenges"][0]["zap_target"]["image"] = image
+    item["challenges"][2]["zap_target"]["image"] = image
+
+
+@pytest.mark.parametrize(
+    "mutation,code",
+    [
+        (
+            lambda item: item["challenges"][1].update(zap_route_id="missing"),
+            "E_ZAP_CONTROL",
+        ),
+        (_mutate_zap_fixture_manifest, "E_ZAP_CONTROL"),
+        (_mutate_zap_control_image, "E_ZAP_CONTROL"),
+        (
+            lambda item: item["challenges"][2].update(zap_route_id="other"),
+            "E_HOLLOW_CHALLENGE",
+        ),
+        (
+            lambda item: item["challenges"][2]["zap_target"]["argv"].append(
+                "different"
+            ),
+            "E_HOLLOW_CHALLENGE",
+        ),
+    ],
+)
+def test_signed_zap_control_contract_rejects_unbound_route_or_mutation(
+    tmp_path, mutation, code
+):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import _validate_obligation
+
+    lane, obligation = _zap_control_fixture(tmp_path)
+    changed = deepcopy(obligation)
+    mutation(changed)
+
+    with pytest.raises(RuntimeAuditError, match=code):
+        _validate_obligation(changed, [lane], 2)
+
+
+def test_zap_control_selector_rejects_missing_duplicate_and_fixture_drift(tmp_path):
+    from copy import deepcopy
+    from factoryline.deep_audit_contract import zap_signed_controls
+
+    lane, obligation = _zap_control_fixture(tmp_path)
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_CONTROL"):
+        zap_signed_controls(lane, [], tmp_path)
+    with pytest.raises(RuntimeAuditError, match="E_ZAP_CONTROL"):
+        zap_signed_controls(lane, [obligation, deepcopy(obligation)], tmp_path)
+
+    (tmp_path / "safe" / "positive.py").write_bytes(b"drifted")
+    with pytest.raises(RuntimeAuditError, match="E_REPORT_DRIFT"):
+        zap_signed_controls(lane, [obligation], tmp_path)
 
 
 def test_scan_rejects_authorization_changed_after_signature_verification(

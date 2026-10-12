@@ -15,7 +15,7 @@ COPY deploy/deep-adapters/requirements-bootstrap.txt /tmp/requirements-bootstrap
 RUN ldconfig && python -m pip uninstall -y setuptools wheel \
     && python -m pip install --no-cache-dir --disable-pip-version-check --require-hashes --only-binary=:all: -r /tmp/requirements-bootstrap.txt \
     && python -c 'import ssl,sqlite3,ctypes,bz2,lzma,readline,curses,uuid; print(ssl.OPENSSL_VERSION,sqlite3.sqlite_version)'
-COPY factoryline/__init__.py factoryline/deep_audit_io.py factoryline/deep_audit_sarif.py factoryline/runtime_audit_common.py factoryline/runtime_audit_process.py /usr/local/lib/python3.11/site-packages/factoryline/
+COPY factoryline/__init__.py factoryline/deep_audit_io.py factoryline/deep_audit_sarif.py factoryline/deep_audit_contract.py factoryline/enterprise_receipts.py factoryline/runtime_audit_common.py factoryline/runtime_audit_process.py /usr/local/lib/python3.11/site-packages/factoryline/
 COPY --chmod=0555 deploy/deep-adapters/entrypoint /opt/factory/bin/audit-adapter
 RUN mkdir -p /src /out /opt/factory/rules
 LABEL io.code-factory.protocol="factory.deep-worker.v1"
@@ -64,10 +64,26 @@ COPY --chown=1000:1000 deploy/deep-adapters/profiles/codeql-actions-full.json /o
 USER 1000:1000
 LABEL io.code-factory.configured="true" io.code-factory.analysis-depth="interprocedural-full" io.code-factory.language="actions"
 
-FROM ghcr.io/google/osv-scanner:v2.2.0@sha256:a6e641ed444704349d4319b80019654643aa9036b76ee1699a9f927dfe1b0d5c AS osv-tool
+# Go 1.27.2 OCI index digest verified from Docker Registry; build is linux/amd64.
+FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS osv-build
+ADD --checksum=sha256:1ce45371bd4b6480ac512156c2ea70d563753eba62283d160360bfe3cf94a7ab https://github.com/google/osv-scanner/archive/a14aa98ab8408547083d4411091c5fbaf5b47d8e.tar.gz /tmp/osv-scanner.tar.gz
+COPY deploy/deep-adapters/osv-lookup-ledger.patch /tmp/osv-lookup-ledger.patch
+COPY deploy/deep-adapters/osv-extractor-inventory.go /tmp/osv-extractor-inventory.go
+COPY deploy/deep-adapters/profiles/osv.json /tmp/osv-profile.json
+RUN mkdir -p /src && tar -xzf /tmp/osv-scanner.tar.gz --strip-components=1 -C /src && rm /tmp/osv-scanner.tar.gz
+RUN mkdir -p /src/cmd/factory-inventory && cp /tmp/osv-extractor-inventory.go /src/cmd/factory-inventory/main.go
+WORKDIR /src
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build echo '4486eff021ec7c86106a0571b76fe6fff42aaba32565d3cff945bbbca36d3652  /tmp/osv-lookup-ledger.patch' | sha256sum -c - && git init -q && git apply --check /tmp/osv-lookup-ledger.patch && git apply /tmp/osv-lookup-ledger.patch \
+    && gofmt -w internal/factorylookup/ledger.go internal/clients/clientimpl/localmatcher/localmatcher.go internal/clients/clientimpl/localmatcher/zip.go pkg/osvscanner/scan.go pkg/osvscanner/osvscanner.go \
+    && GOTOOLCHAIN=local CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags='-s -w' -o /osv-scanner ./cmd/osv-scanner && /osv-scanner --version | grep -F 2.2.0
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build echo '56eb42e1dbdee321433a9625c8c0a82ee55b47614fab477a714c192866026c6c  /tmp/osv-extractor-inventory.go' | sha256sum -c - \
+    && gofmt -w cmd/factory-inventory/main.go \
+    && GOTOOLCHAIN=local CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags='-s -w' -o /osv-extractor-inventory ./cmd/factory-inventory \
+    && /osv-extractor-inventory --profile /tmp/osv-profile.json --generator-sha256 56eb42e1dbdee321433a9625c8c0a82ee55b47614fab477a714c192866026c6c > /osv-extractor-inventory.json
 FROM anchore/syft:v1.33.0@sha256:cefadcf11bd9cce9e3ec5248bb1538a84e33d519486c1b4523ac155c9b5f5033 AS syft-tool
 FROM sdk AS osv-worker
-COPY --from=osv-tool /osv-scanner /usr/local/bin/osv-scanner
+COPY --from=osv-build /osv-scanner /usr/local/bin/osv-scanner
+COPY --from=osv-build /osv-extractor-inventory.json /opt/factory/osv-extractor-inventory.json
 COPY --chmod=0555 deploy/deep-adapters/bin/osv-offline /opt/factory/bin/osv-offline
 COPY --chown=1000:1000 deploy/deep-adapters/rules/empty-ignore.txt /opt/factory/rules/osv-scanner.toml
 ADD --checksum=sha256:36ef7d92e174230b8c7c26b952562be23837472c2239b6752de64d5d683a800e https://osv-vulnerabilities.storage.googleapis.com/PyPI/all.zip?generation=1791370055357324 /tmp/osv-pypi-all.zip
@@ -75,7 +91,7 @@ USER 0:0
 RUN mkdir -p /opt/factory/osv-db/osv-scanner/PyPI && mv /tmp/osv-pypi-all.zip /opt/factory/osv-db/osv-scanner/PyPI/all.zip && chmod 0444 /opt/factory/osv-db/osv-scanner/PyPI/all.zip
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/osv.json /opt/factory/adapter-profile.json
 USER 1000:1000
-LABEL io.code-factory.configured="true" io.code-factory.family="dependencies" io.code-factory.mode="offline-pypi-snapshot"
+LABEL io.code-factory.configured="true" io.code-factory.family="dependencies" io.code-factory.mode="offline-pypi-snapshot" io.code-factory.osv-source="a14aa98ab8408547083d4411091c5fbaf5b47d8e" io.code-factory.osv-ledger="factory.osv-lookup-execution.v1"
 
 ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
 FROM sdk AS syft-worker
@@ -129,4 +145,34 @@ USER 1000:1000
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/atheris.json /opt/factory/adapter-profile.json
 COPY --chown=1000:1000 deploy/deep-adapters/rules/fuzz-control.json /opt/factory/rules/fuzz-control.json
 LABEL io.code-factory.configured="true" io.code-factory.harness="candidate-supplied"
+ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
+
+# Exact stable distribution plus a source-bound native invocation ledger.
+FROM ghcr.io/zaproxy/zaproxy@sha256:17711b689795c5519c512bafee363b3976ce8457358db8405c6961e18c72dc66 AS zap-native-build
+USER 0:0
+ADD --checksum=sha256:774a41e0f7089332656a8b222fc07e96fe29b390a6432719b77595775731b228 https://raw.githubusercontent.com/zaproxy/zaproxy/8a1bff313f4d183dba5aa154ecbe89ad751c9153/zap/src/main/java/org/parosproxy/paros/core/scanner/HostProcess.java /tmp/zap-source/zap/src/main/java/org/parosproxy/paros/core/scanner/HostProcess.java
+ADD --checksum=sha256:25ecec9175591616f0c38e7209476723aedc4bbae716308038a5687cf69c29e4 https://raw.githubusercontent.com/zaproxy/zaproxy/8a1bff313f4d183dba5aa154ecbe89ad751c9153/zap/src/main/java/org/parosproxy/paros/core/scanner/AbstractPlugin.java /tmp/zap-source/zap/src/main/java/org/parosproxy/paros/core/scanner/AbstractPlugin.java
+COPY deploy/deep-adapters/zap-rule-ledger.patch /tmp/zap-rule-ledger.patch
+WORKDIR /tmp/zap-source
+RUN echo '91b0fbd609dc1ac88319ec5b718c586e0f33014b24221e9d055673c49695b74f  /tmp/zap-rule-ledger.patch' | sha256sum -c - \
+    && git apply --check /tmp/zap-rule-ledger.patch \
+    && git apply /tmp/zap-rule-ledger.patch \
+    && mkdir -p /tmp/zap-classes \
+    && javac --release 17 -proc:none -cp '/zap/zap-2.17.0.jar:/zap/lib/*:/zap/plugin/*' -d /tmp/zap-classes zap/src/main/java/org/parosproxy/paros/core/scanner/HostProcess.java zap/src/main/java/org/parosproxy/paros/core/scanner/AbstractPlugin.java \
+    && jar --update --file /zap/zap-2.17.0.jar -C /tmp/zap-classes .
+FROM sdk AS zap-worker
+USER 0:0
+RUN apt-get update \
+    && apt-get -t forky install -y --no-install-recommends libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=zap-native-build /zap /zap
+COPY --from=zap-native-build /usr/lib/jvm/java-17-openjdk-amd64 /opt/factory/java
+COPY --from=zap-native-build /etc/java-17-openjdk /etc/java-17-openjdk
+ENV JAVA_HOME=/opt/factory/java
+ENV PATH=/opt/factory/java/bin:$PATH
+RUN mkdir -p /home/factory /out && chown -R 1000:1000 /home/factory /out
+ENV HOME=/home/factory
+USER 1000:1000
+WORKDIR /src
+LABEL io.code-factory.configured="false" io.code-factory.zap-source="8a1bff313f4d183dba5aa154ecbe89ad751c9153" io.code-factory.zap-ledger="factory.zap-rule-ledger.v1"
 ENTRYPOINT ["/usr/local/bin/python", "-I", "-m", "factoryline.deep_audit_io"]
