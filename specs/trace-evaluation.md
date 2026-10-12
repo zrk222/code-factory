@@ -24,6 +24,8 @@ Integrate the supplied trace-evaluation and eval-driven-development requirements
 
 - The system shall record a native repository scan as a parent span with a child span for every executed local lane, preserving failed spans, at most 10000 spans per recorder and at most 4096 bytes of attributes per span, measured durations and hash-bound lane-result references without raw source or exception messages.
 
+- The system shall return Jev semantic review evidence only from bound task inputs, outputs, rubric criteria and byte-range source excerpts, with at most 8192 bytes per input or output and at most 32768 bytes per excerpt; mismatched digests, invalid ranges and absent semantic evidence shall not establish semantic correctness.
+
 ### Acceptance criteria (Gherkin)
 ```gherkin
 Scenario: input binding and span metrics

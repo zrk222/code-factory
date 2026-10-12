@@ -15,6 +15,8 @@ Architect verdict: PASS
 
 - [ ] T9 | slice=factoryline | files=factoryline/operations.py,factoryline/adoption.py,tests/test_operations.py,tests/test_adoption.py | verify=`python -m pytest -p no:cacheprovider tests/test_operations.py tests/test_adoption.py -k "telemetry or native_trace"` | Instrument actual local repository orchestration with bounded parent-child telemetry and failure retention.
 
+- [ ] T10 | slice=factoryline | files=factoryline/analysis_evidence.py,factoryline/jev_classifier.py,tests/test_audit_rule_search.py | verify=`python -m pytest -p no:cacheprovider tests/test_audit_rule_search.py -k span_review` | Bind actual semantic task evidence and exact source excerpts, preserving explicit missing-evidence states and provider authority.
+
 ## Delivery evidence
 New/changed/failed tests only locally; scoped lint/C901/architecture checks, independent AI source review, hash-bound workflow gate and required CI. Production calibration and rollout evidence require their real authorized environments. File budgets cannot be raised; extract/consolidate existing modules when needed. This plan does not establish implementation or empirical accuracy.
 
@@ -44,3 +46,11 @@ The local evaluators and native surfaces are implemented; this is not complete p
 - Obtain independent labelled evaluation evidence and authenticated production control observations; declared identity/timestamp strings cannot establish independence or live deployment.
 - Run a real operator workflow, independent implementation review and the final hash-bound workflow gate before completion/merge. Static rendered fixtures do not prove operator effectiveness.
 - Complete the broader approved app-builder mission and update external previews only after the corresponding functionality is proven.
+
+## Semantic evidence input
+
+The optional `semantic_evidence` binding references a local JSON artifact with schema `factory.span-semantic-evidence.v1` and `spans`. Each record contains `span_id`, `task_input`, `task_output`, and 1..8 `references`. A reference contains a bound source `path` and `sha256`, plus a half-open `start_byte` / `end_byte` range. CF reopens and hashes the current source before decoding the exact UTF-8 excerpt. Inputs/outputs are limited to 8192 bytes each; excerpts to 32768 bytes. Duplicate references, unknown spans, invalid ranges and stale source digests are rejected.
+
+The bound rubric additionally supplies 1..8 `semantic_criteria` (`id`, `predicate`). These become unresolved binary claims for the reviewer; receiving source bytes is not a semantic pass. Missing task evidence remains UNKNOWN_MISSING_TASK_EVIDENCE. Raw task/source content is untrusted data and is not sent anywhere by these local builders. Provider execution remains separately authorized. Larger review collections still need bounded batching and complete aggregate coverage before this requirement is complete.
+
+Local checkpoint: three CI-failing taxonomy/protocol/inventory tests repaired and passed. The newly observed ABSTAIN, BOUND_LOCAL_EVIDENCE and REGRESSION_GATES strings are observation/dispatch labels, not additional rejection conditions. Ten affected semantic/dashboard checks pass. Scoped Forge QA returns A/PASS with no findings after complexity refactoring; cross-platform CI must confirm the new commit.

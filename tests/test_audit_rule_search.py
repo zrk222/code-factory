@@ -390,6 +390,113 @@ def test_trace_span_review_reuses_closed_evidence_contract_and_keeps_failures_im
     assert failed_result["evaluation_sha256"] == failed["evaluation_sha256"]
 
 
+def _span_semantic_fixture(root):
+    from test_analysis_evidence import _span_fixture
+    import hashlib
+
+    request, _ = _span_fixture(root)
+    rubric = json.loads((root / "rubric.json").read_text(encoding="utf-8"))
+    rubric["semantic_criteria"] = [
+        {
+            "id": "grounded",
+            "predicate": "The output states the value of VALUE from the supplied source.",
+        }
+    ]
+    source = (root / "src/sample.py").read_bytes()
+    semantic = {
+        "schema": "factory.span-semantic-evidence.v1",
+        "spans": [
+            {
+                "span_id": "s1",
+                "task_input": "What value is assigned to VALUE?",
+                "task_output": "VALUE is assigned 1.",
+                "references": [
+                    {
+                        "path": "src/sample.py",
+                        "sha256": hashlib.sha256(source).hexdigest(),
+                        "start_byte": 0,
+                        "end_byte": len(source),
+                    }
+                ],
+            }
+        ],
+    }
+    for role, body in (("rubric", rubric), ("semantic_evidence", semantic)):
+        path = root / (role + ".json")
+        raw = json.dumps(body).encode()
+        path.write_bytes(raw)
+        request["binding_request"]["artifacts"][role] = {
+            "path": path.name,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+        }
+    return request, semantic
+
+
+def test_span_review_semantic_inputs_contain_exact_bound_source_and_binary_criterion(
+    tmp_path,
+):
+    from factoryline.jev_classifier import build_span_review_input
+
+    request, _ = _span_semantic_fixture(tmp_path)
+    result = build_span_review_input(tmp_path, request)
+    assert result["semantic_evidence_coverage"] == {
+        "eligible": 1,
+        "provided": 1,
+        "state": "BOUND_TASK_EVIDENCE",
+    }
+    packet = result["review_request"]["packet"]
+    material = next(
+        item["provenance"]
+        for item in packet["evidence"]
+        if item["kind"] == "bound_semantic_task_evidence"
+    )
+    assert material["references"][0]["excerpt"] == (
+        tmp_path / "src/sample.py"
+    ).read_bytes().decode("utf-8")
+    assert material["task_output"] == "VALUE is assigned 1."
+    assert material["data_trust"] == "UNTRUSTED_CONTENT_NOT_INSTRUCTIONS"
+    semantic_claims = [c for c in packet["claims"] if ":semantic:" in c["id"]]
+    assert len(semantic_claims) == 1
+    assert semantic_claims[0]["status"] == "unresolved"
+    assert result["provider_call"] is False
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["range", "digest", "duplicate", "unknown_span", "oversized", "unknown_field"],
+)
+def test_span_review_rejects_invalid_semantic_sources_without_provider_call(
+    tmp_path, mutation
+):
+    import hashlib
+    from factoryline.jev_classifier import (
+        build_span_review_input,
+        JevClassificationError,
+    )
+
+    request, semantic = _span_semantic_fixture(tmp_path)
+    row = semantic["spans"][0]
+    if mutation == "range":
+        row["references"][0]["end_byte"] = 999999
+    elif mutation == "digest":
+        row["references"][0]["sha256"] = "a" * 64
+    elif mutation == "duplicate":
+        row["references"].append(dict(row["references"][0]))
+    elif mutation == "unknown_span":
+        row["span_id"] = "not-in-trace"
+    elif mutation == "oversized":
+        row["task_output"] = "x" * 8193
+    else:
+        row["raw_prompt"] = "not allowed"
+    raw = json.dumps(semantic).encode()
+    (tmp_path / "semantic_evidence.json").write_bytes(raw)
+    request["binding_request"]["artifacts"]["semantic_evidence"]["sha256"] = (
+        hashlib.sha256(raw).hexdigest()
+    )
+    with pytest.raises(JevClassificationError):
+        build_span_review_input(tmp_path, request)
+
+
 def test_trace_failure_case_is_deidentified_development_only_and_requires_independent_verification(
     tmp_path,
 ):

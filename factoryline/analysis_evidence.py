@@ -51,6 +51,7 @@ _SPAN_OPTIONAL_ROLES = {
     "deployment_control",
     "killswitch_control",
     "rollback_control",
+    "semantic_evidence",
 }
 _SPAN_ARTIFACT_LIMIT = 2_000_000
 _SPAN_TOTAL_LIMIT = 20_000_000
@@ -61,7 +62,12 @@ def _span_incomplete(code: str, detail: str) -> dict[str, Any]:
 
 
 def _span_read(
-    root: Path, descriptor: object, seen: set[str], *, parse: bool = True
+    root: Path,
+    descriptor: object,
+    seen: set[str],
+    *,
+    parse: bool = True,
+    include_bytes: bool = False,
 ) -> tuple[str, str, Any, int]:
     if not isinstance(descriptor, Mapping) or set(descriptor) != {"path", "sha256"}:
         raise AnalysisEvidenceError("TRACE_UNBOUND", "artifact descriptor is invalid")
@@ -85,7 +91,7 @@ def _span_read(
         )
     if sha256(raw).hexdigest() != descriptor["sha256"]:
         raise AnalysisEvidenceError("TRACE_UNBOUND", "artifact hash is stale")
-    body = strict_json(raw) if parse else None
+    body = raw if include_bytes else strict_json(raw) if parse else None
     return relative, sha256(raw).hexdigest(), body, size
 
 
@@ -720,6 +726,19 @@ def evaluate_trace_file(
         )
 
 
+def _read_trace_manifest(path):
+    with path.open("rb") as stream:
+        before = path.stat()
+        opened = os.fstat(stream.fileno())
+        raw = stream.read(4097)
+        after = os.fstat(stream.fileno())
+    if len(raw) > 4096 or not _stable_read_identity(
+        before, opened, after, path.stat(), windows=os.name == "nt"
+    ):
+        raise ValueError("manifest changed or exceeds bound")
+    return strict_json(raw)
+
+
 def trace_evaluation_status(root: Path) -> dict[str, Any]:
     """Project a hash-checked saved result only while its request bindings remain current."""
     result = {
@@ -736,16 +755,7 @@ def trace_evaluation_status(root: Path) -> dict[str, Any]:
     try:
         workspace = Path(root).resolve()
         path = local_file(workspace, ".factory/trace-evaluation/latest.json")
-        with path.open("rb") as stream:
-            before = path.stat()
-            opened = os.fstat(stream.fileno())
-            raw = stream.read(4097)
-            after = os.fstat(stream.fileno())
-        if len(raw) > 4096 or not _stable_read_identity(
-            before, opened, after, path.stat(), windows=os.name == "nt"
-        ):
-            raise ValueError("manifest changed or exceeds bound")
-        manifest = strict_json(raw)
+        manifest = _read_trace_manifest(path)
         if (
             set(manifest) != {"schema", "kind", "request", "receipt"}
             or manifest["schema"] != "factory.trace-evaluation-manifest.v1"
