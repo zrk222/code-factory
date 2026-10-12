@@ -115,5 +115,15 @@
     ],
     "authority": "Clarification and source review only. PRD confirmation records the user's acceptance of the exact reviewed source revision; it does not authorize implementation, mission execution, external effects, merge, publication, deployment or release.",
     "judge": "Jev may review a bound PRD revision against an explicit criterion when configured and authorized. An experimental score never supplies missing user decisions or implementation evidence."
+  },
+  "candidate_workflow": {
+    "protocol": "factory.mission.candidate-declaration.v1",
+    "prerequisite": "Separately approved mission execution decision belonging to the mission owner; PRD confirmation is insufficient.",
+    "agent_responsibility": "Inspect Git state and choose exact workspace-relative files, interfaces, profiles, argument vectors and six audit-lane applicability reasons. Keep technical declaration work out of the beginner interview.",
+    "bind_command": "factory mission bind-candidate <mission> <decision> <declaration> --root <root> --owner <owner> --json",
+    "verify_command": "factory mission verify-candidate <binding> --root <root> --owner <owner> --json",
+    "authority": "Binding and verification do not dispatch a process or grant credentials, external effects or release authority. Owner strings identify the local decision; they are not hosted authentication.",
+    "recovery": "Stop on changed HEAD, dirty workspace, source or approval drift; preserve failure evidence. Do not overwrite receipts or silently refresh the approved scope.",
+    "boundary": "Snapshot validation cannot prevent concurrent filesystem replacement. An isolated executor must revalidate inputs immediately before executing approved tools."
   }
 }

@@ -547,6 +547,20 @@ def _workflow_action_36(a):
 
 
 def _workflow_action_37(a):
+    if a.cmd == "mission" and a.mission_cmd == "verify-candidate":
+        return _lazy_import("product_missions", "verify_mission_candidate")(
+            Path(a.binding), Path(a.root), owner=a.owner
+        )
+    if a.cmd == "mission" and a.mission_cmd == "bind-candidate":
+        return _lazy_import("product_missions", "bind_mission_candidate")(
+            Path(a.mission),
+            Path(a.decision),
+            Path(a.root),
+            owner=a.owner,
+            declaration=_lazy_import("product_missions", "_load_json")(
+                Path(a.declaration), "factory.mission.candidate-declaration.v1"
+            ),
+        )
     if a.cmd == "mission":
         result = _lazy_import("product_missions", "decide_mission")(
             Path(a.mission),
@@ -933,7 +947,7 @@ def _is_product_verification(a) -> bool:
 
 def _is_mission_verification(a) -> bool:
     return a.cmd == "mission" and (
-        a.mission_cmd in {"verify", "verify-completion"}
+        a.mission_cmd in {"verify", "verify-completion", "verify-candidate"}
         or (a.mission_cmd == "proof-delta" and a.mission_delta_cmd == "verify")
     )
 

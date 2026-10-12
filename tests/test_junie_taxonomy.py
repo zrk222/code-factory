@@ -1166,3 +1166,24 @@ def test_signed_zap_source_trace_contract_reaches_all_agents_and_junie(tmp_path)
         assert "factory.zap-source-trace.config.v1" in text
         assert "adds no execution, approval or publication authority" in text
     assert "private internal network" in taxonomy["native_worker_contract"]["isolation"]
+
+
+def test_junie_candidate_workflow_declares_native_commands_without_dispatch():
+    from pathlib import Path
+    import json
+    import factoryline
+
+    manifest = json.loads(
+        (Path(factoryline.__file__).parent / "data" / "junie_pack.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    workflow = manifest["candidate_workflow"]
+    assert workflow["protocol"] == "factory.mission.candidate-declaration.v1"
+    assert workflow["bind_command"].startswith("factory mission bind-candidate ")
+    assert workflow["verify_command"].startswith("factory mission verify-candidate ")
+    assert "Separately approved" in workflow["prerequisite"]
+    assert "beginner interview" in workflow["agent_responsibility"]
+    assert "do not dispatch" in workflow["authority"]
+    assert "Stop on changed HEAD" in workflow["recovery"]
+    assert "concurrent filesystem replacement" in workflow["boundary"]

@@ -1802,6 +1802,24 @@ def _build_parser() -> argparse.ArgumentParser:
     mission_decide.add_argument("--rationale", required=True)
     mission_decide.add_argument("--force", action="store_true")
     mission_decide.add_argument("--json", action="store_true")
+    mission_bind = mission_sub.add_parser(
+        "bind-candidate",
+        help="bind approved mission scope to a clean Git workspace without execution",
+    )
+    mission_bind.add_argument("mission")
+    mission_bind.add_argument("decision")
+    mission_bind.add_argument("declaration", help="explicit candidate declaration JSON")
+    mission_bind.add_argument("--root", default=".")
+    mission_bind.add_argument("--owner", required=True)
+    mission_bind.add_argument("--json", action="store_true")
+    mission_bound = mission_sub.add_parser(
+        "verify-candidate",
+        help="recheck candidate approval, Git state and source hashes without execution",
+    )
+    mission_bound.add_argument("binding")
+    mission_bound.add_argument("--root", default=".")
+    mission_bound.add_argument("--owner", required=True)
+    mission_bound.add_argument("--json", action="store_true")
     mission_delta = mission_sub.add_parser(
         "proof-delta", help="bind new evidence before a supervised mission retry"
     )

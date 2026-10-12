@@ -324,6 +324,15 @@ def test_approved_studio_mission_returns_exact_bound_agent_handoff(tmp_path: Pat
         },
     )
     handoff = decision["agent_handoff"]
+    assert (
+        handoff["candidate_binding"]["bind_command"] == "factory mission bind-candidate"
+    )
+    assert (
+        handoff["candidate_binding"]["verify_command"]
+        == "factory mission verify-candidate"
+    )
+    assert handoff["candidate_binding"]["operator_input_required"] is False
+    assert handoff["candidate_binding"]["execution_authorized"] is False
     assert handoff["task_packet"] == source["task_packet"]
     assert handoff["mission"] == decision["mission"]
     assert handoff["decision"]["sha256"] == decision["decision_sha256"]

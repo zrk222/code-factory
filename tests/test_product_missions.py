@@ -19,6 +19,7 @@ from factoryline.product_missions import (
     plan_value_slices,
     record_outcome,
     verify_mission,
+    verify_mission_candidate,
     verify_mission_completion,
     verify_product_graph,
 )
@@ -92,6 +93,7 @@ def _candidate_workspace(root: Path, workspace: str = "candidate") -> tuple[Path
     candidate = root / workspace
     candidate.mkdir(parents=True)
     (candidate / "README.md").write_text("candidate base\n", encoding="utf-8")
+    (candidate / ".gitignore").write_text("src/signal-review.py\n", encoding="utf-8")
 
     def git(*args: str) -> str:
         result = subprocess.run(
@@ -103,7 +105,7 @@ def _candidate_workspace(root: Path, workspace: str = "candidate") -> tuple[Path
         return result.stdout.strip()
 
     git("init", "--quiet")
-    git("add", "README.md")
+    git("add", "README.md", ".gitignore")
     git(
         "-c",
         "user.name=Test Owner",
@@ -150,6 +152,35 @@ def _approved_binding_inputs(tmp_path: Path):
     )
     candidate, declaration = _candidate_workspace(tmp_path)
     return mission, decision, candidate, declaration
+
+
+def _bound_candidate(tmp_path: Path):
+    mission, decision, candidate, declaration = _approved_binding_inputs(tmp_path)
+    declaration["commands"][0]["argv"] = [
+        "python",
+        "-c",
+        "from pathlib import Path; "
+        f"Path({str(candidate / 'executed-marker')!r}).write_text('ran')",
+    ]
+    binding = bind_mission_candidate(
+        Path(mission["path"]),
+        Path(decision["path"]),
+        tmp_path,
+        owner="release-owner",
+        declaration=declaration,
+    )
+    return mission, decision, candidate, declaration, binding
+
+
+def _reseal_candidate_binding(path: Path, mutate) -> None:
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+    mutate(receipt)
+    core = {key: value for key, value in receipt.items() if key != "binding_sha256"}
+    canonical = json.dumps(
+        core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    receipt["binding_sha256"] = hashlib.sha256(canonical).hexdigest()
+    path.write_text(json.dumps(receipt), encoding="utf-8")
 
 
 def test_product_graph_is_stable_bound_and_ux_complete(tmp_path: Path):
@@ -446,6 +477,16 @@ def test_candidate_binding_rejects_base_commit_and_mission_drift(tmp_path: Path)
             owner="release-owner",
             declaration=declaration,
         )
+    declaration["base_commit"] = _candidate_workspace_head(tmp_path / "candidate")
+    Path(mission["path"]).write_text("{}\n", encoding="utf-8")
+    with pytest.raises(ProductMissionError):
+        bind_mission_candidate(
+            Path(mission["path"]),
+            Path(decision["path"]),
+            tmp_path,
+            owner="release-owner",
+            declaration=declaration,
+        )
 
 
 @pytest.mark.parametrize("invalid_part", ["audit_lanes", "commands", "workspace"])
@@ -573,16 +614,224 @@ def test_candidate_binding_rejects_scope_beneath_file_ancestor(tmp_path: Path):
             declaration=declaration,
         )
 
-    declaration["base_commit"] = _candidate_workspace_head(tmp_path / "candidate")
-    Path(mission["path"]).write_text("{}\n", encoding="utf-8")
-    with pytest.raises(ProductMissionError):
-        bind_mission_candidate(
-            Path(mission["path"]),
-            Path(decision["path"]),
-            tmp_path,
-            owner="release-owner",
-            declaration=declaration,
+
+def test_mission_candidate_verification_is_read_only_and_bound(tmp_path: Path):
+    mission, decision, candidate, _declaration, binding = _bound_candidate(tmp_path)
+    before = {
+        path: Path(path).read_bytes()
+        for path in (
+            mission["path"],
+            decision["path"],
+            binding["path"],
+            candidate / "README.md",
         )
+    }
+    candidate_files = sorted(
+        path.relative_to(candidate).as_posix()
+        for path in candidate.rglob("*")
+        if path.is_file()
+    )
+
+    result = verify_mission_candidate(
+        Path(binding["path"]), tmp_path, owner="release-owner"
+    )
+
+    assert result["schema"] == "factory.mission.candidate-verification.v1"
+    assert result["valid"] is True
+    assert result["state"] == "bound_not_executed"
+    assert result["execution_authorized"] is False
+    assert result["dispatched"] is False
+    assert result["binding_sha256"] == binding["binding_sha256"]
+    assert result["candidate_sha256"] == binding["candidate_sha256"]
+    assert all(Path(path).read_bytes() == value for path, value in before.items())
+    assert candidate_files == sorted(
+        path.relative_to(candidate).as_posix()
+        for path in candidate.rglob("*")
+        if path.is_file()
+    )
+    assert not (candidate / "executed-marker").exists()
+
+
+@pytest.mark.parametrize("tamper", ["binding_hash", "authority", "snapshot"])
+def test_mission_candidate_verification_rejects_binding_tampering(
+    tmp_path: Path, tamper: str
+):
+    _mission, _decision, _candidate, _declaration, binding = _bound_candidate(tmp_path)
+    path = Path(binding["path"])
+    if tamper == "binding_hash":
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+        receipt["binding_sha256"] = "0" * 64
+        path.write_text(json.dumps(receipt), encoding="utf-8")
+    elif tamper == "authority":
+        _reseal_candidate_binding(
+            path, lambda receipt: receipt.update(execution_authorized=True)
+        )
+    else:
+        _reseal_candidate_binding(
+            path,
+            lambda receipt: receipt["files"][0].update(sha256="a" * 64),
+        )
+    with pytest.raises(ProductMissionError, match="MISSION_CANDIDATE_INVALID"):
+        verify_mission_candidate(path, tmp_path, owner="release-owner")
+
+
+@pytest.mark.parametrize("artifact", ["mission", "decision"])
+def test_mission_candidate_verification_rejects_approval_drift(
+    tmp_path: Path, artifact: str
+):
+    mission, decision, _candidate, _declaration, binding = _bound_candidate(tmp_path)
+    path = Path(mission["path"] if artifact == "mission" else decision["path"])
+    value = path.read_text(encoding="utf-8")
+    path.write_text(value + "\n", encoding="utf-8")
+    with pytest.raises(ProductMissionError, match="MISSION_CANDIDATE_INVALID"):
+        verify_mission_candidate(Path(binding["path"]), tmp_path, owner="release-owner")
+
+
+def test_mission_candidate_verification_rejects_wrong_owner(tmp_path: Path):
+    _mission, _decision, _candidate, _declaration, binding = _bound_candidate(tmp_path)
+    with pytest.raises(ProductMissionError, match="MISSION_CANDIDATE_INVALID"):
+        verify_mission_candidate(Path(binding["path"]), tmp_path, owner="another-owner")
+
+
+@pytest.mark.parametrize("change", ["tracked", "untracked", "head"])
+def test_mission_candidate_verification_rejects_git_drift(tmp_path: Path, change: str):
+    _mission, _decision, candidate, _declaration, binding = _bound_candidate(tmp_path)
+    if change == "tracked":
+        (candidate / "README.md").write_text(
+            "changed after binding\n", encoding="utf-8"
+        )
+    elif change == "untracked":
+        (candidate / "new-untracked.txt").write_text(
+            "changed after binding\n", encoding="utf-8"
+        )
+    else:
+        (candidate / "README.md").write_text("new committed base\n", encoding="utf-8")
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(candidate),
+                "-c",
+                "user.name=Test Owner",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "--all",
+                "--quiet",
+                "-m",
+                "changed base",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    with pytest.raises(ProductMissionError, match="MISSION_CANDIDATE_INVALID"):
+        verify_mission_candidate(Path(binding["path"]), tmp_path, owner="release-owner")
+
+
+def test_mission_candidate_verification_detects_ignored_scoped_file_change(
+    tmp_path: Path,
+):
+    _mission, _decision, candidate, _declaration, binding = _bound_candidate(tmp_path)
+    scoped = candidate / "src" / "signal-review.py"
+    scoped.parent.mkdir()
+    scoped.write_text("ignored but scope-bound\n", encoding="utf-8")
+    status = subprocess.run(
+        ["git", "-C", str(candidate), "status", "--porcelain=v1"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert status.stdout.strip() == ""
+    with pytest.raises(ProductMissionError, match="MISSION_CANDIDATE_INVALID"):
+        verify_mission_candidate(Path(binding["path"]), tmp_path, owner="release-owner")
+
+
+def test_mission_candidate_cli_binds_verifies_and_rejects_tampering(
+    tmp_path: Path, capsys
+):
+    mission, decision, _candidate, declaration = _approved_binding_inputs(tmp_path)
+    declaration_path = tmp_path / "candidate-declaration.json"
+    declaration_path.write_text(json.dumps(declaration), encoding="utf-8")
+    bad_declaration = json.loads(json.dumps(declaration))
+    bad_declaration["paths"] = ["../outside.py"]
+    bad_declaration_path = tmp_path / "bad-candidate-declaration.json"
+    bad_declaration_path.write_text(json.dumps(bad_declaration), encoding="utf-8")
+    assert (
+        main(
+            [
+                "mission",
+                "bind-candidate",
+                mission["path"],
+                decision["path"],
+                str(bad_declaration_path),
+                "--root",
+                str(tmp_path),
+                "--owner",
+                "release-owner",
+                "--json",
+            ]
+        )
+        != 0
+    )
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "mission",
+                "bind-candidate",
+                mission["path"],
+                decision["path"],
+                str(declaration_path),
+                "--root",
+                str(tmp_path),
+                "--owner",
+                "release-owner",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    binding = json.loads(capsys.readouterr().out)
+    assert (
+        main(
+            [
+                "mission",
+                "verify-candidate",
+                binding["path"],
+                "--root",
+                str(tmp_path),
+                "--owner",
+                "release-owner",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    verified = json.loads(capsys.readouterr().out)
+    assert verified["valid"] is True
+
+    tampered = json.loads(Path(binding["path"]).read_text(encoding="utf-8"))
+    tampered["dispatched"] = True
+    Path(binding["path"]).write_text(json.dumps(tampered), encoding="utf-8")
+    assert (
+        main(
+            [
+                "mission",
+                "verify-candidate",
+                binding["path"],
+                "--root",
+                str(tmp_path),
+                "--owner",
+                "release-owner",
+                "--json",
+            ]
+        )
+        != 0
+    )
+    failure = capsys.readouterr()
+    assert failure.err or failure.out
 
 
 def _candidate_workspace_head(candidate: Path) -> str:

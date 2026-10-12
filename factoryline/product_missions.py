@@ -2188,7 +2188,7 @@ def _candidate_approval(
     return mission, decision
 
 
-def bind_mission_candidate(
+def _candidate_binding_core(
     mission_path: Path,
     decision_path: Path,
     root: Path,
@@ -2196,7 +2196,7 @@ def bind_mission_candidate(
     owner: str,
     declaration: dict[str, Any],
 ) -> dict[str, Any]:
-    """Bind approved scope to a clean Git candidate; never launch commands."""
+    """Reconstruct a binding from live local facts without writing evidence."""
     root = Path(root).resolve()
     mission_path = Path(mission_path).resolve()
     decision_path = Path(decision_path).resolve()
@@ -2206,7 +2206,7 @@ def bind_mission_candidate(
         )
     mission, decision = _candidate_approval(mission_path, decision_path, owner)
     workspace, files = _candidate_declaration(root, declaration)
-    core = {
+    return {
         "schema": CANDIDATE_BINDING_SCHEMA,
         "state": "bound_not_executed",
         "owner": owner,
@@ -2230,11 +2230,65 @@ def bind_mission_candidate(
             "Lane applicability is an owner declaration, not executed audit evidence.",
         ],
     }
+
+
+def bind_mission_candidate(
+    mission_path: Path,
+    decision_path: Path,
+    root: Path,
+    *,
+    owner: str,
+    declaration: dict[str, Any],
+) -> dict[str, Any]:
+    """Bind approved scope to a clean Git candidate; never launch commands."""
+    core = _candidate_binding_core(
+        mission_path, decision_path, root, owner=owner, declaration=declaration
+    )
     digest = _sha_bytes(_canonical(core))
-    path = mission_path.parent / f"candidate-binding-{digest[:16]}.json"
+    path = (
+        Path(core["mission"]["path"]).parent / f"candidate-binding-{digest[:16]}.json"
+    )
     receipt = {**core, "binding_sha256": digest}
     _atomic_json(path, receipt)
     return {**receipt, "path": str(path)}
+
+
+def verify_mission_candidate(
+    binding_path: Path, root: Path, *, owner: str
+) -> dict[str, Any]:
+    """Recheck persisted scope and current Git/file facts without dispatch or writes."""
+    root = Path(root).resolve()
+    binding_path = Path(binding_path).resolve()
+    if not binding_path.is_relative_to(root):
+        _candidate_reject("candidate binding must be beneath the owner workspace")
+    binding = _load_json(binding_path, CANDIDATE_BINDING_SCHEMA)
+    core = {key: value for key, value in binding.items() if key != "binding_sha256"}
+    if _sha_bytes(_canonical(core)) != binding.get("binding_sha256"):
+        _candidate_reject("candidate binding hash differs")
+    try:
+        expected = _candidate_binding_core(
+            Path(binding["mission"]["path"]),
+            Path(binding["decision"]["path"]),
+            root,
+            owner=owner,
+            declaration=binding["declaration"],
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        _candidate_reject(f"candidate binding cannot be verified: {type(exc).__name__}")
+    if core != expected:
+        _candidate_reject(
+            "candidate binding differs from current approved scope or source facts"
+        )
+    return {
+        "schema": "factory.mission.candidate-verification.v1",
+        "valid": True,
+        "state": "bound_not_executed",
+        "binding_sha256": binding["binding_sha256"],
+        "candidate_sha256": binding["candidate_sha256"],
+        "execution_authorized": False,
+        "dispatched": False,
+        "limits": binding["limits"],
+    }
 
 
 def _evidence(root: Path, paths: list[Path]) -> list[dict[str, Any]]:
