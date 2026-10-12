@@ -92,6 +92,10 @@ def _fixture_step(
         and isinstance(stmt.value, ast.Call)
         and _name(stmt.value.func) == app + ".config.update"
     ):
+        if stmt.value.args or any(
+            keyword.arg is None for keyword in stmt.value.keywords
+        ):
+            return app, False
         setting = next(
             (k.value for k in stmt.value.keywords if k.arg == "TESTING"), None
         )

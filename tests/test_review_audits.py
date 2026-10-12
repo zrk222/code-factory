@@ -18,6 +18,19 @@ from factoryline.change_review import ChangeReviewError, review_change
 from factoryline.cli import main
 
 
+def test_hollow_callback_report_provides_native_assertion_probe(tmp_path):
+    (tmp_path / "test_case.py").write_text(
+        "def test_behavior():\n    def check():\n        assert compute() == 42\n    pass\n"
+    )
+    finding = security_scan(tmp_path)["findings"][0]
+    probe = finding["facts"]["native_assertion_probe"]
+    assert probe["available"] is True
+    assert probe["assertion_lines"] == [3]
+    assert probe["nodeid_hint"] == "test_case.py::test_behavior"
+    assert probe["exact_collection_id_required"] is True
+    assert probe["command"][:3] == ["python", "-m", "factoryline.pytest_readiness"]
+
+
 def test_flask_fixture_apps_and_flask_invoked_callbacks_direct_contract():
     import ast
     from factoryline.review_integrity import flask_fixture_apps, flask_invoked_callbacks
@@ -3983,6 +3996,28 @@ def test_source_resolved_async_callback_requires_escaping_await(
         encoding="utf-8",
     )
     assert security_scan(tmp_path)["finding_counts"] == expected
+
+
+def test_flask_fixture_rejects_positional_config_update(tmp_path):
+    (tmp_path / "conftest.py").write_text(
+        "import pytest\nfrom flask import Flask\n"
+        "@pytest.fixture\ndef app():\n"
+        "    app = Flask('test')\n"
+        "    app.testing = True\n"
+        "    app.config.update({'TESTING': False})\n"
+        "    yield app\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_case.py").write_text(
+        "def test_behavior(app):\n"
+        "    @app.route('/checked')\n"
+        "    def check():\n"
+        "        assert compute() == 42\n"
+        "    client = app.test_client()\n"
+        "    client.get('/checked')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,237 @@
 from pathlib import Path
 
 from factoryline.pytest_readiness import collect_pytest_readiness
+from factoryline.pytest_readiness import probe_assertion_propagation
+import pytest
+
+
+@pytest.mark.parametrize(
+    "invocation,expected",
+    [
+        ("check()", "OBSERVED"),
+        ("pass", "INCOMPLETE"),
+        (
+            "try:\n        check()\n    except AssertionError:\n        pass",
+            "INCOMPLETE",
+        ),
+    ],
+)
+def test_probe_assertion_propagation_callback_reachability(
+    tmp_path, invocation, expected
+):
+    suite = tmp_path / "test_callback.py"
+    suite.write_text(
+        "def test_behavior():\n    def check():\n        assert compute() == 42\n    "
+        + invocation
+        + "\n\ndef compute():\n    return 42\n",
+        encoding="utf-8",
+    )
+    result = probe_assertion_propagation(tmp_path, "test_callback.py::test_behavior", 3)
+    assert result["status"] == expected
+    assert result["source_unchanged"] is True
+    assert str(tmp_path) not in __import__("json").dumps(result)
+
+
+def test_probe_assertion_propagation_existing_failure_cannot_pass(tmp_path):
+    (tmp_path / "test_case.py").write_text("def test_case():\n    assert 1 == 2\n")
+    result = probe_assertion_propagation(tmp_path, "test_case.py::test_case", 2)
+    assert result["status"] == "INCOMPLETE"
+    assert result["challenge"] == {}
+
+
+def test_probe_assertion_propagation_rejects_non_assertion_and_escape(tmp_path):
+    (tmp_path / "test_case.py").write_text("def test_case():\n    pass\n")
+    with pytest.raises(ValueError, match="Python assert"):
+        probe_assertion_propagation(tmp_path, "test_case.py::test_case", 2)
+    with pytest.raises(ValueError, match="inside the project"):
+        probe_assertion_propagation(tmp_path, "../outside.py::test_case", 2)
+
+
+@pytest.mark.parametrize("marker", ["@pytest.mark.skip", "@pytest.mark.xfail"])
+def test_probe_assertion_propagation_skip_and_xfail_are_incomplete(tmp_path, marker):
+    (tmp_path / "test_case.py").write_text(
+        "import pytest\n" + marker + "\ndef test_case():\n    assert True\n"
+    )
+    assert (
+        probe_assertion_propagation(tmp_path, "test_case.py::test_case", 4)["status"]
+        == "INCOMPLETE"
+    )
+
+
+def test_probe_assertion_propagation_timeout_is_incomplete(tmp_path):
+    (tmp_path / "test_case.py").write_text(
+        "def test_case():\n    import time\n    time.sleep(30)\n    assert True\n"
+    )
+    result = probe_assertion_propagation(
+        tmp_path, "test_case.py::test_case", 4, timeout=0.1
+    )
+    assert result["status"] == "INCOMPLETE"
+    assert result["baseline"] == {"status": "TIMEOUT"}
+
+
+def test_probe_assertion_propagation_rejects_forged_marker_failure(tmp_path):
+    (tmp_path / "test_case.py").write_text(
+        "def test_case():\n    try:\n        assert compute() == 42\n"
+        "    except AssertionError:\n"
+        "        raise ValueError('CF_ASSERTION_PROPAGATION_CHALLENGE')\n"
+        "def compute():\n    return 42\n"
+    )
+    result = probe_assertion_propagation(tmp_path, "test_case.py::test_case", 3)
+    assert result["status"] == "INCOMPLETE"
+    assert result["challenge"]["reports"][1]["challenge_visible"] is False
+
+
+def test_probe_assertion_propagation_async_thread_parameter(tmp_path):
+    (tmp_path / "test_case.py").write_text(
+        "import asyncio\nimport pytest\nfrom concurrent.futures import ThreadPoolExecutor\n"
+        "@pytest.mark.parametrize('value', [42, 43])\n"
+        "def test_case(value):\n    def check():\n        assert value == 42\n"
+        "    async def run():\n        with ThreadPoolExecutor() as pool:\n"
+        "            pool.submit(check).result()\n    asyncio.run(run())\n"
+    )
+    result = probe_assertion_propagation(tmp_path, "test_case.py::test_case[42]", 7)
+    assert result["status"] == "OBSERVED"
+    assert result["baseline"]["collected"] == ["test_case.py::test_case[42]"]
+
+
+def test_probe_assertion_propagation_detects_source_drift(tmp_path):
+    (tmp_path / "test_case.py").write_text(
+        "from pathlib import Path\ndef test_case():\n"
+        "    Path('created.py').write_text('changed = True')\n"
+        "    assert compute() == 42\ndef compute():\n    return 42\n"
+    )
+    result = probe_assertion_propagation(tmp_path, "test_case.py::test_case", 4)
+    assert result["status"] == "INCOMPLETE"
+    assert result["source_unchanged"] is False
+
+
+@pytest.mark.parametrize("status,code", [("OBSERVED", 0), ("INCOMPLETE", 2)])
+def test_assertion_probe_main_reports_only_actual_observation(
+    monkeypatch, capsys, status, code
+):
+    from factoryline import pytest_readiness
+
+    monkeypatch.setattr(
+        pytest_readiness,
+        "probe_assertion_propagation",
+        lambda *a, **k: {"status": status, "semantic_strength": "NOT_ASSESSED"},
+    )
+    assert (
+        pytest_readiness.main(
+            ["--root", ".", "--nodeid", "test_case.py::test_case", "--line", "2"]
+        )
+        == code
+    )
+    assert __import__("json").loads(capsys.readouterr().out)["status"] == status
+
+
+def test_assertion_probe_input_and_binding_limits(tmp_path, monkeypatch):
+    from factoryline.pytest_readiness import (
+        _challenge_inputs,
+        _challenge_source_binding,
+    )
+
+    suite = tmp_path / "test_case.py"
+    suite.write_text("def test_case():\n    assert True; assert True\n")
+    with pytest.raises(ValueError, match="exactly one"):
+        _challenge_inputs(tmp_path, "test_case.py::test_case", 2)
+    with pytest.raises(ValueError, match="timeout"):
+        probe_assertion_propagation(
+            tmp_path, "test_case.py::test_case", 2, timeout=True
+        )
+    suite.write_text("def test_case():\n    assert True\n")
+    original = Path.is_symlink
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "is_symlink", lambda p: p == tmp_path or original(p))
+        with pytest.raises(ValueError, match="inside the project"):
+            _challenge_inputs(tmp_path, "test_case.py::test_case", 2)
+    with suite.open("wb") as stream:
+        stream.truncate(4 * 1024 * 1024 + 1)
+    with pytest.raises(ValueError, match="4 MiB"):
+        _challenge_inputs(tmp_path, "test_case.py::test_case", 2)
+    with suite.open("wb") as stream:
+        stream.truncate(128 * 1024 * 1024 + 1)
+    with pytest.raises(ValueError, match="128 MiB"):
+        _challenge_source_binding(tmp_path)
+    suite.unlink()
+
+
+def test_assertion_probe_requires_exact_terminal_reports():
+    from factoryline.pytest_readiness import _exact_challenge_outcome
+
+    node = "test_case.py::test_case"
+    reports = [
+        {"nodeid": node, "phase": phase, "outcome": "passed", "xfail": False}
+        for phase in ("setup", "call", "teardown")
+    ]
+    observation = {"collected": [node], "hits": 1, "reports": reports, "exit_code": 0}
+    assert _exact_challenge_outcome(observation, node, "passed")
+    assert not _exact_challenge_outcome({**observation, "exit_code": 2}, node, "passed")
+    assert not _exact_challenge_outcome(
+        {**observation, "reports": reports[:-1]}, node, "passed"
+    )
+
+
+@pytest.mark.parametrize("reports", [None, [None], [{}], "invalid"])
+def test_assertion_probe_malformed_challenge_is_incomplete(
+    tmp_path, monkeypatch, reports
+):
+    import factoryline.pytest_readiness as readiness
+
+    (tmp_path / "test_case.py").write_text("def test_case():\n    assert True\n")
+    node = "test_case.py::test_case"
+    baseline = {
+        "collected": [node],
+        "hits": 1,
+        "exit_code": 0,
+        "reports": [
+            {"nodeid": node, "phase": phase, "outcome": "passed", "xfail": False}
+            for phase in ("setup", "call", "teardown")
+        ],
+    }
+    observations = iter(
+        [baseline, {"collected": [node], "hits": 1, "exit_code": 1, "reports": reports}]
+    )
+    monkeypatch.setattr(
+        readiness, "_run_assertion_challenge", lambda *args: next(observations)
+    )
+    result = readiness.probe_assertion_propagation(tmp_path, node, 2)
+    assert result["status"] == "INCOMPLETE"
+    assert result["observer_integrity"] == "IN_PROCESS_NOT_ATTESTED"
+
+
+@pytest.mark.parametrize("payload", ["not json", "[]", "null"])
+def test_assertion_probe_rejects_malformed_observation_file(tmp_path, payload):
+    from factoryline.pytest_readiness import _probe_observation
+
+    output = tmp_path / "observation.json"
+    output.write_text(payload)
+    assert _probe_observation(output, {"exit_code": 0})["status"] == "RUNNER_ERROR"
+    output.unlink()
+    assert _probe_observation(output, {"exit_code": 0})["status"] == "RUNNER_ERROR"
+
+
+def test_assertion_probe_aborts_collection_of_multiple_cases(tmp_path):
+    (tmp_path / "test_case.py").write_text(
+        "from pathlib import Path\nclass TestCases:\n"
+        "    def test_one(self):\n        assert True\n"
+        "    def test_two(self):\n        Path('executed').touch()\n"
+    )
+    result = probe_assertion_propagation(tmp_path, "test_case.py::TestCases", 4)
+    assert result["status"] == "INCOMPLETE"
+    assert result["baseline"]["exit_code"] == 4
+    assert not (tmp_path / "executed").exists()
+
+
+def test_assertion_probe_bounds_runner_output(tmp_path):
+    (tmp_path / "test_case.py").write_text(
+        "import sys\ndef test_case():\n    sys.stdout.write('x' * (9 * 1024 * 1024))\n"
+        "    assert compute() == 42\ndef compute():\n    return 42\n"
+    )
+    result = probe_assertion_propagation(tmp_path, "test_case.py::test_case", 4)
+    assert result["status"] == "INCOMPLETE"
+    assert result["challenge"]["status"] == "RUNNER_LIMIT"
+    assert result["challenge"]["process"]["output_limit_exceeded"] is True
 
 
 def test_setup_phase_skip_cannot_satisfy_readiness(tmp_path: Path) -> None:

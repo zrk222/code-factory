@@ -3943,7 +3943,35 @@ def _hollow_test_finding(
         "MEDIUM",
         symbol=node.name,
         runtime_oracle_eligible=_completion_only_oracle(node),
+        native_assertion_probe=_native_assertion_probe(relative, node),
     )
+
+
+def _native_assertion_probe(relative, node):
+    lines = sorted(
+        {child.lineno for child in ast.walk(node) if isinstance(child, ast.Assert)}
+    )[:32]
+    return {
+        "available": bool(lines),
+        "assertion_lines": lines,
+        "nodeid_hint": relative + "::" + node.name,
+        "exact_collection_id_required": True,
+        "command": [
+            "python",
+            "-m",
+            "factoryline.pytest_readiness",
+            "--root",
+            ".",
+            "--nodeid",
+            "<exact collected pytest node ID>",
+            "--line",
+            "<assertion line>",
+            "--timeout",
+            "30",
+        ],
+        "execution": "Explicit local execution only; never started by a static scan",
+        "interpretation": "Reachability and failure propagation only; review semantic strength separately; no automatic suppression",
+    }
 
 
 def _completion_only_oracle(node: ast.AST) -> bool:

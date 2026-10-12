@@ -3,9 +3,330 @@
 from __future__ import annotations
 
 import os
+import ast
+import hashlib
+import json
+import sys
+import tempfile
+import threading
+import time
 
 import pytest
 from pathlib import Path
+
+
+class _AssertionChallenge:
+    """Observe one assertion during the selected call phase, including new threads."""
+
+    def __init__(self, path, line, inject, qualname):
+        self.path, self.line, self.inject = path, line, inject
+        self.qualname = qualname
+        self.active = False
+        self.hits = 0
+        self.reports = []
+        self.collected = []
+        self.error = AssertionError("CF_ASSERTION_PROPAGATION_CHALLENGE")
+        self.escaped = set()
+
+    def trace(self, frame, event, arg):
+        """Raise at the reviewed assertion during the selected call phase."""
+        if self.active and event == "line" and frame.f_lineno == self.line:
+            if (
+                frame.f_code.co_qualname == self.qualname
+                and Path(frame.f_code.co_filename).resolve() == self.path
+            ):
+                self.hits += 1
+                if self.inject:
+                    raise self.error
+        return self.trace
+
+    def pytest_collection_finish(self, session):
+        self.collected = [item.nodeid for item in session.items]
+        if len(session.items) != 1:
+            raise pytest.UsageError(
+                "Assertion probes require exactly one collected case"
+            )
+
+    @pytest.hookimpl(hookwrapper=True)
+    def pytest_runtest_call(self, item):
+        old, old_thread = sys.gettrace(), threading.gettrace()
+        self.active = True
+        sys.settrace(self.trace)
+        threading.settrace(self.trace)
+        try:
+            yield
+        finally:
+            self.active = False
+            sys.settrace(old)
+            threading.settrace(old_thread)
+
+    def pytest_runtest_logreport(self, report):
+        self.reports.append(
+            {
+                "nodeid": report.nodeid,
+                "phase": report.when,
+                "outcome": report.outcome,
+                "xfail": hasattr(report, "wasxfail"),
+                "challenge_visible": (report.nodeid, report.when) in self.escaped,
+            }
+        )
+
+    @pytest.hookimpl(hookwrapper=True)
+    def pytest_runtest_makereport(self, item, call):
+        if call.excinfo is not None and _probe_exception_contains(
+            call.excinfo.value, self.error
+        ):
+            self.escaped.add((item.nodeid, call.when))
+        yield
+
+
+def _probe_exception_contains(error, expected, depth=0):
+    if error is expected:
+        return True
+    if depth >= 8:
+        return False
+    return any(
+        _probe_exception_contains(child, expected, depth + 1)
+        for child in getattr(error, "exceptions", ())
+    )
+
+
+def _challenge_worker(config, output):
+    plugin = _AssertionChallenge(
+        Path(config["path"]).resolve(),
+        config["line"],
+        config["inject"],
+        config["qualname"],
+    )
+    code = pytest.main(
+        [
+            "-q",
+            "--tb=short",
+            "-p",
+            "no:cacheprovider",
+            "--rootdir",
+            config["root"],
+            config["nodeid"],
+        ],
+        plugins=[plugin],
+    )
+    Path(output).write_text(
+        json.dumps(
+            {
+                "exit_code": int(code),
+                "hits": plugin.hits,
+                "collected": plugin.collected,
+                "reports": plugin.reports,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _challenge_inputs(root, nodeid, line):
+    root = Path(root).resolve()
+    if not isinstance(nodeid, str):
+        raise ValueError("An exact pytest node ID is required")
+    name = nodeid.split("::", 1)[0]
+    if (
+        "::" not in nodeid
+        or nodeid.startswith("-")
+        or "\x00" in nodeid
+        or Path(name).is_absolute()
+    ):
+        raise ValueError("An exact pytest node ID is required")
+    path = root / name
+    linked = any(
+        parent.is_symlink()
+        for parent in [path, *path.parents]
+        if parent.is_relative_to(root)
+    )
+    if linked or not path.resolve().is_relative_to(root):
+        raise ValueError("Test source must remain inside the project")
+    if path.stat().st_size > 4 * 1024 * 1024:
+        raise ValueError("Test source exceeds the 4 MiB probe limit")
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    assertions = [
+        n for n in ast.walk(tree) if isinstance(n, ast.Assert) and n.lineno == line
+    ]
+    if type(line) is not int or len(assertions) != 1:
+        raise ValueError("The requested line must contain exactly one Python assert")
+    return root, path.resolve(), _assertion_qualname(tree, assertions[0])
+
+
+def _assertion_qualname(tree, assertion):
+    parents = {
+        child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+    }
+    scopes, node = [], assertion
+    while node in parents:
+        node = parents[node]
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            scopes.append(node)
+    parts, previous = [], None
+    for node in reversed(scopes):
+        if parts and isinstance(previous, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            parts.append("<locals>")
+        parts.append(node.name)
+        previous = node
+    return ".".join(parts) or "<module>"
+
+
+def _challenge_source_binding(root):
+    """Bind Python sources while excluding dependencies and generated caches."""
+    from .review_audits import _security_source_files
+
+    files = _security_source_files(root)
+    if len(files) > 4096 or any(
+        path.is_symlink() or not path.resolve().is_relative_to(root) for path in files
+    ):
+        raise ValueError("Source binding exceeds limits or contains links")
+    if sum(path.stat().st_size for path in files) > 128 * 1024 * 1024:
+        raise ValueError("Source binding exceeds the 128 MiB probe limit")
+    return hashlib.sha256(
+        json.dumps(
+            [
+                [
+                    path.relative_to(root).as_posix(),
+                    hashlib.sha256(path.read_bytes()).hexdigest(),
+                ]
+                for path in sorted(files)
+            ],
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+
+def _run_assertion_challenge(config, timeout):
+    from .runtime_audit_process import _facts, _launch, _run_child_bounded
+
+    with tempfile.TemporaryDirectory(prefix="cf-assertion-probe-") as directory:
+        output = Path(directory) / "observation.json"
+        script = (
+            "from factoryline.pytest_readiness import _challenge_worker; "
+            "import json,sys; _challenge_worker(json.loads(sys.argv[1]),sys.argv[2])"
+        )
+        env = dict(os.environ)
+        env.pop("PYTEST_CURRENT_TEST", None)
+        package_root = str(Path(__file__).resolve().parent.parent)
+        env["PYTHONPATH"] = os.pathsep.join([package_root, env.get("PYTHONPATH", "")])
+        started = time.monotonic()
+        try:
+            child = _launch(
+                [sys.executable, "-c", script, json.dumps(config), str(output)],
+                Path(config["root"]),
+                env,
+            )
+        except OSError:
+            return {"status": "RUNNER_ERROR"}
+        facts = _run_child_bounded(
+            child, _facts(), timeout, started + timeout, started, None, None, None
+        )
+        if facts["timed_out"]:
+            return {"status": "TIMEOUT"}
+        if facts["output_limit_exceeded"] or not facts["cleanup_confirmed"]:
+            return {"status": "RUNNER_LIMIT", "process": facts}
+        if not output.is_file():
+            return {"status": "RUNNER_ERROR", "exit_code": facts["exit_code"]}
+        if output.stat().st_size > 1024 * 1024:
+            return {"status": "RUNNER_LIMIT", "process": facts}
+        return _probe_observation(output, facts)
+
+
+def _probe_observation(output, facts):
+    try:
+        observation = json.loads(output.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"status": "RUNNER_ERROR", "process": facts}
+    if not isinstance(observation, dict):
+        return {"status": "RUNNER_ERROR", "process": facts}
+    observation["process"] = facts
+    return observation
+
+
+def _exact_challenge_outcome(observation, nodeid, outcome):
+    if (
+        observation.get("collected") != [nodeid]
+        or type(observation.get("hits")) is not int
+    ):
+        return False
+    if observation["hits"] < 1:
+        return False
+    reports = observation.get("reports", [])
+    if not isinstance(reports, list) or any(
+        not isinstance(row, dict) for row in reports
+    ):
+        return False
+    if observation.get("exit_code") != (0 if outcome == "passed" else 1):
+        return False
+    if [(row.get("nodeid"), row.get("phase")) for row in reports] != [
+        (nodeid, phase) for phase in ("setup", "call", "teardown")
+    ]:
+        return False
+    if any(
+        row.get("xfail", True) or row.get("outcome") == "skipped" for row in reports
+    ):
+        return False
+    calls = [row for row in reports if row["phase"] == "call"]
+    if len(calls) != 1 or calls[0].get("outcome") != outcome:
+        return False
+    return all(
+        row.get("outcome") == "passed" for row in reports if row["phase"] != "call"
+    )
+
+
+def probe_assertion_propagation(root, nodeid, line, *, timeout=30):
+    """Execute one test twice to observe assertion reachability and failure escape.
+
+    Explicit local execution, not a sandbox, semantic-oracle proof, independent
+    accuracy measurement or authority to clear a scanner finding. Constant and
+    otherwise weak assertions can propagate too; callers must assess their intent.
+    """
+    if type(timeout) not in (int, float) or not 0 < timeout <= 300:
+        raise ValueError("timeout must be between 0 and 300 seconds")
+    root, path, qualname = _challenge_inputs(root, nodeid, line)
+    before = _challenge_source_binding(root)
+    config = {
+        "root": str(root),
+        "path": str(path),
+        "line": line,
+        "nodeid": nodeid,
+        "inject": False,
+        "qualname": qualname,
+    }
+    baseline = _run_assertion_challenge(config, timeout)
+    challenge = {}
+    baseline_stable = before == _challenge_source_binding(root)
+    if baseline_stable and _exact_challenge_outcome(baseline, nodeid, "passed"):
+        challenge = _run_assertion_challenge({**config, "inject": True}, timeout)
+    stable = baseline_stable and before == _challenge_source_binding(root)
+    propagated = _exact_challenge_outcome(challenge, nodeid, "failed")
+    visible = propagated and any(
+        row.get("challenge_visible") is True
+        for row in challenge.get("reports", [])
+        if row["phase"] == "call"
+    )
+    return {
+        "schema": "factory.assertion-propagation-probe.v1",
+        "status": "OBSERVED" if stable and propagated and visible else "INCOMPLETE",
+        "nodeid": nodeid,
+        "line": line,
+        "assertion_qualname": qualname,
+        "source_sha256": before,
+        "tool_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "binding_scope": "Python source inventory only; dependencies and non-Python files are not bound",
+        "source_unchanged": stable,
+        "semantic_strength": "NOT_ASSESSED",
+        "observer_integrity": "IN_PROCESS_NOT_ATTESTED",
+        "baseline": baseline,
+        "challenge": challenge,
+        "limits": [
+            "Local supervised execution; no isolation or independent accuracy claim",
+            "Trusted project code only; hostile code can alter the in-process observer",
+            "Reachability and propagation only; semantic strength is not proved",
+            "No automatic finding suppression, approval or release authority",
+        ],
+    }
 
 
 class _Results:
@@ -20,7 +341,7 @@ class _Results:
             self.skipped += 1
 
     def pytest_runtest_logreport(self, report) -> None:
-        """Count terminal test outcomes without overlooking setup-phase skips or xfails."""
+        """Count test outcomes, including setup skips and xfails."""
         if report.skipped:
             if hasattr(report, "wasxfail"):
                 self.xfailed += 1
@@ -78,3 +399,29 @@ def collect_pytest_readiness(test_paths: list[str]) -> dict[str, int]:
         "skipped": results.skipped,
         "xfailed": results.xfailed,
     }
+
+
+def main(argv=None):
+    """Run an explicitly selected local assertion propagation probe."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Execute one pytest case twice to challenge assertion propagation; "
+            "runs project code locally."
+        )
+    )
+    parser.add_argument("--root", required=True)
+    parser.add_argument("--nodeid", required=True)
+    parser.add_argument("--line", required=True, type=int)
+    parser.add_argument("--timeout", type=float, default=30)
+    args = parser.parse_args(argv)
+    result = probe_assertion_propagation(
+        args.root, args.nodeid, args.line, timeout=args.timeout
+    )
+    print(json.dumps(result, indent=2))
+    return 0 if result["status"] == "OBSERVED" else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
