@@ -437,6 +437,76 @@ def test_studio_decision_serializes_requests_and_ignores_stale_responses():
     assert "may have been recorded" in action
 
 
+def test_dashboard_mission_decisions_use_an_in_page_rationale_form():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("token")
+    interaction = page.split("function dashboardDecisionReasons", 1)[1].split(
+        "async function decideMission(decision)", 1
+    )[0]
+    assert all(call not in interaction for call in ("window.prompt(", "window.alert("))
+    open_action = page.split("function decideDashboardMission", 1)[1].split(
+        "function cancelDashboardMissionDecision", 1
+    )[0]
+    assert "fetch(" not in open_action
+    assert "Choose a starting point" in interaction
+    assert "Write a custom reason" in interaction
+    assert "Confirm decision" in interaction
+    assert "Cancel" in interaction
+    assert "I reviewed the bounded scope and budget" in interaction
+    assert "I need more information before deciding." in interaction
+    assert "The scope or risk is not acceptable as written." in interaction
+
+
+def test_dashboard_decision_draft_survives_polling_and_errors():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("token")
+    approval_rows = page.split("function approvalRows(missions,refreshId)", 1)[1].split(
+        "function dashboardDecisionReasons", 1
+    )[0]
+    submit = page.split("async function submitDashboardMissionDecision()", 1)[1].split(
+        "async function decideMission(decision)", 1
+    )[0]
+    assert (
+        "dashboardDecisionDraft&&host.querySelector('.dashboard-decision-form')"
+        in approval_rows
+    )
+    assert "if(dashboardDecisionBusy||!draft||draft.uncertain)return" in submit
+    assert "dashboardDecisionBusy=true" in submit
+    assert "fetch('/api/mission-decision'" in submit
+    assert "X-Factory-Studio-Token" in submit
+    assert "showDashboardDecisionError" in submit
+    assert "catch(error)" in submit
+    assert "dashboardDecisionDraft=null;await refreshDashboard()" in submit
+
+
+def test_dashboard_decision_uncertainty_requires_refresh_before_retry():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("token")
+    uncertain = page.split("function markDashboardDecisionUncertain", 1)[1].split(
+        "let missionDecisionBusy", 1
+    )[0]
+    approval_rows = page.split("function approvalRows(missions,refreshId)", 1)[1].split(
+        "function dashboardDecisionReasons", 1
+    )[0]
+    cancel = page.split("function cancelDashboardMissionDecision()", 1)[1].split(
+        "function showDashboardDecisionError", 1
+    )[0]
+    assert "response.status>=500" in uncertain
+    assert "dashboardDecisionDraft.uncertain=true" in uncertain
+    assert "uncertainAfter=dashboardRefreshSequence" in uncertain
+    assert (
+        "Refresh the dashboard and inspect the saved decision before retrying."
+        in uncertain
+    )
+    assert "if(!current)return" in approval_rows
+    assert "current.decision!=='awaiting_owner'" in approval_rows
+    assert "refreshId<=dashboardDecisionDraft.uncertainAfter" in approval_rows
+    assert "approvalRows(dashboardMissionSnapshot);refreshDashboard()" in cancel
+
+
 def test_studio_gap_feedback_is_actionable_and_never_auto_invents_product_facts(
     tmp_path: Path,
 ):
