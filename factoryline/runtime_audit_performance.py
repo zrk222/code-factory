@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
+from math import ceil
+from pathlib import Path
 from statistics import median
 from typing import Any
 
 from .runtime_audit_common import (
+    canonical_bytes,
     exact_keys,
     guarded_lane_evaluator,
     lane_result,
@@ -628,3 +632,193 @@ def evaluate_performance(
     return _performance_outcome(
         runs, threshold_summary, resource_summary, leak_observation
     )
+
+
+_TRACE_IDENTITIES = {
+    "dataset_sha256",
+    "workload_sha256",
+    "environment_sha256",
+    "rubric_sha256",
+    "prompt_sha256",
+    "tool_sha256",
+}
+_TRACE_METRICS = {
+    "success_rate",
+    "abstention_rate",
+    "cost_usd_mean",
+    "latency_ms_p95",
+}
+
+
+def _trace_cohort(body: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    exact_keys(body, {"schema", "identities", "rows"})
+    if body["schema"] != "factory.trace-cohort.v1":
+        raise ValueError("cohort schema mismatch")
+    exact_keys(body["identities"], _TRACE_IDENTITIES)
+    for value in body["identities"].values():
+        if (
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(char not in "0123456789abcdef" for char in value)
+        ):
+            raise ValueError("invalid cohort identity")
+    rows = body["rows"]
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 10_000:
+        raise ValueError("cohort must contain 1..10000 rows")
+    indexed = {}
+    for row in rows:
+        item = _trace_cohort_row(row)
+        if item["case_id"] in indexed:
+            raise ValueError("duplicate cohort case")
+        indexed[item["case_id"]] = item
+    return indexed
+
+
+def _trace_cohort_row(row: dict[str, Any]) -> dict[str, Any]:
+    exact_keys(row, {"case_id", "category", "outcome", "cost_usd", "latency_ms"})
+    require_str(row["case_id"], "case_id")
+    require_str(row["category"], "category")
+    if row["outcome"] not in {"PASS", "FAIL", "ABSTAIN"}:
+        raise ValueError("unknown cohort outcome")
+    for metric in ("cost_usd", "latency_ms"):
+        if row[metric] is None:
+            raise ValueError("required cohort measurement is unknown")
+        require_number(row[metric], metric, minimum=0)
+    return row
+
+
+def _trace_cohort_metrics(rows: list[dict[str, Any]]) -> dict[str, float]:
+    count = len(rows)
+    latency = sorted(row["latency_ms"] for row in rows)
+    return {
+        "success_rate": sum(row["outcome"] == "PASS" for row in rows) / count,
+        "abstention_rate": sum(row["outcome"] == "ABSTAIN" for row in rows) / count,
+        "cost_usd_mean": sum(row["cost_usd"] for row in rows) / count,
+        "latency_ms_p95": latency[ceil(0.95 * count) - 1],
+    }
+
+
+def _trace_regression_policy(body: dict[str, Any]) -> list[dict[str, Any]]:
+    exact_keys(body, {"schema", "approval", "thresholds", "identities"})
+    if body["schema"] != "factory.trace-regression-policy.v1":
+        raise ValueError("regression policy schema mismatch")
+    exact_keys(body["approval"], {"origin", "reference"})
+    if body["approval"]["origin"] not in AUTHORITATIVE:
+        raise ValueError("threshold policy lacks approved provenance")
+    require_str(body["approval"]["reference"], "approval reference")
+    thresholds = body["thresholds"]
+    if not isinstance(thresholds, list) or not 1 <= len(thresholds) <= 400:
+        raise ValueError("thresholds must contain 1..400 rows")
+    keys = [_trace_threshold_key(item) for item in thresholds]
+    if len(set(keys)) != len(keys):
+        raise ValueError("duplicate regression threshold")
+    return thresholds
+
+
+def _trace_threshold_key(item: dict[str, Any]) -> tuple[str, str]:
+    exact_keys(item, {"category", "metric", "operator", "limit", "max_regression"})
+    require_str(item["category"], "category")
+    if item["metric"] not in _TRACE_METRICS or item["operator"] not in {"gte", "lte"}:
+        raise ValueError("unsupported regression threshold")
+    expected = "gte" if item["metric"] == "success_rate" else "lte"
+    if item["operator"] != expected:
+        raise ValueError("threshold direction weakens metric")
+    require_number(item["limit"], "limit", minimum=0)
+    require_number(item["max_regression"], "max_regression", minimum=0)
+    if item["metric"].endswith("rate") and item["limit"] > 1:
+        raise ValueError("rate limit exceeds one")
+    return item["category"], item["metric"]
+
+
+def _trace_regression_rows(baseline, candidate, thresholds):
+    categories = sorted({row["category"] for row in baseline.values()})
+    expected = {
+        (category, metric) for category in categories for metric in _TRACE_METRICS
+    }
+    if {_trace_threshold_key(item) for item in thresholds} != expected:
+        raise ValueError("policy must cover every category and mandatory metric")
+    observations = []
+    for item in thresholds:
+        category, metric = item["category"], item["metric"]
+        before = _trace_cohort_metrics(
+            [row for row in baseline.values() if row["category"] == category]
+        )[metric]
+        after = _trace_cohort_metrics(
+            [row for row in candidate.values() if row["category"] == category]
+        )[metric]
+        regression = before - after if item["operator"] == "gte" else after - before
+        passed = _comparison(after, item["operator"], item["limit"]) and (
+            regression <= item["max_regression"]
+        )
+        observations.append(
+            {
+                "category": category,
+                "metric": metric,
+                "baseline": before,
+                "candidate": after,
+                "regression": regression,
+                "limit": item["limit"],
+                "max_regression": item["max_regression"],
+                "state": "PASS" if passed else "FAIL",
+                "paired_cases": sum(
+                    row["category"] == category for row in baseline.values()
+                ),
+            }
+        )
+    return observations
+
+
+def _bound_trace_regression(bound: dict[str, Any]) -> list[dict[str, Any]]:
+    artifacts = bound["artifacts"]
+    before, after = artifacts["baseline"]["body"], artifacts["candidate_cohort"]["body"]
+    baseline, candidate = _trace_cohort(before), _trace_cohort(after)
+    if before["identities"] != after["identities"] or set(baseline) != set(candidate):
+        raise ValueError("baseline and candidate cohorts are not equivalent")
+    if any(baseline[key]["category"] != candidate[key]["category"] for key in baseline):
+        raise ValueError("paired categories differ")
+    policy = artifacts["regression_policy"]["body"]
+    thresholds = _trace_regression_policy(policy)
+    if policy["identities"] != before["identities"]:
+        raise ValueError("cohort differs from approved policy identities")
+    for role in ("dataset", "rubric", "prompt", "tool"):
+        if before["identities"][f"{role}_sha256"] != artifacts[role]["sha256"]:
+            raise ValueError("cohort identity differs from bound artifact")
+    return _trace_regression_rows(baseline, candidate, thresholds)
+
+
+def evaluate_trace_regression(
+    root: Path, binding_request: dict[str, Any]
+) -> dict[str, Any]:
+    """Compare bound paired observations; this local receipt grants no rollout authority."""
+    from .analysis_evidence import AnalysisEvidenceError, validate_evaluation_bindings
+
+    result: dict[str, Any] = {
+        "schema": "factory.trace-regression.v1",
+        "state": "INCOMPLETE",
+        "code": "REGRESSION_GATES",
+        "authority": "none",
+        "observations": [],
+        "claim_boundary": "Local artifact integrity does not authenticate measurements or approvals.",
+        "next_actions": [
+            "Supply current paired cohorts and approved complete thresholds."
+        ],
+    }
+    try:
+        bound = validate_evaluation_bindings(root, binding_request)
+        if bound["state"] != "BOUND_LOCAL_EVIDENCE":
+            raise ValueError("evaluation bindings are incomplete")
+        result["binding_sha256"] = bound["binding_sha256"]
+        observations = _bound_trace_regression(bound)
+        result["observations"] = observations
+        result["state"] = (
+            "FAIL" if any(row["state"] == "FAIL" for row in observations) else "PASS"
+        )
+        result["next_actions"] = (
+            ["Repair breached metrics and rerun only the impacted paired cohort."]
+            if result["state"] == "FAIL"
+            else []
+        )
+    except (AnalysisEvidenceError, ValueError, TypeError, KeyError):
+        pass
+    result["receipt_sha256"] = sha256(canonical_bytes(result)).hexdigest()
+    return result

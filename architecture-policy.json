@@ -101,9 +101,35 @@
         "max_lines": 4556,
         "max_bytes": 196619,
         "rationale": "Allow bounded 5% headroom over the measured MCP adapter size; further growth requires a reviewed design."
+      },
+      "factoryline/analysis_evidence.py": {
+        "max_lines": 2000,
+        "max_bytes": 72000,
+        "rationale": "Bound trace evaluation and Jev dispatch growth before editing; split or consolidate within existing file inventory before exceeding either ceiling."
+      },
+      "factoryline/jev_classifier.py": {
+        "max_lines": 1300,
+        "max_bytes": 51000,
+        "rationale": "Bound trace evaluation and Jev dispatch growth before editing; split or consolidate within existing file inventory before exceeding either ceiling."
+      },
+      "factoryline/operations.py": {
+        "max_lines": 1300,
+        "max_bytes": 46000,
+        "rationale": "Bound trace evaluation and Jev dispatch growth before editing; split or consolidate within existing file inventory before exceeding either ceiling."
+      },
+      "scripts/evaluate_jev.mjs": {
+        "max_lines": 1100,
+        "max_bytes": 63000,
+        "rationale": "Bound trace evaluation and Jev dispatch growth before editing; split or consolidate within existing file inventory before exceeding either ceiling."
+      },
+      "scripts/evaluate_jev.test.mjs": {
+        "max_lines": 1100,
+        "max_bytes": 65000,
+        "rationale": "Bound trace evaluation and Jev dispatch growth before editing; split or consolidate within existing file inventory before exceeding either ceiling."
       }
     },
     "required_paths": [
+      "factoryline/analysis_evidence.py",
       "factoryline/architecture_health.py",
       "factoryline/audit_taxonomy.py",
       "factoryline/audit_trace.py",
@@ -117,9 +143,13 @@
       "factoryline/deep_audit_sarif.py",
       "factoryline/github_account_overview.py",
       "factoryline/graph_ops.py",
+      "factoryline/jev_classifier.py",
       "factoryline/junie_review.py",
       "factoryline/junie_taxonomy.py",
-      "factoryline/mcp.py"
+      "factoryline/mcp.py",
+      "factoryline/operations.py",
+      "scripts/evaluate_jev.mjs",
+      "scripts/evaluate_jev.test.mjs"
     ]
   },
   "review_thresholds": {

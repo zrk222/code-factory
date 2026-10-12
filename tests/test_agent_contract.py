@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
+from hashlib import sha256
 
 import pytest
 
@@ -9,6 +11,75 @@ from factoryline.agent_contract import (
     validate_agent_contract,
     validate_verifier_attestation,
 )
+
+
+def test_trace_evaluation_native_mcp_and_current_dashboard_projection(tmp_path):
+    from test_analysis_evidence import _span_fixture
+    from factoryline.mcp import dispatch
+    from factoryline.analysis_evidence import trace_evaluation_status
+    from factoryline.runtime_audit_common import canonical_bytes
+
+    request, _ = _span_fixture(tmp_path)
+    raw = canonical_bytes(request)
+    (tmp_path / "request.json").write_bytes(raw)
+    response = dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "factory.evaluate_trace",
+                "arguments": {
+                    "request_path": "request.json",
+                    "request_sha256": sha256(raw).hexdigest(),
+                    "kind": "spans",
+                },
+            },
+        },
+        tmp_path,
+    )
+    result = json.loads(response["result"]["content"][0]["text"])
+    assert result["state"] == "PASS"
+    assert result["authority"] == "none"
+    receipt = canonical_bytes(result)
+    (tmp_path / "evaluation.json").write_bytes(receipt)
+    directory = tmp_path / ".factory" / "trace-evaluation"
+    directory.mkdir(parents=True)
+    manifest = {
+        "schema": "factory.trace-evaluation-manifest.v1",
+        "kind": "spans",
+        "request": {"path": "request.json", "sha256": sha256(raw).hexdigest()},
+        "receipt": {"path": "evaluation.json", "sha256": sha256(receipt).hexdigest()},
+    }
+    (directory / "latest.json").write_bytes(canonical_bytes(manifest))
+    projection = trace_evaluation_status(tmp_path)
+    assert projection["state"] == "PASS"
+    assert projection["metrics"]["span_count"] == 1
+    assert projection["metrics"]["actual_cost_usd"] is None
+    (tmp_path / "src" / "sample.py").write_text("VALUE = 2\n")
+    stale = trace_evaluation_status(tmp_path)
+    assert stale["state"] == "INCOMPLETE"
+    assert stale["metrics"] == {}
+
+
+def test_trace_evaluation_ui_and_junie_preserve_unknowns_and_boundaries(tmp_path):
+    from factoryline.studio import _studio_html
+    from factoryline.analysis_evidence import trace_evaluation_status
+
+    assert trace_evaluation_status(tmp_path)["state"] == "MISSING"
+    html = _studio_html("local-test-token")
+    assert "Trace evaluation: evidence and gaps" in html
+    assert "renderTraceEvaluation(payload.trace_evaluation)" in html
+    assert "stale values have been cleared" in html
+    manifest = json.loads(
+        (Path(__file__).parents[1] / "factoryline/data/junie_pack.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["trace_evaluation"]["native_tool"] == "factory.evaluate_trace"
+    assert (
+        "cannot clear deterministic failures" in manifest["trace_evaluation"]["limits"]
+    )
 
 
 def _contract():

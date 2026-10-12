@@ -263,6 +263,34 @@ def _tool_definitions() -> list[dict[str, object]]:
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
         {
+            "name": "factory.evaluate_trace",
+            "description": "Evaluate exact local trace evidence by kind. Reads bound artifacts and Git identity; no provider, source write, repair, rollout or release authority.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "request_path": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 240,
+                    },
+                    "request_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                    "kind": {
+                        "type": "string",
+                        "enum": [
+                            "spans",
+                            "calibration",
+                            "sampling",
+                            "regression",
+                            "rollout",
+                        ],
+                    },
+                },
+                "required": ["request_path", "request_sha256", "kind"],
+                "additionalProperties": False,
+            },
+            "annotations": _READ_ONLY_ANNOTATIONS,
+        },
+        {
             "name": "factory.graph_impact",
             "description": "Map explicit root-relative changed paths to bound proof impact without executing work.",
             "inputSchema": {
@@ -3309,6 +3337,8 @@ def _tool_call_dispatch_1(
         if arguments != {}:
             raise McpError("factory.journey_status accepts no arguments")
         return _content(journey_proof_status(root))
+    if name == "factory.evaluate_trace":
+        return _evaluate_trace_tool(root, arguments)
     if name == "factory.graph_impact":
         return _content(
             {
@@ -3317,6 +3347,32 @@ def _tool_call_dispatch_1(
             }
         )
     return None
+
+
+def _evaluate_trace_tool(root: Path, arguments: object) -> dict[str, object]:
+    from .analysis_evidence import evaluate_trace_file
+
+    if not isinstance(arguments, dict) or set(arguments) != {
+        "request_path",
+        "request_sha256",
+        "kind",
+    }:
+        raise McpError(
+            "factory.evaluate_trace requires exact request_path, request_sha256 and kind"
+        )
+    path, digest, kind = (
+        arguments[key] for key in ("request_path", "request_sha256", "kind")
+    )
+    if (
+        not isinstance(path, str)
+        or not 1 <= len(path) <= 240
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+    ):
+        raise McpError("trace request path or digest is invalid")
+    if kind not in ("spans", "calibration", "sampling", "regression", "rollout"):
+        raise McpError("trace evaluator kind is invalid")
+    return _content(evaluate_trace_file(root, Path(path), digest, kind=kind))
 
 
 def _tool_call_dispatch_2(

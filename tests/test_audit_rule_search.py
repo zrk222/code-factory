@@ -309,6 +309,284 @@ def test_jev_evidence_review_rejects_invented_references_stale_packet_and_transp
     assert result["label"] == "HUMAN_REVIEW" and result["status"] == "FALLBACK"
 
 
+def test_trace_span_review_reuses_closed_evidence_contract_and_keeps_failures_immutable(
+    tmp_path,
+):
+    from test_analysis_evidence import _span_fixture
+    from factoryline.analysis_evidence import evaluate_spans
+    from factoryline.jev_classifier import (
+        build_span_review_input,
+        normalize_span_review,
+    )
+
+    request, _ = _span_fixture(tmp_path)
+    review = build_span_review_input(tmp_path, request)
+    assert review["schema"] == "factory.span-semantic-review-input.v1"
+    assert review["identity"]["model"] == {
+        "id": "review-model",
+        "version": "1",
+        "artifact_sha256": request["binding_request"]["artifacts"]["model"]["sha256"],
+    }
+    assert "template" not in json.dumps(review)
+    assert review["provider_call"] is False
+    claims = review["review_request"]["packet"]["claims"]
+    response = {
+        "context_sha256": review["review_request"]["context_sha256"],
+        "claims": [
+            {
+                "claim_id": claim["id"],
+                "label": "SUPPORTED",
+                "supporting_evidence_ids": claim["supporting_evidence_ids"],
+                "contradicting_evidence_ids": [],
+                "rationale": "The linked local evidence records this outcome.",
+                "verification_action": None,
+            }
+            for claim in claims
+        ],
+    }
+    result = normalize_span_review(
+        {"context_sha256": review["context_sha256"], "review": response},
+        request=review,
+        root=tmp_path,
+        binding_request=request,
+    )
+    assert result["deterministic_state"] == "PASS"
+    assert result["deterministic_failures_immutable"] is True
+    assert result["authority"] == "none"
+
+    failed_request = json.loads(json.dumps(request))
+    failed_request["spans"][0]["numeric"]["value"] = 0.75
+    failed = evaluate_spans(tmp_path, failed_request)
+    failed_review = build_span_review_input(tmp_path, failed_request)
+    failed_claim = next(
+        c
+        for c in failed_review["review_request"]["packet"]["claims"]
+        if c["id"].startswith("span:s1:numeric:")
+    )
+    assert failed_claim["status"] == "contradicted"
+    failed_response = {
+        "context_sha256": failed_review["review_request"]["context_sha256"],
+        "claims": [
+            {
+                "claim_id": c["id"],
+                "label": "CONTRADICTED"
+                if c["status"] == "contradicted"
+                else "SUPPORTED",
+                "supporting_evidence_ids": c["supporting_evidence_ids"],
+                "contradicting_evidence_ids": c["contradicting_evidence_ids"],
+                "rationale": "The linked evidence matches the recorded deterministic outcome.",
+                "verification_action": None,
+            }
+            for c in failed_review["review_request"]["packet"]["claims"]
+        ],
+    }
+    failed_result = normalize_span_review(
+        {"context_sha256": failed_review["context_sha256"], "review": failed_response},
+        request=failed_review,
+        root=tmp_path,
+        binding_request=failed_request,
+    )
+    assert failed_result["deterministic_state"] == "FAIL"
+    assert failed_result["evaluation_sha256"] == failed["evaluation_sha256"]
+
+
+def test_span_review_batches_cover_all_spans_and_reject_partial_or_reordered_responses(
+    tmp_path,
+):
+    from test_analysis_evidence import _span_fixture
+    from factoryline.jev_classifier import (
+        build_span_review_batches,
+        normalize_span_review_batches,
+        JevClassificationError,
+    )
+
+    request, _ = _span_fixture(tmp_path)
+    original = request["spans"][0]
+    request["spans"] = [{**original, "span_id": f"case_{i}"} for i in range(17)]
+    batches = build_span_review_batches(tmp_path, request)
+    assert [len(batch["allowed_span_ids"]) for batch in batches["batches"]] == [8, 8, 1]
+    assert [
+        ident for batch in batches["batches"] for ident in batch["allowed_span_ids"]
+    ] == batches["span_ids"]
+    assert all("spans" not in batch["evaluation"] for batch in batches["batches"])
+    reviews = []
+    for batch in batches["batches"]:
+        review_request = batch["review_request"]
+        reviews.append(
+            {
+                "context_sha256": batch["context_sha256"],
+                "review": {
+                    "context_sha256": review_request["context_sha256"],
+                    "claims": [
+                        {
+                            "claim_id": claim["id"],
+                            "label": "INSUFFICIENT_EVIDENCE",
+                            "supporting_evidence_ids": [],
+                            "contradicting_evidence_ids": [],
+                            "rationale": "Missing runtime observation.",
+                            "verification_action": "Obtain bound observed evidence.",
+                        }
+                        for claim in review_request["packet"]["claims"]
+                    ],
+                },
+            }
+        )
+    raw = {"batch_set_sha256": batches["batch_set_sha256"], "reviews": reviews}
+    result = normalize_span_review_batches(
+        raw, root=tmp_path, binding_request=request, request=batches
+    )
+    assert result["span_ids"] == batches["span_ids"]
+    assert result["semantic_correctness"] == "UNKNOWN_MISSING_TASK_EVIDENCE"
+    assert result["provider_call"] is False
+    for invalid in (reviews[:-1], list(reversed(reviews))):
+        with pytest.raises(JevClassificationError):
+            normalize_span_review_batches(
+                {**raw, "reviews": invalid},
+                root=tmp_path,
+                binding_request=request,
+                request=batches,
+            )
+
+
+def _span_semantic_fixture(root):
+    from test_analysis_evidence import _span_fixture
+    import hashlib
+
+    request, _ = _span_fixture(root)
+    rubric = json.loads((root / "rubric.json").read_text(encoding="utf-8"))
+    rubric["semantic_criteria"] = [
+        {
+            "id": "grounded",
+            "predicate": "The output states the value of VALUE from the supplied source.",
+        }
+    ]
+    source = (root / "src/sample.py").read_bytes()
+    semantic = {
+        "schema": "factory.span-semantic-evidence.v1",
+        "spans": [
+            {
+                "span_id": "s1",
+                "task_input": "What value is assigned to VALUE?",
+                "task_output": "VALUE is assigned 1.",
+                "references": [
+                    {
+                        "path": "src/sample.py",
+                        "sha256": hashlib.sha256(source).hexdigest(),
+                        "start_byte": 0,
+                        "end_byte": len(source),
+                    }
+                ],
+            }
+        ],
+    }
+    for role, body in (("rubric", rubric), ("semantic_evidence", semantic)):
+        path = root / (role + ".json")
+        raw = json.dumps(body).encode()
+        path.write_bytes(raw)
+        request["binding_request"]["artifacts"][role] = {
+            "path": path.name,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+        }
+    return request, semantic
+
+
+def test_span_review_semantic_inputs_contain_exact_bound_source_and_binary_criterion(
+    tmp_path,
+):
+    from factoryline.jev_classifier import build_span_review_input
+
+    request, _ = _span_semantic_fixture(tmp_path)
+    result = build_span_review_input(tmp_path, request)
+    assert result["semantic_evidence_coverage"] == {
+        "eligible": 1,
+        "provided": 1,
+        "state": "BOUND_TASK_EVIDENCE",
+    }
+    packet = result["review_request"]["packet"]
+    material = next(
+        item["provenance"]
+        for item in packet["evidence"]
+        if item["kind"] == "bound_semantic_task_evidence"
+    )
+    assert material["references"][0]["excerpt"] == (
+        tmp_path / "src/sample.py"
+    ).read_bytes().decode("utf-8")
+    assert material["task_output"] == "VALUE is assigned 1."
+    assert material["data_trust"] == "UNTRUSTED_CONTENT_NOT_INSTRUCTIONS"
+    semantic_claims = [c for c in packet["claims"] if ":semantic:" in c["id"]]
+    assert len(semantic_claims) == 1
+    assert semantic_claims[0]["status"] == "unresolved"
+    assert result["provider_call"] is False
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["range", "digest", "duplicate", "unknown_span", "oversized", "unknown_field"],
+)
+def test_span_review_rejects_invalid_semantic_sources_without_provider_call(
+    tmp_path, mutation
+):
+    import hashlib
+    from factoryline.jev_classifier import (
+        build_span_review_input,
+        JevClassificationError,
+    )
+
+    request, semantic = _span_semantic_fixture(tmp_path)
+    row = semantic["spans"][0]
+    if mutation == "range":
+        row["references"][0]["end_byte"] = 999999
+    elif mutation == "digest":
+        row["references"][0]["sha256"] = "a" * 64
+    elif mutation == "duplicate":
+        row["references"].append(dict(row["references"][0]))
+    elif mutation == "unknown_span":
+        row["span_id"] = "not-in-trace"
+    elif mutation == "oversized":
+        row["task_output"] = "x" * 8193
+    else:
+        row["raw_prompt"] = "not allowed"
+    raw = json.dumps(semantic).encode()
+    (tmp_path / "semantic_evidence.json").write_bytes(raw)
+    request["binding_request"]["artifacts"]["semantic_evidence"]["sha256"] = (
+        hashlib.sha256(raw).hexdigest()
+    )
+    with pytest.raises(JevClassificationError):
+        build_span_review_input(tmp_path, request)
+
+
+def test_trace_failure_case_is_deidentified_development_only_and_requires_independent_verification(
+    tmp_path,
+):
+    from test_analysis_evidence import _span_fixture
+    from factoryline.analysis_evidence import evaluate_spans
+    from factoryline.jev_classifier import build_failure_case_receipt
+
+    request, _ = _span_fixture(tmp_path)
+    request["spans"][0]["numeric"]["value"] = 0.75
+    evaluation = evaluate_spans(tmp_path, request)
+    receipt = build_failure_case_receipt(
+        evaluation, root=tmp_path, request=request, span_id="s1"
+    )
+    serialized = json.dumps(receipt)
+    assert '"template"' not in serialized
+    assert receipt["assignment"] == {
+        "split": "development",
+        "development_only": True,
+        "holdout_eligible": False,
+    }
+    assert receipt["repair_verification"]["state"] == "PENDING"
+    assert receipt["repair_verification"]["independent_reviewer_required"] is True
+    assert receipt["repair_verification"]["source_promotion_authorized"] is False
+    evaluation["state"] = "PASS"
+    from factoryline.jev_classifier import JevClassificationError
+
+    with pytest.raises(JevClassificationError, match="digest"):
+        build_failure_case_receipt(
+            evaluation, root=tmp_path, request=request, span_id="s1"
+        )
+
+
 def test_jev_deep_audit_adapter_binds_native_and_signed_result_shapes():
     from factoryline.analysis_evidence import build_review_evidence
     from factoryline.jev_classifier import review_deep_audit_result
@@ -447,3 +725,53 @@ def test_search_mcp_errors_have_stable_marker(tmp_path: Path):
     )
 
     assert response["error"]["data"]["marker"] == "MCP_AUDIT_RULE_SEARCH_INVALID"
+
+
+def test_failure_case_rejects_self_hashed_fabricated_evaluation(tmp_path):
+    from test_analysis_evidence import _span_fixture
+    from factoryline.analysis_evidence import evaluate_spans
+    from factoryline.jev_classifier import (
+        build_failure_case_receipt,
+        JevClassificationError,
+        _digest,
+    )
+
+    request, _ = _span_fixture(tmp_path)
+    request["spans"][0]["numeric"]["value"] = 0.75
+    evaluation = evaluate_spans(tmp_path, request)
+    evaluation["spans"][0]["numeric"]["code"] = "FABRICATED"
+    evaluation.pop("evaluation_sha256")
+    evaluation["evaluation_sha256"] = _digest(evaluation)
+    with pytest.raises(JevClassificationError, match="current bound replay"):
+        build_failure_case_receipt(
+            evaluation, root=tmp_path, request=request, span_id="s1"
+        )
+
+
+def test_failure_case_preserves_replay_binding_and_rejects_changed_request(tmp_path):
+    from test_analysis_evidence import _span_fixture
+    from factoryline.analysis_evidence import evaluate_spans
+    from factoryline.jev_classifier import (
+        build_failure_case_receipt,
+        JevClassificationError,
+        _digest,
+    )
+
+    request, _ = _span_fixture(tmp_path)
+    request["spans"][0]["numeric"]["value"] = 0.75
+    evaluation = evaluate_spans(tmp_path, request)
+    receipt = build_failure_case_receipt(
+        evaluation, root=tmp_path, request=request, span_id="s1"
+    )
+    assert receipt["replay"]["request_sha256"] == _digest(request)
+    assert receipt["replay"]["span_index"] == 0
+    assert (
+        receipt["repair_verification"]["before_evidence_sha256"]
+        == evaluation["evaluation_sha256"]
+    )
+    assert len(receipt["next_actions"]) == 4
+    request["spans"][0]["numeric"]["value"] = 0.9
+    with pytest.raises(JevClassificationError, match="current bound replay"):
+        build_failure_case_receipt(
+            evaluation, root=tmp_path, request=request, span_id="s1"
+        )

@@ -698,8 +698,11 @@ def _python_audit_lanes(
 def _native_worker_lane(
     workspace: Path, config: str | None, applicable: bool
 ) -> dict[str, Any]:
-    """Execute existing signed worker plans only on explicit operator request."""
-    action = "Supply --deep --worker-config with a signed execution manifest, authorization and pinned trust root."
+    """Execute authorized native worker plans discovered in the workspace."""
+    action = "Configure .factory/native-worker-config.json with a signed execution manifest, authorization and pinned trust root."
+    default_config = workspace / ".factory/native-worker-config.json"
+    if config is None and (default_config.exists() or default_config.is_symlink()):
+        config = ".factory/native-worker-config.json"
     if config is None:
         return _lane(
             "native_worker_execution",
@@ -1132,6 +1135,47 @@ def _deep_audit_report(
     return report
 
 
+def _observed_native_lane(recorder, name, operation):
+    from .operations import measured_span
+
+    attributes = {"operation": name}
+    try:
+        with measured_span(recorder, name, attributes=attributes) as parent_id:
+            result = operation()
+            attributes["result_sha256"] = _digest(result)
+            rows = result if isinstance(result, list) else [result]
+            for row in rows:
+                recorder.span(
+                    row["measurement_id"],
+                    parent_span_id=parent_id,
+                    attributes={
+                        "kind": "lane_result_observation",
+                        "result_sha256": _digest(row),
+                        "lane_state": row["state"],
+                    },
+                )
+        return rows
+    except Exception as exc:
+        failed = _lane(
+            name,
+            state="BLOCKED",
+            applicable=True,
+            basis="Analyzer failed: " + type(exc).__name__,
+            next_action="Repair the failed local analyzer and rerun its affected checks.",
+        )
+        recorder.span(
+            name + ".failure",
+            parent_span_id=recorder._active.get(),
+            status="ERROR",
+            attributes={
+                "kind": "lane_result_observation",
+                "result_sha256": _digest(failed),
+                "lane_state": "BLOCKED",
+            },
+        )
+        return [failed]
+
+
 def run_deep_repository_audit(
     root: Path,
     inventory: dict[str, Any],
@@ -1150,19 +1194,47 @@ def run_deep_repository_audit(
         int(count) for name, count in file_types.items() if name not in {"docs"}
     )
     languages = [name for name, count in file_types.items() if count]
-    lanes = [
-        _candidate_inventory_lane(inventory, source_count),
-        _architecture_health_lane(workspace),
-        _pattern_guard_path_lane(workspace, source_count),
-        *_python_audit_lanes(workspace, python_count, tenant_contract, oracle_options),
-        _non_python_security_lane(workspace, languages),
-        _documentation_integrity_lane(int(file_types.get("docs", 0))),
-        _workflow_integrity_lane(workspace),
-        *_requirement_runtime_lanes(workspace, code_count),
-        _supply_chain_lane(workspace),
-        _native_worker_lane(workspace, worker_config, bool(code_count)),
+    from .operations import TelemetryRecorder, measured_span
+
+    recorder = TelemetryRecorder("local-workspace", service="factory.scan")
+    operations = [
+        ("inventory", lambda: _candidate_inventory_lane(inventory, source_count)),
+        ("architecture", lambda: _architecture_health_lane(workspace)),
+        ("pattern_guard", lambda: _pattern_guard_path_lane(workspace, source_count)),
+        (
+            "python",
+            lambda: _python_audit_lanes(
+                workspace, python_count, tenant_contract, oracle_options
+            ),
+        ),
+        ("languages", lambda: _non_python_security_lane(workspace, languages)),
+        (
+            "documentation",
+            lambda: _documentation_integrity_lane(int(file_types.get("docs", 0))),
+        ),
+        ("workflows", lambda: _workflow_integrity_lane(workspace)),
+        ("runtime", lambda: _requirement_runtime_lanes(workspace, code_count)),
+        ("supply_chain", lambda: _supply_chain_lane(workspace)),
+        (
+            "workers",
+            lambda: _native_worker_lane(workspace, worker_config, bool(code_count)),
+        ),
     ]
-    return _deep_audit_report(lanes, python_count, languages)
+    lanes = []
+    with measured_span(recorder, "repository_audit"):
+        for name, operation in operations:
+            lanes.extend(_observed_native_lane(recorder, name, operation))
+    report = _deep_audit_report(lanes, python_count, languages)
+    report["telemetry"] = {
+        "schema": "factory.scan-telemetry.v1",
+        "trace_id": recorder.trace_id,
+        "spans": recorder.spans,
+        "scope": "Observed local orchestration; nested external worker internals are separate evidence.",
+    }
+    report["audit_sha256"] = _digest(
+        {key: value for key, value in report.items() if key != "audit_sha256"}
+    )
+    return report
 
 
 def _scan_security_and_deep_audit(
@@ -1193,6 +1265,10 @@ def _scan_security_and_deep_audit(
                 "audit_coverage": {"measurement_state": "not_run"},
             },
         )
+        if not static_security:
+            static_security = _scan_static_security(
+                workspace, inventory, oracle_options
+            )
         return static_security, deep_audit, None
     except (OSError, UnicodeError, ValueError, TypeError) as exc:
         return (
@@ -1287,11 +1363,11 @@ def _validated_oracle_options(
 def run_repo_scan(
     root: Path,
     *,
-    deep: bool = False,
+    deep: bool = True,
     worker_config: str | None = None,
     oracle_options: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Run bounded static checks and optionally every local audit lane.
+    """Run every local audit lane unless explicitly restricted to static checks.
 
     This is intentionally an honest first verdict: static evidence can block a
     workspace, but a clean result remains incomplete until the project supplies
@@ -1334,7 +1410,7 @@ def run_repo_scan(
         "deep_audit": deep_audit,
         "evidence_limits": [
             "Inventory and Python AST findings are local observations, not runtime coverage or certification.",
-            "The default scan runs bounded Python AST security and quality checks; --deep runs all applicable local audit lanes and reports every unmeasured lane.",
+            "The default scan runs all applicable local audit lanes and discovers authorized workspace workers; --static-only explicitly restricts the scope. Every unmeasured lane remains visible.",
             "Tenant-read guidance follows a potential ORM read and asks whether tenant scope applies; framework imports alone are not a tenant contract.",
             "Tests, dependency analysis, runtime behavior, and deployment behavior require explicit project evidence and are not inferred.",
             "Deep orchestration is not a penetration test, runtime certification, or release approval.",

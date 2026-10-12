@@ -157,5 +157,23 @@
     "repair": "Only execute a separately approved exact patch/scope/check contract within attempt/time/cost limits. Retest failed and impacted checks; reuse unrelated passes only with exact evidence bindings.",
     "recovery": "Preserve failed/paused attempts and the last verified checkpoint. Resume only after revalidating candidate, authority and budgets; preview restoration is not database rollback.",
     "authority": "This guidance does not create a running preview, execute tests, dispatch a repair or authorize publication. Missing executor/tooling/evidence remains incomplete."
+  },
+  "trace_evaluation": {
+    "native_tool": "factory.evaluate_trace",
+    "arguments": {
+      "request_path": "workspace-relative JSON path",
+      "request_sha256": "SHA-256 of exact request bytes",
+      "kind": [
+        "spans",
+        "calibration",
+        "sampling",
+        "regression",
+        "rollout"
+      ]
+    },
+    "workflow": "Select the relevant evaluator, bind current candidate/source and versioned artifacts, inspect per-criterion failures and missing evidence, repair only authorized impacted scope, and retain before/after receipts.",
+    "metrics": "Report per-category and split confusion counts, abstentions, coverage and uncertainty separately from agreement; distinguish internal labels from independent evaluation. Sampling includes eligible, selected, scored, unscored and budget-denied traces. Paired regression includes quality, cost and p95 latency.",
+    "limits": "Local artifact integrity does not authenticate annotators or producers. Structural context coverage is not semantic correctness. Jev is advisory and cannot clear deterministic failures. Model/tool/provider calls, repairs, promotion and release require existing separate authority.",
+    "recovery": "Retain failed attempts as development-only cases with deidentified references. Independent repair verification remains required; never promote a tuned development case into untouched holdout evidence."
   }
 }

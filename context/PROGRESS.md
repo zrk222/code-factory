@@ -830,3 +830,17 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-10-06 07:23] GATE plan openvsx-cadence-exception approver=human tasks=4 sha=d7df0b8af2794ed8
 - [2026-10-11 03:41] GATE spec jetbrains-repair-sandbox approver=human strict=True sha=8bfcaeeea4ed5768
 - [2026-10-11 03:41] GATE plan jetbrains-repair-sandbox approver=human tasks=5 sha=8bfcaeeea4ed5768
+- [2026-10-12 07:59] GATE spec trace-evaluation approver=human strict=True sha=f50db1d0975f5334
+- [2026-10-12 08:06] GATE plan trace-evaluation approver=human tasks=7 sha=f50db1d0975f5334
+- [2026-10-12 08:16] GATE spec trace-evaluation approver=human strict=True sha=1dbfa26f9a351f61
+- [2026-10-12 08:16] GATE plan trace-evaluation approver=human tasks=7 sha=1dbfa26f9a351f61
+- [2026-10-12 08:41] GATE spec trace-evaluation approver=human strict=True sha=91f82eaf5d7b0383
+- [2026-10-12 08:41] GATE plan trace-evaluation approver=human tasks=8 sha=91f82eaf5d7b0383
+- [2026-10-12 08:43] GATE spec trace-evaluation approver=human strict=True sha=a04ba7ff194a1d10
+- [2026-10-12 08:43] GATE plan trace-evaluation approver=human tasks=9 sha=a04ba7ff194a1d10
+- [2026-10-12 08:49] GATE spec trace-evaluation approver=human strict=True sha=9a9fa0dd7df0b06f
+- [2026-10-12 08:49] GATE plan trace-evaluation approver=human tasks=10 sha=9a9fa0dd7df0b06f
+- [2026-10-12 09:44] GATE spec trace-evaluation approver=human strict=True sha=46d7dc1dda4e503f
+- [2026-10-12 09:44] GATE plan trace-evaluation approver=human tasks=10 sha=46d7dc1dda4e503f
+- [2026-10-12 09:44] GATE spec trace-evaluation approver=human strict=True sha=c135606190edff91
+- [2026-10-12 09:44] GATE plan trace-evaluation approver=human tasks=11 sha=c135606190edff91
