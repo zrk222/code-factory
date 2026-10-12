@@ -521,7 +521,16 @@ def _calibration_validate_rows(
 ) -> dict[str, dict[str, Any]]:
     by_case: dict[str, dict[str, Any]] = {}
     expected = {
-        "judgments": {"case_id", "predicted_at", "labels", "abstained", "input_sha256"},
+        "judgments": {
+            "case_id",
+            "predicted_at",
+            "labels",
+            "abstained",
+            "input_sha256",
+            "model_sha256",
+            "prompt_sha256",
+            "rubric_sha256",
+        },
         "adjudications": {"case_id", "labels", "abstained"},
     }[kind]
     for row in rows:
@@ -831,6 +840,7 @@ def _calibration_predictions(
     categories: set[str],
     judge_inputs: dict[str, str],
     freeze_time: datetime,
+    artifact_hashes: Mapping[str, str],
 ) -> dict[str, dict[str, Any]]:
     rows = _calibration_rows(body, _CALIBRATION_SCHEMAS["judgments"], "rows")
     predictions = _calibration_validate_rows(
@@ -847,6 +857,12 @@ def _calibration_predictions(
                 "E_CALIBRATION_JUDGE_INPUT",
                 "judgment input digest differs from sanitized case input",
             )
+        for role in ("model", "prompt", "rubric"):
+            if row[f"{role}_sha256"] != artifact_hashes.get(role):
+                raise OperationsError(
+                    "E_CALIBRATION_ARTIFACT_BINDING",
+                    f"judgment {role} digest differs from the current bound artifact",
+                )
     return predictions
 
 
@@ -868,7 +884,12 @@ def _calibration_evaluate_bound(bound: Mapping[str, Any]) -> dict[str, Any]:
         bodies["annotations"], case_ids, category_set
     )
     predictions = _calibration_predictions(
-        bodies["judgments"], case_ids, category_set, judge_inputs, freeze_time
+        bodies["judgments"],
+        case_ids,
+        category_set,
+        judge_inputs,
+        freeze_time,
+        {role: artifacts[role]["sha256"] for role in ("model", "prompt", "rubric")},
     )
     references = _calibration_validate_rows(
         _calibration_rows(
@@ -927,6 +948,7 @@ def _calibration_evaluate_bound(bound: Mapping[str, Any]) -> dict[str, Any]:
         ],
         "independence": "UNVERIFIED",
         "judge_input_deidentification": "UNVERIFIED",
+        "holdout_input_exposure": "UNVERIFIED",
         "assignment_temporality": "DECLARED_TIMESTAMP_ORDER_ONLY",
         "authority": "none",
         "next_actions": [

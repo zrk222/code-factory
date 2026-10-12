@@ -429,6 +429,8 @@ def _span_tool(span: Mapping[str, Any], tools: Mapping[str, Any]) -> dict[str, A
         or type(result.get("output_bytes")) is not int
         or result["output_bytes"] < 0
         or type(contract.get("allow_empty")) is not bool
+        or type(contract.get("result_required")) is not bool
+        or type(contract.get("state_required")) is not bool
     ):
         return {
             "state": "INCOMPLETE",
@@ -641,6 +643,7 @@ def _evaluate_spans(root: Path, request: Mapping[str, Any]) -> dict[str, Any]:
     core = {
         "schema": SPAN_EVALUATION_SCHEMA,
         "state": overall,
+        "request_sha256": sha256(canonical_bytes(request)).hexdigest(),
         "binding_sha256": bound["binding_sha256"],
         "trace_sha256": bound["trace"]["trace_sha256"],
         "candidate": bound["candidate"],
@@ -740,7 +743,7 @@ def _read_trace_manifest(path):
 
 
 def trace_evaluation_status(root: Path) -> dict[str, Any]:
-    """Project a hash-checked saved result only while its request bindings remain current."""
+    """Project a saved result only when exact-request reevaluation reproduces it."""
     result = {
         "schema": "factory.trace-evaluation-status.v1",
         "state": "MISSING",
@@ -763,7 +766,8 @@ def trace_evaluation_status(root: Path) -> dict[str, Any]:
             raise ValueError("manifest fields differ")
         _, _, request, _ = _span_read(workspace, manifest["request"], set())
         _, _, receipt, _ = _span_read(workspace, manifest["receipt"], set())
-        binding = request["binding_request"] if manifest["kind"] == "spans" else request
+        kind = manifest["kind"]
+        binding = request["binding_request"] if kind == "spans" else request
         current = validate_evaluation_bindings(workspace, binding)
         if (
             current["state"] != "BOUND_LOCAL_EVIDENCE"
@@ -771,6 +775,17 @@ def trace_evaluation_status(root: Path) -> dict[str, Any]:
         ):
             raise ValueError("saved evaluation is stale")
         _verify_trace_result_hash(receipt, manifest["kind"])
+        recomputed = evaluate_trace_file(
+            workspace,
+            Path(manifest["request"]["path"]),
+            manifest["request"]["sha256"],
+            kind=kind,
+        )
+        if (
+            recomputed.get("state") == "INCOMPLETE"
+            or canonical_bytes(recomputed) != canonical_bytes(receipt)
+        ):
+            raise ValueError("saved result differs from deterministic reevaluation")
         return {
             **result,
             "state": receipt["state"],

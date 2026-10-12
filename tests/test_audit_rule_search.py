@@ -565,7 +565,9 @@ def test_trace_failure_case_is_deidentified_development_only_and_requires_indepe
     request, _ = _span_fixture(tmp_path)
     request["spans"][0]["numeric"]["value"] = 0.75
     evaluation = evaluate_spans(tmp_path, request)
-    receipt = build_failure_case_receipt(evaluation, span_id="s1")
+    receipt = build_failure_case_receipt(
+        evaluation, root=tmp_path, request=request, span_id="s1"
+    )
     serialized = json.dumps(receipt)
     assert '"template"' not in serialized
     assert receipt["assignment"] == {
@@ -580,7 +582,9 @@ def test_trace_failure_case_is_deidentified_development_only_and_requires_indepe
     from factoryline.jev_classifier import JevClassificationError
 
     with pytest.raises(JevClassificationError, match="digest"):
-        build_failure_case_receipt(evaluation, span_id="s1")
+        build_failure_case_receipt(
+            evaluation, root=tmp_path, request=request, span_id="s1"
+        )
 
 
 def test_jev_deep_audit_adapter_binds_native_and_signed_result_shapes():
@@ -721,3 +725,53 @@ def test_search_mcp_errors_have_stable_marker(tmp_path: Path):
     )
 
     assert response["error"]["data"]["marker"] == "MCP_AUDIT_RULE_SEARCH_INVALID"
+
+
+def test_failure_case_rejects_self_hashed_fabricated_evaluation(tmp_path):
+    from test_analysis_evidence import _span_fixture
+    from factoryline.analysis_evidence import evaluate_spans
+    from factoryline.jev_classifier import (
+        build_failure_case_receipt,
+        JevClassificationError,
+        _digest,
+    )
+
+    request, _ = _span_fixture(tmp_path)
+    request["spans"][0]["numeric"]["value"] = 0.75
+    evaluation = evaluate_spans(tmp_path, request)
+    evaluation["spans"][0]["numeric"]["code"] = "FABRICATED"
+    evaluation.pop("evaluation_sha256")
+    evaluation["evaluation_sha256"] = _digest(evaluation)
+    with pytest.raises(JevClassificationError, match="current bound replay"):
+        build_failure_case_receipt(
+            evaluation, root=tmp_path, request=request, span_id="s1"
+        )
+
+
+def test_failure_case_preserves_replay_binding_and_rejects_changed_request(tmp_path):
+    from test_analysis_evidence import _span_fixture
+    from factoryline.analysis_evidence import evaluate_spans
+    from factoryline.jev_classifier import (
+        build_failure_case_receipt,
+        JevClassificationError,
+        _digest,
+    )
+
+    request, _ = _span_fixture(tmp_path)
+    request["spans"][0]["numeric"]["value"] = 0.75
+    evaluation = evaluate_spans(tmp_path, request)
+    receipt = build_failure_case_receipt(
+        evaluation, root=tmp_path, request=request, span_id="s1"
+    )
+    assert receipt["replay"]["request_sha256"] == _digest(request)
+    assert receipt["replay"]["span_index"] == 0
+    assert (
+        receipt["repair_verification"]["before_evidence_sha256"]
+        == evaluation["evaluation_sha256"]
+    )
+    assert len(receipt["next_actions"]) == 4
+    request["spans"][0]["numeric"]["value"] = 0.9
+    with pytest.raises(JevClassificationError, match="current bound replay"):
+        build_failure_case_receipt(
+            evaluation, root=tmp_path, request=request, span_id="s1"
+        )

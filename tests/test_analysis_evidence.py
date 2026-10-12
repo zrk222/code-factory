@@ -16,6 +16,7 @@ from factoryline.analysis_evidence import (
     evaluate_spans_file,
     validate_evaluation_bindings,
     parse_analysis_sarif,
+    trace_evaluation_status,
     validate_review_evidence,
 )
 from factoryline.audit_trace import build_audit_trace
@@ -161,6 +162,9 @@ def test_span_evaluation_binds_artifacts_and_returns_four_closed_criteria(
     assert bound["state"] == "BOUND_LOCAL_EVIDENCE"
     result = evaluate_spans(tmp_path, request)
     assert result["schema"] == "factory.span-evaluation.v1"
+    assert result["request_sha256"] == hashlib.sha256(
+        json.dumps(request, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     assert result["provenance"] == "BOUND_LOCAL_EVIDENCE"
     assert result["semantic_correctness"] == "UNKNOWN_PENDING_JEV"
     assert [
@@ -226,6 +230,59 @@ def test_span_evaluation_file_hash_and_stale_binding_fail_closed(
         == "factory.span-evaluation.v1"
     )
     assert evaluate_spans_file(tmp_path, path, "0" * 64)["state"] == "INCOMPLETE"
+
+
+@pytest.mark.parametrize("field", ["result_required", "state_required"])
+def test_span_tool_contract_requires_boolean_requirement_flags(
+    tmp_path: Path, field: str
+) -> None:
+    request, _ = _span_fixture(tmp_path)
+    tool = json.loads((tmp_path / "tool.json").read_text(encoding="utf-8"))
+    tool["tools"]["search"][field] = 1
+    tool_path = tmp_path / "tool.json"
+    tool_path.write_text(json.dumps(tool), encoding="utf-8")
+    request["binding_request"]["artifacts"]["tool"]["sha256"] = hashlib.sha256(
+        tool_path.read_bytes()
+    ).hexdigest()
+
+    result = evaluate_spans(tmp_path, request)
+
+    assert result["spans"][0]["tool"]["state"] == "INCOMPLETE"
+    assert result["spans"][0]["tool"]["code"] == "TOOL_SILENT_FAILURE"
+
+
+def test_trace_status_rejects_fabricated_selfhashed_saved_evaluation(
+    tmp_path: Path,
+) -> None:
+    from factoryline.runtime_audit_common import canonical_bytes
+
+    request, _ = _span_fixture(tmp_path)
+    request_raw = canonical_bytes(request)
+    (tmp_path / "request.json").write_bytes(request_raw)
+    receipt = evaluate_spans(tmp_path, request)
+    forged = dict(receipt)
+    forged["state"] = "PASS" if receipt["state"] != "PASS" else "FAIL"
+    core = {key: value for key, value in forged.items() if key != "evaluation_sha256"}
+    forged["evaluation_sha256"] = hashlib.sha256(canonical_bytes(core)).hexdigest()
+    receipt_raw = canonical_bytes(forged)
+    (tmp_path / "receipt.json").write_bytes(receipt_raw)
+    directory = tmp_path / ".factory" / "trace-evaluation"
+    directory.mkdir(parents=True)
+    manifest = {
+        "schema": "factory.trace-evaluation-manifest.v1",
+        "kind": "spans",
+        "request": {
+            "path": "request.json",
+            "sha256": hashlib.sha256(request_raw).hexdigest(),
+        },
+        "receipt": {
+            "path": "receipt.json",
+            "sha256": hashlib.sha256(receipt_raw).hexdigest(),
+        },
+    }
+    (directory / "latest.json").write_bytes(canonical_bytes(manifest))
+
+    assert trace_evaluation_status(tmp_path)["state"] == "INCOMPLETE"
 
 
 def _sarif(root: Path, tool: str, *, result: dict[str, object] | None = None) -> Path:

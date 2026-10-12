@@ -67,6 +67,10 @@ def _calibration_bundle(
         "rubric": {"version": "1"},
         "policy": {"version": "1"},
     }
+    identity_hashes = {
+        role: hashlib.sha256(json.dumps(bodies[role]).encode("utf-8")).hexdigest()
+        for role in ("model", "prompt", "rubric")
+    }
     cases = []
     for index, _ in enumerate(case_labels):
         cases.append(
@@ -117,6 +121,7 @@ def _calibration_bundle(
                 "labels": [] if abstain_predictions else labels,
                 "abstained": abstain_predictions,
                 "input_sha256": input_digest,
+                **{f"{role}_sha256": digest for role, digest in identity_hashes.items()},
             }
         )
     bodies["judgments"] = {
@@ -275,6 +280,7 @@ def test_judge_calibration_reports_confusion_per_split_and_raw_agreement(
     assert result["human_adjudication_disagreements"] == ["case-1"]
     assert result["independence"] == "UNVERIFIED"
     assert result["judge_input_deidentification"] == "UNVERIFIED"
+    assert result["holdout_input_exposure"] == "UNVERIFIED"
     assert result["authority"] == "none"
     receipt = {
         key: value for key, value in result.items() if key != "evaluation_sha256"
@@ -395,6 +401,29 @@ def test_judge_calibration_rejects_stale_bound_artifact_bytes(tmp_path: Path):
 
     assert result["state"] == "INCOMPLETE"
     assert result["errors"][0]["code"] == "TRACE_UNBOUND"
+
+
+@pytest.mark.parametrize("role", ["model", "prompt", "rubric"])
+def test_judge_calibration_rejects_prediction_identity_mismatch(
+    tmp_path: Path, role: str
+):
+    binding, paths = _calibration_bundle(
+        tmp_path,
+        case_labels=[["risk"]],
+        predicted_labels=[["risk"]],
+    )
+    judgments_path = paths["judgments"]
+    judgments = json.loads(judgments_path.read_text(encoding="utf-8"))
+    judgments["rows"][0][f"{role}_sha256"] = "0" * 64
+    judgments_path.write_text(json.dumps(judgments), encoding="utf-8")
+    binding["artifacts"]["judgments"]["sha256"] = hashlib.sha256(
+        judgments_path.read_bytes()
+    ).hexdigest()
+
+    result = evaluate_judge_calibration(tmp_path, binding)
+
+    assert result["state"] == "INCOMPLETE"
+    assert result["code"] == "E_CALIBRATION_ARTIFACT_BINDING"
 
 
 def _sampling_bundle(root):

@@ -43,7 +43,7 @@ New/changed/failed tests only locally; scoped lint/C901/architecture checks, ind
 
 The local evaluators and native surfaces are implemented; this is not complete production integration. Remaining acceptance is explicit:
 - Capture and validate full parent-child span lineage from actual operator executions, with per-criterion applicability instead of requiring numeric/context/tool facts on every span.
-- Supply actual semantic source/context evidence to the Jev judge with bounded chunking; current span packets validate recorded criterion summaries and do not establish independent semantic correctness.
+- Run the implemented bounded semantic source/context batching through an authorized provider and calibrate its actual outputs; local packet preparation does not establish semantic correctness.
 - Enforce sampling reservations at provider dispatch, then reconcile actual usage and detect longitudinal drift. The present evaluator validates supplied ledgers only.
 - Obtain independent labelled evaluation evidence and authenticated production control observations; declared identity/timestamp strings cannot establish independence or live deployment.
 - Run a real operator workflow, independent implementation review and the final hash-bound workflow gate before completion/merge. Static rendered fixtures do not prove operator effectiveness.
@@ -53,7 +53,7 @@ The local evaluators and native surfaces are implemented; this is not complete p
 
 The optional `semantic_evidence` binding references a local JSON artifact with schema `factory.span-semantic-evidence.v1` and `spans`. Each record contains `span_id`, `task_input`, `task_output`, and 1..8 `references`. A reference contains a bound source `path` and `sha256`, plus a half-open `start_byte` / `end_byte` range. CF reopens and hashes the current source before decoding the exact UTF-8 excerpt. Inputs/outputs are limited to 8192 bytes each; excerpts to 32768 bytes. Duplicate references, unknown spans, invalid ranges and stale source digests are rejected.
 
-The bound rubric additionally supplies 1..8 `semantic_criteria` (`id`, `predicate`). These become unresolved binary claims for the reviewer; receiving source bytes is not a semantic pass. Missing task evidence remains UNKNOWN_MISSING_TASK_EVIDENCE. Raw task/source content is untrusted data and is not sent anywhere by these local builders. Provider execution remains separately authorized. Larger review collections still need bounded batching and complete aggregate coverage before this requirement is complete.
+The bound rubric additionally supplies 1..8 `semantic_criteria` (`id`, `predicate`). These become unresolved binary claims for the reviewer; receiving source bytes is not a semantic pass. Missing task evidence remains UNKNOWN_MISSING_TASK_EVIDENCE. Raw task/source content is untrusted data and is not sent anywhere by these local builders. Provider execution remains separately authorized. Larger review collections use the bounded batching and complete aggregate coverage protocol below; actual provider acceptance remains open.
 
 Local checkpoint: three CI-failing taxonomy/protocol/inventory tests repaired and passed. The newly observed ABSTAIN, BOUND_LOCAL_EVIDENCE and REGRESSION_GATES strings are observation/dispatch labels, not additional rejection conditions. Ten affected semantic/dashboard checks pass. Scoped Forge QA returns A/PASS with no findings after complexity refactoring; cross-platform CI must confirm the new commit.
 
@@ -62,3 +62,9 @@ Local checkpoint: three CI-failing taxonomy/protocol/inventory tests repaired an
 `build_span_review_batches(root, request)` emits an ordered `factory.span-semantic-review-batches.v1` collection, preserving one full evaluation digest and exact span coverage. Each batch has at most eight spans, 128 claims and 256000 packet bytes. Oversized groups split; a single span exceeding packet limits rejects the request. The complete batch set is limited to 20000000 bytes. Full evaluation spans are not copied into every batch.
 
 `normalize_span_review_batches` revalidates current evidence and the batch-set digest, requires every response in exact context order, and preserves deterministic FAIL/INCOMPLETE plus missing semantic-evidence states. This local protocol prepares evidence; provider calls, budget admission and empirical calibration remain separate unfinished acceptance items.
+
+## Independent review repairs
+
+The review identified four concrete defects, now repaired in source with focused tests: calibration prediction rows bind model/prompt/rubric artifact digests; saved status recomputes the exact bound request; span results include the exact canonical request digest; tool requirement flags reject non-booleans. Failure recovery replays current bindings before creating a case, records the private request digest/span index and before-evidence digest, and supplies four reproducible next actions. Development cases retain their private evidence outside the exported receipt and cannot become holdout data. Holdout label exposure and producer independence remain UNVERIFIED until externally established.
+
+The native evaluator SSAT now enumerates the current analysis, operations and Jev interfaces rather than the older function snapshot. This is an interface inventory, not operational acceptance. Current CI failures must be repaired before merge.

@@ -434,6 +434,7 @@ def _append_deterministic_span_review(span, evaluation, evidence, claims, unknow
 def build_span_review_input(
     root: Any, binding_request: Mapping[str, Any]
 ) -> dict[str, Any]:
+    """Build an advisory judge packet from freshly validated local span evidence."""
     evaluation, bound = _span_review_material(root, binding_request)
     spans = evaluation.get("spans", [])
     material = _semantic_records(root, bound, {span["span_id"] for span in spans})
@@ -579,6 +580,23 @@ def build_span_review_batches(root, binding_request):
     return {**core, "batch_set_sha256": _digest(core)}
 
 
+def _normalize_batch_responses(reviews, batches):
+    normalized = []
+    for response, batch in zip(reviews, batches):
+        if (
+            not isinstance(response, Mapping)
+            or set(response) != {"context_sha256", "review"}
+            or response["context_sha256"] != batch["context_sha256"]
+        ):
+            raise JevClassificationError("batch response order or context differs")
+        normalized.append(
+            normalize_evidence_review(
+                response["review"], request=batch["review_request"]
+            )
+        )
+    return normalized
+
+
 def normalize_span_review_batches(raw, *, root, binding_request, request):
     """Reject partial, reordered or stale responses before aggregate reporting."""
     expected = build_span_review_batches(root, binding_request)
@@ -595,19 +613,7 @@ def normalize_span_review_batches(raw, *, root, binding_request, request):
         or len(reviews) != len(expected["batches"])
     ):
         raise JevClassificationError("batch response coverage or identity differs")
-    normalized = []
-    for response, batch in zip(reviews, expected["batches"]):
-        if (
-            not isinstance(response, Mapping)
-            or set(response) != {"context_sha256", "review"}
-            or response["context_sha256"] != batch["context_sha256"]
-        ):
-            raise JevClassificationError("batch response order or context differs")
-        normalized.append(
-            normalize_evidence_review(
-                response["review"], request=batch["review_request"]
-            )
-        )
+    normalized = _normalize_batch_responses(reviews, expected["batches"])
     core = {
         "schema": "factory.span-semantic-review-batch-result.v1",
         "batch_set_sha256": expected["batch_set_sha256"],
@@ -664,9 +670,13 @@ def normalize_span_review(
 
 
 def build_failure_case_receipt(
-    evaluation: Mapping[str, Any], *, span_id: str
+    evaluation: Mapping[str, Any],
+    *,
+    root: Any,
+    request: Mapping[str, Any],
+    span_id: str,
 ) -> dict[str, Any]:
-    """Create a development-only deidentified failure case; repair remains pending independent verification."""
+    """Bind a development recovery case to a freshly reproduced local failure."""
     if (
         not isinstance(evaluation, Mapping)
         or evaluation.get("schema") != "factory.span-evaluation.v1"
@@ -676,6 +686,11 @@ def build_failure_case_receipt(
     recorded_hash = evaluation_core.pop("evaluation_sha256", None)
     if recorded_hash != _digest(evaluation_core):
         raise JevClassificationError("span evaluation digest is invalid")
+    current, bound = _span_review_material(root, request)
+    if dict(evaluation) != current:
+        raise JevClassificationError(
+            "span evaluation differs from current bound replay"
+        )
     span = next(
         (
             item
@@ -700,6 +715,24 @@ def build_failure_case_receipt(
         "evaluation_sha256": evaluation.get("evaluation_sha256"),
         "binding_sha256": evaluation.get("binding_sha256"),
         "span_ref": _digest({"span_id": span_id}),
+        "replay": {
+            "request_sha256": _digest(request),
+            "span_index": next(
+                index
+                for index, item in enumerate(request["spans"])
+                if item["span_id"] == span_id
+            ),
+            "candidate_sha256": _digest(current["candidate"]),
+            "source_evidence_sha256": _digest(bound["source_hashes"]),
+            "expected_state": "FAIL",
+            "material_location": "ORIGINAL_PRIVATE_BOUND_REQUEST",
+        },
+        "next_actions": [
+            "Load the original private request matching replay.request_sha256 and revalidate all bindings.",
+            "Replay evaluate_spans(root, request); require the recorded evaluation digest and failed criteria.",
+            "Repair only the implicated criterion, capture affected checks and fresh before/after evidence.",
+            "Require independent review before accepting the repair; never promote this development case to holdout.",
+        ],
         "failed_criteria": [
             {
                 "criterion": name,
@@ -722,7 +755,7 @@ def build_failure_case_receipt(
         "repair_verification": {
             "state": "PENDING",
             "independent_reviewer_required": True,
-            "before_evidence_sha256": None,
+            "before_evidence_sha256": current["evaluation_sha256"],
             "after_evidence_sha256": None,
             "affected_checks": "required",
             "source_promotion_authorized": False,
