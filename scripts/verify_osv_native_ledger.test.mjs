@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   markCasePassed,
+  reportIdentity,
   validateCompleteLedger,
+  validateExtractorRuns,
   validateExpectedFailure,
 } from './verify_osv_native_ledger.mjs';
 
@@ -56,6 +58,41 @@ test('successful native ledger verifies decision and marks the operator case PAS
 test('successful scan cannot hide an unsuccessful extractor', () => {
   const report = fixture({ failedExtractor: true });
   assert.throws(() => validateCompleteLedger(report, 'native-clean-fixture', '0.0.0', { vulnerable: false }));
+});
+
+test('validateExtractorRuns accepts matching native statuses and rejects incomplete or mismatched rows', () => {
+  const ledger = fixture().factory_lookup_execution;
+  assert.doesNotThrow(() => validateExtractorRuns(ledger));
+  assert.throws(() => validateExtractorRuns({ extractor_runs: [{
+    plugins: ['requirements', 'lockfile'],
+    statuses: [{ name: 'requirements', state: 'SUCCEEDED' }],
+  }] }), /incomplete/);
+  assert.throws(() => validateExtractorRuns({ extractor_runs: [{
+    plugins: ['lockfile', 'requirements'],
+    statuses: [
+      { name: 'lockfile', state: 'SUCCEEDED' },
+      { name: 'other', state: 'SUCCEEDED' },
+    ],
+  }] }), /did not succeed/);
+});
+
+test('reportIdentity normalizes query order and retains only ledger-backed report IDs', () => {
+  const report = fixture();
+  const ledger = report.factory_lookup_execution;
+  ledger.queries = [
+    { name: 'zeta', version: '2.0', ecosystem: 'PyPI', matched_advisories: ['GHSA-Z'] },
+    { name: 'alpha', version: '1.0', ecosystem: 'PyPI', matched_advisories: ['GHSA-A'] },
+  ];
+  report.results = [{ packages: [{ vulnerabilities: [{ id: 'GHSA-Z' }, { id: 'UNBOUND' }] }] },
+    { packages: [{ vulnerabilities: [{ id: 'GHSA-A' }] }] }];
+  const expected = JSON.stringify({
+    queries: [
+      { name: 'alpha', version: '1.0', ecosystem: 'PyPI', matched_advisories: ['GHSA-A'] },
+      { name: 'zeta', version: '2.0', ecosystem: 'PyPI', matched_advisories: ['GHSA-Z'] },
+    ],
+    reported_advisories: ['GHSA-A', 'GHSA-Z'],
+  });
+  assert.equal(reportIdentity(report), expected);
 });
 
 test('decision digest is recomputed from canonical evidence', () => {

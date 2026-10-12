@@ -1521,6 +1521,7 @@ def test_signed_zap_controls_bind_each_rule_route_and_fixture_tree(tmp_path):
     from factoryline.deep_audit_contract import (
         _validate_obligation,
         _zap_control_obligations,
+        zap_signed_controls,
     )
 
     lane, obligation = _zap_control_fixture(tmp_path)
@@ -1530,6 +1531,11 @@ def test_signed_zap_controls_bind_each_rule_route_and_fixture_tree(tmp_path):
 
     assert controls == [obligation]
     assert controls[0]["challenges"][0]["zap_route_id"] == "safe-positive"
+    assert zap_signed_controls(lane, [obligation], tmp_path) == {
+        "40012": {
+            "challenges": {item["kind"]: item for item in obligation["challenges"]}
+        }
+    }
 
 
 def _mutate_zap_fixture_manifest(item):
@@ -1584,17 +1590,17 @@ def test_signed_zap_control_contract_rejects_unbound_route_or_mutation(
 
 def test_zap_control_selector_rejects_missing_duplicate_and_fixture_drift(tmp_path):
     from copy import deepcopy
-    from factoryline.deep_audit_contract import _zap_control_obligations
+    from factoryline.deep_audit_contract import zap_signed_controls
 
     lane, obligation = _zap_control_fixture(tmp_path)
     with pytest.raises(RuntimeAuditError, match="E_ZAP_CONTROL"):
-        _zap_control_obligations(lane, [], tmp_path)
+        zap_signed_controls(lane, [], tmp_path)
     with pytest.raises(RuntimeAuditError, match="E_ZAP_CONTROL"):
-        _zap_control_obligations(lane, [obligation, deepcopy(obligation)], tmp_path)
+        zap_signed_controls(lane, [obligation, deepcopy(obligation)], tmp_path)
 
     (tmp_path / "safe" / "positive.py").write_bytes(b"drifted")
     with pytest.raises(RuntimeAuditError, match="E_REPORT_DRIFT"):
-        _zap_control_obligations(lane, [obligation], tmp_path)
+        zap_signed_controls(lane, [obligation], tmp_path)
 
 
 def test_scan_rejects_authorization_changed_after_signature_verification(
