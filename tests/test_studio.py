@@ -298,6 +298,111 @@ def test_studio_compiles_a_contained_supervised_product_mission(tmp_path: Path):
     assert dashboard["receipt_comparison"]["status"] == "insufficient_runs"
 
 
+def test_approved_studio_mission_returns_exact_bound_agent_handoff(tmp_path: Path):
+    from test_product_missions import PRD
+
+    planned = create_product_mission_from_studio(
+        tmp_path,
+        {
+            "action": "product-mission",
+            "prompt": PRD,
+            "name": "handoff-proof",
+            "executor": "codex",
+            "owner": "owner",
+        },
+    )
+    mission_path = Path(planned["mission"]["path"])
+    source = json.loads(mission_path.read_bytes())
+    decision = decide_product_mission_from_studio(
+        tmp_path,
+        {
+            "action": "mission-decision",
+            "mission": str(mission_path),
+            "owner": "owner",
+            "decision": "approved_execution",
+            "rationale": "Implement this bounded slice.",
+        },
+    )
+    handoff = decision["agent_handoff"]
+    assert handoff["task_packet"] == source["task_packet"]
+    assert handoff["mission"] == decision["mission"]
+    assert handoff["decision"]["sha256"] == decision["decision_sha256"]
+    assert handoff["executor"] == "codex"
+    assert handoff["dispatched"] is False
+    assert handoff["state"] == "approved_needs_candidate_binding"
+    assert handoff["verify_argv"] == [
+        "factory",
+        "mission",
+        "verify",
+        str(mission_path),
+        "--json",
+    ]
+    assert "exact permitted paths" in handoff["instructions"][1]
+    persisted = json.loads(Path(decision["path"]).read_bytes())
+    assert "agent_handoff" not in persisted
+
+
+def test_studio_handoff_requires_approval_and_exact_mission_bytes():
+    from factoryline.studio import _mission_agent_handoff
+
+    assert (
+        _mission_agent_handoff(Path("mission.json"), b"", {"decision": "deferred"})
+        is None
+    )
+    assert (
+        _mission_agent_handoff(Path("mission.json"), b"", {"decision": "rejected"})
+        is None
+    )
+    with pytest.raises(StudioRequestError, match="MISSION_INPUT_DRIFT"):
+        _mission_agent_handoff(
+            Path("mission.json"),
+            b"changed",
+            {
+                "decision": "approved_execution",
+                "mission": {"file_sha256": "0" * 64},
+            },
+        )
+
+
+def test_studio_handoff_ui_is_explicit_readonly_and_never_dispatches():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("token")
+    assert "renderAgentHandoff(payload.agent_handoff)" in page
+    assert "Nothing has been dispatched" in page
+    assert "input.readOnly=true" in page
+    assert "input.value=JSON.stringify(handoff,null,2)" in page
+    assert "input.onclick=()=>input.select()" in page
+
+
+def test_studio_mission_decision_uses_inline_required_rationale():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("token")
+    decision_function = page.split("async function decideMission(decision)", 1)[
+        1
+    ].split("function renderAgentHandoff", 1)[0]
+    assert "window.prompt(" not in decision_function
+    assert "rationaleLabel.htmlFor='mission-rationale'" in page
+    assert "rationaleInput.maxLength=4000" in page
+    assert "Explain this decision before continuing" in page
+    assert "rationaleInput.oninput=()=>rationaleInput.setCustomValidity('')" in page
+
+
+def test_studio_decision_serializes_requests_and_ignores_stale_responses():
+    from factoryline.studio import _studio_html
+
+    page = _studio_html("token")
+    action = page.split("async function decideMission(decision)", 1)[1].split(
+        "function renderAgentHandoff", 1
+    )[0]
+    assert "if(missionDecisionBusy||!currentMission||!rationaleInput)return" in action
+    assert "generation!==guidedGeneration||currentMission!==mission" in action
+    assert "finally{missionDecisionBusy=false" in action
+    assert "DECISION_STATUS_UNKNOWN" in action
+    assert "may have been recorded" in action
+
+
 def test_studio_gap_feedback_is_actionable_and_never_auto_invents_product_facts(
     tmp_path: Path,
 ):

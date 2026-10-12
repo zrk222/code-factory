@@ -1599,15 +1599,50 @@ def decide_product_mission_from_studio(
             "PATH_REJECTED", "mission must be beneath the Studio root", 403
         ) from exc
     try:
-        return decide_mission(
+        mission_bytes = _guided_read(mission, 1024 * 1024)
+        receipt = decide_mission(
             mission,
             root,
             owner=str(payload.get("owner", "")),
             decision=str(payload.get("decision", "")),
             rationale=str(payload.get("rationale", "")),
         )
+        return {
+            **receipt,
+            "agent_handoff": _mission_agent_handoff(mission, mission_bytes, receipt),
+        }
     except ProductMissionError as exc:
         raise StudioRequestError(exc.code, exc.message, 400) from exc
+
+
+def _mission_agent_handoff(
+    mission_path: Path, mission_bytes: bytes, decision: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Expose the exact approved packet without dispatching an executor."""
+    if decision["decision"] != "approved_execution":
+        return None
+    if hashlib.sha256(mission_bytes).hexdigest() != decision["mission"]["file_sha256"]:
+        raise StudioRequestError(
+            "MISSION_INPUT_DRIFT", "mission changed during approval"
+        )
+    mission = json.loads(mission_bytes)
+    return {
+        "schema": "factory.studio.agent-handoff.v1",
+        "state": "approved_needs_candidate_binding",
+        "executor": mission["executor"],
+        "mission": decision["mission"],
+        "decision": {"path": decision["path"], "sha256": decision["decision_sha256"]},
+        "verify_argv": ["factory", "mission", "verify", str(mission_path), "--json"],
+        "instructions": [
+            "Verify the mission and execution decision against their bound hashes before work.",
+            "Inspect the candidate repository and declare exact permitted paths, interfaces and execution profiles before edits.",
+            "Implement only this slice within its budgets; run each applicable audit lane and independent acceptance checks.",
+            "Record failures and actionable repair evidence; stop on drift, missing authority or exhausted budget.",
+            "Return the running preview and hash-bound completion evidence. Merge, publication, deployment and external effects require separate approval.",
+        ],
+        "task_packet": mission["task_packet"],
+        "dispatched": False,
+    }
 
 
 def authorize_graph_ops_from_studio(
@@ -1749,8 +1784,25 @@ setInterval(()=>{{if(mode==='dashboard'&&dashboardAutoRefresh)refreshDashboard()
 function addText(className,text){{const el=document.createElement('div');el.className=className;el.textContent=text;result.appendChild(el);return el;}}
 function renderFailure(payload){{result.className='error';result.textContent='';addText('result-title',`${{payload.code||'FAILED'}} at ${{payload.failure?.point_of_failure||'workflow'}}`);addText('result-row',payload.failure?.why||payload.message||'The workflow failed.');addText('result-row',`Next: ${{payload.failure?.next_action||'Inspect the failure evidence and retry.'}}`);}}
 async function decideDashboardMission(item,decision){{const rationale=window.prompt(`Rationale for ${{decision.replace('_',' ')}} on ${{item.id}}:`);if(!rationale)return;const response=await fetch('/api/mission-decision',{{method:'POST',headers:{{'Content-Type':'application/json','X-Factory-Studio-Token':token}},body:JSON.stringify({{action:'mission-decision',mission:item.path,owner:item.owner,decision,rationale}})}});const payload=await response.json();if(!response.ok){{window.alert(`${{payload.code||'FAILED'}}: ${{payload.failure?.why||payload.message}} Next: ${{payload.failure?.next_action||'inspect evidence'}}`);return;}}await refreshDashboard();}}
-async function decideMission(decision){{const rationale=window.prompt(`Rationale for ${{decision.replace('_',' ')}}:`);if(!rationale)return;const response=await fetch('/api/mission-decision',{{method:'POST',headers:{{'Content-Type':'application/json','X-Factory-Studio-Token':token}},body:JSON.stringify({{action:'mission-decision',mission:currentMission,owner:document.getElementById('owner').value,decision,rationale}})}});const payload=await response.json();if(!response.ok){{renderFailure(payload);return;}}result.className='';result.textContent='';addText('result-title',decision==='approved_execution'?'Bounded execution approved':decision==='deferred'?'Mission deferred':'Mission rejected');addText('result-row',`Decision receipt: ${{payload.path}}`);addText('result-row','Merge, publish, deploy, connectors, credentials, and external messages remain unauthorized.');}}
-function renderMission(payload){{result.className='';result.textContent='';if(!payload.mission){{addText('result-title','Product Graph needs human input');addText('result-row',payload.resolution.next_action);const list=document.createElement('div');list.className='resolution-list';payload.resolution.items.forEach(item=>{{const el=document.createElement('div');el.className='resolution-item';el.textContent=`${{item.code}}: ${{item.next_action}}`;list.appendChild(el);}});result.appendChild(list);addText('result-row',payload.resolution.why_auto_stopped);return;}}currentMission=payload.mission.path;addText('result-title',`Approval ready: ${{payload.mission.id}}`);addText('result-row',`Slice ${{payload.mission.slice_id}} | Risk ${{payload.approval.risk}} | Owner ${{payload.approval.owner}}`);addText('result-row',`Budget: ${{payload.approval.budgets.max_iterations}} iterations, ${{payload.approval.budgets.max_wall_seconds}}s, ${{payload.approval.budgets.max_tokens}} tokens, $${{payload.approval.budgets.max_cost_usd}}`);addText('result-row',`${{payload.approval.completion_criteria.length}} completion criteria require independent evidence.`);const bar=document.createElement('div');bar.className='decision-bar';[['approved_execution','Approve execution',''],['deferred','Defer','defer'],['rejected','Reject','reject']].forEach(([value,label,kind])=>{{const b=document.createElement('button');b.type='button';b.className=kind;b.textContent=label;b.onclick=()=>decideMission(value);bar.appendChild(b);}});result.appendChild(bar);addText('result-row','Approval authorizes only the bounded executor; release effects stay human-owned.');}}
+let missionDecisionBusy=false;
+async function decideMission(decision){{
+ const rationaleInput=document.getElementById('mission-rationale');
+ if(missionDecisionBusy||!currentMission||!rationaleInput)return;
+ const rationale=rationaleInput.value.trim();
+ if(!rationale){{rationaleInput.setCustomValidity('Explain this decision before continuing.');rationaleInput.reportValidity();rationaleInput.focus();return;}}
+ const mission=currentMission;const generation=guidedGeneration;
+ const controls=Array.from(result.querySelectorAll('.decision-bar button'));controls.forEach(control=>control.disabled=true);missionDecisionBusy=true;
+ try{{
+  const response=await fetch('/api/mission-decision',{{method:'POST',headers:{{'Content-Type':'application/json','X-Factory-Studio-Token':token}},body:JSON.stringify({{action:'mission-decision',mission,owner:document.getElementById('owner').value,decision,rationale}})}});
+  const payload=await response.json();
+  if(mode!=='mission'||generation!==guidedGeneration||currentMission!==mission)return;
+  if(!response.ok){{renderFailure(payload);return;}}
+  result.className='';result.textContent='';addText('result-title',decision==='approved_execution'?'Bounded execution approved':decision==='deferred'?'Mission deferred':'Mission rejected');addText('result-row',`Decision receipt: ${{payload.path}}`);addText('result-row','Merge, publish, deploy, connectors, credentials, and external messages remain unauthorized.');renderAgentHandoff(payload.agent_handoff);
+ }}catch(_error){{if(mode==='mission'&&generation===guidedGeneration&&currentMission===mission)renderFailure({{code:'DECISION_STATUS_UNKNOWN',message:'The response was interrupted. Inspect the saved decision receipt before retrying; the decision may have been recorded.'}});}}
+ finally{{missionDecisionBusy=false;controls.forEach(control=>control.disabled=false);}}
+}}
+function renderAgentHandoff(handoff){{if(!handoff)return;addText('result-row','Next: give this brief to your coding agent. Nothing has been dispatched. The agent must bind the candidate scope before editing.');const details=document.createElement('details');const summary=document.createElement('summary');summary.textContent='Agent handoff: ready to paste';const label=document.createElement('label');label.className='field';label.htmlFor='agent-handoff';label.textContent='Select and copy this verified mission brief into your coding agent';const input=document.createElement('textarea');input.id='agent-handoff';input.readOnly=true;input.rows=12;input.value=JSON.stringify(handoff,null,2);input.onclick=()=>input.select();label.appendChild(input);details.append(summary,label);result.appendChild(details);}}
+function renderMission(payload){{result.className='';result.textContent='';if(!payload.mission){{addText('result-title','Product Graph needs human input');addText('result-row',payload.resolution.next_action);const list=document.createElement('div');list.className='resolution-list';payload.resolution.items.forEach(item=>{{const el=document.createElement('div');el.className='resolution-item';el.textContent=`${{item.code}}: ${{item.next_action}}`;list.appendChild(el);}});result.appendChild(list);addText('result-row',payload.resolution.why_auto_stopped);return;}}currentMission=payload.mission.path;addText('result-title',`Approval ready: ${{payload.mission.id}}`);addText('result-row',`Slice ${{payload.mission.slice_id}} | Risk ${{payload.approval.risk}} | Owner ${{payload.approval.owner}}`);addText('result-row',`Budget: ${{payload.approval.budgets.max_iterations}} iterations, ${{payload.approval.budgets.max_wall_seconds}}s, ${{payload.approval.budgets.max_tokens}} tokens, $${{payload.approval.budgets.max_cost_usd}}`);addText('result-row',`${{payload.approval.completion_criteria.length}} completion criteria require independent evidence.`);const rationaleLabel=document.createElement('label');rationaleLabel.className='field';rationaleLabel.htmlFor='mission-rationale';rationaleLabel.textContent='Why is this decision appropriate?';const rationaleInput=document.createElement('textarea');rationaleInput.id='mission-rationale';rationaleInput.maxLength=4000;rationaleInput.placeholder='For example: the scope and budget are clear; proceed with this slice.';rationaleInput.oninput=()=>rationaleInput.setCustomValidity('');rationaleLabel.appendChild(rationaleInput);result.appendChild(rationaleLabel);const bar=document.createElement('div');bar.className='decision-bar';[['approved_execution','Approve execution',''],['deferred','Defer','defer'],['rejected','Reject','reject']].forEach(([value,label,kind])=>{{const b=document.createElement('button');b.type='button';b.className=kind;b.textContent=label;b.onclick=()=>decideMission(value);bar.appendChild(b);}});result.appendChild(bar);addText('result-row','Approval authorizes only the bounded executor; release effects stay human-owned.');}}
 let guidedSession=null, guidedConfirmation=null, guidedDraft=null, guidedBusy=false, guidedGeneration=0;
 function readGuidedBookmark(){{try{{const saved=JSON.parse(sessionStorage.getItem('factory-guided-interview')||'null');return saved&&typeof saved.project==='string'&&saved.session&&typeof saved.session.path==='string'&&typeof saved.session.session_sha256==='string'?saved:null;}}catch(_error){{return null;}}}}
 function saveGuidedBookmark(payload){{try{{sessionStorage.setItem('factory-guided-interview',JSON.stringify({{project:payload.project,session:payload.session}}));document.getElementById('resume-guided').hidden=mode!=='mission';document.getElementById('resume-note').hidden=mode!=='mission';}}catch(_error){{/* Storage is optional; the server-side saved receipt remains intact. */}}}}
