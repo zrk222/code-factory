@@ -23,6 +23,7 @@ from factoryline.product_missions import (
     verify_mission_completion,
     verify_product_graph,
 )
+import factoryline.product_missions as product_missions
 from factoryline.meter import MeterLog, StageTiming, live_snapshot
 from factoryline.cli import main
 
@@ -75,6 +76,70 @@ Scenario: Review the most important signal
   When the operator opens the dashboard
   Then the highest-priority signal is visible with its reason
 """
+
+
+def test_candidate_git_uses_bounded_runner_and_returns_clean_stdout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    calls = []
+
+    def run_cli_detailed(cli, args, cwd, **kwargs):
+        calls.append((cli, args, cwd, kwargs))
+        return {
+            "ok": True,
+            "cleanup_confirmed": True,
+            "streams_closed": True,
+            "stdout": b"  abc123\n",
+        }
+
+    monkeypatch.setattr(product_missions, "run_cli_detailed", run_cli_detailed)
+    assert product_missions._candidate_git(tmp_path, ["rev-parse", "HEAD"]) == "abc123"
+    cli, args, cwd, kwargs = calls[0]
+    assert cli == "git"
+    assert args[:4] == ["--no-optional-locks", "-c", "core.fsmonitor=false", "-C"]
+    assert cwd == tmp_path
+    assert kwargs == {"timeout": 10, "max_stream_bytes": 1_000_000}
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {
+            "ok": True,
+            "cleanup_confirmed": False,
+            "streams_closed": True,
+            "stdout": b"x",
+        },
+        {
+            "ok": False,
+            "cleanup_confirmed": True,
+            "streams_closed": True,
+            "stdout": b"x",
+            "reason": "stage timed out",
+        },
+        {
+            "ok": False,
+            "cleanup_confirmed": True,
+            "streams_closed": True,
+            "stdout": b"x",
+            "reason": "output limit exceeded",
+        },
+        {
+            "ok": True,
+            "cleanup_confirmed": True,
+            "streams_closed": False,
+            "stdout": b"x",
+        },
+    ],
+)
+def test_candidate_git_rejects_unverified_process_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, result: dict
+):
+    monkeypatch.setattr(
+        product_missions, "run_cli_detailed", lambda *args, **kwargs: result
+    )
+    with pytest.raises(ProductMissionError, match="MISSION_CANDIDATE_INVALID"):
+        product_missions._candidate_git(tmp_path, ["rev-parse", "HEAD"])
 
 
 def _pipeline(tmp_path: Path):

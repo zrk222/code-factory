@@ -15,7 +15,6 @@ import argparse
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -24,6 +23,25 @@ from pathlib import Path
 from typing import Any
 from functools import lru_cache
 from importlib import import_module
+
+
+def _run_cli_bounded(cli: str, args: list[str], cwd: Path, *, timeout: float, env=None):
+    """Run a child through FactoryLine's bounded, cleanup-confirming runner."""
+    result = _lazy_import("assembly_process", "run_cli_detailed")(
+        cli,
+        args,
+        cwd,
+        timeout=timeout,
+        max_stream_bytes=1024 * 1024,
+        env=env,
+    )
+    result["ok"] = bool(
+        result.get("ok")
+        and result.get("cleanup_confirmed")
+        and result.get("streams_closed")
+    )
+    return result
+
 
 _FEATURE_CANARY_FIXTURES = {
     "mjs": (
@@ -64,18 +82,15 @@ def _canary_version(module) -> tuple[dict | None, dict | None]:
     if not module.installed:
         return None, {"ok": False, "reason": "cli not installed"}
     try:
-        version = subprocess.run(
-            [_cli_command(module.cli), "--version", "--json"],
-            capture_output=True,
-            text=True,
-            timeout=20,
+        version = _run_cli_bounded(
+            _cli_command(module.cli), ["--version", "--json"], Path.cwd(), timeout=20
         )
-    except (OSError, subprocess.TimeoutExpired) as error:
+    except (OSError, ValueError) as error:
         return None, {"ok": False, "reason": type(error).__name__}
-    if version.returncode != 0:
+    if not version["ok"]:
         return None, {"ok": False, "reason": "version command failed"}
     try:
-        payload = json.loads(version.stdout)
+        payload = json.loads(version["stdout"].decode("utf-8", errors="replace"))
     except json.JSONDecodeError:
         return None, {"ok": False, "reason": "version command was not JSON"}
     return payload, None
@@ -158,25 +173,23 @@ def _typescript_node_path(search_roots: list[Path] | None = None) -> str | None:
     candidates = [project_root, *project_root.parents, *(search_roots or [])]
     unique_candidates = list(dict.fromkeys(str(path) for path in candidates))
     resolver = (
-        "const roots = JSON.parse(require('fs').readFileSync(0, 'utf8')); "
+        "const roots = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')); "
         "for (const root of roots) { try { process.stdout.write(require.resolve('typescript', {paths: [root]})); process.exit(0); } catch (_) {} } "
         "process.exit(1);"
     )
     try:
-        result = subprocess.run(
-            [node, "-e", resolver],
-            cwd=project_root,
-            input=json.dumps(unique_candidates),
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
+        with tempfile.TemporaryDirectory(prefix="factory-ts-roots-") as directory:
+            roots_file = Path(directory) / "roots.json"
+            roots_file.write_text(json.dumps(unique_candidates), encoding="utf-8")
+            result = _run_cli_bounded(
+                node, ["-e", resolver, str(roots_file)], project_root, timeout=10
+            )
+    except (OSError, ValueError):
         return None
-    if result.returncode != 0 or not result.stdout.strip():
+    stdout = result["stdout"].decode("utf-8", errors="replace")
+    if not result["ok"] or not stdout.strip():
         return None
-    module = Path(result.stdout.strip())
+    module = Path(stdout.strip())
     return next(
         (str(parent) for parent in module.parents if parent.name == "node_modules"),
         None,
@@ -211,9 +224,9 @@ def _run_feature_canary(
         env["NODE_PATH"] = os.pathsep.join(
             item for item in (typescript_node_path, env.get("NODE_PATH", "")) if item
         )
-    result = subprocess.run(
+    result = _run_cli_bounded(
+        _cli_command(module.cli),
         [
-            _cli_command(module.cli),
             "qa",
             f"canary-{suffix}",
             "--ssat",
@@ -222,21 +235,22 @@ def _run_feature_canary(
             str(root),
             "--strict",
         ],
+        Path.cwd(),
         env=env,
-        capture_output=True,
-        text=True,
         timeout=30,
     )
-    if result.returncode != 0:
+    stdout = result["stdout"].decode("utf-8", errors="replace")
+    stderr = result["stderr"].decode("utf-8", errors="replace")
+    if not result["ok"]:
         return {
             "ok": False,
             "provenance_ok": provenance_ok,
             "reason": f"{suffix} feature canary failed",
-            "output": (result.stdout + result.stderr)[-1000:],
+            "output": str(result["output"])[-1000:] or (stdout + stderr)[-1000:],
             "provenance": payload,
         }
     try:
-        qa = json.loads(result.stdout)
+        qa = json.loads(stdout)
     except json.JSONDecodeError:
         return {
             "ok": False,
@@ -249,7 +263,7 @@ def _run_feature_canary(
             "ok": False,
             "provenance_ok": provenance_ok,
             "reason": f"{suffix} feature QA did not pass",
-            "output": result.stdout[-1000:],
+            "output": stdout[-1000:],
             "provenance": payload,
         }
     if qa.get("metrics", {}).get("coverage_assessment") != "measured":
@@ -369,13 +383,14 @@ def _doctor_checks() -> tuple[list, list]:
     for module in mods:
         help_text = None
         if module.installed:
-            proc = subprocess.run(
-                [_cli_command(module.cli), "--help"],
-                capture_output=True,
-                text=True,
-                timeout=20,
+            help_text = ""
+            proc = _run_cli_bounded(
+                _cli_command(module.cli), ["--help"], Path.cwd(), timeout=20
             )
-            help_text = proc.stdout + proc.stderr
+            if proc["ok"]:
+                help_text = (proc["stdout"] + proc["stderr"]).decode(
+                    "utf-8", errors="replace"
+                )
         workflow = _workflow_canary(module)
         provenance = workflow.get("provenance")
         if not isinstance(provenance, dict):
@@ -3755,13 +3770,28 @@ def _capture_meter_command(a, capture_command: list[str] | None) -> int:
         return 2
     started = time.monotonic()
     try:
-        proc = subprocess.run(command, cwd=str(Path(a.root)))
-        capture_exit = proc.returncode
-    except FileNotFoundError:
+        proc = _run_cli_bounded(command[0], command[1:], Path(a.root), timeout=300)
+        capture_exit = proc["exit_code"]
+        capture_ok = bool(
+            proc["ok"] and proc["cleanup_confirmed"] and proc["streams_closed"]
+        )
+        stdout = proc["stdout"].decode("utf-8", errors="replace")
+        stderr = proc["stderr"].decode("utf-8", errors="replace")
+        if stdout:
+            print(stdout[-4000:], end="", file=sys.stdout)
+        if stderr:
+            print(stderr[-4000:], end="", file=sys.stderr)
+        if not capture_ok:
+            print(
+                f"meter capture failed: exit={capture_exit!r}, cleanup_confirmed={proc['cleanup_confirmed']}, streams_closed={proc['streams_closed']}",
+                file=sys.stderr,
+            )
+    except (FileNotFoundError, OSError, ValueError):
         print(
-            f"meter capture failed: executable not found: {command[0]}", file=sys.stderr
+            f"meter capture failed: {type(sys.exc_info()[1]).__name__}", file=sys.stderr
         )
         capture_exit = 127
+        capture_ok = False
     elapsed_ms = round((time.monotonic() - started) * 1000)
     from .meter import MeterLog, StageTiming
 
@@ -3773,12 +3803,16 @@ def _capture_meter_command(a, capture_command: list[str] | None) -> int:
             model_calls=0,
             tokens_in=0,
             tokens_out=0,
-            ok=capture_exit == 0,
+            ok=capture_ok,
             feature=a.feature,
             run_id=uuid.uuid4().hex,
         )
     )
-    return capture_exit
+    if isinstance(capture_exit, int) and capture_exit != 0:
+        return capture_exit
+    if capture_exit is None and proc.get("reason") == "launch failed":
+        return 127
+    return 0 if capture_ok else 1
 
 
 def _watch_meter(a) -> None:

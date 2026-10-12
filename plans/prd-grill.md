@@ -3,6 +3,19 @@ Spec: specs/prd-grill.md
 
 Completed steps are retained in Git history, not this active plan.
 
+## Remaining trace evaluation requirements (2026-10-12)
+
+- Bind judgments to intermediate span IDs, candidate hashes, model/prompt/rubric versions and retained observations, including failed attempts.
+- Record observable tool actions, retrieval references, outputs and concise decision rationales, with redaction and retention controls. Do not require private model reasoning or persist secrets/full prompts by default.
+- Check numeric claims against referenced evidence: values, units, denominators and time windows must match; missing evidence stays unresolved.
+- Evaluate summaries against requested outcomes and retrieved context, reporting omitted and contradicted requirements separately.
+- Detect silent tool failures using declared result contracts. Success without required output or state evidence is failure; an intentionally empty valid result is distinct.
+- Detect redundant calls only when arguments, candidate/state bindings and observation freshness match. Preserve justified retries, polling and necessary revalidation.
+- Run deterministic checks before optional sampled Jev judgments. Record sampling denominators, selection policy, cost, latency, disagreements and abstentions; unsampled traces are not judged.
+- Evaluate guardrails with positive and negative controls for leakage and unauthorized effects. Judges cannot override deterministic failures or authorize repair/deployment.
+- Convert deidentified failed traces into development cases while preserving an independent holdout. Verify repairs against failed and impacted checks before authorized deployment.
+- Compare results by model, prompt, rubric and detector version for regressions. These are pending implementation and validation requirements, not measured capabilities.
+
 ## Remaining goal: guided building with lower-capability agents
 
 Status: implementation and effectiveness validation remain incomplete.

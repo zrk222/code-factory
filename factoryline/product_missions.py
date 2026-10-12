@@ -11,7 +11,6 @@ import math
 import os
 import re
 import stat
-import subprocess
 import tempfile
 
 from .loop_passport import (
@@ -21,6 +20,7 @@ from .loop_passport import (
     verify_loop_passport,
 )
 from .failure_guidance import explain_failure
+from .assembly_process import run_cli_detailed
 from .migration import verify_migration_readiness, verify_repository_context
 from .agent_contract import AgentContractError, validate_verifier_attestation
 
@@ -2028,27 +2028,34 @@ def _candidate_inside(root: Path, value: str, *, workspace: bool = False) -> Pat
 
 
 def _candidate_git(workspace: Path, args: list[str]) -> str:
-    try:
-        result = subprocess.run(
-            [
-                "git",
-                "--no-optional-locks",
-                "-c",
-                "core.fsmonitor=false",
-                "-C",
-                str(workspace),
-                *args,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=True,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
+    result = run_cli_detailed(
+        "git",
+        [
+            "--no-optional-locks",
+            "-c",
+            "core.fsmonitor=false",
+            "-C",
+            str(workspace),
+            *args,
+        ],
+        workspace,
+        timeout=10,
+        max_stream_bytes=1_000_000,
+    )
+    if not (
+        result.get("ok")
+        and result.get("cleanup_confirmed")
+        and result.get("streams_closed")
+    ):
         raise ProductMissionError(
             "MISSION_CANDIDATE_INVALID", "candidate Git facts unavailable"
-        ) from exc
-    return result.stdout.strip()
+        )
+    stdout = result.get("stdout")
+    if not isinstance(stdout, bytes):
+        raise ProductMissionError(
+            "MISSION_CANDIDATE_INVALID", "candidate Git facts unavailable"
+        )
+    return stdout.decode("utf-8", errors="replace").strip()
 
 
 def _candidate_revision(workspace: Path, base: Any) -> None:
