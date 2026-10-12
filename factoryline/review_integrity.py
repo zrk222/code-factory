@@ -248,6 +248,53 @@ def _flask_clients(
     return clients, bad | (other & clients.keys())
 
 
+def _literal_client_get(call, clients, bad):
+    if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
+        return False
+    if call.func.attr != "get" or len(call.args) != 1 or call.keywords:
+        return False
+    if not isinstance(call.func.value, ast.Name):
+        return False
+    return call.func.value.id in clients and call.func.value.id not in bad
+
+
+def _effective_get_path(call, clients, bad, aliases, effective):
+    if not _literal_client_get(call, clients, bad):
+        return None
+    path = call.args[0]
+    if not isinstance(path, ast.Constant) or not isinstance(path.value, str):
+        return None
+    return path.value if effective(call, aliases) else None
+
+
+def _dispatch_root(node):
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _flask_dispatch_mutated(test, apps, clients):
+    roots = apps | set(clients)
+    for node in _test_nodes(test):
+        if isinstance(node, (ast.Attribute, ast.Subscript)):
+            if (
+                isinstance(node.ctx, (ast.Store, ast.Del))
+                and _dispatch_root(node) in roots
+            ):
+                return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if _dispatch_root(node.func) in apps and node.func.attr not in {
+                "route",
+                "test_client",
+            }:
+                return True
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            if isinstance(node.value, (ast.Attribute, ast.Subscript)):
+                if _dispatch_root(node.value) in roots:
+                    return True
+    return False
+
+
 def flask_invoked_callbacks(
     test: ast.AST,
     aliases: dict[str, str],
@@ -263,23 +310,14 @@ def flask_invoked_callbacks(
         return set()
     routes = _flask_routes(test, aliases, apps, effective)
     clients, bad = _flask_clients(test, apps, effective, aliases)
+    if _flask_dispatch_mutated(test, apps, clients):
+        return set()
     invoked = set()
     for call in _test_nodes(test):
-        if (
-            not isinstance(call, ast.Call)
-            or not isinstance(call.func, ast.Attribute)
-            or call.func.attr != "get"
-            or len(call.args) != 1
-            or call.keywords
-            or not isinstance(call.func.value, ast.Name)
-            or call.func.value.id not in clients
-            or call.func.value.id in bad
-            or not isinstance(call.args[0], ast.Constant)
-            or not isinstance(call.args[0].value, str)
-            or not effective(call, aliases)
-        ):
+        path = _effective_get_path(call, clients, bad, aliases, effective)
+        if path is None:
             continue
-        callbacks = routes.get(call.args[0].value, ())
+        callbacks = routes.get(path, ())
         if (
             len(callbacks) == 1
             and callbacks[0].name in strong_callback_names
@@ -305,27 +343,20 @@ def _virtual_default(value, defaults):
     return name.removeprefix("self.") if name.startswith("self.") else None
 
 
-def virtual_dispatch_defaults(methods, aliases, effective):
-    """Summarize an omitted-argument virtual method binding, never execute it."""
-    init, invoke = methods.get("__init__"), methods.get("__call__")
-    if init is None or invoke is None or init.decorator_list or invoke.decorator_list:
-        return {}
+def _virtual_init_supported(init, invoke):
+    if init is None or invoke is None:
+        return False
+    if init.decorator_list or invoke.decorator_list:
+        return False
     if init.args.vararg or init.args.kwarg or init.args.kwonlyargs:
-        return {}
-    if any(
+        return False
+    return not any(
         not isinstance(item, (ast.Assign, ast.AnnAssign, ast.Pass))
         for item in init.body
-    ):
-        return {}
-    arguments = [*init.args.posonlyargs, *init.args.args][1:]
-    defaults = {
-        item.arg
-        for item, value in zip(
-            arguments[-len(init.args.defaults) :], init.args.defaults
-        )
-        if isinstance(value, ast.Constant) and value.value is None
-    }
-    required = len(arguments) - len(init.args.defaults)
+    )
+
+
+def _virtual_init_bindings(init, defaults):
     bindings, invalid = {}, set()
     for node in ast.walk(init):
         if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)):
@@ -346,6 +377,24 @@ def virtual_dispatch_defaults(methods, aliases, effective):
             ):
                 invalid.add(name)
             bindings[name] = _virtual_default(getattr(node, "value", None), defaults)
+    return bindings, invalid
+
+
+def virtual_dispatch_defaults(methods, aliases, effective):
+    """Summarize an omitted-argument virtual method binding, never execute it."""
+    init, invoke = methods.get("__init__"), methods.get("__call__")
+    if not _virtual_init_supported(init, invoke):
+        return {}
+    arguments = [*init.args.posonlyargs, *init.args.args][1:]
+    defaults = {
+        item.arg
+        for item, value in zip(
+            arguments[-len(init.args.defaults) :], init.args.defaults
+        )
+        if isinstance(value, ast.Constant) and value.value is None
+    }
+    required = len(arguments) - len(init.args.defaults)
+    bindings, invalid = _virtual_init_bindings(init, defaults)
     invalid.update(_virtual_binding_mutations(methods, bindings))
     resolved = _awaited_virtual_bindings(
         invoke, bindings, invalid, methods, aliases, effective

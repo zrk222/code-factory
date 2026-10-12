@@ -18,6 +18,48 @@ from factoryline.change_review import ChangeReviewError, review_change
 from factoryline.cli import main
 
 
+def test_flask_fixture_apps_and_flask_invoked_callbacks_direct_contract():
+    import ast
+    from factoryline.review_integrity import flask_fixture_apps, flask_invoked_callbacks
+
+    tree = ast.parse(
+        "@pytest.fixture\ndef app():\n    app = Flask('test')\n"
+        "    app.config.update(TESTING=True)\n    return app\n"
+    )
+    aliases = {"pytest": "pytest", "Flask": "flask.Flask"}
+    assert flask_fixture_apps(tree, aliases) == {"app": True}
+    test = ast.parse(
+        "def test_behavior(app):\n    @app.route('/checked')\n"
+        "    def check():\n        assert compute() == 42\n"
+        "    client = app.test_client()\n    client.get('/checked')\n"
+    ).body[0]
+    assert flask_invoked_callbacks(
+        test, aliases, {"app"}, {"check"}, lambda *_: True
+    ) == {"check"}
+    assert (
+        flask_invoked_callbacks(test, aliases, {"app"}, set(), lambda *_: True) == set()
+    )
+
+
+def test_virtual_dispatch_defaults_direct_contract():
+    import ast
+    from factoryline.review_integrity import virtual_dispatch_defaults
+
+    tree = ast.parse(
+        "class Engine:\n    def __init__(self, app, dispatch=None):\n"
+        "        self.dispatch_func = self.dispatch if dispatch is None else dispatch\n"
+        "    async def __call__(self, scope):\n        await self.dispatch_func(scope)\n"
+        "    async def dispatch(self, scope):\n        pass\n"
+    )
+    methods = {node.name: node for node in tree.body[0].body}
+    assert virtual_dispatch_defaults(methods, {}, lambda *_: True) == {
+        "methods": ["dispatch"],
+        "required_arguments": 1,
+        "guards": [],
+    }
+    assert virtual_dispatch_defaults({}, {}, lambda *_: True) == {}
+
+
 @pytest.mark.parametrize(
     ("helper", "invocation", "hollow"),
     [
@@ -3868,6 +3910,24 @@ def test_runtime_oracle_rechecks_source_after_verification(tmp_path, monkeypatch
         (True, "/other", "", {"QUALITY_HOLLOW_TEST": 1}),
         (True, "/checked", "app.testing = False\n    ", {"QUALITY_HOLLOW_TEST": 1}),
         (True, "/checked", "client = fake_client\n    ", {"QUALITY_HOLLOW_TEST": 1}),
+        (
+            True,
+            "/checked",
+            "app.view_functions['check'] = noop\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            True,
+            "/checked",
+            "client.application.testing = False\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            True,
+            "/checked",
+            "views = app.view_functions\n    views.clear()\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
         (
             True,
             "/checked",
