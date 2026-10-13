@@ -39,6 +39,60 @@ def test_probe_assertion_propagation_existing_failure_cannot_pass(tmp_path):
     assert result["challenge"] == {}
 
 
+def _write_shadow_factoryline(path, marker):
+    package = path / "factoryline"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "pytest_readiness.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('shadowed')\n"
+        "def _challenge_worker(*args): raise RuntimeError('shadowed harness')\n",
+        encoding="utf-8",
+    )
+
+
+def _write_assertion_project(root):
+    (root / "workspace_support.py").write_text("VALUE = 42\n", encoding="utf-8")
+    case = root / "test_case.py"
+    case.write_text(
+        "from workspace_support import VALUE\n"
+        "def test_case():\n    assert VALUE == 42\n",
+        encoding="utf-8",
+    )
+    return case
+
+
+def test_assertion_probe_trusted_harness_precedes_workspace_shadow(tmp_path):
+    marker = tmp_path / "workspace-shadow-loaded"
+    _write_shadow_factoryline(tmp_path, marker)
+    _write_assertion_project(tmp_path)
+
+    result = probe_assertion_propagation(tmp_path, "test_case.py::test_case", 3)
+
+    assert result["status"] == "OBSERVED"
+    assert result["baseline"]["collected"] == ["test_case.py::test_case"]
+    assert not marker.exists()
+
+
+def test_assertion_probe_trusted_harness_precedes_inherited_pythonpath(
+    tmp_path, monkeypatch
+):
+    inherited = tmp_path / "inherited"
+    inherited.mkdir()
+    marker = inherited / "inherited-shadow-loaded"
+    _write_shadow_factoryline(inherited, marker)
+    monkeypatch.setenv("PYTHONPATH", str(inherited))
+    project = tmp_path / "project"
+    project.mkdir()
+    _write_assertion_project(project)
+
+    result = probe_assertion_propagation(project, "test_case.py::test_case", 3)
+
+    assert result["status"] == "OBSERVED"
+    assert result["baseline"]["collected"] == ["test_case.py::test_case"]
+    assert not marker.exists()
+
+
 def test_probe_assertion_propagation_rejects_non_assertion_and_escape(tmp_path):
     (tmp_path / "test_case.py").write_text("def test_case():\n    pass\n")
     with pytest.raises(ValueError, match="Python assert"):

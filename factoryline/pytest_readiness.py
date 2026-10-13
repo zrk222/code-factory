@@ -253,8 +253,9 @@ def _run_assertion_challenge(config, timeout):
     with tempfile.TemporaryDirectory(prefix="cf-assertion-probe-") as directory:
         output = Path(directory) / "observation.json"
         script = (
+            "import json,sys; sys.path.insert(0,sys.argv.pop(1)); "
             "from factoryline.pytest_readiness import _challenge_worker; "
-            "import json,sys; _challenge_worker(json.loads(sys.argv[1]),sys.argv[2])"
+            "_challenge_worker(json.loads(sys.argv[1]),sys.argv[2])"
         )
         env = dict(os.environ)
         env.pop("PYTEST_CURRENT_TEST", None)
@@ -263,7 +264,14 @@ def _run_assertion_challenge(config, timeout):
         started = time.monotonic()
         try:
             child = _launch(
-                [sys.executable, "-c", script, json.dumps(config), str(output)],
+                [
+                    sys.executable,
+                    "-c",
+                    script,
+                    package_root,
+                    json.dumps(config),
+                    str(output),
+                ],
                 Path(config["root"]),
                 env,
             )
