@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Extend Junie guidance with enterprise proof capture limits, completeness and
+  host-versus-container cleanup fields. Distinguish rejected probe inputs
+  (`INVALID`, exit 2) from supported executions with incomplete evidence.
 - Bound enterprise proof-runner capture to 8 MiB per stream with bounded
   readback and explicit timeout, overflow and cleanup facts. Validate capture
   directory ancestors before creation. Aborted Docker commands cannot claim

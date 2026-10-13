@@ -1219,12 +1219,20 @@ def test_junie_native_python_security_receipt_and_completeness_guidance():
         assert "QUALITY_OMISSION_MARKER" in text
         assert "QUALITY_PRODUCTION_MOCK" in text
         assert "do not infer a defect, security-critical issue" in text
+        assert "factory.enterprise-proof-runner.v1" in text
+        assert "output_complete" in text and "output_truncated" in text
+        assert "output_limit" in text and "8 MiB per stream" in text
+        assert "cleanup_scope" in text
+        assert "NOT_INDEPENDENTLY_VERIFIED" in text
+        assert "container cleanup" in text
         assert "Do not invent native assertion probes" in text
         assert "python -m factoryline.pytest_readiness" in text
         assert "--kind attribute" in text
         assert "factory.attribute-removal-probe.v1" in text
         assert "does not write a receipt file" in text
         assert "`OBSERVED`" in text and "`INCOMPLETE`" in text
+        assert "factory.probe-validation.v1" in text and "`INVALID`" in text
+        assert "exit code 2" in text
         assert "1 MiB" in text
         assert (
             "read-only proof reviewer inspects supplied output and does not execute the probe"
@@ -1245,10 +1253,23 @@ def test_junie_native_python_security_receipt_and_completeness_guidance():
     ):
         assert code in completeness
     assert "intent UNKNOWN" in completeness
+    runner = limits["enterprise_proof_runner"]
+    for field in (
+        "factory.enterprise-proof-runner.v1",
+        "output_complete",
+        "output_truncated",
+        "output_limit",
+        "capture_limit_bytes_per_stream",
+        "cleanup_scope",
+        "NOT_INDEPENDENTLY_VERIFIED",
+    ):
+        assert field in runner
     probe = limits["native_attribute_probe"]
     assert "python -m factoryline.pytest_readiness" in probe
     assert "factory.attribute-removal-probe.v1" in probe
     assert "INCOMPLETE" in probe
+    assert "factory.probe-validation.v1 INVALID" in probe
+    assert "exit code 2" in probe
     assert "does not execute it" in probe
     assert taxonomy["authority"] == {
         "agent_start": False,
