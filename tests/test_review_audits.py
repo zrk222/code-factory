@@ -642,6 +642,48 @@ def test_mock_configure_mock_cannot_replace_assertion_method(tmp_path):
 
 
 @pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("", {}),
+        (
+            "alias.configure_mock(assert_called_once_with=lambda *args: None)\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "alias.assert_called_once_with = lambda *args: None\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "alias.__dict__['assert_called_once_with'] = lambda *args: None\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "alias = send; alias.configure_mock(assert_called_once_with=lambda *args: None)\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "alias.assert_called_once_with = lambda *args: None\n    alias = object()\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "alias = object()\n    alias.assert_called_once_with = lambda *args: None\n    ",
+            {},
+        ),
+    ],
+)
+def test_mock_alias_mutations_invalidate_root_provenance(tmp_path, mutation, expected):
+    (tmp_path / "test_mock_alias.py").write_text(
+        "from unittest.mock import Mock\n"
+        "def perform(send):\n    send('payload')\n"
+        "def test_behavior():\n    send = Mock()\n    alias = send\n    "
+        + mutation
+        + "perform(send)\n    send.assert_called_once_with('payload')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == expected
+
+
+@pytest.mark.parametrize(
     "source",
     [
         "from unittest.mock import Mock, patch\n"
@@ -4261,6 +4303,48 @@ def test_runtime_oracle_rechecks_source_after_verification(tmp_path, monkeypatch
             True,
             "/checked",
             "views = app.view_functions\n    views.clear()\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            True,
+            "/checked",
+            "getattr(app, 'view_functions').clear()\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            True,
+            "/checked",
+            "getattr(app, 'view_functions').pop('check', None)\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            True,
+            "/checked",
+            "views = getattr(app, 'view_functions')\n    views.clear()\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            True,
+            "/checked",
+            "alias = app; getattr(alias, 'view_functions').clear()\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            True,
+            "/checked",
+            "getattr(app, 'view_functions')['check'] = noop\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            True,
+            "/checked",
+            "getattr(app, 'config')['TESTING'] = False\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            True,
+            "/checked",
+            "setattr(getattr(app, 'config'), 'TESTING', False)\n    ",
             {"QUALITY_HOLLOW_TEST": 1},
         ),
         (

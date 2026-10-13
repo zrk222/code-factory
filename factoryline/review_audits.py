@@ -2076,9 +2076,7 @@ def _mock_context_patch_parameter(scope, name, assertion, aliases):
 
 
 def _mock_root_name(node, scope, aliases):
-    while isinstance(node, ast.Attribute):
-        node = node.value
-    if isinstance(node, ast.Subscript):
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
         node = node.value
     if (
         isinstance(node, ast.Call)
@@ -2115,6 +2113,8 @@ def _mock_child_was_rebound(scope, assertion, root, aliases):
 
 
 def _mock_root_was_mutated(scope, root, before, aliases):
+    from .review_integrity import _source_name_aliases
+
     for node in _test_oracle_body_nodes(scope, {}):
         if (getattr(node, "lineno", 0), getattr(node, "col_offset", 0)) >= (
             before.lineno,
@@ -2124,14 +2124,16 @@ def _mock_root_was_mutated(scope, root, before, aliases):
         if (
             isinstance(node, (ast.Attribute, ast.Subscript))
             and isinstance(node.ctx, (ast.Store, ast.Del))
-            and _mock_root_name(node, scope, aliases) == root
+            and _mock_root_name(node, scope, aliases)
+            in _source_name_aliases(scope, {root}, node)
         ):
             return True
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "configure_mock"
-            and _mock_root_name(node.func.value, scope, aliases) == root
+            and _mock_root_name(node.func.value, scope, aliases)
+            in _source_name_aliases(scope, {root}, node)
         ):
             return True
         if (
@@ -2142,8 +2144,8 @@ def _mock_root_was_mutated(scope, root, before, aliases):
                 "delattr",
             }
             and node.args
-            and isinstance(node.args[0], ast.Name)
-            and node.args[0].id == root
+            and _mock_root_name(node.args[0], scope, aliases)
+            in _source_name_aliases(scope, {root}, node)
         ):
             return True
     return False

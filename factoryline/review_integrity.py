@@ -273,6 +273,32 @@ def _test_nodes(test: ast.AST):
             stack.extend(ast.iter_child_nodes(node))
 
 
+def _source_name_aliases(
+    scope: ast.AST, roots: set[str], endpoint: ast.AST
+) -> set[str]:
+    """Resolve simple local Name aliases established before an AST endpoint."""
+    aliases = set(roots)
+    boundary = endpoint.lineno, endpoint.col_offset
+    statements = sorted(
+        (
+            node
+            for node in _test_nodes(scope)
+            if isinstance(node, (ast.Assign, ast.AnnAssign))
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
+    )
+    for statement in statements:
+        if (statement.lineno, statement.col_offset) >= boundary:
+            break
+        targets = set(_targets(statement)) - roots
+        value = getattr(statement, "value", None)
+        if isinstance(value, ast.Name) and value.id in aliases:
+            aliases.update(targets)
+        else:
+            aliases.difference_update(targets)
+    return aliases
+
+
 def _flask_alias_roots(test: ast.AST, roots: set[str]) -> set[str]:
     aliases = set(roots)
     changed = True
@@ -282,7 +308,8 @@ def _flask_alias_roots(test: ast.AST, roots: set[str]) -> set[str]:
             if not isinstance(stmt, (ast.Assign, ast.AnnAssign)):
                 continue
             value = getattr(stmt, "value", None)
-            if isinstance(value, ast.Name) and value.id in aliases:
+            source = _dispatch_root(value)
+            if source in aliases:
                 before = len(aliases)
                 aliases.update(_targets(stmt))
                 changed |= len(aliases) != before
@@ -300,7 +327,7 @@ def _mutated(test: ast.AST, apps: set[str], roots: set[str] | None = None) -> bo
             return True
         if (
             isinstance(n, ast.Attribute)
-            and _name(n.value).split(".", 1)[0] in roots
+            and _dispatch_root(n.value) in roots
             and (
                 isinstance(n.ctx, (ast.Store, ast.Del))
                 or n.attr in {"config", "testing"}
@@ -308,10 +335,15 @@ def _mutated(test: ast.AST, apps: set[str], roots: set[str] | None = None) -> bo
         ):
             return True
         if (
+            isinstance(n, ast.Subscript)
+            and isinstance(n.ctx, (ast.Store, ast.Del))
+            and _dispatch_root(n) in roots
+        ):
+            return True
+        if (
             isinstance(n, ast.Call)
             and n.args
-            and isinstance(n.args[0], ast.Name)
-            and n.args[0].id in roots
+            and _dispatch_root(n.args[0]) in roots
             and _resolve(n.func, {}) in {"setattr", "delattr"}
         ):
             return True
@@ -408,8 +440,18 @@ def _effective_get_path(call, clients, bad, aliases, effective):
 
 
 def _dispatch_root(node):
-    while isinstance(node, (ast.Attribute, ast.Subscript)):
-        node = node.value
+    while True:
+        if isinstance(node, (ast.Attribute, ast.Subscript)):
+            node = node.value
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and node.args
+        ):
+            node = node.args[0]
+        else:
+            break
     return node.id if isinstance(node, ast.Name) else None
 
 
