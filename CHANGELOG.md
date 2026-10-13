@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Fix assertion-probe worker imports so a workspace or inherited `PYTHONPATH`
+  package named `factoryline` cannot shadow the selected CF harness. Project
+  imports remain available; this is trusted-project execution, not a sandbox.
+- Recognize direct import-only `test_import_*` tests as import-success checks
+  (#184). Swallowed, conditional, deferred, wildcard and mixed-body imports
+  remain findings. Import success does not prove API identity or behavior.
+- Credit assertions reached through a proven local registry registration and
+  synchronous dispatch (#183). Replaced callbacks, mutated registries, swallowed
+  failures and uninvoked callbacks remain findings; arbitrary cross-file
+  framework dispatch is not covered by this proof.
+- Preserve identity checks on repeated attribute and subscript reads (#182):
+  descriptors and indexing can return different values, so these expressions
+  are not assumed to be tautologies.
+- Resolve supported mock provenance, configured type-check oracles and bounded
+  framework callback paths from source (#181). Add an explicit assertion
+  propagation probe that reports reachability and failure escape separately
+  from semantic strength; it does not automatically clear findings.
+- Strengthen guarded assertion flows and source-bound audit evidence (#177),
+  and enforce architecture admission limits for the deep-audit modules.
+
 - Recognize the decorator form of the pytest-benchmark and pytest-codspeed
   fixture (`@benchmark` on a nested function) in tests that already carry a
   typed fixture or `pytest.mark.benchmark`. Untyped, unmarked, lookalike and
