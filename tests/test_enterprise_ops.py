@@ -195,6 +195,8 @@ def test_process_runner_output_overflow_is_bounded_and_incomplete(tmp_path: Path
     assert facts["output_limit_exceeded"] is True
     assert facts["stdout_bytes"] > facts["capture_limit_bytes_per_stream"]
     assert len(facts["stdout_sha256"]) == 64
+    if not facts["cleanup_confirmed"]:
+        print("process_facts=" + json.dumps(facts, sort_keys=True))
     assert facts["cleanup_confirmed"] is True, facts
     assert facts["capture_cleanup_confirmed"] is True
     assert receipt["output_complete"] is False

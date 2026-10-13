@@ -524,9 +524,8 @@ def _await_cleanup(
     child: subprocess.Popen, unit: _CleanupUnit, *, terminate: bool
 ) -> bool:
     """Observe root and cleanup-unit exit within the ten-second hard bound."""
-    clean = True
     if terminate:
-        clean = _terminate_unit(child, unit)
+        _terminate_unit(child, unit)
     deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS
     while True:
         status = _unit_status(child, unit)
@@ -534,7 +533,7 @@ def _await_cleanup(
         if escaped is not True:
             return False
         if status is True:
-            return clean
+            return True
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.05)

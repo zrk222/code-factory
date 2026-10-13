@@ -10,10 +10,13 @@ import re
 import tempfile
 import ast
 import tokenize
+import configparser
+import shlex
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from .revenueforge import AUTHORITY, RevenueForgeError
+from .runtime_audit_common import RuntimeAuditError
 
 
 def _name(node: ast.AST | None) -> str:
@@ -24,6 +27,63 @@ def _resolve(node: ast.AST | None, aliases: dict[str, str]) -> str:
     name = _name(node)
     head, dot, tail = name.partition(".")
     return aliases.get(head, head) + dot + tail
+
+
+def _lexical_nodes(node: ast.AST):
+    pending = [node]
+    while pending:
+        child = pending.pop()
+        yield child
+        if child is not node and isinstance(
+            child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        pending.extend(ast.iter_child_nodes(child))
+
+
+def _reachable_scope_nodes(statements):
+    for statement in statements:
+        if isinstance(statement, ast.For):
+            yield from _reachable_scope_nodes(statement.body)
+        elif isinstance(
+            statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            yield statement
+        else:
+            yield from _lexical_nodes(statement)
+
+
+def _local_binding_names(statement: ast.stmt) -> set[str]:
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return {statement.name}
+    bound = {
+        node.id
+        for node in _lexical_nodes(statement)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))
+    }
+    if isinstance(statement, (ast.Import, ast.ImportFrom)):
+        bound.update(
+            item.asname or item.name.split(".")[0]
+            if isinstance(statement, ast.Import)
+            else item.asname or item.name
+            for item in statement.names
+            if item.name != "*"
+        )
+    return bound
+
+
+def _direct_vacuous_assertions(node, aliases, vacuous_check, remember):
+    body = getattr(node, "body", None)
+    if not isinstance(body, list):
+        return set()
+    known, vacuous = {}, set()
+    for statement in body:
+        if isinstance(statement, ast.Assert):
+            if vacuous_check(statement.test, known):
+                vacuous.add(id(statement))
+            continue
+        remember(statement, known)
+    return vacuous
 
 
 def import_smoke_oracle(node: ast.AST) -> bool:
@@ -316,6 +376,19 @@ def structural_oracle_finding(
     node: ast.AST, relative: str, context: dict
 ) -> dict | bool | None:
     """Map a structural oracle to an exemption or an explicitly unverified finding."""
+    if context.get("codspeed_benchmark") and _benchmark_has_work(node, context):
+        from .review_audits import _security_finding
+
+        return _security_finding(
+            "QUALITY_BENCHMARK_NOT_VERIFIED",
+            relative,
+            node,
+            "Declared CodSpeed workload; no performance measurement or functional oracle was verified.",
+            "INFO",
+            symbol=node.name,
+            state="INCOMPLETE",
+            benchmark="NOT_VERIFIED",
+        )
     status = structural_oracle_status(node, context)
     if status in {"import", "attribute"}:
         return True
@@ -333,6 +406,199 @@ def structural_oracle_finding(
             typecheck="NOT_VERIFIED",
         )
     return None
+
+
+def _benchmark_has_work(node, context):
+    unsupported = (
+        ast.If,
+        ast.While,
+        ast.Try,
+        ast.With,
+        ast.AsyncWith,
+        ast.AsyncFor,
+        ast.Match,
+        ast.GeneratorExp,
+        ast.ListComp,
+        ast.SetComp,
+        ast.DictComp,
+        ast.BoolOp,
+        ast.IfExp,
+        ast.Return,
+        ast.Raise,
+        ast.Break,
+        ast.Continue,
+        ast.Yield,
+        ast.YieldFrom,
+        ast.Await,
+    )
+    lexical = list(_lexical_nodes(node))
+    if any(isinstance(n, unsupported) for n in lexical):
+        return False
+    if any(
+        isinstance(n, ast.For) and not _benchmark_loop_nonempty(n, node, context)
+        for n in lexical
+    ):
+        return False
+    nodes = list(_reachable_scope_nodes(_oracle_body(node)))
+    if any(isinstance(n, ast.Assert) for n in nodes):
+        return False
+    for statement in nodes:
+        if isinstance(statement, ast.ClassDef) and statement.decorator_list:
+            return True
+        if isinstance(statement, (ast.Call, ast.Attribute, ast.Compare, ast.BinOp)):
+            return True
+    return False
+
+
+def _benchmark_loop_nonempty(loop, test, context):
+    blocked = _benchmark_rebindings(test)
+    value = loop.iter
+    if isinstance(value, (ast.List, ast.Tuple)):
+        return bool(value.elts) and not any(
+            isinstance(item, ast.Starred) for item in value.elts
+        )
+    if not (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id == "range"
+        and len(value.args) == 1
+        and not value.keywords
+    ):
+        return False
+    constants = context.get("benchmark_constants", {})
+    if not constants.get("__range_builtin__") or "range" in blocked:
+        return False
+    argument = value.args[0]
+    if isinstance(argument, ast.Constant):
+        bound = argument.value
+    elif isinstance(argument, ast.Name):
+        if argument.id in blocked:
+            return False
+        bound = constants.get(argument.id)
+    else:
+        return False
+    return type(bound) is int and 0 < bound <= 10_000_000
+
+
+def _benchmark_rebindings(test):
+    names = {
+        a.arg for a in (*test.args.posonlyargs, *test.args.args, *test.args.kwonlyargs)
+    }
+    names.update(a.arg for a in (test.args.vararg, test.args.kwarg) if a)
+    names.update(name for stmt in test.body for name in _local_binding_names(stmt))
+    return names
+
+
+def _module_benchmark_marker(tree):
+    imports = {
+        a.asname or a.name: a.name
+        for n in tree.body
+        if isinstance(n, ast.Import)
+        for a in n.names
+    }
+    marks = [
+        n
+        for n in tree.body
+        if isinstance(n, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in n.targets)
+    ]
+    if len(marks) != 1 or len(marks[0].targets) != 1:
+        return False
+    value = marks[0].value
+    value = value.func if isinstance(value, ast.Call) else value
+    name = _name(value)
+    head = name.split(".", 1)[0]
+    if (
+        imports.get(head) != "pytest"
+        or _resolve(value, imports) != "pytest.mark.benchmark"
+    ):
+        return False
+    return not any(
+        head in _local_binding_names(n) or "pytestmark" in _local_binding_names(n)
+        for n in tree.body
+        if n is not marks[0] and not isinstance(n, ast.Import)
+    )
+
+
+def _configured_benchmark_targets(config, root, files):
+    targets = set()
+    for section in config.sections():
+        if not section.startswith("testenv"):
+            continue
+        for line in config.get(section, "commands", fallback="").splitlines():
+            if not line.strip().startswith("pytest "):
+                continue
+            argv = shlex.split(line)
+            if not argv or argv[0] != "pytest" or "--codspeed" not in argv:
+                continue
+            targets.update(p for p in files if p.relative_to(root).as_posix() in argv)
+    return targets
+
+
+def benchmark_configuration(root, files, read_bytes, limit):
+    """Bind exact CodSpeed argv targets; malformed or missing inputs grant nothing."""
+    identity = {"path": "tox.ini", "state": "missing"}
+    try:
+        data = read_bytes(root, "tox.ini")
+        if len(data) > limit:
+            return set(), [], {"path": "tox.ini", "state": "oversized"}, False
+        binding = {
+            "path": "tox.ini",
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "bytes": len(data),
+        }
+        config = configparser.ConfigParser(interpolation=None)
+        config.read_string(data.decode("utf-8"))
+        targets = _configured_benchmark_targets(config, root, files)
+        return targets, [binding], binding, True
+    except FileNotFoundError:
+        return set(), [], identity, True
+    except RuntimeAuditError as exc:
+        return (
+            set(),
+            [],
+            {**identity, "state": exc.code},
+            exc.code == "E_SOURCE_MISSING",
+        )
+    except (OSError, UnicodeError, ValueError, configparser.Error) as exc:
+        return set(), [], {**identity, "state": type(exc).__name__}, False
+
+
+def oracle_configuration(root, files, typecheck_inputs, read_bytes, limit):
+    """Combine bounded type-checker and benchmark configuration identities."""
+    types, bindings, identity, cacheable = typecheck_inputs(root, files)
+    benchmarks, added, config, valid = benchmark_configuration(
+        root, files, read_bytes, limit
+    )
+    return (
+        types,
+        bindings + added,
+        {"typecheck": identity, "benchmark": config},
+        cacheable and valid,
+        benchmarks,
+    )
+
+
+def bind_benchmark_context(contexts, snapshots, benchmark_sources):
+    """Bind module markers and immutable loop bounds without running project code."""
+    for path, context in contexts.items():
+        context["codspeed_benchmark"] = (
+            path in benchmark_sources and _module_benchmark_marker(snapshots[path])
+        )
+        tree = snapshots[path]
+        names = [_local_binding_names(stmt) for stmt in tree.body]
+        constants = {
+            stmt.targets[0].id: stmt.value.value
+            for stmt in tree.body
+            if isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+            and isinstance(stmt.value, ast.Constant)
+            and type(stmt.value.value) is int
+            and sum(stmt.targets[0].id in row for row in names) == 1
+        }
+        constants["__range_builtin__"] = not any("range" in row for row in names)
+        context["benchmark_constants"] = constants
 
 
 def _stub_statement(stmt: ast.stmt) -> bool:
@@ -2350,3 +2616,66 @@ def implementation_completeness_findings(
             item["facts"].get("symbol", item["facts"].get("api", "")),
         ),
     )
+
+
+def _invalidate_mutable_constants(statement, known):
+    from .review_audits import _body_nodes
+
+    if any(
+        isinstance(item, (ast.Call, ast.Subscript)) for item in _body_nodes(statement)
+    ):
+        for name, prior in list(known.items()):
+            if isinstance(prior, (list, dict, set, tuple)):
+                known.pop(name, None)
+
+
+def remember_direct_constant_assignment(
+    statement: ast.stmt, known: dict[str, Any]
+) -> None:
+    """Preserve the existing direct-assignment constant-folding behavior."""
+    from .review_audits import (
+        _UNKNOWN_CONSTANT,
+        _bound_names,
+        _constant_value,
+    )
+
+    targets: list[ast.expr] = []
+    value: Any = _UNKNOWN_CONSTANT
+    _invalidate_mutable_constants(statement, known)
+    if isinstance(statement, ast.Assign):
+        value = _constant_value(statement.value, known)
+        targets = statement.targets
+    elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
+        value = _constant_value(statement.value, known)
+        targets = [statement.target]
+    for name in _bound_names(statement):
+        known.pop(name, None)
+    if value is _UNKNOWN_CONSTANT:
+        return
+    for target in targets:
+        if isinstance(target, ast.Name):
+            known[target.id] = value
+
+
+_STRUCTURAL_SET_FIELDS = (
+    "module_rebindings",
+    "dynamic_getattr_modules",
+    "source_classes",
+)
+_STRUCTURAL_MAP_FIELDS = ("module_imports", "class_imports", "benchmark_constants")
+
+
+def encode_structural_context(context):
+    """Encode all structural oracle bindings for the bounded in-memory cache."""
+    return {
+        **{key: sorted(context.get(key, set())) for key in _STRUCTURAL_SET_FIELDS},
+        **{key: context.get(key, {}) for key in _STRUCTURAL_MAP_FIELDS},
+    }
+
+
+def decode_structural_context(payload):
+    """Restore structural oracle bindings without weakening their source identity."""
+    return {
+        **{key: set(payload.get(key, [])) for key in _STRUCTURAL_SET_FIELDS},
+        **{key: payload.get(key, {}) for key in _STRUCTURAL_MAP_FIELDS},
+    }
