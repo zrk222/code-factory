@@ -163,6 +163,9 @@ def _run_security(args: Any) -> int:
                 [*contract_bindings, *getattr(args, "tenant_read_binding", [])]
             )
         )
+        from .mission_control_status import security_scan_pytest_collection_snapshot
+
+        before_collection = security_scan_pytest_collection_snapshot(Path(args.root))
         result = security_scan(
             Path(args.root),
             tenant_read_calls=calls,
@@ -183,8 +186,22 @@ def _run_security(args: Any) -> int:
                 "read and its binding, or explicitly declare an empty read set."
             )
         result = _seal_security_scan(result)
-    except ReviewAuditError as error:
-        print(json.dumps({"state": "INVALID", "message": str(error)}), file=sys.stderr)
+        from .mission_control_status import (
+            prepare_security_scan_receipt_report,
+            write_security_scan_receipt,
+        )
+
+        result = prepare_security_scan_receipt_report(
+            Path(args.root), result, before_collection=before_collection
+        )
+        write_security_scan_receipt(Path(args.root), result)
+    except (ReviewAuditError, OSError, ValueError) as error:
+        message = (
+            "Security scan receipt could not be written."
+            if isinstance(error, OSError)
+            else str(error)
+        )
+        print(json.dumps({"state": "INVALID", "message": message}), file=sys.stderr)
         return 2
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))

@@ -11,7 +11,11 @@ from pathlib import Path
 from typing import Any
 import hashlib
 import json
+import os
+import stat
+import tempfile
 import time
+import copy
 
 from .lifecycle_ledger import lifecycle_projection
 from .operations_control import operations_control_projection
@@ -27,6 +31,12 @@ from .intake_parameters import intake_parameters_status
 
 
 SCHEMA = "factory.mission-control-status.v1"
+SECURITY_SCAN_RECEIPT_PATH = ".factory/security-scan/latest.json"
+SECURITY_SCAN_RECEIPT_SCHEMA = "factory.security-scan-receipt.v1"
+SECURITY_SCAN_STATUS_SCHEMA = "factory.security-scan-status.v1"
+MAX_SECURITY_SCAN_RECEIPT_BYTES = 10_000_000
+MAX_SECURITY_SCAN_SOURCE_BYTES = 64 * 1024 * 1024
+MAX_SECURITY_SCAN_DISPLAY_FINDINGS = 24
 AUTHORITY = {
     "execution": False,
     "approval": False,
@@ -90,6 +100,8 @@ def _collect_evidence(root: Path, spans: list | None = None) -> dict[str, Any]:
     # Keep the established seven-reader timing baseline stable; this envelope
     # is an additional bounded, read-only projection.
     evidence["intake_parameters"] = intake_parameters_status(Path(root).resolve())
+    # This receipt reader is intentionally outside the existing timing sample.
+    evidence["implementation_audit"] = security_scan_status(Path(root).resolve())
     return evidence
 
 
@@ -98,6 +110,613 @@ def _fingerprint(value: Any) -> str:
         value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _security_scan_hash(value: Any, *, ensure_ascii: bool) -> str:
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=ensure_ascii,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _security_scan_source_bindings(report: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: dict[str, dict[str, Any]] = {}
+
+    def add(row: Any, role: str) -> None:
+        if not isinstance(row, dict):
+            raise ValueError("security scan source binding is malformed")
+        path, sha256, size = row.get("path"), row.get("sha256"), row.get("bytes")
+        if (
+            not isinstance(path, str)
+            or not isinstance(sha256, str)
+            or len(sha256) != 64
+            or any(char not in "0123456789abcdef" for char in sha256)
+            or isinstance(size, bool)
+            or not isinstance(size, int)
+            or size < 0
+        ):
+            raise ValueError("security scan source binding is malformed")
+        value = {"path": path, "sha256": sha256, "bytes": size, "role": role}
+        if path in rows:
+            if rows[path] != value:
+                raise ValueError("security scan source paths are duplicated")
+            return
+        rows[path] = value
+
+    sources = report.get("sources")
+    oracle = report.get("oracle_context")
+    if not isinstance(sources, list) or not isinstance(oracle, dict):
+        raise ValueError("security scan source manifest is malformed")
+    for row in sources:
+        add(row, "source")
+    configs = oracle.get("configuration_sources", [])
+    if not isinstance(configs, list):
+        raise ValueError("security scan configuration manifest is malformed")
+    for row in configs:
+        add(row, "configuration")
+    tenant = report.get("tenant_read_contract")
+    configuration = tenant.get("configuration") if isinstance(tenant, dict) else None
+    if isinstance(configuration, dict) and configuration.get("state") == "loaded":
+        add(configuration, "tenant_configuration")
+    return sorted(rows.values(), key=lambda row: (row["path"], row["role"]))
+
+
+def _security_scan_report_error(report: Any) -> str | None:
+    if (
+        not isinstance(report, dict)
+        or report.get("schema") != "factory.security-audit.v1"
+    ):
+        return "report_schema_invalid"
+    if report.get("marker") != "SECURITY_AUDIT_COMPLETE":
+        return "report_marker_invalid"
+    for field, payload, ensure_ascii in (
+        (
+            "candidate_sha256",
+            {
+                key: report.get(key, {})
+                for key in ("sources", "tenant_read_contract", "oracle_context")
+            },
+            True,
+        ),
+        (
+            "source_manifest_sha256",
+            {key: report.get(key, {}) for key in ("sources", "oracle_context")},
+            False,
+        ),
+        (
+            "audit_sha256",
+            {key: value for key, value in report.items() if key != "audit_sha256"},
+            False,
+        ),
+    ):
+        claimed = report.get(field)
+        if (
+            not isinstance(claimed, str)
+            or len(claimed) != 64
+            or any(char not in "0123456789abcdef" for char in claimed)
+            or _security_scan_hash(payload, ensure_ascii=ensure_ascii) != claimed
+        ):
+            return f"{field}_mismatch"
+    return None
+
+
+def security_scan_pytest_collection_snapshot(root: Path) -> dict[str, Any]:
+    """Capture effective pytest collection settings without executing project code."""
+    from .review_audits import _pytest_collection_config
+
+    patterns, identity = _pytest_collection_config(Path(root).resolve())
+    return {**identity, "patterns": sorted(patterns)}
+
+
+def prepare_security_scan_receipt_report(
+    root: Path, report: dict[str, Any], before_collection: dict[str, Any]
+) -> dict[str, Any]:
+    """Bind pre/post scan pytest config observations before writing a local receipt."""
+    from .review_audits import _seal_security_scan
+
+    prepared = copy.deepcopy(report)
+    after = security_scan_pytest_collection_snapshot(root)
+    stable = before_collection == after
+    collection = {
+        **after,
+        "capture_state": "stable_pre_post" if stable else "changed_during_scan",
+    }
+    oracle = prepared.get("oracle_context")
+    if not isinstance(oracle, dict):
+        raise ValueError("security scan oracle context is malformed")
+    oracle["pytest_collection"] = collection
+    configs = oracle.get("configuration_sources")
+    if not isinstance(configs, list):
+        raise ValueError("security scan configuration manifest is malformed")
+    if isinstance(after.get("path"), str):
+        row = {
+            "path": after["path"],
+            "sha256": after.get("sha256"),
+            "bytes": after.get("bytes"),
+        }
+        if row not in configs:
+            configs.append(row)
+            configs.sort(key=lambda item: item.get("path", ""))
+    if not stable:
+        prepared["state"] = "INCOMPLETE"
+        prepared["action_summary"] = (
+            str(prepared.get("action_summary", ""))
+            + " Pytest collection configuration changed during the scan; rerun before relying on coverage."
+        ).strip()
+    prepared["source_manifest_sha256"] = _security_scan_hash(
+        {"sources": prepared.get("sources", []), "oracle_context": oracle},
+        ensure_ascii=False,
+    )
+    return _seal_security_scan(prepared)
+
+
+def _security_scan_receipt_directory(root: Path, *, create: bool) -> Path:
+    workspace = Path(root).resolve()
+    directory = workspace
+    for part in (".factory", "security-scan"):
+        directory = directory / part
+        try:
+            info = directory.lstat()
+        except FileNotFoundError:
+            if not create:
+                raise
+            directory.mkdir()
+            info = directory.lstat()
+        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise ValueError("security scan receipt directory is linked")
+        if not stat.S_ISDIR(info.st_mode):
+            raise ValueError("security scan receipt parent is not a directory")
+    return directory
+
+
+def write_security_scan_receipt(root: Path, report: dict[str, Any]) -> dict[str, str]:
+    """Atomically store one explicit CLI scan report as unsigned local evidence."""
+    from .deep_audit_io import canonical_bytes, local_file
+
+    error = _security_scan_report_error(report)
+    if error is not None:
+        raise ValueError(f"security scan report is not sealed: {error}")
+    source_bindings = _security_scan_source_bindings(report)
+    envelope = {
+        "schema": SECURITY_SCAN_RECEIPT_SCHEMA,
+        "report": report,
+        "source_bindings": source_bindings,
+    }
+    envelope["receipt_sha256"] = _security_scan_hash(envelope, ensure_ascii=False)
+    raw = canonical_bytes(envelope)
+    if len(raw) > MAX_SECURITY_SCAN_RECEIPT_BYTES:
+        raise ValueError("security scan receipt exceeds its size limit")
+    directory = _security_scan_receipt_directory(root, create=True)
+    path = directory / "latest.json"
+    try:
+        local_file(Path(root).resolve(), SECURITY_SCAN_RECEIPT_PATH)
+    except Exception as exc:
+        from .deep_audit_io import RuntimeAuditError
+
+        if not isinstance(exc, RuntimeAuditError) or exc.code != "E_SOURCE_MISSING":
+            raise ValueError(
+                "existing security scan receipt is not a regular file"
+            ) from exc
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=".latest.", suffix=".tmp", dir=directory
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+    return {
+        "path": SECURITY_SCAN_RECEIPT_PATH,
+        "receipt_sha256": envelope["receipt_sha256"],
+    }
+
+
+def _security_scan_unknown(
+    state: str, reason: str, *, output_truncated: bool = False
+) -> dict[str, Any]:
+    return {
+        "schema": SECURITY_SCAN_STATUS_SCHEMA,
+        "state": state,
+        "report_state": None,
+        "reason": reason,
+        "receipt_path": SECURITY_SCAN_RECEIPT_PATH,
+        "receipt_sha256": None,
+        "candidate_sha256": None,
+        "source_manifest_sha256": None,
+        "candidate_freshness": "NOT_ESTABLISHED",
+        "source_count": None,
+        "finding_count": None,
+        "finding_counts": {},
+        "findings": [],
+        "findings_truncated": False,
+        "display_truncated": False,
+        "output_truncated": output_truncated,
+        "incomplete": state in {"INCOMPLETE", "INVALID"},
+        "audit_coverage": {"complete": False, "measurement_state": state.lower()},
+        "verification": "local_self_hash_only_not_signature_or_approval",
+        "authority": {"execution": False, "approval": False, "repair": False},
+        "claim_boundary": "No current complete static security scan receipt is available; this is not a release or security approval.",
+    }
+
+
+def _security_scan_read_receipt(root: Path) -> tuple[dict[str, Any] | None, bool]:
+    from .deep_audit_io import RuntimeAuditError, local_file, strict_json
+
+    try:
+        path = local_file(root, SECURITY_SCAN_RECEIPT_PATH)
+    except RuntimeAuditError as exc:
+        if exc.code == "E_SOURCE_MISSING":
+            return None, False
+        raise
+    with path.open("rb") as stream:
+        before = path.stat()
+        raw = stream.read(MAX_SECURITY_SCAN_RECEIPT_BYTES + 1)
+        after = path.stat()
+    if len(raw) > MAX_SECURITY_SCAN_RECEIPT_BYTES:
+        return None, True
+    if (before.st_ino, before.st_size, before.st_mtime_ns) != (
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+    ):
+        raise ValueError("security scan receipt changed during read")
+    return strict_json(raw), False
+
+
+def _security_scan_coverage(report: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    coverage = report.get("audit_coverage")
+    if not isinstance(coverage, dict):
+        raise ValueError("security scan coverage is malformed")
+    numeric = ("files_discovered", "files_attempted", "files_audited")
+    if any(
+        isinstance(coverage.get(key), bool)
+        or not isinstance(coverage.get(key), int)
+        or coverage[key] < 0
+        for key in numeric
+    ):
+        raise ValueError("security scan coverage counts are malformed")
+    complete = (
+        coverage.get("complete") is True
+        and coverage.get("inventory_complete") is True
+        and coverage.get("measurement_state") == "complete"
+        and coverage["files_discovered"] == coverage["files_attempted"]
+        and coverage["files_attempted"] == coverage["files_audited"]
+        and coverage["files_audited"] == report.get("files_scanned")
+        and coverage["files_discovered"] > 0
+    )
+    return {
+        "language": coverage.get("language"),
+        "files_discovered": coverage["files_discovered"],
+        "files_attempted": coverage["files_attempted"],
+        "files_audited": coverage["files_audited"],
+        "measurement_state": coverage.get("measurement_state"),
+        "complete": complete,
+        "limit": coverage.get("limit"),
+    }, complete
+
+
+def _security_scan_current_sources(
+    root: Path, report: dict[str, Any], bindings: list[dict[str, Any]]
+) -> str:
+    from .deep_audit_io import RuntimeAuditError, local_file
+    from .review_audits import (
+        MAX_BYTES,
+        MAX_SECURITY_SOURCE_FILES,
+        _security_source_files,
+    )
+
+    current_paths = _security_source_files(root)
+    if len(current_paths) > MAX_SECURITY_SOURCE_FILES:
+        return "SOURCE_INVENTORY_OVER_LIMIT"
+    source_rows = [row for row in bindings if row["role"] == "source"]
+    expected = {row["path"] for row in source_rows}
+    current = {path.relative_to(root).as_posix() for path in current_paths}
+    coverage, complete = _security_scan_coverage(report)
+    if complete and expected != current:
+        return "SOURCE_INVENTORY_MISMATCH"
+    total = 0
+    for row in bindings:
+        try:
+            path = local_file(root, row["path"])
+        except RuntimeAuditError as exc:
+            if exc.code == "E_SOURCE_MISSING":
+                return "SOURCE_MISSING"
+            raise
+        limit = MAX_BYTES if row["role"] != "tenant_configuration" else MAX_BYTES
+        if path.stat().st_size > limit:
+            return "SOURCE_SIZE_LIMIT"
+        with path.open("rb") as stream:
+            before = path.stat()
+            raw = stream.read(limit + 1)
+            after = path.stat()
+        total += len(raw)
+        if total > MAX_SECURITY_SCAN_SOURCE_BYTES:
+            return "SOURCE_VERIFICATION_BUDGET"
+        if len(raw) != row["bytes"] or hashlib.sha256(raw).hexdigest() != row["sha256"]:
+            return "SOURCE_HASH_MISMATCH"
+        if (before.st_ino, before.st_size, before.st_mtime_ns) != (
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ):
+            return "SOURCE_CHANGED_DURING_READ"
+    collection = _security_scan_pytest_collection(root, report, bindings)
+    if collection != "CURRENT_PYTEST_COLLECTION_VERIFIED":
+        return collection
+    return "CURRENT_SOURCE_HASHES_VERIFIED"
+
+
+def _security_scan_pytest_collection(
+    root: Path, report: dict[str, Any], bindings: list[dict[str, Any]]
+) -> str:
+    """Recheck the selected pytest config without importing or executing project code."""
+    oracle = report.get("oracle_context")
+    identity = oracle.get("pytest_collection") if isinstance(oracle, dict) else None
+    if not isinstance(identity, dict):
+        return "PYTEST_COLLECTION_NOT_BOUND"
+    patterns = identity.get("patterns")
+    if not isinstance(patterns, list) or any(
+        not isinstance(item, str) for item in patterns
+    ):
+        return "PYTEST_COLLECTION_BINDING_INVALID"
+    if identity.get("capture_state") != "stable_pre_post":
+        return "PYTEST_COLLECTION_CHANGED_DURING_SCAN"
+    try:
+        from .review_audits import ReviewAuditError, _pytest_collection_config
+
+        current_patterns, current_identity = _pytest_collection_config(root)
+    except Exception as exc:
+        from .review_audits import ReviewAuditError
+
+        if isinstance(exc, ReviewAuditError):
+            return "PYTEST_COLLECTION_CONFIG_UNAVAILABLE"
+        raise
+    sealed = {
+        key: value
+        for key, value in identity.items()
+        if key not in {"patterns", "capture_state"}
+    }
+    if sealed != current_identity or patterns != sorted(current_patterns):
+        return "PYTEST_COLLECTION_CONFIG_CHANGED"
+    selected_path = identity.get("path")
+    if selected_path is not None:
+        selected = [
+            row
+            for row in bindings
+            if row["role"] == "configuration" and row["path"] == selected_path
+        ]
+        if not selected or any(
+            row.get("sha256") != identity.get("sha256")
+            or row.get("bytes") != identity.get("bytes")
+            for row in selected
+        ):
+            return "PYTEST_COLLECTION_SOURCE_NOT_BOUND"
+    return "CURRENT_PYTEST_COLLECTION_VERIFIED"
+
+
+def _security_probe_projection(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    result = {
+        key: value[key]
+        for key in (
+            "available",
+            "call_available",
+            "exact_collection_id_required",
+        )
+        if type(value.get(key)) is bool
+    }
+    for key in ("assertion_lines", "call_lines"):
+        rows = value.get(key)
+        if isinstance(rows, list):
+            result[key] = [item for item in rows[:32] if type(item) is int and item > 0]
+    for key in ("command", "call_command", "call_limits"):
+        rows = value.get(key)
+        if isinstance(rows, list):
+            result[key] = [item[:200] for item in rows[:16] if isinstance(item, str)]
+    for key in ("nodeid_hint", "execution", "interpretation"):
+        item = value.get(key)
+        if isinstance(item, str):
+            result[key] = item[:500]
+    return result or None
+
+
+def _security_findings_projection(
+    report: dict[str, Any],
+) -> tuple[list[dict[str, Any]], bool, dict[str, int]]:
+    findings = report.get("findings")
+    if not isinstance(findings, list):
+        raise ValueError("security scan findings are malformed")
+    result = []
+    for finding in findings[:MAX_SECURITY_SCAN_DISPLAY_FINDINGS]:
+        if not isinstance(finding, dict):
+            raise ValueError("security scan finding is malformed")
+        row = {}
+        facts = finding.get("facts", {})
+        if not isinstance(facts, dict):
+            facts = {}
+        for key in ("code", "severity", "path", "symbol", "message"):
+            value = finding.get(key)
+            if value is None:
+                value = facts.get(key)
+            if isinstance(value, str):
+                row[key] = value[:800]
+        line = finding.get("line")
+        if type(line) is int and line > 0:
+            row["line"] = line
+        probe = _security_probe_projection(
+            finding.get("native_assertion_probe", facts.get("native_assertion_probe"))
+        )
+        if probe is not None:
+            row["native_assertion_probe"] = probe
+        result.append(row)
+    counts = report.get("finding_counts")
+    if not isinstance(counts, dict) or any(
+        not isinstance(code, str)
+        or isinstance(count, bool)
+        or not isinstance(count, int)
+        or count < 0
+        for code, count in counts.items()
+    ):
+        raise ValueError("security scan finding counts are malformed")
+    return result, len(findings) > len(result), dict(sorted(counts.items())[:64])
+
+
+def _security_scan_projection(
+    report: dict[str, Any], receipt_sha256: str, freshness: str
+) -> dict[str, Any]:
+    coverage, coverage_complete = _security_scan_coverage(report)
+    findings, display_truncated, counts = _security_findings_projection(report)
+    tenant = report.get("tenant_read_contract", {})
+    configuration = tenant.get("configuration", {}) if isinstance(tenant, dict) else {}
+    tenant_config_state = (
+        configuration.get("state", "missing")
+        if isinstance(configuration, dict)
+        else "invalid"
+    )
+    report_state = report.get("state")
+    state = report_state
+    incomplete = (
+        not coverage_complete
+        or freshness != "CURRENT_SOURCE_HASHES_VERIFIED"
+        or tenant_config_state != "loaded"
+        or report_state in {"INCOMPLETE", "NO_SOURCES"}
+        or report.get("output_truncated") is True
+    )
+    if incomplete:
+        state = "INCOMPLETE"
+    return {
+        "schema": SECURITY_SCAN_STATUS_SCHEMA,
+        "state": state,
+        "report_state": report_state,
+        "reason": freshness if freshness != "CURRENT_SOURCE_HASHES_VERIFIED" else None,
+        "receipt_path": SECURITY_SCAN_RECEIPT_PATH,
+        "receipt_sha256": receipt_sha256,
+        "candidate_sha256": report.get("candidate_sha256"),
+        "source_manifest_sha256": report.get("source_manifest_sha256"),
+        "candidate_freshness": freshness,
+        "source_count": coverage["files_audited"],
+        "finding_count": len(report["findings"]),
+        "finding_counts": counts,
+        "findings": findings,
+        "findings_truncated": display_truncated,
+        "display_truncated": display_truncated,
+        "output_truncated": report.get("output_truncated") is True,
+        "incomplete": state == "INCOMPLETE",
+        "audit_coverage": coverage,
+        "tenant_read_configuration": tenant_config_state,
+        "verification": "local_self_hash_only_not_signature_or_approval",
+        "authority": {"execution": False, "approval": False, "repair": False},
+        "claim_boundary": "Current local source hashes and self-hashes were checked. This unsigned AST report is advisory; it does not establish trust, semantic correctness, or release approval.",
+    }
+
+
+def _security_scan_finding_counts_error(report: dict[str, Any]) -> str | None:
+    _security_findings_projection(report)
+    actual_counts: dict[str, int] = {}
+    for finding in report["findings"]:
+        facts = finding.get("facts", {}) if isinstance(finding, dict) else {}
+        code = finding.get("code") if isinstance(finding, dict) else None
+        if code is None and isinstance(facts, dict):
+            code = facts.get("code")
+        if not isinstance(code, str) or not code:
+            return "finding code is missing"
+        actual_counts[code] = actual_counts.get(code, 0) + 1
+    if report.get("finding_counts") != dict(sorted(actual_counts.items())):
+        return "finding count mismatch"
+    return None
+
+
+def _security_scan_report_consistency_error(
+    report: dict[str, Any], source_bindings: list[dict[str, Any]]
+) -> str | None:
+    error = _security_scan_finding_counts_error(report)
+    if error is not None:
+        return error
+    if report.get("state") not in {
+        "CLEAN",
+        "FINDINGS",
+        "BLOCKED",
+        "INCOMPLETE",
+        "NO_SOURCES",
+    }:
+        return "scan state is invalid"
+    if report.get("state") == "CLEAN" and report["findings"]:
+        return "clean scan contains findings"
+    coverage, coverage_complete = _security_scan_coverage(report)
+    source_count = sum(row["role"] == "source" for row in source_bindings)
+    if coverage_complete and coverage["files_audited"] != source_count:
+        return "source count does not match coverage"
+    return None
+
+
+def _security_scan_receipt_report(
+    envelope: dict[str, Any],
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]] | None, str | None]:
+    from .deep_audit_io import digest
+
+    if set(envelope) != {"schema", "report", "source_bindings", "receipt_sha256"}:
+        return None, None, "receipt fields are invalid"
+    claimed = envelope.get("receipt_sha256")
+    unsigned = {
+        key: value for key, value in envelope.items() if key != "receipt_sha256"
+    }
+    if envelope.get("schema") != SECURITY_SCAN_RECEIPT_SCHEMA or claimed != digest(
+        unsigned
+    ):
+        return None, None, "receipt digest or schema mismatch"
+    report = envelope.get("report")
+    error = _security_scan_report_error(report)
+    if error is not None:
+        return None, None, error
+    source_bindings = _security_scan_source_bindings(report)
+    if envelope.get("source_bindings") != source_bindings:
+        return None, None, "source manifest mismatch"
+    error = _security_scan_report_consistency_error(report, source_bindings)
+    if error is not None:
+        return None, None, error
+    return report, source_bindings, None
+
+
+def _security_scan_read_error(exc: Exception) -> dict[str, Any]:
+    from .deep_audit_io import RuntimeAuditError
+
+    if isinstance(exc, RuntimeAuditError) and exc.code == "E_SOURCE_MISSING":
+        return _security_scan_unknown("NOT_RUN", "no receipt found")
+    return _security_scan_unknown("INVALID", "receipt could not be verified")
+
+
+def security_scan_status(root: Path) -> dict[str, Any]:
+    """Read and verify the latest bounded local scanner receipt without running a scan."""
+    workspace = Path(root).resolve()
+    try:
+        envelope, truncated = _security_scan_read_receipt(workspace)
+        if truncated:
+            return _security_scan_unknown(
+                "INCOMPLETE", "receipt exceeds read limit", output_truncated=True
+            )
+        if envelope is None:
+            return _security_scan_unknown("NOT_RUN", "no receipt found")
+        claimed = envelope.get("receipt_sha256")
+        report, source_bindings, error = _security_scan_receipt_report(envelope)
+        if error is not None:
+            return _security_scan_unknown("INVALID", error)
+        assert report is not None and source_bindings is not None
+        freshness = _security_scan_current_sources(workspace, report, source_bindings)
+        return _security_scan_projection(report, claimed, freshness)
+    except Exception as exc:
+        return _security_scan_read_error(exc)
 
 
 def mission_control_profile(root: Path) -> dict[str, Any]:
@@ -257,6 +876,7 @@ def _agent_control_plane() -> dict[str, Any]:
             "repair_loop_packet",
             "runtime_assurance_receipt",
             "deep_audit_receipt",
+            "security_scan_receipt",
             "release_workflow_integrity",
             "supply_chain_receipt",
             "context_efficiency_packet",
