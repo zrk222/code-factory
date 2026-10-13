@@ -20,6 +20,185 @@ from factoryline.cli import main
 
 
 @pytest.mark.parametrize(
+    "registration,mutation,dispatch,hollow",
+    [
+        (
+            "checks.append(fn); return fn",
+            "",
+            "for callback in checks:\n        callback(42)",
+            False,
+        ),
+        ("return fn", "", "for callback in checks:\n        callback(42)", True),
+        (
+            "checks.append(lambda value: None); return fn",
+            "",
+            "for callback in checks:\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "checks.clear()",
+            "for callback in checks:\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "checks = []",
+            "for callback in checks:\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "alias = checks; alias.clear()",
+            "for callback in checks:\n        callback(42)",
+            True,
+        ),
+        ("checks.append(fn); return fn", "", "pass", True),
+        (
+            "checks.append(fn); return fn",
+            "",
+            "for callback in []:\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "",
+            "for callback in checks:\n        callback = lambda value: None\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "",
+            "try:\n        for callback in checks:\n            callback(42)\n    except AssertionError:\n        pass",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "mutate(checks)",
+            "for callback in checks:\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "",
+            "for callback in checks:\n        if False:\n            callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "",
+            "for callback in checks:\n        break\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "return",
+            "for callback in checks:\n        callback(42)",
+            True,
+        ),
+    ],
+)
+def test_local_registered_callback_requires_identity_dispatch_and_escape(
+    tmp_path, registration, mutation, dispatch, hollow
+):
+    source = (
+        "def test_behavior():\n    checks = []\n    def register(fn):\n        "
+        + registration
+        + "\n    @register\n    def check(value):\n        assert value == 42\n    "
+        + mutation
+        + "\n    "
+        + dispatch
+        + "\n"
+    )
+    (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
+    flagged = any(
+        finding["code"] == "QUALITY_HOLLOW_TEST"
+        for finding in security_scan(tmp_path)["findings"]
+    )
+    assert flagged is hollow
+
+
+def test_local_registry_proof_is_independent_of_names(tmp_path):
+    (tmp_path / "test_case.py").write_text(
+        "def test_behavior():\n    tasks = []\n    def install(handler):\n"
+        "        tasks.append(handler)\n        return handler\n    @install\n"
+        "    def verify(value):\n        assert value == 42\n    for action in tasks:\n"
+        "        action(42)\n",
+        encoding="utf-8",
+    )
+    assert not any(
+        f["code"] == "QUALITY_HOLLOW_TEST" for f in security_scan(tmp_path)["findings"]
+    )
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "async_decorator",
+        "async_callback",
+        "generator_callback",
+        "decorator_rebound",
+        "code_replaced",
+        "loop_alias_replaced",
+        "early_conditional_return",
+        "stacked_decorator",
+        "unreachable_assertion",
+        "assertion_after_return",
+    ],
+)
+def test_local_registry_rejects_deferred_or_replaced_callbacks(tmp_path, variant):
+    source = (
+        "def test_behavior():\n    checks = []\n    def register(fn):\n"
+        "        checks.append(fn)\n        return fn\n    @register\n"
+        "    def check(value):\n        assert value == 42\n    for callback in checks:\n"
+        "        callback(42)\n"
+    )
+    if variant == "async_decorator":
+        source = source.replace("def register", "async def register")
+    elif variant == "async_callback":
+        source = source.replace("def check", "async def check")
+    elif variant == "generator_callback":
+        source = source.replace(
+            "assert value == 42", "assert value == 42\n        yield value"
+        )
+    elif variant == "decorator_rebound":
+        source = source.replace(
+            "    @register", "    register = lambda fn: fn\n    @register"
+        )
+    elif variant == "code_replaced":
+        source = source.replace(
+            "    for callback",
+            "    check.__code__ = (lambda value: None).__code__\n    for callback",
+        )
+    elif variant == "loop_alias_replaced":
+        source = source.replace(
+            "        callback(42)",
+            "        alias = callback\n        alias.__code__ = (lambda value: None).__code__\n        callback(42)",
+        )
+    elif variant == "early_conditional_return":
+        source = source.replace(
+            "    for callback", "    if True:\n        return\n    for callback"
+        )
+    elif variant == "unreachable_assertion":
+        source = source.replace(
+            "assert value == 42", "if False:\n            assert value == 42"
+        )
+    elif variant == "assertion_after_return":
+        source = source.replace(
+            "assert value == 42", "return\n        assert value == 42"
+        )
+    else:
+        source = source.replace(
+            "    @register",
+            "    def discard(fn):\n        return lambda value: None\n    @register\n    @discard",
+        )
+    (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
+    assert any(
+        f["code"] == "QUALITY_HOLLOW_TEST" for f in security_scan(tmp_path)["findings"]
+    )
+
+
+@pytest.mark.parametrize(
     "expression",
     [
         "obj.version is obj.version",
