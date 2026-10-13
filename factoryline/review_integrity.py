@@ -46,6 +46,99 @@ def import_smoke_oracle(node: ast.AST) -> bool:
     )
 
 
+def _nearest_native_function_scope(node: ast.AST, parents: dict) -> bool:
+    current = node
+    while current in parents:
+        current = parents[current]
+        if isinstance(
+            current,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+        ):
+            return isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef))
+    return False
+
+
+def _native_call_probe_lines(node: ast.AST) -> list[int]:
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return []
+    walked = list(ast.walk(node))
+    parents = {
+        child: parent for parent in walked for child in ast.iter_child_nodes(parent)
+    }
+    statements: dict[int, list[ast.stmt]] = {}
+    for child in walked:
+        if isinstance(child, ast.stmt):
+            statements.setdefault(child.lineno, []).append(child)
+    lines = set()
+    for child in walked:
+        if not isinstance(child, ast.Expr):
+            continue
+        if not isinstance(child.value, ast.Call):
+            continue
+        if not _nearest_native_function_scope(child, parents):
+            continue
+        if statements.get(child.lineno) != [child]:
+            continue
+        if sum(isinstance(part, ast.Call) for part in ast.walk(child.value)) != 1:
+            continue
+        lines.add(child.lineno)
+    return sorted(lines)[:32]
+
+
+def native_test_probe(relative: str, node: ast.AST) -> dict[str, Any]:
+    """Build advisory assertion and standalone-call probe guidance for one test."""
+    lines = sorted(
+        {child.lineno for child in ast.walk(node) if isinstance(child, ast.Assert)}
+    )[:32]
+    call_lines = _native_call_probe_lines(node)
+    command = [
+        "python",
+        "-m",
+        "factoryline.pytest_readiness",
+        "--root",
+        ".",
+        "--nodeid",
+        "<exact collected pytest node ID>",
+        "--line",
+        "<assertion line>",
+        "--timeout",
+        "30",
+    ]
+    call_command = [
+        "python",
+        "-m",
+        "factoryline.pytest_readiness",
+        "--kind",
+        "call",
+        "--root",
+        ".",
+        "--nodeid",
+        "<exact collected pytest node ID>",
+        "--line",
+        "<call line>",
+        "--timeout",
+        "30",
+    ]
+    return {
+        "available": bool(lines),
+        "assertion_lines": lines,
+        "nodeid_hint": relative + "::" + getattr(node, "name", ""),
+        "exact_collection_id_required": True,
+        "command": command,
+        "execution": "Explicit local execution only; never started by a static scan",
+        "interpretation": "Reachability and failure propagation only; review semantic strength separately; no automatic suppression",
+        "call_available": bool(call_lines),
+        "call_lines": call_lines,
+        "call_command": call_command,
+        "call_limits": [
+            "Candidates are standalone call statements only; the runtime CLI validates the exact target again",
+            "Injection is before the selected statement and reports reachability and failure escape only",
+            "Production-function mutation sensitivity and semantic quality are not assessed",
+            "No automatic detection change, finding clearance, or execution by static scan",
+        ],
+    }
+
+
 def callback_argument(call: ast.Call, function: ast.AST, parameter: str) -> str | None:
     """Return a plainly bound callback name for a positional or keyword argument."""
     positional = [*function.args.posonlyargs, *function.args.args]
