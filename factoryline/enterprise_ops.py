@@ -908,6 +908,32 @@ def _cleanup_capture_directory(temporary: tempfile.TemporaryDirectory) -> bool:
     return True
 
 
+def _runner_completion_facts(
+    backend: str,
+    process_facts: dict[str, Any],
+    execution: dict[str, Any],
+    truncated: bool,
+) -> dict[str, Any]:
+    timed_out = process_facts["timed_out"]
+    output_overflow = process_facts["output_limit_exceeded"]
+    aborted_docker = backend == "docker" and (timed_out or output_overflow)
+    return {
+        "aborted_docker": aborted_docker,
+        "container_cleanup": (
+            "NOT_INDEPENDENTLY_VERIFIED" if backend == "docker" else "NOT_APPLICABLE"
+        ),
+        "output_complete": not (
+            truncated
+            or output_overflow
+            or timed_out
+            or not process_facts["cleanup_confirmed"]
+            or aborted_docker
+            or not execution["capture_cleanup_confirmed"]
+            or not execution["capture_read_complete"]
+        ),
+    }
+
+
 def run_proof(
     root: Path,
     command: list[str],
@@ -934,12 +960,7 @@ def run_proof(
     stdout, stderr = execution["stdout"], execution["stderr"]
     combined = stdout + ("\n" if stdout and stderr else "") + stderr
     truncated = len(combined) > output_limit
-    aborted_docker = backend == "docker" and (
-        process_facts["timed_out"] or process_facts["output_limit_exceeded"]
-    )
-    container_cleanup = (
-        "NOT_INDEPENDENTLY_VERIFIED" if backend == "docker" else "NOT_APPLICABLE"
-    )
+    completion = _runner_completion_facts(backend, process_facts, execution, truncated)
     result = {
         "schema": RUNNER_SCHEMA,
         "marker": "RUNNER_ISOLATION_ENFORCED"
@@ -956,21 +977,13 @@ def run_proof(
             process_facts,
             execution["capture_cleanup_confirmed"],
             execution["capture_read_complete"],
-            aborted_docker,
+            completion["aborted_docker"],
         ),
         "exit_code": process_facts["exit_code"],
         "elapsed_ms": round((time.perf_counter() - started) * 1000),
         "output": combined[:output_limit],
         "output_truncated": truncated,
-        "output_complete": not (
-            truncated
-            or process_facts["output_limit_exceeded"]
-            or process_facts["timed_out"]
-            or not process_facts["cleanup_confirmed"]
-            or aborted_docker
-            or not execution["capture_cleanup_confirmed"]
-            or not execution["capture_read_complete"]
-        ),
+        "output_complete": completion["output_complete"],
         "process_facts": {
             **process_facts,
             "cleanup_scope": "host child process and captured stream readers only",
@@ -981,7 +994,7 @@ def run_proof(
                 "capture_file_limit_exceeded", False
             ),
         },
-        "container_cleanup": container_cleanup,
+        "container_cleanup": completion["container_cleanup"],
         "authority": {
             "source_write": False,
             "merge": False,
