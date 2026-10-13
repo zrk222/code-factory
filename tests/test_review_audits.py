@@ -176,6 +176,79 @@ def test_annotated_stub_oracle_requires_source_bound_constructor(tmp_path):
     assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"])
 
 
+def test_annotated_callable_oracle_requires_source_bound_constructor():
+    import ast
+
+    from factoryline.review_integrity import annotated_callable_oracle
+
+    node = ast.parse(
+        "def test_constructs():\n"
+        "    def handler(request: Request) -> Response:\n"
+        "        raise NotImplementedError\n"
+        "    Middleware(handler)\n"
+    ).body[0]
+    context = {
+        "class_imports": {"Middleware": "Middleware"},
+        "module_rebindings": set(),
+    }
+    assert annotated_callable_oracle(node, context)
+    assert not annotated_callable_oracle(
+        node, {**context, "module_rebindings": {"Middleware"}}
+    )
+
+
+def test_structural_oracle_status_reports_attribute_and_abstains_on_unknown_root():
+    import ast
+
+    from factoryline.review_integrity import structural_oracle_status
+
+    trusted = ast.parse("def test_public():\n    api.public\n").body[0]
+    context = {"module_imports": {"api": "product.api"}}
+    assert structural_oracle_status(trusted, context) == "attribute"
+
+    unresolved = ast.parse("def test_public():\n    unknown.public\n").body[0]
+    assert structural_oracle_status(unresolved, context) is None
+
+
+def test_structural_oracle_finding_preserves_unverified_typecheck_state():
+    import ast
+
+    from factoryline.review_integrity import structural_oracle_finding
+
+    node = ast.parse(
+        "def test_constructs():\n"
+        "    def handler(request: Request) -> Response:\n"
+        "        raise NotImplementedError\n"
+        "    Middleware(handler)\n"
+    ).body[0]
+    context = {
+        "class_imports": {"Middleware": "Middleware"},
+        "module_rebindings": set(),
+    }
+    finding = structural_oracle_finding(node, "tests/test_api.py", context)
+    assert finding == {
+        "code": "QUALITY_TYPECHECK_NOT_VERIFIED",
+        "severity": "INFO",
+        "path": "tests/test_api.py",
+        "line": 1,
+        "column": 0,
+        "message": "Source-bound API construction passed; no type-checker receipt was verified.",
+        "facts": {
+            "symbol": "test_constructs",
+            "state": "INCOMPLETE",
+            "typecheck": "NOT_VERIFIED",
+        },
+    }
+    assert (
+        structural_oracle_finding(
+            node,
+            "tests/test_api.py",
+            {**context, "module_rebindings": {"Middleware"}},
+        )
+        is None
+    )
+
+
 @pytest.mark.parametrize(
     "call,expected",
     [

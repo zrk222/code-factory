@@ -302,6 +302,7 @@ def annotated_callable_oracle(node: ast.AST, context: dict) -> bool:
 
 
 def structural_oracle_status(node: ast.AST, context: dict) -> str | None:
+    """Return the proven structural test behavior, or None when evidence is insufficient."""
     if import_smoke_oracle(node):
         return "import"
     if _attribute_access_oracle(node, context):
@@ -314,6 +315,7 @@ def structural_oracle_status(node: ast.AST, context: dict) -> str | None:
 def structural_oracle_finding(
     node: ast.AST, relative: str, context: dict
 ) -> dict | bool | None:
+    """Map a structural oracle to an exemption or an explicitly unverified finding."""
     status = structural_oracle_status(node, context)
     if status in {"import", "attribute"}:
         return True
