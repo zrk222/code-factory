@@ -47,6 +47,82 @@ def test_detailed_launch_failure_cannot_claim_cleanup(tmp_path):
     assert result["reason"] == "launch failed"
 
 
+def test_cleanup_accepts_later_confirmed_empty_state_after_terminate_failure(
+    monkeypatch,
+):
+    class Child:
+        pid = 100
+
+        def poll(self):
+            return 0
+
+    unit = assembly_process._CleanupUnit(pgid=100)
+    termination_requests = []
+    monkeypatch.setattr(assembly_process, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(assembly_process, "_posix_group_status", lambda pgid: True)
+    monkeypatch.setattr(assembly_process, "_posix_processes", lambda: {})
+    monkeypatch.setattr(
+        assembly_process,
+        "_terminate_unit",
+        lambda child, cleanup: termination_requests.append((child, cleanup)) or False,
+    )
+
+    assert assembly_process._unit_status(Child(), unit) is True
+    assert assembly_process._escaped_descendant_status(unit) is True
+    assert assembly_process._await_cleanup(Child(), unit, terminate=True) is True
+    assert len(termination_requests) == 1
+
+
+@pytest.mark.parametrize("group_status", [False, None])
+def test_cleanup_rejects_live_or_unknown_bound_group(monkeypatch, group_status):
+    class Child:
+        pid = 100
+
+        def poll(self):
+            return 0
+
+    unit = assembly_process._CleanupUnit(pgid=100)
+    monotonic_values = iter([0, 1])
+    monkeypatch.setattr(assembly_process, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(
+        assembly_process, "_posix_group_status", lambda pgid: group_status
+    )
+    monkeypatch.setattr(assembly_process, "_posix_processes", lambda: {})
+    monkeypatch.setattr(assembly_process, "CLEANUP_TIMEOUT_SECONDS", 0)
+    monkeypatch.setattr(
+        assembly_process.time, "monotonic", lambda: next(monotonic_values)
+    )
+    monkeypatch.setattr(assembly_process.time, "sleep", lambda _: None)
+
+    assert assembly_process._await_cleanup(Child(), unit, terminate=False) is False
+
+
+@pytest.mark.parametrize(
+    "process_snapshot",
+    [{101: assembly_process._PosixProcess(101, 1, 101, "escaped")}, None],
+)
+def test_cleanup_rejects_live_or_unknown_escaped_descendant(
+    monkeypatch, process_snapshot
+):
+    class Child:
+        pid = 100
+
+        def poll(self):
+            return 0
+
+    unit = assembly_process._CleanupUnit(pgid=100)
+    unit.observed_descendants[101] = "escaped"
+    monkeypatch.setattr(assembly_process, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(assembly_process, "_posix_group_status", lambda pgid: True)
+    monkeypatch.setattr(assembly_process, "_posix_processes", lambda: process_snapshot)
+
+    assert assembly_process._unit_status(Child(), unit) is True
+    assert assembly_process._escaped_descendant_status(unit) is (
+        False if process_snapshot is not None else None
+    )
+    assert assembly_process._await_cleanup(Child(), unit, terminate=False) is False
+
+
 def test_observed_posix_descendant_outside_cleanup_group_blocks_receipt(monkeypatch):
     unit = assembly_process._CleanupUnit(pgid=100)
     snapshot = {
