@@ -123,45 +123,48 @@ def _security_scan_hash(value: Any, *, ensure_ascii: bool) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _security_scan_add_binding(
+    rows: dict[str, dict[str, Any]], row: Any, role: str
+) -> None:
+    if not isinstance(row, dict):
+        raise ValueError("security scan source binding is malformed")
+    path, sha256, size = row.get("path"), row.get("sha256"), row.get("bytes")
+    if (
+        not isinstance(path, str)
+        or not isinstance(sha256, str)
+        or len(sha256) != 64
+        or any(char not in "0123456789abcdef" for char in sha256)
+        or isinstance(size, bool)
+        or not isinstance(size, int)
+        or size < 0
+    ):
+        raise ValueError("security scan source binding is malformed")
+    value = {"path": path, "sha256": sha256, "bytes": size, "role": role}
+    if path in rows:
+        if rows[path] != value:
+            raise ValueError("security scan source paths are duplicated")
+        return
+    rows[path] = value
+
+
 def _security_scan_source_bindings(report: dict[str, Any]) -> list[dict[str, Any]]:
     rows: dict[str, dict[str, Any]] = {}
-
-    def add(row: Any, role: str) -> None:
-        if not isinstance(row, dict):
-            raise ValueError("security scan source binding is malformed")
-        path, sha256, size = row.get("path"), row.get("sha256"), row.get("bytes")
-        if (
-            not isinstance(path, str)
-            or not isinstance(sha256, str)
-            or len(sha256) != 64
-            or any(char not in "0123456789abcdef" for char in sha256)
-            or isinstance(size, bool)
-            or not isinstance(size, int)
-            or size < 0
-        ):
-            raise ValueError("security scan source binding is malformed")
-        value = {"path": path, "sha256": sha256, "bytes": size, "role": role}
-        if path in rows:
-            if rows[path] != value:
-                raise ValueError("security scan source paths are duplicated")
-            return
-        rows[path] = value
 
     sources = report.get("sources")
     oracle = report.get("oracle_context")
     if not isinstance(sources, list) or not isinstance(oracle, dict):
         raise ValueError("security scan source manifest is malformed")
     for row in sources:
-        add(row, "source")
+        _security_scan_add_binding(rows, row, "source")
     configs = oracle.get("configuration_sources", [])
     if not isinstance(configs, list):
         raise ValueError("security scan configuration manifest is malformed")
     for row in configs:
-        add(row, "configuration")
+        _security_scan_add_binding(rows, row, "configuration")
     tenant = report.get("tenant_read_contract")
     configuration = tenant.get("configuration") if isinstance(tenant, dict) else None
     if isinstance(configuration, dict) and configuration.get("state") == "loaded":
-        add(configuration, "tenant_configuration")
+        _security_scan_add_binding(rows, configuration, "tenant_configuration")
     return sorted(rows.values(), key=lambda row: (row["path"], row["role"]))
 
 
@@ -406,51 +409,66 @@ def _security_scan_coverage(report: dict[str, Any]) -> tuple[dict[str, Any], boo
     }, complete
 
 
+def _security_scan_verify_one_binding(
+    root: Path, row: dict[str, Any], total: int
+) -> tuple[str | None, int]:
+    from .deep_audit_io import RuntimeAuditError, local_file
+    from .review_audits import MAX_BYTES
+
+    try:
+        path = local_file(root, row["path"])
+    except RuntimeAuditError as exc:
+        if exc.code == "E_SOURCE_MISSING":
+            return "SOURCE_MISSING", total
+        raise
+    limit = MAX_BYTES
+    if path.stat().st_size > limit:
+        return "SOURCE_SIZE_LIMIT", total
+    with path.open("rb") as stream:
+        before = path.stat()
+        raw = stream.read(limit + 1)
+        after = path.stat()
+    total += len(raw)
+    if total > MAX_SECURITY_SCAN_SOURCE_BYTES:
+        return "SOURCE_VERIFICATION_BUDGET", total
+    if len(raw) != row["bytes"] or hashlib.sha256(raw).hexdigest() != row["sha256"]:
+        return "SOURCE_HASH_MISMATCH", total
+    if (before.st_ino, before.st_size, before.st_mtime_ns) != (
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+    ):
+        return "SOURCE_CHANGED_DURING_READ", total
+    return None, total
+
+
+def _security_scan_verify_source_bindings(
+    root: Path, bindings: list[dict[str, Any]]
+) -> str | None:
+    total = 0
+    for row in bindings:
+        error, total = _security_scan_verify_one_binding(root, row, total)
+        if error is not None:
+            return error
+    return None
+
+
 def _security_scan_current_sources(
     root: Path, report: dict[str, Any], bindings: list[dict[str, Any]]
 ) -> str:
-    from .deep_audit_io import RuntimeAuditError, local_file
-    from .review_audits import (
-        MAX_BYTES,
-        MAX_SECURITY_SOURCE_FILES,
-        _security_source_files,
-    )
+    from .review_audits import MAX_SECURITY_SOURCE_FILES, _security_source_files
 
     current_paths = _security_source_files(root)
     if len(current_paths) > MAX_SECURITY_SOURCE_FILES:
         return "SOURCE_INVENTORY_OVER_LIMIT"
-    source_rows = [row for row in bindings if row["role"] == "source"]
-    expected = {row["path"] for row in source_rows}
+    expected = {row["path"] for row in bindings if row["role"] == "source"}
     current = {path.relative_to(root).as_posix() for path in current_paths}
     coverage, complete = _security_scan_coverage(report)
     if complete and expected != current:
         return "SOURCE_INVENTORY_MISMATCH"
-    total = 0
-    for row in bindings:
-        try:
-            path = local_file(root, row["path"])
-        except RuntimeAuditError as exc:
-            if exc.code == "E_SOURCE_MISSING":
-                return "SOURCE_MISSING"
-            raise
-        limit = MAX_BYTES if row["role"] != "tenant_configuration" else MAX_BYTES
-        if path.stat().st_size > limit:
-            return "SOURCE_SIZE_LIMIT"
-        with path.open("rb") as stream:
-            before = path.stat()
-            raw = stream.read(limit + 1)
-            after = path.stat()
-        total += len(raw)
-        if total > MAX_SECURITY_SCAN_SOURCE_BYTES:
-            return "SOURCE_VERIFICATION_BUDGET"
-        if len(raw) != row["bytes"] or hashlib.sha256(raw).hexdigest() != row["sha256"]:
-            return "SOURCE_HASH_MISMATCH"
-        if (before.st_ino, before.st_size, before.st_mtime_ns) != (
-            after.st_ino,
-            after.st_size,
-            after.st_mtime_ns,
-        ):
-            return "SOURCE_CHANGED_DURING_READ"
+    error = _security_scan_verify_source_bindings(root, bindings)
+    if error is not None:
+        return error
     collection = _security_scan_pytest_collection(root, report, bindings)
     if collection != "CURRENT_PYTEST_COLLECTION_VERIFIED":
         return collection
@@ -532,35 +550,31 @@ def _security_probe_projection(value: Any) -> dict[str, Any] | None:
     return result or None
 
 
-def _security_findings_projection(
-    report: dict[str, Any],
-) -> tuple[list[dict[str, Any]], bool, dict[str, int]]:
-    findings = report.get("findings")
-    if not isinstance(findings, list):
-        raise ValueError("security scan findings are malformed")
-    result = []
-    for finding in findings[:MAX_SECURITY_SCAN_DISPLAY_FINDINGS]:
-        if not isinstance(finding, dict):
-            raise ValueError("security scan finding is malformed")
-        row = {}
-        facts = finding.get("facts", {})
-        if not isinstance(facts, dict):
-            facts = {}
-        for key in ("code", "severity", "path", "symbol", "message"):
-            value = finding.get(key)
-            if value is None:
-                value = facts.get(key)
-            if isinstance(value, str):
-                row[key] = value[:800]
-        line = finding.get("line")
-        if type(line) is int and line > 0:
-            row["line"] = line
-        probe = _security_probe_projection(
-            finding.get("native_assertion_probe", facts.get("native_assertion_probe"))
-        )
-        if probe is not None:
-            row["native_assertion_probe"] = probe
-        result.append(row)
+def _security_finding_projection(finding: Any) -> dict[str, Any]:
+    if not isinstance(finding, dict):
+        raise ValueError("security scan finding is malformed")
+    row = {}
+    facts = finding.get("facts", {})
+    if not isinstance(facts, dict):
+        facts = {}
+    for key in ("code", "severity", "path", "symbol", "message"):
+        value = finding.get(key)
+        if value is None:
+            value = facts.get(key)
+        if isinstance(value, str):
+            row[key] = value[:800]
+    line = finding.get("line")
+    if type(line) is int and line > 0:
+        row["line"] = line
+    probe = _security_probe_projection(
+        finding.get("native_assertion_probe", facts.get("native_assertion_probe"))
+    )
+    if probe is not None:
+        row["native_assertion_probe"] = probe
+    return row
+
+
+def _security_finding_counts(report: dict[str, Any]) -> dict[str, int]:
     counts = report.get("finding_counts")
     if not isinstance(counts, dict) or any(
         not isinstance(code, str)
@@ -570,7 +584,21 @@ def _security_findings_projection(
         for code, count in counts.items()
     ):
         raise ValueError("security scan finding counts are malformed")
-    return result, len(findings) > len(result), dict(sorted(counts.items())[:64])
+    return dict(sorted(counts.items())[:64])
+
+
+def _security_findings_projection(
+    report: dict[str, Any],
+) -> tuple[list[dict[str, Any]], bool, dict[str, int]]:
+    findings = report.get("findings")
+    if not isinstance(findings, list):
+        raise ValueError("security scan findings are malformed")
+    result = [
+        _security_finding_projection(finding)
+        for finding in findings[:MAX_SECURITY_SCAN_DISPLAY_FINDINGS]
+    ]
+    counts = _security_finding_counts(report)
+    return result, len(findings) > len(result), counts
 
 
 def _security_scan_projection(

@@ -143,6 +143,12 @@ def _run_evals(args: Any) -> int:
     return 0 if result["state"] == "PASS" else 2
 
 
+def _security_receipt_error_message(error: Exception) -> str:
+    if isinstance(error, OSError):
+        return "Security scan receipt could not be written."
+    return str(error)
+
+
 def _run_security(args: Any) -> int:
     from .review_audits import (
         ReviewAuditError,
@@ -196,11 +202,7 @@ def _run_security(args: Any) -> int:
         )
         write_security_scan_receipt(Path(args.root), result)
     except (ReviewAuditError, OSError, ValueError) as error:
-        message = (
-            "Security scan receipt could not be written."
-            if isinstance(error, OSError)
-            else str(error)
-        )
+        message = _security_receipt_error_message(error)
         print(json.dumps({"state": "INVALID", "message": message}), file=sys.stderr)
         return 2
     if args.json:
