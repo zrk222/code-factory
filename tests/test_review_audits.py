@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 import json
 import hashlib
 from pathlib import Path
@@ -5330,4 +5331,24 @@ def test_virtual_dispatch_unsupported_guard_and_same_line_mutation_fail_closed(
         "Application(None)",
         operation,
         {"QUALITY_HOLLOW_TEST": 1},
+    )
+
+
+def test_security_scan_reports_production_implementation_completeness(tmp_path):
+    (tmp_path / "service.py").write_text("def build():\n    pass\n")
+    result = security_scan(tmp_path)
+    assert result["finding_counts"]["QUALITY_EMPTY_IMPLEMENTATION"] == 1
+    finding = next(
+        f for f in result["findings"] if f["code"] == "QUALITY_EMPTY_IMPLEMENTATION"
+    )
+    assert finding["facts"]["action"]
+
+
+def test_security_scan_keeps_legitimate_stub_interfaces_and_tests(tmp_path):
+    (tmp_path / "service.py").write_text(
+        "from typing import Protocol\nclass Contract(Protocol):\n    def build(self): ...\n"
+    )
+    (tmp_path / "test_fixture.py").write_text("def helper():\n    pass\n")
+    assert (
+        "QUALITY_EMPTY_IMPLEMENTATION" not in security_scan(tmp_path)["finding_counts"]
     )

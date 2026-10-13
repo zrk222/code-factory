@@ -22,6 +22,303 @@ from factoryline.analysis_evidence import (
 from factoryline.audit_trace import build_audit_trace
 
 
+def _implementation_findings(
+    source: str, *, relative="src/service.py", test_source=False, aliases=None
+):
+    import ast
+
+    from factoryline.review_integrity import implementation_completeness_findings
+
+    return implementation_completeness_findings(
+        relative, ast.parse(source), source, aliases=aliases, test_source=test_source
+    )
+
+
+def test_implementation_completeness_flags_exact_production_stubs_and_exempts_interfaces():
+    source = """from abc import ABC, abstractmethod
+from typing import Protocol, overload
+
+def empty_pass():
+    pass
+
+def empty_ellipsis():
+    ...
+
+def empty_not_implemented():
+    raise NotImplementedError("later")
+
+def operator_fallback(other):
+    return NotImplemented
+
+def conditional_not_implemented(flag):
+    if flag:
+        raise NotImplementedError
+    return 1
+
+class Base(ABC):
+    @abstractmethod
+    def required(self):
+        pass
+
+class Port(Protocol):
+    def execute(self):
+        ...
+
+@overload
+def parse(value: str) -> str: ...
+"""
+    findings = _implementation_findings(source)
+
+    assert [item["facts"]["symbol"] for item in findings] == [
+        "empty_pass",
+        "empty_ellipsis",
+        "empty_not_implemented",
+    ]
+    assert all(item["severity"] == "MEDIUM" for item in findings)
+    assert all(
+        item["facts"]["intent"] == "UNKNOWN_REVIEW_REQUIRED" for item in findings
+    )
+
+
+def test_implementation_completeness_flags_only_exact_returned_placeholder_strings():
+    source = """def demo():
+    return "DEMO_ONLY"
+
+def todo():
+    return "TODO"
+
+def ordinary_empty():
+    return ""
+
+def normal_none():
+    return None
+
+def phrase():
+    return "The TODO is tracked in issue 19"
+
+def outer():
+    def nested():
+        return "TODO"
+    return nested()
+"""
+    findings = _implementation_findings(source)
+
+    assert [item["facts"]["symbol"] for item in findings] == [
+        "demo",
+        "todo",
+        "nested",
+    ]
+    assert all(item["code"] == "QUALITY_PLACEHOLDER_OUTPUT" for item in findings)
+
+
+def test_implementation_completeness_tokenizes_omission_comments_not_strings_or_docstrings():
+    source = '''"""TODO in documentation is not a source comment."""
+MARKER = "FIXME"
+# TODO: implement retry behavior
+def run():
+    # FIXME validate the response
+    return "ordinary"
+'''
+    findings = _implementation_findings(source)
+
+    assert [item["code"] for item in findings] == [
+        "QUALITY_OMISSION_MARKER",
+        "QUALITY_OMISSION_MARKER",
+    ]
+    assert [item["line"] for item in findings] == [3, 5]
+
+
+def test_implementation_completeness_resolves_unittest_mock_aliases_and_patch_apis():
+    source = """import unittest.mock as mocking
+from unittest.mock import Mock as MakeMock
+from unittest import mock as unittest_mock
+
+def configure():
+    one = mocking.Mock()
+    two = MakeMock()
+    with unittest_mock.patch.object(one, "send"):
+        pass
+"""
+    findings = _implementation_findings(source)
+
+    assert [item["facts"]["api"] for item in findings] == [
+        "unittest.mock.Mock",
+        "unittest.mock.Mock",
+        "unittest.mock.patch.object",
+    ]
+    assert all(item["code"] == "QUALITY_PRODUCTION_MOCK" for item in findings)
+
+
+def test_implementation_completeness_resolves_pytest_monkeypatch_constructor_aliases():
+    source = """import pytest as pt
+from pytest import MonkeyPatch as PatchFixture
+
+def configure():
+    first = pt.MonkeyPatch()
+    second = PatchFixture()
+"""
+    findings = _implementation_findings(source)
+
+    assert [item["facts"]["api"] for item in findings] == [
+        "pytest.MonkeyPatch",
+        "pytest.MonkeyPatch",
+    ]
+
+
+def test_implementation_completeness_respects_test_source_and_local_shadowing():
+    source = """import pytest
+from unittest.mock import Mock as MakeMock
+
+def production_parameter_shadow(MakeMock):
+    return MakeMock()
+
+def production_assignment_shadow():
+    MakeMock = FakeMock
+    return MakeMock()
+
+@pytest.fixture
+def fixture_helper():
+    pass
+
+def test_fixture():
+    # TODO: implement a test assertion
+    pass
+"""
+
+    assert _implementation_findings(source) == []
+    assert _implementation_findings(source, test_source=True) == []
+    assert _implementation_findings(source, relative="tests/test_service.py") == []
+
+
+def test_implementation_completeness_does_not_match_mock_names_or_unresolved_aliases():
+    source = """def make(mock_request):
+    return mock_request
+
+def smoke():
+    return FakeMock()
+"""
+
+    assert _implementation_findings(source) == []
+    assert (
+        _implementation_findings(
+            "def configure():\n    MakeMock()\n",
+            aliases={"MakeMock": "unknown.MakeMock"},
+        )
+        == []
+    )
+
+
+def test_implementation_completeness_decodes_declared_source_encoding():
+    import ast
+
+    from factoryline.review_integrity import implementation_completeness_findings
+
+    source = (
+        b"# -*- coding: latin-1 -*-\n# TODO: implement r\xe9try\ndef run():\n    pass\n"
+    )
+    findings = implementation_completeness_findings(
+        "src/service.py", ast.parse(source), source
+    )
+
+    assert [item["code"] for item in findings] == [
+        "QUALITY_OMISSION_MARKER",
+        "QUALITY_EMPTY_IMPLEMENTATION",
+    ]
+
+
+def test_implementation_completeness_rejects_invalid_source_encoding():
+    import ast
+
+    from factoryline.review_integrity import implementation_completeness_findings
+
+    source = b"# coding: no-such-codec\ndef run(): pass\n"
+    with pytest.raises(ValueError, match="invalid Python encoding"):
+        implementation_completeness_findings(
+            "src/service.py", ast.parse("def run(): pass"), source
+        )
+
+
+def test_implementation_completeness_respects_source_ordered_aliases_and_fixtures():
+    source = """import pytest as pt
+from unittest.mock import Mock as Build
+
+def setup():
+    from unrelated import Build
+    return Build()
+
+@pt.fixture
+def plugin_fixture():
+    return Build()
+"""
+
+    findings = _implementation_findings(source)
+
+    assert findings == []
+
+
+def test_implementation_completeness_exempts_generic_protocol_and_not_relative_imports():
+    source = """from typing import Protocol, TypeVar
+from .unittest.mock import Mock
+from .abc import abstractmethod
+
+T = TypeVar("T")
+class Port(Protocol[T]):
+    def execute(self): ...
+
+def local_factory():
+    return Mock()
+
+class ConcreteLooking:
+    @abstractmethod
+    def execute(self):
+        pass
+"""
+
+    findings = _implementation_findings(source)
+
+    assert [(item["code"], item["facts"].get("symbol")) for item in findings] == [
+        ("QUALITY_EMPTY_IMPLEMENTATION", "execute")
+    ]
+
+
+def test_implementation_completeness_does_not_resolve_relative_mock_import_as_stdlib():
+    source = """from .unittest import mock
+
+def local_factory():
+    return mock.Mock()
+"""
+
+    assert _implementation_findings(source) == []
+
+
+def test_implementation_completeness_respects_except_and_pattern_capture_shadows():
+    source = """from unittest.mock import Mock as Build
+
+def caught():
+    try:
+        raise RuntimeError()
+    except RuntimeError as Build:
+        Build()
+
+def matched(value):
+    match value:
+        case Build:
+            Build()
+        case {**Build}:
+            Build()
+"""
+
+    assert _implementation_findings(source) == []
+
+
+def test_implementation_completeness_respects_lambda_parameter_shadowing():
+    source = """from unittest.mock import Mock
+maker = lambda Mock: Mock()
+"""
+
+    assert _implementation_findings(source) == []
+
+
 def _span_fixture(root: Path) -> tuple[dict, list[dict]]:
     (root / "src").mkdir()
     source = root / "src" / "sample.py"

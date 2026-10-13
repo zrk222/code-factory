@@ -5378,9 +5378,12 @@ def _security_scan_file(
             ],
             "unreadable",
         )
+    from .review_integrity import implementation_completeness_findings
+
     return (
         binding,
-        _security_scan_tree(
+        implementation_completeness_findings(relative, tree, data)
+        + _security_scan_tree(
             workspace,
             path,
             tree,
