@@ -39,6 +39,124 @@ def _true_arg(call: ast.AST, key: str) -> bool:
     )
 
 
+def mock_patch_dict_slot(
+    receiver,
+    root,
+    assertion,
+    aliases,
+    nodes,
+    constructors,
+    normalize,
+    rebound,
+    effective,
+    root_name,
+):
+    while isinstance(receiver, ast.Attribute):
+        receiver = receiver.value
+    if (
+        not isinstance(receiver, ast.Subscript)
+        or root_name(receiver.value, None, {}) != root
+        or not isinstance(receiver.slice, ast.Constant)
+    ):
+        return False
+    context = _patch_dict_context(root, assertion, aliases, nodes, normalize, rebound)
+    return context is not None and _literal_mock_slot(
+        root,
+        receiver.slice.value,
+        context,
+        assertion,
+        aliases,
+        nodes,
+        constructors,
+        normalize,
+        rebound,
+        effective,
+    )
+
+
+def _patch_dict_context(root, assertion, aliases, nodes, normalize, rebound):
+    ancestors = getattr(assertion, "_oracle_ancestors", ())
+    for node in nodes:
+        if not isinstance(node, ast.With) or not any(
+            parent is node for parent, _ in ancestors
+        ):
+            continue
+        for item in node.items:
+            call = item.context_expr
+            if (
+                not isinstance(call, ast.Call)
+                or normalize(call, aliases) != "unittest.mock.patch.dict"
+                or len(call.args) not in {1, 2}
+                or call.keywords
+                or not isinstance(call.args[-1], ast.Name)
+                or call.args[-1].id != root
+                or rebound(nodes, root, call.lineno, assertion.lineno)
+            ):
+                continue
+            return call
+    return None
+
+
+def _literal_mock_slot(
+    root,
+    key,
+    context,
+    assertion,
+    aliases,
+    nodes,
+    constructors,
+    normalize,
+    rebound,
+    effective,
+):
+    for statement in nodes:
+        if not isinstance(statement, ast.Assign) or statement.lineno >= context.lineno:
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == root
+            for target in statement.targets
+        ):
+            continue
+        if not isinstance(statement.value, ast.Dict) or not effective(
+            statement, aliases
+        ):
+            return False
+        if rebound(nodes, root, statement.lineno, assertion.lineno):
+            return False
+        if not _mapping_use_is_confined(root, statement, context, assertion, nodes):
+            return False
+        keys = [
+            node.value
+            for node in statement.value.keys
+            if isinstance(node, ast.Constant)
+        ]
+        if len(keys) != len(statement.value.keys) or len(set(keys)) != len(keys):
+            return False
+        return any(
+            isinstance(key_node, ast.Constant)
+            and key_node.value == key
+            and isinstance(value, ast.Call)
+            and normalize(value, aliases) in constructors
+            for key_node, value in zip(statement.value.keys, statement.value.values)
+        )
+    return False
+
+
+def _mapping_use_is_confined(root, statement, context, assertion, nodes):
+    allowed = context.args[-1] if context.args else None
+    start = (statement.end_lineno, statement.end_col_offset)
+    end = (assertion.lineno, assertion.col_offset)
+    return not any(
+        isinstance(node, ast.Name)
+        and node.id == root
+        and isinstance(node.ctx, ast.Load)
+        and start < (node.lineno, node.col_offset) < end
+        and node is not allowed
+        for item in nodes
+        for node in ast.walk(item)
+    )
+
+
 def _fixture_name(fn: ast.AST, aliases: dict[str, str]) -> str | None:
     for dec in getattr(fn, "decorator_list", ()):
         call = dec if isinstance(dec, ast.Call) else None

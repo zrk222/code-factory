@@ -483,6 +483,159 @@ def test_mock_provenance_rejects_shadowed_constructors_and_assertion_methods(
     assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
 
 
+@pytest.mark.parametrize(
+    "setup,context,receiver,expected_hollow",
+    [
+        (
+            "proxies = {'one': Mock(), 'two': Mock()}\n",
+            "with patch.dict(target, proxies):\n",
+            "proxies['one'].clear",
+            False,
+        ),
+        (
+            "proxies = {'one': Fake(), 'two': Fake()}\n",
+            "with patch.dict(target, proxies):\n",
+            "proxies['one'].clear",
+            True,
+        ),
+        (
+            "proxies = {'one': Mock()}\n",
+            "with patch.dict(target, proxies, clear=True):\n",
+            "proxies['one'].clear",
+            True,
+        ),
+        (
+            "proxies = {'one': Mock()}\n",
+            "with patch.dict(target, proxies):\n    proxies['one'] = Fake()\n",
+            "proxies['one'].clear",
+            True,
+        ),
+        (
+            "proxies = {'one': Mock()}\n",
+            "with patch.dict(target):\n",
+            "proxies['one'].clear",
+            True,
+        ),
+        (
+            "proxies = {'one': Mock(), 'one': Fake()}\n",
+            "with patch.dict(target, proxies):\n",
+            "proxies['one'].clear",
+            True,
+        ),
+        (
+            "extra = {'one': Fake()}\nproxies = {'one': Mock(), **extra}\n",
+            "with patch.dict(target, proxies):\n",
+            "proxies['one'].clear",
+            True,
+        ),
+        (
+            "proxies = {'one': Mock()}\n",
+            "with patch.dict(target, proxies):\n    proxies.update({'one': Fake()})\n",
+            "proxies['one'].clear",
+            True,
+        ),
+        (
+            "proxies = {'one': Mock()}\n",
+            "with patch.dict(target, proxies):\n    mutate(proxies)\n",
+            "proxies['one'].clear",
+            True,
+        ),
+    ],
+    ids=[
+        "valid",
+        "fake-values",
+        "clear-true",
+        "rebound-slot",
+        "missing-values",
+        "duplicate-key",
+        "mapping-unpack",
+        "update-mutation",
+        "unknown-mapping-use",
+    ],
+)
+def test_mock_patch_dict_slot_requires_literal_mock_value_and_default_context(
+    tmp_path, setup, context, receiver, expected_hollow
+):
+    body = context.splitlines()
+    (tmp_path / "test_patch_dict.py").write_text(
+        "from unittest.mock import Mock, patch\n"
+        "class Fake:\n    def assert_called_once_with(self, *args): pass\n"
+        "def test_behavior():\n    target = {}\n"
+        + "".join(f"    {line}\n" for line in setup.splitlines())
+        + f"    {body[0]}\n"
+        + "".join(f"        {line.strip()}\n" for line in body[1:])
+        + "        perform()\n        "
+        + receiver
+        + ".assert_called_once_with()\n",
+        encoding="utf-8",
+    )
+    hollow_count = security_scan(tmp_path)["finding_counts"].get(
+        "QUALITY_HOLLOW_TEST", 0
+    )
+    assert hollow_count == int(expected_hollow)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from unittest.mock import patch\n"
+        "def patch(target): return lambda function: function\n"
+        "def test_behavior():\n    with patch('module.target') as send:\n"
+        "        perform()\n        send.assert_called_once_with('payload')\n",
+        "from unittest.mock import patch\n"
+        "class Fake:\n    def assert_called_once_with(self, *args): pass\n"
+        "def test_behavior():\n    with patch('module.target', new=Fake()) as send:\n"
+        "        perform()\n        send.assert_called_once_with('payload')\n",
+        "from unittest.mock import patch\n"
+        "def helper():\n    with patch('module.target') as send:\n        perform()\n"
+        "def test_behavior():\n    helper()\n"
+        "    send.assert_called_once_with('payload')\n",
+        "from unittest.mock import patch\n"
+        "class Fake:\n    def assert_called_once_with(self, *args): pass\n"
+        "def test_behavior():\n    with patch('module.send') as send: send = Fake(); perform(); send.assert_called_once_with('payload')\n",
+    ],
+    ids=["shadowed-patch", "replacement", "outside-scope", "same-line-rebind"],
+)
+def test_mock_context_patch_rejects_shadow_or_replacement(tmp_path, source):
+    (tmp_path / "test_patch_context.py").write_text(source, encoding="utf-8")
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_mock_configure_mock_cannot_replace_assertion_method(tmp_path):
+    (tmp_path / "test_mock_configure.py").write_text(
+        "from unittest.mock import Mock\n"
+        "def test_behavior():\n    send = Mock()\n"
+        "    send.configure_mock(assert_called_once_with=lambda *args: None)\n"
+        "    perform(send)\n    send.assert_called_once_with('payload')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from unittest.mock import Mock, patch\n"
+        "def test_behavior():\n    target = {}\n"
+        "    proxies = {'one': Mock()}; alias = proxies; alias.update({'one': Fake()})\n"
+        "    with patch.dict(target, proxies):\n        perform()\n"
+        "        proxies['one'].clear.assert_called_once_with()\n",
+        "from unittest.mock import Mock, patch\n"
+        "def test_behavior():\n    target = {}\n"
+        "    proxies = {'one': Mock()}\n"
+        "    with patch.dict(target, proxies): proxies.update({'one': Fake()}); perform(); proxies['one'].clear.assert_called_once_with()\n",
+        "from unittest.mock import Mock\n"
+        "def test_behavior():\n    send = Mock(); send.configure_mock(assert_called_once_with=lambda *args: None); perform(send); send.assert_called_once_with('payload')\n",
+        "from unittest.mock import Mock\n"
+        "class Fake:\n    def assert_called_once_with(self, *args): pass\n"
+        "def test_behavior():\n    send = Mock(); send.configure_mock(clear=Fake()); perform(send); send.clear.assert_called_once_with()\n",
+    ],
+)
+def test_mock_provenance_rejects_same_line_mutation_and_escape(tmp_path, source):
+    (tmp_path / "test_same_line_mutation.py").write_text(source, encoding="utf-8")
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
 def test_module_mock_provenance_is_shadowed_by_local_fake(tmp_path):
     (tmp_path / "test_fake.py").write_text(
         "from unittest.mock import Mock\nsend = Mock()\n"

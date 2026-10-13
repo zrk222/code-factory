@@ -1937,10 +1937,29 @@ def _mock_receiver_has_provenance(assertion, aliases):
         )
     )
     patch_proven = _mock_patch_parameter(scope, receiver, scoped_aliases)
+    context_proven = _mock_context_patch_parameter(
+        scope, receiver, assertion, scoped_aliases
+    )
+    from .review_integrity import mock_patch_dict_slot
+
+    mapping_proven = mock_patch_dict_slot(
+        assertion.func.value,
+        receiver,
+        assertion,
+        scoped_aliases,
+        nodes,
+        _UNITTEST_MOCK_CONSTRUCTORS,
+        _normalized_call_name,
+        _name_rebound,
+        _effective_assertion,
+        _mock_root_name,
+    )
     if (
         not proven
         and not fixture_proven
         and not patch_proven
+        and not context_proven
+        and not mapping_proven
         and not (
             receiver in _scope_parameters(scope)
             or any(
@@ -1959,10 +1978,10 @@ def _mock_receiver_has_provenance(assertion, aliases):
             proven = _mock_scope_binding(
                 module.body, receiver, assertion, module_aliases
             )
-    proven = proven or fixture_proven or patch_proven
-    return proven and not _mock_child_was_rebound(
-        scope, assertion.func.value, receiver, aliases
+    proven = (
+        proven or fixture_proven or patch_proven or context_proven or mapping_proven
     )
+    return proven and not _mock_child_was_rebound(scope, assertion, receiver, aliases)
 
 
 def _scope_binds_name(scope, name):
@@ -2028,8 +2047,38 @@ def _default_mock_patch(decorator, aliases):
     return False
 
 
+def _mock_context_patch_parameter(scope, name, assertion, aliases):
+    nodes = _test_oracle_body_nodes(scope, aliases)
+    return isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+        isinstance(node, ast.With)
+        and _in_current_test_body(node)
+        and any(parent is node for parent, _ in assertion._oracle_ancestors)
+        and not any(
+            isinstance(
+                item,
+                (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr, ast.Delete),
+            )
+            and (node.lineno, node.col_offset)
+            < (item.lineno, item.col_offset)
+            < (assertion.lineno, assertion.col_offset)
+            and name in _bound_names(item)
+            for item in nodes
+        )
+        and any(
+            isinstance(item.optional_vars, ast.Name)
+            and item.optional_vars.id == name
+            and isinstance(item.context_expr, ast.Call)
+            and _default_mock_patch(item.context_expr, aliases)
+            for item in node.items
+        )
+        for node in nodes
+    )
+
+
 def _mock_root_name(node, scope, aliases):
     while isinstance(node, ast.Attribute):
+        node = node.value
+    if isinstance(node, ast.Subscript):
         node = node.value
     if (
         isinstance(node, ast.Call)
@@ -2061,18 +2110,28 @@ def _mock_getattr_selector(selector, scope):
     )
 
 
-def _mock_child_was_rebound(scope, receiver, root, aliases):
-    return _mock_root_was_mutated(scope, root, receiver.lineno, aliases)
+def _mock_child_was_rebound(scope, assertion, root, aliases):
+    return _mock_root_was_mutated(scope, root, assertion, aliases)
 
 
 def _mock_root_was_mutated(scope, root, before, aliases):
     for node in _test_oracle_body_nodes(scope, {}):
-        if getattr(node, "lineno", before) >= before:
+        if (getattr(node, "lineno", 0), getattr(node, "col_offset", 0)) >= (
+            before.lineno,
+            before.col_offset,
+        ):
             continue
         if (
             isinstance(node, (ast.Attribute, ast.Subscript))
             and isinstance(node.ctx, (ast.Store, ast.Del))
             and _mock_root_name(node, scope, aliases) == root
+        ):
+            return True
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "configure_mock"
+            and _mock_root_name(node.func.value, scope, aliases) == root
         ):
             return True
         if (
