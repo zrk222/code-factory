@@ -2937,7 +2937,10 @@ def test_security_scan_does_not_trust_imported_noop_helper(tmp_path):
         encoding="utf-8",
     )
     result = security_scan(tmp_path)
-    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert result["finding_counts"] == {
+        "QUALITY_HOLLOW_TEST": 1,
+        "QUALITY_EMPTY_IMPLEMENTATION": 1,
+    }
 
 
 def test_security_scan_accepts_testcase_mixin_assertions(tmp_path):
@@ -5234,7 +5237,9 @@ def test_inherited_virtual_dispatch_requires_default_binding_and_await(
         encoding="utf-8",
     )
     result = security_scan(tmp_path)
-    assert result["finding_counts"] == expected
+    counts = dict(result["finding_counts"])
+    assert counts.pop("QUALITY_EMPTY_IMPLEMENTATION") >= 1
+    assert counts == expected
     if not expected:
         assert any(
             edge["kind"] == "default_virtual_dispatch"
