@@ -186,9 +186,10 @@ def test_security_scan_nested_helper_shadows_module_oracle(tmp_path):
 def test_security_scan_external_repository_oracle_regressions(tmp_path, case):
     fixture_source = case.get("fixture_source", "")
     if fixture_source:
-        assert hashlib.sha256(fixture_source.encode()).hexdigest() == case[
-            "fixture_source_sha256"
-        ]
+        assert (
+            hashlib.sha256(fixture_source.encode()).hexdigest()
+            == case["fixture_source_sha256"]
+        )
         assert case["fixture_source_commit"] == case["commit"]
     (tmp_path / "test_external.py").write_text(
         fixture_source + case["source"], encoding="utf-8"
@@ -407,9 +408,7 @@ def test_source_mock_fixture_proves_child_assertion(tmp_path, receiver):
         ),
     ],
 )
-def test_mock_fixture_child_replacement_is_not_an_oracle(
-    tmp_path, mutation, receiver
-):
+def test_mock_fixture_child_replacement_is_not_an_oracle(tmp_path, mutation, receiver):
     (tmp_path / "test_mock_fixture.py").write_text(
         "import pytest\nfrom unittest.mock import create_autospec\n"
         "class LegacyTerm:\n    def write_text(self, text):\n        pass\n"
@@ -446,9 +445,7 @@ def test_source_fixture_returning_fake_does_not_prove_mock(tmp_path):
         "@wrapper\n@patch('module.send')",
     ],
 )
-def test_patch_parameter_requires_resolved_default_mock_injection(
-    tmp_path, decorator
-):
+def test_patch_parameter_requires_resolved_default_mock_injection(tmp_path, decorator):
     (tmp_path / "test_patched_mock.py").write_text(
         "from unittest.mock import patch\n"
         "class Fake:\n    def assert_called_once_with(self, *args):\n        pass\n"

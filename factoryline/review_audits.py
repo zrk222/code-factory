@@ -1937,21 +1937,28 @@ def _mock_receiver_has_provenance(assertion, aliases):
         )
     )
     patch_proven = _mock_patch_parameter(scope, receiver, scoped_aliases)
-    if not proven and not fixture_proven and not patch_proven and not (
-        receiver in _scope_parameters(scope)
-        or any(
-            isinstance(node, ast.stmt)
-            and node.lineno < assertion.lineno
-            and receiver in _bound_names(node)
-            for node in nodes
+    if (
+        not proven
+        and not fixture_proven
+        and not patch_proven
+        and not (
+            receiver in _scope_parameters(scope)
+            or any(
+                isinstance(node, ast.stmt)
+                and node.lineno < assertion.lineno
+                and receiver in _bound_names(node)
+                for node in nodes
+            )
+            or _scope_binds_name(scope, receiver)
         )
-        or _scope_binds_name(scope, receiver)
     ):
         if module is not None:
             module_aliases = _scope_security_aliases(
                 _module_security_aliases(module), module
             )
-            proven = _mock_scope_binding(module.body, receiver, assertion, module_aliases)
+            proven = _mock_scope_binding(
+                module.body, receiver, assertion, module_aliases
+            )
     proven = proven or fixture_proven or patch_proven
     return proven and not _mock_child_was_rebound(
         scope, assertion.func.value, receiver, aliases
@@ -2002,9 +2009,7 @@ def _mock_patch_parameter(scope, name, aliases):
         or any(not _default_mock_patch(item, aliases) for item in scope.decorator_list)
     ):
         return False
-    parameters = [
-        arg.arg for arg in [*scope.args.posonlyargs, *scope.args.args]
-    ]
+    parameters = [arg.arg for arg in [*scope.args.posonlyargs, *scope.args.args]]
     injected = len(scope.decorator_list)
     return name in parameters[:injected]
 
@@ -2064,14 +2069,23 @@ def _mock_root_was_mutated(scope, root, before, aliases):
     for node in _test_oracle_body_nodes(scope, {}):
         if getattr(node, "lineno", before) >= before:
             continue
-        if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(
-            node.ctx, (ast.Store, ast.Del)
-        ) and _mock_root_name(node, scope, aliases) == root:
+        if (
+            isinstance(node, (ast.Attribute, ast.Subscript))
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and _mock_root_name(node, scope, aliases) == root
+        ):
             return True
-        if isinstance(node, ast.Call) and _call_name(node) in {
-            "setattr",
-            "delattr",
-        } and node.args and isinstance(node.args[0], ast.Name) and node.args[0].id == root:
+        if (
+            isinstance(node, ast.Call)
+            and _call_name(node)
+            in {
+                "setattr",
+                "delattr",
+            }
+            and node.args
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == root
+        ):
             return True
     return False
 
