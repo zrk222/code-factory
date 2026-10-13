@@ -1191,6 +1191,80 @@ def test_junie_candidate_workflow_declares_native_commands_without_dispatch():
     assert "concurrent filesystem replacement" in workflow["boundary"]
 
 
+def test_junie_native_python_security_receipt_and_completeness_guidance():
+    from pathlib import Path
+
+    from factoryline.junie_taxonomy import (
+        _guidance,
+        _junie_proof_agent_bytes,
+        junie_taxonomy,
+    )
+
+    playbook = _guidance().decode("utf-8")
+    proof_agent = _junie_proof_agent_bytes().decode("utf-8")
+    for text in (playbook, proof_agent):
+        assert "factory audit security --root . --json" in text
+        assert ".factory/security-scan/latest.json" in text
+        assert "factory mission-control status --root . --json" in text
+        assert "factory.mission_control_status" in text
+        assert (
+            "Mission Control reads and validates saved evidence; it does not run the scanner."
+            in text
+        )
+        assert "unsigned local evidence" in text
+        assert "CURRENT_SOURCE_HASHES_VERIFIED" in text
+        assert "coverage" in text and "truncated" in text
+        assert "QUALITY_EMPTY_IMPLEMENTATION" in text
+        assert "QUALITY_PLACEHOLDER_OUTPUT" in text
+        assert "QUALITY_OMISSION_MARKER" in text
+        assert "QUALITY_PRODUCTION_MOCK" in text
+        assert "do not infer a defect, security-critical issue" in text
+        assert "Do not invent native assertion probes" in text
+        assert "python -m factoryline.pytest_readiness" in text
+        assert "--kind attribute" in text
+        assert "factory.attribute-removal-probe.v1" in text
+        assert "does not write a receipt file" in text
+        assert "`OBSERVED`" in text and "`INCOMPLETE`" in text
+        assert "1 MiB" in text
+        assert (
+            "read-only proof reviewer inspects supplied output and does not execute the probe"
+            in text
+        )
+        assert "regular in-root source module without dynamic `__getattr__`" in text
+        assert "does not measure type-checker coverage" in text
+
+    taxonomy = junie_taxonomy(Path(__file__).resolve().parents[1])
+    limits = taxonomy["ide_workflow"]["audit_limits"]
+    assert "factory audit security --root . --json" in limits["security"]
+    completeness = limits["python_implementation_completeness"]
+    for code in (
+        "QUALITY_EMPTY_IMPLEMENTATION",
+        "QUALITY_PLACEHOLDER_OUTPUT",
+        "QUALITY_OMISSION_MARKER",
+        "QUALITY_PRODUCTION_MOCK",
+    ):
+        assert code in completeness
+    assert "intent UNKNOWN" in completeness
+    probe = limits["native_attribute_probe"]
+    assert "python -m factoryline.pytest_readiness" in probe
+    assert "factory.attribute-removal-probe.v1" in probe
+    assert "INCOMPLETE" in probe
+    assert "does not execute it" in probe
+    assert taxonomy["authority"] == {
+        "agent_start": False,
+        "source_modify": False,
+        "test_execute": False,
+        "approval": False,
+        "merge": False,
+        "publication": False,
+        "deployment": False,
+        "signing": False,
+        "credential": False,
+        "network": False,
+        "connector": False,
+    }
+
+
 def test_junie_beginner_acceptance_keeps_evidence_and_repair_authority():
     from pathlib import Path
     import json

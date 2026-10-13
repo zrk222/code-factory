@@ -3,7 +3,19 @@ from pathlib import Path
 from factoryline.pytest_readiness import collect_pytest_readiness
 from factoryline.pytest_readiness import probe_assertion_propagation
 from factoryline.pytest_readiness import probe_call_propagation
+from factoryline.pytest_readiness import probe_attribute_removal
 import pytest
+
+
+def _write_attribute_project(
+    root, *, module_source="interface = object()\n", test_prefix=""
+):
+    (root / "product_module.py").write_text(module_source, encoding="utf-8")
+    (root / "test_exports.py").write_text(
+        test_prefix + "import product_module as product\n"
+        "def test_exports():\n    product.interface\n",
+        encoding="utf-8",
+    )
 
 
 @pytest.mark.parametrize(
@@ -56,6 +68,71 @@ def test_probe_call_propagation_observes_bare_callback_invocation(tmp_path):
     assert result["challenge"]["reports"][1]["challenge_visible"] is True
 
 
+def test_probe_attribute_removal_observes_native_missing_export(tmp_path):
+    _write_attribute_project(tmp_path)
+    module = tmp_path / "product_module.py"
+    test_source = tmp_path / "test_exports.py"
+    before = (module.read_bytes(), test_source.read_bytes())
+
+    result = probe_attribute_removal(tmp_path, "test_exports.py::test_exports", 3)
+
+    assert result["schema"] == "factory.attribute-removal-probe.v1"
+    assert result["status"] == "OBSERVED"
+    assert result["source_unchanged"] is True
+    assert result["runtime_context_unchanged"] is True
+    assert result["tool_unchanged"] is True
+    assert result["baseline"]["collected"] == ["test_exports.py::test_exports"]
+    assert result["baseline"]["attribute_module"]["state"] == "BASELINE_READY"
+    assert result["challenge"]["attribute_module"]["state"] == "EXPORT_REMOVED"
+    assert result["challenge"]["attribute_exception"] == {
+        "type": "builtins.AttributeError",
+        "name_matches": True,
+        "object_identity_matches": True,
+        "target_frame_matches": True,
+        "matches": True,
+    }
+    assert (module.read_bytes(), test_source.read_bytes()) == before
+
+
+def test_probe_attribute_removal_can_select_second_direct_module_read(tmp_path):
+    (tmp_path / "product_module.py").write_text(
+        "other = object()\ninterface = object()\n", encoding="utf-8"
+    )
+    (tmp_path / "test_exports.py").write_text(
+        "import product_module as product\n"
+        "def test_exports():\n"
+        "    product.other\n"
+        "    product.interface\n",
+        encoding="utf-8",
+    )
+
+    result = probe_attribute_removal(tmp_path, "test_exports.py::test_exports", 4)
+
+    assert result["status"] == "OBSERVED"
+    assert result["export"] == "interface"
+    assert result["challenge"]["reports"][1]["outcome"] == "failed"
+    assert result["challenge"]["attribute_exception"]["matches"] is True
+
+
+def test_probe_attribute_removal_keeps_earlier_missing_read_as_baseline_failure(
+    tmp_path,
+):
+    (tmp_path / "product_module.py").write_text("interface = object()\n")
+    (tmp_path / "test_exports.py").write_text(
+        "import product_module as product\n"
+        "def test_exports():\n"
+        "    product.other\n"
+        "    product.interface\n",
+        encoding="utf-8",
+    )
+
+    result = probe_attribute_removal(tmp_path, "test_exports.py::test_exports", 4)
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["baseline"]["reports"][1]["outcome"] == "failed"
+    assert result["challenge"] == {}
+
+
 @pytest.mark.parametrize(
     "source,line",
     [
@@ -79,6 +156,190 @@ def test_probe_call_propagation_accepts_multiline_and_aliased_calls(
 
     assert result["status"] == "OBSERVED"
     assert result["challenge"]["schema"] == "factory.call-propagation-challenge.v1"
+
+
+@pytest.mark.parametrize(
+    "source,line,match",
+    [
+        (
+            "from unittest.mock import Mock\nproduct = Mock()\n"
+            "def test_exports():\n    product.missing\n",
+            4,
+            "stable module import binding",
+        ),
+        (
+            "from unittest.mock import Mock\ndef product(): return Mock()\n"
+            "def test_exports():\n    product().missing\n",
+            4,
+            "direct module attribute read",
+        ),
+        (
+            "import product_module as product\n"
+            "def test_exports():\n    try:\n        product.interface\n"
+            "    except AttributeError:\n        pass\n",
+            5,
+            "requested line must contain one direct module attribute read",
+        ),
+        (
+            "import product_module as product\n"
+            "def test_exports():\n    return\n    product.interface\n",
+            4,
+            "test must contain only direct module attribute read statements",
+        ),
+        (
+            "import pytest\nimport product_module as product\n"
+            "@pytest.mark.skip\ndef test_exports():\n    product.interface\n",
+            5,
+            "test must contain only direct module attribute read statements",
+        ),
+    ],
+)
+def test_probe_attribute_removal_rejects_unsafe_or_never_run_shapes(
+    tmp_path, source, line, match
+):
+    (tmp_path / "product_module.py").write_text("interface = object()\n")
+    (tmp_path / "test_exports.py").write_text(source, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=match):
+        probe_attribute_removal(tmp_path, "test_exports.py::test_exports", line)
+
+
+def test_probe_attribute_removal_rejects_export_restored_before_call(tmp_path):
+    _write_attribute_project(tmp_path)
+    (tmp_path / "conftest.py").write_text(
+        "def pytest_runtest_call(item):\n"
+        "    if item.nodeid == 'test_exports.py::test_exports':\n"
+        "        item.module.product.interface = object()\n",
+        encoding="utf-8",
+    )
+
+    result = probe_attribute_removal(tmp_path, "test_exports.py::test_exports", 3)
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["challenge"]["reports"][1]["outcome"] == "passed"
+    assert result["challenge"]["attribute_exception"] == {}
+
+
+def test_probe_attribute_removal_rejects_dynamic_module_getattr(tmp_path):
+    _write_attribute_project(
+        tmp_path, module_source="def __getattr__(name): return object()\n"
+    )
+
+    result = probe_attribute_removal(tmp_path, "test_exports.py::test_exports", 3)
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["baseline"]["attribute_module"] == {
+        "state": "REJECTED",
+        "reason": "DYNAMIC_MODULE_GETATTR",
+    }
+    assert result["challenge"] == {}
+
+
+def test_probe_attribute_removal_rejects_missing_baseline_export(tmp_path):
+    _write_attribute_project(tmp_path, module_source="present = object()\n")
+
+    result = probe_attribute_removal(tmp_path, "test_exports.py::test_exports", 3)
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["baseline"]["reports"][1]["outcome"] == "failed"
+    assert result["challenge"] == {}
+
+
+def test_probe_attribute_removal_rejects_external_module_source(tmp_path):
+    (tmp_path / "test_exports.py").write_text(
+        "import pathlib as product\ndef test_exports():\n    product.Path\n",
+        encoding="utf-8",
+    )
+
+    result = probe_attribute_removal(tmp_path, "test_exports.py::test_exports", 3)
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["baseline"]["attribute_module"]["reason"] == "MODULE_SOURCE_NOT_LOCAL"
+    assert result["challenge"] == {}
+
+
+def test_probe_attribute_removal_detects_source_change(tmp_path):
+    _write_attribute_project(
+        tmp_path,
+        module_source=(
+            "from pathlib import Path\n"
+            "Path('support.py').write_text('changed = True')\n"
+            "interface = object()\n"
+        ),
+    )
+    (tmp_path / "support.py").write_text("changed = False\n", encoding="utf-8")
+
+    result = probe_attribute_removal(tmp_path, "test_exports.py::test_exports", 3)
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["source_unchanged"] is False
+    assert result["challenge"] == {}
+
+
+def test_probe_attribute_removal_timeout_is_incomplete(tmp_path):
+    _write_attribute_project(
+        tmp_path,
+        test_prefix="import time\ntime.sleep(2)\n",
+    )
+
+    result = probe_attribute_removal(
+        tmp_path, "test_exports.py::test_exports", 5, timeout=0.2
+    )
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["baseline"] == {"status": "TIMEOUT"}
+    assert result["challenge"] == {}
+
+
+def test_attribute_probe_rejects_wrong_exception_name_or_module_identity(tmp_path):
+    from factoryline.pytest_readiness import _attribute_exception_evidence
+
+    module = __import__("types").ModuleType("product_module")
+    wrong_name = AttributeError("missing")
+    wrong_name.name = "other"
+    wrong_name.obj = module
+    wrong_object = AttributeError("missing")
+    wrong_object.name = "interface"
+    wrong_object.obj = __import__("types").ModuleType("other")
+
+    name_evidence = _attribute_exception_evidence(
+        wrong_name,
+        None,
+        tmp_path / "test_exports.py",
+        3,
+        "test_exports",
+        1,
+        module,
+        "interface",
+    )
+    object_evidence = _attribute_exception_evidence(
+        wrong_object,
+        None,
+        tmp_path / "test_exports.py",
+        3,
+        "test_exports",
+        1,
+        module,
+        "interface",
+    )
+
+    assert name_evidence["name_matches"] is False
+    assert name_evidence["matches"] is False
+    assert object_evidence["object_identity_matches"] is False
+    assert object_evidence["matches"] is False
+
+
+def test_attribute_module_source_read_is_bounded(tmp_path):
+    from factoryline.pytest_readiness import _attribute_source_bytes
+
+    source = tmp_path / "large_module.py"
+    source.write_bytes(b"x" * (4 * 1024 * 1024 + 2))
+
+    resolved, content, error = _attribute_source_bytes(tmp_path, source, source)
+
+    assert resolved is None
+    assert content is None
+    assert error == "MODULE_SOURCE_TOO_LARGE"
 
 
 @pytest.mark.parametrize(
@@ -321,6 +582,93 @@ def test_call_probe_cli_selects_distinct_kind_and_schema(monkeypatch, capsys):
     assert __import__("json").loads(capsys.readouterr().out) == result
 
 
+def test_attribute_probe_cli_validation_is_structured_and_sanitized(
+    monkeypatch, capsys
+):
+    import json
+    from factoryline import pytest_readiness
+
+    def reject(*args, **kwargs):
+        raise ValueError("private /host/absolute/path")
+
+    monkeypatch.setattr(pytest_readiness, "probe_attribute_removal", reject)
+    assert (
+        pytest_readiness.main(
+            [
+                "--root",
+                ".",
+                "--nodeid",
+                "test_case.py::test_case",
+                "--line",
+                "2",
+                "--kind",
+                "attribute",
+            ]
+        )
+        == 2
+    )
+    output = capsys.readouterr().out
+    result = json.loads(output)
+    assert result["status"] == "INVALID"
+    assert result["schema"] == "factory.probe-validation.v1"
+    assert "/host/absolute/path" not in output
+
+
+def test_attribute_probe_cli_selects_distinct_kind_and_schema(monkeypatch, capsys):
+    from factoryline import pytest_readiness
+
+    result = {
+        "schema": "factory.attribute-removal-probe.v1",
+        "status": "OBSERVED",
+    }
+    monkeypatch.setattr(
+        pytest_readiness, "probe_attribute_removal", lambda *a, **k: result
+    )
+
+    assert (
+        pytest_readiness.main(
+            [
+                "--root",
+                ".",
+                "--nodeid",
+                "test_case.py::test_case",
+                "--line",
+                "2",
+                "--kind",
+                "attribute",
+            ]
+        )
+        == 0
+    )
+    assert __import__("json").loads(capsys.readouterr().out) == result
+
+
+def test_attribute_probe_cli_runs_baseline_and_native_mutation(tmp_path, capsys):
+    from factoryline import pytest_readiness
+
+    _write_attribute_project(tmp_path)
+
+    code = pytest_readiness.main(
+        [
+            "--root",
+            str(tmp_path),
+            "--nodeid",
+            "test_exports.py::test_exports",
+            "--line",
+            "3",
+            "--kind",
+            "attribute",
+        ]
+    )
+
+    result = __import__("json").loads(capsys.readouterr().out)
+    assert code == 0
+    assert result["schema"] == "factory.attribute-removal-probe.v1"
+    assert result["status"] == "OBSERVED"
+    assert result["baseline"]["reports"][1]["outcome"] == "passed"
+    assert result["challenge"]["attribute_exception"]["matches"] is True
+
+
 def test_assertion_probe_input_and_binding_limits(tmp_path, monkeypatch):
     from factoryline.pytest_readiness import (
         _challenge_inputs,
@@ -350,6 +698,60 @@ def test_assertion_probe_input_and_binding_limits(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="128 MiB"):
         _challenge_source_binding(tmp_path)
     suite.unlink()
+
+
+def test_challenge_source_binding_preserves_existing_digest_format(
+    tmp_path, monkeypatch
+):
+    import hashlib
+    import json
+
+    from factoryline import review_audits
+    from factoryline.pytest_readiness import _challenge_source_binding
+
+    source = tmp_path / "test_case.py"
+    content = b"def test_case():\n    assert True\n"
+    source.write_bytes(content)
+    monkeypatch.setattr(review_audits, "_security_source_files", lambda root: [source])
+    expected = hashlib.sha256(
+        json.dumps(
+            [["test_case.py", hashlib.sha256(content).hexdigest()]],
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+    assert _challenge_source_binding(tmp_path) == expected
+
+
+def test_challenge_source_digest_bounds_growth_after_size_check():
+    from factoryline.pytest_readiness import _challenge_source_digest
+
+    class GrowingStream:
+        def __init__(self):
+            self.requests = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size):
+            self.requests.append(size)
+            return b"x" * size
+
+    class GrowingPath:
+        def __init__(self):
+            self.stream = GrowingStream()
+
+        def open(self, mode):
+            assert mode == "rb"
+            return self.stream
+
+    path = GrowingPath()
+    with pytest.raises(ValueError, match="128 MiB"):
+        _challenge_source_digest(path, 5)
+    assert path.stream.requests == [6]
 
 
 def test_assertion_probe_requires_exact_terminal_reports():
@@ -450,6 +852,32 @@ def test_assertion_probe_rejects_malformed_observation_file(tmp_path, payload):
     assert _probe_observation(output, {"exit_code": 0})["status"] == "RUNNER_ERROR"
     output.unlink()
     assert _probe_observation(output, {"exit_code": 0})["status"] == "RUNNER_ERROR"
+
+
+def test_probe_observation_accepts_valid_bounded_json_report(tmp_path):
+    from factoryline.pytest_readiness import _probe_observation
+
+    output = tmp_path / "observation.json"
+    output.write_text('{"status":"OBSERVED"}', encoding="utf-8")
+
+    assert _probe_observation(output, {"exit_code": 0}) == {
+        "status": "OBSERVED",
+        "process": {"exit_code": 0},
+    }
+
+
+def test_probe_observation_rejects_invalid_utf8_and_oversized_report(tmp_path):
+    from factoryline.pytest_readiness import _probe_observation
+
+    output = tmp_path / "observation.json"
+    output.write_bytes(b"{\xff}")
+    assert _probe_observation(output, {"exit_code": 0})["status"] == "RUNNER_ERROR"
+
+    output.write_bytes(b" " * (1024 * 1024 + 10))
+    result = _probe_observation(output, {"exit_code": 0})
+    assert result["status"] == "RUNNER_LIMIT"
+    assert result["report_limit_exceeded"] is True
+    assert result["report_limit_bytes"] == 1024 * 1024
 
 
 def test_assertion_probe_aborts_collection_of_multiple_cases(tmp_path):
