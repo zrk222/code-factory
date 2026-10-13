@@ -4197,7 +4197,9 @@ def _hollow_test_finding(
         return None
     if not node.name.startswith("test_"):
         return None
-    if _test_oracle_exempt(node, aliases):
+    from .review_integrity import import_smoke_oracle
+
+    if _test_oracle_exempt(node, aliases) or import_smoke_oracle(node):
         return None
     nodes = _test_oracle_body_nodes(node, aliases)
     vacuous = _direct_test_vacuous_assertions(node)

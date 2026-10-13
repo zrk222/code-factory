@@ -20,6 +20,76 @@ from factoryline.cli import main
 
 
 @pytest.mark.parametrize(
+    "body,hollow",
+    [
+        ("import product.interface", False),
+        ("from product import interface", False),
+        ("import product.interface as api", False),
+        (
+            '"""The public interface is importable."""\nfrom product import interface',
+            False,
+        ),
+        ("try:\n    import product.interface\nexcept ImportError:\n    pass", True),
+        ("if False:\n    import product.interface", True),
+        ("def deferred():\n    import product.interface", True),
+        ("return\nimport product.interface", True),
+        ("import product.interface\nassert True", True),
+        ("import product.interface\nresult = compute()", True),
+        ('"""import product.interface"""', True),
+        ("from product import *", True),
+    ],
+)
+def test_import_behavior_oracle_requires_direct_complete_body(tmp_path, body, hollow):
+    (tmp_path / "test_interfaces.py").write_text(
+        "def test_import_interface():\n" + textwrap.indent(body, "    ") + "\n"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"]) is hollow
+
+
+def test_import_behavior_does_not_exempt_unrelated_test_name(tmp_path):
+    (tmp_path / "test_interfaces.py").write_text(
+        "def test_compute():\n    import product.interface\n"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"])
+
+
+def test_import_smoke_oracle_direct_async_and_missing_body():
+    import ast
+    from factoryline.review_integrity import import_smoke_oracle
+
+    assert import_smoke_oracle(
+        ast.parse("async def test_import_api():\n    from product import api").body[0]
+    )
+    assert not import_smoke_oracle(
+        ast.parse("def test_import_api():\n    pass").body[0]
+    )
+    assert not import_smoke_oracle(ast.parse("import product"))
+
+
+def test_import_behavior_negative_control_fails_on_removed_export(tmp_path):
+    import subprocess
+    import sys
+
+    module = tmp_path / "public_interface.py"
+    module.write_text("supported = object()\n")
+    command = [
+        sys.executable,
+        "-I",
+        "-B",
+        "-c",
+        f"import sys; sys.path.insert(0, {str(tmp_path)!r}); from public_interface import supported",
+    ]
+    baseline = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    assert baseline.returncode == 0, baseline.stderr
+    module.write_text("removed = object()\n")
+    mutated = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    assert mutated.returncode != 0
+    assert "ImportError" in mutated.stderr and "supported" in mutated.stderr
+
+
+@pytest.mark.parametrize(
     "call,expected",
     [
         ("dispatch(check)", "check"),
