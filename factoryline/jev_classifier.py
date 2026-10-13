@@ -1166,6 +1166,19 @@ def classify_retrieval(
         }
 
 
+def __getattr__(name: str) -> Any:
+    """Lazily expose bounded triage and activation observations from assurance controls."""
+    if name in {
+        "triage_incident_events",
+        "ActivationHookRegistry",
+        "run_activation_experiment",
+    }:
+        from . import senior_assurance
+
+        return getattr(senior_assurance, name)
+    raise AttributeError(name)
+
+
 def fuse_advisory_scores(
     search_payload: Mapping[str, Any],
     classification: Mapping[str, Any],

@@ -5,6 +5,9 @@ import sys
 import pytest
 
 from factoryline.senior_assurance import (
+    ActivationHookRegistry,
+    INCIDENT_TRIAGE_SCHEMA,
+    ACTIVATION_EXPERIMENT_SCHEMA,
     REPAIR_SCHEMA,
     REUSE_REQUEST_SCHEMA,
     SeniorAssuranceError,
@@ -13,6 +16,8 @@ from factoryline.senior_assurance import (
     failure_brief,
     load_assurance_json,
     run_replay,
+    run_activation_experiment,
+    triage_incident_events,
     validate_replay_manifest,
 )
 
@@ -426,6 +431,314 @@ def test_reuse_runs_for_unsafe_receipt_input(tmp_path):
     result = explain_evidence_reuse(tmp_path, request)
     assert result["gates"][0]["decision"] == "RUN"
     assert result["gates"][0]["reason"] == "UNSAFE_RECEIPT_INPUT_REQUIRES_EXECUTION"
+
+
+def test_incident_triage_deduplicates_and_retains_critical_under_group_pressure():
+    result = triage_incident_events(
+        [
+            {"severity": "warning", "source": "api", "message": "slow"},
+            {"severity": "error", "source": "api", "message": "same"},
+            {"severity": "critical", "source": "api", "message": "same"},
+            {"severity": "info", "source": "worker", "message": "idle"},
+        ],
+        max_groups=1,
+    )
+
+    assert result["schema"] == INCIDENT_TRIAGE_SCHEMA
+    assert result["status"] == "BACKPRESSURE"
+    assert result["counts"]["duplicates"] == 1
+    assert result["groups"][0]["severity"] == "critical"
+    assert result["counts"]["dropped_critical"] == 0
+    assert result["execution_allowed"] is False
+    assert result["execution_authority"] == "none"
+
+
+def test_incident_triage_byte_pressure_preserves_all_events_as_unassessed():
+    result = triage_incident_events(
+        [
+            {"severity": "warning", "source": "api", "message": "x" * 500},
+            {"severity": "critical", "source": "db", "message": "corrupt"},
+        ],
+        max_input_bytes=100,
+    )
+
+    assert result["status"] == "NOT_ASSESSED"
+    assert result["backpressure"] is True
+    assert result["abstain"] is True
+    assert result["groups"] == []
+    assert result["pending_event_ids"] == ["event:0", "event:1"]
+    assert result["critical_presence"] == "NOT_ASSESSED"
+    assert result["raw_batch_sha256"] is None
+    assert result["batch_digest_verified"] is False
+
+
+def test_incident_triage_byte_preflight_stops_before_serialization(monkeypatch):
+    import factoryline.senior_assurance as assurance
+
+    def forbidden(_value):
+        raise AssertionError("serialization ran beyond the byte budget")
+
+    monkeypatch.setattr(assurance, "canonical_bytes", forbidden)
+    result = triage_incident_events(
+        [
+            {"severity": "critical", "source": "db", "message": "x" * 2048},
+            {"severity": "warning", "source": "api", "message": "later"},
+        ],
+        max_input_bytes=32,
+    )
+    assert result["status"] == "NOT_ASSESSED"
+    assert result["pending_event_ids"] == ["event:0", "event:1"]
+
+
+def test_incident_triage_rejects_oversized_event_before_serialization(monkeypatch):
+    import factoryline.senior_assurance as assurance
+
+    def forbidden(_value):
+        raise AssertionError("invalid event was serialized")
+
+    monkeypatch.setattr(assurance, "canonical_bytes", forbidden)
+    with pytest.raises(SeniorAssuranceError, match="event message is invalid"):
+        triage_incident_events(
+            [{"severity": "critical", "source": "db", "message": "x" * 2049}]
+        )
+
+
+def test_incident_triage_rejects_explicit_null_fingerprint_before_serialization(
+    monkeypatch,
+):
+    import factoryline.senior_assurance as assurance
+
+    def forbidden(_value):
+        raise AssertionError("invalid fingerprint was serialized")
+
+    monkeypatch.setattr(assurance, "canonical_bytes", forbidden)
+    with pytest.raises(SeniorAssuranceError, match="fingerprint must be"):
+        triage_incident_events(
+            [
+                {
+                    "severity": "info",
+                    "source": "api",
+                    "message": "x",
+                    "event_id": "a",
+                    "timestamp": "t",
+                    "fingerprint": None,
+                }
+            ],
+            max_input_bytes=83,
+        )
+
+
+def test_incident_triage_unknown_severity_abstains_and_oversized_batch_backpressures():
+    unknown = triage_incident_events(
+        [
+            {
+                "event_id": "unknown-1",
+                "severity": "urgent-ish",
+                "source": "api",
+                "message": "check",
+            },
+            {
+                "event_id": "critical-1",
+                "severity": "critical",
+                "source": "db",
+                "message": "one",
+            },
+            {
+                "event_id": "critical-2",
+                "severity": "critical",
+                "source": "db",
+                "message": "two",
+            },
+        ],
+        max_groups=1,
+    )
+    oversized = triage_incident_events(
+        [
+            {"severity": "critical", "source": "db", "message": str(index)}
+            for index in range(3)
+        ],
+        max_events=2,
+    )
+    queued = triage_incident_events(
+        [
+            {"severity": "critical", "source": "db", "message": str(index)}
+            for index in range(3)
+        ],
+        max_events=2,
+        raw_batch_sha256="c" * 64,
+        pending_event_ids=["event-0", "event-1", "event-2"],
+    )
+
+    assert unknown["status"] == "ABSTAIN"
+    assert unknown["abstain"] is True
+    assert unknown["counts"]["dropped_critical"] == 1
+    assert set(unknown["pending_event_ids"]) == {"unknown-1", "critical-2"} or set(
+        unknown["pending_event_ids"]
+    ) == {"unknown-1", "critical-1"}
+    assert oversized["status"] == "NOT_ASSESSED"
+    assert oversized["abstain"] is True
+    assert oversized["groups"] == []
+    assert queued["status"] == "BACKPRESSURE"
+    assert queued["raw_batch_sha256"] == "c" * 64
+    assert queued["pending_event_ids"] == ["event-0", "event-1", "event-2"]
+    assert queued["batch_digest_verified"] is False
+    assert queued["pending_ids_verified"] is False
+
+
+def test_incident_triage_rejects_a_fingerprint_that_does_not_bind_its_event():
+    with pytest.raises(SeniorAssuranceError, match="fingerprint does not match"):
+        triage_incident_events(
+            [
+                {
+                    "severity": "critical",
+                    "source": "api",
+                    "message": "failure",
+                    "fingerprint": "f" * 64,
+                }
+            ]
+        )
+
+
+def _activation_request():
+    body = {
+        "schema": "factory.activation-experiment-request.v1",
+        "experiment_id": "local-test-run",
+        "input": {"prompt_sha256": "1" * 64, "target": "target-token"},
+    }
+    return {**body, "request_sha256": _sha_bytes(_canonical(body))}
+
+
+def _register_activation_hooks(
+    registry, *, mismatch=False, identity_mismatch=False, calls=None
+):
+    request_sha = _activation_request()["request_sha256"]
+
+    def record(name):
+        if calls is not None:
+            calls.append(name)
+
+    registry.register(
+        "reset_cache",
+        lambda request, stage: (
+            record(f"reset:{stage}")
+            or {
+                "request_sha256": request_sha,
+                "condition": stage,
+                "cache_epoch": f"cache-{stage}",
+            }
+        ),
+        hook_id="local-cache-reset",
+        model_id="local-model",
+        model_version="v1",
+        runtime_id="local-runtime",
+        implementation_sha256="a" * 64,
+    )
+
+    def run(stage):
+        def callback(request, *parents):
+            record(stage)
+            return {
+                "request_sha256": "0" * 64
+                if mismatch and stage == "corrupt"
+                else request_sha,
+                "run_id": stage,
+                "state": {"condition": stage},
+            }
+
+        return callback
+
+    def measure(request, observed):
+        record(f"measure:{observed['run_id']}")
+        score = {
+            "baseline": 0.9,
+            "clean": 0.8,
+            "corrupt": 0.1,
+            "denoise": 0.7,
+            "noise": 0.2,
+        }[observed["state"]["condition"]]
+        return {
+            "request_sha256": request_sha,
+            "run_id": observed["run_id"],
+            "metrics": {"target_logit": score},
+        }
+
+    for name in ("baseline", "clean", "corrupt", "denoise", "noise"):
+        registry.register(
+            name,
+            run(name),
+            hook_id=f"local-{name}",
+            model_id="local-model",
+            model_version="v2" if identity_mismatch and name == "noise" else "v1",
+            runtime_id="local-runtime",
+            implementation_sha256="a" * 64,
+        )
+    registry.register(
+        "measure",
+        measure,
+        hook_id="local-measure",
+        model_id="local-model",
+        model_version="v1",
+        runtime_id="local-runtime",
+        implementation_sha256="a" * 64,
+    )
+
+
+def test_activation_experiment_requires_registered_capabilities_and_opt_in():
+    request = _activation_request()
+    missing = run_activation_experiment(request, ActivationHookRegistry(), execute=True)
+    registry = ActivationHookRegistry()
+    calls = []
+    _register_activation_hooks(registry, calls=calls)
+    not_run = run_activation_experiment(request, registry)
+
+    assert missing["status"] == "INCOMPLETE"
+    assert "baseline" in missing["missing_capabilities"]
+    assert not_run["status"] == "NOT_RUN"
+    assert not_run["reason"] == "EXPLICIT_EXECUTION_REQUIRED"
+    assert calls == []
+
+
+def test_activation_experiment_records_baseline_and_asymmetric_bound_observations():
+    registry = ActivationHookRegistry()
+    _register_activation_hooks(registry)
+    result = run_activation_experiment(_activation_request(), registry, execute=True)
+
+    assert result["schema"] == ACTIVATION_EXPERIMENT_SCHEMA
+    assert result["status"] == "OBSERVED"
+    assert set(result["observations"]) == {
+        "baseline",
+        "clean",
+        "corrupt",
+        "denoise",
+        "noise",
+    }
+    assert result["observations"]["denoise"]["metrics"]["target_logit"] == 0.7
+    assert result["observations"]["noise"]["metrics"]["target_logit"] == 0.2
+    assert result["cache_epochs"]["baseline"] != result["cache_epochs"]["clean"]
+    assert result["release_approval"] is False
+    assert "not independently verified" in result["claim_boundary"]
+    assert result["hook_identities"]["baseline"]["hook_name"] == "baseline"
+    assert len(result["evidence_sha256"]) == 64
+
+
+def test_activation_experiment_rejects_inconsistent_model_runtime_identity():
+    registry = ActivationHookRegistry()
+    _register_activation_hooks(registry, identity_mismatch=True)
+    result = run_activation_experiment(_activation_request(), registry, execute=True)
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["reason"] == "E_ACTIVATION_IDENTITY"
+    assert "secret" not in json.dumps(result).lower()
+
+
+def test_activation_experiment_rejects_mismatched_hook_and_measurement_bindings():
+    registry = ActivationHookRegistry()
+    _register_activation_hooks(registry, mismatch=True)
+    result = run_activation_experiment(_activation_request(), registry, execute=True)
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["reason"] == "E_ACTIVATION_BINDING"
+    assert "0" * 64 not in json.dumps(result)
 
 
 def test_failure_brief_links_finding_to_receipt_and_surfaces_uncertainty():

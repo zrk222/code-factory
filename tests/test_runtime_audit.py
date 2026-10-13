@@ -1120,7 +1120,15 @@ def test_execute_runtime_audit_binds_verified_plan_digest(monkeypatch, tmp_path)
     def verify(*args, **kwargs):
         return {"plan": plan, "payload_sha256": "p" * 64}
 
-    def run(current, workspace, output, *, plan_sha256=None):
+    def run(
+        current,
+        workspace,
+        output,
+        *,
+        plan_sha256=None,
+        max_parallelism=1,
+        execution_admission=None,
+    ):
         observed["plan_sha256"] = plan_sha256
         return {"run_root": "run", "executions": [], "plan_sha256": plan_sha256}
 

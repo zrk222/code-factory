@@ -33,6 +33,20 @@ def _completed_mission(tmp_path: Path):
     return graph, slices, mission, completion
 
 
+def test_graph_snapshot_keeps_unknown_context_cache_hits_unknown(
+    tmp_path: Path, monkeypatch
+):
+    import factoryline.mission_control_status as mission_status
+
+    monkeypatch.setattr(
+        mission_status,
+        "context_efficiency_status",
+        lambda _root: {"state": "READY", "packet_count": 1, "cache_hits": None},
+    )
+    snapshot = graph_ops_snapshot(tmp_path)
+    assert snapshot["facts"]["context_efficiency_cache_hits"] is None
+
+
 def test_graph_ops_links_local_product_mission_and_valid_completion_exactly(
     tmp_path: Path,
 ):

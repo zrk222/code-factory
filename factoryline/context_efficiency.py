@@ -12,7 +12,11 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 import re
+import sqlite3
+import stat
+import threading
 from copy import deepcopy
 from datetime import datetime, timezone
 from math import ceil
@@ -26,14 +30,22 @@ VERIFICATION_SCHEMA = "factory.context-efficiency-verification.v1"
 STATUS_SCHEMA = "factory.context-efficiency-status.v1"
 SELECTION_SCHEMA = "factory.context-efficiency-selection.v1"
 EXPERIMENT_SCHEMA = "factory.context-efficiency-paired.v1"
+SHARD_CANDIDATE_SCHEMA = "factory.context-shard-candidate.v1"
+SHARD_REVIEW_SCHEMA = "factory.context-shard-review.v1"
 MODULE_VERSION = "1"
 MAX_SOURCES = 128
 MAX_CHANGED_PATHS = 128
 MAX_CACHE_FILES = 100
+MAX_USAGE_ROWS = MAX_CACHE_FILES * 10
+_USAGE_LOCK = threading.Lock()
 MAX_CANDIDATES = 64
 MAX_SELECTED_SOURCES = 64
 MAX_EXPERIMENT_SAMPLES = 100
 MAX_EXPERIMENT_HISTORY = 20
+MAX_SHARD_CLAIMS = 64
+MAX_SHARD_RECORDS = 256
+MAX_SHARD_LOCATOR_BYTES = 16_384
+MAX_SHARD_ARTIFACT_BYTES = 65_536
 MAX_AST_NODES = 20_000
 MAX_AST_SOURCE_BYTES = 65_536
 MAX_SOURCE_BYTES = 1_048_576
@@ -150,7 +162,7 @@ def _relative_path(root: Path, raw: Any, field: str) -> tuple[Path, str]:
         raise ContextEfficiencyError(
             "E_PATH_BOUNDARY", f"{field} contains traversal or empty components"
         )
-    workspace = Path(root).resolve()
+    workspace = _validated_root(root)
     candidate = workspace.joinpath(candidate_raw)
     ancestor = workspace
     for part in candidate_raw.parts:
@@ -769,6 +781,146 @@ def _cache_dir(root: Path) -> Path:
     return Path(root) / ".factory" / "context-efficiency"
 
 
+def _validated_root(root: Path) -> Path:
+    lexical = Path(root).absolute()
+    if _has_reparse_ancestor(lexical):
+        raise ContextEfficiencyError("E_PATH_LINK", "workspace path traverses a reparse point")
+    return lexical.resolve()
+
+
+def _record_cache_hit(root: Path, cache_key: str) -> bool:
+    """Record bounded operational telemetry outside immutable packet bytes."""
+    path = _cache_dir(root) / "usage.sqlite3"
+    try:
+        raw_root = Path(root).absolute()
+        if _has_reparse_ancestor(raw_root):
+            return False
+        workspace = raw_root.resolve()
+        factory_dir = workspace / ".factory"
+        cache_dir = _cache_dir(workspace)
+        if _unsafe_cache_path(workspace, factory_dir, cache_dir, path):
+            return False
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        if _unsafe_cache_path(workspace, factory_dir, cache_dir, path):
+            return False
+        with _USAGE_LOCK, sqlite3.connect(path, timeout=2) as database:
+            database.execute("PRAGMA max_page_count=256")
+            database.execute(
+                "CREATE TABLE IF NOT EXISTS cache_usage ("
+                "cache_key TEXT PRIMARY KEY, hits INTEGER NOT NULL CHECK(hits >= 0))"
+            )
+            database.execute("BEGIN IMMEDIATE")
+            exists = database.execute(
+                "SELECT 1 FROM cache_usage WHERE cache_key = ?", (cache_key,)
+            ).fetchone()
+            if exists or database.execute(
+                "SELECT COUNT(*) FROM cache_usage"
+            ).fetchone()[0] < MAX_USAGE_ROWS:
+                database.execute(
+                    "INSERT INTO cache_usage(cache_key, hits) VALUES (?, 1) "
+                    "ON CONFLICT(cache_key) DO UPDATE SET hits = hits + 1",
+                    (cache_key,),
+                )
+                return True
+            return False
+    except sqlite3.Error:
+        # Cache correctness does not depend on optional status telemetry.
+        return False
+    except (OSError, OverflowError, ValueError):
+        return False
+
+
+def _mark_cache_usage_unknown(root: Path) -> None:
+    raw_root = Path(root).absolute()
+    if _has_reparse_ancestor(raw_root):
+        return
+    workspace = raw_root.resolve()
+    factory_dir = workspace / ".factory"
+    cache_dir = _cache_dir(workspace)
+    marker = cache_dir / "usage-incomplete"
+    if _unsafe_cache_path(workspace, factory_dir, cache_dir, marker):
+        return
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        marker.write_text("cache usage telemetry is incomplete\n", encoding="utf-8")
+    except OSError:
+        return
+
+
+def _unsafe_cache_path(
+    workspace: Path, factory_dir: Path, cache_dir: Path, database: Path
+) -> bool:
+    for path in (workspace, factory_dir, cache_dir, database):
+        if path.is_symlink() or (
+            hasattr(path, "is_junction") and path.is_junction()
+        ):
+            return True
+        try:
+            if path.exists():
+                info = path.lstat()
+                attributes = getattr(info, "st_file_attributes", 0)
+                if stat.S_ISLNK(info.st_mode) or attributes & getattr(
+                    stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400
+                ):
+                    return True
+            path.resolve(strict=False).relative_to(workspace)
+        except (OSError, ValueError):
+            return True
+        if path.exists() and path.is_file() and path.stat().st_size > 1_000_000:
+            return True
+    return False
+
+
+def _has_reparse_ancestor(path: Path) -> bool:
+    for ancestor in (path, *path.parents):
+        try:
+            if stat.S_ISLNK(ancestor.lstat().st_mode):
+                return True
+            attributes = getattr(ancestor.lstat(), "st_file_attributes", 0)
+            if attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
+                return True
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return True
+    return False
+
+
+def _cache_hit_count(root: Path, cache_key: str) -> int | None:
+    raw_root = Path(root).absolute()
+    if _has_reparse_ancestor(raw_root):
+        return None
+    workspace = raw_root.resolve()
+    factory_dir = workspace / ".factory"
+    cache_dir = _cache_dir(workspace)
+    path = cache_dir / "usage.sqlite3"
+    try:
+        if _unsafe_cache_path(workspace, factory_dir, cache_dir, path):
+            return None
+        if not path.exists():
+            return None
+        incomplete = cache_dir / "usage-incomplete"
+        if _unsafe_cache_path(workspace, factory_dir, cache_dir, incomplete):
+            return None
+        if incomplete.exists():
+            return None
+        uri = path.resolve().as_uri() + "?mode=ro"
+        with sqlite3.connect(uri, uri=True, timeout=2) as database:
+            row = database.execute(
+                "SELECT hits FROM cache_usage WHERE cache_key = ?", (cache_key,)
+            ).fetchone()
+        if row is None:
+            return None
+        hits = row[0]
+        if isinstance(hits, bool) or not isinstance(hits, int) or not 0 <= hits <= 2**31 - 1:
+            return None
+        return hits
+    except sqlite3.Error:
+        return None
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
 def _read_bounded(path: Path, limit: int = 1_000_000) -> bytes:
     with path.open("rb") as stream:
         raw = stream.read(limit + 1)
@@ -815,17 +967,6 @@ def _load_cached_packet(
         )
         _validate_packet_cache(cached, request, _source_identity_rows(packet_sources))
         _validate_packet_snapshot(cached, request, rows, packet_sources)
-        cache = cached.get("cache", {})
-        cached["cache"] = {
-            **cache,
-            "hit": False,
-            "reuse_count": int(cache.get("reuse_count", 0)) + 1,
-        }
-        cached["packet_sha256"] = _packet_digest(cached)
-        cache_path.write_text(
-            json.dumps(cached, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-            encoding="utf-8",
-        )
         return cached
     except (
         OSError,
@@ -962,7 +1103,6 @@ def _assemble_packet(
         "cache": {
             "key": cache_key,
             "hit": False,
-            "reuse_count": 0,
             "path": cache_path.relative_to(cache_path.parents[2]).as_posix(),
         },
         "authority": {
@@ -987,7 +1127,7 @@ def build_context_packet(
     source_snapshot: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build or exactly reuse one bounded packet; never executes a source."""
-    workspace = Path(root).resolve()
+    workspace = _validated_root(root)
     normalized = _validate_request(workspace, request)
     if source_snapshot is None:
         rows, source_digests = _read_source_rows(workspace, normalized)
@@ -1007,8 +1147,17 @@ def build_context_packet(
     if cache_path.is_file():
         cached = _load_cached_packet(cache_path, normalized, rows, selection)
         if cached is not None:
+            telemetry_recorded = _record_cache_hit(workspace, cache_key)
+            if not telemetry_recorded:
+                _mark_cache_usage_unknown(workspace)
             result = deepcopy(cached)
-            result["cache"] = {**result.get("cache", {}), "hit": True}
+            result["cache"] = {
+                **result.get("cache", {}),
+                "hit": True,
+                "usage_count": _cache_hit_count(workspace, cache_key)
+                if telemetry_recorded
+                else None,
+            }
             result["packet_sha256"] = _packet_digest(result)
             if out is not None:
                 _write_packet(Path(out), result)
@@ -1802,7 +1951,7 @@ def _verify_packet_budget(packet: dict[str, Any]) -> None:
 
 def verify_context_packet(root: Path, packet_path: Path) -> dict[str, Any]:
     """Verify packet identity and every selected source without executing it."""
-    workspace = Path(root).resolve()
+    workspace = _validated_root(root)
     path = (
         Path(packet_path)
         if Path(packet_path).is_absolute()
@@ -1847,9 +1996,585 @@ def verify_context_packet(root: Path, packet_path: Path) -> dict[str, Any]:
         }
 
 
+def _shard_digest(value: dict[str, Any], field: str) -> str:
+    body = {key: item for key, item in value.items() if key != field}
+    return _sha(body)
+
+
+def _shard_artifact_path(root: Path, kind: str, digest: str) -> tuple[Path, str]:
+    workspace = _validated_root(root)
+    relative = f".factory/context-efficiency/shards/{kind}/{digest}.json"
+    path, normalized = _shard_relative_path(workspace, relative, "shard artifact")
+    return path, normalized
+
+
+def _shard_relative_path(root: Path, raw: Any, field: str) -> tuple[Path, str]:
+    lexical_root = Path(root).absolute()
+    if _has_reparse_ancestor(lexical_root):
+        raise ContextEfficiencyError(
+            "E_PATH_LINK", "workspace path traverses a reparse point"
+        )
+    value = _safe_text(raw, field, 512).replace("\\", "/")
+    candidate = Path(value)
+    if (
+        candidate.is_absolute()
+        or re.match(r"^[A-Za-z]:/", value)
+        or any(part in {"", ".", ".."} for part in candidate.parts)
+    ):
+        raise ContextEfficiencyError(
+            "E_PATH_BOUNDARY", f"{field} must stay within workspace"
+        )
+    lexical = lexical_root.joinpath(candidate)
+    if _has_reparse_ancestor(lexical):
+        raise ContextEfficiencyError(
+            "E_PATH_LINK", f"{field} may not traverse a reparse point"
+        )
+    return _relative_path(lexical_root, value, field)
+
+
+def _write_immutable_shard(path: Path, artifact: dict[str, Any]) -> None:
+    raw = _canonical(artifact) + b"\n"
+    if len(raw) > MAX_SHARD_ARTIFACT_BYTES:
+        raise ContextEfficiencyError(
+            "E_SHARD_BOUNDARY", "shard artifact exceeds size limit"
+        )
+    try:
+        if _has_reparse_ancestor(path):
+            raise ContextEfficiencyError(
+                "E_PATH_LINK", "shard artifact path traverses a reparse point"
+            )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if _has_reparse_ancestor(path):
+            raise ContextEfficiencyError(
+                "E_PATH_LINK", "shard artifact path traverses a reparse point"
+            )
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        if hasattr(os, "O_BINARY"):
+            flags |= os.O_BINARY
+        descriptor = os.open(path, flags, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except FileExistsError:
+        if _read_bounded(path, MAX_SHARD_ARTIFACT_BYTES) != raw:
+            raise ContextEfficiencyError(
+                "E_SHARD_COLLISION", "immutable shard path contains different bytes"
+            )
+    except OSError as exc:
+        raise ContextEfficiencyError(
+            "E_SHARD_WRITE", "cannot write immutable shard artifact"
+        ) from exc
+
+
+def _shard_datetime(value: Any, field: str) -> datetime:
+    if not isinstance(value, str) or len(value) > 40:
+        raise ContextEfficiencyError(
+            "E_SHARD_EXPIRY", f"{field} must be a UTC timestamp"
+        )
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ContextEfficiencyError(
+            "E_SHARD_EXPIRY", f"{field} must be a UTC timestamp"
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        raise ContextEfficiencyError(
+            "E_SHARD_EXPIRY", f"{field} must include UTC timezone"
+        )
+    return parsed.astimezone(timezone.utc)
+
+
+def _shard_now(now: Any = None) -> datetime:
+    if now is None:
+        return datetime.now(timezone.utc)
+    if isinstance(now, datetime) and now.tzinfo is not None:
+        return now.astimezone(timezone.utc)
+    raise ContextEfficiencyError("E_SHARD_TIME", "now must be timezone-aware")
+
+
+def _shard_source_rows(
+    root: Path, packet: dict[str, Any]
+) -> dict[str, tuple[bytes, str]]:
+    rows: dict[str, tuple[bytes, str]] = {}
+    for source in packet.get("sources", []):
+        if not isinstance(source, dict) or source.get("inclusion") != "full":
+            continue
+        path, relative = _shard_relative_path(root, source.get("path"), "packet source")
+        if _SECRET_NAME.search(relative):
+            continue
+        raw, digest, _ = _stable_file(path)
+        if digest != source.get("source_sha256") or any(
+            pattern.search(raw) for pattern in _SECRET_BYTES
+        ):
+            continue
+        rows[relative] = (raw, digest)
+    return rows
+
+
+def _shard_locator(
+    root: Path, raw_locator: Any, sources: dict[str, tuple[bytes, str]]
+) -> dict[str, Any]:
+    fields = {"path", "start_byte", "end_byte"}
+    if not isinstance(raw_locator, dict) or set(raw_locator) != fields:
+        raise ContextEfficiencyError(
+            "E_SHARD_LOCATOR", "locator must contain path and byte bounds"
+        )
+    path, relative = _shard_relative_path(root, raw_locator["path"], "locator.path")
+    del path
+    source = sources.get(relative)
+    if source is None:
+        raise ContextEfficiencyError(
+            "E_SHARD_LOCATOR", "locator must refer to a full, safe packet source"
+        )
+    raw, digest = source
+    start = _bounded_int(raw_locator["start_byte"], "locator.start_byte", 0, len(raw))
+    end = _bounded_int(raw_locator["end_byte"], "locator.end_byte", 1, len(raw))
+    if end <= start or end - start > MAX_SHARD_LOCATOR_BYTES:
+        raise ContextEfficiencyError(
+            "E_SHARD_LOCATOR", "locator span is empty or exceeds limit"
+        )
+    span = raw[start:end]
+    try:
+        span.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ContextEfficiencyError(
+            "E_SHARD_LOCATOR", "locator must align to UTF-8 boundaries"
+        ) from exc
+    return {
+        "path": relative,
+        "raw_source_sha256": digest,
+        "start_byte": start,
+        "end_byte": end,
+        "span_sha256": hashlib.sha256(span).hexdigest(),
+    }
+
+
+def _verify_shard_locator(root: Path, locator: Any) -> bool:
+    try:
+        if not isinstance(locator, dict) or set(locator) != {
+            "path",
+            "raw_source_sha256",
+            "start_byte",
+            "end_byte",
+            "span_sha256",
+        }:
+            return False
+        path, relative = _shard_relative_path(
+            root, locator["path"], "shard locator.path"
+        )
+        if relative != locator["path"] or _SECRET_NAME.search(relative):
+            return False
+        raw, digest, _ = _stable_file(path)
+        start = _bounded_int(locator["start_byte"], "locator.start_byte", 0, len(raw))
+        end = _bounded_int(locator["end_byte"], "locator.end_byte", 1, len(raw))
+        if end <= start or end - start > MAX_SHARD_LOCATOR_BYTES:
+            return False
+        span = raw[start:end]
+        span.decode("utf-8")
+        return (
+            not any(pattern.search(raw) for pattern in _SECRET_BYTES)
+            and digest == locator["raw_source_sha256"]
+            and hashlib.sha256(span).hexdigest() == locator["span_sha256"]
+        )
+    except (ContextEfficiencyError, OSError, UnicodeError, TypeError, KeyError):
+        return False
+
+
+def _normalize_shard_claims(
+    root: Path, claims: Any, sources: dict[str, tuple[bytes, str]]
+) -> list[dict[str, Any]]:
+    if not isinstance(claims, list) or not 1 <= len(claims) <= MAX_SHARD_CLAIMS:
+        raise ContextEfficiencyError("E_SHARD_FIELDS", "claims must contain 1..64 entries")
+    normalized = []
+    for index, claim in enumerate(claims):
+        if not isinstance(claim, dict) or set(claim) != {"key", "value", "locators"}:
+            raise ContextEfficiencyError("E_SHARD_FIELDS", f"claims[{index}] has invalid fields")
+        key = _safe_text(claim["key"], f"claims[{index}].key", 160).strip()
+        value = claim["value"]
+        if not isinstance(value, (str, int, float, bool, list, dict)) or value is None:
+            raise ContextEfficiencyError("E_SHARD_FIELDS", f"claims[{index}].value must be bounded JSON")
+        _reject_secret_keys({"value": value}, f"claims[{index}]")
+        value_bytes = _canonical(value)
+        if len(value_bytes) > MAX_SHARD_LOCATOR_BYTES or any(pattern.search(value_bytes) for pattern in _SECRET_BYTES):
+            raise ContextEfficiencyError("E_SHARD_BOUNDARY", f"claims[{index}].value exceeds limit")
+        locators = claim["locators"]
+        if not isinstance(locators, list) or not 1 <= len(locators) <= MAX_SHARD_RECORDS:
+            raise ContextEfficiencyError("E_SHARD_LOCATOR", f"claims[{index}] requires source locators")
+        normalized.append({"key": key, "value": value, "locators": [_shard_locator(root, locator, sources) for locator in locators]})
+    return normalized
+
+
+def _normalize_shard_retention(
+    root: Path, retained_records: Any, sources: dict[str, tuple[bytes, str]]
+) -> dict[str, list[dict[str, Any]]]:
+    categories = {"correction", "failure", "approval", "unresolved_action"}
+    if not isinstance(retained_records, dict) or set(retained_records) != categories:
+        raise ContextEfficiencyError("E_SHARD_RETENTION", "all four retained-record categories are required")
+    retained = {}
+    count = 0
+    for category in sorted(categories):
+        records = retained_records[category]
+        if not isinstance(records, list):
+            raise ContextEfficiencyError("E_SHARD_RETENTION", f"{category} must be a locator list")
+        count += len(records)
+        retained[category] = [_shard_locator(root, locator, sources) for locator in records]
+    if count > MAX_SHARD_RECORDS:
+        raise ContextEfficiencyError("E_SHARD_BOUNDARY", "retained records exceed limit")
+    return retained
+
+
+def _accepted_shard_conflict(
+    workspace: Path,
+    artifact: dict[str, Any],
+    digest: str,
+    claims: Any,
+    accepted_shards: Any,
+    now: datetime | None,
+) -> dict[str, str] | None:
+    if not isinstance(accepted_shards, (list, tuple)):
+        return None
+    current_pairs = {
+        (str(claim.get("key", "")).strip().casefold(), _canonical(claim.get("value")))
+        for claim in claims
+        if isinstance(claim, dict)
+    }
+    for accepted in accepted_shards[:MAX_SHARD_RECORDS]:
+        if not isinstance(accepted, dict) or set(accepted) != {"candidate", "review"}:
+            continue
+        other, reviewed = accepted["candidate"], accepted["review"]
+        if not _valid_accepted_shard(workspace, artifact, other, reviewed, now):
+            continue
+        for old in other.get("claims", []):
+            if not isinstance(old, dict):
+                continue
+            pair = (str(old.get("key", "")).strip().casefold(), _canonical(old.get("value")))
+            if any(key == pair[0] and value != pair[1] for key, value in current_pairs):
+                return {"candidate_sha256": digest, "accepted_candidate_sha256": other.get("candidate_sha256"), "key": pair[0], "basis": "same type and normalized key with different canonical values"}
+    return None
+
+
+def _valid_accepted_shard(
+    workspace: Path,
+    current: dict[str, Any],
+    other: Any,
+    reviewed: Any,
+    now: datetime | None,
+) -> bool:
+    if not isinstance(other, dict) or other.get("shard_type") != current.get("shard_type"):
+        return False
+    body = {key: value for key, value in other.items() if key != "artifact_path"}
+    if other.get("candidate_sha256") != _shard_digest(body, "candidate_sha256"):
+        return False
+    path = other.get("artifact_path")
+    if not isinstance(path, str) or not _stored_shard_matches(workspace, path, body):
+        return False
+    try:
+        if not validate_context_shard_candidate(workspace, other, now=now)["valid"]:
+            return False
+    except ContextEfficiencyError:
+        return False
+    if not isinstance(reviewed, dict):
+        return False
+    review_body = {key: value for key, value in reviewed.items() if key != "artifact_path"}
+    if (
+        reviewed.get("schema") != SHARD_REVIEW_SCHEMA
+        or reviewed.get("decision") != "accept"
+        or reviewed.get("state") != "CALLER_REVIEWED_ACCEPTED"
+        or reviewed.get("reviewer_identity_authenticated") is not False
+        or reviewed.get("candidate_sha256") != other.get("candidate_sha256")
+        or reviewed.get("review_sha256") != _shard_digest(review_body, "review_sha256")
+    ):
+        return False
+    return isinstance(reviewed.get("artifact_path"), str) and _stored_shard_matches(
+        workspace, reviewed["artifact_path"], review_body
+    )
+
+
+def _stored_shard_matches(workspace: Path, relative: str, body: dict[str, Any]) -> bool:
+    try:
+        path, _ = _shard_relative_path(workspace, relative, "shard artifact path")
+        return _read_bounded(path, MAX_SHARD_ARTIFACT_BYTES) == _canonical(body) + b"\n"
+    except (ContextEfficiencyError, OSError):
+        return False
+
+
+def _candidate_source_state(workspace: Path, artifact: dict[str, Any], packet_path: Path) -> str:
+    verified = verify_context_packet(workspace, packet_path)
+    if not verified.get("valid") or verified.get("packet_sha256") != artifact.get("packet", {}).get("packet_sha256"):
+        return "STALE"
+    try:
+        packet = json.loads(_read_bounded(packet_path).decode("utf-8"))
+        sources = _shard_source_rows(workspace, packet)
+        locators = [item for claim in artifact.get("claims", []) if isinstance(claim, dict) for item in claim.get("locators", [])]
+        locators.extend(item for records in artifact.get("retained_records", {}).values() if isinstance(records, list) for item in records)
+        if not all(_verify_shard_locator(workspace, item) for item in locators):
+            return "STALE"
+        if any(item.get("path") not in sources for item in locators if isinstance(item, dict)):
+            return "STALE"
+        return "CANDIDATE"
+    except (ContextEfficiencyError, OSError, UnicodeError, json.JSONDecodeError, AttributeError):
+        return "STALE"
+
+
+def _accepted_shard_conflict(workspace: Path, artifact: dict[str, Any], digest: str, claims: Any, accepted: Any, now: datetime | None) -> dict[str, str] | None:
+    if not isinstance(accepted, (list, tuple)):
+        return None
+    current = {(str(item.get("key", "")).strip().casefold(), _canonical(item.get("value"))) for item in claims if isinstance(item, dict)}
+    for pair in accepted[:MAX_SHARD_RECORDS]:
+        if not isinstance(pair, dict) or set(pair) != {"candidate", "review"}:
+            continue
+        other, review = pair["candidate"], pair["review"]
+        if not _is_reviewed_accepted_shard(workspace, artifact, other, review, now):
+            continue
+        for old in other.get("claims", []):
+            if not isinstance(old, dict):
+                continue
+            key, value = str(old.get("key", "")).strip().casefold(), _canonical(old.get("value"))
+            if any(current_key == key and current_value != value for current_key, current_value in current):
+                return {"candidate_sha256": digest, "accepted_candidate_sha256": other.get("candidate_sha256"), "key": key, "basis": "same type and normalized key with different canonical values"}
+    return None
+
+
+def _is_reviewed_accepted_shard(workspace: Path, current: dict[str, Any], other: Any, review: Any, now: datetime | None) -> bool:
+    if not isinstance(other, dict) or other.get("shard_type") != current.get("shard_type"):
+        return False
+    body = {key: value for key, value in other.items() if key != "artifact_path"}
+    if other.get("candidate_sha256") != _shard_digest(body, "candidate_sha256"):
+        return False
+    if not isinstance(other.get("artifact_path"), str) or not _stored_shard_matches(workspace, other["artifact_path"], body):
+        return False
+    try:
+        if not validate_context_shard_candidate(workspace, other, now=now)["valid"]:
+            return False
+    except ContextEfficiencyError:
+        return False
+    if not isinstance(review, dict):
+        return False
+    review_body = {key: value for key, value in review.items() if key != "artifact_path"}
+    return (
+        review.get("schema") == SHARD_REVIEW_SCHEMA
+        and review.get("decision") == "accept"
+        and review.get("state") == "CALLER_REVIEWED_ACCEPTED"
+        and review.get("reviewer_identity_authenticated") is False
+        and review.get("candidate_sha256") == other.get("candidate_sha256")
+        and review.get("review_sha256") == _shard_digest(review_body, "review_sha256")
+        and isinstance(review.get("artifact_path"), str)
+        and _stored_shard_matches(workspace, review["artifact_path"], review_body)
+    )
+
+
+def build_context_shard_candidate(
+    root: Path,
+    packet_path: Path,
+    shard_type: str,
+    claims: Any,
+    retained_records: Any,
+    expires_at: str,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Persist a source-bound candidate shard; this never accepts or activates it."""
+    if shard_type not in {"rule", "fact", "code_map"}:
+        raise ContextEfficiencyError(
+            "E_SHARD_TYPE", "shard_type must be rule, fact, or code_map"
+        )
+    workspace = _validated_root(root)
+    packet_path_value, packet_relative = _shard_relative_path(
+        workspace,
+        Path(packet_path).absolute().relative_to(workspace).as_posix()
+        if Path(packet_path).is_absolute()
+        else str(packet_path),
+        "packet_path",
+    )
+    verified = verify_context_packet(workspace, packet_path_value)
+    if not verified.get("valid"):
+        raise ContextEfficiencyError(
+            "E_SHARD_PACKET", "source packet failed verification"
+        )
+    packet = json.loads(_read_bounded(packet_path_value).decode("utf-8"))
+    sources = _shard_source_rows(workspace, packet)
+    normalized_claims = _normalize_shard_claims(workspace, claims, sources)
+    retained = _normalize_shard_retention(workspace, retained_records, sources)
+    current = _shard_now(now)
+    expiry = _shard_datetime(expires_at, "expires_at")
+    if not current < expiry <= current.replace(year=current.year + 1):
+        raise ContextEfficiencyError(
+            "E_SHARD_EXPIRY", "expiry must be within the next year"
+        )
+    artifact = {
+        "schema": SHARD_CANDIDATE_SCHEMA,
+        "state": "CANDIDATE",
+        "review_status": "UNREVIEWED",
+        "shard_type": shard_type,
+        "packet": {"path": packet_relative, "packet_sha256": verified["packet_sha256"]},
+        "claims": normalized_claims,
+        "retained_records": retained,
+        "retention_inventory_status": "CALLER_DECLARED",
+        "expires_at": expiry.isoformat().replace("+00:00", "Z"),
+        "provenance_boundary": "Hashes and locators bind caller-proposed content to local source bytes; they do not establish truth or completeness.",
+    }
+    artifact["candidate_sha256"] = _shard_digest(artifact, "candidate_sha256")
+    artifact_path, relative = _shard_artifact_path(
+        workspace, "candidates", artifact["candidate_sha256"]
+    )
+    _write_immutable_shard(artifact_path, artifact)
+    return {**artifact, "artifact_path": relative}
+
+
+def _load_shard_candidate(workspace: Path, candidate: Any) -> tuple[dict[str, Any], str | None]:
+    if isinstance(candidate, (str, Path)):
+        path, relative = _shard_relative_path(workspace, str(candidate), "candidate path")
+        try:
+            artifact = json.loads(_read_bounded(path, MAX_SHARD_ARTIFACT_BYTES).decode("utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ContextEfficiencyError("E_SHARD_READ", "candidate artifact cannot be read") from exc
+    elif isinstance(candidate, dict):
+        artifact = {key: value for key, value in candidate.items() if key != "artifact_path"}
+        relative = artifact.get("artifact_path")
+    else:
+        raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate must be an artifact or relative path")
+    if not isinstance(artifact, dict):
+        raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate must be an object")
+    return artifact, relative
+
+
+def _validate_shard_claim_structure(claim: Any) -> None:
+    if not isinstance(claim, dict) or set(claim) != {"key", "value", "locators"}:
+        raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate claim is invalid")
+    _safe_text(claim["key"], "claim.key", 160)
+    if not isinstance(claim["value"], (str, int, float, bool, list, dict)) or claim["value"] is None:
+        raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate claim value is invalid")
+    _reject_secret_keys({"value": claim["value"]}, "candidate.claim")
+    value_bytes = _canonical(claim["value"])
+    if len(value_bytes) > MAX_SHARD_LOCATOR_BYTES or any(pattern.search(value_bytes) for pattern in _SECRET_BYTES):
+        raise ContextEfficiencyError("E_SHARD_BOUNDARY", "candidate claim value exceeds limit")
+    if not isinstance(claim["locators"], list) or not claim["locators"]:
+        raise ContextEfficiencyError("E_SHARD_LOCATOR", "candidate claim requires locators")
+
+
+def _validate_shard_structure(artifact: dict[str, Any]) -> None:
+    fields = {
+        "schema", "state", "review_status", "shard_type", "packet", "claims",
+        "retained_records", "retention_inventory_status", "expires_at", "provenance_boundary",
+        "candidate_sha256",
+    }
+    if set(artifact) != fields or artifact.get("shard_type") not in {"rule", "fact", "code_map"}:
+        raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate has invalid fields or type")
+    if artifact.get("review_status") != "UNREVIEWED" or artifact.get("retention_inventory_status") != "CALLER_DECLARED":
+        raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate review or retention state is invalid")
+    claims = artifact.get("claims")
+    if not isinstance(claims, list) or not 1 <= len(claims) <= MAX_SHARD_CLAIMS:
+        raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate claims are invalid")
+    for claim in claims:
+        _validate_shard_claim_structure(claim)
+    categories = {"correction", "failure", "approval", "unresolved_action"}
+    retained = artifact.get("retained_records")
+    if not isinstance(retained, dict) or set(retained) != categories:
+        raise ContextEfficiencyError("E_SHARD_RETENTION", "candidate retention categories are invalid")
+    if any(not isinstance(records, list) for records in retained.values()):
+        raise ContextEfficiencyError("E_SHARD_RETENTION", "candidate retained records are invalid")
+    if sum(len(records) for records in retained.values()) > MAX_SHARD_RECORDS:
+        raise ContextEfficiencyError("E_SHARD_BOUNDARY", "candidate retained records exceed limit")
+
+
+def _validated_shard_reference(
+    workspace: Path, artifact: dict[str, Any]
+) -> tuple[str, Path, str]:
+    if artifact.get("schema") != SHARD_CANDIDATE_SCHEMA or artifact.get("state") != "CANDIDATE":
+        raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate schema or state is invalid")
+    _validate_shard_structure(artifact)
+    digest = artifact.get("candidate_sha256")
+    if not isinstance(digest, str) or digest != _shard_digest(artifact, "candidate_sha256"):
+        raise ContextEfficiencyError("E_SHARD_DIGEST", "candidate digest is invalid")
+    packet = artifact.get("packet")
+    if not isinstance(packet, dict) or set(packet) != {"path", "packet_sha256"}:
+        raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate packet reference is invalid")
+    path, relative = _shard_relative_path(workspace, packet["path"], "packet.path")
+    return digest, path, relative
+
+
+def validate_context_shard_candidate(
+    root: Path,
+    candidate: Any,
+    *,
+    accepted_shards: Any = (),
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Re-read and validate candidate provenance, freshness, expiry and conflicts."""
+    workspace = _validated_root(root)
+    artifact, relative = _load_shard_candidate(workspace, candidate)
+    digest, packet_path, packet_relative = _validated_shard_reference(workspace, artifact)
+    state = _candidate_source_state(workspace, artifact, packet_path)
+    if state != "STALE" and _shard_now(now) >= _shard_datetime(
+        artifact.get("expires_at"), "expires_at"
+    ):
+        state = "EXPIRED"
+    claims = artifact.get("claims", [])
+    if not isinstance(claims, list) or len(claims) > MAX_SHARD_CLAIMS:
+        state = "BLOCKED"
+    elif not isinstance(accepted_shards, (list, tuple)):
+        state = "BLOCKED"
+    elif len(accepted_shards) > MAX_SHARD_RECORDS:
+        state = "BLOCKED"
+    contradiction = _accepted_shard_conflict(
+        workspace, artifact, digest, claims, accepted_shards, now
+    )
+    if contradiction and state == "CANDIDATE":
+        state = "CONTRADICTED"
+    return {
+        "schema": SHARD_CANDIDATE_SCHEMA,
+        "state": state,
+        "valid": state == "CANDIDATE",
+        "candidate_sha256": digest,
+        "artifact_path": relative,
+        "packet_path": packet_relative,
+        "claim_count": len(claims) if isinstance(claims, list) else None,
+        "retention_inventory_status": artifact.get("retention_inventory_status"),
+        "contradiction": contradiction,
+        "review_status": artifact.get("review_status", "UNREVIEWED"),
+        "claim_boundary": "Structural hash/provenance validation only; no memory activation, semantic truth, or completeness claim.",
+    }
+
+
+def review_context_shard_candidate(
+    root: Path,
+    candidate: dict[str, Any],
+    decision: str,
+    reviewer_id: str,
+    review_basis: str,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Write a separate explicit caller-review event; reviewer identity is unauthenticated."""
+    validation = validate_context_shard_candidate(root, candidate, now=now)
+    if not validation["valid"]:
+        raise ContextEfficiencyError("E_SHARD_NOT_REVIEWABLE", f"candidate state is {validation['state']}")
+    if decision not in {"accept", "reject", "defer"}:
+        raise ContextEfficiencyError("E_SHARD_REVIEW", "decision must be accept, reject, or defer")
+    reviewer = _safe_text(reviewer_id, "reviewer_id", 160)
+    basis = _safe_text(review_basis, "review_basis", 1000)
+    artifact = {key: value for key, value in candidate.items() if key != "artifact_path"}
+    event = {
+        "schema": SHARD_REVIEW_SCHEMA,
+        "state": "CALLER_REVIEWED_ACCEPTED" if decision == "accept" else "CALLER_REVIEWED_REJECTED" if decision == "reject" else "CALLER_REVIEWED_DEFERRED",
+        "decision": decision,
+        "candidate_sha256": artifact["candidate_sha256"],
+        "reviewer_id": reviewer,
+        "reviewer_identity_authenticated": False,
+        "review_basis": basis,
+        "reviewed_at": _shard_now(now).isoformat().replace("+00:00", "Z"),
+        "activation": "NONE",
+    }
+    event["review_sha256"] = _shard_digest(event, "review_sha256")
+    path, relative = _shard_artifact_path(root, "reviews", event["review_sha256"])
+    _write_immutable_shard(path, event)
+    return {**event, "artifact_path": relative}
+
+
 def context_efficiency_status(root: Path) -> dict[str, Any]:
     """Fast bounded status projection over cached packets (no source reread)."""
-    workspace = Path(root).resolve()
+    workspace = _validated_root(root)
     directory = _cache_dir(workspace)
     packet_stats = _collect_packet_status(workspace, directory)
     experiment, experiment_blocked = _load_latest_experiment(directory)
@@ -1870,7 +2595,7 @@ def _collect_packet_status(workspace: Path, directory: Path) -> dict[str, Any]:
     )
     rows: list[dict[str, Any]] = []
     invalid = 0
-    cache_hits = 0
+    cache_hits: int | None = 0
     estimated_tokens = 0
     selection_count = 0
     missing_selection_evidence = 0
@@ -1889,7 +2614,13 @@ def _collect_packet_status(workspace: Path, directory: Path) -> dict[str, Any]:
                 continue
             budget = packet.get("budget", {})
             estimated_tokens += int(budget.get("estimated_tokens", 0))
-            cache_hits += int(packet.get("cache", {}).get("reuse_count", 0))
+            packet_hits = _cache_hit_count(
+                workspace, packet.get("cache", {}).get("key", "")
+            )
+            if packet_hits is None:
+                cache_hits = None
+            elif cache_hits is not None:
+                cache_hits += packet_hits
             selection_count += int(isinstance(packet.get("selection"), dict))
             if isinstance(packet.get("selection"), dict):
                 candidates = packet["selection"].get("candidates", [])
@@ -1921,7 +2652,7 @@ def _collect_packet_status(workspace: Path, directory: Path) -> dict[str, Any]:
     return {
         "rows": rows,
         "invalid_count": invalid,
-        "cache_hits": cache_hits,
+            "cache_hits": cache_hits,
         "estimated_tokens": estimated_tokens,
         "selection_count": selection_count,
         "missing_selection_evidence": missing_selection_evidence,
@@ -1954,6 +2685,8 @@ def _status_projection(
         "packet_count": len(stats["rows"]),
         "invalid_count": invalid,
         "cache_hits": stats["cache_hits"],
+        "cache_hits_semantics": "recorded_lower_bound",
+        "cache_usage_completeness": "UNKNOWN",
         "estimated_tokens": stats["estimated_tokens"],
         "packets": stats["rows"],
         "source_selection_status": "CACHED_METADATA_UNVERIFIED"

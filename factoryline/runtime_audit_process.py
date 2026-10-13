@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import BinaryIO
 
+from . import assembly_process
+
 MAX_OUTPUT = 8 * 1024 * 1024
 
 
@@ -54,24 +56,30 @@ def _environment(scratch: Path) -> dict[str, str]:
 def _launch(
     argv: list[str], cwd: Path, environment: dict[str, str]
 ) -> subprocess.Popen:
-    return subprocess.Popen(
-        argv,
-        cwd=cwd,
-        shell=False,
-        env=environment,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=os.name != "nt",
-        creationflags=(
-            subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
-        )
-        if os.name == "nt"
-        else 0,
+    if not argv:
+        raise OSError("empty command")
+    child, unit, error = assembly_process._launch(
+        argv[0], argv[1:], cwd, env=environment
     )
+    if child is None or unit is None:
+        raise OSError(error or "process lifecycle setup failed")
+    # Preserve the Popen-shaped runner interface while carrying the concrete
+    # cleanup unit returned by the shared lifecycle helper.
+    child._factory_cleanup_unit = unit
+    return child
+
+
+def _cleanup_unit(child: subprocess.Popen):
+    return getattr(child, "_factory_cleanup_unit", None)
 
 
 def _stop(child: subprocess.Popen) -> bool:
+    unit = _cleanup_unit(child)
+    if unit is not None:
+        return assembly_process._terminate_unit(child, unit)
+
+    # Keep direct helper callers and Popen-shaped test doubles bounded. Every
+    # production invocation from _launch has the shared cleanup unit.
     cleanup_confirmed = True
     if os.name == "nt":
         # Only the process tree created by this invocation is addressed.
@@ -154,9 +162,12 @@ def _wait_for_exit_or_limit(
     cancelled: threading.Event | None = None,
     *,
     deadline: float | None = None,
+    unit=None,
 ) -> bool:
     deadline = deadline if deadline is not None else time.monotonic() + timeout_seconds
     while not overflow.is_set() and not (cancelled is not None and cancelled.is_set()):
+        if unit is not None:
+            assembly_process._observe_descendants(child, unit)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return True
@@ -186,33 +197,43 @@ def _join_stream_readers(
 def _await_cleanup(
     child: subprocess.Popen, threads: list[threading.Thread]
 ) -> tuple[bool, bool]:
-    cleanup_confirmed = True
-    if child.poll() is None:
-        cleanup_confirmed = _stop(child)
+    unit = _cleanup_unit(child)
+    cleanup_confirmed = False
+    streams_closed = False
     try:
-        child.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        cleanup_confirmed = False
-        _stop(child)
-    return _join_stream_readers(child, threads, cleanup_confirmed)
+        if unit is not None:
+            # The helper observes descendants during the runner's polling loop,
+            # then verifies the process group / assigned Job Object is empty.
+            cleanup_confirmed = assembly_process._await_cleanup(
+                child, unit, terminate=True
+            )
+        elif child.poll() is None:
+            # An unbound test double may be stopped, but cannot be confirmed.
+            _stop(child)
+        cleanup_confirmed, streams_closed = _join_stream_readers(
+            child, threads, cleanup_confirmed
+        )
+    finally:
+        if unit is not None:
+            try:
+                unit.close()
+            except OSError:
+                cleanup_confirmed = False
+    return cleanup_confirmed, streams_closed
 
 
 def _cleanup_is_confirmed(
     child: subprocess.Popen, cleanup_confirmed: bool, streams_closed: bool
 ) -> bool:
-    # A Windows taskkill can race an already-exiting supervisor and return a
-    # nonzero status even after the inherited streams have closed. Do not turn
-    # that transient status into a false failure, but require both the root
-    # exit and closed captured streams before accepting cleanup. This remains
-    # bounded process supervision, not a sandbox or hidden-descendant proof.
-    if (
-        os.name == "nt"
-        and not cleanup_confirmed
+    # Cleanup must have come from the bound process group / Job Object, with
+    # the root exited and the runner's captured streams closed. This remains
+    # bounded process supervision, not a general security sandbox.
+    return (
+        _cleanup_unit(child) is not None
+        and cleanup_confirmed
         and child.poll() is not None
         and streams_closed
-    ):
-        cleanup_confirmed = True
-    return cleanup_confirmed and child.poll() is not None and streams_closed
+    )
 
 
 def _stream_facts(facts: dict, streams: dict[str, tuple[str, int]]) -> None:
@@ -305,7 +326,12 @@ def _run_child_bounded(
             child, overflow, streams, capture, stderr_capture
         )
         facts["timed_out"] = _wait_for_exit_or_limit(
-            child, timeout_seconds, overflow, cancelled, deadline=deadline
+            child,
+            timeout_seconds,
+            overflow,
+            cancelled,
+            deadline=deadline,
+            unit=_cleanup_unit(child),
         )
         execution_duration_ms = max(
             0, round((time.monotonic() - execution_started) * 1000)

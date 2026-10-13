@@ -15,12 +15,6 @@ import json
 import os
 import tempfile
 
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.units import inch
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-
 from .app_review_gate import SCHEMA as APP_REVIEW_SCHEMA
 from .appforge_quality_audit import RECEIPT_SCHEMA as QUALITY_AUDIT_SCHEMA
 from .appforge_store_media import RECEIPT_SCHEMA as STORE_MEDIA_SCHEMA
@@ -300,6 +294,25 @@ def _markdown(receipt: dict[str, Any]) -> str:
 
 
 def _pdf(path: Path, receipt: dict[str, Any]) -> None:
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.units import inch
+        from reportlab.platypus import (
+            Paragraph,
+            SimpleDocTemplate,
+            Spacer,
+            Table,
+            TableStyle,
+        )
+    except ImportError as exc:
+        raise RevenueForgeError(
+            "APPFORGE_ASSURANCE_PDF_DEPENDENCY_MISSING",
+            "PDF dossier generation requires the optional 'pdf' extra; install with "
+            "`python -m pip install 'factoryline-code-factory[pdf]'`.",
+        ) from exc
+
     styles = getSampleStyleSheet()
     document = SimpleDocTemplate(
         str(path),

@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import builtins
 import hashlib
 import json
+import subprocess
+import sys
 import struct
 import zlib
 from pathlib import Path
 
+import pytest
+
 from factoryline.app_review_gate import RULES, verify_app_review_readiness
 from factoryline.appforge_store_media import verify_store_media
 from factoryline.appforge_submission_assurance import (
+    _pdf,
     submission_assurance_projection,
     verify_submission_assurance,
 )
@@ -18,6 +24,7 @@ from factoryline.appforge_quality_audit import (
     STACK_CHECKS,
     verify_quality_audit,
 )
+from factoryline.revenueforge import RevenueForgeError
 from factoryline.oracle_firewall import capture_intent_handoff, seal_oracle_contract
 from factoryline.saas_proof import verify_saas_proof
 from factoryline.saas_proof import _sha as _receipt_sha
@@ -69,6 +76,40 @@ def _png(
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_submission_assurance_core_imports_without_pdf_extra() -> None:
+    script = """
+import builtins
+original = builtins.__import__
+def guarded(name, *args, **kwargs):
+    if name == 'reportlab' or name.startswith('reportlab.'):
+        raise ImportError('blocked optional dependency')
+    return original(name, *args, **kwargs)
+builtins.__import__ = guarded
+import factoryline.appforge_submission_assurance
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_pdf_generation_reports_actionable_missing_extra(
+    tmp_path: Path, monkeypatch
+) -> None:
+    original = builtins.__import__
+
+    def guarded(name, *args, **kwargs):
+        if name == "reportlab" or name.startswith("reportlab."):
+            raise ImportError("blocked optional dependency")
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    with pytest.raises(RevenueForgeError) as error:
+        _pdf(tmp_path / "dossier.pdf", {})
+    assert error.value.code == "APPFORGE_ASSURANCE_PDF_DEPENDENCY_MISSING"
+    assert "factoryline-code-factory[pdf]" in str(error.value)
 
 
 def _app_review(tmp_path: Path) -> Path:

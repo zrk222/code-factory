@@ -1,4 +1,4 @@
-"""Four bounded senior-engineering assurance controls for 0.46.3.
+"""Bounded senior-engineering assurance controls for 0.46.3.
 
 The controls in this module are deliberately provider-neutral and zero-authority:
 they make a replayable observation, compare a repair against the original
@@ -9,7 +9,11 @@ external systems.
 
 from __future__ import annotations
 
+import copy
 from datetime import datetime, timezone
+import hashlib
+import json
+import math
 import re
 import shutil
 import tempfile
@@ -38,6 +42,20 @@ REPAIR_SCHEMA = "factory.repair-comparison.v1"
 REUSE_REQUEST_SCHEMA = "factory.evidence-reuse-request.v1"
 REUSE_RECEIPT_SCHEMA = "factory.evidence-reuse.v1"
 BRIEF_SCHEMA = "factory.failure-brief.v1"
+INCIDENT_TRIAGE_SCHEMA = "factory.incident-triage.v1"
+ACTIVATION_EXPERIMENT_SCHEMA = "factory.activation-experiment-observation.v1"
+
+_INCIDENT_LEVELS = {"debug": 0, "info": 1, "warning": 2, "error": 3, "critical": 4}
+_INCIDENT_LIMITS = {"event_id": 128, "source": 256, "message": 2048, "timestamp": 64}
+_ACTIVATION_HOOKS = (
+    "reset_cache",
+    "baseline",
+    "clean",
+    "corrupt",
+    "denoise",
+    "noise",
+    "measure",
+)
 
 MAX_FILES = 1024
 MAX_TREE_BYTES = 32 * 1024 * 1024
@@ -1165,3 +1183,625 @@ def load_assurance_json(path: Path) -> dict[str, Any]:
     """Load one bounded JSON object for senior-assurance CLI commands."""
     value, _ = _load_json(Path(path))
     return value
+
+
+def _incident_event(value: object) -> dict[str, Any]:
+    required = {"severity", "source", "message"}
+    allowed = required | {"event_id", "timestamp", "fingerprint"}
+    if (
+        not isinstance(value, dict)
+        or not required <= set(value)
+        or set(value) - allowed
+    ):
+        raise SeniorAssuranceError("E_INCIDENT_EVENT", "event fields are invalid")
+    severity = value["severity"]
+    if not isinstance(severity, str) or len(severity) > 16:
+        raise SeniorAssuranceError("E_INCIDENT_SEVERITY", "event severity must be text")
+    normalized_severity = severity.lower()
+    row = {
+        "severity": normalized_severity
+        if normalized_severity in _INCIDENT_LEVELS
+        else "unknown"
+    }
+    for key, limit in _INCIDENT_LIMITS.items():
+        item = value.get(key, "")
+        if not isinstance(item, str) or len(item) > limit:
+            raise SeniorAssuranceError(
+                "E_INCIDENT_EVENT", f"event {key} is invalid or too long"
+            )
+        row[key] = item
+    has_supplied_fingerprint = "fingerprint" in value
+    supplied = value.get("fingerprint")
+    if has_supplied_fingerprint and (
+        not isinstance(supplied, str) or not re.fullmatch(r"[0-9a-f]{64}", supplied)
+    ):
+        raise SeniorAssuranceError(
+            "E_INCIDENT_FINGERPRINT", "fingerprint must be a lowercase SHA-256"
+        )
+    computed = _sha({"source": row["source"], "message": row["message"]})
+    if has_supplied_fingerprint and supplied != computed:
+        raise SeniorAssuranceError(
+            "E_INCIDENT_FINGERPRINT", "fingerprint does not match event content"
+        )
+    row["fingerprint"] = computed
+    return row
+
+
+def _incident_accumulate(
+    row: dict[str, Any], state: dict[str, Any], byte_limit: int
+) -> None:
+    fingerprint = row["fingerprint"]
+    state["duplicates"] += fingerprint in state["seen"]
+    state["seen"].add(fingerprint)
+    severity = row["severity"]
+    if severity == "critical":
+        state["critical"].add(fingerprint)
+    if severity == "unknown":
+        state["unknown"].add(fingerprint)
+    state["bytes_seen"] += len(canonical_bytes(row))
+    prior = state["groups"].get(fingerprint)
+    if state["bytes_seen"] > byte_limit:
+        state["pressure"] = True
+        if severity != "critical":
+            if prior is None:
+                state["byte_dropped"].add(fingerprint)
+            return
+        row = {**row, "message": ""}
+        state["byte_dropped"].discard(fingerprint)
+        state["truncated_critical"].add(fingerprint)
+    previous = prior["severity"] if prior else None
+    if previous is None or _INCIDENT_LEVELS.get(severity, -1) > _INCIDENT_LEVELS.get(
+        previous, -1
+    ):
+        state["groups"][fingerprint] = row
+
+
+def _pending_event_ids(value: object, expected_count: int) -> list[str]:
+    if (
+        not isinstance(value, list)
+        or len(value) != expected_count
+        or expected_count > 5000
+        or any(
+            not isinstance(item, str) or not item or len(item) > 128 for item in value
+        )
+        or len(set(value)) != len(value)
+    ):
+        return []
+    return value
+
+
+def _incident_json_text_bytes(value: str, remaining: int) -> int | None:
+    """Count canonical JSON string bytes and stop once the input budget is exceeded."""
+    total = 2
+    for char in value:
+        codepoint = ord(char)
+        if char in {'"', "\\", "\b", "\f", "\n", "\r", "\t"}:
+            total += 2
+        elif codepoint < 0x20:
+            total += 6
+        elif codepoint < 0x80:
+            total += 1
+        elif codepoint < 0x800:
+            total += 2
+        elif codepoint < 0x10000:
+            total += 3
+        else:
+            total += 4
+        if total > remaining:
+            return None
+    return total
+
+
+def _incident_fingerprint_size(value: object, remaining: int) -> int | None:
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise SeniorAssuranceError(
+            "E_INCIDENT_FINGERPRINT", "fingerprint must be a lowercase SHA-256"
+        )
+    encoded = _incident_json_text_bytes(value, remaining)
+    return None if encoded is None else len("fingerprint") + 4 + encoded
+
+
+def _incident_preflight_row(value: object, remaining: int) -> int | None:
+    """Validate a shallow event and estimate its bytes without canonical allocation."""
+    allowed = {"severity", "source", "message", "event_id", "timestamp", "fingerprint"}
+    required = {"severity", "source", "message"}
+    if (
+        not isinstance(value, dict)
+        or not required <= set(value)
+        or set(value) - allowed
+    ):
+        raise SeniorAssuranceError("E_INCIDENT_EVENT", "event fields are invalid")
+    used = 3  # object delimiters and conservative separators
+    for key, limit in _INCIDENT_LIMITS.items():
+        item = value.get(key, "")
+        if not isinstance(item, str) or len(item) > limit:
+            raise SeniorAssuranceError(
+                "E_INCIDENT_EVENT", f"event {key} is invalid or too long"
+            )
+        key_bytes = _incident_json_text_bytes(key, remaining - used)
+        item_bytes = _incident_json_text_bytes(item, remaining - used)
+        if key_bytes is None or item_bytes is None:
+            return None
+        used += key_bytes + item_bytes + 2
+        if used > remaining:
+            return None
+    severity = value["severity"]
+    if not isinstance(severity, str) or len(severity) > 16:
+        raise SeniorAssuranceError("E_INCIDENT_SEVERITY", "event severity must be text")
+    severity_bytes = _incident_json_text_bytes(severity, remaining - used)
+    if severity_bytes is None:
+        return None
+    used += len("severity") + 4 + severity_bytes
+    if "fingerprint" in value:
+        fingerprint_size = _incident_fingerprint_size(
+            value["fingerprint"], remaining - used
+        )
+        if fingerprint_size is None:
+            return None
+        used += fingerprint_size
+    return used if used <= remaining else None
+
+
+def _incident_batch_within_budget(events: list, byte_limit: int) -> bool:
+    """Preflight bounded event fields before any canonical serialization or hashing."""
+    used = 2  # list delimiters
+    for index, value in enumerate(events):
+        if index:
+            used += 1
+        row_size = _incident_preflight_row(value, byte_limit - used)
+        if row_size is None:
+            return False
+        used += row_size
+    return True
+
+
+def _triage_incident_events(
+    events: object,
+    *,
+    max_events: int = 500,
+    max_input_bytes: int = 262_144,
+    max_groups: int = 100,
+    raw_batch_sha256: str | None = None,
+    pending_event_ids: object = None,
+) -> dict[str, Any]:
+    """Bound, deduplicate, and prioritize events without granting execution authority."""
+    if (
+        not isinstance(events, list)
+        or type(max_events) is not int
+        or not 1 <= max_events <= 2000
+    ):
+        raise SeniorAssuranceError(
+            "E_INCIDENT_EVENT_BUDGET", "event batch exceeds its scan budget"
+        )
+    if (
+        type(max_input_bytes) is not int
+        or type(max_groups) is not int
+        or not 1 <= max_input_bytes <= 2_000_000
+        or not 1 <= max_groups <= 500
+    ):
+        raise SeniorAssuranceError(
+            "E_INCIDENT_BUDGET", "triage budgets are outside supported bounds"
+        )
+    if len(events) > max_events:
+        valid_digest = isinstance(raw_batch_sha256, str) and bool(
+            re.fullmatch(r"[0-9a-f]{64}", raw_batch_sha256)
+        )
+        pending = _pending_event_ids(pending_event_ids, len(events))
+        return {
+            "schema": INCIDENT_TRIAGE_SCHEMA,
+            "status": "BACKPRESSURE" if valid_digest and pending else "NOT_ASSESSED",
+            "groups": [],
+            "counts": {"received": len(events), "retained": 0, "dropped": len(events)},
+            "raw_batch_sha256": raw_batch_sha256 if valid_digest else None,
+            "batch_digest_verified": False,
+            "pending_event_ids": pending,
+            "pending_ids_verified": False,
+            "abstain": True,
+            "backpressure": True,
+            "execution_authority": "none",
+            "execution_allowed": False,
+            "claim_boundary": "Batch exceeded the scan budget; input preservation and full triage are caller responsibilities.",
+        }
+    if not _incident_batch_within_budget(events, max_input_bytes):
+        pending = [f"event:{index}" for index in range(len(events))]
+        return {
+            "schema": INCIDENT_TRIAGE_SCHEMA,
+            "status": "NOT_ASSESSED",
+            "groups": [],
+            "counts": {"received": len(events), "retained": 0, "dropped": 0},
+            "raw_batch_sha256": None,
+            "batch_digest_verified": False,
+            "pending_event_ids": pending,
+            "pending_ids_verified": False,
+            "critical_presence": "NOT_ASSESSED",
+            "abstain": True,
+            "backpressure": True,
+            "execution_authority": "none",
+            "execution_allowed": False,
+            "claim_boundary": "Input byte budget was reached before canonicalization; every event remains caller-owned and pending for a smaller batch or larger budget.",
+        }
+    state = {
+        "groups": {},
+        "seen": set(),
+        "critical": set(),
+        "unknown": set(),
+        "byte_dropped": set(),
+        "duplicates": 0,
+        "bytes_seen": 0,
+        "pressure": False,
+        "event_refs": {},
+        "duplicate_ids": [],
+        "truncated_critical": set(),
+    }
+    batch_hasher = hashlib.sha256()
+    batch_hasher.update(b"[")
+    for value in events:
+        row = _incident_event(value)
+        if state["seen"]:
+            batch_hasher.update(b",")
+        batch_hasher.update(canonical_bytes(value))
+        fingerprint = row["fingerprint"]
+        event_ref = row["event_id"] or fingerprint
+        state["event_refs"].setdefault(fingerprint, []).append(event_ref)
+        if fingerprint in state["seen"]:
+            state["duplicate_ids"].append(event_ref)
+        _incident_accumulate(row, state, max_input_bytes)
+    batch_hasher.update(b"]")
+    computed_digest = batch_hasher.hexdigest()
+    if raw_batch_sha256 is not None and raw_batch_sha256 != computed_digest:
+        raise SeniorAssuranceError(
+            "E_INCIDENT_BATCH_BINDING", "provided batch digest does not match events"
+        )
+    ordered = sorted(
+        state["groups"].values(),
+        key=lambda row: (
+            -_INCIDENT_LEVELS.get(row["severity"], -1),
+            row["fingerprint"],
+        ),
+    )
+    retained = ordered[:max_groups]
+    retained_fingerprints = {row["fingerprint"] for row in retained}
+    dropped_critical = len(state["critical"] - retained_fingerprints)
+    pressure = state["pressure"] or len(ordered) > max_groups
+    abstain = bool(state["unknown"] or dropped_critical or not events)
+    pending = [
+        event_ref
+        for fingerprint, references in state["event_refs"].items()
+        if fingerprint not in retained_fingerprints
+        or fingerprint in state["truncated_critical"]
+        for event_ref in references
+    ]
+    return {
+        "schema": INCIDENT_TRIAGE_SCHEMA,
+        "status": "ABSTAIN" if abstain else "BACKPRESSURE" if pressure else "READY",
+        "groups": retained,
+        "raw_batch_sha256": computed_digest,
+        "batch_digest_verified": True,
+        "pending_event_ids": pending,
+        "pending_ids_verified": True,
+        "duplicate_event_ids": state["duplicate_ids"],
+        "counts": {
+            "received": len(events),
+            "unique": len(state["seen"]),
+            "duplicates": state["duplicates"],
+            "retained": len(retained),
+            "dropped": len(state["seen"]) - len(retained),
+            "dropped_critical": dropped_critical,
+            "dropped_for_byte_budget": len(state["byte_dropped"]),
+            "bytes_seen": state["bytes_seen"],
+        },
+        "abstain": abstain,
+        "backpressure": pressure,
+        "execution_authority": "none",
+        "execution_allowed": False,
+        "claim_boundary": "Bounded deterministic triage only; omitted input may contain higher-priority evidence.",
+    }
+
+
+def triage_incident_events(
+    events: object,
+    *,
+    max_events: int = 500,
+    max_input_bytes: int = 262_144,
+    max_groups: int = 100,
+    raw_batch_sha256: str | None = None,
+    pending_event_ids: object = None,
+) -> dict[str, Any]:
+    """Return deterministic, bounded triage with critical references and no execution authority."""
+    return _triage_incident_events(
+        events,
+        max_events=max_events,
+        max_input_bytes=max_input_bytes,
+        max_groups=max_groups,
+        raw_batch_sha256=raw_batch_sha256,
+        pending_event_ids=pending_event_ids,
+    )
+
+
+class ActivationHookRegistry:
+    """Caller-declared callbacks; metadata is recorded but not independently authenticated."""
+
+    def __init__(self) -> None:
+        self._hooks: dict[str, Any] = {}
+        self._identities: dict[str, dict[str, str]] = {}
+
+    def register(
+        self,
+        name: str,
+        callback: Any,
+        *,
+        hook_id: str,
+        model_id: str,
+        model_version: str,
+        runtime_id: str,
+        implementation_sha256: str,
+    ) -> None:
+        """Register one caller-supplied executable hook and its declared identity."""
+        if (
+            name not in _ACTIVATION_HOOKS
+            or name in self._hooks
+            or not callable(callback)
+        ):
+            raise SeniorAssuranceError(
+                "E_ACTIVATION_CAPABILITY",
+                "hook must be supported, callable, and registered once",
+            )
+        identity = {
+            "hook_name": name,
+            "hook_id": hook_id,
+            "model_id": model_id,
+            "model_version": model_version,
+            "runtime_id": runtime_id,
+            "implementation_sha256": implementation_sha256,
+        }
+        if any(
+            not isinstance(value, str) or not value or len(value) > 128
+            for value in identity.values()
+        ):
+            raise SeniorAssuranceError(
+                "E_ACTIVATION_IDENTITY", "hook identity fields are required and bounded"
+            )
+        if not re.fullmatch(r"[0-9a-f]{64}", implementation_sha256):
+            raise SeniorAssuranceError(
+                "E_ACTIVATION_IDENTITY",
+                "implementation digest must be lowercase SHA-256",
+            )
+        self._hooks[name] = callback
+        self._identities[name] = identity
+
+    @property
+    def capabilities(self) -> tuple[str, ...]:
+        return tuple(name for name in _ACTIVATION_HOOKS if name in self._hooks)
+
+
+def _activation_request(value: object) -> tuple[dict[str, Any], str]:
+    keys = {"schema", "experiment_id", "input", "request_sha256"}
+    if not isinstance(value, dict) or set(value) != keys:
+        raise SeniorAssuranceError(
+            "E_ACTIVATION_REQUEST", "experiment request shape is invalid"
+        )
+    if value["schema"] != "factory.activation-experiment-request.v1":
+        raise SeniorAssuranceError(
+            "E_ACTIVATION_REQUEST", "experiment schema is unsupported"
+        )
+    if (
+        not isinstance(value["experiment_id"], str)
+        or not value["experiment_id"]
+        or len(value["experiment_id"]) > 128
+    ):
+        raise SeniorAssuranceError("E_ACTIVATION_REQUEST", "experiment id is invalid")
+    body = {key: value[key] for key in ("schema", "experiment_id", "input")}
+    if len(canonical_bytes(body)) > 65_536 or value["request_sha256"] != _sha(body):
+        raise SeniorAssuranceError(
+            "E_ACTIVATION_BINDING", "request is oversized or digest-mismatched"
+        )
+    return body, value["request_sha256"]
+
+
+def _activation_run(value: object, request_sha256: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {
+        "request_sha256",
+        "run_id",
+        "state",
+    }:
+        raise SeniorAssuranceError(
+            "E_ACTIVATION_EVIDENCE", "hook must return a bound run and state"
+        )
+    if (
+        value["request_sha256"] != request_sha256
+        or not isinstance(value["run_id"], str)
+        or not value["run_id"]
+    ):
+        raise SeniorAssuranceError(
+            "E_ACTIVATION_BINDING", "hook run does not match the request"
+        )
+    return value
+
+
+def _activation_metrics(
+    value: object, run: dict[str, Any], request_sha256: str
+) -> dict[str, float]:
+    keys = {"request_sha256", "run_id", "metrics"}
+    if not isinstance(value, dict) or set(value) != keys:
+        raise SeniorAssuranceError(
+            "E_ACTIVATION_MEASUREMENT", "measurement shape is invalid"
+        )
+    metrics = value["metrics"]
+    if value["request_sha256"] != request_sha256 or value["run_id"] != run["run_id"]:
+        raise SeniorAssuranceError(
+            "E_ACTIVATION_BINDING", "measurement does not match its run"
+        )
+    if not isinstance(metrics, dict) or not metrics or len(metrics) > 32:
+        raise SeniorAssuranceError(
+            "E_ACTIVATION_MEASUREMENT", "metrics are missing or oversized"
+        )
+    normalized = {}
+    for name, number in metrics.items():
+        if (
+            not isinstance(name, str)
+            or not name
+            or len(name) > 64
+            or isinstance(number, bool)
+            or not isinstance(number, (int, float))
+            or not math.isfinite(number)
+        ):
+            raise SeniorAssuranceError(
+                "E_ACTIVATION_MEASUREMENT", "metrics must be named finite numbers"
+            )
+        normalized[name] = float(number)
+    return normalized
+
+
+def _reset_activation_cache(
+    hooks: ActivationHookRegistry, body: dict[str, Any], digest: str, condition: str
+) -> str:
+    result = hooks._hooks["reset_cache"](json.loads(canonical_bytes(body)), condition)
+    if (
+        not isinstance(result, dict)
+        or set(result) != {"request_sha256", "condition", "cache_epoch"}
+        or result["request_sha256"] != digest
+        or result["condition"] != condition
+        or not isinstance(result["cache_epoch"], str)
+        or not result["cache_epoch"]
+    ):
+        raise SeniorAssuranceError(
+            "E_ACTIVATION_CACHE", "cache reset is unbound or unconfirmed"
+        )
+    return result["cache_epoch"]
+
+
+def _activation_protocol(
+    body: dict[str, Any], request_sha256: str, hooks: ActivationHookRegistry
+) -> dict[str, Any]:
+    identities = hooks._identities
+    for key in ("model_id", "model_version", "runtime_id"):
+        if len({identity[key] for identity in identities.values()}) != 1:
+            raise SeniorAssuranceError(
+                "E_ACTIVATION_IDENTITY", "hooks do not share one model/runtime identity"
+            )
+    hook_ids = {identity["hook_id"] for identity in identities.values()}
+    if len(hook_ids) != len(_ACTIVATION_HOOKS):
+        raise SeniorAssuranceError(
+            "E_ACTIVATION_IDENTITY", "each callback needs a unique hook identity"
+        )
+    cache_epochs = {}
+
+    def run_input():
+        return copy.deepcopy(body)
+
+    runs = {}
+    for stage in ("baseline", "clean"):
+        cache_epochs[stage] = _reset_activation_cache(
+            hooks, body, request_sha256, stage
+        )
+        runs[stage] = _activation_run(hooks._hooks[stage](run_input()), request_sha256)
+    cache_epochs["corrupt"] = _reset_activation_cache(
+        hooks, body, request_sha256, "corrupt"
+    )
+    runs["corrupt"] = _activation_run(
+        hooks._hooks["corrupt"](run_input(), copy.deepcopy(runs["clean"])),
+        request_sha256,
+    )
+    for stage in ("denoise", "noise"):
+        cache_epochs[stage] = _reset_activation_cache(
+            hooks, body, request_sha256, stage
+        )
+        runs[stage] = _activation_run(
+            hooks._hooks[stage](
+                run_input(),
+                copy.deepcopy(runs["clean"]),
+                copy.deepcopy(runs["corrupt"]),
+            ),
+            request_sha256,
+        )
+    if len({run["run_id"] for run in runs.values()}) != len(runs):
+        raise SeniorAssuranceError(
+            "E_ACTIVATION_EVIDENCE", "each stage needs a distinct run id"
+        )
+    if len(set(cache_epochs.values())) != len(cache_epochs):
+        raise SeniorAssuranceError(
+            "E_ACTIVATION_CACHE", "each condition needs a fresh cache epoch"
+        )
+    observations = {
+        stage: {
+            "run_id": run["run_id"],
+            "metrics": _activation_metrics(
+                hooks._hooks["measure"](copy.deepcopy(body), copy.deepcopy(run)),
+                run,
+                request_sha256,
+            ),
+        }
+        for stage, run in runs.items()
+    }
+    metric_sets = {tuple(sorted(item["metrics"])) for item in observations.values()}
+    if len(metric_sets) != 1:
+        raise SeniorAssuranceError(
+            "E_ACTIVATION_MEASUREMENT", "all conditions need matching metrics"
+        )
+    declared_identities = {
+        name: dict(identity) for name, identity in identities.items()
+    }
+    result = {
+        "schema": ACTIVATION_EXPERIMENT_SCHEMA,
+        "status": "OBSERVED",
+        "experiment_id": body["experiment_id"],
+        "request_sha256": request_sha256,
+        "scope": "caller-configured-activation-experiment",
+        "hook_identities": declared_identities,
+        "hook_identity_sha256": _sha(declared_identities),
+        "cache_epochs": cache_epochs,
+        "observations": observations,
+        "execution_authority": "explicit-caller-opt-in-registered-hooks",
+        "release_approval": False,
+        "claim_boundary": "Caller-declared identities and request-bound measurements only; hook behavior is not independently verified.",
+    }
+    result["evidence_sha256"] = _sha(result)
+    return result
+
+
+def run_activation_experiment(
+    request: object, hooks: object, *, execute: bool = False
+) -> dict[str, Any]:
+    """Explicitly run caller-configured baseline and dual-patch callbacks."""
+    try:
+        body, request_sha256 = _activation_request(request)
+        if not isinstance(hooks, ActivationHookRegistry):
+            raise SeniorAssuranceError(
+                "E_ACTIVATION_CAPABILITY", "explicit hook registry is required"
+            )
+        missing = [name for name in _ACTIVATION_HOOKS if name not in hooks._hooks]
+        if missing:
+            return {
+                "schema": ACTIVATION_EXPERIMENT_SCHEMA,
+                "status": "INCOMPLETE",
+                "reason": "MISSING_CAPABILITIES",
+                "missing_capabilities": missing,
+                "request_sha256": request_sha256,
+                "execution_authority": "none",
+            }
+        if not isinstance(execute, bool):
+            raise SeniorAssuranceError(
+                "E_ACTIVATION_EXECUTE", "execute must be an explicit boolean"
+            )
+        if not execute:
+            return {
+                "schema": ACTIVATION_EXPERIMENT_SCHEMA,
+                "status": "NOT_RUN",
+                "reason": "EXPLICIT_EXECUTION_REQUIRED",
+                "request_sha256": request_sha256,
+                "execution_authority": "none",
+            }
+        return _activation_protocol(body, request_sha256, hooks)
+    except Exception as exc:
+        code = getattr(exc, "code", "")
+        safe_code = (
+            code
+            if isinstance(code, str) and re.fullmatch(r"E_[A-Z0-9_]{1,64}", code)
+            else type(exc).__name__
+        )
+        return {
+            "schema": ACTIVATION_EXPERIMENT_SCHEMA,
+            "status": "INCOMPLETE",
+            "reason": safe_code,
+            "execution_authority": "none",
+        }

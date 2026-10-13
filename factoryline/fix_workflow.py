@@ -19,6 +19,9 @@ from .senior_assurance import SeniorAssuranceError, compare_repair, failure_brie
 
 SCHEMA = "factory.fix-workflow.v1"
 INTERVENTION_SCHEMA = "factory.behavioral-intervention-summary.v1"
+BRANCH_COMPARISON_SCHEMA = "factory.repair-branch-comparison.v1"
+BRANCH_COMPARISON_RECEIPT_SCHEMA = "factory.repair-branch-comparison-receipt.v1"
+MAX_REPAIR_BRANCHES = 8
 
 
 class FixWorkflowError(ValueError):
@@ -296,6 +299,163 @@ def _intervention_status(
     return "OBSERVED"
 
 
+def _branch_inputs(root: Path, value: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if not isinstance(value, dict) or set(value) != {
+        "schema", "comparison_id", "contract_sha256", "original", "negative_controls", "branches"
+    }:
+        raise FixWorkflowError("E_BRANCH_FIELDS", "branch comparison has missing or unknown fields")
+    if value.get("schema") != BRANCH_COMPARISON_SCHEMA:
+        raise FixWorkflowError("E_BRANCH_SCHEMA", "unsupported branch comparison schema")
+    if not isinstance(value.get("comparison_id"), str) or not value["comparison_id"].strip() or len(value["comparison_id"]) > 64:
+        raise FixWorkflowError("E_BRANCH_ID", "comparison_id must be a short non-empty string")
+    if not _is_digest(value.get("contract_sha256")):
+        raise FixWorkflowError("E_BRANCH_CONTRACT", "contract_sha256 must be lowercase SHA-256")
+    branches = value.get("branches")
+    if not isinstance(branches, list) or not 1 <= len(branches) <= MAX_REPAIR_BRANCHES:
+        raise FixWorkflowError("E_BRANCH_LIMIT", f"branches must contain 1..{MAX_REPAIR_BRANCHES} candidates")
+    ids = []
+    for row in branches:
+        if not isinstance(row, dict) or set(row) != {"branch_id", "candidate"}:
+            raise FixWorkflowError("E_BRANCH_FIELDS", "each branch requires only branch_id and candidate")
+        identifier = row.get("branch_id")
+        if not isinstance(identifier, str) or not identifier or len(identifier) > 64 or not identifier[0].isalnum() or any(not (c.isalnum() or c in "._-") for c in identifier):
+            raise FixWorkflowError("E_BRANCH_ID", "branch_id must use letters, digits, dot, underscore, or hyphen")
+        ids.append(identifier)
+    if len(set(ids)) != len(ids):
+        raise FixWorkflowError("E_BRANCH_DUPLICATE", "branch_id values must be unique")
+    base = {
+        "schema": "factory.repair-comparison.v1",
+        "comparison_id": value["comparison_id"],
+        "contract_sha256": value["contract_sha256"],
+        "buggy": value["original"],
+        "negative_controls": value["negative_controls"],
+    }
+    return base, branches
+
+
+def _branch_repair_manifest(base: dict[str, Any], branch: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **base,
+        "comparison_id": f"{base['comparison_id']}-{branch['branch_id']}",
+        "fixed": branch["candidate"],
+    }
+
+
+def _branch_binding(base: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "contract_sha256": base["contract_sha256"],
+        "original_manifest_sha256": _sha(base["buggy"]),
+        "negative_control_manifest_sha256": [_sha(item) for item in base["negative_controls"]],
+    }
+
+
+def _branch_row(
+    branch: dict[str, Any],
+    repair: dict[str, Any],
+    binding: dict[str, Any],
+    comparison: dict[str, Any],
+    *,
+    execute: bool,
+) -> dict[str, Any]:
+    intervention = _behavioral_intervention(comparison, repair, execute)
+    status = "PLAN_ONLY" if not execute else (
+        "OBSERVED" if intervention["status"] == "OBSERVED" else "INCOMPLETE"
+    )
+    return {
+        "branch_id": branch["branch_id"],
+        "candidate_manifest_sha256": _sha(branch["candidate"]),
+        "shared_binding_sha256": _sha(binding),
+        "status": status,
+        "comparison_state": comparison.get("state"),
+        "behavioral_intervention": intervention,
+        "raw_comparison": comparison,
+        "comparison_manifest_sha256": _sha(repair),
+    }
+
+
+def _preflight_repair_branches(
+    workspace: Path, base: dict[str, Any], branches: list[dict[str, Any]]
+) -> list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]]:
+    prepared = []
+    for branch in branches:
+        repair = _branch_repair_manifest(base, branch)
+        try:
+            plan = compare_repair(workspace, repair, execute=False)
+        except SeniorAssuranceError as exc:
+            raise FixWorkflowError(exc.code, exc.message) from exc
+        prepared.append((branch, repair, plan))
+    return prepared
+
+
+def _compare_repair_branches(
+    workspace: Path,
+    prepared: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]],
+    binding: dict[str, Any],
+    *,
+    execute: bool,
+) -> list[dict[str, Any]]:
+    results = []
+    for branch, repair, plan in prepared:
+        comparison = plan
+        if execute:
+            try:
+                comparison = compare_repair(workspace, repair, execute=True)
+            except SeniorAssuranceError as exc:
+                comparison = {
+                    "state": "INCOMPLETE",
+                    "executed": False,
+                    "error_code": exc.code,
+                    "error": "Replay execution did not produce a complete comparison.",
+                }
+        results.append(_branch_row(branch, repair, binding, comparison, execute=execute))
+    return results
+
+
+def _branch_batch_state(execute: bool, results: list[dict[str, Any]]) -> str:
+    if not execute:
+        return "PLAN_ONLY"
+    complete = all(
+        row["status"] == "OBSERVED" and row["raw_comparison"].get("executed") is True
+        for row in results
+    )
+    return "COMPARED" if complete else "INCOMPLETE"
+
+
+def run_repair_branch_comparison(
+    root: Path, manifest: dict[str, Any], *, execute: bool = False, out: Path | None = None
+) -> dict[str, Any]:
+    """Compare up to eight repair candidates under one exact contract and baseline."""
+    workspace = Path(root).resolve()
+    base, branches = _branch_inputs(workspace, manifest)
+    binding = _branch_binding(base)
+    prepared = _preflight_repair_branches(workspace, base, branches)
+    results = _compare_repair_branches(workspace, prepared, binding, execute=execute)
+    core = {
+        "schema": BRANCH_COMPARISON_RECEIPT_SCHEMA,
+        "marker": "REPAIR_BRANCH_COMPARISON_ADVISORY",
+        "comparison_id": manifest["comparison_id"],
+        "contract_sha256": manifest["contract_sha256"],
+        "mode": "execute" if execute else "plan",
+        "state": _branch_batch_state(execute, results),
+        "branch_count": len(results),
+        "shared_binding": binding,
+        "shared_binding_sha256": _sha(binding),
+        "branches": results,
+        "candidate_selection": None,
+        "promotion": "NONE",
+        "application": "NONE",
+        "release_approval": False,
+        "authority": "none",
+        "claim_boundary": "Each candidate is compared independently against the same original failure and controls in fresh replay workspaces. Raw outcomes are preserved; no winner is chosen, ranked, promoted, applied, or approved.",
+    }
+    result = {**core, "receipt_sha256": _sha(core)}
+    if out is not None:
+        destination = Path(out)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(canonical_bytes(result) + b"\n")
+    return result
+
+
 def run_fix_workflow(
     root: Path,
     repair_manifest: dict[str, Any],
@@ -304,6 +464,10 @@ def run_fix_workflow(
     out: Path | None = None,
 ) -> dict[str, Any]:
     """Run or plan the complete fix handoff around a repair comparison manifest."""
+    if isinstance(repair_manifest, dict) and repair_manifest.get("schema") == BRANCH_COMPARISON_SCHEMA:
+        return run_repair_branch_comparison(
+            root, repair_manifest, execute=execute, out=out
+        )
     try:
         comparison = compare_repair(
             Path(root).resolve(), repair_manifest, execute=execute

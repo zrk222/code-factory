@@ -388,9 +388,10 @@ def _lifecycle_receipt_target(
         RECEIPT_DIR / f"{event['run_id']}-{event['sequence']:04d}.json"
     ).as_posix()
     target_relative = _relative(str(out) if out else default, "output")
-    if not target_relative.startswith(RECEIPT_DIR.as_posix() + "/"):
+    if target_relative != default:
         raise LifecycleLedgerError(
-            "E_LIFECYCLE_PATH", "output must be beneath .factory/lifecycle"
+            "E_LIFECYCLE_PATH",
+            "output must use the canonical run and sequence receipt path",
         )
     target = _inside(workspace, target_relative)
     target.parent.mkdir(parents=True, exist_ok=True)

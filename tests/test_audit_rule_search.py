@@ -13,6 +13,7 @@ from factoryline.jev_classifier import (
     classify_retrieval,
     fuse_advisory_scores,
     normalize_jev_result,
+    triage_incident_events,
 )
 from factoryline.mcp import dispatch
 
@@ -133,6 +134,16 @@ def test_jev_handoff_rejects_non_ranked_search():
     lexical = search_audit_rules({"query": "tenant", "ranking": "lexical"})
     with pytest.raises(JevClassificationError):
         build_jev_input(lexical)
+
+
+def test_jev_lazy_triage_surface_is_bounded_and_advisory():
+    result = triage_incident_events(
+        [{"severity": "critical", "source": "api", "message": "failure"}]
+    )
+
+    assert result["status"] == "READY"
+    assert result["groups"][0]["severity"] == "critical"
+    assert result["execution_allowed"] is False
 
 
 def _review_packet(candidate_sha256="a" * 64):

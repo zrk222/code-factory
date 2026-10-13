@@ -104,7 +104,7 @@ def _configs():
     }
 
 
-def signed_plan(tmp_path: Path):
+def signed_plan(tmp_path: Path, *, execution_policy: dict | None = None):
     source = tmp_path / "candidate.txt"
     source.write_text("candidate", encoding="utf-8")
     raw = source.read_bytes()
@@ -140,6 +140,8 @@ def signed_plan(tmp_path: Path):
         },
         "lanes": [],
     }
+    if execution_policy is not None:
+        plan["execution_policy"] = execution_policy
     for kind, config in _configs().items():
         plan["lanes"].append(
             {
@@ -186,6 +188,51 @@ def test_signed_plan_binds_six_lanes_sources_environment_and_authority(tmp_path)
     plan_path, trust, trust_sha, plan = signed_plan(tmp_path)
     result = verify_runtime_audit_plan(plan_path, trust, trust_sha, tmp_path, D)
     assert result["plan"] == plan and result["authority"] == "none"
+    assert result["execution_policy"]["max_parallelism"] == 1
+
+
+def test_signed_execution_policy_requires_safe_bounded_parallelism(tmp_path):
+    plan_path, trust, trust_sha, plan = signed_plan(tmp_path)
+    plan["execution_policy"] = {
+        "max_parallelism": 2,
+        "non_mutating": True,
+        "resource_safe": True,
+    }
+    material = generate_key_material(
+        out_dir=tmp_path / "keys2",
+        keyid="operator2",
+        identity="operator@example.test",
+        issuer="https://issuer.example.test",
+    )
+    envelope = sign_payload(
+        plan,
+        payload_type=PLAN_TYPE,
+        private_key_path=Path(material["private_key"]),
+        keyid=material["keyid"],
+        identity=material["identity"],
+        issuer=material["issuer"],
+    )
+    plan_path.write_text(json.dumps(envelope), encoding="utf-8")
+    trust = Path(material["trust_root"])
+    trust_sha = sha256_bytes(trust.read_bytes())
+    result = verify_runtime_audit_plan(plan_path, trust, trust_sha, tmp_path, D)
+    assert result["execution_policy"]["max_parallelism"] == 2
+    for unsafe in (
+        {"max_parallelism": 2, "non_mutating": False, "resource_safe": True},
+        {"max_parallelism": 2, "non_mutating": True, "resource_safe": False},
+    ):
+        plan["execution_policy"] = unsafe
+        envelope = sign_payload(
+            plan,
+            payload_type=PLAN_TYPE,
+            private_key_path=Path(material["private_key"]),
+            keyid=material["keyid"],
+            identity=material["identity"],
+            issuer=material["issuer"],
+        )
+        plan_path.write_text(json.dumps(envelope), encoding="utf-8")
+        with pytest.raises(RuntimeAuditError, match="E_EXECUTION_POLICY"):
+            verify_runtime_audit_plan(plan_path, trust, trust_sha, tmp_path, D)
 
 
 def test_contract_rejects_environment_source_and_signature_drift(tmp_path):
