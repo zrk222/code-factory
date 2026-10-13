@@ -18,9 +18,10 @@ from pathlib import Path
 class _AssertionChallenge:
     """Observe one assertion during the selected call phase, including new threads."""
 
-    def __init__(self, path, line, inject, qualname):
+    def __init__(self, path, line, inject, qualname, firstlineno):
         self.path, self.line, self.inject = path, line, inject
         self.qualname = qualname
+        self.firstlineno = firstlineno
         self.active = False
         self.hits = 0
         self.reports = []
@@ -32,7 +33,8 @@ class _AssertionChallenge:
         """Raise at the reviewed assertion during the selected call phase."""
         if self.active and event == "line" and frame.f_lineno == self.line:
             if (
-                frame.f_code.co_qualname == self.qualname
+                frame.f_code.co_name == self.qualname.rsplit(".", 1)[-1]
+                and frame.f_code.co_firstlineno == self.firstlineno
                 and Path(frame.f_code.co_filename).resolve() == self.path
             ):
                 self.hits += 1
@@ -41,6 +43,7 @@ class _AssertionChallenge:
         return self.trace
 
     def pytest_collection_finish(self, session):
+        """Reject ambiguous collection before any selected test can execute."""
         self.collected = [item.nodeid for item in session.items]
         if len(session.items) != 1:
             raise pytest.UsageError(
@@ -49,6 +52,7 @@ class _AssertionChallenge:
 
     @pytest.hookimpl(hookwrapper=True)
     def pytest_runtest_call(self, item):
+        """Trace only the selected call phase and restore existing observers."""
         old, old_thread = sys.gettrace(), threading.gettrace()
         self.active = True
         sys.settrace(self.trace)
@@ -61,6 +65,7 @@ class _AssertionChallenge:
             threading.settrace(old_thread)
 
     def pytest_runtest_logreport(self, report):
+        """Record exact terminal phase outcomes without retaining raw output."""
         self.reports.append(
             {
                 "nodeid": report.nodeid,
@@ -73,6 +78,7 @@ class _AssertionChallenge:
 
     @pytest.hookimpl(hookwrapper=True)
     def pytest_runtest_makereport(self, item, call):
+        """Identify the injected exception by identity rather than its text."""
         if call.excinfo is not None and _probe_exception_contains(
             call.excinfo.value, self.error
         ):
@@ -97,6 +103,7 @@ def _challenge_worker(config, output):
         config["line"],
         config["inject"],
         config["qualname"],
+        config["firstlineno"],
     )
     code = pytest.main(
         [
@@ -123,7 +130,7 @@ def _challenge_worker(config, output):
     )
 
 
-def _challenge_inputs(root, nodeid, line):
+def _challenge_path(root, nodeid):
     root = Path(root).resolve()
     if not isinstance(nodeid, str):
         raise ValueError("An exact pytest node ID is required")
@@ -145,16 +152,55 @@ def _challenge_inputs(root, nodeid, line):
         raise ValueError("Test source must remain inside the project")
     if path.stat().st_size > 4 * 1024 * 1024:
         raise ValueError("Test source exceeds the 4 MiB probe limit")
+    return root, path.resolve()
+
+
+def _challenge_inputs(root, nodeid, line):
+    root, path = _challenge_path(root, nodeid)
     tree = ast.parse(path.read_text(encoding="utf-8"))
     assertions = [
         n for n in ast.walk(tree) if isinstance(n, ast.Assert) and n.lineno == line
     ]
-    if type(line) is not int or len(assertions) != 1:
+    ambiguous = _shared_assertion_line(tree, line)
+    if type(line) is not int or len(assertions) != 1 or ambiguous:
         raise ValueError("The requested line must contain exactly one Python assert")
-    return root, path.resolve(), _assertion_qualname(tree, assertions[0])
+    scopes = _assertion_scopes(tree, assertions[0])
+    return (
+        root,
+        path,
+        _assertion_qualname(scopes),
+        _assertion_firstlineno(scopes),
+    )
 
 
-def _assertion_qualname(tree, assertion):
+def _assertion_firstlineno(scopes):
+    function = next(
+        (
+            node
+            for node in scopes
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ),
+        None,
+    )
+    if function is None:
+        return 1
+    return min(
+        [function.lineno, *(decorator.lineno for decorator in function.decorator_list)]
+    )
+
+
+def _shared_assertion_line(tree, line):
+    return any(
+        isinstance(n, ast.stmt)
+        and not isinstance(
+            n, (ast.Assert, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        )
+        and n.lineno == line
+        for n in ast.walk(tree)
+    )
+
+
+def _assertion_scopes(tree, assertion):
     parents = {
         child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
     }
@@ -163,6 +209,10 @@ def _assertion_qualname(tree, assertion):
         node = parents[node]
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             scopes.append(node)
+    return scopes
+
+
+def _assertion_qualname(scopes):
     parts, previous = [], None
     for node in reversed(scopes):
         if parts and isinstance(previous, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -253,11 +303,15 @@ def _exact_challenge_outcome(observation, nodeid, outcome):
     if observation["hits"] < 1:
         return False
     reports = observation.get("reports", [])
+    if observation.get("exit_code") != (0 if outcome == "passed" else 1):
+        return False
+    return _exact_phase_reports(reports, nodeid, outcome)
+
+
+def _exact_phase_reports(reports, nodeid, outcome):
     if not isinstance(reports, list) or any(
         not isinstance(row, dict) for row in reports
     ):
-        return False
-    if observation.get("exit_code") != (0 if outcome == "passed" else 1):
         return False
     if [(row.get("nodeid"), row.get("phase")) for row in reports] != [
         (nodeid, phase) for phase in ("setup", "call", "teardown")
@@ -284,7 +338,7 @@ def probe_assertion_propagation(root, nodeid, line, *, timeout=30):
     """
     if type(timeout) not in (int, float) or not 0 < timeout <= 300:
         raise ValueError("timeout must be between 0 and 300 seconds")
-    root, path, qualname = _challenge_inputs(root, nodeid, line)
+    root, path, qualname, firstlineno = _challenge_inputs(root, nodeid, line)
     before = _challenge_source_binding(root)
     config = {
         "root": str(root),
@@ -293,6 +347,7 @@ def probe_assertion_propagation(root, nodeid, line, *, timeout=30):
         "nodeid": nodeid,
         "inject": False,
         "qualname": qualname,
+        "firstlineno": firstlineno,
     }
     baseline = _run_assertion_challenge(config, timeout)
     challenge = {}

@@ -1891,6 +1891,8 @@ def _mock_argument_oracle(node: ast.Call, aliases: dict[str, str]) -> bool:
     }
     if not isinstance(node.func, ast.Attribute) or node.func.attr not in methods:
         return False
+    if not _mock_receiver_has_provenance(node, aliases):
+        return False
     if node.func.attr in {
         "assert_not_called",
         "assert_not_awaited",
@@ -1901,6 +1903,89 @@ def _mock_argument_oracle(node: ast.Call, aliases: dict[str, str]) -> bool:
     } and not _injected_mock_use(node, aliases):
         return False
     return not _mock_self_check(node)
+
+
+_UNITTEST_MOCK_CONSTRUCTORS = {
+    "unittest.mock.AsyncMock",
+    "unittest.mock.MagicMock",
+    "unittest.mock.Mock",
+    "unittest.mock.NonCallableMagicMock",
+    "unittest.mock.NonCallableMock",
+    "unittest.mock.PropertyMock",
+    "unittest.mock.create_autospec",
+    "unittest.mock.mock_open",
+}
+
+
+def _mock_receiver_has_provenance(assertion, aliases):
+    """Trust mock assertions only for locally constructed unittest.mock values."""
+    receiver = _mock_root_name(assertion.func.value)
+    scope = getattr(assertion, "_oracle_scope", None)
+    if receiver is None or scope is None:
+        return False
+    scoped_aliases = _scope_security_aliases(aliases, scope)
+    nodes = _test_oracle_body_nodes(scope, scoped_aliases)
+    if _mock_scope_binding(nodes, receiver, assertion, scoped_aliases):
+        return True
+    if (
+        receiver in _scope_parameters(scope)
+        or any(
+            isinstance(node, ast.stmt)
+            and node.lineno < assertion.lineno
+            and receiver in _bound_names(node)
+            for node in nodes
+        )
+        or _scope_binds_name(scope, receiver)
+    ):
+        return False
+    module = getattr(scope, "_oracle_module", None)
+    if module is None:
+        return False
+    module_aliases = _scope_security_aliases(_module_security_aliases(module), module)
+    return _mock_scope_binding(
+        module.body,
+        receiver,
+        assertion,
+        module_aliases,
+    )
+
+
+def _scope_binds_name(scope, name):
+    return any(name in _bound_names(statement) for statement in scope.body)
+
+
+def _mock_root_name(node):
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _mock_scope_binding(nodes, name, endpoint, aliases):
+    endpoint_line = endpoint.lineno
+    for statement in nodes:
+        if not isinstance(statement, ast.stmt):
+            continue
+        if statement.lineno >= endpoint_line or not _in_current_test_body(statement):
+            continue
+        if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            continue
+        if not _mock_constructor_binding(statement, name, aliases):
+            continue
+        return not _name_rebound(nodes, name, statement.lineno, endpoint_line)
+    return False
+
+
+def _mock_constructor_binding(statement, name, aliases):
+    targets = (
+        statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+    )
+    return (
+        any(isinstance(target, ast.Name) and target.id == name for target in targets)
+        and _effective_assertion(statement, aliases)
+        and isinstance(statement.value, ast.Call)
+        and _normalized_call_name(statement.value, aliases)
+        in _UNITTEST_MOCK_CONSTRUCTORS
+    )
 
 
 def _injected_mock_use(assertion: ast.Call, aliases: dict[str, str]) -> bool:
@@ -4962,6 +5047,9 @@ def _security_scan_tree(
     relative = path.relative_to(root).as_posix()
     nodes = list(ast.walk(tree))
     aliases = _security_aliases(nodes)
+    for node in nodes:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            node._oracle_module = tree
     oracle_aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
     context = oracle_context or {}
     helper_names = _local_assertion_helpers(tree, oracle_aliases) | set(

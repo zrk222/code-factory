@@ -172,6 +172,51 @@ def test_assertion_probe_requires_exact_terminal_reports():
     )
 
 
+def test_assertion_probe_matches_python310_code_identity(tmp_path):
+    from types import SimpleNamespace
+    from factoryline.pytest_readiness import _AssertionChallenge
+
+    source = tmp_path / "test_case.py"
+    source.write_text("def test_case():\n    assert True\n")
+    plugin = _AssertionChallenge(source.resolve(), 2, False, "test_case", 1)
+    plugin.active = True
+    frame = SimpleNamespace(
+        f_lineno=2,
+        f_code=SimpleNamespace(
+            co_name="test_case", co_firstlineno=1, co_filename=str(source)
+        ),
+    )
+    plugin.trace(frame, "line", None)
+    assert plugin.hits == 1
+    frame.f_code.co_firstlineno = 10
+    plugin.trace(frame, "line", None)
+    assert plugin.hits == 1
+
+
+def test_assertion_probe_matches_decorated_nested_function(tmp_path):
+    from factoryline.pytest_readiness import probe_assertion_propagation
+
+    (tmp_path / "test_case.py").write_text(
+        "def identity(fn):\n    return fn\ndef test_case():\n"
+        "    @identity\n    def check():\n        assert True\n    check()\n"
+    )
+    result = probe_assertion_propagation(tmp_path, "test_case.py::test_case", 6)
+    assert result["status"] == "OBSERVED"
+    assert result["semantic_strength"] == "NOT_ASSESSED"
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["return; assert True", "value = 42; assert value == 42", "if False: assert True"],
+)
+def test_assertion_probe_rejects_shared_statement_line(tmp_path, body):
+    from factoryline.pytest_readiness import probe_assertion_propagation
+
+    (tmp_path / "test_case.py").write_text("def test_case():\n    " + body + "\n")
+    with pytest.raises(ValueError, match="exactly one Python assert"):
+        probe_assertion_propagation(tmp_path, "test_case.py::test_case", 2)
+
+
 @pytest.mark.parametrize("reports", [None, [None], [{}], "invalid"])
 def test_assertion_probe_malformed_challenge_is_incomplete(
     tmp_path, monkeypatch, reports

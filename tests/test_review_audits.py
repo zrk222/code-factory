@@ -206,7 +206,8 @@ def test_security_scan_external_repository_oracle_regressions(tmp_path, case):
 )
 def test_security_scan_accepts_argument_and_exception_oracles(tmp_path, body):
     (tmp_path / "test_behavior.py").write_text(
-        "import pytest, contextlib\nasync def test_behavior():\n    " + body + "\n"
+        "import pytest, contextlib\nfrom unittest.mock import Mock\n"
+        "async def test_behavior():\n    send = Mock()\n    " + body + "\n"
     )
     assert security_scan(tmp_path)["findings"] == []
 
@@ -350,6 +351,27 @@ def test_mock_oracle_rejects_self_unused_and_rebound_state(tmp_path, body):
         "    dependency = AsyncMock()\n    "
         + body
         + "\n    dependency.assert_called_once()\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_mock_assertion_spelling_on_fake_object_is_not_an_oracle(tmp_path):
+    (tmp_path / "test_fake.py").write_text(
+        "class Fake:\n    def assert_called_once_with(self, *args):\n        pass\n"
+        "def test_behavior():\n    send = Fake()\n"
+        "    perform(send)\n    send.assert_called_once_with('payload')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_module_mock_provenance_is_shadowed_by_local_fake(tmp_path):
+    (tmp_path / "test_fake.py").write_text(
+        "from unittest.mock import Mock\nsend = Mock()\n"
+        "class Fake:\n    def assert_called_once_with(self, *args):\n        pass\n"
+        "def test_behavior(send=Fake()):\n"
+        "    perform(send)\n    send.assert_called_once_with('payload')\n",
         encoding="utf-8",
     )
     assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
@@ -635,7 +657,8 @@ def test_security_scan_retains_pickle_decorator_roundtrip_evidence(tmp_path):
         (
             "from unittest.mock import Mock\nsend = Mock()\n"
             "def perform(send):\n    send('payload')\n"
-            "def test_behavior():\n    perform(send)\n    send.assert_called_once_with('payload')\n",
+            "def test_behavior():\n    perform(send)\n"
+            "    send.assert_called_once_with('payload')\n",
             "send.assert_called_once_with('incorrect')",
         ),
         (
