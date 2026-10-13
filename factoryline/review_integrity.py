@@ -3,10 +3,14 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
 import os
+import re
 import tempfile
 import ast
+import tokenize
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from .revenueforge import AUTHORITY, RevenueForgeError
@@ -1519,3 +1523,518 @@ def verify_policy_pack(root: Path, pack_path: Path, out: Path) -> dict[str, Any]
     find.extend(_policy_rule_findings(p))
     core = _policy_core(root, pp, p, find)
     return _write(root, out, core)
+
+
+_IMPLEMENTATION_PLACEHOLDERS = {
+    "coming soon",
+    "demo_only",
+    "fixme",
+    "not implemented",
+    "not implemented yet",
+    "placeholder",
+    "tbd",
+    "todo",
+}
+_MOCK_APIS = {
+    "unittest.mock.AsyncMock",
+    "unittest.mock.MagicMock",
+    "unittest.mock.Mock",
+    "unittest.mock.NonCallableMagicMock",
+    "unittest.mock.NonCallableMock",
+    "unittest.mock.PropertyMock",
+    "unittest.mock.create_autospec",
+    "unittest.mock.mock_open",
+    "unittest.mock.patch",
+    "unittest.mock.patch.dict",
+    "unittest.mock.patch.multiple",
+    "unittest.mock.patch.object",
+    "pytest.MonkeyPatch",
+}
+_OMISSION_COMMENT = re.compile(
+    r"\b(?:TODO|FIXME|XXX)\b(?:\s*[:\-]\s*|\s+)"
+    r"(?:implement|add|finish|complete|replace|remove|validate|handle|support|wire)\b",
+    re.IGNORECASE,
+)
+
+
+def _implementation_imports(nodes: list[ast.AST]) -> dict[str, str]:
+    resolved: dict[str, str] = {}
+    for node in nodes:
+        if isinstance(node, ast.Import):
+            for item in node.names:
+                local = item.asname or item.name.split(".", 1)[0]
+                target = item.name if item.asname else local
+                resolved[local] = target
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            module = "." * node.level + node.module
+            for item in node.names:
+                if item.name == "*":
+                    continue
+                local = item.asname or item.name
+                target = f"{module}.{item.name}"
+                if (
+                    node.level == 0
+                    and node.module == "unittest"
+                    and item.name == "mock"
+                ):
+                    target = "unittest.mock"
+                resolved[local] = target
+    return resolved
+
+
+def _implementation_scope_nodes(scope: ast.AST) -> list[ast.AST]:
+    body = getattr(scope, "body", ())
+    if not isinstance(body, (list, tuple)):
+        body = [body]
+    found, pending = [], list(reversed(body))
+    while pending:
+        node = pending.pop()
+        found.append(node)
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        pending.extend(reversed(list(ast.iter_child_nodes(node))))
+    return found
+
+
+def _implementation_bound_names(scope: ast.AST) -> set[str]:
+    nodes = _implementation_scope_nodes(scope)
+    names = {
+        node.id
+        for node in nodes
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))
+    }
+    names.update(
+        node.name for node in nodes if isinstance(node, ast.ExceptHandler) and node.name
+    )
+    names.update(
+        node.name
+        for node in nodes
+        if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name
+    )
+    names.update(
+        node.rest for node in nodes if isinstance(node, ast.MatchMapping) and node.rest
+    )
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        arguments = scope.args
+        names.update(
+            item.arg
+            for item in [
+                *arguments.posonlyargs,
+                *arguments.args,
+                *arguments.kwonlyargs,
+            ]
+        )
+        if arguments.vararg:
+            names.add(arguments.vararg.arg)
+        if arguments.kwarg:
+            names.add(arguments.kwarg.arg)
+    names.update(
+        node.name
+        for node in nodes
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    )
+    return names
+
+
+def _implementation_scope_aliases(
+    scope: ast.AST, inherited: dict[str, str]
+) -> dict[str, str]:
+    nodes = _implementation_scope_nodes(scope)
+    imports = _implementation_imports(nodes)
+    bound = _implementation_bound_names(scope)
+    aliases = {name: value for name, value in inherited.items() if name not in bound}
+    aliases.update(
+        {name: value for name, value in imports.items() if name not in bound}
+    )
+    return aliases
+
+
+def _implementation_call_name(node: ast.AST, aliases: dict[str, str]) -> str:
+    if isinstance(node, ast.Name):
+        return aliases.get(node.id, node.id)
+    if isinstance(node, ast.Attribute):
+        value = _implementation_call_name(node.value, aliases)
+        return f"{value}.{node.attr}"
+    if isinstance(node, ast.Subscript):
+        return _implementation_call_name(node.value, aliases)
+    return ""
+
+
+def _implementation_parents(tree: ast.AST) -> dict[ast.AST, ast.AST]:
+    return {
+        child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+    }
+
+
+def _implementation_scope_chain(
+    node: ast.AST, parents: dict[ast.AST, ast.AST]
+) -> list[ast.AST]:
+    scopes = []
+    parent = parents.get(node)
+    while parent is not None:
+        if isinstance(
+            parent,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+        ):
+            scopes.append(parent)
+        parent = parents.get(parent)
+    return list(reversed(scopes))
+
+
+def _implementation_fixture_scope(
+    scope: ast.AST, parents: dict[ast.AST, ast.AST]
+) -> bool:
+    module: ast.AST = scope
+    while module in parents:
+        module = parents[module]
+    aliases = _implementation_scope_aliases(
+        module, _implementation_imports(module.body)
+    )
+    return bool(
+        _implementation_decorator_names(scope, aliases).intersection(
+            {"pytest.fixture", "_pytest.fixture"}
+        )
+    )
+
+
+def _implementation_aliases_for(
+    node: ast.AST,
+    parents: dict[ast.AST, ast.AST],
+    module_aliases: dict[str, str],
+    module: ast.Module,
+) -> dict[str, str]:
+    aliases = _implementation_scope_aliases(module, module_aliases)
+    for scope in _implementation_scope_chain(node, parents):
+        aliases = _implementation_scope_aliases(scope, aliases)
+    return aliases
+
+
+def _implementation_is_test_path(relative: str) -> bool:
+    path = Path(relative.replace("\\", "/"))
+    name = path.name.casefold()
+    return (
+        path.suffix.casefold() == ".pyi"
+        or name == "conftest.py"
+        or name.startswith("test_")
+        or name.endswith("_test.py")
+        or any(part.casefold() in {"test", "tests"} for part in path.parts)
+    )
+
+
+def _implementation_is_test_function(
+    node: ast.AST, parents: dict[ast.AST, ast.AST]
+) -> bool:
+    return (
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("test_")
+        or any(
+            isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and scope.name.startswith("test_")
+            for scope in _implementation_scope_chain(node, parents)
+        )
+        or any(
+            isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and _implementation_fixture_scope(scope, parents)
+            for scope in _implementation_scope_chain(node, parents)
+        )
+    )
+
+
+def _implementation_docstring_body(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> list[ast.stmt]:
+    body = list(node.body)
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+    ):
+        if isinstance(body[0].value.value, str):
+            body.pop(0)
+    return body
+
+
+def _implementation_protocol_class(
+    node: ast.AST, parents: dict[ast.AST, ast.AST], aliases: dict[str, str]
+) -> bool:
+    parent = parents.get(node)
+    while parent is not None:
+        if isinstance(parent, ast.ClassDef):
+            if any(
+                _implementation_call_name(base, aliases)
+                in {"typing.Protocol", "typing_extensions.Protocol"}
+                for base in parent.bases
+            ):
+                return True
+        parent = parents.get(parent)
+    return False
+
+
+def _implementation_decorator_names(
+    node: ast.FunctionDef | ast.AsyncFunctionDef, aliases: dict[str, str]
+) -> set[str]:
+    return {
+        _implementation_call_name(
+            decorator.func if isinstance(decorator, ast.Call) else decorator,
+            aliases,
+        )
+        for decorator in node.decorator_list
+    }
+
+
+def _implementation_placeholder_raise(node: ast.stmt) -> bool:
+    if not isinstance(node, ast.Raise) or node.exc is None:
+        return False
+    value = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
+    return ast.unparse(value) in {"NotImplementedError", "builtins.NotImplementedError"}
+
+
+def _implementation_comment_findings(
+    relative: str,
+    source: str,
+    tree: ast.Module,
+    parents: dict[ast.AST, ast.AST],
+    module_aliases: dict[str, str],
+) -> list[dict[str, Any]]:
+    findings = []
+    excluded_lines = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        aliases = _implementation_aliases_for(node, parents, module_aliases, tree)
+        decorators = _implementation_decorator_names(node, aliases)
+        if not node.name.startswith("test_") and not decorators.intersection(
+            {"pytest.fixture", "_pytest.fixture"}
+        ):
+            continue
+        excluded_lines.update(
+            range(node.lineno, getattr(node, "end_lineno", node.lineno) + 1)
+        )
+    try:
+        tokens = tokenize.generate_tokens(io.StringIO(source).readline)
+        for token in tokens:
+            if (
+                token.type == tokenize.COMMENT
+                and token.start[0] not in excluded_lines
+                and _OMISSION_COMMENT.search(token.string)
+            ):
+                findings.append(
+                    {
+                        "code": "QUALITY_OMISSION_MARKER",
+                        "severity": "MEDIUM",
+                        "path": relative,
+                        "line": token.start[0],
+                        "column": token.start[1],
+                        "message": "An actionable omission marker appears in a source comment; review whether the work is still outstanding.",
+                        "facts": {
+                            "rule": "omission-marker",
+                            "intent": "UNKNOWN_REVIEW_REQUIRED",
+                            "action": "Confirm the marker is resolved or document why it remains intentional.",
+                        },
+                    }
+                )
+    except (IndentationError, tokenize.TokenError):
+        return findings
+    return findings
+
+
+def _implementation_is_exempt(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    parents: dict[ast.AST, ast.AST],
+    aliases: dict[str, str],
+) -> bool:
+    decorators = _implementation_decorator_names(node, aliases)
+    exempt_decorators = {
+        "abc.abstractmethod",
+        "builtins.abstractmethod",
+        "typing.overload",
+        "typing_extensions.overload",
+        "pytest.fixture",
+        "_pytest.fixture",
+    }
+    return (
+        node.name in {"__init_subclass__", "__subclasshook__"}
+        or bool(decorators & exempt_decorators)
+        or _implementation_protocol_class(node, parents, aliases)
+    )
+
+
+def _implementation_stub_statement(statement: ast.stmt) -> bool:
+    if isinstance(statement, ast.Pass) or _implementation_placeholder_raise(statement):
+        return True
+    return (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Constant)
+        and statement.value.value is Ellipsis
+    )
+
+
+def _implementation_stub_finding(relative: str, node: ast.AST) -> dict[str, Any]:
+    return {
+        "code": "QUALITY_EMPTY_IMPLEMENTATION",
+        "severity": "MEDIUM",
+        "path": relative,
+        "line": node.lineno,
+        "column": node.col_offset,
+        "message": "The function body contains only a stub statement; review whether this production implementation is intentionally incomplete.",
+        "facts": {
+            "rule": "production-empty-body",
+            "symbol": node.name,
+            "intent": "UNKNOWN_REVIEW_REQUIRED",
+            "action": "Implement the behavior or document the intentional extension point.",
+        },
+    }
+
+
+def _implementation_return_finding(
+    relative: str, function: ast.AST, statement: ast.Return
+) -> dict[str, Any] | None:
+    if not isinstance(statement.value, ast.Constant) or not isinstance(
+        statement.value.value, str
+    ):
+        return None
+    sentinel = statement.value.value
+    if sentinel.strip().casefold() not in _IMPLEMENTATION_PLACEHOLDERS:
+        return None
+    return {
+        "code": "QUALITY_PLACEHOLDER_OUTPUT",
+        "severity": "MEDIUM",
+        "path": relative,
+        "line": statement.lineno,
+        "column": statement.col_offset,
+        "message": "The function returns an exact placeholder string; review whether this is intended output.",
+        "facts": {
+            "rule": "explicit-static-output-sentinel",
+            "symbol": function.name,
+            "sentinel": sentinel,
+            "intent": "UNKNOWN_REVIEW_REQUIRED",
+            "action": "Replace the sentinel with a real result or document the bounded preview contract.",
+        },
+    }
+
+
+def _implementation_function_nodes(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+):
+    pending = list(function.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        yield node
+        pending.extend(ast.iter_child_nodes(node))
+
+
+def _implementation_function_findings(
+    relative: str,
+    tree: ast.Module,
+    parents: dict[ast.AST, ast.AST],
+    module_aliases: dict[str, str],
+) -> list[dict[str, Any]]:
+    findings = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if _implementation_is_test_function(node, parents):
+            continue
+        aliases = _implementation_aliases_for(node, parents, module_aliases, tree)
+        if _implementation_is_exempt(node, parents, aliases):
+            continue
+        body = _implementation_docstring_body(node)
+        if len(body) == 1 and _implementation_stub_statement(body[0]):
+            findings.append(_implementation_stub_finding(relative, node))
+        for child in _implementation_function_nodes(node):
+            if isinstance(child, ast.Return):
+                finding = _implementation_return_finding(relative, node, child)
+                if finding is not None:
+                    findings.append(finding)
+    return findings
+
+
+def _implementation_mock_findings(
+    relative: str,
+    tree: ast.Module,
+    parents: dict[ast.AST, ast.AST],
+    module_aliases: dict[str, str],
+) -> list[dict[str, Any]]:
+    findings = []
+    for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+        if _implementation_is_test_function(call, parents):
+            continue
+        aliases = _implementation_aliases_for(call, parents, module_aliases, tree)
+        api = _implementation_call_name(call.func, aliases)
+        if api not in _MOCK_APIS:
+            continue
+        findings.append(
+            {
+                "code": "QUALITY_PRODUCTION_MOCK",
+                "severity": "MEDIUM",
+                "path": relative,
+                "line": call.lineno,
+                "column": call.col_offset,
+                "message": "Production code constructs or applies a test-mocking API; review whether this is an intentional adapter seam.",
+                "facts": {
+                    "rule": "production-mock-provenance",
+                    "api": api,
+                    "intent": "UNKNOWN_REVIEW_REQUIRED",
+                    "action": "Confirm the mocked dependency is an intentional production seam and not placeholder behavior.",
+                },
+            }
+        )
+    return findings
+
+
+def implementation_completeness_findings(
+    relative: str,
+    tree: ast.AST,
+    source: str | bytes,
+    aliases: Mapping[str, str] | None = None,
+    test_source: bool = False,
+) -> list[dict[str, Any]]:
+    """Return bounded review signals for explicit Python implementation omissions.
+
+    Findings describe candidates for review and do not establish defect, runtime
+    behavior, or complete placeholder coverage.
+    """
+    if not isinstance(tree, ast.Module):
+        return []
+    if isinstance(source, bytes):
+        try:
+            encoding, _ = tokenize.detect_encoding(io.BytesIO(source).readline)
+            source = source.decode(encoding)
+        except (SyntaxError, UnicodeDecodeError, LookupError) as exc:
+            raise ValueError("source bytes have an invalid Python encoding") from exc
+    elif not isinstance(source, str):
+        raise TypeError("source must be str or bytes")
+    if test_source or _implementation_is_test_path(relative):
+        return []
+    supplied = {
+        name: target
+        for name, target in (aliases or {}).items()
+        if isinstance(name, str) and isinstance(target, str)
+    }
+    module_aliases = _implementation_imports(tree.body)
+    module_aliases.update(supplied)
+    parents = _implementation_parents(tree)
+    findings = _implementation_comment_findings(
+        relative, source, tree, parents, module_aliases
+    )
+    findings.extend(
+        _implementation_function_findings(relative, tree, parents, module_aliases)
+    )
+    findings.extend(
+        _implementation_mock_findings(relative, tree, parents, module_aliases)
+    )
+    return sorted(
+        findings,
+        key=lambda item: (
+            item["line"],
+            item["column"],
+            item["code"],
+            item["facts"].get("symbol", item["facts"].get("api", "")),
+        ),
+    )

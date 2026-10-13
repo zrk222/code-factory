@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 import json
 import hashlib
 from pathlib import Path
@@ -2936,7 +2937,10 @@ def test_security_scan_does_not_trust_imported_noop_helper(tmp_path):
         encoding="utf-8",
     )
     result = security_scan(tmp_path)
-    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert result["finding_counts"] == {
+        "QUALITY_HOLLOW_TEST": 1,
+        "QUALITY_EMPTY_IMPLEMENTATION": 1,
+    }
 
 
 def test_security_scan_accepts_testcase_mixin_assertions(tmp_path):
@@ -5233,7 +5237,9 @@ def test_inherited_virtual_dispatch_requires_default_binding_and_await(
         encoding="utf-8",
     )
     result = security_scan(tmp_path)
-    assert result["finding_counts"] == expected
+    counts = dict(result["finding_counts"])
+    assert counts.pop("QUALITY_EMPTY_IMPLEMENTATION") >= 1
+    assert counts == expected
     if not expected:
         assert any(
             edge["kind"] == "default_virtual_dispatch"
@@ -5330,4 +5336,24 @@ def test_virtual_dispatch_unsupported_guard_and_same_line_mutation_fail_closed(
         "Application(None)",
         operation,
         {"QUALITY_HOLLOW_TEST": 1},
+    )
+
+
+def test_security_scan_reports_production_implementation_completeness(tmp_path):
+    (tmp_path / "service.py").write_text("def build():\n    pass\n")
+    result = security_scan(tmp_path)
+    assert result["finding_counts"]["QUALITY_EMPTY_IMPLEMENTATION"] == 1
+    finding = next(
+        f for f in result["findings"] if f["code"] == "QUALITY_EMPTY_IMPLEMENTATION"
+    )
+    assert finding["facts"]["action"]
+
+
+def test_security_scan_keeps_legitimate_stub_interfaces_and_tests(tmp_path):
+    (tmp_path / "service.py").write_text(
+        "from typing import Protocol\nclass Contract(Protocol):\n    def build(self): ...\n"
+    )
+    (tmp_path / "test_fixture.py").write_text("def helper():\n    pass\n")
+    assert (
+        "QUALITY_EMPTY_IMPLEMENTATION" not in security_scan(tmp_path)["finding_counts"]
     )
