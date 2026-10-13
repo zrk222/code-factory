@@ -22,6 +22,293 @@ def _resolve(node: ast.AST | None, aliases: dict[str, str]) -> str:
     return aliases.get(head, head) + dot + tail
 
 
+def callback_argument(call: ast.Call, function: ast.AST, parameter: str) -> str | None:
+    """Return a plainly bound callback name for a positional or keyword argument."""
+    positional = [*function.args.posonlyargs, *function.args.args]
+    names = [argument.arg for argument in positional]
+    if parameter in names:
+        index = names.index(parameter)
+        if index < len(call.args) and isinstance(call.args[index], ast.Name):
+            return call.args[index].id
+    return next(
+        (
+            keyword.value.id
+            for keyword in call.keywords
+            if keyword.arg == parameter and isinstance(keyword.value, ast.Name)
+        ),
+        None,
+    )
+
+
+def _callback_registry_store(node: ast.AST, name: str) -> bool:
+    return (
+        isinstance(node, ast.Name)
+        and node.id == name
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+    )
+
+
+def _callback_registry_alias(test: ast.AST, name: str) -> bool:
+    return any(
+        isinstance(node, (ast.Assign, ast.AnnAssign))
+        and isinstance(node.value, ast.Name)
+        and node.value.id == name
+        for node in ast.walk(test)
+    )
+
+
+def _callback_registry_mutated(
+    test: ast.AST, name: str, initial: ast.AST, append: ast.AST
+) -> bool:
+    for node in ast.walk(test):
+        if node is initial.targets[0]:
+            continue
+        if _callback_registry_store(node, name):
+            return True
+        if (
+            isinstance(node, (ast.Assign, ast.AnnAssign))
+            and isinstance(node.value, ast.Name)
+            and node.value.id == name
+        ):
+            return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if isinstance(node.func.value, ast.Name) and node.func.value.id == name:
+                if node is not append.value:
+                    return True
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            if node.value.id == name and isinstance(node.ctx, (ast.Store, ast.Del)):
+                return True
+    return _callback_registry_alias(test, name)
+
+
+def _callback_catches_assertion(function: ast.AST) -> bool:
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Try):
+            continue
+        for handler in node.handlers:
+            if handler.type is None:
+                return True
+            caught = {
+                item.id for item in ast.walk(handler.type) if isinstance(item, ast.Name)
+            }
+            if caught & {"AssertionError", "Exception", "BaseException"}:
+                return True
+    return False
+
+
+def _registered_callback_functions(functions, aliases):
+    local_names = {fn.name for fn in functions}
+    used = {
+        dec.id
+        for fn in functions
+        for dec in fn.decorator_list
+        if isinstance(dec, ast.Name)
+        and _resolve(dec, aliases) == dec.id
+        and dec.id in local_names
+    }
+    if len(used) != 1:
+        return None
+    name = next(iter(used))
+    register = [fn for fn in functions if fn.name == name]
+    callbacks = [
+        fn
+        for fn in functions
+        if len(fn.decorator_list) == 1
+        and isinstance(fn.decorator_list[0], ast.Name)
+        and fn.decorator_list[0].id == name
+    ]
+    if len(register) != 1 or not callbacks:
+        return None
+    return register[0], callbacks
+
+
+def _callback_registration_body(register, registry):
+    if isinstance(register, ast.AsyncFunctionDef) or register.decorator_list:
+        return None
+    params = [arg.arg for arg in [*register.args.posonlyargs, *register.args.args]]
+    statements = [s for s in register.body if not _is_docstring(s)]
+    if len(params) != 1 or len(statements) != 2:
+        return None
+    append, returned = statements
+    valid_append = (
+        isinstance(append, ast.Expr)
+        and isinstance(append.value, ast.Call)
+        and isinstance(append.value.func, ast.Attribute)
+        and append.value.func.attr == "append"
+        and isinstance(append.value.func.value, ast.Name)
+        and append.value.func.value.id == registry
+        and len(append.value.args) == 1
+        and isinstance(append.value.args[0], ast.Name)
+        and append.value.args[0].id == params[0]
+        and not append.value.keywords
+    )
+    valid_return = (
+        isinstance(returned, ast.Return)
+        and isinstance(returned.value, ast.Name)
+        and returned.value.id == params[0]
+    )
+    return append if valid_append and valid_return else None
+
+
+def _callback_has_live_assertion(
+    callback, aliases, strong_assertion, effective_assertion
+):
+    if isinstance(callback, ast.AsyncFunctionDef) or _callback_catches_assertion(
+        callback
+    ):
+        return False
+    if any(isinstance(node, (ast.Yield, ast.YieldFrom)) for node in ast.walk(callback)):
+        return False
+    return strong_assertion(callback, aliases) and any(
+        isinstance(node, ast.Assert) and effective_assertion(node, aliases)
+        for node in ast.walk(callback)
+    )
+
+
+def _callback_registry_dispatch(test, registry, registration, register, callbacks):
+    names = {fn.name for fn in callbacks}
+    if any(
+        isinstance(node, ast.Name)
+        and (
+            (node.id == register.name and isinstance(node.ctx, (ast.Store, ast.Del)))
+            or (
+                node.id in names
+                and isinstance(node.ctx, (ast.Load, ast.Store, ast.Del))
+            )
+        )
+        for node in ast.walk(test)
+    ):
+        return False
+    for loop in (node for node in test.body if isinstance(node, ast.For)):
+        if not (
+            isinstance(loop.iter, ast.Name)
+            and loop.iter.id == registry
+            and isinstance(loop.target, ast.Name)
+        ):
+            continue
+        target = loop.target.id
+        if any(
+            isinstance(
+                node,
+                (ast.Try, ast.With, ast.Break, ast.Continue, ast.Return, ast.Raise),
+            )
+            for statement in loop.body
+            for node in ast.walk(statement)
+        ):
+            continue
+        if any(
+            isinstance(node, ast.Name)
+            and node.id == target
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            for statement in loop.body
+            for node in ast.walk(statement)
+        ):
+            continue
+        if any(
+            isinstance(statement, (ast.Return, ast.Raise))
+            and statement.lineno < loop.lineno
+            for statement in test.body
+        ):
+            continue
+        allowed_before = {id(register), *(id(fn) for fn in callbacks)}
+        if any(
+            statement.lineno < loop.lineno
+            and id(statement) not in allowed_before
+            and not (
+                isinstance(statement, ast.Assign)
+                and len(statement.targets) == 1
+                and isinstance(statement.targets[0], ast.Name)
+                and statement.targets[0].id == registry
+            )
+            and not _is_docstring(statement)
+            for statement in test.body
+        ):
+            continue
+        calls = [
+            statement.value
+            for statement in loop.body
+            if isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Call)
+            and isinstance(statement.value.func, ast.Name)
+            and statement.value.func.id == target
+        ]
+        if (
+            len(calls) != len([s for s in loop.body if not _is_docstring(s)])
+            or not calls
+        ):
+            continue
+        if any(
+            isinstance(node, ast.Name)
+            and node.id == registry
+            and isinstance(node.ctx, ast.Load)
+            and id(node) not in {id(registration.value.func.value), id(loop.iter)}
+            for node in ast.walk(test)
+        ):
+            continue
+        return True
+    return False
+
+
+def _empty_callback_registries(test):
+    """Find direct, single-name empty-list initializers without executing code."""
+    return [
+        node
+        for node in test.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and isinstance(node.value, ast.List)
+        and not node.value.elts
+    ]
+
+
+def registered_callback_oracle(test, aliases, strong_assertion, effective_assertion):
+    """Prove a narrow local append-registry decorator and direct callback loop.
+
+    Cross-file registries, metaclasses, dynamic tags, and indirect dispatch remain
+    unsupported. Unsupported syntax returns false; it is never treated as proven.
+    """
+    if not isinstance(test, ast.FunctionDef):
+        return False
+    initializers = _empty_callback_registries(test)
+    if len(initializers) != 1:
+        return False
+    initial = initializers[0]
+    registry = initial.targets[0].id
+    functions = [node for node in test.body if isinstance(node, ast.FunctionDef)]
+    pair = _registered_callback_functions(functions, aliases)
+    if pair is None:
+        return False
+    register, callbacks = pair
+    if initial.lineno >= register.lineno or any(
+        register.lineno >= fn.lineno for fn in callbacks
+    ):
+        return False
+    registration = _callback_registration_body(register, registry)
+    if registration is None or _callback_registry_mutated(
+        test, registry, initial, registration
+    ):
+        return False
+    if any(
+        not _callback_has_live_assertion(
+            fn, aliases, strong_assertion, effective_assertion
+        )
+        for fn in callbacks
+    ):
+        return False
+    return _callback_registry_dispatch(
+        test, registry, registration, register, callbacks
+    )
+
+
+def _is_docstring(node: ast.stmt) -> bool:
+    return (
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    )
+
+
 def _targets(stmt: ast.AST) -> list[str]:
     targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
     return [

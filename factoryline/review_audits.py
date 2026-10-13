@@ -2946,20 +2946,9 @@ def _direct_callback_parameter(function):
 
 
 def _callback_argument(call, function, parameter):
-    positional = [*function.args.posonlyargs, *function.args.args]
-    names = [argument.arg for argument in positional]
-    if parameter in names:
-        index = names.index(parameter)
-        if index < len(call.args) and isinstance(call.args[index], ast.Name):
-            return call.args[index].id
-    return next(
-        (
-            keyword.value.id
-            for keyword in call.keywords
-            if keyword.arg == parameter and isinstance(keyword.value, ast.Name)
-        ),
-        None,
-    )
+    from .review_integrity import callback_argument
+
+    return callback_argument(call, function, parameter)
 
 
 def _source_callback_parameters(function, methods, depth=0, aliases=None):
@@ -3440,8 +3429,17 @@ def _virtual_scope_binding_safe(nodes, name, bound, call):
 
 
 def _proven_dispatch_assertion(test, aliases, helpers, apps, invokers):
-    from .review_integrity import flask_invoked_callbacks
+    from .review_integrity import flask_invoked_callbacks, registered_callback_oracle
 
+    if registered_callback_oracle(
+        test,
+        aliases,
+        lambda fn, scope: _strong_local_assertion(
+            fn, _scope_security_aliases(scope, fn), helpers
+        ),
+        _effective_assertion,
+    ):
+        return True
     if _local_virtual_dispatch_oracle(test, invokers, aliases, helpers):
         return True
     definitions = _nested_helper_definitions(test)
