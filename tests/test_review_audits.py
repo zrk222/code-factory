@@ -20,6 +20,83 @@ from factoryline.cli import main
 
 
 @pytest.mark.parametrize(
+    "call,expected",
+    [
+        ("dispatch(check)", "check"),
+        ("dispatch(callback=check)", "check"),
+        ("dispatch(lambda: None)", None),
+        ("dispatch(**options)", None),
+    ],
+)
+def test_callback_argument_binding(call, expected):
+    import ast
+    from factoryline.review_integrity import callback_argument
+
+    function = ast.parse("def dispatch(callback): pass").body[0]
+    assert (
+        callback_argument(ast.parse(call).body[0].value, function, "callback")
+        == expected
+    )
+
+
+def test_registered_callback_oracle_checks_initializer_and_live_assertion():
+    import ast
+    from factoryline.review_integrity import registered_callback_oracle
+
+    function = ast.parse(
+        textwrap.dedent("""
+        def test_dispatch():
+            checks = []
+            def install(fn):
+                checks.append(fn)
+                return fn
+            @install
+            def verify(value):
+                assert value == 42
+            for callback in checks:
+                callback(42)
+    """)
+    ).body[0]
+
+    def strong(fn, aliases):
+        return any(isinstance(node, ast.Assert) for node in ast.walk(fn))
+
+    def effective(node, aliases):
+        return True
+
+    assert registered_callback_oracle(function, {}, strong, effective)
+    assert not registered_callback_oracle(
+        function, {}, strong, lambda node, aliases: False
+    )
+    callback = function.body[2]
+    saved_body = callback.body
+    callback.body = [ast.Pass()]
+    assert not registered_callback_oracle(function, {}, strong, effective)
+    callback.body = saved_body
+    function.body[0].value.elts.append(ast.Constant(1))
+    assert not registered_callback_oracle(function, {}, strong, effective)
+
+
+def test_mock_patch_dict_slot_rejects_nonliteral_receiver():
+    import ast
+    from factoryline.review_integrity import mock_patch_dict_slot
+
+    receiver = ast.parse("proxies[key]").body[0].value
+    assert not mock_patch_dict_slot(
+        receiver,
+        "proxies",
+        ast.parse("check()").body[0],
+        {},
+        [],
+        set(),
+        lambda node, aliases: ast.unparse(node),
+        lambda *args: False,
+        lambda *args: True,
+        lambda *args: "proxies",
+    )
+
+
+@pytest.mark.parametrize(
     "registration,mutation,dispatch,hollow",
     [
         (
