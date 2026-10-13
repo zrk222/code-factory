@@ -362,7 +362,9 @@ def test_workflow_approved_repair_dispatch_binds_exact_receipt_and_current_ident
         *,
         expected_approval_sha256,
         expected_approval_file_sha256,
+        runtime_authority_check,
     ):
+        assert runtime_authority_check() is True
         calls.append(
             (root, path, expected_approval_sha256, expected_approval_file_sha256)
         )
@@ -408,6 +410,112 @@ def test_workflow_approved_repair_dispatch_binds_exact_receipt_and_current_ident
     assert binding["tool_contract_sha256"]
     assert binding["candidate_sha256"]
     assert "approved_by" not in binding
+
+
+@pytest.mark.parametrize("failure", ["false", "exception", "not_callable"])
+def test_runtime_authority_rejects_uncertain_permission(failure):
+    def check():
+        if failure == "exception":
+            raise RuntimeError("private provider detail")
+        return False
+
+    with pytest.raises(repair_sandbox.RepairSandboxError) as error:
+        repair_sandbox._require_runtime_authority(
+            object() if failure == "not_callable" else check
+        )
+    assert error.value.code == "REPAIR_RUNTIME_AUTHORITY_LOST"
+    assert "private provider detail" not in str(error.value)
+
+
+def test_runtime_authority_preserves_explicit_owner_boundary():
+    repair_sandbox._require_runtime_authority(None)
+    repair_sandbox._require_runtime_authority(lambda: True)
+
+
+def test_runtime_authority_cleanup_failure_cannot_be_overwritten(tmp_path, monkeypatch):
+    attempt = tmp_path / "attempt"
+    repair_sandbox._begin_attempt(attempt, "a" * 64)
+    failed = repair_sandbox._persist_failure(
+        attempt,
+        stopped=False,
+        code="REPAIR_CONTAINER_CLEANUP_UNVERIFIED",
+        phase="REPAIR_CONTAINER_CLEANUP_UNVERIFIED",
+    )
+    assert failed["container_cleanup_confirmed"] is False
+    monkeypatch.setattr(repair_sandbox, "_clean_base", lambda *_args: "base")
+    repair_sandbox._finish_attempt(tmp_path, attempt, failed, "base", None, None)
+    result = repair_sandbox._read_attempt_state(attempt)
+    assert result["worktree_cleanup_confirmed"] is True
+    assert result["container_cleanup_confirmed"] is False
+    assert result["cleanup_confirmed"] is False
+    assert result["status"] == "FAILED"
+
+
+@pytest.mark.parametrize("cleanup", [True, False])
+def test_runtime_authority_denial_before_launch_still_checks_cleanup(
+    tmp_path, monkeypatch, cleanup
+):
+    calls = []
+    monkeypatch.setattr(
+        repair_sandbox, "_docker", lambda *_args: {"ok": True, "stdout": b""}
+    )
+
+    def remove(*_args):
+        calls.append("cleanup")
+        return cleanup
+
+    monkeypatch.setattr(repair_sandbox, "_remove_container", remove)
+    monkeypatch.setattr(
+        repair_sandbox,
+        "run_cli_detailed",
+        lambda *_args, **_kwargs: pytest.fail("denied command must not launch"),
+    )
+    with pytest.raises(repair_sandbox.RepairSandboxError) as error:
+        repair_sandbox._container_check(
+            tmp_path,
+            tmp_path,
+            "image",
+            "context",
+            {"argv": ["python"]},
+            "named-attempt",
+            lambda: False,
+        )
+    assert error.value.code == (
+        "REPAIR_ATTEMPT_STOPPED" if cleanup else "REPAIR_CONTAINER_CLEANUP_UNVERIFIED"
+    )
+    assert calls == ["cleanup"]
+
+
+def test_workflow_runtime_authority_rechecks_role_during_execution(
+    tmp_path, monkeypatch
+):
+    from factoryline.control_plane import Principal
+
+    _, approval_path, requester, request, store, identities, resolve = (
+        _workflow_repair_case(tmp_path, monkeypatch)
+    )
+
+    def execute(root, path, **kwargs):
+        check = kwargs["runtime_authority_check"]
+        assert check() is True
+        identities[requester.subject] = Principal(
+            requester.subject, "tenant-a", ("viewer",)
+        )
+        repair_sandbox._require_runtime_authority(check)
+        pytest.fail("revoked requester must not continue execution")
+
+    monkeypatch.setattr(repair_sandbox, "execute_approved_repair", execute)
+    with pytest.raises(repair_sandbox.RepairSandboxError) as error:
+        execute_workflow_approved_repair(
+            tmp_path,
+            approval_path,
+            principal=requester,
+            tenant_id="tenant-a",
+            workflow_approval_id=request["approval_id"],
+            evidence_store=store,
+            resolve_principal=resolve,
+        )
+    assert error.value.code == "REPAIR_RUNTIME_AUTHORITY_LOST"
 
 
 @pytest.mark.parametrize("decision", ["pending", "rejected"])

@@ -2124,6 +2124,8 @@ def _persist_failure(
         "code": code,
         "message": f"Repair execution stopped safely during {phase}.",
     }
+    if code == "REPAIR_CONTAINER_CLEANUP_UNVERIFIED":
+        state["container_cleanup_confirmed"] = False
     _persist_attempt(attempt, state)
     return state
 
@@ -2183,6 +2185,10 @@ def _container_check(
     args.extend(["--entrypoint", check["argv"][0], image, *check["argv"][1:]])
     docker_args = ["--context", context, *args]
     try:
+        if not heartbeat():
+            raise RepairSandboxError(
+                "REPAIR_ATTEMPT_STOPPED", "execution permission was not confirmed"
+            )
         result = run_cli_detailed(
             _tool_path("docker"),
             docker_args,
@@ -2194,6 +2200,11 @@ def _container_check(
         )
     finally:
         cleanup = _remove_container(root, context, name)
+        if not cleanup:
+            raise RepairSandboxError(
+                "REPAIR_CONTAINER_CLEANUP_UNVERIFIED",
+                "container cleanup could not be independently confirmed",
+            )
     return {"result": result, "container_cleanup_confirmed": cleanup}
 
 
@@ -2420,11 +2431,18 @@ def execute_workflow_approved_repair(
     )
     verifier(expected)
     _current_dispatch_principal(current, tenant_id, resolve_principal)
+
+    def runtime_authority_check():
+        _current_dispatch_principal(current, tenant_id, resolve_principal)
+        verifier(expected)
+        return True
+
     result = execute_approved_repair(
         workspace,
         approval_file,
         expected_approval_sha256=approval_sha,
         expected_approval_file_sha256=approval_file_sha,
+        runtime_authority_check=runtime_authority_check,
     )
     return _verify_host_dispatch_result(workspace, approval, approval_sha, result)
 
@@ -2617,6 +2635,8 @@ def _finish_attempt(
         unchanged = base is not None and _clean_base(root, base) == base
     except RepairSandboxError:
         unchanged = False
+    state["worktree_cleanup_confirmed"] = cleanup
+    cleanup = cleanup and state.get("container_cleanup_confirmed") is not False
     state["cleanup_confirmed"] = cleanup
     state["primary_checkout_unchanged"] = unchanged
     if not cleanup or not unchanged:
@@ -2634,7 +2654,9 @@ def _prepare_repair_attempt(
     deadline: float,
     resources: dict,
     mission_binding: dict | None = None,
+    runtime_authority_check=None,
 ) -> tuple:
+    _require_runtime_authority(runtime_authority_check)
     if mission_binding is not None:
         _revalidate_mission_binding(workspace, mission_binding)
     _reject_checkout_filters(workspace)
@@ -2665,6 +2687,7 @@ def _prepare_repair_attempt(
     _reject_checkout_filters(workspace)
     temporary = attempt / "execution"
     resources["temporary"] = temporary
+    _require_runtime_authority(runtime_authority_check)
     temporary.mkdir()
     worktree = temporary / "checkout"
     resources["worktree"] = worktree
@@ -2677,6 +2700,7 @@ def _prepare_repair_attempt(
     _reject_runtime_secrets(worktree)
 
     def heartbeat() -> bool:
+        _require_runtime_authority(runtime_authority_check)
         if mission_binding is not None:
             _revalidate_mission_binding(workspace, mission_binding)
         return (
@@ -2685,6 +2709,20 @@ def _prepare_repair_attempt(
         )
 
     return image, heartbeat
+
+
+def _require_runtime_authority(check) -> None:
+    """Fail closed on lost host authority; cleanup remains independently required."""
+    if check is None:
+        return
+    try:
+        if not callable(check) or check() is not True:
+            raise ValueError("authority not confirmed")
+    except Exception as exc:
+        raise RepairSandboxError(
+            "REPAIR_RUNTIME_AUTHORITY_LOST",
+            "current host identity or workflow approval could not be confirmed",
+        ) from exc
 
 
 def _run_repair_stages(
@@ -2753,6 +2791,7 @@ def _execute_repair_lifecycle(
     revoked_file: Path,
     state: dict,
     mission_binding: dict | None = None,
+    runtime_authority_check=None,
 ) -> tuple:
     deadline = time.monotonic() + 600
     resources = {"base": None, "temporary": None, "worktree": None}
@@ -2766,6 +2805,7 @@ def _execute_repair_lifecycle(
             deadline,
             resources,
             mission_binding,
+            runtime_authority_check,
         )
         state = _run_repair_stages(
             workspace,
@@ -2786,6 +2826,7 @@ def _execute_repair_lifecycle(
                 "REPAIR_ATTEMPT_BUDGET_EXHAUSTED",
                 "MISSION_REPAIR_BINDING_DRIFT",
                 "MISSION_REPAIR_BINDING_WORKSPACE",
+                "REPAIR_RUNTIME_AUTHORITY_LOST",
             },
             code=exc.code,
             phase=exc.code,
@@ -2894,8 +2935,10 @@ def execute_approved_repair(
     expected_approval_sha256: str | None = None,
     expected_approval_file_sha256: str | None = None,
     mission_binding: dict | None = None,
+    runtime_authority_check=None,
 ) -> dict[str, Any]:
     """Run locally owner-approved checks; this path does not authenticate identity."""
+    _require_runtime_authority(runtime_authority_check)
     workspace = _mount_safe_workspace(root)
     approval, approval_sha, revoked_file = _execution_approval(
         workspace,
@@ -2926,6 +2969,7 @@ def execute_approved_repair(
         revoked_file,
         initial,
         runtime_mission_binding,
+        runtime_authority_check,
     )
     _settle_mission_repair(attempt, state, mission_context, approval_sha, started)
     return {
