@@ -520,6 +520,21 @@ def _module_benchmark_marker(tree):
     )
 
 
+def _configured_benchmark_targets(config, root, files):
+    targets = set()
+    for section in config.sections():
+        if not section.startswith("testenv"):
+            continue
+        for line in config.get(section, "commands", fallback="").splitlines():
+            if not line.strip().startswith("pytest "):
+                continue
+            argv = shlex.split(line)
+            if not argv or argv[0] != "pytest" or "--codspeed" not in argv:
+                continue
+            targets.update(p for p in files if p.relative_to(root).as_posix() in argv)
+    return targets
+
+
 def benchmark_configuration(root, files, read_bytes, limit):
     """Bind exact CodSpeed argv targets; malformed or missing inputs grant nothing."""
     identity = {"path": "tox.ini", "state": "missing"}
@@ -534,19 +549,7 @@ def benchmark_configuration(root, files, read_bytes, limit):
         }
         config = configparser.ConfigParser(interpolation=None)
         config.read_string(data.decode("utf-8"))
-        targets = set()
-        for section in config.sections():
-            if not section.startswith("testenv"):
-                continue
-            for line in config.get(section, "commands", fallback="").splitlines():
-                if not line.strip().startswith("pytest "):
-                    continue
-                argv = shlex.split(line)
-                if not argv or argv[0] != "pytest" or "--codspeed" not in argv:
-                    continue
-                targets.update(
-                    p for p in files if p.relative_to(root).as_posix() in argv
-                )
+        targets = _configured_benchmark_targets(config, root, files)
         return targets, [binding], binding, True
     except FileNotFoundError:
         return set(), [], identity, True
@@ -2615,25 +2618,30 @@ def implementation_completeness_findings(
     )
 
 
-def remember_direct_constant_assignment(
-    statement: ast.stmt, known: dict[str, Any]
-) -> None:
-    """Preserve the existing direct-assignment constant-folding behavior."""
-    from .review_audits import (
-        _UNKNOWN_CONSTANT,
-        _body_nodes,
-        _bound_names,
-        _constant_value,
-    )
+def _invalidate_mutable_constants(statement, known):
+    from .review_audits import _body_nodes
 
-    targets: list[ast.expr] = []
-    value: Any = _UNKNOWN_CONSTANT
     if any(
         isinstance(item, (ast.Call, ast.Subscript)) for item in _body_nodes(statement)
     ):
         for name, prior in list(known.items()):
             if isinstance(prior, (list, dict, set, tuple)):
                 known.pop(name, None)
+
+
+def remember_direct_constant_assignment(
+    statement: ast.stmt, known: dict[str, Any]
+) -> None:
+    """Preserve the existing direct-assignment constant-folding behavior."""
+    from .review_audits import (
+        _UNKNOWN_CONSTANT,
+        _bound_names,
+        _constant_value,
+    )
+
+    targets: list[ast.expr] = []
+    value: Any = _UNKNOWN_CONSTANT
+    _invalidate_mutable_constants(statement, known)
     if isinstance(statement, ast.Assign):
         value = _constant_value(statement.value, known)
         targets = statement.targets
