@@ -190,7 +190,9 @@ def _branch_manifest(tmp_path, *, branch_count=2, shared_contract=True):
         "branches": [],
     }
     for index in range(branch_count):
-        candidate_contract = contract if shared_contract or index == 0 else _digest("other-contract")
+        candidate_contract = (
+            contract if shared_contract or index == 0 else _digest("other-contract")
+        )
         manifest["branches"].append(
             {
                 "branch_id": f"branch-{index + 1}",
@@ -229,8 +231,13 @@ def test_public_repair_branch_api_plans_common_baseline_without_execution(tmp_pa
     assert result["promotion"] == "NONE"
     assert result["release_approval"] is False
     assert all(branch["status"] == "PLAN_ONLY" for branch in result["branches"])
-    assert all(branch["raw_comparison"]["executed"] is False for branch in result["branches"])
-    assert all(branch["raw_comparison"]["state"] == "PLAN_ONLY" for branch in result["branches"])
+    assert all(
+        branch["raw_comparison"]["executed"] is False for branch in result["branches"]
+    )
+    assert all(
+        branch["raw_comparison"]["state"] == "PLAN_ONLY"
+        for branch in result["branches"]
+    )
 
 
 def test_repair_branch_comparison_preserves_raw_isolated_outcomes(tmp_path):
@@ -251,7 +258,9 @@ def test_repair_branch_comparison_preserves_raw_isolated_outcomes(tmp_path):
     assert result["promotion"] == result["application"] == "NONE"
 
 
-def test_repair_branch_contract_mismatch_preflights_before_any_execution(monkeypatch, tmp_path):
+def test_repair_branch_contract_mismatch_preflights_before_any_execution(
+    monkeypatch, tmp_path
+):
     from factoryline import fix_workflow
 
     calls = []
@@ -272,13 +281,17 @@ def test_repair_branch_contract_mismatch_preflights_before_any_execution(monkeyp
     assert True not in calls
 
 
-def test_repair_branch_execution_failure_is_incomplete_not_plan_only(monkeypatch, tmp_path):
+def test_repair_branch_execution_failure_is_incomplete_not_plan_only(
+    monkeypatch, tmp_path
+):
     from factoryline import fix_workflow
     from factoryline.senior_assurance import SeniorAssuranceError
 
     def compare(_root, manifest, *, execute=False):
         if execute:
-            raise SeniorAssuranceError("E_REPLAY_INTERRUPTED", "replay did not complete")
+            raise SeniorAssuranceError(
+                "E_REPLAY_INTERRUPTED", "replay did not complete"
+            )
         return {
             "comparison_id": manifest["comparison_id"],
             "contract_sha256": manifest["contract_sha256"],
@@ -290,11 +303,15 @@ def test_repair_branch_execution_failure_is_incomplete_not_plan_only(monkeypatch
     result = run_fix_workflow(tmp_path, _branch_manifest(tmp_path), execute=True)
     assert result["state"] == "INCOMPLETE"
     assert all(row["status"] == "INCOMPLETE" for row in result["branches"])
-    assert all(row["raw_comparison"]["state"] == "INCOMPLETE" for row in result["branches"])
+    assert all(
+        row["raw_comparison"]["state"] == "INCOMPLETE" for row in result["branches"]
+    )
     assert all(row["raw_comparison"]["executed"] is False for row in result["branches"])
 
 
-def test_repair_branch_runner_failure_cannot_be_hidden_by_comparison_state(monkeypatch, tmp_path):
+def test_repair_branch_runner_failure_cannot_be_hidden_by_comparison_state(
+    monkeypatch, tmp_path
+):
     from factoryline import fix_workflow
 
     def compare(_root, _manifest, *, execute=False):
@@ -316,7 +333,9 @@ def test_repair_branch_runner_failure_cannot_be_hidden_by_comparison_state(monke
     assert result["branches"][0]["status"] == "INCOMPLETE"
 
 
-def test_repair_branch_comparison_rejects_more_than_eight_candidates(monkeypatch, tmp_path):
+def test_repair_branch_comparison_rejects_more_than_eight_candidates(
+    monkeypatch, tmp_path
+):
     from factoryline import fix_workflow
 
     monkeypatch.setattr(
@@ -330,9 +349,7 @@ def test_repair_branch_comparison_rejects_more_than_eight_candidates(monkeypatch
         "contract_sha256": _digest("contract"),
         "original": {},
         "negative_controls": [],
-        "branches": [
-            {"branch_id": f"b{i}", "candidate": {}} for i in range(9)
-        ],
+        "branches": [{"branch_id": f"b{i}", "candidate": {}} for i in range(9)],
     }
     with pytest.raises(FixWorkflowError, match="E_BRANCH_LIMIT"):
         run_fix_workflow(tmp_path, manifest, execute=True)
@@ -353,7 +370,9 @@ def test_repair_branch_existing_cli_defaults_to_plan_only(tmp_path, capsys):
     assert exit_code == 0
     assert payload["state"] == "PLAN_ONLY"
     assert payload["mode"] == "plan"
-    assert all(row["raw_comparison"]["executed"] is False for row in payload["branches"])
+    assert all(
+        row["raw_comparison"]["executed"] is False for row in payload["branches"]
+    )
     assert payload["candidate_selection"] is None
 
 
@@ -394,7 +413,9 @@ def test_repair_branch_existing_cli_returns_nonzero_for_incomplete_execution(
 
     def compare(_root, manifest, *, execute=False):
         if execute:
-            raise SeniorAssuranceError("E_REPLAY_INTERRUPTED", "replay did not complete")
+            raise SeniorAssuranceError(
+                "E_REPLAY_INTERRUPTED", "replay did not complete"
+            )
         return {
             "comparison_id": manifest["comparison_id"],
             "contract_sha256": manifest["contract_sha256"],

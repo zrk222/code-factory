@@ -662,14 +662,20 @@ def _senior_fix(args: Any) -> tuple[dict[str, Any], int]:
         if args.execute
         else "Validated the reproduce-and-repair workflow; no candidate command ran."
     )
-    complete_branch_comparison = result.get("state") == "COMPARED" and bool(
-        result.get("branches")
-    ) and all(
-        row.get("status") == "OBSERVED"
-        and row.get("raw_comparison", {}).get("executed") is True
-        for row in result["branches"]
+    complete_branch_comparison = (
+        result.get("state") == "COMPARED"
+        and bool(result.get("branches"))
+        and all(
+            row.get("status") == "OBSERVED"
+            and row.get("raw_comparison", {}).get("executed") is True
+            for row in result["branches"]
+        )
     )
-    code = 0 if result["state"] in {"PLAN_ONLY", "PASS"} or complete_branch_comparison else 1
+    code = (
+        0
+        if result["state"] in {"PLAN_ONLY", "PASS"} or complete_branch_comparison
+        else 1
+    )
     return _senior_action(result, summary, code)
 
 

@@ -784,7 +784,9 @@ def _cache_dir(root: Path) -> Path:
 def _validated_root(root: Path) -> Path:
     lexical = Path(root).absolute()
     if _has_reparse_ancestor(lexical):
-        raise ContextEfficiencyError("E_PATH_LINK", "workspace path traverses a reparse point")
+        raise ContextEfficiencyError(
+            "E_PATH_LINK", "workspace path traverses a reparse point"
+        )
     return lexical.resolve()
 
 
@@ -813,9 +815,11 @@ def _record_cache_hit(root: Path, cache_key: str) -> bool:
             exists = database.execute(
                 "SELECT 1 FROM cache_usage WHERE cache_key = ?", (cache_key,)
             ).fetchone()
-            if exists or database.execute(
-                "SELECT COUNT(*) FROM cache_usage"
-            ).fetchone()[0] < MAX_USAGE_ROWS:
+            if (
+                exists
+                or database.execute("SELECT COUNT(*) FROM cache_usage").fetchone()[0]
+                < MAX_USAGE_ROWS
+            ):
                 database.execute(
                     "INSERT INTO cache_usage(cache_key, hits) VALUES (?, 1) "
                     "ON CONFLICT(cache_key) DO UPDATE SET hits = hits + 1",
@@ -851,9 +855,7 @@ def _unsafe_cache_path(
     workspace: Path, factory_dir: Path, cache_dir: Path, database: Path
 ) -> bool:
     for path in (workspace, factory_dir, cache_dir, database):
-        if path.is_symlink() or (
-            hasattr(path, "is_junction") and path.is_junction()
-        ):
+        if path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction()):
             return True
         try:
             if path.exists():
@@ -912,7 +914,11 @@ def _cache_hit_count(root: Path, cache_key: str) -> int | None:
         if row is None:
             return None
         hits = row[0]
-        if isinstance(hits, bool) or not isinstance(hits, int) or not 0 <= hits <= 2**31 - 1:
+        if (
+            isinstance(hits, bool)
+            or not isinstance(hits, int)
+            or not 0 <= hits <= 2**31 - 1
+        ):
             return None
         return hits
     except sqlite3.Error:
@@ -2185,23 +2191,46 @@ def _normalize_shard_claims(
     root: Path, claims: Any, sources: dict[str, tuple[bytes, str]]
 ) -> list[dict[str, Any]]:
     if not isinstance(claims, list) or not 1 <= len(claims) <= MAX_SHARD_CLAIMS:
-        raise ContextEfficiencyError("E_SHARD_FIELDS", "claims must contain 1..64 entries")
+        raise ContextEfficiencyError(
+            "E_SHARD_FIELDS", "claims must contain 1..64 entries"
+        )
     normalized = []
     for index, claim in enumerate(claims):
         if not isinstance(claim, dict) or set(claim) != {"key", "value", "locators"}:
-            raise ContextEfficiencyError("E_SHARD_FIELDS", f"claims[{index}] has invalid fields")
+            raise ContextEfficiencyError(
+                "E_SHARD_FIELDS", f"claims[{index}] has invalid fields"
+            )
         key = _safe_text(claim["key"], f"claims[{index}].key", 160).strip()
         value = claim["value"]
         if not isinstance(value, (str, int, float, bool, list, dict)) or value is None:
-            raise ContextEfficiencyError("E_SHARD_FIELDS", f"claims[{index}].value must be bounded JSON")
+            raise ContextEfficiencyError(
+                "E_SHARD_FIELDS", f"claims[{index}].value must be bounded JSON"
+            )
         _reject_secret_keys({"value": value}, f"claims[{index}]")
         value_bytes = _canonical(value)
-        if len(value_bytes) > MAX_SHARD_LOCATOR_BYTES or any(pattern.search(value_bytes) for pattern in _SECRET_BYTES):
-            raise ContextEfficiencyError("E_SHARD_BOUNDARY", f"claims[{index}].value exceeds limit")
+        if len(value_bytes) > MAX_SHARD_LOCATOR_BYTES or any(
+            pattern.search(value_bytes) for pattern in _SECRET_BYTES
+        ):
+            raise ContextEfficiencyError(
+                "E_SHARD_BOUNDARY", f"claims[{index}].value exceeds limit"
+            )
         locators = claim["locators"]
-        if not isinstance(locators, list) or not 1 <= len(locators) <= MAX_SHARD_RECORDS:
-            raise ContextEfficiencyError("E_SHARD_LOCATOR", f"claims[{index}] requires source locators")
-        normalized.append({"key": key, "value": value, "locators": [_shard_locator(root, locator, sources) for locator in locators]})
+        if (
+            not isinstance(locators, list)
+            or not 1 <= len(locators) <= MAX_SHARD_RECORDS
+        ):
+            raise ContextEfficiencyError(
+                "E_SHARD_LOCATOR", f"claims[{index}] requires source locators"
+            )
+        normalized.append(
+            {
+                "key": key,
+                "value": value,
+                "locators": [
+                    _shard_locator(root, locator, sources) for locator in locators
+                ],
+            }
+        )
     return normalized
 
 
@@ -2210,17 +2239,25 @@ def _normalize_shard_retention(
 ) -> dict[str, list[dict[str, Any]]]:
     categories = {"correction", "failure", "approval", "unresolved_action"}
     if not isinstance(retained_records, dict) or set(retained_records) != categories:
-        raise ContextEfficiencyError("E_SHARD_RETENTION", "all four retained-record categories are required")
+        raise ContextEfficiencyError(
+            "E_SHARD_RETENTION", "all four retained-record categories are required"
+        )
     retained = {}
     count = 0
     for category in sorted(categories):
         records = retained_records[category]
         if not isinstance(records, list):
-            raise ContextEfficiencyError("E_SHARD_RETENTION", f"{category} must be a locator list")
+            raise ContextEfficiencyError(
+                "E_SHARD_RETENTION", f"{category} must be a locator list"
+            )
         count += len(records)
-        retained[category] = [_shard_locator(root, locator, sources) for locator in records]
+        retained[category] = [
+            _shard_locator(root, locator, sources) for locator in records
+        ]
     if count > MAX_SHARD_RECORDS:
-        raise ContextEfficiencyError("E_SHARD_BOUNDARY", "retained records exceed limit")
+        raise ContextEfficiencyError(
+            "E_SHARD_BOUNDARY", "retained records exceed limit"
+        )
     return retained
 
 
@@ -2248,9 +2285,17 @@ def _accepted_shard_conflict(
         for old in other.get("claims", []):
             if not isinstance(old, dict):
                 continue
-            pair = (str(old.get("key", "")).strip().casefold(), _canonical(old.get("value")))
+            pair = (
+                str(old.get("key", "")).strip().casefold(),
+                _canonical(old.get("value")),
+            )
             if any(key == pair[0] and value != pair[1] for key, value in current_pairs):
-                return {"candidate_sha256": digest, "accepted_candidate_sha256": other.get("candidate_sha256"), "key": pair[0], "basis": "same type and normalized key with different canonical values"}
+                return {
+                    "candidate_sha256": digest,
+                    "accepted_candidate_sha256": other.get("candidate_sha256"),
+                    "key": pair[0],
+                    "basis": "same type and normalized key with different canonical values",
+                }
     return None
 
 
@@ -2261,7 +2306,9 @@ def _valid_accepted_shard(
     reviewed: Any,
     now: datetime | None,
 ) -> bool:
-    if not isinstance(other, dict) or other.get("shard_type") != current.get("shard_type"):
+    if not isinstance(other, dict) or other.get("shard_type") != current.get(
+        "shard_type"
+    ):
         return False
     body = {key: value for key, value in other.items() if key != "artifact_path"}
     if other.get("candidate_sha256") != _shard_digest(body, "candidate_sha256"):
@@ -2276,7 +2323,9 @@ def _valid_accepted_shard(
         return False
     if not isinstance(reviewed, dict):
         return False
-    review_body = {key: value for key, value in reviewed.items() if key != "artifact_path"}
+    review_body = {
+        key: value for key, value in reviewed.items() if key != "artifact_path"
+    }
     if (
         reviewed.get("schema") != SHARD_REVIEW_SCHEMA
         or reviewed.get("decision") != "accept"
@@ -2299,28 +2348,63 @@ def _stored_shard_matches(workspace: Path, relative: str, body: dict[str, Any]) 
         return False
 
 
-def _candidate_source_state(workspace: Path, artifact: dict[str, Any], packet_path: Path) -> str:
+def _candidate_source_state(
+    workspace: Path, artifact: dict[str, Any], packet_path: Path
+) -> str:
     verified = verify_context_packet(workspace, packet_path)
-    if not verified.get("valid") or verified.get("packet_sha256") != artifact.get("packet", {}).get("packet_sha256"):
+    if not verified.get("valid") or verified.get("packet_sha256") != artifact.get(
+        "packet", {}
+    ).get("packet_sha256"):
         return "STALE"
     try:
         packet = json.loads(_read_bounded(packet_path).decode("utf-8"))
         sources = _shard_source_rows(workspace, packet)
-        locators = [item for claim in artifact.get("claims", []) if isinstance(claim, dict) for item in claim.get("locators", [])]
-        locators.extend(item for records in artifact.get("retained_records", {}).values() if isinstance(records, list) for item in records)
+        locators = [
+            item
+            for claim in artifact.get("claims", [])
+            if isinstance(claim, dict)
+            for item in claim.get("locators", [])
+        ]
+        locators.extend(
+            item
+            for records in artifact.get("retained_records", {}).values()
+            if isinstance(records, list)
+            for item in records
+        )
         if not all(_verify_shard_locator(workspace, item) for item in locators):
             return "STALE"
-        if any(item.get("path") not in sources for item in locators if isinstance(item, dict)):
+        if any(
+            item.get("path") not in sources
+            for item in locators
+            if isinstance(item, dict)
+        ):
             return "STALE"
         return "CANDIDATE"
-    except (ContextEfficiencyError, OSError, UnicodeError, json.JSONDecodeError, AttributeError):
+    except (
+        ContextEfficiencyError,
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+        AttributeError,
+    ):
         return "STALE"
 
 
-def _accepted_shard_conflict(workspace: Path, artifact: dict[str, Any], digest: str, claims: Any, accepted: Any, now: datetime | None) -> dict[str, str] | None:
+def _accepted_shard_conflict(
+    workspace: Path,
+    artifact: dict[str, Any],
+    digest: str,
+    claims: Any,
+    accepted: Any,
+    now: datetime | None,
+) -> dict[str, str] | None:
     if not isinstance(accepted, (list, tuple)):
         return None
-    current = {(str(item.get("key", "")).strip().casefold(), _canonical(item.get("value"))) for item in claims if isinstance(item, dict)}
+    current = {
+        (str(item.get("key", "")).strip().casefold(), _canonical(item.get("value")))
+        for item in claims
+        if isinstance(item, dict)
+    }
     for pair in accepted[:MAX_SHARD_RECORDS]:
         if not isinstance(pair, dict) or set(pair) != {"candidate", "review"}:
             continue
@@ -2330,19 +2414,40 @@ def _accepted_shard_conflict(workspace: Path, artifact: dict[str, Any], digest: 
         for old in other.get("claims", []):
             if not isinstance(old, dict):
                 continue
-            key, value = str(old.get("key", "")).strip().casefold(), _canonical(old.get("value"))
-            if any(current_key == key and current_value != value for current_key, current_value in current):
-                return {"candidate_sha256": digest, "accepted_candidate_sha256": other.get("candidate_sha256"), "key": key, "basis": "same type and normalized key with different canonical values"}
+            key, value = (
+                str(old.get("key", "")).strip().casefold(),
+                _canonical(old.get("value")),
+            )
+            if any(
+                current_key == key and current_value != value
+                for current_key, current_value in current
+            ):
+                return {
+                    "candidate_sha256": digest,
+                    "accepted_candidate_sha256": other.get("candidate_sha256"),
+                    "key": key,
+                    "basis": "same type and normalized key with different canonical values",
+                }
     return None
 
 
-def _is_reviewed_accepted_shard(workspace: Path, current: dict[str, Any], other: Any, review: Any, now: datetime | None) -> bool:
-    if not isinstance(other, dict) or other.get("shard_type") != current.get("shard_type"):
+def _is_reviewed_accepted_shard(
+    workspace: Path,
+    current: dict[str, Any],
+    other: Any,
+    review: Any,
+    now: datetime | None,
+) -> bool:
+    if not isinstance(other, dict) or other.get("shard_type") != current.get(
+        "shard_type"
+    ):
         return False
     body = {key: value for key, value in other.items() if key != "artifact_path"}
     if other.get("candidate_sha256") != _shard_digest(body, "candidate_sha256"):
         return False
-    if not isinstance(other.get("artifact_path"), str) or not _stored_shard_matches(workspace, other["artifact_path"], body):
+    if not isinstance(other.get("artifact_path"), str) or not _stored_shard_matches(
+        workspace, other["artifact_path"], body
+    ):
         return False
     try:
         if not validate_context_shard_candidate(workspace, other, now=now)["valid"]:
@@ -2351,7 +2456,9 @@ def _is_reviewed_accepted_shard(workspace: Path, current: dict[str, Any], other:
         return False
     if not isinstance(review, dict):
         return False
-    review_body = {key: value for key, value in review.items() if key != "artifact_path"}
+    review_body = {
+        key: value for key, value in review.items() if key != "artifact_path"
+    }
     return (
         review.get("schema") == SHARD_REVIEW_SCHEMA
         and review.get("decision") == "accept"
@@ -2422,18 +2529,30 @@ def build_context_shard_candidate(
     return {**artifact, "artifact_path": relative}
 
 
-def _load_shard_candidate(workspace: Path, candidate: Any) -> tuple[dict[str, Any], str | None]:
+def _load_shard_candidate(
+    workspace: Path, candidate: Any
+) -> tuple[dict[str, Any], str | None]:
     if isinstance(candidate, (str, Path)):
-        path, relative = _shard_relative_path(workspace, str(candidate), "candidate path")
+        path, relative = _shard_relative_path(
+            workspace, str(candidate), "candidate path"
+        )
         try:
-            artifact = json.loads(_read_bounded(path, MAX_SHARD_ARTIFACT_BYTES).decode("utf-8"))
+            artifact = json.loads(
+                _read_bounded(path, MAX_SHARD_ARTIFACT_BYTES).decode("utf-8")
+            )
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise ContextEfficiencyError("E_SHARD_READ", "candidate artifact cannot be read") from exc
+            raise ContextEfficiencyError(
+                "E_SHARD_READ", "candidate artifact cannot be read"
+            ) from exc
     elif isinstance(candidate, dict):
-        artifact = {key: value for key, value in candidate.items() if key != "artifact_path"}
+        artifact = {
+            key: value for key, value in candidate.items() if key != "artifact_path"
+        }
         relative = artifact.get("artifact_path")
     else:
-        raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate must be an artifact or relative path")
+        raise ContextEfficiencyError(
+            "E_SHARD_FIELDS", "candidate must be an artifact or relative path"
+        )
     if not isinstance(artifact, dict):
         raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate must be an object")
     return artifact, relative
@@ -2443,26 +2562,56 @@ def _validate_shard_claim_structure(claim: Any) -> None:
     if not isinstance(claim, dict) or set(claim) != {"key", "value", "locators"}:
         raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate claim is invalid")
     _safe_text(claim["key"], "claim.key", 160)
-    if not isinstance(claim["value"], (str, int, float, bool, list, dict)) or claim["value"] is None:
-        raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate claim value is invalid")
+    if (
+        not isinstance(claim["value"], (str, int, float, bool, list, dict))
+        or claim["value"] is None
+    ):
+        raise ContextEfficiencyError(
+            "E_SHARD_FIELDS", "candidate claim value is invalid"
+        )
     _reject_secret_keys({"value": claim["value"]}, "candidate.claim")
     value_bytes = _canonical(claim["value"])
-    if len(value_bytes) > MAX_SHARD_LOCATOR_BYTES or any(pattern.search(value_bytes) for pattern in _SECRET_BYTES):
-        raise ContextEfficiencyError("E_SHARD_BOUNDARY", "candidate claim value exceeds limit")
+    if len(value_bytes) > MAX_SHARD_LOCATOR_BYTES or any(
+        pattern.search(value_bytes) for pattern in _SECRET_BYTES
+    ):
+        raise ContextEfficiencyError(
+            "E_SHARD_BOUNDARY", "candidate claim value exceeds limit"
+        )
     if not isinstance(claim["locators"], list) or not claim["locators"]:
-        raise ContextEfficiencyError("E_SHARD_LOCATOR", "candidate claim requires locators")
+        raise ContextEfficiencyError(
+            "E_SHARD_LOCATOR", "candidate claim requires locators"
+        )
 
 
 def _validate_shard_structure(artifact: dict[str, Any]) -> None:
     fields = {
-        "schema", "state", "review_status", "shard_type", "packet", "claims",
-        "retained_records", "retention_inventory_status", "expires_at", "provenance_boundary",
+        "schema",
+        "state",
+        "review_status",
+        "shard_type",
+        "packet",
+        "claims",
+        "retained_records",
+        "retention_inventory_status",
+        "expires_at",
+        "provenance_boundary",
         "candidate_sha256",
     }
-    if set(artifact) != fields or artifact.get("shard_type") not in {"rule", "fact", "code_map"}:
-        raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate has invalid fields or type")
-    if artifact.get("review_status") != "UNREVIEWED" or artifact.get("retention_inventory_status") != "CALLER_DECLARED":
-        raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate review or retention state is invalid")
+    if set(artifact) != fields or artifact.get("shard_type") not in {
+        "rule",
+        "fact",
+        "code_map",
+    }:
+        raise ContextEfficiencyError(
+            "E_SHARD_FIELDS", "candidate has invalid fields or type"
+        )
+    if (
+        artifact.get("review_status") != "UNREVIEWED"
+        or artifact.get("retention_inventory_status") != "CALLER_DECLARED"
+    ):
+        raise ContextEfficiencyError(
+            "E_SHARD_FIELDS", "candidate review or retention state is invalid"
+        )
     claims = artifact.get("claims")
     if not isinstance(claims, list) or not 1 <= len(claims) <= MAX_SHARD_CLAIMS:
         raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate claims are invalid")
@@ -2471,25 +2620,40 @@ def _validate_shard_structure(artifact: dict[str, Any]) -> None:
     categories = {"correction", "failure", "approval", "unresolved_action"}
     retained = artifact.get("retained_records")
     if not isinstance(retained, dict) or set(retained) != categories:
-        raise ContextEfficiencyError("E_SHARD_RETENTION", "candidate retention categories are invalid")
+        raise ContextEfficiencyError(
+            "E_SHARD_RETENTION", "candidate retention categories are invalid"
+        )
     if any(not isinstance(records, list) for records in retained.values()):
-        raise ContextEfficiencyError("E_SHARD_RETENTION", "candidate retained records are invalid")
+        raise ContextEfficiencyError(
+            "E_SHARD_RETENTION", "candidate retained records are invalid"
+        )
     if sum(len(records) for records in retained.values()) > MAX_SHARD_RECORDS:
-        raise ContextEfficiencyError("E_SHARD_BOUNDARY", "candidate retained records exceed limit")
+        raise ContextEfficiencyError(
+            "E_SHARD_BOUNDARY", "candidate retained records exceed limit"
+        )
 
 
 def _validated_shard_reference(
     workspace: Path, artifact: dict[str, Any]
 ) -> tuple[str, Path, str]:
-    if artifact.get("schema") != SHARD_CANDIDATE_SCHEMA or artifact.get("state") != "CANDIDATE":
-        raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate schema or state is invalid")
+    if (
+        artifact.get("schema") != SHARD_CANDIDATE_SCHEMA
+        or artifact.get("state") != "CANDIDATE"
+    ):
+        raise ContextEfficiencyError(
+            "E_SHARD_FIELDS", "candidate schema or state is invalid"
+        )
     _validate_shard_structure(artifact)
     digest = artifact.get("candidate_sha256")
-    if not isinstance(digest, str) or digest != _shard_digest(artifact, "candidate_sha256"):
+    if not isinstance(digest, str) or digest != _shard_digest(
+        artifact, "candidate_sha256"
+    ):
         raise ContextEfficiencyError("E_SHARD_DIGEST", "candidate digest is invalid")
     packet = artifact.get("packet")
     if not isinstance(packet, dict) or set(packet) != {"path", "packet_sha256"}:
-        raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate packet reference is invalid")
+        raise ContextEfficiencyError(
+            "E_SHARD_FIELDS", "candidate packet reference is invalid"
+        )
     path, relative = _shard_relative_path(workspace, packet["path"], "packet.path")
     return digest, path, relative
 
@@ -2504,7 +2668,9 @@ def validate_context_shard_candidate(
     """Re-read and validate candidate provenance, freshness, expiry and conflicts."""
     workspace = _validated_root(root)
     artifact, relative = _load_shard_candidate(workspace, candidate)
-    digest, packet_path, packet_relative = _validated_shard_reference(workspace, artifact)
+    digest, packet_path, packet_relative = _validated_shard_reference(
+        workspace, artifact
+    )
     state = _candidate_source_state(workspace, artifact, packet_path)
     if state != "STALE" and _shard_now(now) >= _shard_datetime(
         artifact.get("expires_at"), "expires_at"
@@ -2549,15 +2715,25 @@ def review_context_shard_candidate(
     """Write a separate explicit caller-review event; reviewer identity is unauthenticated."""
     validation = validate_context_shard_candidate(root, candidate, now=now)
     if not validation["valid"]:
-        raise ContextEfficiencyError("E_SHARD_NOT_REVIEWABLE", f"candidate state is {validation['state']}")
+        raise ContextEfficiencyError(
+            "E_SHARD_NOT_REVIEWABLE", f"candidate state is {validation['state']}"
+        )
     if decision not in {"accept", "reject", "defer"}:
-        raise ContextEfficiencyError("E_SHARD_REVIEW", "decision must be accept, reject, or defer")
+        raise ContextEfficiencyError(
+            "E_SHARD_REVIEW", "decision must be accept, reject, or defer"
+        )
     reviewer = _safe_text(reviewer_id, "reviewer_id", 160)
     basis = _safe_text(review_basis, "review_basis", 1000)
-    artifact = {key: value for key, value in candidate.items() if key != "artifact_path"}
+    artifact = {
+        key: value for key, value in candidate.items() if key != "artifact_path"
+    }
     event = {
         "schema": SHARD_REVIEW_SCHEMA,
-        "state": "CALLER_REVIEWED_ACCEPTED" if decision == "accept" else "CALLER_REVIEWED_REJECTED" if decision == "reject" else "CALLER_REVIEWED_DEFERRED",
+        "state": "CALLER_REVIEWED_ACCEPTED"
+        if decision == "accept"
+        else "CALLER_REVIEWED_REJECTED"
+        if decision == "reject"
+        else "CALLER_REVIEWED_DEFERRED",
         "decision": decision,
         "candidate_sha256": artifact["candidate_sha256"],
         "reviewer_id": reviewer,
@@ -2652,7 +2828,7 @@ def _collect_packet_status(workspace: Path, directory: Path) -> dict[str, Any]:
     return {
         "rows": rows,
         "invalid_count": invalid,
-            "cache_hits": cache_hits,
+        "cache_hits": cache_hits,
         "estimated_tokens": estimated_tokens,
         "selection_count": selection_count,
         "missing_selection_evidence": missing_selection_evidence,

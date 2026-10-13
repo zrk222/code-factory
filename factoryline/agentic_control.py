@@ -3689,9 +3689,7 @@ class WorkflowEventStore:
         return value
 
     @staticmethod
-    def _validate_claim_item(
-        item, expected_epoch, expected_source_sha256
-    ):
+    def _validate_claim_item(item, expected_epoch, expected_source_sha256):
         if expected_epoch is not None and item["epoch"] != expected_epoch:
             raise AgenticControlError(
                 "E_WORKFLOW_FENCED", "source owner epoch changed before claim"
@@ -3759,12 +3757,8 @@ class WorkflowEventStore:
         owner, ttl = _id(owner, "owner"), self._ttl(ttl)
         with self._connect() as db:
             item = self._read(db, key)
-            self._validate_claim_item(
-                item, expected_epoch, expected_source_sha256
-            )
-            item = self._prepare_claim_item(
-                item, key, owner, ttl, driver_binding
-            )
+            self._validate_claim_item(item, expected_epoch, expected_source_sha256)
+            item = self._prepare_claim_item(item, key, owner, ttl, driver_binding)
             self._write(db, item, "run_claimed")
             return _runtime_result(
                 item,
@@ -3998,15 +3992,11 @@ INCIDENT_PHASES = ("detect", "investigate", "reproduce", "repair", "verify", "re
 class RegisteredIncidentDriver(Protocol):
     """Host-registered idempotent launch and authoritative action lookup port."""
 
-    def lookup(
-        self, action_intent_id: str, intent: dict[str, Any]
-    ) -> dict[str, Any]:
+    def lookup(self, action_intent_id: str, intent: dict[str, Any]) -> dict[str, Any]:
         """Return an authoritative observation for this exact action intent."""
         ...
 
-    def launch(
-        self, run_id: str, action_intent_id: str, intent: dict[str, Any]
-    ) -> str:
+    def launch(self, run_id: str, action_intent_id: str, intent: dict[str, Any]) -> str:
         """Start an action only when its intent and caller scope are authorized."""
         ...
 
@@ -4207,18 +4197,14 @@ class DurableIncidentDriver:
         )
         driver = self.drivers.get(driver_id)
         if driver is None:
-            raise AgenticControlError(
-                "E_INCIDENT_DRIVER", "driver is not registered"
-            )
+            raise AgenticControlError("E_INCIDENT_DRIVER", "driver is not registered")
         self._authorized(owner, payload)
         return item, payload, binding, driver, item.get("run")
 
     @staticmethod
     def _validate_active_launch_run(run, owner, binding):
         if run.get("driver_binding") != binding:
-            raise AgenticControlError(
-                "E_INCIDENT_INTENT", "active run intent differs"
-            )
+            raise AgenticControlError("E_INCIDENT_INTENT", "active run intent differs")
         if run.get("owner") != owner:
             raise AgenticControlError(
                 "E_WORKFLOW_FENCED", "active run belongs to another owner"
@@ -4249,9 +4235,7 @@ class DurableIncidentDriver:
             return False
         return self._validate_previous_launch(item, phase, binding, previous)
 
-    def _observe_launch_phase(
-        self, key, owner, item, payload, binding, driver, run
-    ):
+    def _observe_launch_phase(self, key, owner, item, payload, binding, driver, run):
         observation = self._observation(driver, binding, payload)
         if self.store.get(key) != item:
             raise AgenticControlError(
@@ -4283,9 +4267,7 @@ class DurableIncidentDriver:
             )
         return None
 
-    def _launch_claimed_phase(
-        self, key, owner, item, payload, binding, driver, ttl
-    ):
+    def _launch_claimed_phase(self, key, owner, item, payload, binding, driver, ttl):
         claimed = self.store.claim(
             key,
             owner,
@@ -4457,7 +4439,9 @@ class DurableIncidentDriver:
         checkpoint["checkpoint_sha256"] = _sha(checkpoint)
         return checkpoint
 
-    def _persist_checkpoint(self, key, owner, snapshot, authorization, checkpoint, phase):
+    def _persist_checkpoint(
+        self, key, owner, snapshot, authorization, checkpoint, phase
+    ):
         with self.store._connect() as db:
             item = self.store._read(db, key)
             if item != snapshot:
@@ -4479,15 +4463,11 @@ class DurableIncidentDriver:
         expected, verifier_id = self._checkpoint_expected(
             snapshot, run, binding, evidence
         )
-        authorization = self._checkpoint_authorization(
-            expected, binding, owner, run
-        )
+        authorization = self._checkpoint_authorization(expected, binding, owner, run)
         self._verify_checkpoint_source_and_result(
             snapshot, phase, expected, verifier_id, owner, authorization
         )
-        checkpoint = self._checkpoint_record(
-            phase, run, binding, expected, verifier_id
-        )
+        checkpoint = self._checkpoint_record(phase, run, binding, expected, verifier_id)
         item = self._persist_checkpoint(
             key, owner, snapshot, authorization, checkpoint, phase
         )
