@@ -249,15 +249,9 @@ def _callback_registry_dispatch(test, registry, registration, register, callback
     return False
 
 
-def registered_callback_oracle(test, aliases, strong_assertion, effective_assertion):
-    """Prove a narrow local append-registry decorator and direct callback loop.
-
-    Cross-file registries, metaclasses, dynamic tags, and indirect dispatch remain
-    unsupported. Unsupported syntax returns false; it is never treated as proven.
-    """
-    if not isinstance(test, ast.FunctionDef):
-        return False
-    initializers = [
+def _empty_callback_registries(test):
+    """Find direct, single-name empty-list initializers without executing code."""
+    return [
         node
         for node in test.body
         if isinstance(node, ast.Assign)
@@ -266,6 +260,17 @@ def registered_callback_oracle(test, aliases, strong_assertion, effective_assert
         and isinstance(node.value, ast.List)
         and not node.value.elts
     ]
+
+
+def registered_callback_oracle(test, aliases, strong_assertion, effective_assertion):
+    """Prove a narrow local append-registry decorator and direct callback loop.
+
+    Cross-file registries, metaclasses, dynamic tags, and indirect dispatch remain
+    unsupported. Unsupported syntax returns false; it is never treated as proven.
+    """
+    if not isinstance(test, ast.FunctionDef):
+        return False
+    initializers = _empty_callback_registries(test)
     if len(initializers) != 1:
         return False
     initial = initializers[0]
