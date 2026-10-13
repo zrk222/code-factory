@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 import textwrap
 
@@ -183,7 +184,15 @@ def test_security_scan_nested_helper_shadows_module_oracle(tmp_path):
     ids=lambda case: case["id"],
 )
 def test_security_scan_external_repository_oracle_regressions(tmp_path, case):
-    (tmp_path / "test_external.py").write_text(case["source"], encoding="utf-8")
+    fixture_source = case.get("fixture_source", "")
+    if fixture_source:
+        assert hashlib.sha256(fixture_source.encode()).hexdigest() == case[
+            "fixture_source_sha256"
+        ]
+        assert case["fixture_source_commit"] == case["commit"]
+    (tmp_path / "test_external.py").write_text(
+        fixture_source + case["source"], encoding="utf-8"
+    )
     result = security_scan(tmp_path)
     hollow = any(
         finding["code"] == "QUALITY_HOLLOW_TEST" for finding in result["findings"]
@@ -363,6 +372,117 @@ def test_mock_assertion_spelling_on_fake_object_is_not_an_oracle(tmp_path):
         "    perform(send)\n    send.assert_called_once_with('payload')\n",
         encoding="utf-8",
     )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "receiver",
+    [
+        "legacy_term_mock.write_text",
+        "getattr(legacy_term_mock, method_name)",
+    ],
+)
+def test_source_mock_fixture_proves_child_assertion(tmp_path, receiver):
+    (tmp_path / "test_mock_fixture.py").write_text(
+        "import pytest\nfrom unittest.mock import create_autospec\n"
+        "class LegacyTerm:\n    def write_text(self, text):\n        pass\n"
+        "@pytest.fixture\ndef legacy_term_mock():\n"
+        "    return create_autospec(LegacyTerm)\n"
+        "def test_behavior(legacy_term_mock):\n    method_name = 'write_text'\n"
+        "    perform(legacy_term_mock)\n    "
+        + receiver
+        + ".assert_called_once_with('payload')\n",
+        encoding="utf-8",
+    )
+    assert not security_scan(tmp_path)["findings"]
+
+
+@pytest.mark.parametrize(
+    "mutation,receiver",
+    [
+        ("legacy_term_mock.write_text = Fake()", "legacy_term_mock.write_text"),
+        (
+            "setattr(legacy_term_mock, method_name, Fake())",
+            "getattr(legacy_term_mock, method_name)",
+        ),
+    ],
+)
+def test_mock_fixture_child_replacement_is_not_an_oracle(
+    tmp_path, mutation, receiver
+):
+    (tmp_path / "test_mock_fixture.py").write_text(
+        "import pytest\nfrom unittest.mock import create_autospec\n"
+        "class LegacyTerm:\n    def write_text(self, text):\n        pass\n"
+        "class Fake:\n    def assert_called_once_with(self, *args):\n        pass\n"
+        "@pytest.fixture\ndef legacy_term_mock():\n"
+        "    return create_autospec(LegacyTerm)\n"
+        "def test_behavior(legacy_term_mock):\n    method_name = 'write_text'\n    "
+        + mutation
+        + "\n    perform(legacy_term_mock)\n    "
+        + receiver
+        + ".assert_called_once_with('payload')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_source_fixture_returning_fake_does_not_prove_mock(tmp_path):
+    (tmp_path / "test_fake_fixture.py").write_text(
+        "import pytest\nclass Fake:\n"
+        "    def assert_called_once_with(self, *args):\n        pass\n"
+        "@pytest.fixture\ndef legacy_term_mock():\n    return Fake()\n"
+        "def test_behavior(legacy_term_mock):\n    perform(legacy_term_mock)\n"
+        "    legacy_term_mock.write_text.assert_called_once_with('payload')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "decorator",
+    [
+        "@patch('module.send', new=Fake())",
+        "@patch('module.send', new_callable=Fake)",
+        "@wrapper\n@patch('module.send')",
+    ],
+)
+def test_patch_parameter_requires_resolved_default_mock_injection(
+    tmp_path, decorator
+):
+    (tmp_path / "test_patched_mock.py").write_text(
+        "from unittest.mock import patch\n"
+        "class Fake:\n    def assert_called_once_with(self, *args):\n        pass\n"
+        + decorator
+        + "\ndef test_behavior(send):\n    perform(send)\n"
+        "    send.assert_called_once_with('payload')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from unittest.mock import patch\n"
+        "def patch(target):\n    return lambda function: function\n"
+        "class Fake:\n    def assert_called_once_with(self, *args):\n        pass\n"
+        "@patch('module.send')\ndef test_send(send):\n    perform()\n"
+        "    send.assert_called_once_with('payload')\n",
+        "from unittest.mock import Mock\n"
+        "class Fake:\n    def assert_called_once_with(self, *args):\n        pass\n"
+        "def Mock():\n    return Fake()\n"
+        "def test_send():\n    send = Mock()\n    perform()\n"
+        "    send.assert_called_once_with('payload')\n",
+        "from unittest.mock import Mock\n"
+        "def test_send():\n    send = Mock()\n"
+        "    send.assert_called_once_with = lambda *args: None\n"
+        "    perform(send)\n    send.assert_called_once_with('payload')\n",
+    ],
+)
+def test_mock_provenance_rejects_shadowed_constructors_and_assertion_methods(
+    tmp_path, source
+):
+    (tmp_path / "test_mock_shadow.py").write_text(source, encoding="utf-8")
     assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
 
 

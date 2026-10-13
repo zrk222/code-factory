@@ -1919,15 +1919,25 @@ _UNITTEST_MOCK_CONSTRUCTORS = {
 
 def _mock_receiver_has_provenance(assertion, aliases):
     """Trust mock assertions only for locally constructed unittest.mock values."""
-    receiver = _mock_root_name(assertion.func.value)
     scope = getattr(assertion, "_oracle_scope", None)
+    receiver = _mock_root_name(assertion.func.value, scope, aliases)
     if receiver is None or scope is None:
         return False
     scoped_aliases = _scope_security_aliases(aliases, scope)
     nodes = _test_oracle_body_nodes(scope, scoped_aliases)
-    if _mock_scope_binding(nodes, receiver, assertion, scoped_aliases):
-        return True
-    if (
+    proven = _mock_scope_binding(nodes, receiver, assertion, scoped_aliases)
+    module = getattr(scope, "_oracle_module", None)
+    fixture_proven = bool(
+        module is not None
+        and _mock_fixture_binding(
+            scope,
+            receiver,
+            module,
+            _scope_security_aliases(_module_security_aliases(module), module),
+        )
+    )
+    patch_proven = _mock_patch_parameter(scope, receiver, scoped_aliases)
+    if not proven and not fixture_proven and not patch_proven and not (
         receiver in _scope_parameters(scope)
         or any(
             isinstance(node, ast.stmt)
@@ -1937,16 +1947,14 @@ def _mock_receiver_has_provenance(assertion, aliases):
         )
         or _scope_binds_name(scope, receiver)
     ):
-        return False
-    module = getattr(scope, "_oracle_module", None)
-    if module is None:
-        return False
-    module_aliases = _scope_security_aliases(_module_security_aliases(module), module)
-    return _mock_scope_binding(
-        module.body,
-        receiver,
-        assertion,
-        module_aliases,
+        if module is not None:
+            module_aliases = _scope_security_aliases(
+                _module_security_aliases(module), module
+            )
+            proven = _mock_scope_binding(module.body, receiver, assertion, module_aliases)
+    proven = proven or fixture_proven or patch_proven
+    return proven and not _mock_child_was_rebound(
+        scope, assertion.func.value, receiver, aliases
     )
 
 
@@ -1954,10 +1962,118 @@ def _scope_binds_name(scope, name):
     return any(name in _bound_names(statement) for statement in scope.body)
 
 
-def _mock_root_name(node):
+def _mock_fixture_binding(scope, name, module, aliases):
+    if name not in _scope_parameters(scope) or _scope_binds_name(scope, name):
+        return False
+    fixtures = [
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == name
+        and len(node.decorator_list) == 1
+        and _resolved_ast_name(node.decorator_list[0], aliases) == "pytest.fixture"
+    ]
+    if len(fixtures) != 1 or _module_has_rebinding(module, name, fixtures[0]):
+        return False
+    fixture = fixtures[0]
+    fixture_aliases = _scope_security_aliases(aliases, fixture)
+    returns = [item for item in fixture.body if isinstance(item, ast.Return)]
+    return (
+        len(fixture.body) == 1
+        and len(returns) == 1
+        and isinstance(returns[0].value, ast.Call)
+        and _normalized_call_name(returns[0].value, fixture_aliases)
+        in _UNITTEST_MOCK_CONSTRUCTORS
+    )
+
+
+def _module_has_rebinding(module, name, fixture):
+    return any(
+        statement is not fixture and name in _bound_names(statement)
+        for statement in module.body
+    )
+
+
+def _mock_patch_parameter(scope, name, aliases):
+    if (
+        not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+        or not scope.decorator_list
+        or _scope_binds_name(scope, name)
+        or any(not _default_mock_patch(item, aliases) for item in scope.decorator_list)
+    ):
+        return False
+    parameters = [
+        arg.arg for arg in [*scope.args.posonlyargs, *scope.args.args]
+    ]
+    injected = len(scope.decorator_list)
+    return name in parameters[:injected]
+
+
+def _default_mock_patch(decorator, aliases):
+    if not isinstance(decorator, ast.Call) or any(
+        keyword.arg in {"new", "new_callable"} or keyword.arg is None
+        for keyword in decorator.keywords
+    ):
+        return False
+    name = _normalized_call_name(decorator, aliases)
+    if name == "unittest.mock.patch.object":
+        return len(decorator.args) == 2
+    if name == "unittest.mock.patch":
+        return len(decorator.args) == 1
+    return False
+
+
+def _mock_root_name(node, scope, aliases):
     while isinstance(node, ast.Attribute):
         node = node.value
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and len(node.args) == 2
+        and _mock_getattr_selector(node.args[1], scope)
+        and not node.keywords
+        and not aliases.get("getattr")
+        and scope is not None
+        and "getattr" not in _scope_parameters(scope)
+        and not _scope_binds_name(scope, "getattr")
+        and not _scope_binds_name(
+            getattr(scope, "_oracle_module", ast.Module(body=[], type_ignores=[])),
+            "getattr",
+        )
+    ):
+        return _mock_root_name(node.args[0], scope, aliases)
     return node.id if isinstance(node, ast.Name) else None
+
+
+def _mock_getattr_selector(selector, scope):
+    if isinstance(selector, ast.Name):
+        return selector.id not in {"__class__", "__dict__", "__getattribute__"}
+    return (
+        isinstance(selector, ast.Constant)
+        and isinstance(selector.value, str)
+        and not (selector.value.startswith("__") and selector.value.endswith("__"))
+    )
+
+
+def _mock_child_was_rebound(scope, receiver, root, aliases):
+    return _mock_root_was_mutated(scope, root, receiver.lineno, aliases)
+
+
+def _mock_root_was_mutated(scope, root, before, aliases):
+    for node in _test_oracle_body_nodes(scope, {}):
+        if getattr(node, "lineno", before) >= before:
+            continue
+        if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ) and _mock_root_name(node, scope, aliases) == root:
+            return True
+        if isinstance(node, ast.Call) and _call_name(node) in {
+            "setattr",
+            "delattr",
+        } and node.args and isinstance(node.args[0], ast.Name) and node.args[0].id == root:
+            return True
+    return False
 
 
 def _mock_scope_binding(nodes, name, endpoint, aliases):
