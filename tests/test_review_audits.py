@@ -389,6 +389,125 @@ def test_hollow_callback_report_provides_native_assertion_probe(tmp_path):
     assert probe["nodeid_hint"] == "test_case.py::test_behavior"
     assert probe["exact_collection_id_required"] is True
     assert probe["command"][:3] == ["python", "-m", "factoryline.pytest_readiness"]
+    assert probe["command"] == [
+        "python",
+        "-m",
+        "factoryline.pytest_readiness",
+        "--root",
+        ".",
+        "--nodeid",
+        "<exact collected pytest node ID>",
+        "--line",
+        "<assertion line>",
+        "--timeout",
+        "30",
+    ]
+    assert probe["call_available"] is False
+    assert probe["call_lines"] == []
+    assert "--kind" not in probe["command"]
+    assert "--kind" in probe["call_command"]
+    assert probe["call_command"][probe["call_command"].index("--kind") + 1] == "call"
+    assert "mutation sensitivity and semantic quality are not assessed" in " ".join(
+        probe["call_limits"]
+    )
+
+
+def test_native_test_probe_attribution_excludes_ambiguous_call_shapes():
+    import ast
+    from factoryline.review_integrity import native_test_probe
+
+    test = ast.parse(
+        "def test_behavior():\n"
+        "    callback()\n"
+        "    value = callback()\n"
+        "    callback(); other()\n"
+        "    callback() or other()\n"
+        "    def helper():\n        callback()\n"
+        "    class Container:\n        callback()\n"
+        "        def method(self):\n            callback()\n"
+        "    @register(other())\n    def decorated(value=other()):\n        pass\n"
+        "    async def deferred():\n        await callback()\n"
+        "    lambda: callback()\n"
+    ).body[0]
+
+    probe = native_test_probe("tests/test_behavior.py", test)
+
+    assert probe["call_lines"] == [2, 7, 11]
+    assert probe["call_available"] is True
+    assert probe["call_command"][0:5] == [
+        "python",
+        "-m",
+        "factoryline.pytest_readiness",
+        "--kind",
+        "call",
+    ]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def test_behavior():\n    value = callback()\n    pass\n",
+        "def test_behavior():\n    callback(); other()\n",
+        "def test_behavior():\n    callback(other())\n",
+        "def test_behavior():\n    callback() or other()\n",
+        "async def test_behavior():\n    await callback()\n",
+        "def test_behavior():\n    lambda: callback()\n",
+        "@register(callback())\ndef test_behavior():\n    pass\n",
+        "def test_behavior(value=callback()):\n    pass\n",
+        "def test_behavior():\n    class Container:\n        callback()\n",
+        "callback()\ndef test_behavior():\n    pass\n",
+    ],
+)
+def test_hollow_test_call_probe_guidance_rejects_non_direct_targets(tmp_path, source):
+    (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
+
+    finding = next(
+        item
+        for item in security_scan(tmp_path)["findings"]
+        if item["code"] == "QUALITY_HOLLOW_TEST"
+    )
+    probe = finding["facts"]["native_assertion_probe"]
+
+    assert probe["call_available"] is False
+    assert probe["call_lines"] == []
+
+
+def test_native_test_probe_excludes_module_level_calls():
+    import ast
+    from factoryline.review_integrity import native_test_probe
+
+    module = ast.parse("callback()\ndef test_behavior():\n    pass\n")
+
+    assert native_test_probe("tests/test_case.py", module)["call_lines"] == []
+
+
+def test_hollow_test_call_guidance_is_static_and_explicitly_bounded(tmp_path):
+    (tmp_path / "test_case.py").write_text(
+        "from pathlib import Path\n"
+        "Path('scanner-ran-source').write_text('unexpected')\n"
+        "def test_behavior():\n    callback()\n    pass\n"
+        "def callback():\n    pass\n",
+        encoding="utf-8",
+    )
+
+    finding = next(
+        item
+        for item in security_scan(tmp_path)["findings"]
+        if item["code"] == "QUALITY_HOLLOW_TEST"
+    )
+    probe = finding["facts"]["native_assertion_probe"]
+
+    assert probe["call_available"] is True
+    assert probe["call_lines"] == [4]
+    assert probe["nodeid_hint"] == "test_case.py::test_behavior"
+    assert probe["call_command"][-4:] == [
+        "--line",
+        "<call line>",
+        "--timeout",
+        "30",
+    ]
+    assert "never started by a static scan" in probe["execution"]
+    assert not (tmp_path / "scanner-ran-source").exists()
 
 
 def test_flask_fixture_apps_and_flask_invoked_callbacks_direct_contract():
