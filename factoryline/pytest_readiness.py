@@ -584,6 +584,7 @@ def _run_assertion_challenge(config, timeout):
         script = (
             "import json,sys; sys.path.insert(0,sys.argv.pop(1)); "
             "from factoryline.pytest_readiness import _challenge_worker; "
+            "sys.path.insert(0,json.loads(sys.argv[1])['root']); "
             "_challenge_worker(json.loads(sys.argv[1]),sys.argv[2])"
         )
         env = dict(os.environ)

@@ -1005,3 +1005,49 @@ def test_structural_context_roundtrip_and_missing_defaults():
         "class_imports": {},
         "benchmark_constants": {},
     }
+
+
+def test_assertion_challenge_imports_trusted_worker_before_project_root(
+    tmp_path, monkeypatch
+):
+    from factoryline import pytest_readiness
+
+    project = tmp_path / "project"
+    project.mkdir()
+    project_package = project / "factoryline"
+    project_package.mkdir()
+    (project_package / "__init__.py").write_text(
+        "raise RuntimeError('project factoryline package was imported')\n"
+    )
+    (project / "shadow_product.py").write_text("VALUE = 'project'\n")
+
+    tool_root = tmp_path / "installed"
+    tool_package = tool_root / "factoryline"
+    tool_package.mkdir(parents=True)
+    (tool_package / "__init__.py").write_text("")
+    worker_path = tool_package / "pytest_readiness.py"
+    worker_path.write_text(
+        "import json\n"
+        "def _challenge_worker(config, output):\n"
+        "    import shadow_product\n"
+        "    with open(output, 'w', encoding='utf-8') as stream:\n"
+        "        json.dump({'chosen_value': shadow_product.VALUE, "
+        "'worker_file': __file__}, stream)\n"
+    )
+    (tool_root / "shadow_product.py").write_text("VALUE = 'installed'\n")
+    monkeypatch.setattr(pytest_readiness, "__file__", str(worker_path))
+
+    observation = pytest_readiness._run_assertion_challenge(
+        {
+            "root": str(project),
+            "path": str(project / "test_sample.py"),
+            "line": 1,
+            "inject": False,
+            "qualname": "test_sample",
+            "firstlineno": 1,
+        },
+        timeout=5,
+    )
+
+    assert observation["chosen_value"] == "project"
+    assert Path(observation["worker_file"]) == worker_path
