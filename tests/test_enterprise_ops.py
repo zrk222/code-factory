@@ -120,6 +120,44 @@ def test_docker_unavailable_fails_closed(
     assert error.value.code == "E_RUNNER_BACKEND_UNAVAILABLE"
 
 
+@pytest.mark.parametrize("length,status", [(1024, "passed"), (1025, "incomplete")])
+def test_proof_runner_truncated_output_cannot_pass(
+    tmp_path, monkeypatch, length, status
+):
+    root = _init(tmp_path)
+    monkeypatch.setattr(
+        "factoryline.enterprise_ops._execute_runner",
+        lambda *args: (0, "x" * length, "", False),
+    )
+    receipt = run_proof(
+        root,
+        ["python", "-c", "pass"],
+        backend="process",
+        allow_process_boundary=True,
+        output_limit=1024,
+    )
+    assert receipt["status"] == status
+    assert receipt["output_truncated"] is (length > 1024)
+
+
+def test_required_checks_reject_truncated_passed_receipt(tmp_path):
+    root = _init(tmp_path)
+    (root / "src.py").write_text("value = 1\n")
+    receipt = root / "proof.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "status": "passed",
+                "output_truncated": True,
+                "changed_paths": ["src.py"],
+            }
+        )
+    )
+    result = evaluate_required_checks(root, ["src.py"], proof_receipts=["proof.json"])
+    assert result["decision"] == "REVIEW_REQUIRED"
+    assert result["missing"] == ["src.py"]
+
+
 def test_required_checks_report_missing_and_ready(tmp_path: Path):
     root = _init(tmp_path)
     changed = root / "src.py"

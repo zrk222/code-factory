@@ -790,6 +790,7 @@ def run_proof(
         argv, workspace, timeout_seconds
     )
     combined = stdout + ("\n" if stdout and stderr else "") + stderr
+    truncated = len(combined) > output_limit
     result = {
         "schema": RUNNER_SCHEMA,
         "marker": "RUNNER_ISOLATION_ENFORCED"
@@ -799,11 +800,12 @@ def run_proof(
         "tenant_id": config["tenant_id"],
         "command": command,
         "posture": posture,
-        "status": "timeout" if timed_out else "passed" if exit_code == 0 else "failed",
+        "status": _proof_runner_status(timed_out, exit_code, truncated),
         "exit_code": exit_code,
         "elapsed_ms": round((time.perf_counter() - started) * 1000),
         "output": combined[:output_limit],
-        "output_truncated": len(combined) > output_limit,
+        "output_truncated": truncated,
+        "output_complete": not truncated,
         "authority": {
             "source_write": False,
             "merge": False,
@@ -815,6 +817,14 @@ def run_proof(
         {key: value for key, value in result.items() if key != "receipt_sha256"}
     )
     return result
+
+
+def _proof_runner_status(timed_out, exit_code, truncated):
+    if timed_out:
+        return "timeout"
+    if exit_code != 0:
+        return "failed"
+    return "incomplete" if truncated else "passed"
 
 
 def _normalize_changed_paths(
@@ -844,9 +854,13 @@ def _read_proof_receipts(
             raise EnterpriseOpsError(
                 "E_PROOF_RECEIPT_INVALID", f"proof receipt cannot be read: {exc}"
             ) from exc
-        if isinstance(value, dict) and (
-            value.get("verified") is True
-            or value.get("status") in {"verified", "passed"}
+        if (
+            isinstance(value, dict)
+            and not value.get("output_truncated", False)
+            and (
+                value.get("verified") is True
+                or value.get("status") in {"verified", "passed"}
+            )
         ):
             receipts.append(value)
     return receipts

@@ -2203,6 +2203,8 @@ def _injected_mock_use(assertion: ast.Call, aliases: dict[str, str]) -> bool:
 
 def _direct_mock_dependency_use(assertion, receiver, aliases, nodes):
     """Credit interaction checks after passing a mock to an executed dependency."""
+    from .review_integrity import assigned_sync_function_call
+
     for call in nodes:
         if not isinstance(call, ast.Call) or call.lineno >= assertion.lineno:
             continue
@@ -2216,8 +2218,12 @@ def _direct_mock_dependency_use(assertion, receiver, aliases, nodes):
             continue
         if name == receiver or name.startswith(("unittest.mock.", "mock.")):
             continue
-        if isinstance(
-            getattr(call, "_oracle_parent", None), (ast.Assign, ast.AnnAssign)
+        parent = getattr(call, "_oracle_parent", None)
+        if isinstance(parent, (ast.Assign, ast.AnnAssign)) and (
+            scope is None
+            or not assigned_sync_function_call(
+                call, scope, getattr(scope, "_oracle_module", ast.Module())
+            )
         ):
             continue
         arguments = [*call.args, *(item.value for item in call.keywords)]
@@ -4860,6 +4866,7 @@ def _test_oracle_findings(
         ):
             continue
         node._oracle_click_runners = click_runners or set()
+        node._oracle_module = nodes[0]
         node._oracle_async_functions = {
             item.name
             for item in [*nodes[0].body, *node.body]

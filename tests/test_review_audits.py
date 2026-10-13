@@ -873,6 +873,129 @@ def test_mock_oracle_rejects_self_unused_and_rebound_state(tmp_path, body):
     assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from unittest.mock import Mock\ndef test_behavior():\n"
+        "    m = Mock()\n    ret = (lambda f: None)(m)\n    m.assert_not_called()\n",
+        "from unittest.mock import Mock\ndef perform(dep):\n    pass\n"
+        "def test_behavior():\n    m = Mock()\n    ret = perform(m)\n"
+        "    m.assert_not_called()\n",
+        "from unittest.mock import Mock\ndef test_behavior():\n"
+        "    def perform(dep):\n        pass\n    m = Mock()\n"
+        "    ret = perform(m)\n    m.assert_not_called()\n",
+    ],
+    ids=["inline-lambda", "module-function", "local-function"],
+)
+def test_mock_oracle_accepts_assigned_direct_sync_dependency_calls(tmp_path, source):
+    (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
+    assert not security_scan(tmp_path)["findings"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from unittest.mock import Mock\ndef test_behavior():\n"
+        "    m = Mock()\n    m.assert_not_called()\n",
+        "from unittest.mock import Mock\ndef test_behavior():\n"
+        "    m = Mock()\n    if False:\n        ret = (lambda f: None)(m)\n"
+        "    m.assert_not_called()\n",
+        "from unittest.mock import Mock\nclass Dependency:\n    pass\n"
+        "def test_behavior():\n    m = Mock()\n    ret = Dependency(m)\n"
+        "    m.assert_not_called()\n",
+        "from unittest.mock import Mock\n@wrapper\ndef perform(dep):\n    pass\n"
+        "def test_behavior():\n    m = Mock()\n    ret = perform(m)\n"
+        "    m.assert_not_called()\n",
+        "from unittest.mock import Mock\ndef test_behavior():\n"
+        "    def perform(dep):\n        pass\n    perform = unknown\n"
+        "    m = Mock()\n    ret = perform(m)\n    m.assert_not_called()\n",
+        "from unittest.mock import Mock\nasync def perform(dep):\n    pass\n"
+        "def test_behavior():\n    m = Mock()\n    ret = perform(m)\n"
+        "    m.assert_not_called()\n",
+        "from unittest.mock import Mock\ndef test_behavior():\n"
+        "    m = Mock()\n    ret = (lambda f: None)(m)\n"
+        "    m = object()\n    m.assert_not_called()\n",
+    ],
+    ids=[
+        "unused",
+        "unreachable",
+        "constructor-only",
+        "decorated",
+        "rebound-callable",
+        "unawaited-async",
+        "rebound-mock",
+    ],
+)
+def test_mock_oracle_rejects_unsafe_assigned_dependency_calls(tmp_path, source):
+    (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "shadow",
+    [
+        "parameter",
+        "wildcard",
+        "local_assignment",
+        "conditional_class",
+        "pattern_capture",
+    ],
+)
+def test_assigned_sync_function_call_rejects_shadowed_module_binding(shadow):
+    import ast
+    from factoryline.review_integrity import assigned_sync_function_call
+
+    parameter = "perform" if shadow == "parameter" else ""
+    imported = "from plugin import *\n" if shadow == "wildcard" else ""
+    rebound = "    perform = replacement\n" if shadow == "local_assignment" else ""
+    if shadow == "conditional_class":
+        rebound = "    if True:\n        class perform:\n            pass\n"
+    if shadow == "pattern_capture":
+        rebound = (
+            "    match [replacement]:\n        case [perform]:\n            pass\n"
+        )
+    tree = ast.parse(
+        "def perform(value):\n    return None\n"
+        + imported
+        + f"def test_behavior({parameter}):\n"
+        + rebound
+        + "    result = perform(dependency)\n"
+    )
+    scope = tree.body[-1]
+    call = scope.body[-1].value
+    assert not assigned_sync_function_call(call, scope, tree)
+
+
+def test_assigned_sync_function_call_helper_attributes_direct_targets():
+    import ast
+
+    from factoryline.review_integrity import assigned_sync_function_call
+
+    module = ast.parse(
+        "def perform(dep): pass\ndef test_behavior():\n    ret = perform(dep)\n"
+    )
+    scope = module.body[1]
+    call = next(item for item in ast.walk(scope) if isinstance(item, ast.Call))
+    assert assigned_sync_function_call(call, scope, module)
+
+    inline = ast.parse("def test_behavior():\n    ret = (lambda f: None)(dep)\n")
+    inline_scope = inline.body[0]
+    inline_call = next(
+        item for item in ast.walk(inline_scope) if isinstance(item, ast.Call)
+    )
+    assert assigned_sync_function_call(inline_call, inline_scope, inline)
+
+    decorated = ast.parse(
+        "@decorator\ndef perform(dep): pass\n"
+        "def test_behavior():\n    ret = perform(dep)\n"
+    )
+    decorated_scope = decorated.body[1]
+    decorated_call = next(
+        item for item in ast.walk(decorated_scope) if isinstance(item, ast.Call)
+    )
+    assert not assigned_sync_function_call(decorated_call, decorated_scope, decorated)
+
+
 def test_mock_assertion_spelling_on_fake_object_is_not_an_oracle(tmp_path):
     (tmp_path / "test_fake.py").write_text(
         "class Fake:\n    def assert_called_once_with(self, *args):\n        pass\n"
