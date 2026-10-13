@@ -4,7 +4,11 @@ import sys
 
 import pytest
 
-from factoryline.fix_workflow import FixWorkflowError, run_fix_workflow
+from factoryline.fix_workflow import (
+    FixWorkflowError,
+    run_fix_workflow,
+    run_repair_branch_comparison,
+)
 from factoryline.live_feedback import LiveFeedbackError, run_live_feedback
 from factoryline.senior_assurance import _source_digest
 
@@ -212,6 +216,21 @@ def test_repair_branch_comparison_plan_is_explicit_and_keeps_common_bindings(tmp
     assert all(row["status"] == "PLAN_ONLY" for row in result["branches"])
     assert all(row["raw_comparison"]["executed"] is False for row in result["branches"])
     assert result["release_approval"] is False
+
+
+def test_public_repair_branch_api_plans_common_baseline_without_execution(tmp_path):
+    manifest = _branch_manifest(tmp_path)
+
+    result = run_repair_branch_comparison(tmp_path, manifest)
+
+    assert result["state"] == "PLAN_ONLY"
+    assert result["contract_sha256"] == manifest["contract_sha256"]
+    assert result["candidate_selection"] is None
+    assert result["promotion"] == "NONE"
+    assert result["release_approval"] is False
+    assert all(branch["status"] == "PLAN_ONLY" for branch in result["branches"])
+    assert all(branch["raw_comparison"]["executed"] is False for branch in result["branches"])
+    assert all(branch["raw_comparison"]["state"] == "PLAN_ONLY" for branch in result["branches"])
 
 
 def test_repair_branch_comparison_preserves_raw_isolated_outcomes(tmp_path):

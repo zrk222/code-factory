@@ -7678,6 +7678,7 @@ def test_zap_daemon_watch_fails_closed_before_api_use(state, code, monkeypatch):
 
 def test_zap_native_process_facts_include_bounded_stream_and_cleanup_evidence():
     import hashlib
+    from types import SimpleNamespace
 
     from factoryline.deep_audit_io import _zap_process_facts
 
@@ -7694,7 +7695,10 @@ def test_zap_native_process_facts_include_bounded_stream_and_cleanup_evidence():
         "stdout": (hashlib.sha256(stdout).hexdigest(), len(stdout)),
         "stderr": (hashlib.sha256(stderr).hexdigest(), len(stderr)),
     }
-    facts = _zap_process_facts(Child(), time.monotonic() - 0.1, streams, True, True)
+    child = Child()
+    # The test double carries the lifecycle binding required for a positive receipt.
+    child._factory_cleanup_unit = SimpleNamespace(kind="fixture", pid=child.pid)
+    facts = _zap_process_facts(child, time.monotonic() - 0.1, streams, True, True)
 
     assert facts == {
         "pid": 321,

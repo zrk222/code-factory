@@ -37,9 +37,9 @@ unchanged. The shared public preview is in
 
 ## What it does
 
-**6 mandatory audit lanes. 174 coded rejection conditions. One human-owned release decision.**
+**6 mandatory audit lanes. 178 coded rejection conditions. One human-owned release decision.**
 These source-inventoried counts describe the senior runtime
-assurance path: 88 lane-specific and 86 cross-cutting conditions. They do not
+assurance path: 88 lane-specific and 90 cross-cutting conditions. They do not
 mean every project executes that many tests; observations scale with approved scope.
 
 Code Factory is an engineering audit and orchestration system for human and

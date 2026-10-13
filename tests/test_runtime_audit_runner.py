@@ -108,7 +108,6 @@ def test_parallel_runner_requires_signed_policy_before_launch(tmp_path):
 def test_parallel_prelaunch_source_growth_reads_only_signed_budget_plus_one(
     tmp_path, monkeypatch
 ):
-    from factoryline.runtime_audit_contract import _hash_regular_file_bounded
     from factoryline.runtime_audit_common import RuntimeAuditError
 
     plan_path, trust, trust_sha, _ = signed_plan(

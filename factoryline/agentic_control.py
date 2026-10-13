@@ -3688,6 +3688,63 @@ class WorkflowEventStore:
             )
         return value
 
+    @staticmethod
+    def _validate_claim_item(
+        item, expected_epoch, expected_source_sha256
+    ):
+        if expected_epoch is not None and item["epoch"] != expected_epoch:
+            raise AgenticControlError(
+                "E_WORKFLOW_FENCED", "source owner epoch changed before claim"
+            )
+        if expected_source_sha256 is not None and _sha(item["source"]) != (
+            expected_source_sha256
+        ):
+            raise AgenticControlError(
+                "E_WORKFLOW_FENCED", "source changed before claim"
+            )
+        if item["run"] is not None:
+            raise AgenticControlError(
+                "E_WORKFLOW_RECOVERY_REQUIRED",
+                "observe the existing live handle before retiring ownership",
+            )
+        if item["phase"] not in {
+            "intake",
+            "triage",
+            "planning",
+            "building",
+            "auditing",
+            "reviewing",
+        }:
+            raise AgenticControlError(
+                "E_WORKFLOW_PHASE", "phase does not admit agent work"
+            )
+        if item["attempts"] >= 3:
+            raise AgenticControlError(
+                "E_WORKFLOW_RETRY",
+                "retry budget exhausted; explicit remediation required",
+            )
+
+    def _prepare_claim_item(self, item, key, owner, ttl, driver_binding):
+        if driver_binding is not None:
+            driver_binding = _incident_driver_binding(
+                driver_binding, key, _sha(item["source"])
+            )
+        item["epoch"] += 1
+        item["attempts"] += 1
+        item["run"] = {
+            "id": _sha([key, item["epoch"]]),
+            "source_sha256": _sha(item["source"]),
+            "owner": owner,
+            "epoch": item["epoch"],
+            "expires_at": self.clock() + ttl,
+            "handle": None,
+            "invalidated": False,
+        }
+        if driver_binding is not None:
+            item["run"]["driver_binding"] = driver_binding
+        item["phase"] = "triage" if item["phase"] == "intake" else item["phase"]
+        return item
+
     def claim(
         self,
         key,
@@ -3702,55 +3759,12 @@ class WorkflowEventStore:
         owner, ttl = _id(owner, "owner"), self._ttl(ttl)
         with self._connect() as db:
             item = self._read(db, key)
-            if expected_epoch is not None and item["epoch"] != expected_epoch:
-                raise AgenticControlError(
-                    "E_WORKFLOW_FENCED", "source owner epoch changed before claim"
-                )
-            if expected_source_sha256 is not None and _sha(item["source"]) != (
-                expected_source_sha256
-            ):
-                raise AgenticControlError(
-                    "E_WORKFLOW_FENCED", "source changed before claim"
-                )
-            if item["run"] is not None:
-                raise AgenticControlError(
-                    "E_WORKFLOW_RECOVERY_REQUIRED",
-                    "observe the existing live handle before retiring ownership",
-                )
-            if item["phase"] not in {
-                "intake",
-                "triage",
-                "planning",
-                "building",
-                "auditing",
-                "reviewing",
-            }:
-                raise AgenticControlError(
-                    "E_WORKFLOW_PHASE", "phase does not admit agent work"
-                )
-            if item["attempts"] >= 3:
-                raise AgenticControlError(
-                    "E_WORKFLOW_RETRY",
-                    "retry budget exhausted; explicit remediation required",
-                )
-            if driver_binding is not None:
-                driver_binding = _incident_driver_binding(
-                    driver_binding, key, _sha(item["source"])
-                )
-            item["epoch"] += 1
-            item["attempts"] += 1
-            item["run"] = {
-                "id": _sha([key, item["epoch"]]),
-                "source_sha256": _sha(item["source"]),
-                "owner": owner,
-                "epoch": item["epoch"],
-                "expires_at": self.clock() + ttl,
-                "handle": None,
-                "invalidated": False,
-            }
-            if driver_binding is not None:
-                item["run"]["driver_binding"] = driver_binding
-            item["phase"] = "triage" if item["phase"] == "intake" else item["phase"]
+            self._validate_claim_item(
+                item, expected_epoch, expected_source_sha256
+            )
+            item = self._prepare_claim_item(
+                item, key, owner, ttl, driver_binding
+            )
             self._write(db, item, "run_claimed")
             return _runtime_result(
                 item,
@@ -3986,11 +4000,15 @@ class RegisteredIncidentDriver(Protocol):
 
     def lookup(
         self, action_intent_id: str, intent: dict[str, Any]
-    ) -> dict[str, Any]: ...
+    ) -> dict[str, Any]:
+        """Return an authoritative observation for this exact action intent."""
+        ...
 
     def launch(
         self, run_id: str, action_intent_id: str, intent: dict[str, Any]
-    ) -> str: ...
+    ) -> str:
+        """Start an action only when its intent and caller scope are authorized."""
+        ...
 
     # The registered implementation must enforce caller scope at the external
     # effect boundary; the orchestration checks are admission and race guards.
@@ -4179,10 +4197,9 @@ class DurableIncidentDriver:
             "authority": dict(_AUTHORITY),
         }
 
-    def launch_phase(
-        self, key, owner, phase, *, driver_id, policy_sha256, action_sha256, ttl=30
+    def _prepare_launch_phase(
+        self, key, owner, phase, driver_id, policy_sha256, action_sha256
     ):
-        """Launch one explicitly requested phase after an action-intent lookup."""
         item = self.store.get(key)
         self._phase_allowed(item, phase)
         payload, binding = self._intent(
@@ -4190,40 +4207,53 @@ class DurableIncidentDriver:
         )
         driver = self.drivers.get(driver_id)
         if driver is None:
-            raise AgenticControlError("E_INCIDENT_DRIVER", "driver is not registered")
+            raise AgenticControlError(
+                "E_INCIDENT_DRIVER", "driver is not registered"
+            )
         self._authorized(owner, payload)
-        run = item.get("run")
-        if run is not None:
-            if run.get("driver_binding") != binding:
-                raise AgenticControlError(
-                    "E_INCIDENT_INTENT", "active run intent differs"
-                )
-            if run["owner"] != owner:
-                raise AgenticControlError(
-                    "E_WORKFLOW_FENCED", "active run belongs to another owner"
-                )
-        elif item.get("last_run"):
-            previous = item["last_run"]
-            previous_binding = previous.get("driver_binding")
-            if previous_binding and previous_binding.get("phase") == phase:
-                if previous.get("terminal_state") != "missing":
-                    return self._result(
-                        item,
-                        "checkpoint_required",
-                        "Record evidence for the terminal phase",
-                    )
-                if previous_binding != binding:
-                    raise AgenticControlError(
-                        "E_INCIDENT_INTENT", "retry intent differs from retired run"
-                    )
-            elif previous_binding is None and not item.get("incident"):
-                raise AgenticControlError(
-                    "E_INCIDENT_INTENT", "prior non-incident run must be resolved"
-                )
+        return item, payload, binding, driver, item.get("run")
 
+    @staticmethod
+    def _validate_active_launch_run(run, owner, binding):
+        if run.get("driver_binding") != binding:
+            raise AgenticControlError(
+                "E_INCIDENT_INTENT", "active run intent differs"
+            )
+        if run.get("owner") != owner:
+            raise AgenticControlError(
+                "E_WORKFLOW_FENCED", "active run belongs to another owner"
+            )
+
+    @staticmethod
+    def _validate_previous_launch(item, phase, binding, previous):
+        previous_binding = previous.get("driver_binding")
+        if previous_binding and previous_binding.get("phase") == phase:
+            if previous.get("terminal_state") != "missing":
+                return True
+            if previous_binding != binding:
+                raise AgenticControlError(
+                    "E_INCIDENT_INTENT", "retry intent differs from retired run"
+                )
+        elif previous_binding is None and not item.get("incident"):
+            raise AgenticControlError(
+                "E_INCIDENT_INTENT", "prior non-incident run must be resolved"
+            )
+        return False
+
+    def _validate_launch_run(self, item, owner, phase, binding, run):
+        if run is not None:
+            self._validate_active_launch_run(run, owner, binding)
+            return False
+        previous = item.get("last_run")
+        if previous is None:
+            return False
+        return self._validate_previous_launch(item, phase, binding, previous)
+
+    def _observe_launch_phase(
+        self, key, owner, item, payload, binding, driver, run
+    ):
         observation = self._observation(driver, binding, payload)
-        latest = self.store.get(key)
-        if latest != item:
+        if self.store.get(key) != item:
             raise AgenticControlError(
                 "E_WORKFLOW_FENCED",
                 "source or owner epoch changed during driver lookup",
@@ -4251,7 +4281,11 @@ class DurableIncidentDriver:
             return self._result(
                 item, observation["state"], "Observe the existing action; do not launch"
             )
+        return None
 
+    def _launch_claimed_phase(
+        self, key, owner, item, payload, binding, driver, ttl
+    ):
         claimed = self.store.claim(
             key,
             owner,
@@ -4262,15 +4296,16 @@ class DurableIncidentDriver:
         )["item"]
         try:
             self._authorized(owner, payload)
-            latest = self.store.get(key)
-            if latest != claimed:
+            if self.store.get(key) != claimed:
                 raise AgenticControlError(
                     "E_WORKFLOW_FENCED",
                     "source or owner epoch changed before driver launch",
                 )
             handle = _bounded_text(
                 driver.launch(
-                    claimed["run"]["id"], binding["action_intent_sha256"], dict(payload)
+                    claimed["run"]["id"],
+                    binding["action_intent_sha256"],
+                    dict(payload),
                 ),
                 "driver handle",
                 512,
@@ -4290,9 +4325,29 @@ class DurableIncidentDriver:
             "Observe the registered handle before checkpointing",
         )
 
-    def checkpoint(self, key, owner, phase, evidence):
-        """Persist evidence only after a registered host verifier confirms success."""
-        snapshot = self.store.get(key)
+    def launch_phase(
+        self, key, owner, phase, *, driver_id, policy_sha256, action_sha256, ttl=30
+    ):
+        """Launch one explicitly requested phase after an action-intent lookup."""
+        item, payload, binding, driver, run = self._prepare_launch_phase(
+            key, owner, phase, driver_id, policy_sha256, action_sha256
+        )
+        if self._validate_launch_run(item, owner, phase, binding, run):
+            return self._result(
+                item,
+                "checkpoint_required",
+                "Record evidence for the terminal phase",
+            )
+        observed = self._observe_launch_phase(
+            key, owner, item, payload, binding, driver, run
+        )
+        if observed is not None:
+            return observed
+        return self._launch_claimed_phase(
+            key, owner, item, payload, binding, driver, ttl
+        )
+
+    def _checkpoint_run_context(self, snapshot, owner, phase):
         self._phase_allowed(snapshot, phase)
         run = snapshot.get("last_run")
         binding = run.get("driver_binding") if run else None
@@ -4308,6 +4363,10 @@ class DurableIncidentDriver:
             raise AgenticControlError(
                 "E_INCIDENT_EVIDENCE", "matching terminal run required"
             )
+        return run, binding
+
+    @staticmethod
+    def _checkpoint_expected(snapshot, run, binding, evidence):
         required = {
             "run_id",
             "action_intent_sha256",
@@ -4342,13 +4401,21 @@ class DurableIncidentDriver:
             raise AgenticControlError(
                 "E_INCIDENT_EVIDENCE", "phase outcome binding differs"
             )
-        authorization = {
+        return expected, verifier_id
+
+    @staticmethod
+    def _checkpoint_authorization(expected, binding, owner, run):
+        return {
             "schema": "factory.incident-checkpoint-authorization.v1",
             **expected,
             "driver_id": binding["driver_id"],
             "owner": owner,
             "owner_epoch": run["epoch"],
         }
+
+    def _verify_checkpoint_source_and_result(
+        self, snapshot, phase, expected, verifier_id, owner, authorization
+    ):
         self._authorized(owner, authorization)
         current_source = _runtime_source(
             self.source_observer(dict(snapshot["source"])), self.store.allowed
@@ -4372,6 +4439,9 @@ class DurableIncidentDriver:
             raise AgenticControlError(
                 "E_INCIDENT_EVIDENCE", "registered verifier did not confirm success"
             )
+
+    @staticmethod
+    def _checkpoint_record(phase, run, binding, expected, verifier_id):
         checkpoint = {
             "phase": phase,
             "source_sha256": run["source_sha256"],
@@ -4385,6 +4455,9 @@ class DurableIncidentDriver:
             "owner_epoch": run["epoch"],
         }
         checkpoint["checkpoint_sha256"] = _sha(checkpoint)
+        return checkpoint
+
+    def _persist_checkpoint(self, key, owner, snapshot, authorization, checkpoint, phase):
         with self.store._connect() as db:
             item = self.store._read(db, key)
             if item != snapshot:
@@ -4397,6 +4470,27 @@ class DurableIncidentDriver:
             )
             item["attempts"] = 0
             self.store._write(db, item, "incident_checkpoint_" + phase)
+        return item
+
+    def checkpoint(self, key, owner, phase, evidence):
+        """Persist evidence only after a registered host verifier confirms success."""
+        snapshot = self.store.get(key)
+        run, binding = self._checkpoint_run_context(snapshot, owner, phase)
+        expected, verifier_id = self._checkpoint_expected(
+            snapshot, run, binding, evidence
+        )
+        authorization = self._checkpoint_authorization(
+            expected, binding, owner, run
+        )
+        self._verify_checkpoint_source_and_result(
+            snapshot, phase, expected, verifier_id, owner, authorization
+        )
+        checkpoint = self._checkpoint_record(
+            phase, run, binding, expected, verifier_id
+        )
+        item = self._persist_checkpoint(
+            key, owner, snapshot, authorization, checkpoint, phase
+        )
         status = "pending_review" if phase == "review" else "checkpointed"
         return self._result(
             item,

@@ -1459,6 +1459,7 @@ def test_incident_driver_fences_other_owner_and_rejects_changed_intent(
     key = store.intake("incident-fence", workflow_source)["item"]["source_key"]
     driver = _IncidentTestDriver()
     supervisor = _incident_supervisor(tmp_path, driver)
+    supervisor.authorizer = lambda owner, intent: owner in {"worker-a", "worker-b"}
     _launch_incident_phase(supervisor, key)
     with pytest.raises(AgenticControlError) as error:
         _launch_incident_phase(supervisor, key, owner="worker-b")

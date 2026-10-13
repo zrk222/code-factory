@@ -1571,6 +1571,7 @@ class ActivationHookRegistry:
 
     @property
     def capabilities(self) -> tuple[str, ...]:
+        """Return registered hook names in the experiment's canonical order."""
         return tuple(name for name in _ACTIVATION_HOOKS if name in self._hooks)
 
 
