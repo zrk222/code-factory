@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add hash-bound behavioral intervention summaries to fix-workflow receipts:
+  original failure, repaired outcome and raw negative-control counts, with
+  explicit unexecuted/incomplete states. These are not scanner accuracy scores.
+- Revalidate host requester and workflow approval during repair execution and
+  before container launch. Preserve container cleanup failures in the aggregate
+  cleanup result; cooperative revocation does not undo completed effects.
+- Document practical research integration and remaining durable-driver and
+  self-hosted model-intervention acceptance requirements.
 - Extend Junie guidance with enterprise proof capture limits, completeness and
   host-versus-container cleanup fields. Distinguish rejected probe inputs
   (`INVALID`, exit 2) from supported executions with incomplete evidence.
