@@ -97,3 +97,32 @@ the observer's interpreter and can tamper with it; the report explicitly records
 `observer_integrity: IN_PROCESS_NOT_ATTESTED`. It is not hostile-code evidence.
 Runner output is bounded to 8 MiB per stream, observation JSON to 1 MiB, the
 selected source to 4 MiB, and the Python source binding to 4,096 files / 128 MiB.
+
+## Native no-raise call propagation probe
+
+When a test's intended contract is that a valid input must be accepted without
+raising, challenge its exact standalone call explicitly:
+
+```powershell
+python -m factoryline.pytest_readiness --kind call --root . `
+  --nodeid 'tests/test_parser.py::test_valid_input' --line 12 --timeout 30
+```
+
+The selected line must identify one unambiguous bare call statement inside a
+function. Assignment calls, deferred expressions, short-circuit expressions,
+multiple calls and shared statement lines are rejected rather than guessed.
+The baseline must pass and reach that execution point. The challenge injects
+a unique exception **before the statement executes** and requires that same
+exception to escape into the exact test's failed call phase. Skipped, xfailed,
+already failing, uninvoked and swallowed paths remain incomplete. Source drift,
+timeouts and missing runner observations also prevent an observed result.
+
+The call-specific receipt distinguishes this observation from an assertion
+probe. It establishes execution-point reachability and failure propagation;
+it does not mutate the production function, prove sensitivity to incorrect
+return values, or establish that the chosen input matches a specification.
+Record the intended acceptance contract and its source separately, and retain
+implementation mutation results when evaluating behavioral strength. Passing
+this probe does not automatically suppress a hollow-test finding or contribute
+an independent precision/recall result. The same trusted-project, process,
+source-binding and observer-integrity limits above apply.

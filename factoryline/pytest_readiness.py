@@ -18,15 +18,17 @@ from pathlib import Path
 class _AssertionChallenge:
     """Observe one assertion during the selected call phase, including new threads."""
 
-    def __init__(self, path, line, inject, qualname, firstlineno):
+    def __init__(self, path, line, inject, qualname, firstlineno, kind="assertion"):
         self.path, self.line, self.inject = path, line, inject
         self.qualname = qualname
         self.firstlineno = firstlineno
+        self.kind = kind
         self.active = False
         self.hits = 0
         self.reports = []
         self.collected = []
-        self.error = AssertionError("CF_ASSERTION_PROPAGATION_CHALLENGE")
+        label = "CALL" if kind == "call" else "ASSERTION"
+        self.error = AssertionError(f"CF_{label}_PROPAGATION_CHALLENGE")
         self.escaped = set()
 
     def trace(self, frame, event, arg):
@@ -47,7 +49,7 @@ class _AssertionChallenge:
         self.collected = [item.nodeid for item in session.items]
         if len(session.items) != 1:
             raise pytest.UsageError(
-                "Assertion probes require exactly one collected case"
+                "Propagation probes require exactly one collected case"
             )
 
     @pytest.hookimpl(hookwrapper=True)
@@ -104,6 +106,7 @@ def _challenge_worker(config, output):
         config["inject"],
         config["qualname"],
         config["firstlineno"],
+        config.get("kind", "assertion"),
     )
     code = pytest.main(
         [
@@ -120,6 +123,11 @@ def _challenge_worker(config, output):
     Path(output).write_text(
         json.dumps(
             {
+                "schema": (
+                    "factory.call-propagation-challenge.v1"
+                    if plugin.kind == "call"
+                    else "factory.assertion-propagation-challenge.v1"
+                ),
                 "exit_code": int(code),
                 "hits": plugin.hits,
                 "collected": plugin.collected,
@@ -165,6 +173,44 @@ def _challenge_inputs(root, nodeid, line):
     if type(line) is not int or len(assertions) != 1 or ambiguous:
         raise ValueError("The requested line must contain exactly one Python assert")
     scopes = _assertion_scopes(tree, assertions[0])
+    return (
+        root,
+        path,
+        _assertion_qualname(scopes),
+        _assertion_firstlineno(scopes),
+    )
+
+
+def _call_challenge_inputs(root, nodeid, line):
+    root, path = _challenge_path(root, nodeid)
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    expressions = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Expr) and node.lineno == line
+    ]
+    statements = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.stmt) and node.lineno == line
+    ]
+    if type(line) is not int or len(expressions) != 1:
+        raise ValueError("The requested line must contain one standalone call")
+    expression = expressions[0]
+    calls = [node for node in ast.walk(expression.value) if isinstance(node, ast.Call)]
+    scopes = _assertion_scopes(tree, expression)
+    if (
+        not isinstance(expression.value, ast.Call)
+        or len(calls) != 1
+        or statements != [expression]
+        or not any(
+            isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+            for scope in scopes
+        )
+    ):
+        raise ValueError(
+            "The requested line must be one standalone call inside a function"
+        )
     return (
         root,
         path,
@@ -392,6 +438,63 @@ def probe_assertion_propagation(root, nodeid, line, *, timeout=30):
     }
 
 
+def probe_call_propagation(root, nodeid, line, *, timeout=30):
+    """Inject before one standalone call to observe execution-point failure escape.
+
+    This does not measure mutation sensitivity of the production function, semantic
+    quality, or whether a scanner finding should be cleared. Project code runs locally.
+    """
+    if type(timeout) not in (int, float) or not 0 < timeout <= 300:
+        raise ValueError("timeout must be between 0 and 300 seconds")
+    root, path, qualname, firstlineno = _call_challenge_inputs(root, nodeid, line)
+    before = _challenge_source_binding(root)
+    config = {
+        "root": str(root),
+        "path": str(path),
+        "line": line,
+        "nodeid": nodeid,
+        "inject": False,
+        "qualname": qualname,
+        "firstlineno": firstlineno,
+        "kind": "call",
+    }
+    baseline = _run_assertion_challenge(config, timeout)
+    challenge = {}
+    baseline_stable = before == _challenge_source_binding(root)
+    if baseline_stable and _exact_challenge_outcome(baseline, nodeid, "passed"):
+        challenge = _run_assertion_challenge({**config, "inject": True}, timeout)
+    stable = baseline_stable and before == _challenge_source_binding(root)
+    propagated = _exact_challenge_outcome(challenge, nodeid, "failed")
+    visible = propagated and any(
+        row.get("challenge_visible") is True
+        for row in challenge.get("reports", [])
+        if row["phase"] == "call"
+    )
+    return {
+        "schema": "factory.call-propagation-probe.v1",
+        "status": "OBSERVED" if stable and propagated and visible else "INCOMPLETE",
+        "nodeid": nodeid,
+        "line": line,
+        "call_scope": qualname,
+        "source_sha256": before,
+        "tool_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "binding_scope": "Python source inventory only; dependencies and non-Python files are not bound",
+        "source_unchanged": stable,
+        "execution_point": "Before the selected call statement; reachability and injected failure escape only",
+        "production_function_mutation_sensitivity": "NOT_TESTED",
+        "semantic_quality": "NOT_ASSESSED",
+        "observer_integrity": "IN_PROCESS_NOT_ATTESTED",
+        "baseline": baseline,
+        "challenge": challenge,
+        "limits": [
+            "Local supervised execution; no isolation or independent accuracy claim",
+            "Trusted project code only; hostile code can alter the in-process observer",
+            "The injected failure tests statement reachability and failure escape, not production behavior",
+            "No automatic finding suppression, approval or release authority",
+        ],
+    }
+
+
 class _Results:
     def __init__(self) -> None:
         self.passed = 0
@@ -465,23 +568,25 @@ def collect_pytest_readiness(test_paths: list[str]) -> dict[str, int]:
 
 
 def main(argv=None):
-    """Run an explicitly selected local assertion propagation probe."""
+    """Run an explicitly selected local assertion or call propagation probe."""
     import argparse
 
     parser = argparse.ArgumentParser(
         description=(
-            "Execute one pytest case twice to challenge assertion propagation; "
+            "Execute one pytest case twice to challenge assertion or call propagation; "
             "runs project code locally."
         )
     )
     parser.add_argument("--root", required=True)
     parser.add_argument("--nodeid", required=True)
     parser.add_argument("--line", required=True, type=int)
+    parser.add_argument("--kind", choices=("assertion", "call"), default="assertion")
     parser.add_argument("--timeout", type=float, default=30)
     args = parser.parse_args(argv)
-    result = probe_assertion_propagation(
-        args.root, args.nodeid, args.line, timeout=args.timeout
+    probe = (
+        probe_call_propagation if args.kind == "call" else probe_assertion_propagation
     )
+    result = probe(args.root, args.nodeid, args.line, timeout=args.timeout)
     print(json.dumps(result, indent=2))
     return 0 if result["status"] == "OBSERVED" else 2
 
