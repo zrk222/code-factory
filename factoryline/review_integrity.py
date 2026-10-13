@@ -46,6 +46,95 @@ def import_smoke_oracle(node: ast.AST) -> bool:
     )
 
 
+def assigned_sync_function_call(
+    call: ast.Call, scope: ast.AST, module: ast.AST
+) -> bool:
+    """Accept assigned calls only when their direct callee is a stable source function."""
+    if isinstance(call.func, ast.Lambda):
+        return True
+    if not isinstance(call.func, ast.Name):
+        return False
+    name = call.func.id
+    local = [
+        item
+        for item in scope.body
+        if isinstance(item, ast.FunctionDef) and item.name == name
+    ]
+    if local:
+        candidates, body = local, scope.body
+    else:
+        if _oracle_function_shadowed(scope, name):
+            return False
+        candidates = [
+            item
+            for item in module.body
+            if isinstance(item, ast.FunctionDef) and item.name == name
+        ]
+        body = module.body
+    if not _oracle_unique_sync(candidates):
+        return False
+    if candidates[0].lineno >= call.lineno:
+        return False
+    bindings = [
+        item
+        for statement in body
+        for item in _oracle_bound_names(statement)
+        if item in {name, "*"}
+    ]
+    return len(bindings) == 1 and "*" not in bindings
+
+
+def _oracle_function_shadowed(scope, name):
+    parameters = [*scope.args.posonlyargs, *scope.args.args, *scope.args.kwonlyargs]
+    parameters += [item for item in (scope.args.vararg, scope.args.kwarg) if item]
+    if any(item.arg == name for item in parameters):
+        return True
+    return any(name in _oracle_bound_names(statement) for statement in scope.body)
+
+
+def _oracle_unique_sync(candidates):
+    return len(candidates) == 1 and not candidates[0].decorator_list
+
+
+def _oracle_binding_nodes(statement):
+    pending = [statement]
+    while pending:
+        node = pending.pop()
+        yield node
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            pending.extend(ast.iter_child_nodes(node))
+
+
+def _oracle_bound_names(statement: ast.AST) -> set[str]:
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return {statement.name}
+    names = set()
+    for child in _oracle_binding_nodes(statement):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(child.name)
+        elif isinstance(child, ast.Name) and isinstance(
+            child.ctx, (ast.Store, ast.Del)
+        ):
+            names.add(child.id)
+        elif isinstance(child, (ast.Import, ast.ImportFrom)):
+            if isinstance(child, ast.ImportFrom) and any(
+                item.name == "*" for item in child.names
+            ):
+                names.add("*")
+            names.update(
+                item.asname or item.name.split(".")[0]
+                for item in child.names
+                if item.name != "*"
+            )
+        elif isinstance(child, ast.ExceptHandler) and child.name:
+            names.add(child.name)
+        elif isinstance(child, (ast.MatchAs, ast.MatchStar)) and child.name:
+            names.add(child.name)
+        elif isinstance(child, ast.MatchMapping) and child.rest:
+            names.add(child.rest)
+    return names
+
+
 def _nearest_native_function_scope(node: ast.AST, parents: dict) -> bool:
     current = node
     while current in parents:
