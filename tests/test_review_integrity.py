@@ -850,3 +850,158 @@ def test_warm_cache_preserves_structural_import_binding_and_source_drift(tmp_pat
     product.write_text("def __getattr__(name):\n    return object()\n")
     assert "QUALITY_HOLLOW_TEST" in security_scan(tmp_path)["finding_counts"]
     assert "QUALITY_HOLLOW_TEST" in security_scan(tmp_path)["finding_counts"]
+
+
+def test_benchmark_configuration_binds_valid_targets_and_identity(tmp_path):
+    from factoryline.review_integrity import benchmark_configuration
+
+    config = tmp_path / "tox.ini"
+    config.write_text(
+        "[testenv:perf]\ncommands = pytest --codspeed tests/test_bench.py\n"
+    )
+    # Match the repository-relative spelling represented in tox.ini.
+    target = tmp_path / "tests" / "test_bench.py"
+    target.parent.mkdir()
+    target.write_text("def test_case(): pass\n")
+    files = {target}
+
+    targets, bindings, identity, cacheable = benchmark_configuration(
+        tmp_path, files, lambda root, name: (root / name).read_bytes(), 1024
+    )
+
+    assert targets == {target}
+    assert bindings == [identity]
+    assert identity["path"] == "tox.ini"
+    assert identity["sha256"] == hashlib.sha256(config.read_bytes()).hexdigest()
+    assert cacheable is True
+
+
+def test_benchmark_configuration_missing_and_invalid_inputs_fail_closed(tmp_path):
+    from factoryline.review_integrity import benchmark_configuration
+
+    source = tmp_path / "tests" / "test_bench.py"
+    source.parent.mkdir()
+    source.write_text("pass\n")
+    files = {source}
+
+    def read_bytes(root, name):
+        return (root / name).read_bytes()
+
+    missing = benchmark_configuration(tmp_path, files, read_bytes, 1024)
+    assert missing == (set(), [], {"path": "tox.ini", "state": "missing"}, True)
+
+    (tmp_path / "tox.ini").write_text(
+        "[testenv:perf\ncommands = pytest --codspeed test_bench.py\n"
+    )
+    invalid = benchmark_configuration(tmp_path, files, read_bytes, 1024)
+    assert invalid[0] == set()
+    assert invalid[1] == []
+    assert invalid[2]["path"] == "tox.ini"
+    assert invalid[2]["state"]
+    assert invalid[3] is False
+
+
+def test_oracle_configuration_combines_type_and_benchmark_identity(tmp_path):
+    from factoryline.review_integrity import oracle_configuration
+
+    source = tmp_path / "tests" / "test_bench.py"
+    source.parent.mkdir()
+    source.write_text("pass\n")
+    (tmp_path / "tox.ini").write_text(
+        "[testenv:perf]\ncommands = pytest --codspeed tests/test_bench.py\n"
+    )
+    type_identity = {"path": "pyproject.toml", "sha256": "type-hash"}
+    type_binding = {"path": "pyproject.toml", "sha256": "type-hash", "bytes": 9}
+
+    result = oracle_configuration(
+        tmp_path,
+        {source},
+        lambda root, files: ({"checker": "mypy"}, [type_binding], type_identity, True),
+        lambda root, name: (root / name).read_bytes(),
+        1024,
+    )
+
+    types, bindings, identities, cacheable, benchmarks = result
+    assert types == {"checker": "mypy"}
+    assert bindings[0] == type_binding
+    assert bindings[1]["path"] == "tox.ini"
+    assert identities["typecheck"] == type_identity
+    assert identities["benchmark"] == bindings[1]
+    assert cacheable is True
+    assert benchmarks == {source}
+
+
+def test_bind_benchmark_context_requires_stable_marker_and_bounds():
+    import ast
+    from factoryline.review_integrity import bind_benchmark_context
+
+    path = Path("tests/test_perf.py")
+    marked = ast.parse("import pytest\npytestmark = pytest.mark.benchmark\nLIMIT = 4\n")
+    shadowed = ast.parse(
+        "import pytest\npytestmark = pytest.mark.benchmark\n"
+        "LIMIT = 4\nrange = custom_range\n"
+    )
+    contexts = {path: {}, Path("tests/test_shadowed.py"): {}}
+    bind_benchmark_context(
+        contexts,
+        {path: marked, Path("tests/test_shadowed.py"): shadowed},
+        {path, Path("tests/test_shadowed.py")},
+    )
+
+    assert contexts[path]["codspeed_benchmark"] is True
+    assert contexts[path]["benchmark_constants"] == {
+        "LIMIT": 4,
+        "__range_builtin__": True,
+    }
+    assert (
+        contexts[Path("tests/test_shadowed.py")]["benchmark_constants"][
+            "__range_builtin__"
+        ]
+        is False
+    )
+
+
+def test_remember_direct_constant_assignment_and_mutable_invalidation():
+    import ast
+    from factoryline.review_integrity import remember_direct_constant_assignment
+
+    known = {"BASE": 3, "MUTABLE": [1, 2], "IMMUTABLE": (1, 2)}
+    remember_direct_constant_assignment(
+        ast.parse("ALIAS = BASE", mode="exec").body[0], known
+    )
+    assert known["ALIAS"] == 3
+
+    remember_direct_constant_assignment(
+        ast.parse("result = consume()", mode="exec").body[0], known
+    )
+    assert "MUTABLE" not in known
+    assert "IMMUTABLE" not in known
+    assert "result" not in known
+
+
+def test_structural_context_roundtrip_and_missing_defaults():
+    from factoryline.review_integrity import (
+        decode_structural_context,
+        encode_structural_context,
+    )
+
+    context = {
+        "module_rebindings": {"range", "pytest"},
+        "dynamic_getattr_modules": {"plugin"},
+        "source_classes": {"Widget"},
+        "module_imports": {"pytest": "pytest"},
+        "class_imports": {"Base": "api.Base"},
+        "benchmark_constants": {"LIMIT": 4, "__range_builtin__": True},
+    }
+    payload = encode_structural_context(context)
+
+    assert payload["module_rebindings"] == ["pytest", "range"]
+    assert decode_structural_context(payload) == context
+    assert decode_structural_context({}) == {
+        "module_rebindings": set(),
+        "dynamic_getattr_modules": set(),
+        "source_classes": set(),
+        "module_imports": {},
+        "class_imports": {},
+        "benchmark_constants": {},
+    }
