@@ -1019,8 +1019,6 @@ def _proof_runner_status(
 ):
     if timed_out:
         return "timeout"
-    if exit_code != 0:
-        return "failed"
     if (
         truncated
         or process_facts["output_limit_exceeded"]
@@ -1030,6 +1028,8 @@ def _proof_runner_status(
         or aborted_docker
     ):
         return "incomplete"
+    if exit_code != 0:
+        return "failed"
     return "passed"
 
 

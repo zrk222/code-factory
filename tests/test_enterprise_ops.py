@@ -225,6 +225,7 @@ def test_process_runner_timeout_is_not_a_pass(tmp_path: Path):
     "fact_changes,cleanup,read_complete,expected",
     [
         ({"output_limit_exceeded": True}, True, True, "incomplete"),
+        ({"output_limit_exceeded": True, "exit_code": 120}, True, True, "incomplete"),
         ({"cleanup_confirmed": False}, True, True, "incomplete"),
         ({}, False, True, "incomplete"),
         ({}, True, False, "incomplete"),
