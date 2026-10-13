@@ -51,6 +51,7 @@ def mock_patch_dict_slot(
     effective,
     root_name,
 ):
+    """Prove an unchanged literal Mock slot inside a resolved patch.dict context."""
     while isinstance(receiver, ast.Attribute):
         receiver = receiver.value
     if (
