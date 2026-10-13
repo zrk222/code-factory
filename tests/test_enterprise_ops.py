@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
 from pathlib import Path
+import sys
 
 import pytest
 
 from factoryline.enterprise_ops import (
     EnterpriseOpsError,
+    _execute_runner,
     evaluate_required_checks,
     evaluate_sla,
     export_evidence,
@@ -96,11 +100,15 @@ def test_evidence_tamper_is_detected(tmp_path: Path):
 def test_process_runner_requires_explicit_boundary_and_is_labelled(tmp_path: Path):
     root = _init(tmp_path)
     with pytest.raises(EnterpriseOpsError) as error:
-        run_proof(root, ["python", "-c", "print('ok')"], backend="process")
+        run_proof(root, [sys.executable, "-c", "print('ok')"], backend="process")
     assert error.value.code == "E_RUNNER_ISOLATION_REQUIRED"
     receipt = run_proof(
         root,
-        ["python", "-c", "print('ok')"],
+        [
+            sys.executable,
+            "-c",
+            "import sys; print('out'); print('err', file=sys.stderr)",
+        ],
         backend="process",
         allow_process_boundary=True,
     )
@@ -108,6 +116,22 @@ def test_process_runner_requires_explicit_boundary_and_is_labelled(tmp_path: Pat
     assert receipt["eops_marker"] == "EOPS_RUNNER_READY"
     assert receipt["status"] == "passed"
     assert receipt["authority"]["deploy"] is False
+    assert receipt["output"] == f"out{os.linesep}\nerr{os.linesep}"
+    assert receipt["output_complete"] is True
+    stdout = f"out{os.linesep}".encode()
+    stderr = f"err{os.linesep}".encode()
+    assert receipt["process_facts"]["stdout_bytes"] == len(stdout)
+    assert receipt["process_facts"]["stderr_bytes"] == len(stderr)
+    assert (
+        receipt["process_facts"]["stdout_sha256"] == hashlib.sha256(stdout).hexdigest()
+    )
+    assert (
+        receipt["process_facts"]["stderr_sha256"] == hashlib.sha256(stderr).hexdigest()
+    )
+    assert receipt["process_facts"]["cleanup_confirmed"] is True
+    assert receipt["process_facts"]["capture_cleanup_confirmed"] is True
+    assert receipt["process_facts"]["capture_limit_bytes_per_stream"] == 8 * 1024 * 1024
+    assert receipt["container_cleanup"] == "NOT_APPLICABLE"
 
 
 def test_docker_unavailable_fails_closed(
@@ -127,7 +151,19 @@ def test_proof_runner_truncated_output_cannot_pass(
     root = _init(tmp_path)
     monkeypatch.setattr(
         "factoryline.enterprise_ops._execute_runner",
-        lambda *args: (0, "x" * length, "", False),
+        lambda *args: {
+            "facts": {
+                "exit_code": 0,
+                "timed_out": False,
+                "launch_error": False,
+                "output_limit_exceeded": False,
+                "cleanup_confirmed": True,
+            },
+            "stdout": "x" * length,
+            "stderr": "",
+            "capture_cleanup_confirmed": True,
+            "capture_read_complete": True,
+        },
     )
     receipt = run_proof(
         root,
@@ -138,6 +174,160 @@ def test_proof_runner_truncated_output_cannot_pass(
     )
     assert receipt["status"] == status
     assert receipt["output_truncated"] is (length > 1024)
+    assert receipt["output_complete"] is (length <= 1024)
+
+
+def test_process_runner_output_overflow_is_bounded_and_incomplete(tmp_path: Path):
+    root = _init(tmp_path)
+    command = (
+        "import sys; chunk=b'x'*65536; "
+        "[sys.stdout.buffer.write(chunk) for _ in range(129)]"
+    )
+    receipt = run_proof(
+        root,
+        [sys.executable, "-c", command],
+        backend="process",
+        allow_process_boundary=True,
+        timeout_seconds=30,
+    )
+    facts = receipt["process_facts"]
+    assert receipt["status"] == "incomplete"
+    assert facts["output_limit_exceeded"] is True
+    assert facts["stdout_bytes"] > facts["capture_limit_bytes_per_stream"]
+    assert len(facts["stdout_sha256"]) == 64
+    assert facts["cleanup_confirmed"] is True
+    assert facts["capture_cleanup_confirmed"] is True
+    assert receipt["output_complete"] is False
+    assert not list((root / ".factory" / "ops").glob(".proof-capture-*"))
+
+
+def test_process_runner_timeout_is_not_a_pass(tmp_path: Path):
+    root = _init(tmp_path)
+    receipt = run_proof(
+        root,
+        [
+            sys.executable,
+            "-c",
+            "import time; print('started', flush=True); time.sleep(10)",
+        ],
+        backend="process",
+        allow_process_boundary=True,
+        timeout_seconds=1,
+    )
+    assert receipt["status"] == "timeout"
+    assert receipt["process_facts"]["timed_out"] is True
+    assert receipt["process_facts"]["cleanup_confirmed"] is True
+    assert receipt["output"].startswith("started")
+    assert receipt["output_complete"] is False
+
+
+@pytest.mark.parametrize(
+    "fact_changes,cleanup,read_complete,expected",
+    [
+        ({"output_limit_exceeded": True}, True, True, "incomplete"),
+        ({"output_limit_exceeded": True, "exit_code": 120}, True, True, "incomplete"),
+        ({"cleanup_confirmed": False}, True, True, "incomplete"),
+        ({}, False, True, "incomplete"),
+        ({}, True, False, "incomplete"),
+    ],
+)
+def test_runner_terminal_facts_gate_green_status(
+    tmp_path, monkeypatch, fact_changes, cleanup, read_complete, expected
+):
+    root = _init(tmp_path)
+    facts = {
+        "exit_code": 0,
+        "timed_out": False,
+        "launch_error": False,
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": True,
+    }
+    facts.update(fact_changes)
+    monkeypatch.setattr(
+        "factoryline.enterprise_ops._execute_runner",
+        lambda *args: {
+            "facts": facts,
+            "stdout": "ok\n",
+            "stderr": "",
+            "capture_cleanup_confirmed": cleanup,
+            "capture_read_complete": read_complete,
+        },
+    )
+    receipt = run_proof(
+        root,
+        [sys.executable, "-c", "pass"],
+        backend="process",
+        allow_process_boundary=True,
+    )
+    assert receipt["status"] == expected
+
+
+def test_aborted_docker_cli_does_not_claim_container_cleanup(tmp_path, monkeypatch):
+    root = _init(tmp_path)
+    monkeypatch.setattr(
+        "factoryline.enterprise_ops._runner_argv",
+        lambda *args: (
+            ["docker", "run", "--rm", "image", "command"],
+            {"backend": "docker", "isolation": "container"},
+        ),
+    )
+    monkeypatch.setattr(
+        "factoryline.enterprise_ops._execute_runner",
+        lambda *args: {
+            "facts": {
+                "exit_code": 0,
+                "timed_out": True,
+                "launch_error": False,
+                "output_limit_exceeded": False,
+                "cleanup_confirmed": True,
+            },
+            "stdout": "",
+            "stderr": "",
+            "capture_cleanup_confirmed": True,
+            "capture_read_complete": True,
+        },
+    )
+    receipt = run_proof(
+        root,
+        ["command"],
+        backend="docker",
+        timeout_seconds=1,
+    )
+    assert receipt["status"] == "timeout"
+    assert receipt["container_cleanup"] == "NOT_INDEPENDENTLY_VERIFIED"
+
+
+def test_spawn_error_does_not_disclose_absolute_path(tmp_path: Path):
+    root = _init(tmp_path)
+    missing = tmp_path / "missing-proof-executable.exe"
+    with pytest.raises(EnterpriseOpsError) as error:
+        run_proof(
+            root,
+            [str(missing)],
+            backend="process",
+            allow_process_boundary=True,
+        )
+    assert error.value.code == "E_RUNNER_EXECUTION"
+    assert str(tmp_path) not in str(error.value)
+
+
+def test_runner_rejects_capture_root_symlink_before_creating_outside(
+    tmp_path: Path,
+):
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    try:
+        (workspace / ".factory").symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlinks are unavailable: {exc}")
+
+    with pytest.raises(EnterpriseOpsError) as error:
+        _execute_runner([sys.executable, "-c", "pass"], workspace, 1)
+
+    assert error.value.code == "E_RUNNER_CAPTURE"
+    assert not (outside / "ops").exists()
 
 
 def test_required_checks_reject_truncated_passed_receipt(tmp_path):
