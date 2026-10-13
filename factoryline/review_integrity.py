@@ -273,7 +273,24 @@ def _test_nodes(test: ast.AST):
             stack.extend(ast.iter_child_nodes(node))
 
 
-def _mutated(test: ast.AST, apps: set[str]) -> bool:
+def _flask_alias_roots(test: ast.AST, roots: set[str]) -> set[str]:
+    aliases = set(roots)
+    changed = True
+    while changed:
+        changed = False
+        for stmt in _test_nodes(test):
+            if not isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+                continue
+            value = getattr(stmt, "value", None)
+            if isinstance(value, ast.Name) and value.id in aliases:
+                before = len(aliases)
+                aliases.update(_targets(stmt))
+                changed |= len(aliases) != before
+    return aliases
+
+
+def _mutated(test: ast.AST, apps: set[str], roots: set[str] | None = None) -> bool:
+    roots = roots or apps
     for n in _test_nodes(test):
         if (
             isinstance(n, ast.Name)
@@ -283,7 +300,7 @@ def _mutated(test: ast.AST, apps: set[str]) -> bool:
             return True
         if (
             isinstance(n, ast.Attribute)
-            and _name(n.value).split(".", 1)[0] in apps
+            and _name(n.value).split(".", 1)[0] in roots
             and (
                 isinstance(n.ctx, (ast.Store, ast.Del))
                 or n.attr in {"config", "testing"}
@@ -294,7 +311,7 @@ def _mutated(test: ast.AST, apps: set[str]) -> bool:
             isinstance(n, ast.Call)
             and n.args
             and isinstance(n.args[0], ast.Name)
-            and n.args[0].id in apps
+            and n.args[0].id in roots
             and _resolve(n.func, {}) in {"setattr", "delattr"}
         ):
             return True
@@ -397,7 +414,9 @@ def _dispatch_root(node):
 
 
 def _flask_dispatch_mutated(test, apps, clients):
-    roots = apps | set(clients)
+    app_roots = _flask_alias_roots(test, apps)
+    client_roots = _flask_alias_roots(test, set(clients))
+    roots = app_roots | client_roots
     for node in _test_nodes(test):
         if isinstance(node, (ast.Attribute, ast.Subscript)):
             if (
@@ -406,10 +425,13 @@ def _flask_dispatch_mutated(test, apps, clients):
             ):
                 return True
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if _dispatch_root(node.func) in apps and node.func.attr not in {
+            root = _dispatch_root(node.func)
+            if root in app_roots and node.func.attr not in {
                 "route",
                 "test_client",
             }:
+                return True
+            if root in client_roots and node.func.attr != "get":
                 return True
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             if isinstance(node.value, (ast.Attribute, ast.Subscript)):
@@ -433,6 +455,8 @@ def flask_invoked_callbacks(
         return set()
     routes = _flask_routes(test, aliases, apps, effective)
     clients, bad = _flask_clients(test, apps, effective, aliases)
+    if _mutated(test, apps, _flask_alias_roots(test, apps | set(clients))):
+        return set()
     if _flask_dispatch_mutated(test, apps, clients):
         return set()
     invoked = set()

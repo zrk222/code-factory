@@ -55,6 +55,35 @@ def test_flask_fixture_apps_and_flask_invoked_callbacks_direct_contract():
     )
 
 
+@pytest.mark.parametrize(
+    ("setup", "expected_findings"),
+    [
+        ("alias = app", False),
+        ("alias = app; alias.testing = False", True),
+        ("first = app; second = first; second.testing = False", True),
+        ("alias = app; alias.replace_dispatcher()", True),
+        ("alias = client; alias.get = lambda path: None", True),
+    ],
+)
+def test_flask_dispatch_rejects_mutated_app_and_client_aliases(
+    tmp_path, setup, expected_findings
+):
+    fixture = (
+        "import pytest\nfrom flask import Flask\n"
+        "@pytest.fixture\ndef app():\n    app = Flask('test')\n"
+        "    app.testing = True\n    return app\n"
+    )
+    test = (
+        "def test_behavior(app):\n    client = app.test_client()\n    "
+        + setup
+        + "\n    @app.route('/checked')\n    def check():\n"
+        "        assert compute() == 42\n    client.get('/checked')\n"
+    )
+    (tmp_path / "test_behavior.py").write_text(fixture + test)
+    findings = security_scan(tmp_path, cache_enabled=False)["finding_counts"]
+    assert ("QUALITY_HOLLOW_TEST" in findings) is expected_findings
+
+
 def test_virtual_dispatch_defaults_direct_contract():
     import ast
     from factoryline.review_integrity import virtual_dispatch_defaults
