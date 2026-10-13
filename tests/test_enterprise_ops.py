@@ -195,10 +195,57 @@ def test_process_runner_output_overflow_is_bounded_and_incomplete(tmp_path: Path
     assert facts["output_limit_exceeded"] is True
     assert facts["stdout_bytes"] > facts["capture_limit_bytes_per_stream"]
     assert len(facts["stdout_sha256"]) == 64
-    assert facts["cleanup_confirmed"] is True
+    assert facts["cleanup_confirmed"] is True, facts
     assert facts["capture_cleanup_confirmed"] is True
     assert receipt["output_complete"] is False
     assert not list((root / ".factory" / "ops").glob(".proof-capture-*"))
+
+
+def test_reader_join_uses_one_cleanup_deadline_and_preserves_unknown_cleanup(
+    monkeypatch,
+):
+    import factoryline.runtime_audit_process as runtime_process
+
+    class Reader:
+        def __init__(self, finishes_at):
+            self.finishes_at = finishes_at
+            self.join_timeouts = []
+
+        def join(self, timeout):
+            self.join_timeouts.append(timeout)
+            if clock[0] < self.finishes_at:
+                clock[0] = min(self.finishes_at, clock[0] + timeout)
+
+        def is_alive(self):
+            return clock[0] < self.finishes_at
+
+    clock = [0.0]
+    monkeypatch.setattr(runtime_process.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(runtime_process.time, "sleep", lambda duration: None)
+    monkeypatch.setattr(
+        runtime_process.assembly_process, "CLEANUP_TIMEOUT_SECONDS", 10.0
+    )
+    cleanup_calls = []
+    monkeypatch.setattr(
+        runtime_process, "_stop", lambda child: cleanup_calls.append(child) or True
+    )
+    child = object()
+    readers = [Reader(5.0), Reader(11.0)]
+
+    cleanup, closed = runtime_process._join_stream_readers(child, readers, False)
+
+    assert cleanup is False
+    assert closed is False
+    assert cleanup_calls == [child]
+    assert readers[0].join_timeouts == [10.0, 0.0]
+    assert readers[1].join_timeouts == [5.0, 0.0]
+
+    clock[0] = 0.0
+    ready_readers = [Reader(2.0), Reader(4.0)]
+    cleanup, closed = runtime_process._join_stream_readers(child, ready_readers, True)
+    assert cleanup is True
+    assert closed is True
+    assert cleanup_calls == [child]
 
 
 def test_process_runner_timeout_is_not_a_pass(tmp_path: Path):

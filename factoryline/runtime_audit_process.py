@@ -184,12 +184,13 @@ def _wait_for_exit_or_limit(
 def _join_stream_readers(
     child: subprocess.Popen, threads: list[threading.Thread], cleanup_confirmed: bool
 ) -> tuple[bool, bool]:
+    deadline = time.monotonic() + assembly_process.CLEANUP_TIMEOUT_SECONDS
     for thread in threads:
-        thread.join(timeout=0.5)
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
     if any(thread.is_alive() for thread in threads):
         cleanup_confirmed = _stop(child) and cleanup_confirmed
         for thread in threads:
-            thread.join(timeout=1)
+            thread.join(timeout=max(0.0, deadline - time.monotonic()))
     streams_closed = not any(thread.is_alive() for thread in threads)
     return cleanup_confirmed, streams_closed
 
