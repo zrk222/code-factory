@@ -640,9 +640,11 @@ def domain_definition(measurement_id: str) -> dict[str, str] | None:
     return None
 
 
-_AGENT_USAGE_CONTRACT["six_lane_review"] = json.loads(
+_AGENT_USAGE_PACK = json.loads(
     files("factoryline").joinpath("data", "junie_pack.json").read_text(encoding="utf-8")
-)["agent_six_lane_review"]
+)
+_AGENT_USAGE_CONTRACT["six_lane_review"] = _AGENT_USAGE_PACK["agent_six_lane_review"]
+_AGENT_USAGE_CONTRACT["native_harness"] = _AGENT_USAGE_PACK["native_harness"]
 
 
 _ACTION_REFERENCE_FIELDS = {

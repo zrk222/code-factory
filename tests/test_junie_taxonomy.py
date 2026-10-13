@@ -1053,6 +1053,34 @@ def test_shared_six_lane_contract_reaches_junie_manifest_and_guidance(tmp_path):
         assert "Model agreement cannot clear deterministic findings" in text
 
 
+def test_native_harness_contract_reaches_junie_manifest_and_guidance(tmp_path):
+    contract = audit_taxonomy()["agent_usage_contract"]["native_harness"]
+    assert set(contract["capabilities"]) == {
+        "context_shards",
+        "runtime_audit",
+        "repair_branches",
+        "incident_triage",
+        "activation_experiment",
+        "durable_incident_driver",
+    }
+    assert "500 events" in contract["capabilities"]["incident_triage"]["boundary"]
+    assert "execute=True" in contract["capabilities"]["activation_experiment"]["route"]
+    assert (
+        "not independently authenticated"
+        in contract["capabilities"]["activation_experiment"]["boundary"]
+    )
+    manifest = junie_manifest(tmp_path)
+    assert manifest["agent_usage_contract"]["native_harness"] == contract
+    assert "effects" in " ".join(contract["shared_invariants"])
+    from factoryline.junie_taxonomy import _guidance
+
+    guidance = _guidance().decode("utf-8")
+    assert "## Native harness capabilities and boundaries" in guidance
+    assert "that review is unauthenticated" in guidance
+    assert "Only authoritative absence permits bounded retry" in guidance
+    assert "not a real model or provider" in guidance
+
+
 def test_six_lane_contract_is_detached_and_manifest_digest_changes(
     tmp_path, monkeypatch
 ):

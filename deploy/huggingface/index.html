@@ -61,6 +61,7 @@
     h2 { margin: 0; font-size: clamp(2.2rem, 5vw, 4.4rem); line-height: normal; letter-spacing: -.055em; }
     .section-head p { margin: 0; color: var(--muted); }
     .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+    .native-harness-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .card { padding: 28px; border: 1px solid var(--line); border-radius: 20px; background: rgba(255,255,255,.66); }
     .card span { color: var(--amber-dark); font-size: .9rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
     .card h3 { margin: 12px 0 8px; font-size: 1.28rem; }
@@ -139,10 +140,15 @@
     <section id="audit-update" aria-labelledby="audit-update-title">
       <div class="shell">
         <div class="section-head">
-          <h2 id="audit-update-title">0.47.0: a robust code-audit factory with visible evidence and limits.</h2>
+          <h2 id="audit-update-title">Coordinated code audits with visible evidence and limits</h2>
           <p>Inspect progress, findings, and repair tasks from one candidate-bound run. This static preview explains the workflow; it does not scan or upload your repository.</p>
         </div>
-        <div class="grid" aria-label="What changed, improved, and was added in 0.47.0">
+        <div class="boundary"><strong>Status:</strong> Current source preview only; published Code Factory 0.48.1 remains unchanged. Local-wheel inclusion is not claimed.</div>
+        <div class="grid native-harness-grid" aria-label="Native agent-harness source preview">
+          <article class="card"><span>Keep useful context</span><h3>Resume incident reviews and compare fixes</h3><p>The native harness keeps incident checkpoints for recovery, binds review context shards to source, and compares candidate repairs without applying them. Budgeted Jev triage keeps unprocessed incidents visible as pending, not assessed.</p></article>
+          <article class="card"><span>Explicit controls</span><h3>Choose when parallel audits and hooks run</h3><p>Parallel audits are opt-in and require a signed policy declaring work non-mutating and resource-safe; serial remains the default, and the declaration does not prove isolation. Optional activation experiments call only hooks explicitly registered by the caller. Their observations are experimental, not model certification or accuracy evidence. The source taxonomy and manifest define the same routes for Junie while keeping execution and identity limits visible.</p></article>
+        </div>
+        <div class="grid" aria-label="What changed in the audit workflow">
           <article class="card"><span>Fixed</span><h3>Missing audit status</h3><p>Native editor views distinguish unavailable, incomplete, failed, stale, and not-run checks. A static inventory no longer looks like a completed audit.</p></article>
           <article class="card"><span>Changed</span><h3>Review the evidence route</h3><p>Junie's taxonomy now directs reviewers from intent and diff through bounded checks, concrete repairs, reruns, and independent specialty AI review.</p></article>
           <article class="card"><span>Added</span><h3>Project-neutral workflow audit</h3><p><code>factory audit workflows</code> evaluates declared checks and profiles against hash-bound candidate and execution evidence. Missing or stale evidence blocks a complete result.</p></article>

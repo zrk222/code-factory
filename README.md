@@ -268,6 +268,20 @@ executed coverage nor a security certification.
 
 [60-second CF/FL audit and repair walkthrough](https://youtu.be/covWDYhUqbM) — October 8, 2026. Silent captions, current Graph Ops captures, bounded scanner improvements and agent repair evidence requirements. The source render is in `videos/code-factory-proof-of-survival/remotion`.
 
+## Native agent-harness preview — current source candidate
+
+Status: Current source preview only; published Code Factory 0.48.1 remains unchanged. Local-wheel inclusion is not claimed.
+
+The native harness keeps incident checkpoints for recovery, binds review
+context shards to source, and compares candidate repairs without applying them.
+Budgeted Jev triage keeps unprocessed incidents visible as pending, not assessed.
+Parallel audits are opt-in and require a signed policy declaring work
+non-mutating and resource-safe; serial remains the default, and the declaration
+does not prove isolation. Optional activation experiments call only hooks
+explicitly registered by the caller. Their observations are experimental, not
+model certification or accuracy evidence. The source taxonomy and manifest define the same routes for
+Junie while keeping execution and identity limits visible.
+
 ## Native scanner expansion — core 0.48.1 / editor 1.1.4 source preview
 
 **Fixed:** native scanner controls require vulnerable and safe results bound to

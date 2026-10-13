@@ -12,9 +12,16 @@ test('worker workflow path filters cover every Docker build input without framew
     .filter(path => path.startsWith('factoryline/')))];
   assert.deepEqual(dockerSourceFiles.sort(), [
     'factoryline/__init__.py',
+    'factoryline/assembly_process.py',
+    'factoryline/audit_action_refs.py',
+    'factoryline/audit_taxonomy.py',
+    'factoryline/data/junie_pack.json',
+    'factoryline/deep_audit.py',
+    'factoryline/deep_audit_attestation.py',
     'factoryline/deep_audit_io.py',
-    'factoryline/deep_audit_sarif.py',
     'factoryline/deep_audit_contract.py',
+    'factoryline/deep_audit_loop.py',
+    'factoryline/deep_audit_sarif.py',
     'factoryline/enterprise_receipts.py',
     'factoryline/runtime_audit_common.py',
     'factoryline/runtime_audit_process.py',

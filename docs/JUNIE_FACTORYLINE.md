@@ -136,3 +136,32 @@ features only. Retain every judgment and its input/rubric/raw-output digests
 for operator correction and calibration. Missing evidence remains unresolved;
 Jev judgments carry no scanner override, execution, merge or release authority.
 The full protocol remains unexecuted until its separate validation completes.
+
+## Native harness capabilities and boundaries
+
+The shared taxonomy and generated Junie manifest expose six native routes:
+source-bound context shards; explicit signed runtime audits; isolated repair
+replay branches; deterministic budgeted incident triage; opt-in registered
+activation experiments; and a registered durable incident driver. See
+`agent_usage_contract.native_harness` for exact APIs and boundaries.
+
+Shard review is caller-provided and unauthenticated; it does not prove
+completeness or authorize execution. Runtime audit status and inspect are
+read-only, while `run` is explicit. Parallelism defaults to 1 and is bounded
+to 1..8; values above 1 require a verified signed plan that permits
+non-mutating, resource-safe lanes. Legacy plans remain serial. Repair planning
+is the default; `--execute` explicitly runs replay legs in isolated workspaces
+without applying or promoting patches.
+
+Incident triage is deterministic, defaults to 500 events, 262144 input bytes,
+and 100 groups, and does not call a JEV model or provider. Activation
+experiments require explicit `execute=True` and seven registered host hooks;
+local fixtures validate callback protocol and binding, not actual
+model/provider behavior. Durable incident
+driving is a registered host API: reconcile the stable action intent before
+retry, do not relaunch after unknown outcomes or transport errors, and retry
+only after authoritative absence. No always-on production monitor, daemon,
+scheduler, or network deployment is included. Every effect remains bound to
+the exact candidate, source, environment, policy, run, and current owner epoch;
+local evidence does not establish authenticated identity, correctness, merge,
+release, or production status.
