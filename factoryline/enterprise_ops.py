@@ -15,7 +15,6 @@ enterprise service.
 
 from __future__ import annotations
 
-from base64 import b64decode
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -24,11 +23,12 @@ from pathlib import Path
 import re
 import shutil
 import sqlite3
+import stat
 import tempfile
 import time
 from typing import Any, Iterable
 
-from .e2e_proof import _run_command
+from . import runtime_audit_process as _runtime_process
 
 
 OPS_SCHEMA = "factory.enterprise-ops.v1"
@@ -753,18 +753,159 @@ def _runner_argv(
 
 def _execute_runner(
     argv: list[str], workspace: Path, timeout_seconds: int
-) -> tuple[int | None, str, str, bool]:
-    result, captures = _run_command(
-        argv, cwd=workspace, timeout_seconds=timeout_seconds
-    )
-    if result["status"] == "spawn_error":
-        error = b64decode(captures["stderr"]).decode("utf-8", errors="replace")
-        raise EnterpriseOpsError(
-            "E_RUNNER_EXECUTION", f"proof command could not start: {error}"
+) -> dict[str, Any]:
+    """Supervise the exact argv while retaining only bounded temporary captures."""
+    capture_root = workspace / OPS_DIR
+    try:
+        for directory in (workspace / ".factory", capture_root):
+            _require_capture_path(directory, workspace)
+            directory.mkdir(exist_ok=True)
+            _require_capture_path(directory, workspace)
+        temporary = tempfile.TemporaryDirectory(
+            prefix=".proof-capture-", dir=capture_root
         )
-    stdout = b64decode(captures["stdout"]).decode("utf-8", errors="replace")
-    stderr = b64decode(captures["stderr"]).decode("utf-8", errors="replace")
-    return result["exit_code"], stdout, stderr, result["status"] == "timed_out"
+    except (OSError, EnterpriseOpsError) as exc:
+        raise EnterpriseOpsError(
+            "E_RUNNER_CAPTURE", "proof output capture could not be prepared"
+        ) from exc
+
+    capture_dir = Path(temporary.name)
+    stdout_path, stderr_path = capture_dir / "stdout.bin", capture_dir / "stderr.bin"
+    try:
+        _require_capture_path(capture_dir, workspace)
+        captures = _runtime_process._open_capture_files(stdout_path, stderr_path)
+    except (OSError, EnterpriseOpsError) as exc:
+        _cleanup_capture_directory(temporary)
+        raise EnterpriseOpsError(
+            "E_RUNNER_CAPTURE", "proof output capture could not be prepared"
+        ) from exc
+
+    started = time.monotonic()
+    deadline = started + timeout_seconds
+    facts = _runtime_process._facts()
+    facts["timeout_seconds"] = timeout_seconds
+    try:
+        # _run_command inherited the caller environment. Keep that behavior for
+        # proof tools such as Docker, whose endpoint/context can be environment
+        # configured, while reusing the existing bounded stream supervisor.
+        child = _runtime_process._launch(argv, workspace, os.environ.copy())
+    except OSError:
+        _runtime_process._close_capture_files(*captures)
+        facts = _runtime_process._launch_error_facts(facts, started)
+        capture_cleanup_confirmed = _cleanup_capture_directory(temporary)
+        return {
+            "facts": facts,
+            "stdout": "",
+            "stderr": "",
+            "capture_cleanup_confirmed": capture_cleanup_confirmed,
+            "capture_read_complete": False,
+        }
+
+    execution_started = time.monotonic()
+    try:
+        facts = _runtime_process._run_child_bounded(
+            child,
+            facts,
+            timeout_seconds,
+            deadline,
+            execution_started,
+            *captures,
+            None,
+        )
+    except Exception:
+        # The supervisor attempts termination and joins its readers before
+        # raising. Do not claim that cleanup succeeded on this exceptional path.
+        _stop_runner_after_supervisor_error(child)
+        facts.update(
+            exit_code=child.poll(),
+            launch_error=False,
+            cleanup_confirmed=False,
+            termination_reason="supervisor_error",
+            supervisor_error=True,
+        )
+
+    stdout_bytes, stdout_ok, stdout_overflow = _read_capture(stdout_path, workspace)
+    stderr_bytes, stderr_ok, stderr_overflow = _read_capture(stderr_path, workspace)
+    facts["capture_file_limit_exceeded"] = stdout_overflow or stderr_overflow
+    capture_cleanup_confirmed = _cleanup_capture_directory(temporary)
+    return {
+        "facts": facts,
+        "stdout": stdout_bytes.decode("utf-8", errors="replace"),
+        "stderr": stderr_bytes.decode("utf-8", errors="replace"),
+        "capture_cleanup_confirmed": capture_cleanup_confirmed,
+        "capture_read_complete": (
+            stdout_ok and stderr_ok and not facts["capture_file_limit_exceeded"]
+        ),
+    }
+
+
+def _stop_runner_after_supervisor_error(child: Any) -> None:
+    try:
+        _runtime_process._stop(child)
+    except Exception:
+        pass
+    if child.poll() is None:
+        try:
+            child.kill()
+            child.wait(timeout=10)
+        except Exception:
+            pass
+    for stream in (child.stdout, child.stderr):
+        if stream is not None:
+            try:
+                stream.close()
+            except OSError:
+                pass
+
+
+def _require_capture_path(path: Path, workspace: Path) -> None:
+    try:
+        resolved_workspace = workspace.resolve(strict=True)
+        path.resolve(strict=False).relative_to(resolved_workspace)
+        candidate = path
+        while candidate != resolved_workspace:
+            try:
+                entry = candidate.lstat()
+            except FileNotFoundError:
+                candidate = candidate.parent
+                continue
+            attributes = getattr(entry, "st_file_attributes", 0)
+            if stat.S_ISLNK(entry.st_mode) or attributes & getattr(
+                stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400
+            ):
+                raise OSError("capture path is redirected")
+            candidate = candidate.parent
+        entry = resolved_workspace.lstat()
+        attributes = getattr(entry, "st_file_attributes", 0)
+        if stat.S_ISLNK(entry.st_mode) or attributes & getattr(
+            stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400
+        ):
+            raise OSError("capture workspace is redirected")
+    except (OSError, ValueError) as exc:
+        raise EnterpriseOpsError(
+            "E_RUNNER_CAPTURE", "proof output capture path is not safe"
+        ) from exc
+
+
+def _read_capture(path: Path, workspace: Path) -> tuple[bytes, bool, bool]:
+    try:
+        _require_capture_path(path, workspace)
+        with path.open("rb") as stream:
+            data = stream.read(_runtime_process.MAX_OUTPUT + 1)
+        exceeded = len(data) > _runtime_process.MAX_OUTPUT
+        return data[: _runtime_process.MAX_OUTPUT], not exceeded, exceeded
+    except OSError:
+        return b"", False, False
+    except EnterpriseOpsError:
+        return b"", False, False
+
+
+def _cleanup_capture_directory(temporary: tempfile.TemporaryDirectory) -> bool:
+    try:
+        temporary.cleanup()
+    except OSError:
+        return False
+    return True
 
 
 def run_proof(
@@ -786,11 +927,19 @@ def run_proof(
         workspace, command, backend, timeout_seconds, image, allow_process_boundary
     )
     started = time.perf_counter()
-    exit_code, stdout, stderr, timed_out = _execute_runner(
-        argv, workspace, timeout_seconds
-    )
+    execution = _execute_runner(argv, workspace, timeout_seconds)
+    process_facts = execution["facts"]
+    if process_facts["launch_error"]:
+        raise EnterpriseOpsError("E_RUNNER_EXECUTION", "proof command could not start")
+    stdout, stderr = execution["stdout"], execution["stderr"]
     combined = stdout + ("\n" if stdout and stderr else "") + stderr
     truncated = len(combined) > output_limit
+    aborted_docker = backend == "docker" and (
+        process_facts["timed_out"] or process_facts["output_limit_exceeded"]
+    )
+    container_cleanup = (
+        "NOT_INDEPENDENTLY_VERIFIED" if backend == "docker" else "NOT_APPLICABLE"
+    )
     result = {
         "schema": RUNNER_SCHEMA,
         "marker": "RUNNER_ISOLATION_ENFORCED"
@@ -800,12 +949,39 @@ def run_proof(
         "tenant_id": config["tenant_id"],
         "command": command,
         "posture": posture,
-        "status": _proof_runner_status(timed_out, exit_code, truncated),
-        "exit_code": exit_code,
+        "status": _proof_runner_status(
+            process_facts["timed_out"],
+            process_facts["exit_code"],
+            truncated,
+            process_facts,
+            execution["capture_cleanup_confirmed"],
+            execution["capture_read_complete"],
+            aborted_docker,
+        ),
+        "exit_code": process_facts["exit_code"],
         "elapsed_ms": round((time.perf_counter() - started) * 1000),
         "output": combined[:output_limit],
         "output_truncated": truncated,
-        "output_complete": not truncated,
+        "output_complete": not (
+            truncated
+            or process_facts["output_limit_exceeded"]
+            or process_facts["timed_out"]
+            or not process_facts["cleanup_confirmed"]
+            or aborted_docker
+            or not execution["capture_cleanup_confirmed"]
+            or not execution["capture_read_complete"]
+        ),
+        "process_facts": {
+            **process_facts,
+            "cleanup_scope": "host child process and captured stream readers only",
+            "capture_limit_bytes_per_stream": _runtime_process.MAX_OUTPUT,
+            "capture_cleanup_confirmed": execution["capture_cleanup_confirmed"],
+            "capture_read_complete": execution["capture_read_complete"],
+            "capture_file_limit_exceeded": process_facts.get(
+                "capture_file_limit_exceeded", False
+            ),
+        },
+        "container_cleanup": container_cleanup,
         "authority": {
             "source_write": False,
             "merge": False,
@@ -819,12 +995,29 @@ def run_proof(
     return result
 
 
-def _proof_runner_status(timed_out, exit_code, truncated):
+def _proof_runner_status(
+    timed_out,
+    exit_code,
+    truncated,
+    process_facts,
+    capture_cleanup_confirmed,
+    capture_read_complete,
+    aborted_docker,
+):
     if timed_out:
         return "timeout"
     if exit_code != 0:
         return "failed"
-    return "incomplete" if truncated else "passed"
+    if (
+        truncated
+        or process_facts["output_limit_exceeded"]
+        or not process_facts["cleanup_confirmed"]
+        or not capture_cleanup_confirmed
+        or not capture_read_complete
+        or aborted_docker
+    ):
+        return "incomplete"
+    return "passed"
 
 
 def _normalize_changed_paths(

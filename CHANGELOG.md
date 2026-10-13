@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Bound enterprise proof-runner capture to 8 MiB per stream with bounded
+  readback and explicit timeout, overflow and cleanup facts. Validate capture
+  directory ancestors before creation. Aborted Docker commands cannot claim
+  verified container cleanup; host process cleanup is reported separately.
+- Add an explicit native missing-export probe (#191). It runs one selected
+  pytest case before and after removing a real module export in memory, and
+  requires a matching natural `AttributeError`. Bound source/report reads and
+  return sanitized validation errors. This does not automatically clear findings.
+- Show saved static scanner receipts in Mission Control (#190), including
+  source coverage, freshness, implementation findings and manual probe guidance.
+  Missing, stale or contradictory evidence cannot become a clean result; the
+  panel does not execute scans or approve releases.
+- Add bounded Python review signals for empty production implementations,
+  placeholder outputs, omission markers and production mocks (#189). These
+  are advisory quality findings with unknown intent, not proven vulnerabilities.
+- Preserve source-bound assigned mock call provenance and reject truncated
+  proof output as passing evidence (#188).
 - Fix assertion-probe worker imports so a workspace or inherited `PYTHONPATH`
   package named `factoryline` cannot shadow the selected CF harness. Project
   imports remain available; this is trusted-project execution, not a sandbox.
