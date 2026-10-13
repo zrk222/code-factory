@@ -583,7 +583,9 @@ def main(argv=None):
     parser.add_argument("--kind", choices=("assertion", "call"), default="assertion")
     parser.add_argument("--timeout", type=float, default=30)
     args = parser.parse_args(argv)
-    probe = probe_call_propagation if args.kind == "call" else probe_assertion_propagation
+    probe = (
+        probe_call_propagation if args.kind == "call" else probe_assertion_propagation
+    )
     result = probe(args.root, args.nodeid, args.line, timeout=args.timeout)
     print(json.dumps(result, indent=2))
     return 0 if result["status"] == "OBSERVED" else 2

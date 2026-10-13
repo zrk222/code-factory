@@ -60,8 +60,7 @@ def test_probe_call_propagation_observes_bare_callback_invocation(tmp_path):
     "source,line",
     [
         (
-            "def test_case():\n    callback(\n    )\n"
-            "def callback():\n    pass\n",
+            "def test_case():\n    callback(\n    )\ndef callback():\n    pass\n",
             2,
         ),
         (
