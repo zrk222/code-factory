@@ -45,9 +45,14 @@ VERIFICATION_SCHEMA = "factory.runtime-boundary-verification.v1"
 TEST_ORACLE_SCHEMA = "factory.test-oracle-attestation.v1"
 TEST_ORACLE_PAYLOAD_TYPE = "application/vnd.factory.test-oracle-attestation.v1+json"
 TEST_ORACLE_VERIFICATION_SCHEMA = "factory.test-oracle-verification.v1"
+TEST_ORACLE_SCHEMA_V2 = "factory.test-oracle-attestation.v2"
+TEST_ORACLE_PAYLOAD_TYPE_V2 = "application/vnd.factory.test-oracle-attestation.v2+json"
+TEST_ORACLE_VERIFICATION_SCHEMA_V2 = "factory.test-oracle-verification.v2"
 MAX_VALIDITY = timedelta(hours=24)
 MAX_TEST_ORACLE_BYTES = 1_048_576
 MAX_TEST_ORACLE_CASE_IDS = 2048
+MAX_TEST_ORACLE_ORIGINS_PER_RUN = 8192
+MAX_TEST_ORACLE_ORIGINS_TOTAL = 16_384
 _SUPERVISED_MODE = "supervised_" + "sub" + "process"
 ISOLATION_MODES = (_SUPERVISED_MODE, "isolated_worker", "hardened_vm")
 INDEPENDENT_MODES = {"isolated_worker", "hardened_vm"}
@@ -730,7 +735,113 @@ def _oracle_case_ids(value: object, field: str, path: str, symbol: str) -> list[
     return sorted(case_ids)
 
 
-def _oracle_test(value: object) -> dict[str, Any]:
+def _oracle_origins(
+    value: object,
+    *,
+    field: str,
+    case_ids: list[str],
+    test_path: str,
+    test_sha: str,
+    source_path: str,
+    source_sha: str,
+) -> list[dict[str, str]]:
+    if (
+        not isinstance(value, list)
+        or not 2 <= len(value) <= MAX_TEST_ORACLE_ORIGINS_PER_RUN
+    ):
+        _oracle_fail("E_ORACLE_ORIGIN", f"{field} must contain 2..8192 origin records")
+    normalized: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    digest_by_source: dict[tuple[str, str], str] = {}
+    path_by_module: dict[tuple[str, str], str] = {}
+    for index, item in enumerate(value):
+        record = _oracle_exact(
+            item,
+            {
+                "case_id",
+                "phase",
+                "source_path",
+                "module_name",
+                "source_sha256",
+                "observation_kind",
+            },
+            f"{field}[{index}]",
+        )
+        case_id = require_str(record["case_id"], f"{field}.case_id", maximum=1024)
+        phase = require_str(record["phase"], f"{field}.phase", maximum=32)
+        path = _oracle_relative_py(
+            record["source_path"], f"{field}.source_path", test_source=True
+        )
+        module_name = require_str(
+            record["module_name"], f"{field}.module_name", maximum=512
+        )
+        digest = require_digest(record["source_sha256"], f"{field}.source_sha256")
+        observation = require_str(
+            record["observation_kind"], f"{field}.observation_kind", maximum=32
+        )
+        if (
+            case_id not in case_ids
+            or phase != "call"
+            or not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", module_name)
+            or observation not in {"imported_module", "executed_frame"}
+        ):
+            _oracle_fail(
+                "E_ORACLE_ORIGIN", f"{field} contains an unknown or unmatched origin"
+            )
+        identity = (case_id, path, module_name, observation)
+        source_identity = (case_id, path)
+        module_identity = (case_id, module_name)
+        if identity in seen:
+            _oracle_fail(
+                "E_ORACLE_ORIGIN", f"{field} contains duplicate origin records"
+            )
+        if (
+            source_identity in digest_by_source
+            and digest_by_source[source_identity] != digest
+        ):
+            _oracle_fail(
+                "E_ORACLE_ORIGIN", f"{field} contains conflicting source digests"
+            )
+        if (
+            module_identity in path_by_module
+            and path_by_module[module_identity] != path
+        ):
+            _oracle_fail(
+                "E_ORACLE_ORIGIN", f"{field} binds one module name to multiple paths"
+            )
+        seen.add(identity)
+        digest_by_source[source_identity] = digest
+        path_by_module[module_identity] = path
+        normalized.append(
+            {
+                "case_id": case_id,
+                "phase": phase,
+                "source_path": path,
+                "module_name": module_name,
+                "source_sha256": digest,
+                "observation_kind": observation,
+            }
+        )
+    for case_id in case_ids:
+        executed = {
+            (item["source_path"], item["source_sha256"])
+            for item in normalized
+            if item["case_id"] == case_id
+            and item["observation_kind"] == "executed_frame"
+        }
+        if (test_path, test_sha) not in executed or (
+            source_path,
+            source_sha,
+        ) not in executed:
+            _oracle_fail(
+                "E_ORACLE_ORIGIN",
+                f"{field} lacks executed-frame evidence for the test or selected source",
+            )
+    return normalized
+
+
+def _oracle_test(value: object, *, schema: str = TEST_ORACLE_SCHEMA) -> dict[str, Any]:
+    version_two = schema == TEST_ORACLE_SCHEMA_V2
     test = _oracle_exact(
         value,
         {"path", "line", "symbol", "test_sha256", "baseline", "mutation"},
@@ -742,9 +853,10 @@ def _oracle_test(value: object) -> dict[str, Any]:
     if not symbol.isidentifier() or not symbol.startswith("test_"):
         _oracle_fail("E_ORACLE_TEST", "test.symbol must be a valid test_* identifier")
     test_sha = require_digest(test["test_sha256"], "test_sha256")
+    run_fields = {"status", "phase", "collection_complete", "case_ids", "report_sha256"}
     baseline = _oracle_exact(
         test["baseline"],
-        {"status", "phase", "collection_complete", "case_ids", "report_sha256"},
+        run_fields | ({"module_origins"} if version_two else set()),
         "baseline",
     )
     if (
@@ -759,18 +871,19 @@ def _oracle_test(value: object) -> dict[str, Any]:
     baseline_report = require_digest(
         baseline["report_sha256"], "baseline.report_sha256"
     )
+    mutation_fields = {
+        "source_path",
+        "source_sha256",
+        "mutant_sha256",
+        "status",
+        "phase",
+        "case_ids",
+        "failure_kind",
+        "report_sha256",
+    }
     mutation = _oracle_exact(
         test["mutation"],
-        {
-            "source_path",
-            "source_sha256",
-            "mutant_sha256",
-            "status",
-            "phase",
-            "case_ids",
-            "failure_kind",
-            "report_sha256",
-        },
+        mutation_fields | ({"module_origins"} if version_two else set()),
         "mutation",
     )
     source_path = _oracle_relative_py(
@@ -798,30 +911,51 @@ def _oracle_test(value: object) -> dict[str, Any]:
         _oracle_fail(
             "E_ORACLE_MUTATION", "mutation failure must be assertion or exception"
         )
+    normalized_baseline = {
+        "status": "PASS",
+        "phase": "call",
+        "collection_complete": True,
+        "case_ids": baseline_cases,
+        "report_sha256": baseline_report,
+    }
+    normalized_mutation = {
+        "source_path": source_path,
+        "source_sha256": source_sha,
+        "mutant_sha256": mutant_sha,
+        "status": "FAIL",
+        "phase": "call",
+        "case_ids": mutation_cases,
+        "failure_kind": failure_kind,
+        "report_sha256": require_digest(
+            mutation["report_sha256"], "mutation.report_sha256"
+        ),
+    }
+    if version_two:
+        normalized_baseline["module_origins"] = _oracle_origins(
+            baseline["module_origins"],
+            field="baseline.module_origins",
+            case_ids=baseline_cases,
+            test_path=path,
+            test_sha=test_sha,
+            source_path=source_path,
+            source_sha=source_sha,
+        )
+        normalized_mutation["module_origins"] = _oracle_origins(
+            mutation["module_origins"],
+            field="mutation.module_origins",
+            case_ids=mutation_cases,
+            test_path=path,
+            test_sha=test_sha,
+            source_path=source_path,
+            source_sha=mutant_sha,
+        )
     return {
         "path": path,
         "line": line,
         "symbol": symbol,
         "test_sha256": test_sha,
-        "baseline": {
-            "status": "PASS",
-            "phase": "call",
-            "collection_complete": True,
-            "case_ids": baseline_cases,
-            "report_sha256": baseline_report,
-        },
-        "mutation": {
-            "source_path": source_path,
-            "source_sha256": source_sha,
-            "mutant_sha256": mutant_sha,
-            "status": "FAIL",
-            "phase": "call",
-            "case_ids": mutation_cases,
-            "failure_kind": failure_kind,
-            "report_sha256": require_digest(
-                mutation["report_sha256"], "mutation.report_sha256"
-            ),
-        },
+        "baseline": normalized_baseline,
+        "mutation": normalized_mutation,
     }
 
 
@@ -832,6 +966,7 @@ def _oracle_payload(
     environment_sha256: str,
     now: datetime | None,
 ) -> dict[str, Any]:
+    payload_schema = _oracle_payload_schema(value)
     payload = _oracle_exact(
         value,
         {
@@ -845,7 +980,7 @@ def _oracle_payload(
         },
         "payload",
     )
-    if payload["schema"] != TEST_ORACLE_SCHEMA or payload["authority"] != "none":
+    if payload["schema"] != payload_schema or payload["authority"] != "none":
         _oracle_fail("E_ORACLE_SCHEMA", "unexpected test-oracle schema or authority")
     source_manifest = require_digest(
         payload["source_manifest_sha256"], "source_manifest_sha256"
@@ -873,12 +1008,22 @@ def _oracle_payload(
     tests = payload["tests"]
     if not isinstance(tests, list) or not 1 <= len(tests) <= 460:
         _oracle_fail("E_ORACLE_TESTS", "tests must contain 1..460 test observations")
-    normalized = [_oracle_test(item) for item in tests]
+    normalized = [_oracle_test(item, schema=payload_schema) for item in tests]
+    if payload_schema == TEST_ORACLE_SCHEMA_V2:
+        origin_count = sum(
+            len(test[run]["module_origins"])
+            for test in normalized
+            for run in ("baseline", "mutation")
+        )
+        if origin_count > MAX_TEST_ORACLE_ORIGINS_TOTAL:
+            _oracle_fail(
+                "E_ORACLE_ORIGIN", "payload exceeds the total origin-record bound"
+            )
     identities = [(item["path"], item["line"], item["symbol"]) for item in normalized]
     if len(identities) != len(set(identities)):
         _oracle_fail("E_ORACLE_TESTS", "duplicate test identity")
     return {
-        "schema": TEST_ORACLE_SCHEMA,
+        "schema": payload_schema,
         "issued_at": issued.isoformat(),
         "expires_at": expires.isoformat(),
         "source_manifest_sha256": source_manifest,
@@ -886,6 +1031,21 @@ def _oracle_payload(
         "authority": "none",
         "tests": normalized,
     }
+
+
+def _oracle_payload_schema(value: object) -> str:
+    schema = value.get("schema") if isinstance(value, dict) else None
+    if schema == TEST_ORACLE_SCHEMA or schema == TEST_ORACLE_SCHEMA_V2:
+        return schema
+    _oracle_fail("E_ORACLE_SCHEMA", "unexpected test-oracle schema or authority")
+
+
+def _oracle_signature_type(schema: object) -> tuple[str, str]:
+    if schema == TEST_ORACLE_SCHEMA:
+        return TEST_ORACLE_SCHEMA, TEST_ORACLE_PAYLOAD_TYPE
+    if schema == TEST_ORACLE_SCHEMA_V2:
+        return TEST_ORACLE_SCHEMA_V2, TEST_ORACLE_PAYLOAD_TYPE_V2
+    _oracle_fail("E_ORACLE_SCHEMA", "unexpected test-oracle schema")
 
 
 def _verify_oracle_envelope(
@@ -905,6 +1065,7 @@ def _verify_oracle_envelope(
             "E_ORACLE_JSON", "DSSE payload encoding is invalid"
         ) from exc
     payload = _oracle_json(payload_bytes, "signed payload")
+    expected_schema, payload_type = _oracle_signature_type(payload.get("schema"))
     keys = trust.get("keys")
     if not isinstance(keys, list):
         _oracle_fail("E_TRUST_ROOT", "trust root keys must be an array")
@@ -937,8 +1098,8 @@ def _verify_oracle_envelope(
         try:
             verified = verify_signed_document(
                 receipt_snapshot,
-                payload_type=TEST_ORACLE_PAYLOAD_TYPE,
-                schema=TEST_ORACLE_SCHEMA,
+                payload_type=payload_type,
+                schema=expected_schema,
                 trust_root_path=trust_snapshot,
                 required_key_role="oracle-verifier",
             )
@@ -987,7 +1148,11 @@ def verify_signed_test_oracles(
                 "E_ORACLE_DRIFT", "receipt or trust root changed during verification"
             )
         return {
-            "schema": TEST_ORACLE_VERIFICATION_SCHEMA,
+            "schema": (
+                TEST_ORACLE_VERIFICATION_SCHEMA_V2
+                if normalized["schema"] == TEST_ORACLE_SCHEMA_V2
+                else TEST_ORACLE_VERIFICATION_SCHEMA
+            ),
             "state": "VERIFIED",
             "payload_sha256": verified["payload_sha256"],
             "receipt_sha256": sha256_bytes(receipt_bytes),
@@ -1004,7 +1169,11 @@ def verify_signed_test_oracles(
             },
             "tests": normalized["tests"],
             "authority": "none",
-            "claim_boundary": "Verified signer attestation only; independent test execution, mutation application, and test-oracle accuracy are not established by signature verification.",
+            "claim_boundary": (
+                "Verified signer claims only; verification does not execute or sign tests, apply mutations, or grant approval, and does not establish independent test execution, mutation application, or test-oracle accuracy."
+                if normalized["schema"] == TEST_ORACLE_SCHEMA_V2
+                else "Verified signer attestation only; independent test execution, mutation application, and test-oracle accuracy are not established by signature verification."
+            ),
         }
     except RuntimeAttestationError:
         raise
