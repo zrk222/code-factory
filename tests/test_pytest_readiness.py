@@ -2,6 +2,7 @@ from pathlib import Path
 
 from factoryline.pytest_readiness import collect_pytest_readiness
 from factoryline.pytest_readiness import probe_assertion_propagation
+from factoryline.pytest_readiness import probe_call_propagation
 import pytest
 
 
@@ -37,6 +38,122 @@ def test_probe_assertion_propagation_existing_failure_cannot_pass(tmp_path):
     result = probe_assertion_propagation(tmp_path, "test_case.py::test_case", 2)
     assert result["status"] == "INCOMPLETE"
     assert result["challenge"] == {}
+
+
+def test_probe_call_propagation_observes_bare_callback_invocation(tmp_path):
+    (tmp_path / "test_case.py").write_text(
+        "def test_case():\n    callback()\ndef callback():\n    pass\n",
+        encoding="utf-8",
+    )
+
+    result = probe_call_propagation(tmp_path, "test_case.py::test_case", 2)
+
+    assert result["schema"] == "factory.call-propagation-probe.v1"
+    assert result["status"] == "OBSERVED"
+    assert result["execution_point"].startswith("Before the selected call")
+    assert result["production_function_mutation_sensitivity"] == "NOT_TESTED"
+    assert result["challenge"]["schema"] == "factory.call-propagation-challenge.v1"
+    assert result["challenge"]["reports"][1]["challenge_visible"] is True
+
+
+@pytest.mark.parametrize(
+    "source,line",
+    [
+        (
+            "def test_case():\n    callback(\n    )\n"
+            "def callback():\n    pass\n",
+            2,
+        ),
+        (
+            "def test_case():\n    handler = callback\n    handler()\n"
+            "def callback():\n    pass\n",
+            3,
+        ),
+    ],
+)
+def test_probe_call_propagation_accepts_multiline_and_aliased_calls(
+    tmp_path, source, line
+):
+    (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
+
+    result = probe_call_propagation(tmp_path, "test_case.py::test_case", line)
+
+    assert result["status"] == "OBSERVED"
+    assert result["challenge"]["schema"] == "factory.call-propagation-challenge.v1"
+
+
+@pytest.mark.parametrize(
+    "source,line",
+    [
+        ("def test_case():\n    result = callback()\n", 2),
+        ("def test_case():\n    callback() or other()\n", 2),
+        ("def test_case():\n    callback(); other()\n", 2),
+        ("def test_case():\n    callback(other())\n", 2),
+        ("def test_case():\n    if True: callback()\n", 2),
+        ("callback()\ndef test_case():\n    pass\n", 1),
+        ("async def test_case():\n    await callback()\n", 2),
+        ("def test_case(value=callback()):\n    pass\n", 1),
+        ("@register(callback())\ndef test_case():\n    pass\n", 1),
+    ],
+)
+def test_probe_call_propagation_rejects_ambiguous_or_deferred_targets(
+    tmp_path, source, line
+):
+    (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="standalone call"):
+        probe_call_propagation(tmp_path, "test_case.py::test_case", line)
+
+
+@pytest.mark.parametrize(
+    "source,line,changed",
+    [
+        (
+            "def test_case():\n    def helper():\n        callback()\n"
+            "def callback():\n    pass\n",
+            3,
+            False,
+        ),
+        (
+            "def test_case():\n    try:\n        callback()\n"
+            "    except AssertionError:\n        pass\n"
+            "def callback():\n    pass\n",
+            3,
+            False,
+        ),
+        (
+            "def test_case():\n    assert False\n    callback()\n"
+            "def callback():\n    pass\n",
+            3,
+            False,
+        ),
+        (
+            "from pathlib import Path\ndef test_case():\n"
+            "    Path('created.py').write_text('changed = True')\n"
+            "    callback()\ndef callback():\n    pass\n",
+            4,
+            True,
+        ),
+        (
+            "import pytest\n@pytest.mark.xfail\ndef test_case():\n"
+            "    callback()\ndef callback():\n    pass\n",
+            4,
+            False,
+        ),
+    ],
+)
+def test_probe_call_propagation_does_not_clear_incomplete_cases(
+    tmp_path, source, line, changed
+):
+    (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
+
+    result = probe_call_propagation(tmp_path, "test_case.py::test_case", line)
+
+    assert result["status"] == "INCOMPLETE"
+    if "assert False" in source:
+        assert result["challenge"] == {}
+    if changed:
+        assert result["source_unchanged"] is False
 
 
 def _write_shadow_factoryline(path, marker):
@@ -177,6 +294,32 @@ def test_assertion_probe_main_reports_only_actual_observation(
         == code
     )
     assert __import__("json").loads(capsys.readouterr().out)["status"] == status
+
+
+def test_call_probe_cli_selects_distinct_kind_and_schema(monkeypatch, capsys):
+    from factoryline import pytest_readiness
+
+    result = {"schema": "factory.call-propagation-probe.v1", "status": "OBSERVED"}
+    monkeypatch.setattr(
+        pytest_readiness, "probe_call_propagation", lambda *a, **k: result
+    )
+
+    assert (
+        pytest_readiness.main(
+            [
+                "--root",
+                ".",
+                "--nodeid",
+                "test_case.py::test_case",
+                "--line",
+                "2",
+                "--kind",
+                "call",
+            ]
+        )
+        == 0
+    )
+    assert __import__("json").loads(capsys.readouterr().out) == result
 
 
 def test_assertion_probe_input_and_binding_limits(tmp_path, monkeypatch):
