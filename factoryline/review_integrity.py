@@ -22,6 +22,30 @@ def _resolve(node: ast.AST | None, aliases: dict[str, str]) -> str:
     return aliases.get(head, head) + dot + tail
 
 
+def import_smoke_oracle(node: ast.AST) -> bool:
+    """Recognize import-availability/export smoke tests, not semantic coverage."""
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    if not node.name.startswith("test_import_"):
+        return False
+    body = node.body
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body = body[1:]
+    return bool(body) and all(
+        isinstance(statement, ast.Import)
+        or (
+            isinstance(statement, ast.ImportFrom)
+            and all(alias.name != "*" for alias in statement.names)
+        )
+        for statement in body
+    )
+
+
 def callback_argument(call: ast.Call, function: ast.AST, parameter: str) -> str | None:
     """Return a plainly bound callback name for a positional or keyword argument."""
     positional = [*function.args.posonlyargs, *function.args.args]
