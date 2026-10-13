@@ -13,7 +13,10 @@ from factoryline.runtime_attestation import (
     PAYLOAD_TYPE,
     SCHEMA,
     TEST_ORACLE_PAYLOAD_TYPE,
+    TEST_ORACLE_PAYLOAD_TYPE_V2,
     TEST_ORACLE_SCHEMA,
+    TEST_ORACLE_SCHEMA_V2,
+    TEST_ORACLE_VERIFICATION_SCHEMA_V2,
     RuntimeAttestationError,
     capture_supervised_attestation,
     runtime_boundary_decision,
@@ -231,6 +234,35 @@ def _oracle_payload(*, now: datetime | None = None) -> dict:
     }
 
 
+def _oracle_payload_v2(*, now: datetime | None = None) -> dict:
+    payload = _oracle_payload(now=now)
+    payload["schema"] = TEST_ORACLE_SCHEMA_V2
+    test = payload["tests"][0]
+    case_id = test["baseline"]["case_ids"][0]
+    test_source = {
+        "case_id": case_id,
+        "phase": "call",
+        "source_path": test["path"],
+        "module_name": "tests.test_example",
+        "source_sha256": test["test_sha256"],
+        "observation_kind": "executed_frame",
+    }
+    target_source = {
+        "case_id": case_id,
+        "phase": "call",
+        "source_path": test["mutation"]["source_path"],
+        "module_name": "factoryline.example",
+        "source_sha256": test["mutation"]["source_sha256"],
+        "observation_kind": "executed_frame",
+    }
+    test["baseline"]["module_origins"] = [test_source, target_source]
+    test["mutation"]["module_origins"] = [
+        test_source,
+        {**target_source, "source_sha256": test["mutation"]["mutant_sha256"]},
+    ]
+    return payload
+
+
 def _signed_oracle(tmp_path: Path, payload: dict | None = None):
     keys = generate_key_material(
         out_dir=tmp_path / "oracle-keys",
@@ -245,7 +277,11 @@ def _signed_oracle(tmp_path: Path, payload: dict | None = None):
     payload = payload or _oracle_payload()
     envelope = sign_payload(
         payload,
-        payload_type=TEST_ORACLE_PAYLOAD_TYPE,
+        payload_type=(
+            TEST_ORACLE_PAYLOAD_TYPE_V2
+            if payload["schema"] == TEST_ORACLE_SCHEMA_V2
+            else TEST_ORACLE_PAYLOAD_TYPE
+        ),
         private_key_path=Path(keys["private_key"]),
         keyid=keys["keyid"],
         identity=keys["identity"],
@@ -290,6 +326,210 @@ def test_signed_test_oracle_verifies_bounded_signer_claim(tmp_path: Path):
     assert result["signature"]["role"] == "oracle-verifier"
     assert len(result["receipt_sha256"]) == 64
     assert "not established" in result["claim_boundary"]
+
+
+def test_signed_test_oracle_v2_requires_bound_executed_origins(tmp_path: Path):
+    now = datetime.now(timezone.utc)
+    payload = _oracle_payload_v2(now=now)
+    receipt, trust, _, _ = _signed_oracle(tmp_path, payload)
+
+    result = _verify_oracle(receipt, trust, payload, now=now + timedelta(minutes=1))
+
+    assert result["state"] == "VERIFIED"
+    assert result["schema"] == TEST_ORACLE_VERIFICATION_SCHEMA_V2
+    assert result["authority"] == "none"
+    assert (
+        result["tests"][0]["baseline"]["module_origins"]
+        == payload["tests"][0]["baseline"]["module_origins"]
+    )
+
+
+def test_signed_test_oracle_v2_allows_consistent_module_aliases(tmp_path: Path):
+    payload = _oracle_payload_v2()
+    target = payload["tests"][0]["baseline"]["module_origins"][1]
+    payload["tests"][0]["baseline"]["module_origins"].append(
+        {
+            **target,
+            "module_name": "factoryline.alias",
+            "observation_kind": "imported_module",
+        }
+    )
+    receipt, trust, _, _ = _signed_oracle(tmp_path, payload)
+
+    result = _verify_oracle(receipt, trust, payload)
+
+    assert result["state"] == "VERIFIED"
+
+
+def test_signed_test_oracle_v2_requires_origins_for_each_selected_case(
+    tmp_path: Path,
+):
+    payload = _oracle_payload_v2()
+    test = payload["tests"][0]
+    first_case = test["baseline"]["case_ids"][0]
+    second_case = "tests/test_example.py::test_example[case-2]"
+    for run in ("baseline", "mutation"):
+        test[run]["case_ids"].append(second_case)
+        second_case_origins = [
+            {**origin, "case_id": second_case} for origin in test[run]["module_origins"]
+        ]
+        test[run]["module_origins"].extend(second_case_origins)
+    receipt, trust, _, _ = _signed_oracle(tmp_path, payload)
+
+    result = _verify_oracle(receipt, trust, payload)
+
+    assert result["tests"][0]["baseline"]["case_ids"] == [first_case, second_case]
+    assert {
+        origin["case_id"] for origin in result["tests"][0]["mutation"]["module_origins"]
+    } == {first_case, second_case}
+
+
+def test_signed_test_oracle_v2_rejects_origins_missing_for_one_case(tmp_path: Path):
+    payload = _oracle_payload_v2()
+    second_case = "tests/test_example.py::test_example[case-2]"
+    test = payload["tests"][0]
+    for run in ("baseline", "mutation"):
+        test[run]["case_ids"].append(second_case)
+    receipt, trust, _, _ = _signed_oracle(tmp_path, payload)
+
+    with pytest.raises(RuntimeAttestationError, match="E_ORACLE_ORIGIN"):
+        _verify_oracle(receipt, trust, payload)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "code"),
+    [
+        (
+            lambda p: p["tests"][0]["baseline"]["module_origins"][1].update(
+                observation_kind="imported_module"
+            ),
+            "E_ORACLE_ORIGIN",
+        ),
+        (
+            lambda p: p["tests"][0]["mutation"]["module_origins"].pop(),
+            "E_ORACLE_ORIGIN",
+        ),
+        (
+            lambda p: p["tests"][0]["baseline"]["module_origins"][0].update(
+                source_sha256=_digest("changed test source")
+            ),
+            "E_ORACLE_ORIGIN",
+        ),
+        (
+            lambda p: p["tests"][0]["mutation"]["module_origins"][1].update(
+                case_id="tests/test_other.py::test_other"
+            ),
+            "E_ORACLE_ORIGIN",
+        ),
+        (
+            lambda p: p["tests"][0]["baseline"]["module_origins"][1].update(
+                source_path="C:/src/example.py"
+            ),
+            "E_ORACLE_PATH",
+        ),
+        (
+            lambda p: p["tests"][0]["baseline"].update(status="UNKNOWN"),
+            "E_ORACLE_BASELINE",
+        ),
+        (
+            lambda p: p["tests"][0]["baseline"]["module_origins"].append(
+                dict(p["tests"][0]["baseline"]["module_origins"][0])
+            ),
+            "E_ORACLE_ORIGIN",
+        ),
+        (
+            lambda p: p["tests"][0]["baseline"]["module_origins"].append(
+                {
+                    **p["tests"][0]["baseline"]["module_origins"][0],
+                    "observation_kind": "imported_module",
+                    "source_sha256": _digest("conflicting import digest"),
+                }
+            ),
+            "E_ORACLE_ORIGIN",
+        ),
+        (
+            lambda p: p["tests"][0]["baseline"]["module_origins"].append(
+                {
+                    **p["tests"][0]["baseline"]["module_origins"][1],
+                    "module_name": "factoryline.alias",
+                    "observation_kind": "imported_module",
+                    "source_sha256": _digest("conflicting alias digest"),
+                }
+            ),
+            "E_ORACLE_ORIGIN",
+        ),
+        (
+            lambda p: p["tests"][0]["baseline"]["module_origins"].append(
+                {
+                    **p["tests"][0]["baseline"]["module_origins"][1],
+                    "source_path": "factoryline/alias.py",
+                    "observation_kind": "imported_module",
+                }
+            ),
+            "E_ORACLE_ORIGIN",
+        ),
+        (
+            lambda p: p["tests"][0]["baseline"]["module_origins"][0].update(
+                phase="setup"
+            ),
+            "E_ORACLE_ORIGIN",
+        ),
+    ],
+)
+def test_signed_test_oracle_v2_rejects_unproven_origins(
+    tmp_path: Path, mutate, code: str
+):
+    payload = _oracle_payload_v2()
+    mutate(payload)
+    receipt, trust, _, _ = _signed_oracle(tmp_path, payload)
+
+    with pytest.raises(RuntimeAttestationError, match=code):
+        _verify_oracle(receipt, trust, payload)
+
+
+def test_signed_test_oracle_v1_does_not_accept_v2_origin_fields(tmp_path: Path):
+    payload = _oracle_payload()
+    payload["tests"][0]["baseline"]["module_origins"] = []
+    receipt, trust, _, _ = _signed_oracle(tmp_path, payload)
+
+    with pytest.raises(RuntimeAttestationError, match="E_ORACLE_SCHEMA"):
+        _verify_oracle(receipt, trust, payload)
+
+
+def test_signed_test_oracle_v2_rejects_wrong_dsse_payload_type(tmp_path: Path):
+    keys = generate_key_material(
+        out_dir=tmp_path / "oracle-keys",
+        keyid="oracle-key",
+        identity="oracle@example",
+        issuer="local",
+    )
+    trust_path = Path(keys["trust_root"])
+    trust = json.loads(trust_path.read_text(encoding="utf-8"))
+    trust["keys"][0]["roles"] = ["oracle-verifier"]
+    trust_path.write_text(json.dumps(trust), encoding="utf-8")
+    payload = _oracle_payload_v2()
+    envelope = sign_payload(
+        payload,
+        payload_type=TEST_ORACLE_PAYLOAD_TYPE,
+        private_key_path=Path(keys["private_key"]),
+        keyid=keys["keyid"],
+        identity=keys["identity"],
+        issuer=keys["issuer"],
+    )
+    receipt = tmp_path / "wrong-payload-type.json"
+    receipt.write_text(json.dumps(envelope), encoding="utf-8")
+
+    with pytest.raises(RuntimeAttestationError):
+        _verify_oracle(receipt, trust_path, payload)
+
+
+def test_signed_test_oracle_rejects_non_string_schema(tmp_path: Path):
+    payload = _oracle_payload()
+    payload["schema"] = [TEST_ORACLE_SCHEMA]
+    receipt, trust, _, _ = _signed_oracle(tmp_path, payload)
+
+    with pytest.raises(RuntimeAttestationError, match="E_ORACLE_SCHEMA"):
+        _verify_oracle(receipt, trust, payload)
 
 
 @pytest.mark.parametrize(
@@ -481,6 +721,16 @@ def test_test_oracle_private_helpers_enforce_contracts(tmp_path: Path):
     with pytest.raises(RuntimeAttestationError, match="E_ORACLE_CASES"):
         oracle._oracle_case_ids(
             ["tests/test_y.py::test_y"], "cases", "tests/test_x.py", "test_x"
+        )
+    with pytest.raises(RuntimeAttestationError, match="E_ORACLE_ORIGIN"):
+        oracle._oracle_origins(
+            [{}] * (oracle.MAX_TEST_ORACLE_ORIGINS_PER_RUN + 1),
+            field="origins",
+            case_ids=["tests/test_example.py::test_example[case-1]"],
+            test_path="tests/test_example.py",
+            test_sha=_digest("test source"),
+            source_path="factoryline/example.py",
+            source_sha=_digest("original source"),
         )
     payload = _oracle_payload()
     assert oracle._oracle_test(payload["tests"][0])["mutation"]["status"] == "FAIL"
