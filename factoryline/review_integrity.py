@@ -50,6 +50,316 @@ def import_smoke_oracle(node: ast.AST) -> bool:
     )
 
 
+def _oracle_body(node: ast.AST) -> list[ast.stmt]:
+    body = list(node.body)
+    if body and _is_docstring(body[0]):
+        body.pop(0)
+    return body
+
+
+def _structural_oracle_context(
+    tree: ast.Module, imports: dict, snapshots: dict
+) -> dict:
+    """Summarize direct bindings and visible local module behavior for test oracles."""
+    module_imports, rebound = {}, set()
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Import):
+            module_imports.update(
+                {a.asname or a.name.split(".")[0]: a.name for a in stmt.names}
+            )
+        elif isinstance(stmt, ast.ImportFrom):
+            module_imports.update(
+                {
+                    a.asname or a.name: stmt.module or ""
+                    for a in stmt.names
+                    if a.name != "*"
+                }
+            )
+        else:
+            rebound.update(_oracle_bound_names(stmt))
+    dynamic, classes = set(), {}
+    for alias, (source, symbol) in imports.items():
+        module = snapshots.get(source)
+        body = getattr(module, "body", ())
+        if any(
+            isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and n.name == "__getattr__"
+            for n in body
+        ):
+            dynamic.add(alias)
+        if symbol and any(
+            isinstance(n, ast.ClassDef) and n.name == symbol for n in body
+        ):
+            classes[alias] = symbol
+    return {
+        "module_imports": module_imports,
+        "module_rebindings": rebound,
+        "dynamic_getattr_modules": dynamic,
+        "class_imports": classes,
+        "source_classes": set(classes),
+    }
+
+
+def _attribute_chain_root(node: ast.AST) -> str | None:
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _attribute_access_oracle(node: ast.AST, context: dict) -> bool:
+    """Credit only pure reads from a direct, non-mock module import."""
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    params = {
+        a.arg for a in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+    }
+    params.update(a.arg for a in (node.args.vararg, node.args.kwarg) if a)
+    body = _oracle_body(node)
+    reads = [s for s in body if isinstance(s, ast.Expr)]
+    if not reads or not all(
+        isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Attribute)
+        and all(
+            not isinstance(part, ast.Call) or (not part.args and not part.keywords)
+            for part in ast.walk(stmt.value)
+        )
+        for stmt in reads
+    ):
+        return False
+    imports = context.get("module_imports", {})
+    bound = context.get("module_rebindings", set())
+    roots = {_attribute_chain_root(s.value) for s in reads}
+    body_bindings = set().union(*(_oracle_bound_names(stmt) for stmt in body))
+    if (
+        not roots
+        or None in roots
+        or roots & params
+        or roots & bound
+        or roots & body_bindings
+    ):
+        return False
+    for root in roots:
+        imported = imports.get(root, "")
+        if not imported or imported.startswith(("unittest.mock", "mock")):
+            return False
+        if root in context.get("dynamic_getattr_modules", set()):
+            return False
+    return all(
+        (isinstance(s, ast.Expr) and isinstance(s.value, ast.Attribute))
+        or isinstance(s, ast.Import)
+        or (isinstance(s, ast.ImportFrom) and all(a.name != "*" for a in s.names))
+        for s in body
+    )
+
+
+def _typed_stub_parts(body: list[ast.stmt]):
+    defs = [
+        s
+        for s in body
+        if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    ]
+    if not defs or body[: len(defs)] != defs:
+        return None
+    functions = [d for d in defs if not isinstance(d, ast.ClassDef)]
+    classes = [d for d in defs if isinstance(d, ast.ClassDef)]
+    return (
+        (defs, functions, classes)
+        if functions and all(_annotated_stub(fn) for fn in functions)
+        else None
+    )
+
+
+def _typed_stub_decorators_known(functions: list, context: dict) -> bool:
+    imports = context.get("module_imports", {})
+    return all(
+        isinstance(d, ast.Name)
+        and d.id == "asynccontextmanager"
+        and imports.get(d.id) == "contextlib"
+        for fn in functions
+        for d in fn.decorator_list
+    )
+
+
+def _typed_class_imports(node: ast.AST, context: dict) -> dict:
+    params = {
+        a.arg for a in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+    }
+    params.update(a.arg for a in (node.args.vararg, node.args.kwarg) if a)
+    rebound = context.get("module_rebindings", set())
+    return {
+        name: symbol
+        for name, symbol in context.get("class_imports", {}).items()
+        if name not in params and name not in rebound
+    }
+
+
+def _typed_classes_safe(classes: list, imported: dict) -> bool:
+    for cls in classes:
+        if (
+            cls.decorator_list
+            or cls.keywords
+            or any(
+                not _stub_statement(s)
+                for s in cls.body
+                if not isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef))
+            )
+        ):
+            return False
+        if any(
+            not isinstance(base, ast.Name) or base.id not in imported
+            for base in cls.bases
+        ):
+            return False
+        if any(
+            isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)) for s in cls.body
+        ):
+            return False
+    return True
+
+
+def _typed_call_passes_stub(call: ast.Call, names: set[str]) -> bool:
+    if any(
+        isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in names
+        for n in ast.walk(call)
+    ):
+        return False
+    passed = {
+        n.id
+        for part in (*call.args, *(k.value for k in call.keywords))
+        for n in ast.walk(part)
+        if isinstance(n, ast.Name)
+    }
+    return bool(passed & names)
+
+
+def _typed_call_is_source_bound(
+    call: ast.Call, classes: list, imported: dict, local: set, params: set
+) -> bool:
+    name = call.func.id if isinstance(call.func, ast.Name) else None
+    if name in params:
+        return False
+    subclasses = {
+        cls.name
+        for cls in classes
+        if cls.bases
+        and not cls.decorator_list
+        and not cls.keywords
+        and all(
+            isinstance(base, ast.Name) and base.id in imported for base in cls.bases
+        )
+    }
+    return name in subclasses or name in imported and name not in local
+
+
+def _typed_calls_trusted(
+    calls: list,
+    names: set[str],
+    classes: list,
+    imported: dict,
+    body: list,
+    node: ast.AST,
+) -> bool:
+    if not calls:
+        return False
+    params = {
+        a.arg for a in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+    }
+    params.update(a.arg for a in (node.args.vararg, node.args.kwarg) if a)
+    local = set().union(*(_oracle_bound_names(stmt) for stmt in body))
+    trusted = False
+    for stmt in calls:
+        if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
+            return False
+        call = stmt.value
+        if not _typed_call_passes_stub(call, names):
+            return False
+        trusted |= _typed_call_is_source_bound(call, classes, imported, local, params)
+    return trusted
+
+
+def annotated_callable_oracle(node: ast.AST, context: dict) -> bool:
+    """Identify typed-stub construction only when the callee class is source-bound."""
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    body = _oracle_body(node)
+    parts = _typed_stub_parts(body)
+    if not parts:
+        return False
+    defs, functions, classes = parts
+    imported = _typed_class_imports(node, context)
+    return (
+        _typed_stub_decorators_known(functions, context)
+        and _typed_classes_safe(classes, imported)
+        and _typed_calls_trusted(
+            body[len(defs) :],
+            {fn.name for fn in functions},
+            classes,
+            imported,
+            body,
+            node,
+        )
+    )
+
+
+def structural_oracle_status(node: ast.AST, context: dict) -> str | None:
+    if import_smoke_oracle(node):
+        return "import"
+    if _attribute_access_oracle(node, context):
+        return "attribute"
+    if annotated_callable_oracle(node, context):
+        return "typed"
+    return None
+
+
+def structural_oracle_finding(
+    node: ast.AST, relative: str, context: dict
+) -> dict | bool | None:
+    status = structural_oracle_status(node, context)
+    if status in {"import", "attribute"}:
+        return True
+    if status == "typed":
+        from .review_audits import _security_finding
+
+        return _security_finding(
+            "QUALITY_TYPECHECK_NOT_VERIFIED",
+            relative,
+            node,
+            "Source-bound API construction passed; no type-checker receipt was verified.",
+            "INFO",
+            symbol=node.name,
+            state="INCOMPLETE",
+            typecheck="NOT_VERIFIED",
+        )
+    return None
+
+
+def _stub_statement(stmt: ast.stmt) -> bool:
+    if isinstance(stmt, ast.Pass) or _is_docstring(stmt):
+        return True
+    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
+        return stmt.value.value is Ellipsis or isinstance(stmt.value.value, str)
+    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
+        return (
+            stmt.value.value is None
+            or isinstance(stmt.value.value, ast.Constant)
+            and stmt.value.value.value is None
+        )
+    if isinstance(stmt, ast.Raise) and stmt.exc is not None:
+        exc = stmt.exc.func if isinstance(stmt.exc, ast.Call) else stmt.exc
+        return isinstance(exc, ast.Name) and exc.id == "NotImplementedError"
+    return False
+
+
+def _annotated_stub(fn: ast.AST) -> bool:
+    args = [*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs]
+    args += [a for a in (fn.args.vararg, fn.args.kwarg) if a]
+    return (
+        fn.returns is not None
+        and all(a.annotation is not None for a in args)
+        and all(_stub_statement(s) for s in fn.body)
+    )
+
+
 def assigned_sync_function_call(
     call: ast.Call, scope: ast.AST, module: ast.AST
 ) -> bool:

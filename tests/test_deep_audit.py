@@ -1756,7 +1756,13 @@ def _copy_worker_modules(root: Path, package_root: Path, sources: set[str]) -> N
 
 def _run_worker_import(package_root: Path) -> subprocess.CompletedProcess:
     code = (
-        "import runpy,sys; sys.path.insert(0,sys.argv[1]); "
+        "import importlib.machinery,pathlib,runpy,sys; "
+        "assert tuple(sys.meta_path)==(importlib.machinery.BuiltinImporter,"
+        "importlib.machinery.FrozenImporter,importlib.machinery.PathFinder); "
+        "root=pathlib.Path(sys.argv[1]).resolve(); sys.path.insert(0,str(root)); "
+        "import factoryline; "
+        "assert pathlib.Path(factoryline.__file__).resolve()==root/'factoryline/__init__.py'; "
+        "factoryline.__path__=[str(root/'factoryline')]; "
         "import factoryline.deep_audit_loop; "
         "import factoryline.deep_audit_attestation; "
         "import factoryline.runtime_audit_process; "
@@ -1764,7 +1770,14 @@ def _run_worker_import(package_root: Path) -> subprocess.CompletedProcess:
         "runpy.run_module('factoryline.deep_audit_io',run_name='__main__')"
     )
     return subprocess.run(
-        [sys.executable, "-I", "-c", code, str(package_root)],
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-c",
+            code,
+            str(package_root),
+        ],
         capture_output=True,
         text=True,
         check=False,

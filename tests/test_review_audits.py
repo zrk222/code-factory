@@ -90,6 +90,92 @@ def test_import_behavior_negative_control_fails_on_removed_export(tmp_path):
     assert "ImportError" in mutated.stderr and "supported" in mutated.stderr
 
 
+def test_attribute_access_oracle_requires_import_binding_and_no_dynamic_fallback(
+    tmp_path,
+):
+    product = tmp_path / "product.py"
+    product.write_text("public = object()\n")
+    test_file = tmp_path / "test_product.py"
+    test_file.write_text("import product\ndef test_public():\n    product.public\n")
+    assert not any(
+        f["code"] == "QUALITY_HOLLOW_TEST"
+        for f in security_scan(tmp_path, cache_enabled=False)["findings"]
+    )
+
+    test_file.write_text(
+        "from unittest.mock import Mock\nproduct = Mock()\ndef test_public():\n    product.public\n"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"])
+
+    test_file.write_text(
+        "import product\ndef test_public():\n"
+        "    from unittest.mock import sentinel as product\n    product.anything\n"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"])
+
+    test_file.write_text("def test_public():\n    unresolved.public\n")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"])
+
+    product.write_text("def __getattr__(name):\n    return object()\n")
+    test_file.write_text("import product\ndef test_public():\n    product.missing\n")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"])
+
+
+def test_annotated_stub_oracle_requires_source_bound_constructor(tmp_path):
+    (tmp_path / "api.py").write_text(
+        "class Middleware:\n    def __init__(self, handler):\n        self.handler = handler\n"
+    )
+    test = tmp_path / "test_api.py"
+    test.write_text(
+        "from api import Middleware\n"
+        "def test_constructs():\n"
+        "    def handler(request: object) -> object:\n"
+        "        raise NotImplementedError\n"
+        "    Middleware(handler)\n"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert any(
+        f["code"] == "QUALITY_TYPECHECK_NOT_VERIFIED" for f in report["findings"]
+    )
+    assert not any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"])
+
+    test.write_text(
+        "from api import Middleware\nfrom unittest.mock import Mock\nMiddleware = Mock()\n"
+        "def test_constructs():\n"
+        "    def handler(request: object) -> object:\n"
+        "        raise NotImplementedError\n"
+        "    Middleware(handler)\n"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"])
+
+    test.write_text(
+        "from api import Middleware\n"
+        "def test_constructs(Middleware):\n"
+        "    class App(Middleware):\n"
+        "        pass\n"
+        "    def handler(request: object) -> object:\n"
+        "        raise NotImplementedError\n"
+        "    App(handler)\n"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"])
+
+    test.write_text(
+        "from api import Middleware\n"
+        "def test_constructs(Middleware):\n"
+        "    def handler(request: object) -> object:\n"
+        "        raise NotImplementedError\n"
+        "    Middleware(handler)\n"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"])
+
+
 @pytest.mark.parametrize(
     "call,expected",
     [

@@ -3951,6 +3951,9 @@ def _build_oracle_context(
         contexts[path]["typecheck"] = path in typecheck_sources
         contexts[path]["flask_apps"] = _flask_context_apps(path, tree, snapshots)
         imports = _oracle_imports(root, path, tree, set(files))
+        from .review_integrity import _structural_oracle_context
+
+        contexts[path].update(_structural_oracle_context(tree, imports, snapshots))
         contexts[path]["callback_invokers"] = _source_callback_invokers(
             imports, snapshots, callback_summaries
         )
@@ -4198,15 +4201,19 @@ def _hollow_test_finding(
     helper_names: set[str] | None = None,
     *,
     unittest_context: bool = False,
+    oracle_context: dict | None = None,
 ) -> dict[str, Any] | None:
     if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return None
     if not node.name.startswith("test_"):
         return None
-    from .review_integrity import import_smoke_oracle
+    from .review_integrity import structural_oracle_finding
 
-    if _test_oracle_exempt(node, aliases) or import_smoke_oracle(node):
+    oracle = structural_oracle_finding(node, relative, oracle_context or {})
+    if _test_oracle_exempt(node, aliases) or oracle is True:
         return None
+    if isinstance(oracle, dict):
+        return oracle
     nodes = _test_oracle_body_nodes(node, aliases)
     vacuous = _direct_test_vacuous_assertions(node)
     assertions = [n for n in nodes if isinstance(n, ast.Assert)]
@@ -4843,6 +4850,7 @@ def _test_oracle_findings(
     inherited_pytest_methods: set[int] | None = None,
     flask_apps: set[str] | None = None,
     callback_invokers: dict | None = None,
+    oracle_context: dict | None = None,
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     parents = _oracle_ancestor_map(nodes[0].body)
@@ -4895,6 +4903,7 @@ def _test_oracle_findings(
             scoped_aliases,
             hollow_helpers,
             unittest_context=is_unittest_method,
+            oracle_context=oracle_context,
         )
         if hollow is not None:
             findings.append(hollow)
@@ -5267,6 +5276,7 @@ def _security_scan_tree(
             _pytest_inherited_method_ids(tree, context.get("pytest_inherited", set())),
             context.get("flask_apps", set()),
             context.get("callback_invokers", {}),
+            context,
         )
     )
     roundtrip_aliases = _unmodified_serialization_aliases(nodes, aliases)
