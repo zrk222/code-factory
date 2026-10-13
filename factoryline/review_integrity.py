@@ -6,9 +6,659 @@ import hashlib
 import json
 import os
 import tempfile
+import ast
 from pathlib import Path
 from typing import Any
 from .revenueforge import AUTHORITY, RevenueForgeError
+
+
+def _name(node: ast.AST | None) -> str:
+    return ast.unparse(node) if node is not None else ""
+
+
+def _resolve(node: ast.AST | None, aliases: dict[str, str]) -> str:
+    name = _name(node)
+    head, dot, tail = name.partition(".")
+    return aliases.get(head, head) + dot + tail
+
+
+def _targets(stmt: ast.AST) -> list[str]:
+    targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+    return [
+        n.id
+        for t in targets
+        for n in ast.walk(t)
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+    ]
+
+
+def _true_arg(call: ast.AST, key: str) -> bool:
+    return isinstance(call, ast.Call) and any(
+        k.arg == key and isinstance(k.value, ast.Constant) and k.value.value is True
+        for k in call.keywords
+    )
+
+
+def mock_patch_dict_slot(
+    receiver,
+    root,
+    assertion,
+    aliases,
+    nodes,
+    constructors,
+    normalize,
+    rebound,
+    effective,
+    root_name,
+):
+    """Prove an unchanged literal Mock slot inside a resolved patch.dict context."""
+    while isinstance(receiver, ast.Attribute):
+        receiver = receiver.value
+    if (
+        not isinstance(receiver, ast.Subscript)
+        or root_name(receiver.value, None, {}) != root
+        or not isinstance(receiver.slice, ast.Constant)
+    ):
+        return False
+    context = _patch_dict_context(root, assertion, aliases, nodes, normalize, rebound)
+    return context is not None and _literal_mock_slot(
+        root,
+        receiver.slice.value,
+        context,
+        assertion,
+        aliases,
+        nodes,
+        constructors,
+        normalize,
+        rebound,
+        effective,
+    )
+
+
+def _patch_dict_context(root, assertion, aliases, nodes, normalize, rebound):
+    ancestors = getattr(assertion, "_oracle_ancestors", ())
+    for node in nodes:
+        if not isinstance(node, ast.With) or not any(
+            parent is node for parent, _ in ancestors
+        ):
+            continue
+        for item in node.items:
+            call = item.context_expr
+            if (
+                not isinstance(call, ast.Call)
+                or normalize(call, aliases) != "unittest.mock.patch.dict"
+                or len(call.args) not in {1, 2}
+                or call.keywords
+                or not isinstance(call.args[-1], ast.Name)
+                or call.args[-1].id != root
+                or rebound(nodes, root, call.lineno, assertion.lineno)
+            ):
+                continue
+            return call
+    return None
+
+
+def _literal_mock_slot(
+    root,
+    key,
+    context,
+    assertion,
+    aliases,
+    nodes,
+    constructors,
+    normalize,
+    rebound,
+    effective,
+):
+    for statement in nodes:
+        if not isinstance(statement, ast.Assign) or statement.lineno >= context.lineno:
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == root
+            for target in statement.targets
+        ):
+            continue
+        if not isinstance(statement.value, ast.Dict) or not effective(
+            statement, aliases
+        ):
+            return False
+        if rebound(nodes, root, statement.lineno, assertion.lineno):
+            return False
+        if not _mapping_use_is_confined(root, statement, context, assertion, nodes):
+            return False
+        keys = [
+            node.value
+            for node in statement.value.keys
+            if isinstance(node, ast.Constant)
+        ]
+        if len(keys) != len(statement.value.keys) or len(set(keys)) != len(keys):
+            return False
+        return any(
+            isinstance(key_node, ast.Constant)
+            and key_node.value == key
+            and isinstance(value, ast.Call)
+            and normalize(value, aliases) in constructors
+            for key_node, value in zip(statement.value.keys, statement.value.values)
+        )
+    return False
+
+
+def _mapping_use_is_confined(root, statement, context, assertion, nodes):
+    allowed = context.args[-1] if context.args else None
+    start = (statement.end_lineno, statement.end_col_offset)
+    end = (assertion.lineno, assertion.col_offset)
+    return not any(
+        isinstance(node, ast.Name)
+        and node.id == root
+        and isinstance(node.ctx, ast.Load)
+        and start < (node.lineno, node.col_offset) < end
+        and node is not allowed
+        for item in nodes
+        for node in ast.walk(item)
+    )
+
+
+def _fixture_name(fn: ast.AST, aliases: dict[str, str]) -> str | None:
+    for dec in getattr(fn, "decorator_list", ()):
+        call = dec if isinstance(dec, ast.Call) else None
+        if _resolve(call.func if call else dec, aliases) in {
+            "pytest.fixture",
+            "_pytest.fixture",
+        }:
+            return (
+                next(
+                    (
+                        k.value.value
+                        for k in (call.keywords if call else ())
+                        if k.arg == "name"
+                        and isinstance(k.value, ast.Constant)
+                        and isinstance(k.value.value, str)
+                    ),
+                    None,
+                )
+                or fn.name
+            )
+    return None
+
+
+def _fixture_step(
+    stmt: ast.AST, app: str | None, testing: bool, aliases: dict
+) -> tuple[str | None, bool]:
+    if (
+        app
+        and isinstance(stmt, (ast.If, ast.Try, ast.For, ast.While, ast.With))
+        and _mutated(ast.Module(body=[stmt], type_ignores=[]), {app})
+    ):
+        return app, False
+    if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+        value, names = stmt.value, _targets(stmt)
+        if (
+            isinstance(value, ast.Call)
+            and _resolve(value.func, aliases) == "flask.Flask"
+        ):
+            return names[0] if len(names) == 1 else None, False
+        if app and app in names:
+            return None, False
+        if app and any(
+            _name(t).endswith((".testing", ".config['TESTING']", '.config["TESTING"]'))
+            and _name(t).rsplit(".", 1)[0] == app
+            for t in (stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target])
+        ):
+            return app, isinstance(value, ast.Constant) and value.value is True
+    if (
+        isinstance(stmt, ast.Expr)
+        and app is not None
+        and isinstance(stmt.value, ast.Call)
+        and _name(stmt.value.func) == app + ".config.update"
+    ):
+        if stmt.value.args or any(
+            keyword.arg is None for keyword in stmt.value.keywords
+        ):
+            return app, False
+        setting = next(
+            (k.value for k in stmt.value.keywords if k.arg == "TESTING"), None
+        )
+        if setting is not None:
+            return app, isinstance(setting, ast.Constant) and setting.value is True
+    return app, testing
+
+
+def _fixture_terminal(
+    stmt: ast.AST, app: str | None, testing: bool, aliases: dict
+) -> bool | None:
+    if isinstance(stmt, ast.Return):
+        value = stmt.value
+    elif isinstance(stmt, ast.Expr) and isinstance(
+        stmt.value, (ast.Yield, ast.YieldFrom)
+    ):
+        value = stmt.value.value
+    else:
+        return None
+    if value is None:
+        return False
+    return testing if isinstance(value, ast.Name) and value.id == app else False
+
+
+def _fixture_testing(fn: ast.AST, aliases: dict[str, str]) -> bool:
+    shadowed = {
+        item.arg for item in [*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs]
+    }
+    aliases = {name: value for name, value in aliases.items() if name not in shadowed}
+    app, testing = None, False
+    for stmt in getattr(fn, "body", ()):
+        app, testing = _fixture_step(stmt, app, testing, aliases)
+        result = _fixture_terminal(stmt, app, testing, aliases)
+        if result is not None:
+            return result
+    return False
+
+
+def flask_fixture_apps(tree: ast.AST, aliases: dict[str, str]) -> dict[str, bool]:
+    """Summarize testing-enabled Flask fixture source; does not prove runtime execution."""
+    return {
+        name: _fixture_testing(fn, aliases)
+        for fn in getattr(tree, "body", ())
+        if (name := _fixture_name(fn, aliases))
+    }
+
+
+def _test_nodes(test: ast.AST):
+    stack = list(getattr(test, "body", ()))
+    while stack:
+        node = stack.pop()
+        yield node
+        if not isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            stack.extend(ast.iter_child_nodes(node))
+
+
+def _source_name_aliases(
+    scope: ast.AST, roots: set[str], endpoint: ast.AST
+) -> set[str]:
+    """Resolve simple local Name aliases established before an AST endpoint."""
+    aliases = set(roots)
+    boundary = endpoint.lineno, endpoint.col_offset
+    statements = sorted(
+        (
+            node
+            for node in _test_nodes(scope)
+            if isinstance(node, (ast.Assign, ast.AnnAssign))
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
+    )
+    for statement in statements:
+        if (statement.lineno, statement.col_offset) >= boundary:
+            break
+        targets = set(_targets(statement)) - roots
+        value = getattr(statement, "value", None)
+        if isinstance(value, ast.Name) and value.id in aliases:
+            aliases.update(targets)
+        else:
+            aliases.difference_update(targets)
+    return aliases
+
+
+def _flask_alias_roots(test: ast.AST, roots: set[str]) -> set[str]:
+    aliases = set(roots)
+    changed = True
+    while changed:
+        changed = False
+        for stmt in _test_nodes(test):
+            if not isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+                continue
+            value = getattr(stmt, "value", None)
+            source = _dispatch_root(value)
+            if source in aliases:
+                before = len(aliases)
+                aliases.update(_targets(stmt))
+                changed |= len(aliases) != before
+    return aliases
+
+
+def _mutated(test: ast.AST, apps: set[str], roots: set[str] | None = None) -> bool:
+    roots = roots or apps
+    for n in _test_nodes(test):
+        if (
+            isinstance(n, ast.Name)
+            and n.id in apps
+            and isinstance(n.ctx, (ast.Store, ast.Del))
+        ):
+            return True
+        if (
+            isinstance(n, ast.Attribute)
+            and _dispatch_root(n.value) in roots
+            and (
+                isinstance(n.ctx, (ast.Store, ast.Del))
+                or n.attr in {"config", "testing"}
+            )
+        ):
+            return True
+        if (
+            isinstance(n, ast.Subscript)
+            and isinstance(n.ctx, (ast.Store, ast.Del))
+            and _dispatch_root(n) in roots
+        ):
+            return True
+        if (
+            isinstance(n, ast.Call)
+            and n.args
+            and _dispatch_root(n.args[0]) in roots
+            and _resolve(n.func, {}) in {"setattr", "delattr"}
+        ):
+            return True
+    return False
+
+
+def _route(fn: ast.AST, aliases: dict[str, str], apps: set[str], effective):
+    if len(fn.decorator_list) != 1:
+        return None
+    dec = fn.decorator_list[0]
+    if (
+        not isinstance(dec, ast.Call)
+        or len(dec.args) != 1
+        or dec.keywords
+        or not isinstance(dec.func, ast.Attribute)
+    ):
+        return None
+    path = dec.args[0]
+    if (
+        dec.func.attr != "route"
+        or _name(dec.func.value) not in apps
+        or not isinstance(path, ast.Constant)
+        or not isinstance(path.value, str)
+        or any(ch in path.value for ch in "<>")
+        or not effective(dec, aliases)
+    ):
+        return None
+    return path.value
+
+
+def _flask_routes(test: ast.AST, aliases: dict, apps: set[str], effective) -> dict:
+    routes = {}
+    for fn in (
+        n
+        for n in ast.walk(test)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ):
+        path = _route(fn, aliases, apps, effective)
+        if path is not None:
+            routes.setdefault(path, []).append(fn)
+    return routes
+
+
+def _flask_clients(
+    test: ast.AST, apps: set[str], effective, aliases: dict
+) -> tuple[dict, set]:
+    clients, bad, other = {}, set(), set()
+    for stmt in _test_nodes(test):
+        if not isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+            continue
+        value, targets = stmt.value, _targets(stmt)
+        if len(targets) != 1:
+            other.update(targets)
+            continue
+        app = (
+            value.func.value.id
+            if isinstance(value, ast.Call)
+            and not value.args
+            and not value.keywords
+            and isinstance(value.func, ast.Attribute)
+            and value.func.attr == "test_client"
+            and isinstance(value.func.value, ast.Name)
+            and value.func.value.id in apps
+            and effective(value, aliases)
+            else None
+        )
+        target = targets[0]
+        if app:
+            if target in clients and clients[target] != app:
+                bad.add(target)
+            clients[target] = app
+        else:
+            other.add(target)
+    return clients, bad | (other & clients.keys())
+
+
+def _literal_client_get(call, clients, bad):
+    if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
+        return False
+    if call.func.attr != "get" or len(call.args) != 1 or call.keywords:
+        return False
+    if not isinstance(call.func.value, ast.Name):
+        return False
+    return call.func.value.id in clients and call.func.value.id not in bad
+
+
+def _effective_get_path(call, clients, bad, aliases, effective):
+    if not _literal_client_get(call, clients, bad):
+        return None
+    path = call.args[0]
+    if not isinstance(path, ast.Constant) or not isinstance(path.value, str):
+        return None
+    return path.value if effective(call, aliases) else None
+
+
+def _dispatch_root(node):
+    while True:
+        if isinstance(node, (ast.Attribute, ast.Subscript)):
+            node = node.value
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and node.args
+        ):
+            node = node.args[0]
+        else:
+            break
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _flask_dispatch_mutated(test, apps, clients):
+    app_roots = _flask_alias_roots(test, apps)
+    client_roots = _flask_alias_roots(test, set(clients))
+    roots = app_roots | client_roots
+    for node in _test_nodes(test):
+        if isinstance(node, (ast.Attribute, ast.Subscript)):
+            if (
+                isinstance(node.ctx, (ast.Store, ast.Del))
+                and _dispatch_root(node) in roots
+            ):
+                return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            root = _dispatch_root(node.func)
+            if root in app_roots and node.func.attr not in {
+                "route",
+                "test_client",
+            }:
+                return True
+            if root in client_roots and node.func.attr != "get":
+                return True
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            if isinstance(node.value, (ast.Attribute, ast.Subscript)):
+                if _dispatch_root(node.value) in roots:
+                    return True
+    return False
+
+
+def flask_invoked_callbacks(
+    test: ast.AST,
+    aliases: dict[str, str],
+    apps: set[str],
+    strong_callback_names: set[str],
+    effective,
+) -> set[str]:
+    """Credit only local literal routes reached by an effective exact GET on a proven app.
+
+    This bounded AST summary does not prove Flask runtime dispatch.
+    """
+    if not apps or _mutated(test, apps):
+        return set()
+    routes = _flask_routes(test, aliases, apps, effective)
+    clients, bad = _flask_clients(test, apps, effective, aliases)
+    if _mutated(test, apps, _flask_alias_roots(test, apps | set(clients))):
+        return set()
+    if _flask_dispatch_mutated(test, apps, clients):
+        return set()
+    invoked = set()
+    for call in _test_nodes(test):
+        path = _effective_get_path(call, clients, bad, aliases, effective)
+        if path is None:
+            continue
+        callbacks = routes.get(path, ())
+        if (
+            len(callbacks) == 1
+            and callbacks[0].name in strong_callback_names
+            and callbacks[0].lineno < call.lineno
+        ):
+            invoked.add(callbacks[0].name)
+    return invoked
+
+
+def _virtual_default(value, defaults):
+    if not isinstance(value, ast.IfExp) or not isinstance(value.test, ast.Compare):
+        return None
+    test = value.test
+    if len(test.ops) != 1 or not isinstance(test.ops[0], ast.Is):
+        return None
+    if len(test.comparators) != 1 or not isinstance(test.comparators[0], ast.Constant):
+        return None
+    if test.comparators[0].value is not None or _name(test.left) not in defaults:
+        return None
+    if _name(value.orelse) != _name(test.left):
+        return None
+    name = _name(value.body)
+    return name.removeprefix("self.") if name.startswith("self.") else None
+
+
+def _virtual_init_supported(init, invoke):
+    if init is None or invoke is None:
+        return False
+    if init.decorator_list or invoke.decorator_list:
+        return False
+    if init.args.vararg or init.args.kwarg or init.args.kwonlyargs:
+        return False
+    return not any(
+        not isinstance(item, (ast.Assign, ast.AnnAssign, ast.Pass))
+        for item in init.body
+    )
+
+
+def _virtual_init_bindings(init, defaults):
+    bindings, invalid = {}, set()
+    for node in ast.walk(init):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)):
+            continue
+        targets = (
+            node.targets
+            if isinstance(node, (ast.Assign, ast.Delete))
+            else [node.target]
+        )
+        for target in targets:
+            name = _name(target)
+            if not name.startswith("self."):
+                continue
+            if (
+                name in bindings
+                or not isinstance(node, ast.Assign)
+                or node not in init.body
+            ):
+                invalid.add(name)
+            bindings[name] = _virtual_default(getattr(node, "value", None), defaults)
+    return bindings, invalid
+
+
+def virtual_dispatch_defaults(methods, aliases, effective):
+    """Summarize an omitted-argument virtual method binding, never execute it."""
+    init, invoke = methods.get("__init__"), methods.get("__call__")
+    if not _virtual_init_supported(init, invoke):
+        return {}
+    arguments = [*init.args.posonlyargs, *init.args.args][1:]
+    defaults = {
+        item.arg
+        for item, value in zip(
+            arguments[-len(init.args.defaults) :], init.args.defaults
+        )
+        if isinstance(value, ast.Constant) and value.value is None
+    }
+    required = len(arguments) - len(init.args.defaults)
+    bindings, invalid = _virtual_init_bindings(init, defaults)
+    invalid.update(_virtual_binding_mutations(methods, bindings))
+    resolved = _awaited_virtual_bindings(
+        invoke, bindings, invalid, methods, aliases, effective
+    )
+    guards = _virtual_scope_guards(invoke)
+    return (
+        {"methods": sorted(resolved), "required_arguments": required, "guards": guards}
+        if resolved and guards is not None
+        else {}
+    )
+
+
+def _virtual_scope_guards(invoke):
+    guards = []
+    for item in invoke.body:
+        if not isinstance(item, ast.If) or not any(
+            isinstance(n, ast.Return) for n in item.body
+        ):
+            continue
+        test = item.test
+        if (
+            not isinstance(test, ast.Compare)
+            or len(test.ops) != 1
+            or not isinstance(test.ops[0], ast.NotEq)
+        ):
+            return None
+        left = test.left
+        if not isinstance(left, ast.Subscript) or not isinstance(left.value, ast.Name):
+            return None
+        if (
+            not isinstance(left.slice, ast.Constant)
+            or len(test.comparators) != 1
+            or not isinstance(test.comparators[0], ast.Constant)
+            or not isinstance(left.slice.value, str)
+            or type(test.comparators[0].value) not in (str, int, bool, type(None))
+        ):
+            return None
+        parameters = [
+            arg.arg for arg in [*invoke.args.posonlyargs, *invoke.args.args][1:]
+        ]
+        if left.value.id not in parameters:
+            return None
+        guards.append(
+            {
+                "index": parameters.index(left.value.id),
+                "parameter": left.value.id,
+                "key": left.slice.value,
+                "value": test.comparators[0].value,
+            }
+        )
+    return guards
+
+
+def _virtual_binding_mutations(methods, bindings):
+    return {
+        _name(node)
+        for name, method in methods.items()
+        if name != "__init__"
+        for node in ast.walk(method)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and _name(node) in bindings
+    }
+
+
+def _awaited_virtual_bindings(invoke, bindings, invalid, methods, aliases, effective):
+    resolved = set()
+    for node in _test_nodes(invoke):
+        if not isinstance(node, ast.Await) or not isinstance(node.value, ast.Call):
+            continue
+        name = _name(node.value.func)
+        method = bindings.get(name)
+        if name not in invalid and method in methods and effective(node.value, aliases):
+            resolved.add(method)
+    return resolved
 
 
 def _sha(v: object) -> str:

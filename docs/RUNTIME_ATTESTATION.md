@@ -63,3 +63,37 @@ This boundary complements, rather than replaces, the existing signed execution
 attestation. Teams that operate a hardened worker or VM must supply its own
 collector, signing policy, host enforcement, and evidence; Code Factory reports
 what was proven and what remains unknown.
+
+## Native assertion propagation probe
+
+For a callback assertion that static analysis cannot resolve, explicitly run
+one exact pytest case and challenge its assertion:
+
+```powershell
+python -m factoryline.pytest_readiness --root . `
+  --nodeid 'tests/test_example.py::test_behavior' --line 18 --timeout 30
+```
+
+This executes project code locally twice in separate Python processes. First,
+the baseline must pass and reach the selected assertion. The challenge then
+raises a unique assertion exception at that exact source function and line.
+`OBSERVED` requires that same exception to escape into the selected test's
+failed call phase, with clean setup and teardown. Async callbacks and newly
+created threads are traced. Skips, xfails, unreachable assertions, swallowed
+failures, timeouts, missing runner results and Python source drift remain
+`INCOMPLETE`. Supply an exact parametrized node ID when applicable.
+
+The JSON records source binding, exact test identity, baseline and challenge
+outcomes, hit counts and hashes of captured runner output. Raw output and local
+absolute paths are omitted. The CLI exits 0 for `OBSERVED`, otherwise 2.
+
+This establishes assertion reachability and failure propagation, **not semantic
+strength**: even `assert True` can fail when forcibly challenged. It does not
+automatically clear scanner findings, replace implementation mutation testing,
+sign an independent evaluation, or authorize a release. Review the assertion's
+meaning separately. This is supervised local execution, not an isolation boundary;
+run only trusted project tests you authorize to execute. Project code shares
+the observer's interpreter and can tamper with it; the report explicitly records
+`observer_integrity: IN_PROCESS_NOT_ATTESTED`. It is not hostile-code evidence.
+Runner output is bounded to 8 MiB per stream, observation JSON to 1 MiB, the
+selected source to 4 MiB, and the Python source binding to 4,096 files / 128 MiB.

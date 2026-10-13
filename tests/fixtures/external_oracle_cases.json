@@ -231,7 +231,11 @@
     "label_basis": "Executed argument or expected-exception oracle",
     "license_file": "LICENSE",
     "license_text": "Copyright (c) 2020 Will McGugan\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
-    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67"
+    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67",
+    "fixture_source": "@pytest.fixture\ndef legacy_term_mock():\n    return create_autospec(LegacyWindowsTerm)\n\n",
+    "fixture_source_path": "tests/test_windows_renderer.py:16-18",
+    "fixture_source_sha256": "b3360684e6776cc2990b82a705852792b6d522efa23c600efd578310c8edc0d3",
+    "fixture_source_commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f"
   },
   {
     "id": "rich-test_text_with_style",
@@ -244,7 +248,11 @@
     "label_basis": "Executed argument or expected-exception oracle",
     "license_file": "LICENSE",
     "license_text": "Copyright (c) 2020 Will McGugan\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
-    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67"
+    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67",
+    "fixture_source": "@pytest.fixture\ndef legacy_term_mock():\n    return create_autospec(LegacyWindowsTerm)\n\n",
+    "fixture_source_path": "tests/test_windows_renderer.py:16-18",
+    "fixture_source_sha256": "b3360684e6776cc2990b82a705852792b6d522efa23c600efd578310c8edc0d3",
+    "fixture_source_commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f"
   },
   {
     "id": "rich-test_control_cursor_move_to",
@@ -257,7 +265,11 @@
     "label_basis": "Executed argument or expected-exception oracle",
     "license_file": "LICENSE",
     "license_text": "Copyright (c) 2020 Will McGugan\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
-    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67"
+    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67",
+    "fixture_source": "@pytest.fixture\ndef legacy_term_mock():\n    return create_autospec(LegacyWindowsTerm)\n\n",
+    "fixture_source_path": "tests/test_windows_renderer.py:16-18",
+    "fixture_source_sha256": "b3360684e6776cc2990b82a705852792b6d522efa23c600efd578310c8edc0d3",
+    "fixture_source_commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f"
   },
   {
     "id": "rich-test_control_carriage_return",
@@ -270,7 +282,11 @@
     "label_basis": "Executed argument or expected-exception oracle",
     "license_file": "LICENSE",
     "license_text": "Copyright (c) 2020 Will McGugan\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
-    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67"
+    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67",
+    "fixture_source": "@pytest.fixture\ndef legacy_term_mock():\n    return create_autospec(LegacyWindowsTerm)\n\n",
+    "fixture_source_path": "tests/test_windows_renderer.py:16-18",
+    "fixture_source_sha256": "b3360684e6776cc2990b82a705852792b6d522efa23c600efd578310c8edc0d3",
+    "fixture_source_commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f"
   },
   {
     "id": "rich-test_control_home",
@@ -283,7 +299,11 @@
     "label_basis": "Executed argument or expected-exception oracle",
     "license_file": "LICENSE",
     "license_text": "Copyright (c) 2020 Will McGugan\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
-    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67"
+    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67",
+    "fixture_source": "@pytest.fixture\ndef legacy_term_mock():\n    return create_autospec(LegacyWindowsTerm)\n\n",
+    "fixture_source_path": "tests/test_windows_renderer.py:16-18",
+    "fixture_source_sha256": "b3360684e6776cc2990b82a705852792b6d522efa23c600efd578310c8edc0d3",
+    "fixture_source_commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f"
   },
   {
     "id": "rich-test_control_cursor_single_cell_movement",
@@ -296,7 +316,11 @@
     "label_basis": "Executed argument or expected-exception oracle",
     "license_file": "LICENSE",
     "license_text": "Copyright (c) 2020 Will McGugan\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
-    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67"
+    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67",
+    "fixture_source": "@pytest.fixture\ndef legacy_term_mock():\n    return create_autospec(LegacyWindowsTerm)\n\n",
+    "fixture_source_path": "tests/test_windows_renderer.py:16-18",
+    "fixture_source_sha256": "b3360684e6776cc2990b82a705852792b6d522efa23c600efd578310c8edc0d3",
+    "fixture_source_commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f"
   },
   {
     "id": "rich-test_control_erase_line",
@@ -309,7 +333,11 @@
     "label_basis": "Executed argument or expected-exception oracle",
     "license_file": "LICENSE",
     "license_text": "Copyright (c) 2020 Will McGugan\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
-    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67"
+    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67",
+    "fixture_source": "@pytest.fixture\ndef legacy_term_mock():\n    return create_autospec(LegacyWindowsTerm)\n\n",
+    "fixture_source_path": "tests/test_windows_renderer.py:16-18",
+    "fixture_source_sha256": "b3360684e6776cc2990b82a705852792b6d522efa23c600efd578310c8edc0d3",
+    "fixture_source_commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f"
   },
   {
     "id": "rich-test_control_show_cursor",
@@ -322,7 +350,11 @@
     "label_basis": "Executed argument or expected-exception oracle",
     "license_file": "LICENSE",
     "license_text": "Copyright (c) 2020 Will McGugan\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
-    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67"
+    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67",
+    "fixture_source": "@pytest.fixture\ndef legacy_term_mock():\n    return create_autospec(LegacyWindowsTerm)\n\n",
+    "fixture_source_path": "tests/test_windows_renderer.py:16-18",
+    "fixture_source_sha256": "b3360684e6776cc2990b82a705852792b6d522efa23c600efd578310c8edc0d3",
+    "fixture_source_commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f"
   },
   {
     "id": "rich-test_control_hide_cursor",
@@ -335,7 +367,11 @@
     "label_basis": "Executed argument or expected-exception oracle",
     "license_file": "LICENSE",
     "license_text": "Copyright (c) 2020 Will McGugan\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
-    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67"
+    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67",
+    "fixture_source": "@pytest.fixture\ndef legacy_term_mock():\n    return create_autospec(LegacyWindowsTerm)\n\n",
+    "fixture_source_path": "tests/test_windows_renderer.py:16-18",
+    "fixture_source_sha256": "b3360684e6776cc2990b82a705852792b6d522efa23c600efd578310c8edc0d3",
+    "fixture_source_commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f"
   },
   {
     "id": "rich-test_control_cursor_move_to_column",
@@ -348,7 +384,11 @@
     "label_basis": "Executed argument or expected-exception oracle",
     "license_file": "LICENSE",
     "license_text": "Copyright (c) 2020 Will McGugan\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
-    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67"
+    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67",
+    "fixture_source": "@pytest.fixture\ndef legacy_term_mock():\n    return create_autospec(LegacyWindowsTerm)\n\n",
+    "fixture_source_path": "tests/test_windows_renderer.py:16-18",
+    "fixture_source_sha256": "b3360684e6776cc2990b82a705852792b6d522efa23c600efd578310c8edc0d3",
+    "fixture_source_commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f"
   },
   {
     "id": "rich-test_control_set_terminal_window_title",
@@ -361,7 +401,11 @@
     "label_basis": "Executed argument or expected-exception oracle",
     "license_file": "LICENSE",
     "license_text": "Copyright (c) 2020 Will McGugan\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
-    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67"
+    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67",
+    "fixture_source": "@pytest.fixture\ndef legacy_term_mock():\n    return create_autospec(LegacyWindowsTerm)\n\n",
+    "fixture_source_path": "tests/test_windows_renderer.py:16-18",
+    "fixture_source_sha256": "b3360684e6776cc2990b82a705852792b6d522efa23c600efd578310c8edc0d3",
+    "fixture_source_commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f"
   },
   {
     "id": "rich-test_get_style",

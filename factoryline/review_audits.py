@@ -97,6 +97,8 @@ def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
                 "pytest_inherited": set(item["pytest_inherited"]),
                 "click_runners": set(item["click_runners"]),
                 "typecheck": item["typecheck"],
+                "flask_apps": set(item.get("flask_apps", [])),
+                "callback_invokers": item.get("callback_invokers", {}),
             }
             for item in document["contexts"]
         }
@@ -123,6 +125,8 @@ def _oracle_context_cache_write(key: str, contexts: dict, edges: list) -> None:
                 "pytest_inherited": sorted(context["pytest_inherited"]),
                 "click_runners": sorted(context["click_runners"]),
                 "typecheck": bool(context["typecheck"]),
+                "flask_apps": sorted(context.get("flask_apps", set())),
+                "callback_invokers": context.get("callback_invokers", {}),
             }
         )
     payload = json.dumps(
@@ -1872,6 +1876,8 @@ def _mock_argument_oracle(node: ast.Call, aliases: dict[str, str]) -> bool:
     methods = {
         "assert_called_with",
         "assert_called_once_with",
+        "assert_called",
+        "assert_called_once",
         "assert_any_call",
         "assert_has_calls",
         "assert_not_called",
@@ -1885,14 +1891,292 @@ def _mock_argument_oracle(node: ast.Call, aliases: dict[str, str]) -> bool:
     }
     if not isinstance(node.func, ast.Attribute) or node.func.attr not in methods:
         return False
+    if not _mock_receiver_has_provenance(node, aliases):
+        return False
     if node.func.attr in {
         "assert_not_called",
         "assert_not_awaited",
+        "assert_called",
+        "assert_called_once",
         "assert_awaited",
         "assert_awaited_once",
     } and not _injected_mock_use(node, aliases):
         return False
     return not _mock_self_check(node)
+
+
+_UNITTEST_MOCK_CONSTRUCTORS = {
+    "unittest.mock.AsyncMock",
+    "unittest.mock.MagicMock",
+    "unittest.mock.Mock",
+    "unittest.mock.NonCallableMagicMock",
+    "unittest.mock.NonCallableMock",
+    "unittest.mock.PropertyMock",
+    "unittest.mock.create_autospec",
+    "unittest.mock.mock_open",
+}
+
+
+def _mock_receiver_has_provenance(assertion, aliases):
+    """Trust mock assertions only for locally constructed unittest.mock values."""
+    scope = getattr(assertion, "_oracle_scope", None)
+    receiver = _mock_root_name(assertion.func.value, scope, aliases)
+    if receiver is None or scope is None:
+        return False
+    scoped_aliases = _scope_security_aliases(aliases, scope)
+    nodes = _test_oracle_body_nodes(scope, scoped_aliases)
+    proven = _mock_scope_binding(nodes, receiver, assertion, scoped_aliases)
+    module = getattr(scope, "_oracle_module", None)
+    fixture_proven = bool(
+        module is not None
+        and _mock_fixture_binding(
+            scope,
+            receiver,
+            module,
+            _scope_security_aliases(_module_security_aliases(module), module),
+        )
+    )
+    patch_proven = _mock_patch_parameter(scope, receiver, scoped_aliases)
+    context_proven = _mock_context_patch_parameter(
+        scope, receiver, assertion, scoped_aliases
+    )
+    from .review_integrity import mock_patch_dict_slot
+
+    mapping_proven = mock_patch_dict_slot(
+        assertion.func.value,
+        receiver,
+        assertion,
+        scoped_aliases,
+        nodes,
+        _UNITTEST_MOCK_CONSTRUCTORS,
+        _normalized_call_name,
+        _name_rebound,
+        _effective_assertion,
+        _mock_root_name,
+    )
+    if (
+        not proven
+        and not fixture_proven
+        and not patch_proven
+        and not context_proven
+        and not mapping_proven
+        and not (
+            receiver in _scope_parameters(scope)
+            or any(
+                isinstance(node, ast.stmt)
+                and node.lineno < assertion.lineno
+                and receiver in _bound_names(node)
+                for node in nodes
+            )
+            or _scope_binds_name(scope, receiver)
+        )
+    ):
+        if module is not None:
+            module_aliases = _scope_security_aliases(
+                _module_security_aliases(module), module
+            )
+            proven = _mock_scope_binding(
+                module.body, receiver, assertion, module_aliases
+            )
+    proven = (
+        proven or fixture_proven or patch_proven or context_proven or mapping_proven
+    )
+    return proven and not _mock_child_was_rebound(scope, assertion, receiver, aliases)
+
+
+def _scope_binds_name(scope, name):
+    return any(name in _bound_names(statement) for statement in scope.body)
+
+
+def _mock_fixture_binding(scope, name, module, aliases):
+    if name not in _scope_parameters(scope) or _scope_binds_name(scope, name):
+        return False
+    fixtures = [
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == name
+        and len(node.decorator_list) == 1
+        and _resolved_ast_name(node.decorator_list[0], aliases) == "pytest.fixture"
+    ]
+    if len(fixtures) != 1 or _module_has_rebinding(module, name, fixtures[0]):
+        return False
+    fixture = fixtures[0]
+    fixture_aliases = _scope_security_aliases(aliases, fixture)
+    returns = [item for item in fixture.body if isinstance(item, ast.Return)]
+    return (
+        len(fixture.body) == 1
+        and len(returns) == 1
+        and isinstance(returns[0].value, ast.Call)
+        and _normalized_call_name(returns[0].value, fixture_aliases)
+        in _UNITTEST_MOCK_CONSTRUCTORS
+    )
+
+
+def _module_has_rebinding(module, name, fixture):
+    return any(
+        statement is not fixture and name in _bound_names(statement)
+        for statement in module.body
+    )
+
+
+def _mock_patch_parameter(scope, name, aliases):
+    if (
+        not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+        or not scope.decorator_list
+        or _scope_binds_name(scope, name)
+        or any(not _default_mock_patch(item, aliases) for item in scope.decorator_list)
+    ):
+        return False
+    parameters = [arg.arg for arg in [*scope.args.posonlyargs, *scope.args.args]]
+    injected = len(scope.decorator_list)
+    return name in parameters[:injected]
+
+
+def _default_mock_patch(decorator, aliases):
+    if not isinstance(decorator, ast.Call) or any(
+        keyword.arg in {"new", "new_callable"} or keyword.arg is None
+        for keyword in decorator.keywords
+    ):
+        return False
+    name = _normalized_call_name(decorator, aliases)
+    if name == "unittest.mock.patch.object":
+        return len(decorator.args) == 2
+    if name == "unittest.mock.patch":
+        return len(decorator.args) == 1
+    return False
+
+
+def _mock_context_patch_parameter(scope, name, assertion, aliases):
+    nodes = _test_oracle_body_nodes(scope, aliases)
+    return isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+        isinstance(node, ast.With)
+        and _in_current_test_body(node)
+        and any(parent is node for parent, _ in assertion._oracle_ancestors)
+        and not any(
+            isinstance(
+                item,
+                (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr, ast.Delete),
+            )
+            and (node.lineno, node.col_offset)
+            < (item.lineno, item.col_offset)
+            < (assertion.lineno, assertion.col_offset)
+            and name in _bound_names(item)
+            for item in nodes
+        )
+        and any(
+            isinstance(item.optional_vars, ast.Name)
+            and item.optional_vars.id == name
+            and isinstance(item.context_expr, ast.Call)
+            and _default_mock_patch(item.context_expr, aliases)
+            for item in node.items
+        )
+        for node in nodes
+    )
+
+
+def _mock_root_name(node, scope, aliases):
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
+        node = node.value
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and len(node.args) == 2
+        and _mock_getattr_selector(node.args[1], scope)
+        and not node.keywords
+        and not aliases.get("getattr")
+        and scope is not None
+        and "getattr" not in _scope_parameters(scope)
+        and not _scope_binds_name(scope, "getattr")
+        and not _scope_binds_name(
+            getattr(scope, "_oracle_module", ast.Module(body=[], type_ignores=[])),
+            "getattr",
+        )
+    ):
+        return _mock_root_name(node.args[0], scope, aliases)
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _mock_getattr_selector(selector, scope):
+    if isinstance(selector, ast.Name):
+        return selector.id not in {"__class__", "__dict__", "__getattribute__"}
+    return (
+        isinstance(selector, ast.Constant)
+        and isinstance(selector.value, str)
+        and not (selector.value.startswith("__") and selector.value.endswith("__"))
+    )
+
+
+def _mock_child_was_rebound(scope, assertion, root, aliases):
+    return _mock_root_was_mutated(scope, root, assertion, aliases)
+
+
+def _mock_root_was_mutated(scope, root, before, aliases):
+    from .review_integrity import _source_name_aliases
+
+    for node in _test_oracle_body_nodes(scope, {}):
+        if (getattr(node, "lineno", 0), getattr(node, "col_offset", 0)) >= (
+            before.lineno,
+            before.col_offset,
+        ):
+            continue
+        if (
+            isinstance(node, (ast.Attribute, ast.Subscript))
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and _mock_root_name(node, scope, aliases)
+            in _source_name_aliases(scope, {root}, node)
+        ):
+            return True
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "configure_mock"
+            and _mock_root_name(node.func.value, scope, aliases)
+            in _source_name_aliases(scope, {root}, node)
+        ):
+            return True
+        if (
+            isinstance(node, ast.Call)
+            and _call_name(node)
+            in {
+                "setattr",
+                "delattr",
+            }
+            and node.args
+            and _mock_root_name(node.args[0], scope, aliases)
+            in _source_name_aliases(scope, {root}, node)
+        ):
+            return True
+    return False
+
+
+def _mock_scope_binding(nodes, name, endpoint, aliases):
+    endpoint_line = endpoint.lineno
+    for statement in nodes:
+        if not isinstance(statement, ast.stmt):
+            continue
+        if statement.lineno >= endpoint_line or not _in_current_test_body(statement):
+            continue
+        if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            continue
+        if not _mock_constructor_binding(statement, name, aliases):
+            continue
+        return not _name_rebound(nodes, name, statement.lineno, endpoint_line)
+    return False
+
+
+def _mock_constructor_binding(statement, name, aliases):
+    targets = (
+        statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+    )
+    return (
+        any(isinstance(target, ast.Name) and target.id == name for target in targets)
+        and _effective_assertion(statement, aliases)
+        and isinstance(statement.value, ast.Call)
+        and _normalized_call_name(statement.value, aliases)
+        in _UNITTEST_MOCK_CONSTRUCTORS
+    )
 
 
 def _injected_mock_use(assertion: ast.Call, aliases: dict[str, str]) -> bool:
@@ -1903,12 +2187,42 @@ def _injected_mock_use(assertion: ast.Call, aliases: dict[str, str]) -> bool:
     receiver = _name(assertion.func.value)
     scoped_aliases = _scope_security_aliases(aliases, scope)
     nodes = _test_oracle_body_nodes(scope, scoped_aliases)
-    return any(
+    return _direct_mock_dependency_use(
+        assertion, receiver, scoped_aliases, nodes
+    ) or any(
         _injected_mock_assertion_proven(
             constructor, assertion, receiver, aliases, scoped_aliases, nodes
         )
         for constructor in nodes
     )
+
+
+def _direct_mock_dependency_use(assertion, receiver, aliases, nodes):
+    """Credit interaction checks after passing a mock to an executed dependency."""
+    for call in nodes:
+        if not isinstance(call, ast.Call) or call.lineno >= assertion.lineno:
+            continue
+        if not _in_current_test_body(call) or not _effective_assertion(call, aliases):
+            continue
+        name = _normalized_call_name(call, aliases)
+        scope = getattr(assertion, "_oracle_scope", None)
+        if _call_name(call) in getattr(
+            scope, "_oracle_async_functions", set()
+        ) and not isinstance(getattr(call, "_oracle_parent", None), ast.Await):
+            continue
+        if name == receiver or name.startswith(("unittest.mock.", "mock.")):
+            continue
+        if isinstance(
+            getattr(call, "_oracle_parent", None), (ast.Assign, ast.AnnAssign)
+        ):
+            continue
+        arguments = [*call.args, *(item.value for item in call.keywords)]
+        if any(
+            isinstance(item, ast.Name) and item.id == receiver for item in arguments
+        ):
+            if not _name_rebound(nodes, receiver, call.lineno, assertion.lineno):
+                return True
+    return False
 
 
 def _injected_mock_assertion_proven(
@@ -2612,12 +2926,17 @@ def _direct_callback_parameter(function):
             and isinstance(item.value.value, str)
         )
     ]
-    if len(statements) != 1 or not isinstance(statements[0], ast.Expr):
+    if not statements or not isinstance(statements[-1], (ast.Expr, ast.Return)):
         return None
-    call = statements[0].value
+    if any(
+        not isinstance(item, (ast.Assign, ast.AnnAssign, ast.Expr))
+        for item in statements[:-1]
+    ):
+        return None
+    call = statements[-1].value
     if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
         return None
-    if call.args or call.keywords:
+    if any(call.func.id in _bound_names(item) for item in statements[:-1]):
         return None
     return call.func.id if call.func.id in _scope_parameters(function) else None
 
@@ -2637,6 +2956,524 @@ def _callback_argument(call, function, parameter):
         ),
         None,
     )
+
+
+def _source_callback_parameters(function, methods, depth=0, aliases=None):
+    """Resolve bounded first-party callback paths, excluding swallowed calls."""
+    if depth >= 4 or function.decorator_list:
+        return set()
+    parameters = _scope_parameters(function)
+    nodes = _test_oracle_body_nodes(function, {})
+    if sum(isinstance(item, ast.Call) for item in nodes) > 128:
+        return set()
+    aliases = _scope_security_aliases(aliases or {}, function)
+    invoked = _partial_callback_parameters(
+        function, methods, nodes, depth, aliases or {}
+    )
+    for call in (item for item in nodes if isinstance(item, ast.Call)):
+        if not _in_current_test_body(call) or not _effective_assertion(call, aliases):
+            continue
+        if isinstance(call.func, ast.Name) and call.func.id in parameters:
+            if isinstance(
+                getattr(call, "_oracle_parent", None), ast.Await
+            ) and _callback_binding_preserved(
+                nodes, call.func.id, call.lineno, methods, aliases
+            ):
+                invoked.add(call.func.id)
+            continue
+        target = methods.get(_call_name(call).removeprefix("self."))
+        if target is None or not _call_name(call).startswith("self."):
+            continue
+        if isinstance(target, ast.AsyncFunctionDef) and not isinstance(
+            getattr(call, "_oracle_parent", None), ast.Await
+        ):
+            continue
+        for parameter in _source_callback_parameters(
+            target, methods, depth + 1, aliases
+        ):
+            invoked.update(
+                _forwarded_callback_names(
+                    call, target, parameter, parameters, nodes, methods, aliases
+                )
+            )
+    return invoked
+
+
+def _forwarded_callback_names(
+    call, target, parameter, parameters, nodes, methods, aliases
+):
+    names = [item.arg for item in [*target.args.posonlyargs, *target.args.args][1:]]
+    values = [value.value for value in call.keywords if value.arg == parameter]
+    if parameter in names and names.index(parameter) < len(call.args):
+        values.append(call.args[names.index(parameter)])
+    return {
+        value.id
+        for value in values
+        if isinstance(value, ast.Name)
+        and value.id in parameters
+        and _callback_binding_preserved(nodes, value.id, call.lineno, methods, aliases)
+    }
+
+
+def _partial_callback_bindings(nodes, methods, aliases):
+    bindings, invalid = {}, set()
+    for statement in nodes:
+        if not isinstance(
+            statement, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)
+        ):
+            continue
+        names = _bound_names(statement)
+        call = getattr(statement, "value", None)
+        target = None
+        if (
+            isinstance(call, ast.Call)
+            and _normalized_call_name(call, aliases) == "functools.partial"
+            and call.args
+            and _name(call.args[0]).startswith("self.")
+        ):
+            target = methods.get(_name(call.args[0]).removeprefix("self."))
+        if target is None or not _effective_assertion(call, aliases):
+            invalid.update(names)
+            continue
+        for name in names:
+            bindings.setdefault(name, []).append((target, call))
+    return {name: values for name, values in bindings.items() if name not in invalid}
+
+
+def _partial_callback_parameters(function, methods, nodes, depth, aliases):
+    if depth >= 4:
+        return set()
+    bindings = _partial_callback_bindings(nodes, methods, aliases)
+    invoked = set()
+    for call in (item for item in nodes if isinstance(item, ast.Call)):
+        if not isinstance(
+            getattr(call, "_oracle_parent", None), ast.Await
+        ) or not _effective_assertion(call, aliases):
+            continue
+        for target, partial in bindings.get(_call_name(call), ()):
+            if partial.lineno >= call.lineno:
+                continue
+            names = [
+                item.arg for item in [*target.args.posonlyargs, *target.args.args][1:]
+            ]
+            for parameter in _source_callback_parameters(
+                target, methods, depth + 1, aliases
+            ):
+                if parameter in names and names.index(parameter) + 1 < len(
+                    partial.args
+                ):
+                    value = partial.args[names.index(parameter) + 1]
+                    if (
+                        isinstance(value, ast.Name)
+                        and value.id in _scope_parameters(function)
+                        and _callback_binding_preserved(
+                            nodes, value.id, partial.lineno, methods, aliases
+                        )
+                    ):
+                        invoked.add(value.id)
+    return invoked
+
+
+def _callback_wrapper_preserves(method, parameter, aliases=None):
+    definitions = _nested_helper_definitions(method) or {}
+    returned = [item.value for item in method.body if isinstance(item, ast.Return)]
+    if len(returned) != 1 or not isinstance(returned[0], ast.Name):
+        return False
+    wrapper = definitions.get(returned[0].id)
+    if (
+        not isinstance(wrapper, ast.AsyncFunctionDef)
+        or wrapper.decorator_list
+        or parameter in _scope_parameters(wrapper)
+    ):
+        return False
+    if any(parameter in _bound_names(item) for item in method.body):
+        return False
+    aliases = _scope_security_aliases(aliases or {}, wrapper)
+    nodes = _test_oracle_body_nodes(wrapper, aliases)
+    return any(
+        isinstance(item, ast.Call)
+        and _call_name(item) == parameter
+        and isinstance(getattr(item, "_oracle_parent", None), ast.Await)
+        and _effective_assertion(item, aliases)
+        and _callback_binding_preserved(nodes, parameter, item.lineno, {}, aliases)
+        for item in nodes
+    )
+
+
+def _callback_binding_preserved(nodes, parameter, before, methods, aliases=None):
+    for statement in nodes:
+        if (
+            not isinstance(
+                statement, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)
+            )
+            or statement.lineno >= before
+            or parameter not in _bound_names(statement)
+        ):
+            continue
+        call = getattr(statement, "value", None)
+        if (
+            not isinstance(call, ast.Call)
+            or not _call_name(call).startswith("self.")
+            or len(call.args) != 1
+            or not isinstance(call.args[0], ast.Name)
+            or call.args[0].id != parameter
+        ):
+            return False
+        method = methods.get(_call_name(call).removeprefix("self."))
+        if method is None:
+            return False
+        names = [item.arg for item in [*method.args.posonlyargs, *method.args.args][1:]]
+        if not names or not _callback_wrapper_preserves(method, names[0], aliases):
+            return False
+    return True
+
+
+def _inherited_source_methods(cls, tree, depth=0):
+    methods = {}
+    if depth >= 4:
+        return methods
+    classes = {item.name: item for item in tree.body if isinstance(item, ast.ClassDef)}
+    for base in cls.bases:
+        if isinstance(base, ast.Name) and base.id in classes:
+            methods.update(_inherited_source_methods(classes[base.id], tree, depth + 1))
+    methods.update(
+        {
+            item.name: item
+            for item in cls.body
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+    )
+    return methods
+
+
+def _source_methods_are_stable(methods):
+    if {
+        "__getattribute__",
+        "__getattr__",
+        "__setattr__",
+        "__delattr__",
+    } & methods.keys():
+        return False
+    for method in methods.values():
+        for node in ast.walk(method):
+            if isinstance(node, ast.Attribute) and isinstance(
+                node.ctx, (ast.Store, ast.Del)
+            ):
+                if _name(node.value) == "self" and node.attr in methods:
+                    return False
+            if isinstance(node, ast.Call) and _call_name(node) in {
+                "setattr",
+                "delattr",
+            }:
+                if node.args and _name(node.args[0]) == "self":
+                    return False
+    return True
+
+
+def _source_callback_invokers(imports, snapshots, summaries=None):
+    from .review_integrity import virtual_dispatch_defaults
+
+    invokers = {}
+    summaries = {} if summaries is None else summaries
+    for local, (source, symbol) in imports.items():
+        tree = snapshots.get(source)
+        if tree is None or symbol is None:
+            continue
+        key = (source, symbol)
+        if key in summaries:
+            if summaries[key] is not None:
+                invokers[local] = summaries[key]
+            continue
+        summaries[key] = None
+        declarations = [
+            item
+            for item in tree.body
+            if isinstance(item, ast.ClassDef) and item.name == symbol
+        ]
+        if len(declarations) != 1:
+            continue
+        methods = _inherited_source_methods(declarations[0], tree)
+        if not _source_methods_are_stable(methods):
+            continue
+        function = methods.get("__call__")
+        if not isinstance(function, ast.AsyncFunctionDef):
+            continue
+        parameters = [
+            item.arg for item in [*function.args.posonlyargs, *function.args.args][1:]
+        ]
+        invoked = _source_callback_parameters(
+            function, methods, aliases=_module_security_aliases(tree)
+        )
+        invokers[local] = {
+            "parameters": parameters,
+            "invoked": sorted(invoked),
+            "source": source.as_posix(),
+            "symbol": symbol,
+            "virtual_dispatch": virtual_dispatch_defaults(
+                methods, _module_security_aliases(tree), _effective_assertion
+            ),
+        }
+        summaries[key] = invokers[local]
+    return invokers
+
+
+def _source_invoked_callbacks(test, invokers, strong, aliases):
+    nodes = _test_oracle_body_nodes(test, aliases)
+    constructors = {
+        statement.targets[0].id: (
+            invokers[_call_name(statement.value)],
+            statement.lineno,
+        )
+        for statement in test.body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and isinstance(statement.value, ast.Call)
+        and _call_name(statement.value) in invokers
+        and _call_name(statement.value).split(".", 1)[0] in aliases
+    }
+    for call in (item for item in nodes if isinstance(item, ast.Call)):
+        binding = constructors.get(_call_name(call))
+        if (
+            binding is None
+            or not isinstance(getattr(call, "_oracle_parent", None), ast.Await)
+            or not _effective_assertion(call, aliases)
+        ):
+            continue
+        profile, constructed_at = binding
+        if (
+            call.lineno <= constructed_at
+            or _name_rebound(nodes, _call_name(call), constructed_at, call.lineno)
+            or _click_receiver_mutated(test, _call_name(call))
+        ):
+            continue
+        for parameter in profile["invoked"]:
+            index = (
+                profile["parameters"].index(parameter)
+                if parameter in profile["parameters"]
+                else len(call.args)
+            )
+            arguments = [item.value for item in call.keywords if item.arg == parameter]
+            if index < len(call.args):
+                arguments.append(call.args[index])
+            if any(
+                isinstance(item, ast.Name) and item.id in strong for item in arguments
+            ):
+                return True
+    return False
+
+
+def _local_virtual_dispatch_classes(test, invokers, aliases, helpers):
+    profiles = {}
+    for cls in (item for item in test.body if isinstance(item, ast.ClassDef)):
+        if (
+            len(cls.bases) != 1
+            or cls.decorator_list
+            or cls.keywords
+            or _click_receiver_mutated(test, cls.name)
+        ):
+            continue
+        if any(
+            not isinstance(
+                item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Pass, ast.Expr)
+            )
+            for item in cls.body
+        ):
+            continue
+        if any(
+            item is not cls
+            and isinstance(item, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            and item.name == cls.name
+            for item in ast.walk(test)
+        ):
+            continue
+        base = _name(cls.bases[0])
+        profile = invokers.get(base, {}).get("virtual_dispatch", {})
+        if (
+            not profile
+            or base.split(".", 1)[0] not in aliases
+            or _click_receiver_mutated(test, base)
+        ):
+            continue
+        if any(
+            isinstance(item, ast.Expr) and not isinstance(item.value, ast.Constant)
+            for item in cls.body
+        ):
+            continue
+        methods = {
+            item.name: item
+            for item in cls.body
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        if (
+            "__init__" in methods
+            or "__call__" in methods
+            or not _source_methods_are_stable(methods)
+            or any(method.decorator_list for method in methods.values())
+            or set(methods) - set(profile["methods"])
+        ):
+            continue
+        if any(
+            _strong_local_assertion(
+                methods[name], _scope_security_aliases(aliases, methods[name]), helpers
+            )
+            for name in profile["methods"]
+            if name in methods and not methods[name].decorator_list
+        ):
+            profiles[cls.name] = {"profile": profile, "line": cls.lineno}
+    return profiles
+
+
+def _virtual_dispatch_constructor(statement, profiles, nodes):
+    if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+        return None
+    targets = (
+        statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+    )
+    call = statement.value
+    if (
+        len(targets) != 1
+        or not isinstance(targets[0], ast.Name)
+        or not isinstance(call, ast.Call)
+    ):
+        return None
+    declared = profiles.get(_call_name(call))
+    if (
+        declared is None
+        or call.keywords
+        or len(call.args) != declared["profile"]["required_arguments"]
+    ):
+        return None
+    if statement.lineno <= declared["line"] or _name_rebound(
+        nodes, _call_name(call), declared["line"], statement.lineno
+    ):
+        return None
+    return targets[0].id
+
+
+def _local_virtual_dispatch_oracle(test, invokers, aliases, helpers):
+    profiles = _local_virtual_dispatch_classes(test, invokers, aliases, helpers)
+    if not profiles:
+        return False
+    nodes = _test_oracle_body_nodes(test, aliases)
+    for statement in test.body:
+        name = _virtual_dispatch_constructor(statement, profiles, nodes)
+        if name is None or _click_receiver_mutated(test, name):
+            continue
+        for call in (item for item in nodes if isinstance(item, ast.Call)):
+            if _call_name(call) != name or not isinstance(
+                getattr(call, "_oracle_parent", None), ast.Await
+            ):
+                continue
+            if (
+                statement.lineno < call.lineno
+                and not _name_rebound(nodes, name, statement.lineno, call.lineno)
+                and _effective_assertion(call, aliases)
+                and _virtual_call_matches_guards(call, statement, profiles, nodes)
+            ):
+                return True
+    return False
+
+
+def _virtual_call_matches_guards(call, constructed, profiles, nodes):
+    guards = profiles[_call_name(constructed.value)]["profile"].get("guards", [])
+    for guard in guards:
+        argument = next(
+            (k.value for k in call.keywords if k.arg == guard["parameter"]), None
+        )
+        if guard["index"] < len(call.args):
+            argument = call.args[guard["index"]]
+        if isinstance(argument, ast.Name):
+            bindings = [
+                n
+                for n in nodes
+                if isinstance(n, (ast.Assign, ast.AnnAssign))
+                and argument.id in _bound_names(n)
+                and n.lineno < call.lineno
+            ]
+            if len(bindings) != 1 or bindings[0] not in getattr(
+                call._oracle_scope, "body", []
+            ):
+                return False
+            if not _virtual_scope_binding_safe(nodes, argument.id, bindings[0], call):
+                return False
+            argument = bindings[0].value
+        try:
+            value = ast.literal_eval(argument)
+        except (ValueError, TypeError, SyntaxError):
+            return False
+        if not isinstance(value, dict) or value.get(guard["key"]) != guard["value"]:
+            return False
+    return True
+
+
+def _virtual_scope_binding_safe(nodes, name, bound, call):
+    start, end = (bound.lineno, bound.col_offset), (call.lineno, call.col_offset)
+    for node in nodes:
+        if (
+            not start
+            < (getattr(node, "lineno", 0), getattr(node, "col_offset", 0))
+            < end
+        ):
+            continue
+        if isinstance(
+            node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr, ast.Delete)
+        ) and name in _bound_names(node):
+            return False
+        if isinstance(node, (ast.Subscript, ast.Attribute)) and isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
+            if _name(node.value).split(".", 1)[0] == name:
+                return False
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and _name(node.value) == name:
+            return False
+        if isinstance(node, ast.Call) and any(
+            _name(arg) == name
+            for arg in [*node.args, *(k.value for k in node.keywords)]
+        ):
+            return False
+    return True
+
+
+def _proven_dispatch_assertion(test, aliases, helpers, apps, invokers):
+    from .review_integrity import flask_invoked_callbacks
+
+    if _local_virtual_dispatch_oracle(test, invokers, aliases, helpers):
+        return True
+    definitions = _nested_helper_definitions(test)
+    if not definitions or not _nested_helper_names_are_unbound(test, definitions):
+        return False
+    strong = {
+        name
+        for name, function in definitions.items()
+        if _strong_local_assertion(
+            function, _scope_security_aliases(aliases, function), helpers
+        )
+    }
+    undecorated = {name for name in strong if not definitions[name].decorator_list}
+    return bool(
+        flask_invoked_callbacks(test, aliases, apps, strong, _effective_assertion)
+    ) or _source_invoked_callbacks(test, invokers, undecorated, aliases)
+
+
+def _flask_context_apps(path, tree, snapshots):
+    from .review_integrity import flask_fixture_apps
+
+    declared = {}
+    sources = sorted(
+        (
+            source
+            for source in snapshots
+            if source.name == "conftest.py"
+            and path.parent.is_relative_to(source.parent)
+        ),
+        key=lambda source: len(source.parts),
+    )
+    for source in sources:
+        target = snapshots[source]
+        declared.update(flask_fixture_apps(target, _module_security_aliases(target)))
+    declared.update(flask_fixture_apps(tree, _module_security_aliases(tree)))
+    return {name for name, trusted in declared.items() if trusted}
 
 
 def _invoked_nested_assertion_helpers(
@@ -2816,7 +3653,7 @@ def _oracle_snapshots(root: Path, files: list[Path], source_bytes: dict) -> dict
 def _declared_typecheck_sources(
     root: Path, files: list[Path]
 ) -> tuple[set, list, dict, bool]:
-    """Bind bounded mypy configuration; never exempt a collected runtime file."""
+    """Bind explicit type-checker sources without exempting runtime assertions."""
     config_identity: dict[str, Any] = {"path": "pyproject.toml", "state": "missing"}
     config_binding: list[dict[str, Any]] = []
     try:
@@ -2846,11 +3683,17 @@ def _declared_typecheck_sources(
         config_binding = [
             {"path": "pyproject.toml", "sha256": config_digest, "bytes": len(data)}
         ]
-        settings = tomllib.loads(data.decode("utf-8")).get("tool", {}).get("mypy", {})
-        declared = settings.get("files", [])
+        tools = tomllib.loads(data.decode("utf-8")).get("tool", {})
+        declared = tools.get("mypy", {}).get("files", [])
+        pyright = tools.get("pyright", {}).get("include", [])
+        if not isinstance(pyright, list):
+            return set(), config_binding, config_identity, True
+        declared = declared + pyright if isinstance(declared, list) else declared
         if not isinstance(declared, list) or len(declared) > MAX_PATHS:
             return set(), config_binding, config_identity, True
         roots = [root / _relative_path(item) for item in declared]
+        if any(not target.resolve().is_relative_to(root.resolve()) for target in roots):
+            return set(), config_binding, config_identity, False
     except RuntimeAuditError as exc:
         if exc.code == "E_SOURCE_MISSING":
             return set(), [], config_identity, True
@@ -2862,13 +3705,22 @@ def _declared_typecheck_sources(
     selected = {
         path
         for path in files
-        if not (path.name.startswith("test_") or path.name.endswith("_test.py"))
+        if (
+            path in roots
+            or not (path.name.startswith("test_") or path.name.endswith("_test.py"))
+        )
         and any(path == target or path.is_relative_to(target) for target in roots)
     }
     return selected, config_binding, config_identity, True
 
 
 def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict) -> str:
+    from .review_integrity import (
+        flask_fixture_apps,
+        flask_invoked_callbacks,
+        virtual_dispatch_defaults,
+    )
+
     helpers = (
         ast.parse,
         _click_runner_fixtures,
@@ -2884,6 +3736,18 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _oracle_snapshots,
         _oracle_source_inputs,
         _declared_typecheck_sources,
+        _source_callback_invokers,
+        _source_methods_are_stable,
+        _source_callback_parameters,
+        _forwarded_callback_names,
+        _partial_callback_bindings,
+        _partial_callback_parameters,
+        _callback_binding_preserved,
+        _callback_wrapper_preserves,
+        flask_fixture_apps,
+        flask_invoked_callbacks,
+        virtual_dispatch_defaults,
+        _flask_context_apps,
         _local_assertion_helpers,
         _local_weak_assertion_helpers,
         _is_oracle_helper_name,
@@ -3065,6 +3929,7 @@ def _build_oracle_context(
         for path in snapshots
     }
     edges = set()
+    callback_summaries = {}
     for path, tree in snapshots.items():
         aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
         fixtures = {}
@@ -3076,7 +3941,11 @@ def _build_oracle_context(
             name for name, trusted in fixtures.items() if trusted
         }
         contexts[path]["typecheck"] = path in typecheck_sources
+        contexts[path]["flask_apps"] = _flask_context_apps(path, tree, snapshots)
         imports = _oracle_imports(root, path, tree, set(files))
+        contexts[path]["callback_invokers"] = _source_callback_invokers(
+            imports, snapshots, callback_summaries
+        )
         contexts[path]["helpers"] = _imported_oracle_helpers(
             imports, snapshots, aliases
         )
@@ -3084,6 +3953,28 @@ def _build_oracle_context(
             imports, snapshots, aliases
         )
         caller = path.relative_to(root).as_posix()
+        edges.update(
+            (
+                caller,
+                Path(profile["source"]).relative_to(root).as_posix(),
+                "callback_parameter",
+                local + "." + parameter,
+                "source_resolved",
+            )
+            for local, profile in contexts[path]["callback_invokers"].items()
+            for parameter in profile["invoked"]
+        )
+        edges.update(
+            (
+                caller,
+                Path(profile["source"]).relative_to(root).as_posix(),
+                "default_virtual_dispatch",
+                local + "." + method,
+                "source_resolved",
+            )
+            for local, profile in contexts[path]["callback_invokers"].items()
+            for method in profile.get("virtual_dispatch", {}).get("methods", [])
+        )
         for local, (source, symbol) in imports.items():
             target = source.relative_to(root).as_posix()
             target_tree = snapshots.get(source)
@@ -3161,7 +4052,7 @@ def _static_type_edges(
             "caller": path.relative_to(root).as_posix(),
             "target": binding["path"],
             "kind": "static_type_configuration",
-            "symbol": "mypy.files",
+            "symbol": "type_checker.sources",
             "strength": "declared",
             "sha256": binding["sha256"],
         }
@@ -3182,9 +4073,10 @@ def _weak_assertion_call_reason(node: ast.Call, aliases: dict) -> str | None:
         )
     ):
         return "non-null assertion does not verify the expected behavior"
-    if leaf in {"assert_called", "assert_called_once"} or (
-        leaf == "assert_called_once_with" and _mock_self_check(node)
-    ):
+    if (
+        leaf in {"assert_called", "assert_called_once"}
+        and not _mock_argument_oracle(node, aliases)
+    ) or (leaf == "assert_called_once_with" and _mock_self_check(node)):
         return "mock invocation state does not verify its result or arguments"
     return None
 
@@ -3327,7 +4219,35 @@ def _hollow_test_finding(
         "MEDIUM",
         symbol=node.name,
         runtime_oracle_eligible=_completion_only_oracle(node),
+        native_assertion_probe=_native_assertion_probe(relative, node),
     )
+
+
+def _native_assertion_probe(relative, node):
+    lines = sorted(
+        {child.lineno for child in ast.walk(node) if isinstance(child, ast.Assert)}
+    )[:32]
+    return {
+        "available": bool(lines),
+        "assertion_lines": lines,
+        "nodeid_hint": relative + "::" + node.name,
+        "exact_collection_id_required": True,
+        "command": [
+            "python",
+            "-m",
+            "factoryline.pytest_readiness",
+            "--root",
+            ".",
+            "--nodeid",
+            "<exact collected pytest node ID>",
+            "--line",
+            "<assertion line>",
+            "--timeout",
+            "30",
+        ],
+        "execution": "Explicit local execution only; never started by a static scan",
+        "interpretation": "Reachability and failure propagation only; review semantic strength separately; no automatic suppression",
+    }
 
 
 def _completion_only_oracle(node: ast.AST) -> bool:
@@ -3932,6 +4852,8 @@ def _test_oracle_findings(
     typecheck: bool = False,
     test_file_patterns: set[str] | None = None,
     inherited_pytest_methods: set[int] | None = None,
+    flask_apps: set[str] | None = None,
+    callback_invokers: dict | None = None,
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     parents = _oracle_ancestor_map(nodes[0].body)
@@ -3955,6 +4877,11 @@ def _test_oracle_findings(
         ):
             continue
         node._oracle_click_runners = click_runners or set()
+        node._oracle_async_functions = {
+            item.name
+            for item in [*nodes[0].body, *node.body]
+            if isinstance(item, ast.AsyncFunctionDef)
+        }
         is_unittest_method = id(node) in unittest_methods
         helpers = helper_names | (class_helpers or {}).get(id(node), set())
         if node.name.startswith("test_"):
@@ -3968,6 +4895,10 @@ def _test_oracle_findings(
             and node.name.startswith("test_")
             else aliases
         )
+        if _proven_dispatch_assertion(
+            node, scoped_aliases, helpers, flask_apps or set(), callback_invokers or {}
+        ):
+            continue
         hollow = _hollow_test_finding(
             relative,
             node,
@@ -4307,6 +5238,9 @@ def _security_scan_tree(
     relative = path.relative_to(root).as_posix()
     nodes = list(ast.walk(tree))
     aliases = _security_aliases(nodes)
+    for node in nodes:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            node._oracle_module = tree
     oracle_aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
     context = oracle_context or {}
     helper_names = _local_assertion_helpers(tree, oracle_aliases) | set(
@@ -4341,6 +5275,8 @@ def _security_scan_tree(
             context.get("typecheck", False),
             test_file_patterns,
             _pytest_inherited_method_ids(tree, context.get("pytest_inherited", set())),
+            context.get("flask_apps", set()),
+            context.get("callback_invokers", {}),
         )
     )
     roundtrip_aliases = _unmodified_serialization_aliases(nodes, aliases)

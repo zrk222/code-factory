@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 import textwrap
 
@@ -16,6 +17,90 @@ from factoryline.review_audits import (
 )
 from factoryline.change_review import ChangeReviewError, review_change
 from factoryline.cli import main
+
+
+def test_hollow_callback_report_provides_native_assertion_probe(tmp_path):
+    (tmp_path / "test_case.py").write_text(
+        "def test_behavior():\n    def check():\n        assert compute() == 42\n    pass\n"
+    )
+    finding = security_scan(tmp_path)["findings"][0]
+    probe = finding["facts"]["native_assertion_probe"]
+    assert probe["available"] is True
+    assert probe["assertion_lines"] == [3]
+    assert probe["nodeid_hint"] == "test_case.py::test_behavior"
+    assert probe["exact_collection_id_required"] is True
+    assert probe["command"][:3] == ["python", "-m", "factoryline.pytest_readiness"]
+
+
+def test_flask_fixture_apps_and_flask_invoked_callbacks_direct_contract():
+    import ast
+    from factoryline.review_integrity import flask_fixture_apps, flask_invoked_callbacks
+
+    tree = ast.parse(
+        "@pytest.fixture\ndef app():\n    app = Flask('test')\n"
+        "    app.config.update(TESTING=True)\n    return app\n"
+    )
+    aliases = {"pytest": "pytest", "Flask": "flask.Flask"}
+    assert flask_fixture_apps(tree, aliases) == {"app": True}
+    test = ast.parse(
+        "def test_behavior(app):\n    @app.route('/checked')\n"
+        "    def check():\n        assert compute() == 42\n"
+        "    client = app.test_client()\n    client.get('/checked')\n"
+    ).body[0]
+    assert flask_invoked_callbacks(
+        test, aliases, {"app"}, {"check"}, lambda *_: True
+    ) == {"check"}
+    assert (
+        flask_invoked_callbacks(test, aliases, {"app"}, set(), lambda *_: True) == set()
+    )
+
+
+@pytest.mark.parametrize(
+    ("setup", "expected_findings"),
+    [
+        ("alias = app", False),
+        ("alias = app; alias.testing = False", True),
+        ("first = app; second = first; second.testing = False", True),
+        ("alias = app; alias.replace_dispatcher()", True),
+        ("alias = client; alias.get = lambda path: None", True),
+    ],
+)
+def test_flask_dispatch_rejects_mutated_app_and_client_aliases(
+    tmp_path, setup, expected_findings
+):
+    fixture = (
+        "import pytest\nfrom flask import Flask\n"
+        "@pytest.fixture\ndef app():\n    app = Flask('test')\n"
+        "    app.testing = True\n    return app\n"
+    )
+    test = (
+        "def test_behavior(app):\n    client = app.test_client()\n    "
+        + setup
+        + "\n    @app.route('/checked')\n    def check():\n"
+        "        assert compute() == 42\n    client.get('/checked')\n"
+    )
+    (tmp_path / "test_behavior.py").write_text(fixture + test)
+    findings = security_scan(tmp_path, cache_enabled=False)["finding_counts"]
+    assert ("QUALITY_HOLLOW_TEST" in findings) is expected_findings
+
+
+def test_virtual_dispatch_defaults_direct_contract():
+    import ast
+    from factoryline.review_integrity import virtual_dispatch_defaults
+
+    tree = ast.parse(
+        "class Engine:\n    def __init__(self, app, dispatch=None):\n"
+        "        self.dispatch_func = self.dispatch if dispatch is None else dispatch\n"
+        "    async def __call__(self, scope):\n        await self.dispatch_func(scope)\n"
+        "    async def dispatch(self, scope):\n        pass\n"
+    )
+    methods = {node.name: node for node in tree.body[0].body}
+    assert virtual_dispatch_defaults(methods, {}, lambda *_: True) == {
+        "methods": ["dispatch"],
+        "required_arguments": 1,
+        "guards": [],
+    }
+    assert virtual_dispatch_defaults({}, {}, lambda *_: True) == {}
 
 
 @pytest.mark.parametrize(
@@ -128,7 +213,16 @@ def test_security_scan_nested_helper_shadows_module_oracle(tmp_path):
     ids=lambda case: case["id"],
 )
 def test_security_scan_external_repository_oracle_regressions(tmp_path, case):
-    (tmp_path / "test_external.py").write_text(case["source"], encoding="utf-8")
+    fixture_source = case.get("fixture_source", "")
+    if fixture_source:
+        assert (
+            hashlib.sha256(fixture_source.encode()).hexdigest()
+            == case["fixture_source_sha256"]
+        )
+        assert case["fixture_source_commit"] == case["commit"]
+    (tmp_path / "test_external.py").write_text(
+        fixture_source + case["source"], encoding="utf-8"
+    )
     result = security_scan(tmp_path)
     hollow = any(
         finding["code"] == "QUALITY_HOLLOW_TEST" for finding in result["findings"]
@@ -151,7 +245,8 @@ def test_security_scan_external_repository_oracle_regressions(tmp_path, case):
 )
 def test_security_scan_accepts_argument_and_exception_oracles(tmp_path, body):
     (tmp_path / "test_behavior.py").write_text(
-        "import pytest, contextlib\nasync def test_behavior():\n    " + body + "\n"
+        "import pytest, contextlib\nfrom unittest.mock import Mock\n"
+        "async def test_behavior():\n    send = Mock()\n    " + body + "\n"
     )
     assert security_scan(tmp_path)["findings"] == []
 
@@ -258,6 +353,404 @@ def test_mock_state_oracle_does_not_credit_unused_or_unreachable_dependencies(
         finding["code"] == "QUALITY_HOLLOW_TEST"
         for finding in security_scan(tmp_path)["findings"]
     )
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "assert_not_called",
+        "assert_not_awaited",
+        "assert_awaited",
+        "assert_awaited_once",
+        "assert_called",
+        "assert_called_once",
+    ],
+)
+def test_mock_oracle_supports_function_dependency_injection(tmp_path, method):
+    (tmp_path / "test_case.py").write_text(
+        "from unittest.mock import AsyncMock\n"
+        "async def test_behavior():\n    dependency = AsyncMock()\n"
+        f"    await perform(dependency)\n    dependency.{method}()\n",
+        encoding="utf-8",
+    )
+    assert not security_scan(tmp_path)["findings"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "dependency()",
+        "perform(dependency)\n    dependency = AsyncMock()",
+        "if False:\n        perform(dependency)",
+    ],
+)
+def test_mock_oracle_rejects_self_unused_and_rebound_state(tmp_path, body):
+    (tmp_path / "test_case.py").write_text(
+        "from unittest.mock import AsyncMock\ndef test_behavior():\n"
+        "    dependency = AsyncMock()\n    "
+        + body
+        + "\n    dependency.assert_called_once()\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_mock_assertion_spelling_on_fake_object_is_not_an_oracle(tmp_path):
+    (tmp_path / "test_fake.py").write_text(
+        "class Fake:\n    def assert_called_once_with(self, *args):\n        pass\n"
+        "def test_behavior():\n    send = Fake()\n"
+        "    perform(send)\n    send.assert_called_once_with('payload')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "receiver",
+    [
+        "legacy_term_mock.write_text",
+        "getattr(legacy_term_mock, method_name)",
+    ],
+)
+def test_source_mock_fixture_proves_child_assertion(tmp_path, receiver):
+    (tmp_path / "test_mock_fixture.py").write_text(
+        "import pytest\nfrom unittest.mock import create_autospec\n"
+        "class LegacyTerm:\n    def write_text(self, text):\n        pass\n"
+        "@pytest.fixture\ndef legacy_term_mock():\n"
+        "    return create_autospec(LegacyTerm)\n"
+        "def test_behavior(legacy_term_mock):\n    method_name = 'write_text'\n"
+        "    perform(legacy_term_mock)\n    "
+        + receiver
+        + ".assert_called_once_with('payload')\n",
+        encoding="utf-8",
+    )
+    assert not security_scan(tmp_path)["findings"]
+
+
+@pytest.mark.parametrize(
+    "mutation,receiver",
+    [
+        ("legacy_term_mock.write_text = Fake()", "legacy_term_mock.write_text"),
+        (
+            "setattr(legacy_term_mock, method_name, Fake())",
+            "getattr(legacy_term_mock, method_name)",
+        ),
+    ],
+)
+def test_mock_fixture_child_replacement_is_not_an_oracle(tmp_path, mutation, receiver):
+    (tmp_path / "test_mock_fixture.py").write_text(
+        "import pytest\nfrom unittest.mock import create_autospec\n"
+        "class LegacyTerm:\n    def write_text(self, text):\n        pass\n"
+        "class Fake:\n    def assert_called_once_with(self, *args):\n        pass\n"
+        "@pytest.fixture\ndef legacy_term_mock():\n"
+        "    return create_autospec(LegacyTerm)\n"
+        "def test_behavior(legacy_term_mock):\n    method_name = 'write_text'\n    "
+        + mutation
+        + "\n    perform(legacy_term_mock)\n    "
+        + receiver
+        + ".assert_called_once_with('payload')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_source_fixture_returning_fake_does_not_prove_mock(tmp_path):
+    (tmp_path / "test_fake_fixture.py").write_text(
+        "import pytest\nclass Fake:\n"
+        "    def assert_called_once_with(self, *args):\n        pass\n"
+        "@pytest.fixture\ndef legacy_term_mock():\n    return Fake()\n"
+        "def test_behavior(legacy_term_mock):\n    perform(legacy_term_mock)\n"
+        "    legacy_term_mock.write_text.assert_called_once_with('payload')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "decorator",
+    [
+        "@patch('module.send', new=Fake())",
+        "@patch('module.send', new_callable=Fake)",
+        "@wrapper\n@patch('module.send')",
+    ],
+)
+def test_patch_parameter_requires_resolved_default_mock_injection(tmp_path, decorator):
+    (tmp_path / "test_patched_mock.py").write_text(
+        "from unittest.mock import patch\n"
+        "class Fake:\n    def assert_called_once_with(self, *args):\n        pass\n"
+        + decorator
+        + "\ndef test_behavior(send):\n    perform(send)\n"
+        "    send.assert_called_once_with('payload')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from unittest.mock import patch\n"
+        "def patch(target):\n    return lambda function: function\n"
+        "class Fake:\n    def assert_called_once_with(self, *args):\n        pass\n"
+        "@patch('module.send')\ndef test_send(send):\n    perform()\n"
+        "    send.assert_called_once_with('payload')\n",
+        "from unittest.mock import Mock\n"
+        "class Fake:\n    def assert_called_once_with(self, *args):\n        pass\n"
+        "def Mock():\n    return Fake()\n"
+        "def test_send():\n    send = Mock()\n    perform()\n"
+        "    send.assert_called_once_with('payload')\n",
+        "from unittest.mock import Mock\n"
+        "def test_send():\n    send = Mock()\n"
+        "    send.assert_called_once_with = lambda *args: None\n"
+        "    perform(send)\n    send.assert_called_once_with('payload')\n",
+    ],
+)
+def test_mock_provenance_rejects_shadowed_constructors_and_assertion_methods(
+    tmp_path, source
+):
+    (tmp_path / "test_mock_shadow.py").write_text(source, encoding="utf-8")
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "setup,context,receiver,expected_hollow",
+    [
+        (
+            "proxies = {'one': Mock(), 'two': Mock()}\n",
+            "with patch.dict(target, proxies):\n",
+            "proxies['one'].clear",
+            False,
+        ),
+        (
+            "proxies = {'one': Fake(), 'two': Fake()}\n",
+            "with patch.dict(target, proxies):\n",
+            "proxies['one'].clear",
+            True,
+        ),
+        (
+            "proxies = {'one': Mock()}\n",
+            "with patch.dict(target, proxies, clear=True):\n",
+            "proxies['one'].clear",
+            True,
+        ),
+        (
+            "proxies = {'one': Mock()}\n",
+            "with patch.dict(target, proxies):\n    proxies['one'] = Fake()\n",
+            "proxies['one'].clear",
+            True,
+        ),
+        (
+            "proxies = {'one': Mock()}\n",
+            "with patch.dict(target):\n",
+            "proxies['one'].clear",
+            True,
+        ),
+        (
+            "proxies = {'one': Mock(), 'one': Fake()}\n",
+            "with patch.dict(target, proxies):\n",
+            "proxies['one'].clear",
+            True,
+        ),
+        (
+            "extra = {'one': Fake()}\nproxies = {'one': Mock(), **extra}\n",
+            "with patch.dict(target, proxies):\n",
+            "proxies['one'].clear",
+            True,
+        ),
+        (
+            "proxies = {'one': Mock()}\n",
+            "with patch.dict(target, proxies):\n    proxies.update({'one': Fake()})\n",
+            "proxies['one'].clear",
+            True,
+        ),
+        (
+            "proxies = {'one': Mock()}\n",
+            "with patch.dict(target, proxies):\n    mutate(proxies)\n",
+            "proxies['one'].clear",
+            True,
+        ),
+    ],
+    ids=[
+        "valid",
+        "fake-values",
+        "clear-true",
+        "rebound-slot",
+        "missing-values",
+        "duplicate-key",
+        "mapping-unpack",
+        "update-mutation",
+        "unknown-mapping-use",
+    ],
+)
+def test_mock_patch_dict_slot_requires_literal_mock_value_and_default_context(
+    tmp_path, setup, context, receiver, expected_hollow
+):
+    body = context.splitlines()
+    (tmp_path / "test_patch_dict.py").write_text(
+        "from unittest.mock import Mock, patch\n"
+        "class Fake:\n    def assert_called_once_with(self, *args): pass\n"
+        "def test_behavior():\n    target = {}\n"
+        + "".join(f"    {line}\n" for line in setup.splitlines())
+        + f"    {body[0]}\n"
+        + "".join(f"        {line.strip()}\n" for line in body[1:])
+        + "        perform()\n        "
+        + receiver
+        + ".assert_called_once_with()\n",
+        encoding="utf-8",
+    )
+    hollow_count = security_scan(tmp_path)["finding_counts"].get(
+        "QUALITY_HOLLOW_TEST", 0
+    )
+    assert hollow_count == int(expected_hollow)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from unittest.mock import patch\n"
+        "def patch(target): return lambda function: function\n"
+        "def test_behavior():\n    with patch('module.target') as send:\n"
+        "        perform()\n        send.assert_called_once_with('payload')\n",
+        "from unittest.mock import patch\n"
+        "class Fake:\n    def assert_called_once_with(self, *args): pass\n"
+        "def test_behavior():\n    with patch('module.target', new=Fake()) as send:\n"
+        "        perform()\n        send.assert_called_once_with('payload')\n",
+        "from unittest.mock import patch\n"
+        "def helper():\n    with patch('module.target') as send:\n        perform()\n"
+        "def test_behavior():\n    helper()\n"
+        "    send.assert_called_once_with('payload')\n",
+        "from unittest.mock import patch\n"
+        "class Fake:\n    def assert_called_once_with(self, *args): pass\n"
+        "def test_behavior():\n    with patch('module.send') as send: send = Fake(); perform(); send.assert_called_once_with('payload')\n",
+    ],
+    ids=["shadowed-patch", "replacement", "outside-scope", "same-line-rebind"],
+)
+def test_mock_context_patch_rejects_shadow_or_replacement(tmp_path, source):
+    (tmp_path / "test_patch_context.py").write_text(source, encoding="utf-8")
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_mock_configure_mock_cannot_replace_assertion_method(tmp_path):
+    (tmp_path / "test_mock_configure.py").write_text(
+        "from unittest.mock import Mock\n"
+        "def test_behavior():\n    send = Mock()\n"
+        "    send.configure_mock(assert_called_once_with=lambda *args: None)\n"
+        "    perform(send)\n    send.assert_called_once_with('payload')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("", {}),
+        (
+            "alias.configure_mock(assert_called_once_with=lambda *args: None)\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "alias.assert_called_once_with = lambda *args: None\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "alias.__dict__['assert_called_once_with'] = lambda *args: None\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "alias = send; alias.configure_mock(assert_called_once_with=lambda *args: None)\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "alias.assert_called_once_with = lambda *args: None\n    alias = object()\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "alias = object()\n    alias.assert_called_once_with = lambda *args: None\n    ",
+            {},
+        ),
+    ],
+)
+def test_mock_alias_mutations_invalidate_root_provenance(tmp_path, mutation, expected):
+    (tmp_path / "test_mock_alias.py").write_text(
+        "from unittest.mock import Mock\n"
+        "def perform(send):\n    send('payload')\n"
+        "def test_behavior():\n    send = Mock()\n    alias = send\n    "
+        + mutation
+        + "perform(send)\n    send.assert_called_once_with('payload')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == expected
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from unittest.mock import Mock, patch\n"
+        "def test_behavior():\n    target = {}\n"
+        "    proxies = {'one': Mock()}; alias = proxies; alias.update({'one': Fake()})\n"
+        "    with patch.dict(target, proxies):\n        perform()\n"
+        "        proxies['one'].clear.assert_called_once_with()\n",
+        "from unittest.mock import Mock, patch\n"
+        "def test_behavior():\n    target = {}\n"
+        "    proxies = {'one': Mock()}\n"
+        "    with patch.dict(target, proxies): proxies.update({'one': Fake()}); perform(); proxies['one'].clear.assert_called_once_with()\n",
+        "from unittest.mock import Mock\n"
+        "def test_behavior():\n    send = Mock(); send.configure_mock(assert_called_once_with=lambda *args: None); perform(send); send.assert_called_once_with('payload')\n",
+        "from unittest.mock import Mock\n"
+        "class Fake:\n    def assert_called_once_with(self, *args): pass\n"
+        "def test_behavior():\n    send = Mock(); send.configure_mock(clear=Fake()); perform(send); send.clear.assert_called_once_with()\n",
+    ],
+)
+def test_mock_provenance_rejects_same_line_mutation_and_escape(tmp_path, source):
+    (tmp_path / "test_same_line_mutation.py").write_text(source, encoding="utf-8")
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_module_mock_provenance_is_shadowed_by_local_fake(tmp_path):
+    (tmp_path / "test_fake.py").write_text(
+        "from unittest.mock import Mock\nsend = Mock()\n"
+        "class Fake:\n    def assert_called_once_with(self, *args):\n        pass\n"
+        "def test_behavior(send=Fake()):\n"
+        "    perform(send)\n    send.assert_called_once_with('payload')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize("invoke", ["check(42)", "return check(42)"])
+def test_callback_oracle_follows_setup_and_return(tmp_path, invoke):
+    (tmp_path / "test_case.py").write_text(
+        "def test_behavior():\n    def check(value):\n        assert compute() == value\n"
+        "    def execute(callback):\n        setup = 42\n        "
+        + invoke.replace("check", "callback")
+        + "\n    execute(check)\n",
+        encoding="utf-8",
+    )
+    assert not security_scan(tmp_path)["findings"]
+
+
+def test_mock_oracle_does_not_credit_unawaited_async_dependency(tmp_path):
+    (tmp_path / "test_case.py").write_text(
+        "from unittest.mock import AsyncMock\nasync def perform(dep):\n    await dep()\n"
+        "async def test_behavior():\n    dependency = AsyncMock()\n"
+        "    perform(dependency)\n    dependency.assert_not_awaited()\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_explicit_pyright_type_source_credits_only_real_type_assertion(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pyright]\ninclude = ["test_typing.py"]\n', encoding="utf-8"
+    )
+    (tmp_path / "test_typing.py").write_text(
+        "from typing import assert_type\ndef test_types():\n    assert_type(compute(), int)\n"
+        "def test_missing():\n    compute()\n",
+        encoding="utf-8",
+    )
+    findings = security_scan(tmp_path)["findings"]
+    assert [item["facts"]["symbol"] for item in findings] == ["test_missing"]
 
 
 def test_callback_oracle_requires_direct_invocation_not_callback_passing(tmp_path):
@@ -505,7 +998,8 @@ def test_security_scan_retains_pickle_decorator_roundtrip_evidence(tmp_path):
         (
             "from unittest.mock import Mock\nsend = Mock()\n"
             "def perform(send):\n    send('payload')\n"
-            "def test_behavior():\n    perform(send)\n    send.assert_called_once_with('payload')\n",
+            "def test_behavior():\n    perform(send)\n"
+            "    send.assert_called_once_with('payload')\n",
             "send.assert_called_once_with('incorrect')",
         ),
         (
@@ -3783,3 +4277,456 @@ def test_runtime_oracle_rechecks_source_after_verification(tmp_path, monkeypatch
     monkeypatch.setattr(attestation, "verify_signed_test_oracles", drift)
     with pytest.raises(ReviewAuditError, match="Runtime oracle evidence rejected"):
         security_scan(tmp_path, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "testing,path,mutation,expected",
+    [
+        (True, "/checked", "", {}),
+        (False, "/checked", "", {"QUALITY_HOLLOW_TEST": 1}),
+        (True, "/other", "", {"QUALITY_HOLLOW_TEST": 1}),
+        (True, "/checked", "app.testing = False\n    ", {"QUALITY_HOLLOW_TEST": 1}),
+        (True, "/checked", "client = fake_client\n    ", {"QUALITY_HOLLOW_TEST": 1}),
+        (
+            True,
+            "/checked",
+            "app.view_functions['check'] = noop\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            True,
+            "/checked",
+            "client.application.testing = False\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            True,
+            "/checked",
+            "views = app.view_functions\n    views.clear()\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            True,
+            "/checked",
+            "getattr(app, 'view_functions').clear()\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            True,
+            "/checked",
+            "getattr(app, 'view_functions').pop('check', None)\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            True,
+            "/checked",
+            "views = getattr(app, 'view_functions')\n    views.clear()\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            True,
+            "/checked",
+            "alias = app; getattr(alias, 'view_functions').clear()\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            True,
+            "/checked",
+            "getattr(app, 'view_functions')['check'] = noop\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            True,
+            "/checked",
+            "getattr(app, 'config')['TESTING'] = False\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            True,
+            "/checked",
+            "setattr(getattr(app, 'config'), 'TESTING', False)\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            True,
+            "/checked",
+            "app.config.update(TESTING=False)\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+    ],
+)
+def test_registered_flask_callback_requires_dispatch_and_propagation(
+    tmp_path, testing, path, mutation, expected
+):
+    (tmp_path / "conftest.py").write_text(
+        "import pytest\nfrom flask import Flask\n@pytest.fixture\ndef app():\n    app = Flask('test')\n    app.config.update(TESTING="
+        + str(testing)
+        + ")\n    return app\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_case.py").write_text(
+        "def test_behavior(app):\n    @app.route('/checked')\n    def check():\n        assert compute() == 42\n        return ''\n    client = app.test_client()\n    "
+        + mutation
+        + "client.get('"
+        + path
+        + "')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == expected
+
+
+@pytest.mark.parametrize(
+    "operation,expected",
+    [
+        ("await send(scope)", {}),
+        ("send(scope)", {"QUALITY_HOLLOW_TEST": 1}),
+        ("if False:\n            await send(scope)", {"QUALITY_HOLLOW_TEST": 1}),
+        (
+            "try:\n            await send(scope)\n        except AssertionError:\n            pass",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        ("send = noop\n        await send(scope)", {"QUALITY_HOLLOW_TEST": 1}),
+    ],
+)
+def test_source_resolved_async_callback_requires_escaping_await(
+    tmp_path, operation, expected
+):
+    (tmp_path / "engine.py").write_text(
+        "class Application:\n    async def __call__(self, scope, receive, send):\n        await self.deliver(scope, send)\n    async def deliver(self, scope, send):\n        "
+        + operation
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_case.py").write_text(
+        "from engine import Application\nasync def test_behavior():\n    async def check(message):\n        assert message == expected\n    app = Application()\n    await app({}, None, check)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == expected
+
+
+def test_flask_fixture_rejects_positional_config_update(tmp_path):
+    (tmp_path / "conftest.py").write_text(
+        "import pytest\nfrom flask import Flask\n"
+        "@pytest.fixture\ndef app():\n"
+        "    app = Flask('test')\n"
+        "    app.testing = True\n"
+        "    app.config.update({'TESTING': False})\n"
+        "    yield app\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_case.py").write_text(
+        "def test_behavior(app):\n"
+        "    @app.route('/checked')\n"
+        "    def check():\n"
+        "        assert compute() == 42\n"
+        "    client = app.test_client()\n"
+        "    client.get('/checked')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "setup,dispatch,expected",
+    [
+        ("run = partial(self.deliver, send)", "await run()", {}),
+        ("run = partial(self.deliver, send)", "run()", {"QUALITY_HOLLOW_TEST": 1}),
+        (
+            "run = partial(self.deliver, send)\n        run: object = noop",
+            "await run()",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "run = partial(self.deliver, send)\n        send = noop",
+            "await self.deliver(send)",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "",
+            "await run()\n        run = partial(self.deliver, send)",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "run = partial(self.deliver, send)",
+            "try:\n            await run()\n        except AssertionError:\n            pass",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+    ],
+)
+def test_source_partial_callback_rejects_rebinding_and_swallowing(
+    tmp_path, setup, dispatch, expected
+):
+    (tmp_path / "engine.py").write_text(
+        "from functools import partial\nclass Application:\n    async def __call__(self, scope, receive, send):\n        "
+        + setup
+        + "\n        "
+        + dispatch
+        + "\n    async def deliver(self, send):\n        await send({})\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_case.py").write_text(
+        "from engine import Application\nasync def test_behavior():\n    async def check(message):\n        assert message == expected\n    app = Application()\n    await app({}, None, check)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == expected
+
+
+@pytest.mark.parametrize(
+    "wrapper,expected",
+    [
+        ("async def wrapped(message):\n            await send(message)", {}),
+        (
+            "async def wrapped(send):\n            await send({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "async def wrapped(message):\n            send = noop\n            await send(message)",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "async def wrapped(message):\n            try:\n                await send(message)\n            except AssertionError:\n                pass",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+    ],
+)
+def test_source_callback_wrapper_requires_original_escaping_callback(
+    tmp_path, wrapper, expected
+):
+    (tmp_path / "engine.py").write_text(
+        "class Application:\n    async def __call__(self, scope, receive, send):\n        send = self.wrap(send)\n        await send({})\n    def wrap(self, send):\n        "
+        + wrapper
+        + "\n        return wrapped\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_case.py").write_text(
+        "from engine import Application\nasync def test_behavior():\n    async def check(message):\n        assert message == expected\n    app = Application()\n    await app({}, None, check)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == expected
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_source_callback_rejects_aliased_assertion_handler(tmp_path, wrapped):
+    direct = "class Application:\n    async def __call__(self, scope, receive, send):\n        try:\n            await send(scope)\n        except E:\n            pass\n"
+    wrapper = "class Application:\n    async def __call__(self, scope, receive, send):\n        send = self.wrap(send)\n        await send(scope)\n    def wrap(self, send):\n        async def wrapped(message):\n            try:\n                await send(message)\n            except E:\n                pass\n        return wrapped\n"
+    (tmp_path / "engine.py").write_text(
+        "from builtins import AssertionError as E\n" + (wrapper if wrapped else direct),
+        encoding="utf-8",
+    )
+    (tmp_path / "test_case.py").write_text(
+        "from engine import Application\nasync def test_behavior():\n    async def check(message):\n        assert message == expected\n    app = Application()\n    await app({}, None, check)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "mutation", ["self.deliver = noop", "setattr(self, 'deliver', noop)"]
+)
+def test_source_callback_rejects_constructor_method_override(tmp_path, mutation):
+    (tmp_path / "engine.py").write_text(
+        "class Application:\n    def __init__(self):\n        "
+        + mutation
+        + "\n    async def __call__(self, scope, receive, send):\n        await self.deliver(send)\n    async def deliver(self, send):\n        await send({})\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_case.py").write_text(
+        "from engine import Application\nasync def test_behavior():\n    async def check(message):\n        assert message == expected\n    app = Application()\n    await app({}, None, check)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "base_call,override,construct,operation,expected",
+    [
+        (
+            "await self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert value == expected",
+            "Application(None)",
+            "await app({})",
+            {},
+        ),
+        (
+            "self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert value == expected",
+            "Application(None)",
+            "await app({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "if False:\n            await self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert value == expected",
+            "Application(None)",
+            "await app({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "try:\n            await self.dispatch_func(scope)\n        except AssertionError:\n            pass",
+            "async def dispatch(self, value):\n            assert value == expected",
+            "Application(None)",
+            "await app({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "await self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert True",
+            "Application(None)",
+            "await app({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "await self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert value == expected",
+            "Application(None, dispatch=noop)",
+            "await app({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "await self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert value == expected",
+            "Application(None)",
+            "app.dispatch_func = noop\n    await app({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "await self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert value == expected",
+            "Application(None)",
+            "app({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "await self.dispatch_func(scope)",
+            "async def __call__(self, value):\n            pass\n        async def dispatch(self, value):\n            assert value == expected",
+            "Application(None)",
+            "await app({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "await self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert value == expected\n        dispatch = noop",
+            "Application(None)",
+            "await app({})",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+    ],
+)
+def test_inherited_virtual_dispatch_requires_default_binding_and_await(
+    tmp_path, base_call, override, construct, operation, expected
+):
+    (tmp_path / "engine.py").write_text(
+        "class Base:\n    def __init__(self, app, dispatch=None):\n        self.app = app\n        self.dispatch_func = self.dispatch if dispatch is None else dispatch\n    async def __call__(self, scope):\n        "
+        + base_call
+        + "\n    async def dispatch(self, value):\n        raise NotImplementedError\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_case.py").write_text(
+        "from engine import Base\nasync def test_behavior():\n    class Application(Base):\n        "
+        + override
+        + "\n    app: object = "
+        + construct
+        + "\n    "
+        + operation
+        + "\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == expected
+    if not expected:
+        assert any(
+            edge["kind"] == "default_virtual_dispatch"
+            for edge in result["oracle_context"]["resolved_edges"]
+        )
+
+
+@pytest.mark.parametrize(
+    "base_call,override,operation",
+    [
+        (
+            "self.dispatch_func = noop\n        await self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert value == expected",
+            "await app({})",
+        ),
+        (
+            "await self.dispatch_func(scope)",
+            "Base.__init__ = noop\n        async def dispatch(self, value):\n            assert value == expected",
+            "await app({})",
+        ),
+        (
+            "await self.dispatch_func(scope)",
+            "setattr(Base, '__init__', noop)\n        async def dispatch(self, value):\n            assert value == expected",
+            "await app({})",
+        ),
+        (
+            "await self.dispatch_func(scope)",
+            "async def dispatch(self, value):\n            assert value == expected",
+            "Application.dispatch = noop\n    await app({})",
+        ),
+    ],
+)
+def test_virtual_dispatch_rejects_class_and_source_mutations(
+    tmp_path, base_call, override, operation
+):
+    test_inherited_virtual_dispatch_requires_default_binding_and_await(
+        tmp_path,
+        base_call,
+        override,
+        "Application(None)",
+        operation,
+        {"QUALITY_HOLLOW_TEST": 1},
+    )
+
+
+@pytest.mark.parametrize(
+    "operation,expected",
+    [
+        ("await app({'type': 'http'})", {}),
+        ("scope = {'type': 'http'}\n    await app(scope)", {}),
+        ("await app({'type': 'websocket'})", {"QUALITY_HOLLOW_TEST": 1}),
+        (
+            "scope = {'type': 'http'}\n    scope['type'] = 'websocket'\n    await app(scope)",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            "scope = {'type': 'http'}\n    mutate(scope)\n    await app(scope)",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+    ],
+)
+def test_virtual_dispatch_requires_scope_guard_to_reach_override(
+    tmp_path, operation, expected
+):
+    test_inherited_virtual_dispatch_requires_default_binding_and_await(
+        tmp_path,
+        "if scope['type'] != 'http':\n            return\n        await self.dispatch_func(scope)",
+        "async def dispatch(self, value):\n            assert value == expected",
+        "Application(None)",
+        operation,
+        expected,
+    )
+
+
+@pytest.mark.parametrize(
+    "guard,operation",
+    [
+        ("scope[b'type'] != b'http'", "await app({b'type': b'http'})"),
+        (
+            "scope['type'] != 'http'",
+            "scope = {'type': 'http'}\n    scope['type'] = 'websocket'; await app(scope)",
+        ),
+    ],
+)
+def test_virtual_dispatch_unsupported_guard_and_same_line_mutation_fail_closed(
+    tmp_path, guard, operation
+):
+    test_inherited_virtual_dispatch_requires_default_binding_and_await(
+        tmp_path,
+        "if "
+        + guard
+        + ":\n            return\n        await self.dispatch_func(scope)",
+        "async def dispatch(self, value):\n            assert value == expected",
+        "Application(None)",
+        operation,
+        {"QUALITY_HOLLOW_TEST": 1},
+    )
