@@ -1782,8 +1782,12 @@ def _vacuous_assertion(node: ast.expr, known: dict[str, Any] | None = None) -> b
     if not isinstance(node.ops[0], (ast.Eq, ast.Is, ast.LtE, ast.GtE)):
         return False
     operands = [node.left, *node.comparators]
-    # Repeated calls may return different values. Never call these tautologies.
-    if any(isinstance(n, (ast.Call, ast.Await)) for x in operands for n in ast.walk(x)):
+    # Calls, descriptors and indexed reads can return different values each time.
+    if any(
+        isinstance(n, (ast.Call, ast.Await, ast.Attribute, ast.Subscript))
+        for x in operands
+        for n in ast.walk(x)
+    ):
         return False
     return ast.dump(operands[0]) == ast.dump(operands[1])
 

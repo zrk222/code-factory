@@ -19,6 +19,39 @@ from factoryline.change_review import ChangeReviewError, review_change
 from factoryline.cli import main
 
 
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "obj.version is obj.version",
+        "obj.value == obj.value",
+        "obj[0] is obj[0]",
+        "obj[0] == obj[0]",
+    ],
+)
+def test_repeated_descriptor_and_index_reads_are_not_tautologies(tmp_path, expression):
+    (tmp_path / "test_case.py").write_text(
+        f"def test_behavior(obj):\n    assert {expression}\n", encoding="utf-8"
+    )
+    assert not any(
+        finding["code"] == "QUALITY_HOLLOW_TEST"
+        for finding in security_scan(tmp_path)["findings"]
+    )
+
+
+@pytest.mark.parametrize(
+    "expression",
+    ["obj is obj", "obj == obj", "obj <= obj", "obj >= obj", "True", "1 == 1"],
+)
+def test_repeated_local_values_remain_hollow(tmp_path, expression):
+    (tmp_path / "test_case.py").write_text(
+        f"def test_behavior(obj):\n    assert {expression}\n", encoding="utf-8"
+    )
+    assert any(
+        finding["code"] == "QUALITY_HOLLOW_TEST"
+        for finding in security_scan(tmp_path)["findings"]
+    )
+
+
 def test_hollow_callback_report_provides_native_assertion_probe(tmp_path):
     (tmp_path / "test_case.py").write_text(
         "def test_behavior():\n    def check():\n        assert compute() == 42\n    pass\n"
