@@ -1,6 +1,7 @@
 from copy import deepcopy
 import json
 from pathlib import Path
+import subprocess
 import sys
 import time
 
@@ -1711,6 +1712,129 @@ def test_osv_worker_copies_existing_empty_policy_asset():
         if line.startswith("COPY factoryline/__init__.py")
     )
     assert "factoryline/deep_audit_sarif.py" in sdk_copy
+
+
+_WORKER_IMPORT_MODULES = frozenset(
+    {
+        "factoryline/__init__.py",
+        "factoryline/deep_audit_io.py",
+        "factoryline/deep_audit.py",
+        "factoryline/deep_audit_sarif.py",
+        "factoryline/deep_audit_contract.py",
+        "factoryline/deep_audit_loop.py",
+        "factoryline/deep_audit_attestation.py",
+        "factoryline/audit_action_refs.py",
+        "factoryline/audit_taxonomy.py",
+        "factoryline/enterprise_receipts.py",
+        "factoryline/runtime_audit_common.py",
+        "factoryline/runtime_audit_process.py",
+        "factoryline/assembly_process.py",
+    }
+)
+
+
+def _worker_copy_sources(dockerfile: str, destination: str) -> set[str]:
+    sources = set()
+    for line in dockerfile.splitlines():
+        parts = line.split()
+        if len(parts) > 2 and parts[0] == "COPY" and parts[-1] == destination:
+            sources.update(
+                part for part in parts[1:-1] if part.startswith("factoryline/")
+            )
+    return sources
+
+
+def _copy_worker_modules(root: Path, package_root: Path, sources: set[str]) -> None:
+    for source in sources:
+        destination = package_root / source
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((root / source).read_bytes())
+    resource = package_root / "factoryline/data/junie_pack.json"
+    resource.parent.mkdir(parents=True, exist_ok=True)
+    resource.write_bytes((root / "factoryline/data/junie_pack.json").read_bytes())
+
+
+def _run_worker_import(package_root: Path) -> subprocess.CompletedProcess:
+    code = (
+        "import runpy,sys; sys.path.insert(0,sys.argv[1]); "
+        "import factoryline.deep_audit_loop; "
+        "import factoryline.deep_audit_attestation; "
+        "import factoryline.runtime_audit_process; "
+        "sys.argv=['factoryline.deep_audit_io','--help']; "
+        "runpy.run_module('factoryline.deep_audit_io',run_name='__main__')"
+    )
+    return subprocess.run(
+        [sys.executable, "-I", "-c", code, str(package_root)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _assert_worker_base_images_pinned(dockerfile: str) -> None:
+    assert (
+        "FROM python:3.11.17-slim-trixie@sha256:"
+        "0dd364ba7e10242f07755449e3a3d0e35f9efd987952737b90def6709ab0c5ce AS python-source"
+    ) in dockerfile
+    assert (
+        "FROM debian:forky-slim@sha256:"
+        "3c80e257eff6274d593eb33a94bda5174ccd619836e6a728a73e11c97f2213e3 AS sdk"
+    ) in dockerfile
+
+
+def _assert_worker_image_imports(
+    dockerfile: str, destination: str, package_root: Path
+) -> None:
+    copied = _worker_copy_sources(dockerfile, destination)
+    assert _WORKER_IMPORT_MODULES <= copied
+    assert (
+        f"COPY factoryline/data/junie_pack.json {destination}data/junie_pack.json"
+        in dockerfile.splitlines()
+    )
+    closure_bytes = sum((Path.cwd() / source).stat().st_size for source in copied)
+    closure_bytes += Path("factoryline/data/junie_pack.json").stat().st_size
+    assert closure_bytes <= 1_250_000
+    _copy_worker_modules(Path.cwd(), package_root, copied)
+    result = _run_worker_import(package_root)
+    assert result.returncode == 0, result.stderr
+    assert "usage:" in result.stdout
+
+
+def _assert_missing_worker_module_fails(tmp_path: Path) -> None:
+    missing_package = tmp_path / "worker-missing-module"
+    _copy_worker_modules(
+        Path.cwd(),
+        missing_package,
+        _WORKER_IMPORT_MODULES - {"factoryline/audit_action_refs.py"},
+    )
+    missing = _run_worker_import(missing_package)
+    assert missing.returncode != 0
+    assert "No module named 'factoryline.audit_action_refs'" in missing.stderr
+
+
+def test_worker_images_ship_entrypoint_import_closure_and_detect_omissions(tmp_path):
+    dockerfile = Path("deploy/deep-adapters/Dockerfile").read_text()
+    _assert_worker_base_images_pinned(dockerfile)
+    destinations = (
+        "/usr/local/lib/python3.11/site-packages/factoryline/",
+        "/usr/lib/python3.12/site-packages/factoryline/",
+    )
+    for index, destination in enumerate(destinations):
+        _assert_worker_image_imports(
+            dockerfile, destination, tmp_path / f"worker-{index}"
+        )
+    sdk_stage = dockerfile.split("FROM semgrep/semgrep:", 1)[0]
+    semgrep_stage = dockerfile.split("FROM semgrep-tool AS semgrep-worker", 1)[1].split(
+        "FROM sdk AS codeql-python-worker", 1
+    )[0]
+    assert "USER 1000:1000" in sdk_stage
+    assert 'ENTRYPOINT ["/opt/factory/bin/audit-adapter"]' in sdk_stage
+    assert "USER 1000:1000" in semgrep_stage
+    assert (
+        'ENTRYPOINT ["/usr/bin/python", "-I", "-m", "factoryline.deep_audit_io"]'
+        in semgrep_stage
+    )
+    _assert_missing_worker_module_fails(tmp_path)
 
 
 def _osv_package_accounting_fixture(

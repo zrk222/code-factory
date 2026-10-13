@@ -197,6 +197,24 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path, monkeypatch):
         registry["agent_usage_contract"]["cli_fallback"]
         == "factory audit taxonomy --json"
     )
+    harness = registry["agent_usage_contract"]["native_harness"]
+    assert set(harness["capabilities"]) == {
+        "context_shards",
+        "runtime_audit",
+        "repair_branches",
+        "incident_triage",
+        "activation_experiment",
+        "durable_incident_driver",
+    }
+    assert "unauthenticated" in harness["capabilities"]["context_shards"]["boundary"]
+    assert (
+        "legacy plans remain serial"
+        in harness["capabilities"]["runtime_audit"]["boundary"]
+    )
+    assert (
+        "unknown outcomes never relaunch"
+        in harness["capabilities"]["durable_incident_driver"]["boundary"]
+    )
     assert any(
         route["route"] == "factory.github_overview"
         for route in registry["agent_usage_contract"]["agent_routes"]

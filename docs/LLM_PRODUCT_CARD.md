@@ -35,6 +35,20 @@ HTTP. The six mandatory audit lanes and human-owned release decision remain
 unchanged. The shared public preview is in
 [`CHANGELOG.md`](../CHANGELOG.md).
 
+## Native agent-harness source preview
+
+Status: Current source preview only; published Code Factory 0.48.1 remains unchanged. Local-wheel inclusion is not claimed.
+
+The native harness keeps incident checkpoints for recovery, binds review
+context shards to source, and compares candidate repairs without applying them.
+Budgeted Jev triage keeps unprocessed incidents visible as pending, not assessed.
+Parallel audits are opt-in and require a signed policy declaring work
+non-mutating and resource-safe; serial remains the default, and the declaration
+does not prove isolation. Optional activation experiments call only hooks
+explicitly registered by the caller. Their observations are experimental, not
+model certification or accuracy evidence. The source taxonomy and manifest define the same routes for
+Junie while keeping execution and identity limits visible.
+
 ## What it does
 
 **6 mandatory audit lanes. 178 coded rejection conditions. One human-owned release decision.**

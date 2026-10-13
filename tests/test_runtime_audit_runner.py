@@ -64,10 +64,25 @@ def test_runner_supports_bounded_parallel_lanes_with_isolated_scratch(
     )
     verified = verify_runtime_audit_plan(plan_path, trust, trust_sha, tmp_path, D)
     calls = []
+    active = 0
+    peak_active = 0
+    lock = threading.Lock()
+    overlap = threading.Barrier(2, timeout=5)
 
     def fake_leg(lane, command_name, argv_key, run_root, workspace):
-        calls.append((lane["id"], command_name))
-        return {"artifact": {"ok": True}}
+        nonlocal active, peak_active
+        command_root = run_root / lane["id"] / command_name
+        command_root.mkdir(parents=True, exist_ok=False)
+        with lock:
+            active += 1
+            peak_active = max(peak_active, active)
+            calls.append((lane["id"], command_name, command_root))
+        try:
+            overlap.wait()
+            return {"artifact": {"ok": True}}
+        finally:
+            with lock:
+                active -= 1
 
     monkeypatch.setattr("factoryline.runtime_audit_runner._run_one_guarded", fake_leg)
     plan = verified["plan"]
@@ -83,9 +98,17 @@ def test_runner_supports_bounded_parallel_lanes_with_isolated_scratch(
     assert [item["id"] for item in result["executions"]] == [
         item["id"] for item in plan["lanes"]
     ]
-    assert calls == [
+    expected = {
         (lane["id"], leg) for lane in plan["lanes"] for leg in ("target", "known_bad")
-    ]
+    }
+    assert {(lane_id, leg) for lane_id, leg, _ in calls} == expected
+    assert len(calls) == len(expected)
+    assert peak_active == 2
+    scratch = [path for _, _, path in calls]
+    assert len(set(scratch)) == len(expected)
+    assert all(
+        path.is_dir() and path.is_relative_to(tmp_path / "out") for path in scratch
+    )
 
 
 def test_parallel_runner_requires_signed_policy_before_launch(tmp_path):
