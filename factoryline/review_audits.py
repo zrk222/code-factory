@@ -72,6 +72,8 @@ def _oracle_context_cache_info() -> dict[str, int]:
 
 
 def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
+    from .review_integrity import decode_structural_context
+
     global _ORACLE_CONTEXT_CACHE_BYTES, _ORACLE_CONTEXT_CACHE_HITS
     global _ORACLE_CONTEXT_CACHE_MISSES
     with _ORACLE_CONTEXT_CACHE_LOCK:
@@ -99,6 +101,8 @@ def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
                 "typecheck": item["typecheck"],
                 "flask_apps": set(item.get("flask_apps", [])),
                 "callback_invokers": item.get("callback_invokers", {}),
+                "codspeed_benchmark": item.get("codspeed_benchmark", False),
+                **decode_structural_context(item.get("structural_context", {})),
             }
             for item in document["contexts"]
         }
@@ -113,6 +117,8 @@ def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
 
 
 def _oracle_context_cache_write(key: str, contexts: dict, edges: list) -> None:
+    from .review_integrity import encode_structural_context
+
     global _ORACLE_CONTEXT_CACHE_BYTES
     rows = []
     for path, context in sorted(contexts.items(), key=lambda item: str(item[0])):
@@ -127,6 +133,8 @@ def _oracle_context_cache_write(key: str, contexts: dict, edges: list) -> None:
                 "typecheck": bool(context["typecheck"]),
                 "flask_apps": sorted(context.get("flask_apps", set())),
                 "callback_invokers": context.get("callback_invokers", {}),
+                "codspeed_benchmark": context.get("codspeed_benchmark", False),
+                "structural_context": encode_structural_context(context),
             }
         )
     payload = json.dumps(
@@ -1717,46 +1725,18 @@ def _constant_binary_value(node: ast.BinOp, known: dict[str, Any]) -> Any:
     return value
 
 
-def _direct_test_vacuous_assertions(node: ast.AST) -> set[int]:
-    """Track immutable direct assignments in source order, failing closed in branches."""
-    body = _scope_body(node)
-    if body is None:
-        return set()
-    known: dict[str, Any] = {}
-    vacuous: set[int] = set()
-    for statement in body:
-        if isinstance(statement, ast.Assert):
-            if _vacuous_assertion(statement.test, known):
-                vacuous.add(id(statement))
-            continue
-        _remember_direct_constant_assignment(statement, known)
-    return vacuous
+def _direct_test_vacuous_assertions(node: ast.AST, aliases=None) -> set[int]:
+    from .review_integrity import _direct_vacuous_assertions
+
+    return _direct_vacuous_assertions(
+        node, aliases or {}, _vacuous_assertion, _remember_direct_constant_assignment
+    )
 
 
-def _remember_direct_constant_assignment(
-    statement: ast.stmt, known: dict[str, Any]
-) -> None:
-    targets: list[ast.expr] = []
-    value: Any = _UNKNOWN_CONSTANT
-    if any(
-        isinstance(item, (ast.Call, ast.Subscript)) for item in _body_nodes(statement)
-    ):
-        for name, prior in list(known.items()):
-            if isinstance(prior, (list, dict, set, tuple)):
-                known.pop(name, None)
-    if isinstance(statement, ast.Assign):
-        value = _constant_value(statement.value, known)
-        targets = statement.targets
-    elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
-        value = _constant_value(statement.value, known)
-        targets = [statement.target]
-    for name in _bound_names(statement):
-        known.pop(name, None)
-    if value is _UNKNOWN_CONSTANT:
-        return
-    for target in targets:
-        if isinstance(target, ast.Name):
-            known[target.id] = value
+def _remember_direct_constant_assignment(statement, known):
+    from .review_integrity import remember_direct_constant_assignment
+
+    remember_direct_constant_assignment(statement, known)
 
 
 def _vacuous_assertion(node: ast.expr, known: dict[str, Any] | None = None) -> bool:
@@ -2663,7 +2643,9 @@ def _meaningful_local_assertion(
     unittest_context: bool = False,
 ) -> bool:
     nodes = _test_oracle_body_nodes(node, aliases)
-    vacuous = _direct_test_vacuous_assertions(node)
+    vacuous = _direct_test_vacuous_assertions(
+        node, _scope_security_aliases(aliases, node)
+    )
     return (
         any(
             _effective_assertion(child, aliases)
@@ -2695,7 +2677,9 @@ def _strong_local_assertion(
 ) -> bool:
     """Return true only when a helper carries a non-weak oracle."""
     nodes = _test_oracle_body_nodes(node, aliases)
-    vacuous = _direct_test_vacuous_assertions(node)
+    vacuous = _direct_test_vacuous_assertions(
+        node, _scope_security_aliases(aliases, node)
+    )
     return (
         any(
             isinstance(child, ast.Assert)
@@ -3890,8 +3874,16 @@ def _project_oracle_context(
     source_bytes, source_bindings, manifest, source_cacheable = _oracle_source_inputs(
         root, files
     )
-    typecheck_sources, config_bindings, config_identity, config_cacheable = (
-        _declared_typecheck_sources(root, files)
+    from .review_integrity import oracle_configuration, bind_benchmark_context
+
+    (
+        typecheck_sources,
+        config_bindings,
+        config_identity,
+        config_cacheable,
+        benchmarks,
+    ) = oracle_configuration(
+        root, files, _declared_typecheck_sources, _security_source_bytes, MAX_BYTES
     )
     config_identity = {
         **config_identity,
@@ -3907,6 +3899,7 @@ def _project_oracle_context(
             return contexts, bindings, edges
     snapshots = _oracle_snapshots(root, files, source_bytes)
     contexts, edges = _build_oracle_context(root, files, snapshots, typecheck_sources)
+    bind_benchmark_context(contexts, snapshots, benchmarks)
     edges.extend(_static_type_edges(root, typecheck_sources, config_bindings))
     if cache_enabled and cacheable:
         _oracle_context_cache_write(cache_key, contexts, edges)
@@ -4140,7 +4133,9 @@ def _weak_test_oracle_finding(
     if _test_oracle_exempt(node, aliases):
         return None
     nodes = _test_oracle_body_nodes(node, aliases)
-    vacuous = _direct_test_vacuous_assertions(node)
+    vacuous = _direct_test_vacuous_assertions(
+        node, _scope_security_aliases(aliases, node)
+    )
     weak = [
         (child, _weak_assertion_reason(child.test, aliases))
         for child in nodes
@@ -4215,7 +4210,9 @@ def _hollow_test_finding(
     if isinstance(oracle, dict):
         return oracle
     nodes = _test_oracle_body_nodes(node, aliases)
-    vacuous = _direct_test_vacuous_assertions(node)
+    vacuous = _direct_test_vacuous_assertions(
+        node, _scope_security_aliases(aliases, node)
+    )
     assertions = [n for n in nodes if isinstance(n, ast.Assert)]
     if _has_manual_failure(node, aliases):
         return None

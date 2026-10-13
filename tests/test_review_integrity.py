@@ -741,3 +741,112 @@ def test_repository_action_refs_are_pinned():
     from factoryline.workflow_audit import audit_action_pins
 
     assert audit_action_pins(Path(__file__).resolve().parents[1])["state"] == "PASS"
+
+
+@pytest.mark.parametrize(
+    "change,expected",
+    [
+        ("valid", "QUALITY_BENCHMARK_NOT_VERIFIED"),
+        ("missing_config", "QUALITY_HOLLOW_TEST"),
+        ("wrong_target", "QUALITY_HOLLOW_TEST"),
+        ("no_codspeed", "QUALITY_HOLLOW_TEST"),
+        ("shadowed_pytest", "QUALITY_HOLLOW_TEST"),
+        ("rebound_marker", "QUALITY_HOLLOW_TEST"),
+        ("empty_workload", "QUALITY_HOLLOW_TEST"),
+        ("uninvoked_helper", "QUALITY_HOLLOW_TEST"),
+        ("vacuous_assertion", "QUALITY_HOLLOW_TEST"),
+        ("short_circuit", "QUALITY_HOLLOW_TEST"),
+        ("loop_break", "QUALITY_HOLLOW_TEST"),
+        ("generator", "QUALITY_HOLLOW_TEST"),
+        ("early_return", "QUALITY_HOLLOW_TEST"),
+        ("zero_range", "QUALITY_HOLLOW_TEST"),
+        ("starred_empty", "QUALITY_HOLLOW_TEST"),
+        ("range_shadow", "QUALITY_HOLLOW_TEST"),
+        ("bounded_loop", "QUALITY_BENCHMARK_NOT_VERIFIED"),
+    ],
+)
+def test_codspeed_module_benchmark_requires_config_and_workload(
+    tmp_path, change, expected
+):
+    from factoryline.review_audits import security_scan
+
+    source = "import pytest\npytestmark = pytest.mark.benchmark()\n"
+    if change == "shadowed_pytest":
+        source += "pytest = object()\n"
+    if change == "rebound_marker":
+        source += "pytestmark = []\n"
+    body = {
+        "empty_workload": "pass",
+        "uninvoked_helper": "def helper():\n        product()",
+        "vacuous_assertion": "product()\n    assert True",
+        "short_circuit": "False and product()",
+        "loop_break": "for _ in [1]:\n        break\n        product()",
+        "generator": "unused = (product() for _ in [])",
+        "early_return": "if True:\n        return\n    product()",
+        "zero_range": "for _ in range(0):\n        product()",
+        "starred_empty": "for _ in [*()]:\n        product()",
+        "range_shadow": "range = lambda count: []\n    for _ in range(1):\n        product()",
+        "bounded_loop": "for _ in range(1):\n        product()",
+    }.get(change, "product()")
+    (tmp_path / "test_bench.py").write_text(
+        source + "def test_case():\n    " + body + "\n"
+    )
+    command = "pytest --codspeed test_bench.py"
+    if change == "wrong_target":
+        command = "pytest --codspeed other.py"
+    if change == "no_codspeed":
+        command = "pytest test_bench.py"
+    if change != "missing_config":
+        (tmp_path / "tox.ini").write_text(
+            "[testenv:perf]\ncommands = " + command + "\n"
+        )
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert expected in result["finding_counts"]
+
+
+def test_codspeed_config_change_invalidates_cached_oracle(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_bench.py").write_text(
+        "import pytest\npytestmark = pytest.mark.benchmark\ndef test_case():\n    product()\n"
+    )
+    config = tmp_path / "tox.ini"
+    config.write_text("[testenv:perf]\ncommands = pytest --codspeed test_bench.py\n")
+    assert "QUALITY_BENCHMARK_NOT_VERIFIED" in security_scan(tmp_path)["finding_counts"]
+    assert "QUALITY_BENCHMARK_NOT_VERIFIED" in security_scan(tmp_path)["finding_counts"]
+    config.write_text("[testenv:perf]\ncommands = pytest test_bench.py\n")
+    assert "QUALITY_HOLLOW_TEST" in security_scan(tmp_path)["finding_counts"]
+
+
+def test_codspeed_ignores_unrelated_non_pytest_command_syntax(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_bench.py").write_text(
+        "import pytest\npytestmark = pytest.mark.benchmark\ndef test_case():\n    product()\n"
+    )
+    (tmp_path / "tox.ini").write_text(
+        "[testenv:other]\ncommands = shell 'unmatched\n"
+        "[testenv:perf]\ncommands = pytest --codspeed test_bench.py\n"
+    )
+    assert "QUALITY_BENCHMARK_NOT_VERIFIED" in security_scan(tmp_path)["finding_counts"]
+
+
+def test_warm_cache_preserves_structural_import_binding_and_source_drift(tmp_path):
+    from factoryline.review_audits import (
+        security_scan,
+        _oracle_context_cache_clear,
+        _oracle_context_cache_info,
+    )
+
+    _oracle_context_cache_clear()
+    product = tmp_path / "product.py"
+    product.write_text("public = object()\n")
+    test = tmp_path / "test_product.py"
+    test.write_text("import product\ndef test_public():\n    product.public\n")
+    cold = security_scan(tmp_path)["finding_counts"]
+    warm = security_scan(tmp_path)["finding_counts"]
+    assert cold == warm == {}
+    assert _oracle_context_cache_info()["hits"] >= 1
+    product.write_text("def __getattr__(name):\n    return object()\n")
+    assert "QUALITY_HOLLOW_TEST" in security_scan(tmp_path)["finding_counts"]
+    assert "QUALITY_HOLLOW_TEST" in security_scan(tmp_path)["finding_counts"]
