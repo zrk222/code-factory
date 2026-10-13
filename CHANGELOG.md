@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Seal lifecycle ledger outputs to the canonical run/sequence path so duplicate
+  same-sequence writes cannot publish alternate receipt names.
+- Bind context-cache hits to recomputed packet digests and reject reparse-point
+  workspace ancestry. Report recorded hit telemetry as a lower bound with
+  completeness unknown; no latency or savings claim is implied.
+- Share bounded process launch and cleanup lifecycle with runtime audit while
+  preserving direct-to-file stream capture, incremental hashes, minimized
+  environment and timeout budget. Cleanup confirmation requires the observed
+  process group or assigned Windows Job Object to exit; this is not a security
+  sandbox or universal hidden-process guarantee.
+- Gate parallel runtime-audit execution on bounded policy and matching signed
+  plan, source and environment identities; default execution remains serial.
+  These checks do not independently authenticate signatures at the low-level
+  runner boundary or establish a speedup.
+- Move hosted PostgreSQL, PDF and LangGraph dependencies to explicit extras;
+  make AppForge PDF imports lazy with an actionable install error while
+  retaining CLI and non-PDF import use without those optional packages.
 - Add hash-bound behavioral intervention summaries to fix-workflow receipts:
   original failure, repaired outcome and raw negative-control counts, with
   explicit unexecuted/incomplete states. These are not scanner accuracy scores.

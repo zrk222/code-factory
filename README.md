@@ -25,6 +25,14 @@ factory guide
 factory scan --root .
 ```
 
+The base install keeps hosted PostgreSQL, LangGraph, and PDF-generation
+libraries optional. Install `factoryline-code-factory[pdf]` when AppForge
+submission assurance needs a PDF dossier. Hosted PostgreSQL uses the `hosted`
+extra, and durable LangGraph workflows use the `langgraph` extra. For local
+development, install `.[dev,compat]`; `dev` supplies test tools and `compat`
+restores all optional runtime dependencies that were previously installed by
+default. Other non-PDF audits do not require ReportLab.
+
 The guide offers one plain-language path. The default scan inventories relative
 file metadata and reads eligible Python source for bounded AST security and
 test-oracle analysis. It does not execute project code. Quality findings require

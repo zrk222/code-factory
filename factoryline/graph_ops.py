@@ -5260,9 +5260,7 @@ def _update_snapshot_facts(
             "context_efficiency_packet_count": int(
                 p["context_efficiency"].get("packet_count", 0)
             ),
-            "context_efficiency_cache_hits": int(
-                p["context_efficiency"].get("cache_hits", 0)
-            ),
+            "context_efficiency_cache_hits": p["context_efficiency"].get("cache_hits"),
             "context_efficiency_estimated_tokens": int(
                 p["context_efficiency"].get("estimated_tokens", 0)
             ),

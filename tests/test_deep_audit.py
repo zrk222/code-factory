@@ -306,6 +306,155 @@ def test_native_counter_stderr_capture_is_bounded_and_explicit(tmp_path):
     stderr.unlink()
 
 
+def test_runtime_supervisor_uses_shared_cleanup_unit_and_preserves_stream_hashes(
+    tmp_path, monkeypatch
+):
+    import hashlib
+
+    from factoryline import assembly_process
+    from factoryline.runtime_audit_process import run_bounded_command
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    stdout = scratch / "stdout.bin"
+    stderr = scratch / "stderr.bin"
+    launched = {}
+    launch = assembly_process._launch
+
+    def capture_launch(*args, **kwargs):
+        child, unit, error = launch(*args, **kwargs)
+        launched.update(child=child, unit=unit, error=error)
+        return child, unit, error
+
+    monkeypatch.setattr(assembly_process, "_launch", capture_launch)
+    facts = run_bounded_command(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.buffer.write(b'capture-bound\\n'); "
+            "sys.stderr.buffer.write(b'err\\n')",
+        ],
+        tmp_path,
+        5,
+        scratch,
+        stdout_path=stdout,
+        stderr_path=stderr,
+    )
+
+    assert launched["error"] is None
+    assert launched["unit"] is launched["child"]._factory_cleanup_unit
+    assert facts["cleanup_confirmed"] is True
+    assert stdout.read_bytes() == b"capture-bound\n"
+    assert facts["stdout_bytes"] == len(stdout.read_bytes())
+    assert facts["stdout_sha256"] == hashlib.sha256(stdout.read_bytes()).hexdigest()
+    assert stderr.read_bytes() == b"err\n"
+    assert facts["stderr_sha256"] == hashlib.sha256(stderr.read_bytes()).hexdigest()
+    assert launched["child"].returncode == 0
+
+
+def test_runtime_supervisor_cleans_descendant_after_normal_root_exit(tmp_path):
+    import hashlib
+
+    from factoryline.runtime_audit_process import run_bounded_command
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    script = (
+        "import subprocess,sys; "
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+        "sys.stdout.buffer.write(b'root-exit\\n')"
+    )
+    facts = run_bounded_command([sys.executable, "-c", script], tmp_path, 5, scratch)
+
+    assert facts["exit_code"] == 0
+    assert facts["cleanup_confirmed"] is True
+    assert facts["stdout_bytes"] == len(b"root-exit\n")
+    assert facts["stdout_sha256"] == hashlib.sha256(b"root-exit\n").hexdigest()
+
+
+def test_runtime_supervisor_caps_capture_but_hashes_full_overflow_stream(
+    tmp_path,
+):
+    import hashlib
+
+    from factoryline.runtime_audit_process import MAX_OUTPUT, run_bounded_command
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    output = scratch / "stdout.bin"
+    size = MAX_OUTPUT + 1
+    facts = run_bounded_command(
+        [
+            sys.executable,
+            "-c",
+            f"import sys; sys.stdout.buffer.write(b'x' * {size})",
+        ],
+        tmp_path,
+        10,
+        scratch,
+        stdout_path=output,
+    )
+
+    expected = b"x" * size
+    assert facts["output_limit_exceeded"] is True
+    assert facts["stdout_bytes"] == size
+    assert facts["stdout_sha256"] == hashlib.sha256(expected).hexdigest()
+    assert output.stat().st_size <= MAX_OUTPUT
+    assert facts["cleanup_confirmed"] is True
+
+
+def test_runtime_supervisor_cleans_on_cancellation(tmp_path):
+    import threading
+
+    from factoryline.runtime_audit_process import run_bounded_command
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    cancelled = threading.Event()
+    timer = threading.Timer(0.1, cancelled.set)
+    timer.start()
+    try:
+        facts = run_bounded_command(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            tmp_path,
+            5,
+            scratch,
+            cancelled=cancelled,
+        )
+    finally:
+        timer.cancel()
+
+    assert facts["cancelled"] is True
+    assert facts["cleanup_confirmed"] is True
+
+
+def test_runtime_supervisor_reports_native_handle_close_failure(tmp_path, monkeypatch):
+    from factoryline import assembly_process
+    from factoryline.runtime_audit_process import run_bounded_command
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    launch = assembly_process._launch
+
+    def fail_after_close(*args, **kwargs):
+        child, unit, error = launch(*args, **kwargs)
+        if unit is not None:
+            close = unit.close
+
+            def close_then_fail():
+                close()
+                raise OSError("simulated native handle close failure")
+
+            unit.close = close_then_fail
+        return child, unit, error
+
+    monkeypatch.setattr(assembly_process, "_launch", fail_after_close)
+    facts = run_bounded_command([sys.executable, "-c", "pass"], tmp_path, 5, scratch)
+
+    assert facts["exit_code"] == 0
+    assert facts["cleanup_confirmed"] is False
+
+
 @pytest.mark.parametrize(
     "stderr",
     [
@@ -7529,6 +7678,7 @@ def test_zap_daemon_watch_fails_closed_before_api_use(state, code, monkeypatch):
 
 def test_zap_native_process_facts_include_bounded_stream_and_cleanup_evidence():
     import hashlib
+    from types import SimpleNamespace
 
     from factoryline.deep_audit_io import _zap_process_facts
 
@@ -7545,7 +7695,10 @@ def test_zap_native_process_facts_include_bounded_stream_and_cleanup_evidence():
         "stdout": (hashlib.sha256(stdout).hexdigest(), len(stdout)),
         "stderr": (hashlib.sha256(stderr).hexdigest(), len(stderr)),
     }
-    facts = _zap_process_facts(Child(), time.monotonic() - 0.1, streams, True, True)
+    child = Child()
+    # The test double carries the lifecycle binding required for a positive receipt.
+    child._factory_cleanup_unit = SimpleNamespace(kind="fixture", pid=child.pid)
+    facts = _zap_process_facts(child, time.monotonic() - 0.1, streams, True, True)
 
     assert facts == {
         "pid": 321,

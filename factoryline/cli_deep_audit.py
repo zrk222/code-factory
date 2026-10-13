@@ -62,6 +62,14 @@ def add_parser(sub: Any) -> None:
         )
         if action == "run":
             command.add_argument("--out", default=".factory/runtime-audits")
+            command.add_argument(
+                "--max-parallelism",
+                type=int,
+                default=1,
+                choices=range(1, 9),
+                metavar="1..8",
+                help="bounded lane concurrency, allowed only by the signed execution policy",
+            )
         command.add_argument("--json", action="store_true")
     status = runtime_sub.add_parser(
         "status", help="read the latest self-hash-verified local runtime audit receipt"
@@ -479,6 +487,7 @@ def _run_runtime(args: Any) -> int:
                 args.environment_sha256,
                 Path(args.out),
                 require_intake=args.require_intake,
+                max_parallelism=args.max_parallelism,
             )
             code = 0 if result["receipt"]["decision"] == "READY_FOR_HUMAN_REVIEW" else 1
     except (RuntimeAuditError, OSError, ValueError, KeyError, TypeError) as exc:
@@ -653,7 +662,20 @@ def _senior_fix(args: Any) -> tuple[dict[str, Any], int]:
         if args.execute
         else "Validated the reproduce-and-repair workflow; no candidate command ran."
     )
-    code = 0 if result["state"] in {"PLAN_ONLY", "PASS"} else 1
+    complete_branch_comparison = (
+        result.get("state") == "COMPARED"
+        and bool(result.get("branches"))
+        and all(
+            row.get("status") == "OBSERVED"
+            and row.get("raw_comparison", {}).get("executed") is True
+            for row in result["branches"]
+        )
+    )
+    code = (
+        0
+        if result["state"] in {"PLAN_ONLY", "PASS"} or complete_branch_comparison
+        else 1
+    )
     return _senior_action(result, summary, code)
 
 

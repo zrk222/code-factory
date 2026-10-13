@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import base64
+import hashlib
+import os
 import re
+import stat
 from pathlib import PureWindowsPath
 from pathlib import Path
 from urllib.parse import urlparse
@@ -26,6 +29,59 @@ from .runtime_audit_common import (
 from .runtime_audit_policy import ENGINES, validate_lane_policy
 from .runtime_attestation import ISOLATION_MODES
 from .intake_parameters import verify_intake_binding
+
+MAX_RUNTIME_SOURCE_BYTES = 100_000_000
+
+
+def _hash_regular_file_bounded(path: Path, maximum_bytes: int) -> tuple[str, int]:
+    """Hash a lexical regular file with a strict byte budget and stable identity."""
+    if (
+        isinstance(maximum_bytes, bool)
+        or not isinstance(maximum_bytes, int)
+        or not 0 <= maximum_bytes <= MAX_RUNTIME_SOURCE_BYTES
+    ):
+        raise RuntimeAuditError("E_SOURCE_SIZE", "source byte budget is invalid")
+    lexical = Path(path)
+    if lexical.is_symlink():
+        raise RuntimeAuditError("E_SOURCE_TYPE", "source must not be a symlink")
+    before = lexical.stat(follow_symlinks=False)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or getattr(before, "st_file_attributes", 0) & 0x400
+    ):
+        raise RuntimeAuditError("E_SOURCE_TYPE", "source must be a regular file")
+    digest = hashlib.sha256()
+    count = 0
+    with lexical.open("rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if not stat.S_ISREG(opened.st_mode) or _file_identity(opened) != _file_identity(
+            before
+        ):
+            raise RuntimeAuditError(
+                "E_SOURCE_CHANGED", "source identity changed before read"
+            )
+        while count <= maximum_bytes:
+            block = stream.read(min(1024 * 1024, maximum_bytes + 1 - count))
+            if not block:
+                break
+            count += len(block)
+            digest.update(block)
+        after = os.fstat(stream.fileno())
+    final = lexical.stat(follow_symlinks=False)
+    if _file_identity(before) != _file_identity(after) or _file_identity(
+        after
+    ) != _file_identity(final):
+        raise RuntimeAuditError(
+            "E_SOURCE_CHANGED", "source identity changed during read"
+        )
+    if count > maximum_bytes:
+        raise RuntimeAuditError("E_SOURCE_SIZE", "source exceeds its byte budget")
+    return digest.hexdigest(), count
+
+
+def _file_identity(info) -> tuple[int, int, int, int]:
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+
 
 PLAN_TYPE = "application/vnd.factory.runtime-audit-plan.v1+json"
 PLAN_SCHEMA = "factory.runtime-audit-plan.v1"
@@ -67,14 +123,26 @@ def _relative_file(root: Path, relative: object, field: str) -> Path:
         or ":" in text
     ):
         raise RuntimeAuditError("E_PATH_ESCAPE", text)
-    candidate = (root / text).resolve()
+    lexical = root / text
+    cursor = root
+    for part in text.replace("\\", "/").split("/"):
+        cursor = cursor / part
+        try:
+            info = cursor.stat(follow_symlinks=False)
+        except OSError as exc:
+            raise RuntimeAuditError("E_SOURCE_MISSING", text) from exc
+        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise RuntimeAuditError(
+                "E_SOURCE_TYPE", "source path must not contain a reparse point"
+            )
+    candidate = lexical.resolve()
     try:
         candidate.relative_to(root)
     except ValueError as exc:
         raise RuntimeAuditError("E_PATH_ESCAPE", text) from exc
     if not candidate.is_file():
         raise RuntimeAuditError("E_SOURCE_MISSING", text)
-    return candidate
+    return lexical
 
 
 def _argv(value: object, field: str) -> list[str]:
@@ -197,6 +265,37 @@ def _plan_boundary(plan):
             )
 
 
+def _plan_execution_policy(plan):
+    policy = plan.get("execution_policy")
+    if policy is None:
+        return {"max_parallelism": 1, "non_mutating": False, "resource_safe": False}
+    if not isinstance(policy, dict):
+        raise RuntimeAuditError(
+            "E_EXECUTION_POLICY", "execution_policy must be an object"
+        )
+    exact_keys(policy, {"max_parallelism", "non_mutating", "resource_safe"})
+    maximum = require_int(
+        policy["max_parallelism"],
+        "execution_policy.max_parallelism",
+        minimum=1,
+        maximum=8,
+    )
+    non_mutating = require_bool(policy["non_mutating"], "execution_policy.non_mutating")
+    resource_safe = require_bool(
+        policy["resource_safe"], "execution_policy.resource_safe"
+    )
+    if maximum > 1 and not (non_mutating and resource_safe):
+        raise RuntimeAuditError(
+            "E_EXECUTION_POLICY",
+            "parallel execution requires non_mutating and resource_safe declarations",
+        )
+    return {
+        "max_parallelism": maximum,
+        "non_mutating": non_mutating,
+        "resource_safe": resource_safe,
+    }
+
+
 def _plan_sources(plan, root):
     sources = plan["sources"]
     if not isinstance(sources, list) or not 1 <= len(sources) <= 128:
@@ -211,14 +310,18 @@ def _plan_sources(plan, root):
             raise RuntimeAuditError("E_DUPLICATE_ID", relative)
         source_ids.add(relative)
         source_path = _relative_file(root, relative, "sources.path")
-        if source_path.stat().st_size > 100_000_000:
-            raise RuntimeAuditError("E_SOURCE_SIZE", relative)
-        raw = source_path.read_bytes()
-        if len(raw) != require_int(
-            source["bytes"], "sources.bytes", minimum=0, maximum=100_000_000
-        ):
+        declared_bytes = require_int(
+            source["bytes"],
+            "sources.bytes",
+            minimum=0,
+            maximum=MAX_RUNTIME_SOURCE_BYTES,
+        )
+        actual_digest, actual_bytes = _hash_regular_file_bounded(
+            source_path, declared_bytes
+        )
+        if actual_bytes != declared_bytes:
             raise RuntimeAuditError("E_SOURCE_DRIFT", relative)
-        if sha256_bytes(raw) != require_digest(source["sha256"], "sources.sha256"):
+        if actual_digest != require_digest(source["sha256"], "sources.sha256"):
             raise RuntimeAuditError("E_SOURCE_DRIFT", relative)
     if plan["candidate_sha256"] != sha256_bytes(
         canonical_bytes(sorted(sources, key=lambda s: s["path"]))
@@ -399,7 +502,7 @@ def _plan_lifetime(plan, now):
             "lanes",
             "counterfactual_mesh",
         },
-        optional={"runtime_boundary", "intake_parameters"},
+        optional={"runtime_boundary", "intake_parameters", "execution_policy"},
     )
     require_str(plan["id"], "id", maximum=128)
     require_digest(plan["candidate_sha256"], "candidate_sha256")
@@ -462,19 +565,36 @@ def verify_runtime_audit_plan(
             "E_INPUT_CHANGED", "signed inputs changed while verifying"
         )
     _plan_lifetime(plan, now)
+    execution_policy = _plan_execution_policy(plan)
     digest = _plan_environment(plan, environment_digest)
     _plan_boundary(plan)
     sources = _plan_sources(plan, root)
     _plan_mesh(plan)
     lanes = _plan_lanes(plan)
     intake_binding = _plan_intake(plan, root, sources, lanes, require_intake)
+    source_manifest_sha256 = sha256_bytes(
+        canonical_bytes(sorted(sources, key=lambda item: item["path"]))
+    )
     return {
         "schema": "factory.runtime-audit-plan-verification.v1",
         "verification": verified["verification"],
         "payload_sha256": verified["payload_sha256"],
+        "source_manifest_sha256": sha256_bytes(
+            canonical_bytes(sorted(sources, key=lambda item: item["path"]))
+        ),
         "trust_root_sha256": expected_trust,
         "environment_digest": digest,
         "plan": plan,
+        "execution_policy": execution_policy,
+        "execution_admission": {
+            "payload_sha256": verified["payload_sha256"],
+            "plan_canonical_sha256": sha256_bytes(canonical_bytes(plan)),
+            "source_manifest_sha256": source_manifest_sha256,
+            "environment_sha256": digest,
+            "max_parallelism": execution_policy["max_parallelism"],
+            "non_mutating": execution_policy["non_mutating"],
+            "resource_safe": execution_policy["resource_safe"],
+        },
         "intake_parameters": intake_binding,
         "authority": "none",
     }

@@ -9,6 +9,28 @@ from factoryline.incremental_scheduler import load_schedule_json
 from factoryline.senior_assurance import REUSE_REQUEST_SCHEMA
 
 
+def test_runtime_audit_run_cli_exposes_bounded_parallelism(capsys):
+    import pytest
+
+    with pytest.raises(SystemExit) as error:
+        main(
+            [
+                "runtime-audit",
+                "run",
+                "plan.json",
+                "--trust-root",
+                "trust.json",
+                "--trust-root-sha256",
+                "a" * 64,
+                "--environment-sha256",
+                "b" * 64,
+                "--max-parallelism",
+                "9",
+            ]
+        )
+    assert error.value.code == 2
+
+
 def _digest(seed: str) -> str:
     return hashlib.sha256(seed.encode()).hexdigest()
 

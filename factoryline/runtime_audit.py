@@ -584,6 +584,7 @@ def execute_runtime_audit(
     output_root: Path,
     *,
     require_intake: bool = False,
+    max_parallelism: int = 1,
 ) -> dict[str, Any]:
     """Verify, execute, reverify, evaluate, and persist one signed runtime assurance plan."""
     verification = verify_runtime_audit_plan(
@@ -599,6 +600,10 @@ def execute_runtime_audit(
         workspace_root,
         output_root,
         plan_sha256=verification["payload_sha256"],
+        max_parallelism=max_parallelism,
+        execution_admission=verification.get("execution_admission")
+        if max_parallelism > 1
+        else None,
     )
     post_verification = verify_runtime_audit_plan(
         plan_path,

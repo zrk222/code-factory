@@ -1,5 +1,6 @@
 import io
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -11,8 +12,11 @@ from factoryline.context_efficiency import (
     SELECTION_SCHEMA,
     ContextEfficiencyError,
     build_context_packet,
+    build_context_shard_candidate,
     build_selected_context_packet,
     context_efficiency_status,
+    review_context_shard_candidate,
+    validate_context_shard_candidate,
     verify_context_packet,
 )
 from factoryline.graph_ops import graph_ops_snapshot
@@ -34,6 +38,174 @@ def _request(paths=("README.md",), **overrides):
     }
     value.update(overrides)
     return value
+
+
+def _shard_fixture(tmp_path, source="stable rule: keep API local\n"):
+    source_path = tmp_path / "README.md"
+    source_path.write_text(source, encoding="utf-8")
+    packet = build_context_packet(tmp_path, _request())
+    packet_path = tmp_path / packet["cache"]["path"]
+    start = source.index("stable")
+    end = len(source.rstrip("\n"))
+    locator = {"path": "README.md", "start_byte": start, "end_byte": end}
+    candidate = build_context_shard_candidate(
+        tmp_path,
+        packet_path,
+        "rule",
+        [{"key": "network", "value": "local", "locators": [locator]}],
+        {
+            "correction": [locator],
+            "failure": [locator],
+            "approval": [locator],
+            "unresolved_action": [locator],
+        },
+        "2026-10-20T00:00:00Z",
+        now=datetime(2026, 10, 13, tzinfo=timezone.utc),
+    )
+    return source_path, packet_path, locator, candidate
+
+
+def test_context_shard_preserves_provenance_and_requires_explicit_review(tmp_path):
+    _, _, _, candidate = _shard_fixture(tmp_path)
+    candidate_file = tmp_path / candidate["artifact_path"]
+    persisted_candidate = candidate_file.read_bytes()
+    verified = validate_context_shard_candidate(
+        tmp_path, candidate, now=datetime(2026, 10, 13, tzinfo=timezone.utc)
+    )
+    assert verified["valid"] is True
+    assert candidate["state"] == "CANDIDATE"
+    assert candidate["review_status"] == "UNREVIEWED"
+    assert candidate["retention_inventory_status"] == "CALLER_DECLARED"
+    assert set(candidate["retained_records"]) == {
+        "correction",
+        "failure",
+        "approval",
+        "unresolved_action",
+    }
+    assert all(
+        len(candidate["retained_records"][name]) == 1
+        for name in candidate["retained_records"]
+    )
+    assert candidate["claims"][0]["locators"][0]["raw_source_sha256"]
+    assert candidate["claims"][0]["locators"][0]["span_sha256"]
+
+    review = review_context_shard_candidate(
+        tmp_path,
+        candidate,
+        "accept",
+        "reviewer-handle",
+        "explicit caller review basis",
+        now=datetime(2026, 10, 13, tzinfo=timezone.utc),
+    )
+    assert review["state"] == "CALLER_REVIEWED_ACCEPTED"
+    assert review["reviewer_identity_authenticated"] is False
+    assert review["activation"] == "NONE"
+    assert candidate_file.read_bytes() == persisted_candidate
+    assert (
+        validate_context_shard_candidate(
+            tmp_path,
+            candidate,
+            accepted_shards=[{"candidate": candidate, "review": review}],
+            now=datetime(2026, 10, 13, tzinfo=timezone.utc),
+        )["valid"]
+        is True
+    )
+
+
+def test_context_shard_becomes_stale_after_source_changes(tmp_path):
+    source_path, _, _, candidate = _shard_fixture(tmp_path)
+    source_path.write_text("stable rule: changed\n", encoding="utf-8")
+    result = validate_context_shard_candidate(
+        tmp_path, candidate, now=datetime(2026, 10, 13, tzinfo=timezone.utc)
+    )
+    assert result["state"] == "STALE"
+    assert result["valid"] is False
+
+
+def test_context_shard_expiry_is_reported_without_acceptance(tmp_path):
+    _, _, _, candidate = _shard_fixture(tmp_path)
+    result = validate_context_shard_candidate(
+        tmp_path, candidate, now=datetime(2026, 10, 20, tzinfo=timezone.utc)
+    )
+    assert result["state"] == "EXPIRED"
+    with pytest.raises(ContextEfficiencyError, match="E_SHARD_NOT_REVIEWABLE"):
+        review_context_shard_candidate(
+            tmp_path,
+            candidate,
+            "accept",
+            "reviewer",
+            "basis",
+            now=datetime(2026, 10, 20, tzinfo=timezone.utc),
+        )
+
+
+def test_context_shard_refuses_truncated_and_unlocatable_sources(tmp_path):
+    (tmp_path / "README.md").write_text("stable " + ("long " * 1000), encoding="utf-8")
+    packet = build_context_packet(tmp_path, _request())
+    assert packet["sources"][0]["inclusion"] != "full"
+    with pytest.raises(ContextEfficiencyError, match="E_SHARD_LOCATOR"):
+        build_context_shard_candidate(
+            tmp_path,
+            tmp_path / packet["cache"]["path"],
+            "fact",
+            [
+                {
+                    "key": "k",
+                    "value": "v",
+                    "locators": [{"path": "README.md", "start_byte": 0, "end_byte": 6}],
+                }
+            ],
+            {
+                name: []
+                for name in ("correction", "failure", "approval", "unresolved_action")
+            },
+            "2026-10-20T00:00:00Z",
+            now=datetime(2026, 10, 13, tzinfo=timezone.utc),
+        )
+
+
+def test_context_shard_reports_only_deterministic_accepted_conflicts(tmp_path):
+    _, packet_path, locator, candidate = _shard_fixture(tmp_path)
+    empty_inventory = {
+        name: [] for name in ("correction", "failure", "approval", "unresolved_action")
+    }
+    other = build_context_shard_candidate(
+        tmp_path,
+        packet_path,
+        "rule",
+        [{"key": "network", "value": "remote", "locators": [locator]}],
+        empty_inventory,
+        "2026-10-20T00:00:00Z",
+        now=datetime(2026, 10, 13, tzinfo=timezone.utc),
+    )
+    review = review_context_shard_candidate(
+        tmp_path,
+        other,
+        "accept",
+        "reviewer",
+        "explicit review",
+        now=datetime(2026, 10, 13, tzinfo=timezone.utc),
+    )
+    result = validate_context_shard_candidate(
+        tmp_path,
+        candidate,
+        accepted_shards=[{"candidate": other, "review": review}],
+        now=datetime(2026, 10, 13, tzinfo=timezone.utc),
+    )
+    assert result["state"] == "CONTRADICTED"
+    assert result["contradiction"]["basis"].startswith("same type and normalized key")
+
+
+def test_context_shard_blocks_incomplete_accepted_set_over_limit(tmp_path):
+    _, _, _, candidate = _shard_fixture(tmp_path)
+    result = validate_context_shard_candidate(
+        tmp_path,
+        candidate,
+        accepted_shards=[{}] * 257,
+        now=datetime(2026, 10, 13, tzinfo=timezone.utc),
+    )
+    assert result["state"] == "BLOCKED"
+    assert result["valid"] is False
 
 
 def test_packet_is_bounded_and_verifiable(tmp_path):
@@ -156,8 +328,185 @@ def test_second_build_reuses_exact_cache(tmp_path):
     second = build_context_packet(tmp_path, _request())
     assert first["cache"]["key"] == second["cache"]["key"]
     assert first["packet_sha256"] != second["packet_sha256"]
+    cached_path = tmp_path / first["cache"]["path"]
+    assert json.loads(cached_path.read_text(encoding="utf-8")) == first
     assert second["cache"]["hit"] is True
+    assert second["packet_sha256"] != first["packet_sha256"]
+    assert second["packet_sha256"] == __import__(
+        "factoryline.context_efficiency", fromlist=["_packet_digest"]
+    )._packet_digest(second)
+    assert (
+        verify_context_packet(tmp_path, tmp_path / first["cache"]["path"])["valid"]
+        is True
+    )
     assert context_efficiency_status(tmp_path)["cache_hits"] == 1
+
+
+def test_hit_output_is_valid_and_cache_file_stays_immutable(tmp_path):
+    (tmp_path / "README.md").write_text("stable", encoding="utf-8")
+    first = build_context_packet(tmp_path, _request())
+    cache_path = tmp_path / first["cache"]["path"]
+    original = cache_path.read_bytes()
+    out = tmp_path / "hit.json"
+    hit = build_context_packet(tmp_path, _request(), out=out)
+    assert cache_path.read_bytes() == original
+    assert json.loads(out.read_text(encoding="utf-8")) == hit
+    assert hit["packet_sha256"] == __import__(
+        "factoryline.context_efficiency", fromlist=["_packet_digest"]
+    )._packet_digest(hit)
+    assert verify_context_packet(tmp_path, out)["valid"] is True
+
+
+def test_public_root_reparse_path_fails_before_resolution(tmp_path, monkeypatch):
+    from factoryline.context_efficiency import ContextEfficiencyError
+    from types import SimpleNamespace
+    import stat
+
+    (tmp_path / "README.md").write_text("stable", encoding="utf-8")
+    linked_root = tmp_path.parent / (tmp_path.name + "-root-link")
+    try:
+        linked_root.symlink_to(tmp_path, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("directory symlinks unavailable")
+    with pytest.raises(ContextEfficiencyError, match="E_PATH_LINK"):
+        build_context_packet(linked_root, _request())
+    with pytest.raises(ContextEfficiencyError, match="E_PATH_LINK"):
+        context_efficiency_status(linked_root)
+
+    plain_root = tmp_path / "plain-root"
+    plain_root.mkdir()
+    real_lstat = Path.lstat
+
+    def fake_reparse_lstat(path):
+        if path == plain_root:
+            return SimpleNamespace(
+                st_mode=stat.S_IFDIR,
+                st_file_attributes=0x400,
+            )
+        return real_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", fake_reparse_lstat)
+    with pytest.raises(ContextEfficiencyError, match="E_PATH_LINK"):
+        build_context_packet(plain_root, _request())
+    with pytest.raises(ContextEfficiencyError, match="E_PATH_LINK"):
+        context_efficiency_status(plain_root)
+
+
+def test_failed_cache_counter_write_reports_unknown(tmp_path, monkeypatch):
+    import factoryline.context_efficiency as module
+
+    (tmp_path / "README.md").write_text("stable", encoding="utf-8")
+    first = build_context_packet(tmp_path, _request())
+    monkeypatch.setattr(module, "_record_cache_hit", lambda *_: False)
+    out = tmp_path / "unrecorded-hit.json"
+    hit = build_context_packet(tmp_path, _request(), out=out)
+    assert hit["cache"]["usage_count"] is None
+    assert verify_context_packet(tmp_path, out)["valid"] is True
+    assert context_efficiency_status(tmp_path)["cache_hits"] is None
+    assert (tmp_path / first["cache"]["path"]).is_file()
+
+
+def test_failed_counter_and_marker_keep_status_as_lower_bound(tmp_path, monkeypatch):
+    import factoryline.context_efficiency as module
+
+    (tmp_path / "README.md").write_text("stable", encoding="utf-8")
+    build_context_packet(tmp_path, _request())
+    assert build_context_packet(tmp_path, _request())["cache"]["usage_count"] == 1
+    monkeypatch.setattr(module, "_record_cache_hit", lambda *_: False)
+    monkeypatch.setattr(module, "_mark_cache_usage_unknown", lambda *_: None)
+    hit = build_context_packet(tmp_path, _request())
+    assert hit["cache"]["usage_count"] is None
+    status = context_efficiency_status(tmp_path)
+    assert status["cache_hits"] == 1
+    assert status["cache_hits_semantics"] == "recorded_lower_bound"
+    assert status["cache_usage_completeness"] == "UNKNOWN"
+
+
+def test_cache_usage_row_cap_reports_unknown(tmp_path, monkeypatch):
+    import factoryline.context_efficiency as module
+
+    (tmp_path / "README.md").write_text("stable", encoding="utf-8")
+    build_context_packet(tmp_path, _request())
+    monkeypatch.setattr(module, "MAX_USAGE_ROWS", 0)
+    hit = build_context_packet(tmp_path, _request())
+    assert hit["cache"]["usage_count"] is None
+    assert context_efficiency_status(tmp_path)["cache_hits"] is None
+
+
+def test_cache_hit_counter_is_separate_and_bounded(tmp_path):
+    from factoryline.context_efficiency import (
+        MAX_USAGE_ROWS,
+        _cache_hit_count,
+        _record_cache_hit,
+    )
+
+    (tmp_path / "README.md").write_text("stable", encoding="utf-8")
+    packet = build_context_packet(tmp_path, _request())
+    cache_key = packet["cache"]["key"]
+    _record_cache_hit(tmp_path, cache_key)
+    _record_cache_hit(tmp_path, cache_key)
+    assert _cache_hit_count(tmp_path, cache_key) == 2
+    assert context_efficiency_status(tmp_path)["cache_hits"] == 2
+    for index in range(MAX_USAGE_ROWS + 1):
+        _record_cache_hit(tmp_path, f"{index:064x}")
+    import sqlite3
+
+    with sqlite3.connect(tmp_path / ".factory/context-efficiency/usage.sqlite3") as db:
+        count = db.execute("SELECT COUNT(*) FROM cache_usage").fetchone()[0]
+    assert count == MAX_USAGE_ROWS
+
+
+def test_cache_usage_symlink_is_ignored(tmp_path):
+    from factoryline.context_efficiency import _cache_hit_count, _record_cache_hit
+
+    outside = tmp_path.parent / (tmp_path.name + "-outside")
+    outside.mkdir()
+    cache_dir = tmp_path / ".factory/context-efficiency"
+    cache_dir.parent.mkdir(parents=True)
+    try:
+        cache_dir.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("directory symlinks unavailable")
+    _record_cache_hit(tmp_path, "a" * 64)
+    assert _cache_hit_count(tmp_path, "a" * 64) is None
+    assert list(outside.iterdir()) == []
+
+
+def test_cache_usage_rejects_reparse_ancestor_and_invalid_counter(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+    import stat
+    import sqlite3
+
+    from factoryline.context_efficiency import (
+        _cache_hit_count,
+        _has_reparse_ancestor,
+    )
+
+    candidate = tmp_path / "workspace"
+    candidate.mkdir()
+    real_lstat = Path.lstat
+
+    def fake_lstat(path):
+        if path == candidate:
+            return SimpleNamespace(
+                st_mode=stat.S_IFDIR,
+                st_file_attributes=0x400,
+            )
+        return real_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", fake_lstat)
+    assert _has_reparse_ancestor(candidate) is True
+    monkeypatch.setattr(Path, "lstat", real_lstat)
+
+    cache_dir = candidate / ".factory/context-efficiency"
+    cache_dir.mkdir(parents=True)
+    database_path = cache_dir / "usage.sqlite3"
+    with sqlite3.connect(database_path) as database:
+        database.execute("CREATE TABLE cache_usage (cache_key TEXT, hits INTEGER)")
+        database.execute("INSERT INTO cache_usage VALUES (?, ?)", ("a" * 64, -1))
+    assert _cache_hit_count(candidate, "a" * 64) is None
 
 
 def test_source_drift_blocks_verification(tmp_path):
@@ -217,6 +566,206 @@ def test_cli_pack_verify_and_status_are_read_only(tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)["valid"] is True
     assert main(["efficiency", "status", "--root", str(tmp_path), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["state"] == "READY"
+
+
+def test_cli_context_shard_build_validate_review_is_bounded_and_nonactivating(
+    tmp_path, capsys
+):
+    (tmp_path / "README.md").write_text(
+        "stable rule: keep API local\n", encoding="utf-8"
+    )
+    packet = build_context_packet(tmp_path, _request())
+    packet_path = packet["cache"]["path"]
+    locator = {"path": "README.md", "start_byte": 0, "end_byte": 27}
+    manifest = tmp_path / "shard-request.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "factory.context-shard-request.v1",
+                "packet_path": packet_path,
+                "shard_type": "rule",
+                "claims": [{"key": "network", "value": "local", "locators": [locator]}],
+                "retained_records": {
+                    name: [locator]
+                    for name in (
+                        "correction",
+                        "failure",
+                        "approval",
+                        "unresolved_action",
+                    )
+                },
+                "expires_at": "2026-10-20T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "input-directory").mkdir()
+    assert (
+        main(
+            [
+                "efficiency",
+                "shard-build",
+                "--manifest",
+                "input-directory",
+                "--root",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+        == 2
+    )
+    rejected_directory = json.loads(capsys.readouterr().out)
+    assert rejected_directory["code"] == "E_PATH_INPUT"
+    assert str(tmp_path) not in rejected_directory["message"]
+    assert (
+        main(
+            [
+                "efficiency",
+                "shard-build",
+                "--manifest",
+                str(manifest),
+                "--root",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+        == 2
+    )
+    rejected_manifest = json.loads(capsys.readouterr().out)
+    assert rejected_manifest["code"] == "E_PATH_BOUNDARY"
+    assert str(tmp_path) not in rejected_manifest["message"]
+    assert (
+        main(
+            [
+                "efficiency",
+                "shard-build",
+                "--manifest",
+                "shard-request.json",
+                "--root",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    candidate = json.loads(capsys.readouterr().out)
+    assert candidate["state"] == "CANDIDATE"
+    assert candidate["review_status"] == "UNREVIEWED"
+    candidate_path = candidate["artifact_path"]
+    accepted = tmp_path / "accepted.json"
+    accepted.write_text("[]", encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "efficiency",
+                "shard-validate",
+                candidate_path,
+                "--root",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["valid"] is True
+    assert (
+        main(
+            [
+                "efficiency",
+                "shard-validate",
+                candidate_path,
+                "--accepted",
+                "accepted.json",
+                "--root",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["valid"] is True
+    assert (
+        main(
+            [
+                "efficiency",
+                "shard-validate",
+                candidate_path,
+                "--accepted",
+                str(accepted),
+                "--root",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+        == 2
+    )
+    rejected_accepted = json.loads(capsys.readouterr().out)
+    assert rejected_accepted["code"] == "E_PATH_BOUNDARY"
+    assert str(tmp_path) not in rejected_accepted["message"]
+    assert (
+        main(
+            [
+                "efficiency",
+                "shard-review",
+                candidate_path,
+                "--decision",
+                "accept",
+                "--reviewer-id",
+                "operator",
+                "--review-basis",
+                "explicit local review",
+                "--root",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    review = json.loads(capsys.readouterr().out)
+    assert review["reviewer_identity_authenticated"] is False
+    assert review["activation"] == "NONE"
+
+    assert (
+        main(
+            [
+                "efficiency",
+                "shard-validate",
+                str(tmp_path / candidate_path),
+                "--root",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+        == 2
+    )
+    error = json.loads(capsys.readouterr().out)
+    assert error["code"] == "E_PATH_BOUNDARY"
+
+
+def test_cli_context_shard_rejects_linked_workspace_root(tmp_path, capsys):
+    linked_root = tmp_path.parent / f"{tmp_path.name}-linked"
+    try:
+        linked_root.symlink_to(tmp_path, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlink unavailable: {exc}")
+
+    assert (
+        main(
+            [
+                "efficiency",
+                "shard-validate",
+                "candidate.json",
+                "--root",
+                str(linked_root),
+                "--json",
+            ]
+        )
+        == 2
+    )
+    error = json.loads(capsys.readouterr().out)
+    assert error["code"] == "E_PATH_LINK"
+    assert str(linked_root) not in error["message"]
 
 
 def test_mission_and_graph_surface_invalid_cache_as_review_only(tmp_path):

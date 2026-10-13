@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import subprocess
 import sys
+from threading import Barrier
 
 import pytest
 
@@ -382,7 +384,42 @@ def test_lifecycle_requires_sealed_contract_hash_chain_and_explicit_session_trac
     )
     second_payload["session_trace"]["stage"] = "planning"
     _write(event, second_payload)
+    alternate = tmp_path / ".factory/lifecycle/sidecar.json"
+    with pytest.raises(LifecycleLedgerError) as raised:
+        record_lifecycle_event(tmp_path, event, Path(".factory/lifecycle/sidecar.json"))
+    assert raised.value.code == "E_LIFECYCLE_PATH"
+    assert not alternate.exists()
     record_lifecycle_event(tmp_path, event)
+    concurrent_payload = {
+        **second_payload,
+        "event_id": "e-concurrent",
+        "run_id": "run-concurrent",
+        "sequence": 1,
+        "event": "created",
+        "previous_receipt_sha256": None,
+    }
+    concurrent_event = _write(tmp_path / "concurrent-event.json", concurrent_payload)
+    barrier = Barrier(2)
+
+    def concurrent_record() -> str:
+        barrier.wait()
+        try:
+            record_lifecycle_event(tmp_path, concurrent_event)
+            return "recorded"
+        except LifecycleLedgerError as exc:
+            return exc.code
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(lambda _: concurrent_record(), range(2)))
+    assert outcomes.count("recorded") == 1
+    assert (
+        sum(
+            code in {"E_LIFECYCLE_EXISTS", "E_LIFECYCLE_CONTINUITY"}
+            for code in outcomes
+        )
+        == 1
+    )
+    assert (tmp_path / ".factory/lifecycle/run-concurrent-0001.json").is_file()
     status = lifecycle_projection(tmp_path)
     assert status["latest"]["latest_session_trace"]["session_id"] == "session1"
     second_payload["sequence"] = 3

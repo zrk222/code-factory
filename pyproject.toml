@@ -60,9 +60,7 @@ classifiers = [
 dependencies = [
   "cryptography>=42,<50",
   "httpx>=0.28,<1",
-  "psycopg[binary]>=3.2,<4",
   "PyYAML>=6,<7",
-  "reportlab>=4,<5",
   "tomli>=2.0; python_version < '3.11'",
 ]
 
@@ -75,6 +73,8 @@ Changelog = "https://github.com/zrk222/code-factory/releases"
 
 [project.optional-dependencies]
 dev = [
+  "psycopg[binary]>=3.2,<4",
+  "reportlab>=4,<5",
   "Pillow==12.3.0",
   "setuptools>=77,<83",
   "hypothesis>=6.135,<7",
@@ -85,18 +85,26 @@ dev = [
   "ruff>=0.14,<0.15",
   "tomli>=2.0; python_version < '3.11'",
 ]
+compat = [
+  "psycopg[binary]>=3.2,<4",
+  "reportlab>=4,<5",
+  "langgraph>=1.1,<2",
+  "langgraph-checkpoint-sqlite>=3,<4",
+]
+pdf = ["reportlab>=4,<5"]
 sigstore = ["sigstore>=4.4,<5"]
 enterprise = ["cryptography>=42,<50"]
 hosted = [
   "gunicorn>=23,<24; platform_system != 'Windows'",
+  "psycopg[binary]>=3.2,<4",
 ]
-
-[tool.vercel]
-entrypoint = "api.index:app"
 langgraph = [
   "langgraph>=1.1,<2",
   "langgraph-checkpoint-sqlite>=3,<4",
 ]
+
+[tool.vercel]
+entrypoint = "api.index:app"
 
 [tool.pytest.ini_options]
 pythonpath = ["tests", "."]

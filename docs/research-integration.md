@@ -66,6 +66,33 @@ stops further work while preserving required cleanup. Polling is not immediate
 revocation and cannot undo effects already performed. Local owner-approved CLI
 execution retains its separate, explicitly unauthenticated identity boundary.
 
+The native Python surface is `factoryline.agentic_control.DurableIncidentDriver`.
+Construct it with an existing `WorkflowEventStore`, a bounded map of registered
+host adapters, a current-caller `authorizer`, exact source `source_observer`, and
+registered phase verifiers for `detect`, `investigate`, `reproduce`, `repair`,
+`verify`, and `review`. A host adapter implements `lookup(action_intent_sha256,
+intent)` and idempotent `launch(run_id, action_intent_sha256, intent)`; lookup must
+return an authoritative live, terminal, or missing result, and uncertainty must
+remain unknown. Operators call `launch_phase(...)`, then call `checkpoint(...)`
+only with the terminal result that a registered phase verifier confirms as
+successful. Bind policy and action digests at each phase and recheck live caller
+permission at effect time. Keep adapter objects, credentials, authorization
+callbacks, and verifier code in the trusted host process; do not accept Python
+imports or callback specifications from CLI arguments or JSON manifests. This
+is a native integration API, not an enabled monitor or production deployment.
+
+Context shards have bounded operator commands: `factory efficiency shard-build
+--manifest request.json --root <workspace> --json`, `factory efficiency
+shard-validate <candidate-path> [--accepted <accepted-list.json>] --root <workspace> --json`, and `factory
+efficiency shard-review <candidate-path> --decision accept|reject|defer
+--reviewer-id <id> --review-basis <text> --root <workspace> --json`. The build
+Manifest, candidate, and accepted-list inputs must be regular workspace-relative
+files without symlink or reparse-point traversal. The build manifest uses the
+exact `factory.context-shard-request.v1` schema with
+`packet_path`, `shard_type`, `claims`, `retained_records`, and `expires_at`.
+Review records an explicit caller decision, but reviewer identity is
+unauthenticated and acceptance does not activate the shard.
+
 ## Jev and model-internal research
 
 Jev can prioritize uncertain evidence, explain contradictions and suggest a

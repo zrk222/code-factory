@@ -1256,6 +1256,471 @@ def test_runtime_linked_storage_is_rejected(tmp_path, monkeypatch):
     assert error.value.code == "E_WORKFLOW_PATH"
 
 
+class _IncidentTestDriver:
+    def __init__(
+        self,
+        *,
+        state="missing",
+        handle=None,
+        launch_error=False,
+        accepted_on_error=True,
+        lookup_error=False,
+    ):
+        self.state = state
+        self.handle = handle
+        self.launch_error = launch_error
+        self.accepted_on_error = accepted_on_error
+        self.lookup_error = lookup_error
+        self.launches = []
+
+    def lookup(self, action_intent_id, intent):
+        if self.lookup_error:
+            raise OSError("simulated driver lookup failure")
+        return {
+            "action_intent_sha256": action_intent_id,
+            "state": self.state,
+            "handle": self.handle,
+            "authoritative": self.state != "unknown",
+        }
+
+    def launch(self, run_id, action_intent_id, intent):
+        self.launches.append((run_id, action_intent_id, intent))
+        if self.launch_error:
+            if self.accepted_on_error:
+                self.handle = self.handle or "incident-handle-1"
+                self.state = "live"
+            else:
+                self.handle = None
+                self.state = "missing"
+            raise OSError("simulated disconnect after accepted launch")
+        self.handle = self.handle or "incident-handle-1"
+        self.state = "live"
+        return self.handle
+
+
+def _incident_supervisor(tmp_path, driver, clock=None):
+    from factoryline.agentic_control import DurableIncidentDriver, INCIDENT_PHASES
+
+    return DurableIncidentDriver(
+        workflow_store(tmp_path, clock),
+        {"local-test": driver},
+        authorizer=lambda owner, intent: owner == "worker-a",
+        phase_verifiers={
+            phase: {"test-verifier": lambda evidence: evidence}
+            for phase in INCIDENT_PHASES
+        },
+        source_observer=lambda source: source,
+    )
+
+
+def _incident_success_evidence(
+    item, result_sha256="3" * 64, outcome="succeeded", verifier_id="test-verifier"
+):
+    run = item["last_run"]
+    binding = run["driver_binding"]
+    return {
+        "run_id": run["id"],
+        "action_intent_sha256": binding["action_intent_sha256"],
+        "source_sha256": binding["source_sha256"],
+        "policy_sha256": binding["policy_sha256"],
+        "outcome": outcome,
+        "result_sha256": result_sha256,
+        "verifier_id": verifier_id,
+    }
+
+
+def _launch_incident_phase(supervisor, key, **changes):
+    arguments = {
+        "owner": "worker-a",
+        "phase": "detect",
+        "driver_id": "local-test",
+        "policy_sha256": "1" * 64,
+        "action_sha256": "2" * 64,
+    }
+    arguments.update(changes)
+    return supervisor.launch_phase(key, **arguments)
+
+
+def test_incident_driver_persists_hash_bound_checkpoint_across_restart(
+    tmp_path, workflow_source
+):
+    store = workflow_store(tmp_path)
+    key = store.intake("incident-detect", workflow_source)["item"]["source_key"]
+    driver = _IncidentTestDriver()
+    launched = _launch_incident_phase(_incident_supervisor(tmp_path, driver), key)
+    assert launched["status"] == "launched"
+    assert len(driver.launches) == 1
+    binding = launched["item"]["run"]["driver_binding"]
+    assert binding["action_intent_sha256"] == driver.launches[0][1]
+
+    driver.state = "terminal"
+    supervisor = _incident_supervisor(tmp_path, driver)
+    terminal = _launch_incident_phase(supervisor, key)
+    assert terminal["status"] == "retired"
+    checkpoint = _incident_supervisor(tmp_path, driver).checkpoint(
+        key, "worker-a", "detect", _incident_success_evidence(terminal["item"])
+    )
+    assert checkpoint["status"] == "checkpointed"
+    saved = workflow_store(tmp_path).get(key)["incident"]["checkpoints"][0]
+    assert saved["phase"] == "detect"
+    assert saved["source_sha256"] == binding["source_sha256"]
+    assert saved["policy_sha256"] == "1" * 64
+    assert saved["action_sha256"] == "2" * 64
+    assert saved["result_sha256"] == "3" * 64
+    assert saved["owner_epoch"] == launched["item"]["run"]["epoch"]
+
+
+def test_incident_driver_recovers_launch_crash_without_duplicate_launch(
+    tmp_path, workflow_source
+):
+    store = workflow_store(tmp_path)
+    key = store.intake("incident-crash", workflow_source)["item"]["source_key"]
+    driver = _IncidentTestDriver(launch_error=True)
+    uncertain = _launch_incident_phase(_incident_supervisor(tmp_path, driver), key)
+    assert uncertain["status"] == "unknown"
+    assert len(driver.launches) == 1
+    assert workflow_store(tmp_path).get(key)["run"]["handle"] is None
+
+    driver.launch_error = False
+    recovered = _launch_incident_phase(_incident_supervisor(tmp_path, driver), key)
+    assert recovered["status"] == "live"
+    assert len(driver.launches) == 1
+    assert workflow_store(tmp_path).get(key)["run"]["handle"] == "incident-handle-1"
+
+
+def test_incident_driver_recovers_handle_persistence_crash_after_lease_expiry(
+    tmp_path, workflow_source, monkeypatch
+):
+    store = workflow_store(tmp_path, lambda: 100.0)
+    key = store.intake("incident-handle-crash", workflow_source)["item"]["source_key"]
+    driver = _IncidentTestDriver()
+    from factoryline.agentic_control import WorkflowEventStore
+
+    original_heartbeat = WorkflowEventStore.heartbeat
+
+    def interrupted_heartbeat(self, *args, **kwargs):
+        raise OSError("simulated crash after driver returned its handle")
+
+    monkeypatch.setattr(WorkflowEventStore, "heartbeat", interrupted_heartbeat)
+    uncertain = _launch_incident_phase(
+        _incident_supervisor(tmp_path, driver, lambda: 100.0), key, ttl=1
+    )
+    assert uncertain["status"] == "unknown"
+    assert len(driver.launches) == 1
+    assert workflow_store(tmp_path, lambda: 100.0).get(key)["run"]["handle"] is None
+
+    monkeypatch.setattr(WorkflowEventStore, "heartbeat", original_heartbeat)
+    recovered = _launch_incident_phase(
+        _incident_supervisor(tmp_path, driver, lambda: 102.0), key, ttl=1
+    )
+    assert recovered["status"] == "live"
+    assert len(driver.launches) == 1
+    assert workflow_store(tmp_path, lambda: 102.0).get(key)["run"]["handle"] == (
+        "incident-handle-1"
+    )
+
+
+def test_incident_driver_unknown_lookup_never_launches_and_missing_retry_is_bounded(
+    tmp_path, workflow_source
+):
+    store = workflow_store(tmp_path)
+    key = store.intake("incident-unknown", workflow_source)["item"]["source_key"]
+    driver = _IncidentTestDriver(state="unknown", accepted_on_error=False)
+    supervisor = _incident_supervisor(tmp_path, driver)
+    unknown = _launch_incident_phase(supervisor, key)
+    assert unknown["status"] == "unknown"
+    assert driver.launches == []
+
+    driver.lookup_error = True
+    transport_error = _launch_incident_phase(supervisor, key)
+    assert transport_error["status"] == "unknown"
+    assert driver.launches == []
+    driver.lookup_error = False
+    driver.state = "missing"
+    driver.launch_error = True
+    first = _launch_incident_phase(supervisor, key)
+    assert first["status"] == "unknown"
+    assert len(driver.launches) == 1
+    absent = _launch_incident_phase(supervisor, key)
+    assert absent["status"] == "retired"
+    assert len(driver.launches) == 1
+    driver.launch_error = False
+    retried = _launch_incident_phase(supervisor, key)
+    assert retried["status"] == "launched"
+    assert len(driver.launches) == 2
+
+
+def test_incident_driver_fences_other_owner_and_rejects_changed_intent(
+    tmp_path, workflow_source
+):
+    from factoryline.agentic_control import AgenticControlError
+
+    store = workflow_store(tmp_path)
+    key = store.intake("incident-fence", workflow_source)["item"]["source_key"]
+    driver = _IncidentTestDriver()
+    supervisor = _incident_supervisor(tmp_path, driver)
+    supervisor.authorizer = lambda owner, intent: owner in {"worker-a", "worker-b"}
+    _launch_incident_phase(supervisor, key)
+    with pytest.raises(AgenticControlError) as error:
+        _launch_incident_phase(supervisor, key, owner="worker-b")
+    assert error.value.code == "E_WORKFLOW_FENCED"
+    with pytest.raises(AgenticControlError) as intent_error:
+        _launch_incident_phase(supervisor, key, policy_sha256="4" * 64)
+    assert intent_error.value.code == "E_INCIDENT_INTENT"
+    assert len(driver.launches) == 1
+
+
+@pytest.mark.parametrize("outcome", ["failed", "cancelled"])
+def test_incident_checkpoint_rejects_failed_or_unregistered_outcome(
+    tmp_path, workflow_source, outcome
+):
+    from factoryline.agentic_control import AgenticControlError
+
+    key = workflow_store(tmp_path).intake("incident-failed", workflow_source)["item"][
+        "source_key"
+    ]
+    driver = _IncidentTestDriver()
+    supervisor = _incident_supervisor(tmp_path, driver)
+    _launch_incident_phase(supervisor, key)
+    driver.state = "terminal"
+    terminal = _launch_incident_phase(supervisor, key)
+    with pytest.raises(AgenticControlError) as failed:
+        supervisor.checkpoint(
+            key,
+            "worker-a",
+            "detect",
+            _incident_success_evidence(terminal["item"], outcome=outcome),
+        )
+    assert failed.value.code == "E_INCIDENT_EVIDENCE"
+    with pytest.raises(AgenticControlError) as unregistered:
+        supervisor.checkpoint(
+            key,
+            "worker-a",
+            "detect",
+            _incident_success_evidence(terminal["item"], verifier_id="fake-verifier"),
+        )
+    assert unregistered.value.code == "E_INCIDENT_TRUST"
+    assert workflow_store(tmp_path).get(key).get("incident") is None
+
+
+def test_incident_checkpoint_requires_fresh_source_and_success_verifier(
+    tmp_path, workflow_source
+):
+    from factoryline.agentic_control import (
+        AgenticControlError,
+        DurableIncidentDriver,
+        INCIDENT_PHASES,
+    )
+
+    key = workflow_store(tmp_path).intake("incident-source", workflow_source)["item"][
+        "source_key"
+    ]
+    driver = _IncidentTestDriver()
+    base = _incident_supervisor(tmp_path, driver)
+    _launch_incident_phase(base, key)
+    driver.state = "terminal"
+    terminal = _launch_incident_phase(base, key)
+    evidence = _incident_success_evidence(terminal["item"])
+
+    changed_source = {**workflow_source, "revision": 2, "title": "Changed source"}
+    stale = DurableIncidentDriver(
+        workflow_store(tmp_path),
+        {"local-test": driver},
+        authorizer=lambda owner, intent: True,
+        phase_verifiers={
+            phase: {"test-verifier": lambda expected: expected}
+            for phase in INCIDENT_PHASES
+        },
+        source_observer=lambda source: changed_source,
+    )
+    with pytest.raises(AgenticControlError) as stale_error:
+        stale.checkpoint(key, "worker-a", "detect", evidence)
+    assert stale_error.value.code == "E_INCIDENT_SOURCE"
+
+    def verify_exact_result(expected):
+        if expected["result_sha256"] != "3" * 64:
+            return {**expected, "outcome": "failed"}
+        return expected
+
+    rejecting = DurableIncidentDriver(
+        workflow_store(tmp_path),
+        {"local-test": driver},
+        authorizer=lambda owner, intent: True,
+        phase_verifiers={
+            phase: {"test-verifier": verify_exact_result} for phase in INCIDENT_PHASES
+        },
+        source_observer=lambda source: source,
+    )
+    with pytest.raises(AgenticControlError) as forged:
+        rejecting.checkpoint(
+            key,
+            "worker-a",
+            "detect",
+            _incident_success_evidence(terminal["item"], result_sha256="9" * 64),
+        )
+    assert forged.value.code == "E_INCIDENT_EVIDENCE"
+    assert workflow_store(tmp_path).get(key).get("incident") is None
+
+
+def test_incident_launch_requires_current_caller_authorization(
+    tmp_path, workflow_source
+):
+    from factoryline.agentic_control import (
+        AgenticControlError,
+        DurableIncidentDriver,
+        INCIDENT_PHASES,
+    )
+
+    key = workflow_store(tmp_path).intake("incident-auth", workflow_source)["item"][
+        "source_key"
+    ]
+    driver = _IncidentTestDriver()
+    denied = DurableIncidentDriver(
+        workflow_store(tmp_path),
+        {"local-test": driver},
+        authorizer=lambda owner, intent: False,
+        phase_verifiers={
+            phase: {"test-verifier": lambda expected: expected}
+            for phase in INCIDENT_PHASES
+        },
+        source_observer=lambda source: source,
+    )
+    with pytest.raises(AgenticControlError) as error:
+        _launch_incident_phase(denied, key)
+    assert error.value.code == "E_INCIDENT_AUTHORITY"
+    assert driver.launches == []
+    assert workflow_store(tmp_path).get(key)["run"] is None
+
+
+def test_incident_driver_rechecks_permission_after_lookup_before_launch(
+    tmp_path, workflow_source
+):
+    from factoryline.agentic_control import (
+        DurableIncidentDriver,
+        AgenticControlError,
+        INCIDENT_PHASES,
+    )
+
+    key = workflow_store(tmp_path).intake("incident-revoked-lookup", workflow_source)[
+        "item"
+    ]["source_key"]
+    driver = _IncidentTestDriver()
+    permitted = [True]
+
+    def lookup_and_revoke(action_intent_id, intent):
+        value = {
+            "action_intent_sha256": action_intent_id,
+            "state": "missing",
+            "handle": None,
+            "authoritative": True,
+        }
+        permitted[0] = False
+        return value
+
+    driver.lookup = lookup_and_revoke
+    supervisor = DurableIncidentDriver(
+        workflow_store(tmp_path),
+        {"local-test": driver},
+        authorizer=lambda owner, intent: permitted[0],
+        phase_verifiers={
+            phase: {"test-verifier": lambda expected: expected}
+            for phase in INCIDENT_PHASES
+        },
+        source_observer=lambda source: source,
+    )
+    with pytest.raises(AgenticControlError) as error:
+        _launch_incident_phase(supervisor, key)
+    assert error.value.code == "E_INCIDENT_AUTHORITY"
+    assert driver.launches == []
+    assert workflow_store(tmp_path).get(key)["run"] is None
+
+
+def test_incident_checkpoint_rechecks_revoked_permission_before_commit(
+    tmp_path, workflow_source
+):
+    from factoryline.agentic_control import (
+        DurableIncidentDriver,
+        AgenticControlError,
+        INCIDENT_PHASES,
+    )
+
+    key = workflow_store(tmp_path).intake(
+        "incident-revoked-checkpoint", workflow_source
+    )["item"]["source_key"]
+    driver = _IncidentTestDriver()
+    permitted = [True]
+
+    def verify_then_revoke(expected):
+        permitted[0] = False
+        return expected
+
+    supervisor = DurableIncidentDriver(
+        workflow_store(tmp_path),
+        {"local-test": driver},
+        authorizer=lambda owner, intent: permitted[0],
+        phase_verifiers={
+            phase: {
+                "test-verifier": verify_then_revoke
+                if phase == "detect"
+                else lambda expected: expected
+            }
+            for phase in INCIDENT_PHASES
+        },
+        source_observer=lambda source: source,
+    )
+    _launch_incident_phase(supervisor, key)
+    driver.state = "terminal"
+    terminal = _launch_incident_phase(supervisor, key)
+    evidence = _incident_success_evidence(terminal["item"])
+    with pytest.raises(AgenticControlError) as error:
+        supervisor.checkpoint(key, "worker-a", "detect", evidence)
+    assert error.value.code == "E_INCIDENT_AUTHORITY"
+    persisted = workflow_store(tmp_path).get(key)
+    assert persisted.get("incident") is None
+    assert persisted["attempts"] == 1
+
+
+def test_incident_driver_enforces_six_checkpoints_and_stops_at_review(
+    tmp_path, workflow_source
+):
+    from factoryline.agentic_control import INCIDENT_PHASES
+
+    store = workflow_store(tmp_path)
+    key = store.intake("incident-phases", workflow_source)["item"]["source_key"]
+    driver = _IncidentTestDriver()
+    for index, phase in enumerate(INCIDENT_PHASES):
+        driver.state = "missing"
+        driver.handle = None
+        supervisor = _incident_supervisor(tmp_path, driver)
+        launched = _launch_incident_phase(
+            supervisor,
+            key,
+            phase=phase,
+            action_sha256=hashlib.sha256(phase.encode()).hexdigest(),
+        )
+        assert launched["status"] == "launched"
+        driver.state = "terminal"
+        terminal = _launch_incident_phase(
+            _incident_supervisor(tmp_path, driver),
+            key,
+            phase=phase,
+            action_sha256=hashlib.sha256(phase.encode()).hexdigest(),
+        )
+        assert terminal["status"] == "retired"
+        result = _incident_supervisor(tmp_path, driver).checkpoint(
+            key,
+            "worker-a",
+            phase,
+            _incident_success_evidence(
+                terminal["item"],
+                hashlib.sha256(f"evidence-{index}".encode()).hexdigest(),
+            ),
+        )
+    assert result["status"] == "pending_review"
+    assert len(result["item"]["incident"]["checkpoints"]) == 6
+    assert len(driver.launches) == 6
+
+
 def github_intake_payload():
     return {
         "number": 172,

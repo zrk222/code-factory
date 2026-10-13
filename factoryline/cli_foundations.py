@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import stat
 import sys
 from pathlib import Path
 from typing import Any
@@ -198,6 +199,39 @@ def add_parser(sub: Any) -> None:
     efficiency_status.add_argument("--root", default=".")
     efficiency_status.add_argument("--json", action="store_true")
 
+    shard_build = efficiency_sub.add_parser(
+        "shard-build", help="build an immutable source-bound context shard candidate"
+    )
+    shard_build.add_argument(
+        "--manifest", required=True, help="bounded shard request JSON"
+    )
+    shard_build.add_argument("--root", default=".")
+    shard_build.add_argument("--json", action="store_true")
+    shard_validate = efficiency_sub.add_parser(
+        "shard-validate", help="validate candidate provenance and freshness"
+    )
+    shard_validate.add_argument(
+        "candidate", help="workspace-relative candidate JSON path"
+    )
+    shard_validate.add_argument(
+        "--accepted", help="bounded workspace-relative accepted-shards JSON list"
+    )
+    shard_validate.add_argument("--root", default=".")
+    shard_validate.add_argument("--json", action="store_true")
+    shard_review = efficiency_sub.add_parser(
+        "shard-review", help="record an explicit unauthenticated caller review"
+    )
+    shard_review.add_argument(
+        "candidate", help="workspace-relative candidate JSON path"
+    )
+    shard_review.add_argument(
+        "--decision", required=True, choices=("accept", "reject", "defer")
+    )
+    shard_review.add_argument("--reviewer-id", required=True)
+    shard_review.add_argument("--review-basis", required=True)
+    shard_review.add_argument("--root", default=".")
+    shard_review.add_argument("--json", action="store_true")
+
 
 def _run_architecture(args: Any) -> int:
     from .architecture_health import (
@@ -373,6 +407,8 @@ def _efficiency_result(args: Any, root: Path) -> tuple[dict[str, Any], int]:
         verify_context_packet,
     )
 
+    if args.efficiency_cmd in {"shard-build", "shard-validate", "shard-review"}:
+        return _efficiency_shard_result(args, root)
     if args.efficiency_cmd in {"pack", "select", "record"}:
         with Path(args.manifest).open("rb") as stream:
             raw = stream.read(1_000_001)
@@ -401,11 +437,129 @@ def _efficiency_result(args: Any, root: Path) -> tuple[dict[str, Any], int]:
     return context_efficiency_status(root), 0
 
 
+def _efficiency_shard_result(args: Any, root: Path) -> tuple[dict[str, Any], int]:
+    from .context_efficiency import (
+        MAX_SHARD_ARTIFACT_BYTES,
+        ContextEfficiencyError,
+        build_context_shard_candidate,
+        review_context_shard_candidate,
+        validate_context_shard_candidate,
+    )
+
+    if args.efficiency_cmd == "shard-build":
+        raw, _ = _read_shard_cli_input(root, args.manifest, "manifest", 1_000_000)
+        request = json.loads(raw.decode("utf-8-sig"))
+        fields = {
+            "schema",
+            "packet_path",
+            "shard_type",
+            "claims",
+            "retained_records",
+            "expires_at",
+        }
+        if (
+            not isinstance(request, dict)
+            or set(request) != fields
+            or request.get("schema") != "factory.context-shard-request.v1"
+        ):
+            raise ContextEfficiencyError(
+                "E_SHARD_FIELDS",
+                "manifest must use the exact context-shard request schema",
+            )
+        if not isinstance(request["packet_path"], str):
+            raise ContextEfficiencyError(
+                "E_SHARD_FIELDS", "packet_path must be workspace-relative"
+            )
+        if (
+            not isinstance(request["shard_type"], str)
+            or not isinstance(request["claims"], list)
+            or not isinstance(request["retained_records"], dict)
+            or not isinstance(request["expires_at"], str)
+        ):
+            raise ContextEfficiencyError(
+                "E_SHARD_FIELDS", "manifest field types are invalid"
+            )
+        return build_context_shard_candidate(
+            root,
+            Path(request["packet_path"]),
+            request["shard_type"],
+            request["claims"],
+            request["retained_records"],
+            request["expires_at"],
+        ), 0
+
+    candidate_raw, relative = _read_shard_cli_input(
+        root, args.candidate, "candidate path", MAX_SHARD_ARTIFACT_BYTES
+    )
+    candidate = json.loads(candidate_raw.decode("utf-8"))
+    if not isinstance(candidate, dict):
+        raise ContextEfficiencyError(
+            "E_SHARD_FIELDS", "candidate artifact must be an object"
+        )
+    candidate["artifact_path"] = relative
+    if args.efficiency_cmd == "shard-review":
+        return (
+            review_context_shard_candidate(
+                root,
+                candidate,
+                args.decision,
+                args.reviewer_id,
+                args.review_basis,
+            ),
+            0,
+        )
+    accepted_shards = ()
+    if args.accepted:
+        accepted_raw, _ = _read_shard_cli_input(
+            root, args.accepted, "accepted shards", 1_000_000
+        )
+        accepted_shards = json.loads(accepted_raw.decode("utf-8"))
+        if not isinstance(accepted_shards, list):
+            raise ContextEfficiencyError(
+                "E_SHARD_FIELDS", "accepted shards input must be a JSON list"
+            )
+    result = validate_context_shard_candidate(
+        root, relative, accepted_shards=accepted_shards
+    )
+    return result, 0 if result.get("valid") is True else 1
+
+
+def _read_shard_cli_input(
+    root: Path, raw_path: str, field: str, limit: int
+) -> tuple[bytes, str]:
+    """Read one regular, workspace-contained shard input without path disclosure."""
+    from .context_efficiency import (
+        ContextEfficiencyError,
+        _has_reparse_ancestor,
+        _read_bounded,
+        _shard_relative_path,
+    )
+
+    path, relative = _shard_relative_path(root, raw_path, field)
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or _has_reparse_ancestor(path):
+            raise ContextEfficiencyError(
+                "E_PATH_INPUT", f"{field} must be a regular workspace file"
+            )
+        return _read_bounded(path, limit), relative
+    except ContextEfficiencyError:
+        raise
+    except OSError as exc:
+        raise ContextEfficiencyError(
+            "E_PATH_INPUT", f"{field} cannot be read as a bounded workspace file"
+        ) from exc
+
+
 def _run_efficiency(args: Any) -> int:
     from .context_efficiency import ContextEfficiencyError
 
-    root = Path(args.root).resolve()
     try:
+        root = Path(args.root)
+        if args.efficiency_cmd in {"shard-build", "shard-validate", "shard-review"}:
+            root = root.absolute()
+        else:
+            root = root.resolve()
         result, code = _efficiency_result(args, root)
     except (
         ContextEfficiencyError,

@@ -5,9 +5,12 @@ import io
 from pathlib import Path
 import sys
 import threading
+import pytest
 
 from factoryline.runtime_audit_process import _drain_stream, _stop, run_bounded_command
 from factoryline.runtime_audit_runner import run_runtime_audit_plan
+from factoryline.runtime_audit_contract import verify_runtime_audit_plan
+from test_runtime_audit_contract import D, signed_plan
 
 
 def test_runner_uses_exact_argv_separate_artifacts_and_no_worktree_home(tmp_path):
@@ -48,28 +51,177 @@ def test_runner_uses_exact_argv_separate_artifacts_and_no_worktree_home(tmp_path
     assert not (tmp_path / "runtime-home").exists()
 
 
-def test_runner_supports_bounded_parallel_lanes_with_isolated_scratch(tmp_path):
-    writer = tmp_path / "writer.py"
-    writer.write_text(
-        "import json,sys; json.dump({'schema':'fixture','mode':sys.argv[1]},open(sys.argv[2],'w'))\n",
-        encoding="utf-8",
+def test_runner_supports_bounded_parallel_lanes_with_isolated_scratch(
+    tmp_path, monkeypatch
+):
+    plan_path, trust, trust_sha, _ = signed_plan(
+        tmp_path,
+        execution_policy={
+            "max_parallelism": 2,
+            "non_mutating": True,
+            "resource_safe": True,
+        },
     )
-    lanes = [
-        {
-            "id": f"lane-{suffix}",
-            "kind": "stateful_invariant",
-            "timeout_seconds": 5,
-            "target_argv": [sys.executable, str(writer), "target", "{artifact}"],
-            "known_bad_argv": [sys.executable, str(writer), "known_bad", "{artifact}"],
-        }
-        for suffix in ("a", "b")
-    ]
+    verified = verify_runtime_audit_plan(plan_path, trust, trust_sha, tmp_path, D)
+    calls = []
+
+    def fake_leg(lane, command_name, argv_key, run_root, workspace):
+        calls.append((lane["id"], command_name))
+        return {"artifact": {"ok": True}}
+
+    monkeypatch.setattr("factoryline.runtime_audit_runner._run_one_guarded", fake_leg)
+    plan = verified["plan"]
     result = run_runtime_audit_plan(
-        {"lanes": lanes}, tmp_path, tmp_path / "out", max_parallelism=2
+        plan,
+        tmp_path,
+        tmp_path / "out",
+        plan_sha256=verified["payload_sha256"],
+        max_parallelism=2,
+        execution_admission=verified["execution_admission"],
     )
     assert result["execution_policy"]["max_parallelism"] == 2
-    assert [item["id"] for item in result["executions"]] == ["lane-a", "lane-b"]
-    assert all(item["target"]["artifact"] for item in result["executions"])
+    assert [item["id"] for item in result["executions"]] == [
+        item["id"] for item in plan["lanes"]
+    ]
+    assert calls == [
+        (lane["id"], leg) for lane in plan["lanes"] for leg in ("target", "known_bad")
+    ]
+
+
+def test_parallel_runner_requires_signed_policy_before_launch(tmp_path):
+    lane = {
+        "id": "lane",
+        "kind": "stateful_invariant",
+        "timeout_seconds": 1,
+        "target_argv": [sys.executable, "-c", "raise SystemExit(9)", "{artifact}"],
+        "known_bad_argv": [sys.executable, "-c", "raise SystemExit(9)", "{artifact}"],
+    }
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    with pytest.raises(RuntimeAuditError, match="E_PARALLELISM_POLICY"):
+        run_runtime_audit_plan(
+            {"lanes": [lane]}, tmp_path, tmp_path / "out", max_parallelism=2
+        )
+    assert not list((tmp_path / "out").glob("run-*"))
+
+
+def test_parallel_prelaunch_source_growth_reads_only_signed_budget_plus_one(
+    tmp_path, monkeypatch
+):
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    plan_path, trust, trust_sha, _ = signed_plan(
+        tmp_path,
+        execution_policy={
+            "max_parallelism": 2,
+            "non_mutating": True,
+            "resource_safe": True,
+        },
+    )
+    verified = verify_runtime_audit_plan(plan_path, trust, trust_sha, tmp_path, D)
+    source = tmp_path / "candidate.txt"
+    source.write_bytes(b"g" * 4096)
+    calls = []
+    original_open = Path.open
+
+    class CountingStream:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def __getattr__(self, name):
+            return getattr(self.stream, name)
+
+        def __enter__(self):
+            self.stream.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.stream.__exit__(*args)
+
+        def read(self, size=-1):
+            block = self.stream.read(size)
+            calls.append(len(block))
+            return block
+
+    def counting_open(path, *args, **kwargs):
+        stream = original_open(path, *args, **kwargs)
+        return CountingStream(stream) if path == source else stream
+
+    monkeypatch.setattr(Path, "open", counting_open)
+
+    with pytest.raises(RuntimeAuditError, match="E_SOURCE_SIZE"):
+        run_runtime_audit_plan(
+            verified["plan"],
+            tmp_path,
+            tmp_path / "out",
+            plan_sha256=verified["payload_sha256"],
+            max_parallelism=2,
+            execution_admission=verified["execution_admission"],
+        )
+    assert sum(calls) == len(b"candidate") + 1
+    assert not list((tmp_path / "out").glob("run-*"))
+
+
+def test_parallel_runner_rejects_unsafe_or_over_limit_policy(tmp_path):
+    lane = {
+        "id": "lane",
+        "kind": "stateful_invariant",
+        "timeout_seconds": 1,
+        "target_argv": [sys.executable, "-c", "pass", "{artifact}"],
+        "known_bad_argv": [sys.executable, "-c", "pass", "{artifact}"],
+    }
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    for policy in (
+        {"max_parallelism": 2, "non_mutating": False, "resource_safe": True},
+        {"max_parallelism": 2, "non_mutating": True, "resource_safe": False},
+        {"max_parallelism": 1, "non_mutating": True, "resource_safe": True},
+    ):
+        with pytest.raises(RuntimeAuditError, match="E_PARALLELISM_POLICY"):
+            run_runtime_audit_plan(
+                {"lanes": [lane], "execution_policy": policy},
+                tmp_path,
+                tmp_path / "out",
+                max_parallelism=2,
+            )
+
+
+@pytest.mark.parametrize(
+    "mutation", ["lane", "source", "source_bytes", "environment", "policy"]
+)
+def test_parallel_runner_rejects_plan_changed_after_admission(tmp_path, mutation):
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    plan_path, trust, trust_sha, plan = signed_plan(
+        tmp_path,
+        execution_policy={
+            "max_parallelism": 2,
+            "non_mutating": True,
+            "resource_safe": True,
+        },
+    )
+    verified = verify_runtime_audit_plan(plan_path, trust, trust_sha, tmp_path, D)
+    admission = verified["execution_admission"]
+    if mutation == "lane":
+        plan["lanes"][0]["timeout_seconds"] = 2
+    elif mutation == "source":
+        plan["sources"][0]["sha256"] = "b" * 64
+    elif mutation == "source_bytes":
+        (tmp_path / "candidate.txt").write_bytes(b"changed")
+    elif mutation == "environment":
+        plan["environment"]["digest"] = "f" * 64
+    else:
+        plan["execution_policy"]["max_parallelism"] = 3
+    with pytest.raises(RuntimeAuditError, match="E_PARALLELISM_POLICY"):
+        run_runtime_audit_plan(
+            plan,
+            tmp_path,
+            tmp_path / "out",
+            plan_sha256=verified["payload_sha256"],
+            max_parallelism=2,
+            execution_admission=admission,
+        )
+    assert not list((tmp_path / "out").glob("run-*"))
 
 
 def test_missing_artifact_error_does_not_disclose_absolute_path(tmp_path):
