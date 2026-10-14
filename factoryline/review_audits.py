@@ -29,11 +29,8 @@ except ModuleNotFoundError:  # Python 3.10
 from .audit_action_refs import audit_remediation_packet
 from .deep_audit_io import local_file
 from .runtime_audit_common import RuntimeAuditError
-from .review_integrity import (
-    security_assignment_findings,
-    security_call_name,
-    security_source_sink_findings,
-)
+from . import review_integrity as integrity
+from .review_integrity import security_call_name as security_call_name
 
 SCHEMA = "factory.review-audit-policy.v1"
 FINGERPRINT_SCHEMA = "factory.code-review-fingerprint.v1"
@@ -3162,8 +3159,6 @@ def _source_methods_are_stable(methods):
 
 
 def _source_callback_invokers(imports, snapshots, summaries=None):
-    from .review_integrity import virtual_dispatch_defaults
-
     invokers = {}
     summaries = {} if summaries is None else summaries
     for local, (source, symbol) in imports.items():
@@ -3200,7 +3195,7 @@ def _source_callback_invokers(imports, snapshots, summaries=None):
             "invoked": sorted(invoked),
             "source": source.as_posix(),
             "symbol": symbol,
-            "virtual_dispatch": virtual_dispatch_defaults(
+            "virtual_dispatch": integrity.virtual_dispatch_defaults(
                 methods, _module_security_aliases(tree), _effective_assertion
             ),
         }
@@ -3457,8 +3452,6 @@ def _proven_dispatch_assertion(test, aliases, helpers, apps, invokers):
 
 
 def _flask_context_apps(path, tree, snapshots):
-    from .review_integrity import flask_fixture_apps
-
     declared = {}
     sources = sorted(
         (
@@ -3471,8 +3464,10 @@ def _flask_context_apps(path, tree, snapshots):
     )
     for source in sources:
         target = snapshots[source]
-        declared.update(flask_fixture_apps(target, _module_security_aliases(target)))
-    declared.update(flask_fixture_apps(tree, _module_security_aliases(tree)))
+        declared.update(
+            integrity.flask_fixture_apps(target, _module_security_aliases(target))
+        )
+    declared.update(integrity.flask_fixture_apps(tree, _module_security_aliases(tree)))
     return {name for name, trusted in declared.items() if trusted}
 
 
@@ -3715,14 +3710,11 @@ def _declared_typecheck_sources(
 
 
 def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict) -> str:
-    from .review_integrity import (
-        flask_fixture_apps,
-        flask_invoked_callbacks,
-        virtual_dispatch_defaults,
-    )
-
     helpers = (
         ast.parse,
+        _build_oracle_context,
+        _static_type_edges,
+        _security_source_bytes,
         _click_runner_fixtures,
         _scope_security_aliases,
         _module_security_aliases,
@@ -3744,13 +3736,21 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _partial_callback_parameters,
         _callback_binding_preserved,
         _callback_wrapper_preserves,
-        flask_fixture_apps,
-        flask_invoked_callbacks,
-        virtual_dispatch_defaults,
+        integrity.flask_fixture_apps,
+        integrity.flask_invoked_callbacks,
+        integrity.virtual_dispatch_defaults,
         _flask_context_apps,
         _local_assertion_helpers,
         _local_weak_assertion_helpers,
         _is_oracle_helper_name,
+    )
+    helpers += tuple(
+        getattr(integrity, name)
+        for name in (
+            "oracle_configuration",
+            "bind_benchmark_context",
+            "_structural_oracle_context",
+        )
     )
     identity = {
         "schema": "factory.security-oracle-context-cache.v3",
@@ -3877,20 +3877,18 @@ def _project_oracle_context(
     *,
     cache_enabled: bool = True,
     collection_identity: dict | None = None,
-) -> tuple[dict, list, list]:
-    """Resolve one local import hop without executing repository code; bind every read."""
+) -> tuple[dict, list, list, dict]:
+    """Resolve local imports and return retained bytes without executing repository code."""
     source_bytes, source_bindings, manifest, source_cacheable = _oracle_source_inputs(
         root, files
     )
-    from .review_integrity import oracle_configuration, bind_benchmark_context
-
     (
         typecheck_sources,
         config_bindings,
         config_identity,
         config_cacheable,
         benchmarks,
-    ) = oracle_configuration(
+    ) = integrity.oracle_configuration(
         root, files, _declared_typecheck_sources, _security_source_bytes, MAX_BYTES
     )
     config_identity = {
@@ -3904,14 +3902,14 @@ def _project_oracle_context(
         cached = _oracle_context_cache_read(cache_key)
         if cached is not None:
             contexts, edges = cached
-            return contexts, bindings, edges
+            return contexts, bindings, edges, source_bytes
     snapshots = _oracle_snapshots(root, files, source_bytes)
     contexts, edges = _build_oracle_context(root, files, snapshots, typecheck_sources)
-    bind_benchmark_context(contexts, snapshots, benchmarks)
+    integrity.bind_benchmark_context(contexts, snapshots, benchmarks)
     edges.extend(_static_type_edges(root, typecheck_sources, config_bindings))
     if cache_enabled and cacheable:
         _oracle_context_cache_write(cache_key, contexts, edges)
-    return contexts, bindings, edges
+    return contexts, bindings, edges, source_bytes
 
 
 def _build_oracle_context(
@@ -3952,9 +3950,9 @@ def _build_oracle_context(
         contexts[path]["typecheck"] = path in typecheck_sources
         contexts[path]["flask_apps"] = _flask_context_apps(path, tree, snapshots)
         imports = _oracle_imports(root, path, tree, set(files))
-        from .review_integrity import _structural_oracle_context
-
-        contexts[path].update(_structural_oracle_context(tree, imports, snapshots))
+        contexts[path].update(
+            integrity._structural_oracle_context(tree, imports, snapshots)
+        )
         contexts[path]["callback_invokers"] = _source_callback_invokers(
             imports, snapshots, callback_summaries
         )
@@ -5142,7 +5140,7 @@ def _security_node_findings(
     roundtrip_aliases: dict | None = None,
 ) -> list[dict[str, Any]]:
     if isinstance(node, ast.Call):
-        call = security_call_name(node, aliases)
+        call = integrity.security_call_name(node, aliases)
         finding = _security_call_finding(call, relative, node)
         if finding and finding["code"] == "SECURITY_UNSAFE_DESERIALIZATION":
             if _test_serialization_roundtrip(relative, node, roundtrip_aliases or {}):
@@ -5157,7 +5155,7 @@ def _security_node_findings(
         finding = _bare_except_finding(relative, node)
         return [finding] if finding is not None else []
     if isinstance(node, (ast.Assign, ast.AnnAssign)):
-        return security_assignment_findings(relative, node, aliases)
+        return integrity.security_assignment_findings(relative, node, aliases)
     return []
 
 
@@ -5228,7 +5226,9 @@ def _security_scan_tree(
     relative = path.relative_to(root).as_posix()
     nodes = list(ast.walk(tree))
     aliases = _security_aliases(nodes)
-    source_sink_findings = security_source_sink_findings(relative, tree, nodes, aliases)
+    source_sink_findings = integrity.security_source_sink_findings(
+        relative, tree, nodes, aliases
+    )
     for node in nodes:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             node._oracle_module = tree
@@ -5310,6 +5310,7 @@ def _security_scan_file(
     tenant_read_bindings: dict[str, tuple[str, ...]] | None = None,
     oracle_context: dict | None = None,
     test_file_patterns: set[str] | None = None,
+    source_data: bytes | None = None,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]], str]:
     """Scan one bounded Python source and return its byte binding and findings."""
     relative = path.relative_to(workspace).as_posix()
@@ -5331,7 +5332,9 @@ def _security_scan_file(
                 ],
                 "too_large",
             )
-        data = _security_source_bytes(workspace, relative)
+        data = source_data
+        if data is None:
+            data = _security_source_bytes(workspace, relative)
         final_size = local_file(workspace, relative).stat().st_size
         if len(data) > MAX_BYTES or final_size > MAX_BYTES:
             return (
@@ -5384,11 +5387,9 @@ def _security_scan_file(
             ],
             "unreadable",
         )
-    from .review_integrity import implementation_completeness_findings
-
     return (
         binding,
-        implementation_completeness_findings(relative, tree, data)
+        integrity.implementation_completeness_findings(relative, tree, data)
         + _security_scan_tree(
             workspace,
             path,
@@ -5555,7 +5556,7 @@ def _scan_security_sources(
                 state=collection_identity["state"],
             )
         )
-    contexts, context_bindings, oracle_edges = _project_oracle_context(
+    contexts, context_bindings, oracle_edges, source_bytes = _project_oracle_context(
         workspace,
         files,
         cache_enabled=cache_enabled,
@@ -5572,6 +5573,7 @@ def _scan_security_sources(
             scoped_bindings,
             contexts.get(path, {}),
             test_file_patterns,
+            source_bytes.get(path),
         )
         if binding is not None:
             bindings.append(binding)
