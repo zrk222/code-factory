@@ -72,6 +72,7 @@ _CROSSCUTTING_MODULES = (
     "runtime_audit_runner.py",
     "runtime_audit_integrity.py",
     "runtime_audit.py",
+    "runtime_audit_process.py",
 )
 _REJECTION_PREFIXES = ("E_", "RUNTIME_", "CROSS_", "HOLLOW_", "INCOMPLETE_")
 _NON_REJECTION_MARKERS = {

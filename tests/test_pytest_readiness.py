@@ -565,17 +565,14 @@ def test_typecheck_probe_fails_closed_for_ignored_transfer(tmp_path):
     )
     signature, transfer = _write_typecheck_project(tmp_path, source)
 
-    result = probe_typecheck_transfer(
-        tmp_path,
-        "test_transfer.py::test_transfer",
-        signature,
-        transfer,
-        "typecheck.ini",
-    )
-
-    assert result["status"] == "INCOMPLETE"
-    assert result["challenge"] == {}
-    assert result["discovery"]["diagnostics"][0]["code"] == "unused-ignore"
+    with pytest.raises(ValueError, match="Type ignore is inside selected test"):
+        probe_typecheck_transfer(
+            tmp_path,
+            "test_transfer.py::test_transfer",
+            signature,
+            transfer,
+            "typecheck.ini",
+        )
 
 
 def test_typecheck_probe_fails_closed_when_any_sink_accepts_mutation(tmp_path):
@@ -1377,7 +1374,7 @@ def test_assertion_probe_input_and_binding_limits(tmp_path, monkeypatch):
     original = Path.is_symlink
     with monkeypatch.context() as patch:
         patch.setattr(Path, "is_symlink", lambda p: p == tmp_path or original(p))
-        with pytest.raises(ValueError, match="inside the project"):
+        with pytest.raises(ValueError, match="linked path"):
             _challenge_inputs(tmp_path, "test_case.py::test_case", 2)
     with suite.open("wb") as stream:
         stream.truncate(4 * 1024 * 1024 + 1)
@@ -1413,7 +1410,7 @@ def test_challenge_source_binding_preserves_existing_digest_format(
     assert _challenge_source_binding(tmp_path) == expected
 
 
-def test_challenge_source_digest_bounds_growth_after_size_check():
+def test_challenge_source_digest_bounds_growth_after_size_check(tmp_path, monkeypatch):
     from factoryline.pytest_readiness import _challenge_source_digest
 
     class GrowingStream:
@@ -1430,18 +1427,20 @@ def test_challenge_source_digest_bounds_growth_after_size_check():
             self.requests.append(size)
             return b"x" * size
 
-    class GrowingPath:
-        def __init__(self):
-            self.stream = GrowingStream()
+    path = tmp_path / "growing.py"
+    stream = GrowingStream()
+    original_open = Path.open
 
-        def open(self, mode):
+    def open_growing_stream(candidate, mode="r", *args, **kwargs):
+        if candidate == path:
             assert mode == "rb"
-            return self.stream
+            return stream
+        return original_open(candidate, mode, *args, **kwargs)
 
-    path = GrowingPath()
+    monkeypatch.setattr(Path, "open", open_growing_stream)
     with pytest.raises(ValueError, match="128 MiB"):
         _challenge_source_digest(path, 5)
-    assert path.stream.requests == [6]
+    assert stream.requests == [6]
 
 
 def test_assertion_probe_requires_exact_terminal_reports():
@@ -1468,11 +1467,13 @@ def test_assertion_probe_matches_python310_code_identity(tmp_path):
     source.write_text("def test_case():\n    assert True\n")
     plugin = _AssertionChallenge(source.resolve(), 2, False, "test_case", 1)
     plugin.active = True
+    plugin.phase = "call"
     frame = SimpleNamespace(
         f_lineno=2,
         f_code=SimpleNamespace(
             co_name="test_case", co_firstlineno=1, co_filename=str(source)
         ),
+        f_globals={"__name__": "test_case"},
     )
     plugin.trace(frame, "line", None)
     assert plugin.hits == 1

@@ -674,6 +674,26 @@ def test_search_inventory_matches_the_six_lane_source_count():
     assert payload["returned"] == 20
 
 
+def test_search_inventory_includes_process_rejection_conditions():
+    import factoryline.audit_rule_search as search_module
+
+    rules = search_module._inventory()
+    codes = {rule["rejectionCondition"] for rule in rules}
+    process_markers = {
+        code
+        for code in search_module._markers("runtime_audit_process.py")
+        if code.startswith(search_module._REJECTION_PREFIXES)
+    }
+
+    assert process_markers == {
+        "E_MUTATION_OUTPUT",
+        "E_MUTATION_TEMP",
+        "E_OUTPUT_ESCAPE",
+    }
+    assert process_markers <= codes
+    assert "runtime_audit_process.py" in search_module._CROSSCUTTING_MODULES
+
+
 def test_search_can_surface_cross_cutting_rules_and_keeps_context_small():
     payload = search_audit_rules({"query": "e_", "limit": 2})
 

@@ -180,6 +180,7 @@ class _AssertionChallenge:
             self.origin_status = "INCOMPLETE"
 
     def profile(self, frame, event, arg):
+        """Observe executed frames from the audited project during profiling."""
         if event == "call":
             self._record_project_frame(frame)
 
@@ -282,6 +283,7 @@ class _AssertionChallenge:
             self.collection_incomplete = True
 
     def pytest_collectreport(self, report):
+        """Record failed or skipped collection reports as incomplete evidence."""
         if report.failed or report.skipped:
             self.collection_incomplete = True
         self.collection_reports.append(
@@ -1071,8 +1073,14 @@ def _run_assertion_challenge(config, timeout):
     with tempfile.TemporaryDirectory(prefix="cf-assertion-probe-") as directory:
         output = Path(directory) / "observation.json"
         manifest_path = Path(directory) / "source-manifest.json"
+        source_manifest = _challenge_runner_manifest(config)
+        if source_manifest is None:
+            return {
+                "status": "INCOMPLETE",
+                "source_manifest_status": "INCOMPLETE",
+            }
         manifest_path.write_text(
-            json.dumps(config.pop("source_manifest"), sort_keys=True), encoding="utf-8"
+            json.dumps(source_manifest, sort_keys=True), encoding="utf-8"
         )
         script = (
             "import json,sys; sys.path.insert(0,sys.argv.pop(1)); "
@@ -1108,19 +1116,9 @@ def _run_assertion_challenge(config, timeout):
         facts = _run_child_bounded(
             child, _facts(), timeout, started + timeout, started, None, None, None
         )
-        if facts["timed_out"]:
-            return {"status": "TIMEOUT"}
-        if facts["output_limit_exceeded"] or not facts["cleanup_confirmed"]:
-            return {"status": "RUNNER_LIMIT", "process": facts}
-        if not output.is_file():
-            return {"status": "RUNNER_ERROR", "exit_code": facts["exit_code"]}
-        if output.stat().st_size > 1024 * 1024:
-            return {
-                "status": "RUNNER_LIMIT",
-                "process": facts,
-                "report_limit_exceeded": True,
-                "report_limit_bytes": 1024 * 1024,
-            }
+        failure = _challenge_runner_failure(output, facts)
+        if failure is not None:
+            return failure
         observation = _probe_observation(output, facts)
         if config.get("kind") == "attribute" and isinstance(observation, dict):
             observation["launch_context_sha256"] = config["launch_context_sha256"]
@@ -1130,6 +1128,44 @@ def _run_assertion_challenge(config, timeout):
                 == config["launch_context_sha256"]
             )
         return observation
+
+
+def _challenge_runner_manifest(config):
+    """Use supplied inventory or bind a bounded real inventory for internal callers."""
+    if "source_manifest" not in config:
+        try:
+            return _challenge_source_inventory(Path(config["root"]))
+        except (KeyError, OSError, RuntimeError, TypeError, ValueError):
+            return None
+    manifest = config.pop("source_manifest")
+    if not isinstance(manifest, dict) or not manifest:
+        return None
+    if any(
+        not isinstance(path, str)
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        for path, digest in manifest.items()
+    ):
+        return None
+    return manifest
+
+
+def _challenge_runner_failure(output, facts):
+    """Classify bounded worker failures before reading the observation file."""
+    if facts["timed_out"]:
+        return {"status": "TIMEOUT"}
+    if facts["output_limit_exceeded"] or not facts["cleanup_confirmed"]:
+        return {"status": "RUNNER_LIMIT", "process": facts}
+    if not output.is_file():
+        return {"status": "RUNNER_ERROR", "exit_code": facts["exit_code"]}
+    if output.stat().st_size > 1024 * 1024:
+        return {
+            "status": "RUNNER_LIMIT",
+            "process": facts,
+            "report_limit_exceeded": True,
+            "report_limit_bytes": 1024 * 1024,
+        }
+    return None
 
 
 def _challenge_runtime_mapping(paths):
@@ -1498,6 +1534,7 @@ def _attribute_probe_config(root, path, nodeid, line, qualname, firstlineno, bin
         "firstlineno": firstlineno,
         "kind": "attribute",
         "attribute_binding": binding,
+        "source_manifest": _challenge_source_inventory(root),
     }
     return config
 
