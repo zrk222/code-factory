@@ -1,47 +1,34 @@
 # Code Factory
 
-## Have an app idea, but little coding experience?
-
-Ask your coding agent to help you write `PRD.md` from your idea, then run:
-
-```powershell
-factory prd grill PRD.md --root . --mode deep --json
-```
-
-The agent uses the returned interview contract to guide you through one
-decision at a time, with plain-language recommendations. Your answers become
-requirements, visible acceptance checks and failure-recovery expectations.
-After you confirm the plan, it follows CF/FL's development and audit route in
-small slices, showing what works, what needs repair and what remains untested.
-See [the beginner PRD guide](docs/PRD_GRILL.md). This source integration is a
-candidate update; it does not establish publication or defect-free output.
-
-## Start with your repository
+Review your code, find missing checks, and verify repairs using the tools you
+already know. Start with one command:
 
 ```powershell
 python -m pip install factoryline-code-factory
-factory --help
-factory guide
 factory scan --root .
 ```
 
-The base install keeps hosted PostgreSQL, LangGraph, and PDF-generation
-libraries optional. Install `factoryline-code-factory[pdf]` when AppForge
-submission assurance needs a PDF dossier. Hosted PostgreSQL uses the `hosted`
-extra, and durable LangGraph workflows use the `langgraph` extra. For local
-development, install `.[dev,compat]`; `dev` supplies test tools and `compat`
-restores all optional runtime dependencies that were previously installed by
-default. Other non-PDF audits do not require ReportLab.
+**Your workflow:** scan → review the findings → repair → run your tests and the
+affected checks again. The basic scan reads eligible Python source; it does not
+run your project. Missing evidence is **INCOMPLETE**, not a clean bill of health.
 
-The guide offers one plain-language path. The default scan inventories relative
-file metadata and reads eligible Python source for bounded AST security and
-test-oracle analysis. It does not execute project code. Quality findings require
-review; high-risk security patterns and analyzer failures block the static lane.
-`factory scan --root . --deep --json` adds every applicable local audit lane.
-Missing runtime or project evidence remains incomplete. Neither mode proves
-that a repository is safe to release. A prior ForgeLine adoption is not required.
-See [Start Here](docs/START_HERE.md) for a plain-language glossary, the
-optional existing-project adoption path, and the verified CI/CD boundaries.
+Want a visual workspace? Run `factory studio --root .`. Need options?
+`factory --help` shows the short path; `factory --help-all` shows all commands.
+Start with [the quick guide](docs/START_HERE.md).
+
+Keep pytest, mutation testing, CodeQL, Semgrep and your review checklist. CF adds
+test-quality findings and source-bound local evidence alongside them. A basic
+scan needs no adoption ceremony, signing keys, tenant setup or Docker. Native
+worker execution has separate setup and safety requirements.
+
+Code Factory is the product. Its internal engines and advanced governance
+features are optional workflows, not prerequisites for reviewing your code.
+
+## Starting from an idea?
+
+Describe your idea to your coding agent and create `PRD.md`. The optional
+[beginner guide](docs/PRD_GRILL.md) helps turn it into concrete acceptance checks.
+For an existing repository, start with the scan above.
 
 ## Latest audit telemetry preview — October 8, 2026
 
@@ -65,57 +52,6 @@ software, guarantee that defects are absent, or approve a release.
 architecture engine. SpecLine, HSF, and Prestige are advanced internal lanes
 that appear only when a project declares the corresponding scope; they are not
 separate products a new user must learn before running a scan.
-
-## Current update preview (next core release)
-
-**Fixed:** editor audit views now expose missing and incomplete checks.
-**Changed:** Junie's route connects a diff to bounded evidence and a concrete
-repair handoff. **Added:** project-neutral `factory audit workflows` contracts
-with hash-bound candidate and execution evidence, plus VS Code/Open VSX 1.1.4
-evidence tree, JetBrains 1.1.4 CF + ForgeLine tab, and a native
-[OpenCode plugin](plugins/code-factory-opencode/README.md).
-**Candidate detection fixes:** the Python scanner flags tests without a local
-assertion, constant-true assertions, and reflexive comparisons. Declared tenant
-reads can be checked with `factory audit security --tenant-read-call db.get`.
-That legacy form requires `tenant_id=tenant_id`. For positional or renamed
-arguments, declare the mapping, for example
-`--tenant-read-binding db.get=position:1:tenant_scope`; keyword mappings use
-`db.get=keyword:tenant_id:tenant_scope`. Positional indexes start at zero. The
-scanner requires the named, required function parameter to reach the declared
-argument without reassignment; configure exactly one binding per read call. This
-does not prove that the value is the authenticated tenant or that runtime access
-is isolated.
-The unchanged eight-case public regression corpus now gives 6 true positives,
-2 true negatives, and no false positives or false negatives locally, with the
-same tenant-read contract applied to defective, repaired, and clean inputs.
-This is a small development regression result, not independent accuracy,
-runtime coverage, or release approval. CI verification is still required.
-**Added runtime budget admission:** `factory loop runtime` now exposes
-`session`, `admit`, `settle`, and `status` operations backed by a local SQLite
-ledger. It reserves estimated usage before an enrolled adapter acts, reconciles
-measured usage afterward, and fails closed on malformed ledger state or
-inconsistent replay receipts. The HSF classifier remains advisory; its result
-never substitutes for the SQLite admission call.
-**Changed:** persisted usage and replay receipts are checked against exact
-fixed-point measurements, request digests, action states, and overrun markers.
-**Limits:** enforcement applies only to adapters that call the runtime API;
-provider billing is not queried, and a hostile process with workspace write
-access can still alter the local SQLite ledger. This does not certify software
-or grant release authority.
-
-**Candidate quality receipt:** on a clean Git-tracked snapshot, ForgeLine
-0.10.8 reports A (98.2/100), 1,073 of 1,093 function checks attributed to
-test intent (98.17%), maximum complexity 10, and 460 Python files. This is a
-static candidate measurement, not runtime coverage or certification. The
-source-hashed [candidate receipt](evidence/self-audit/quality-candidate-2026-10-06.json)
-records the measured scope. The published core release remains 0.47.0; this
-branch is not merged or published.
-No public precision, recall, or attribution benchmark is claimed here: the
-attribution percentage is an internal static candidate metric, not measured
-defect-detection accuracy on independent AI-generated repositories.
-The [autonomous ops plan](docs/AUTONOMOUS_OPS_EDITOR_PLAN.md) explains the
-proposed Observer Agent loop and its gates. These versions remain release
-candidates until each channel has a verified provider publication receipt.
 
 ## Graph Ops in action
 
