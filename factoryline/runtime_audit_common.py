@@ -321,6 +321,46 @@ def _candidate_configuration_manifest(capture, test_path, source_manifest):
     return configs, digest
 
 
+def _runtime_config_bindings(core):
+    sources = core.get("sources")
+    configs = core.get("oracle_context", {}).get("configuration_sources")
+    if not all(isinstance(rows, list) for rows in (sources, configs)):
+        raise RuntimeAuditError("E_ORACLE_CONFIG", "scan bindings are incomplete")
+    bound = {
+        item["path"]: item["sha256"]
+        for item in sources + configs
+        if isinstance(item, dict)
+        and isinstance(item.get("path"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256")))
+    }
+    if len(bound) != len(sources) + len(configs):
+        raise RuntimeAuditError("E_ORACLE_CONFIG", "scan bindings are malformed")
+    return sources, bound
+
+
+def runtime_config_sources(workspace, core, row, schema):
+    """Return configuration bindings applicable to this verified oracle schema."""
+    if schema != "factory.test-oracle-verification.v3":
+        return core.get("oracle_context", {}).get("configuration_sources", [])
+    from .review_audits import _pytest_collection_config
+
+    selected = _pytest_collection_config(workspace)[1]
+    source_rows, bound = _runtime_config_bindings(core)
+    path, digest = selected.get("path"), selected.get("sha256")
+    if selected["state"] == "read" and bound.get(path) != digest:
+        raise RuntimeAuditError("E_ORACLE_CONFIG", "pytest configuration is unbound")
+    result = [{"path": path, "sha256": digest}] if selected["state"] == "read" else []
+    source_hashes = {item["path"]: item["sha256"] for item in source_rows}
+    parts = row["path"].split("/")
+    for index in range(len(parts)):
+        path = "/".join(parts[:index] + ["conftest.py"])
+        if path in source_hashes:
+            result.append({"path": path, "sha256": source_hashes[path]})
+        elif (workspace / Path(*path.split("/"))).exists():
+            raise RuntimeAuditError("E_ORACLE_CONFIG", "ancestor conftest is unbound")
+    return sorted(result, key=lambda item: item["path"])
+
+
 def _candidate_run_evidence(capture, name, selector):
     observation, trial = capture.get(f"{name}_observation"), capture.get(name)
     selection, mutation = capture.get("selection"), capture.get("production_mutation")
