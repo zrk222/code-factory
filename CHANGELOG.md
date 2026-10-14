@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Accept compiler-generated Python frame names in v3 runtime origins while
+  retaining strict callback assertion identities, so captured comprehension
+  frames can pass the unsigned production-mutation projection.
+
 - Reuse imported assertion-helper summaries within each scan instead of
   recomputing them across aliases and import edges; preserve detector output,
   source/configuration invalidation and the existing file limits.

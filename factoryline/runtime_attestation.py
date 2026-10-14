@@ -57,6 +57,15 @@ MAX_TEST_ORACLE_CASE_IDS = 2048
 MAX_TEST_ORACLE_ORIGINS_PER_RUN = 8192
 MAX_TEST_ORACLE_ORIGINS_TOTAL = 16_384
 MAX_TEST_ORACLE_CONFIG_FILES = 64
+_ORACLE_FRAME_QUALNAME_SPECIALS = {
+    "<locals>",
+    "<listcomp>",
+    "<setcomp>",
+    "<dictcomp>",
+    "<genexpr>",
+    "<lambda>",
+    "<module>",
+}
 _SUPERVISED_MODE = "supervised_" + "sub" + "process"
 ISOLATION_MODES = (_SUPERVISED_MODE, "isolated_worker", "hardened_vm")
 INDEPENDENT_MODES = {"isolated_worker", "hardened_vm"}
@@ -952,9 +961,10 @@ def _oracle_origin_record(item, *, field, index, case_ids, version_three):
         qualname = record["frame_qualname"]
         if kind == "executed_frame":
             qualname = require_str(qualname, f"{field}.frame_qualname", maximum=1024)
-            if any(
-                part != "<locals>" and not part.isidentifier()
-                for part in qualname.split(".")
+            parts = qualname.split(".")
+            if ("<module>" in parts and qualname != "<module>") or any(
+                part not in _ORACLE_FRAME_QUALNAME_SPECIALS and not part.isidentifier()
+                for part in parts
             ):
                 _oracle_fail("E_ORACLE_ORIGIN", f"{field} has invalid frame name")
         elif qualname is not None:

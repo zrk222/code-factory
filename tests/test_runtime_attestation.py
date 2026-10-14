@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import base64
+from types import CodeType
 
 import pytest
 
@@ -442,6 +443,128 @@ def test_signed_test_oracle_v3_verifies_collection_and_assertion_observations(
         result["tests"][0]["mutation"]["assertion_observations"][0]["failure_visible"]
         is True
     )
+
+
+def _compiled_frame_qualname(source: str, code_name: str) -> str | None:
+    root = compile(source, "frame_qualname_fixture.py", "exec")
+    if code_name == "<module>":
+        return getattr(root, "co_qualname", None)
+    pending = [root]
+    while pending:
+        code = pending.pop()
+        if code.co_name == code_name:
+            return getattr(code, "co_qualname", None)
+        pending.extend(item for item in code.co_consts if isinstance(item, CodeType))
+    return None
+
+
+def _append_test_frame(payload: dict, qualname: str) -> None:
+    test = payload["tests"][0]
+    for run_name in ("baseline", "mutation"):
+        definition = next(
+            row
+            for row in test[run_name]["module_origins"]
+            if row["source_path"] == test["path"]
+            and row["frame_qualname"] == "test_example"
+        )
+        test[run_name]["module_origins"].append(
+            {**definition, "frame_qualname": qualname}
+        )
+
+
+@pytest.mark.parametrize(
+    ("source", "code_name", "legacy_qualname"),
+    [
+        (
+            "def outer():\n return [x for x in ()]\n",
+            "<listcomp>",
+            "outer.<locals>.<listcomp>",
+        ),
+        (
+            "def outer():\n return {x for x in ()}\n",
+            "<setcomp>",
+            "outer.<locals>.<setcomp>",
+        ),
+        (
+            "def outer():\n return {x: x for x in ()}\n",
+            "<dictcomp>",
+            "outer.<locals>.<dictcomp>",
+        ),
+        (
+            "def outer():\n return (x for x in ())\n",
+            "<genexpr>",
+            "outer.<locals>.<genexpr>",
+        ),
+        (
+            "def outer():\n return lambda: None\n",
+            "<lambda>",
+            "outer.<locals>.<lambda>",
+        ),
+        ("value = 1\n", "<module>", "<module>"),
+    ],
+)
+def test_v3_frame_origins_accept_compiler_and_legacy_qualnames(
+    source: str, code_name: str, legacy_qualname: str
+):
+    import factoryline.runtime_attestation as oracle
+
+    emitted_qualname = _compiled_frame_qualname(source, code_name)
+    assert code_name in legacy_qualname
+    if emitted_qualname is not None:
+        assert emitted_qualname == legacy_qualname
+    payload = _oracle_payload_v3()
+    _append_test_frame(payload, legacy_qualname)
+    normalized = oracle._oracle_payload(
+        payload,
+        source_manifest_sha256=payload["source_manifest_sha256"],
+        environment_sha256=payload["environment_sha256"],
+        now=datetime.now(timezone.utc),
+    )["tests"][0]["baseline"]["module_origins"]
+    assert normalized[0]["frame_qualname"] == "test_example"
+    assert any(row["frame_qualname"] == legacy_qualname for row in normalized)
+
+
+@pytest.mark.parametrize(
+    "qualname",
+    [
+        "<bogus>",
+        "outer.<listcomp",
+        "outer.<localsx>.f",
+        "outer.<>",
+        "outer.<module>",
+        "<module>.f",
+        "outer.<listcomp>.<module>",
+    ],
+)
+def test_v3_frame_origins_reject_unknown_or_malformed_special_tokens(qualname: str):
+    import factoryline.runtime_attestation as oracle
+
+    payload = _oracle_payload_v3()
+    _append_test_frame(payload, qualname)
+    with pytest.raises(RuntimeAttestationError, match="E_ORACLE_ORIGIN"):
+        oracle._oracle_payload(
+            payload,
+            source_manifest_sha256=payload["source_manifest_sha256"],
+            environment_sha256=payload["environment_sha256"],
+            now=datetime.now(timezone.utc),
+        )
+
+
+def test_v3_callback_assertion_qualnames_still_reject_compiler_tokens():
+    import factoryline.runtime_attestation as oracle
+
+    payload = _oracle_payload_v3()
+    for run_name in ("baseline", "mutation"):
+        payload["tests"][0][run_name]["assertion_observations"][0][
+            "callback_qualname"
+        ] = "test_example.<locals>.<listcomp>"
+    with pytest.raises(RuntimeAttestationError, match="E_ORACLE_ASSERTION"):
+        oracle._oracle_payload(
+            payload,
+            source_manifest_sha256=payload["source_manifest_sha256"],
+            environment_sha256=payload["environment_sha256"],
+            now=datetime.now(timezone.utc),
+        )
 
 
 def test_signed_test_oracle_v3_rejects_wrong_dsse_payload_type(tmp_path: Path):
