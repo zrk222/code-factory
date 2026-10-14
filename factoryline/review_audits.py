@@ -2744,14 +2744,22 @@ def _local_assertion_helpers(
 
 
 def _local_weak_assertion_helpers(
-    tree: ast.Module, aliases: dict[str, str], *, unittest_context: bool = False
+    tree: ast.Module,
+    aliases: dict[str, str],
+    *,
+    unittest_context: bool = False,
+    strong_helpers: set[str] | None = None,
 ) -> set[str]:
     functions = {
         node.name: node
         for node in tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
-    strong = _local_assertion_helpers(tree, aliases, unittest_context=unittest_context)
+    strong = strong_helpers
+    if strong is None:
+        strong = _local_assertion_helpers(
+            tree, aliases, unittest_context=unittest_context
+        )
     return {
         name
         for name, node in functions.items()
@@ -3722,6 +3730,7 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _oracle_import_source,
         _imported_oracle_helpers,
         _imported_weak_oracle_helpers,
+        _imported_oracle_helper_sets,
         _imported_unittest_mixins,
         _unittest_testcase_classes,
         _class_oracle_helpers,
@@ -3764,48 +3773,55 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
     return sha256(encoded).hexdigest()
 
 
-def _imported_oracle_helpers(imports: dict, snapshots: dict, aliases: dict) -> set[str]:
-    helpers = set()
+def _imported_oracle_helper_sets(
+    imports: dict, snapshots: dict, aliases: dict, summary_cache: dict | None = None
+) -> tuple[set[str], set[str]]:
+    helpers, weak_helpers = set(), set()
     for local, (source, symbol) in imports.items():
         tree = snapshots.get(source)
         if tree is None:
             continue
-        names = _local_assertion_helpers(
-            tree, _scope_security_aliases(_module_security_aliases(tree), tree)
-        )
-        names = {name for name in names if _is_oracle_helper_name(name)}
-        exported_assertions = {
-            name
-            for name, target in _module_security_aliases(tree).items()
-            if target in {"pytest.raises", "pytest.warns"}
-        }
-        names.update(exported_assertions)
-        if symbol in names:
-            helpers.add(aliases.get(local, local))
-        elif symbol is None or symbol not in names:
-            helpers.update(aliases.get(local, local) + "." + name for name in names)
-    return helpers
+        summary = summary_cache.get(tree) if summary_cache is not None else None
+        if summary is None:
+            raw_aliases = _module_security_aliases(tree)
+            module_aliases = _scope_security_aliases(raw_aliases, tree)
+            strong = _local_assertion_helpers(tree, module_aliases)
+            weak = _local_weak_assertion_helpers(
+                tree, module_aliases, strong_helpers=strong
+            )
+            exported = {
+                name
+                for name, target in raw_aliases.items()
+                if target in {"pytest.raises", "pytest.warns"}
+            }
+            summary = module_aliases, strong, weak, exported
+            if summary_cache is not None:
+                summary_cache[tree] = summary
+        _, strong, weak, exported = summary
+        for names, result in (
+            (
+                {name for name in strong if _is_oracle_helper_name(name)} | exported,
+                helpers,
+            ),
+            ({name for name in weak if _is_oracle_helper_name(name)}, weak_helpers),
+        ):
+            if symbol in names:
+                result.add(aliases.get(local, local))
+            elif symbol is None or symbol not in names:
+                result.update(aliases.get(local, local) + "." + name for name in names)
+    return helpers, weak_helpers
+
+
+def _imported_oracle_helpers(
+    imports: dict, snapshots: dict, aliases: dict, *, summary_cache: dict | None = None
+) -> set[str]:
+    return _imported_oracle_helper_sets(imports, snapshots, aliases, summary_cache)[0]
 
 
 def _imported_weak_oracle_helpers(
-    imports: dict, snapshots: dict, aliases: dict
+    imports: dict, snapshots: dict, aliases: dict, *, summary_cache: dict | None = None
 ) -> set[str]:
-    helpers = set()
-    for local, (source, symbol) in imports.items():
-        tree = snapshots.get(source)
-        if tree is None:
-            continue
-        module_aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
-        names = {
-            name
-            for name in _local_weak_assertion_helpers(tree, module_aliases)
-            if _is_oracle_helper_name(name)
-        }
-        if symbol in names:
-            helpers.add(aliases.get(local, local))
-        elif symbol is None or symbol not in names:
-            helpers.update(aliases.get(local, local) + "." + name for name in names)
-    return helpers
+    return _imported_oracle_helper_sets(imports, snapshots, aliases, summary_cache)[1]
 
 
 def _imported_unittest_mixins(tree: ast.Module, aliases: dict, imports: dict) -> list:
@@ -3937,6 +3953,7 @@ def _build_oracle_context(
     }
     edges = set()
     callback_summaries = {}
+    helper_summaries = {}
     for path, tree in snapshots.items():
         aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
         fixtures = {}
@@ -3956,11 +3973,8 @@ def _build_oracle_context(
         contexts[path]["callback_invokers"] = _source_callback_invokers(
             imports, snapshots, callback_summaries
         )
-        contexts[path]["helpers"] = _imported_oracle_helpers(
-            imports, snapshots, aliases
-        )
-        contexts[path]["weak_helpers"] = _imported_weak_oracle_helpers(
-            imports, snapshots, aliases
+        contexts[path]["helpers"], contexts[path]["weak_helpers"] = (
+            _imported_oracle_helper_sets(imports, snapshots, aliases, helper_summaries)
         )
         caller = path.relative_to(root).as_posix()
         edges.update(
@@ -3990,30 +4004,17 @@ def _build_oracle_context(
             target_tree = snapshots.get(source)
             if target_tree is None:
                 continue
-            target_aliases = _scope_security_aliases(
-                _module_security_aliases(target_tree), target_tree
-            )
+            _, strong_summary, weak_summary, exported_assertions = helper_summaries[
+                target_tree
+            ]
             strong_names = {
-                name
-                for name in _local_assertion_helpers(target_tree, target_aliases)
-                if _is_oracle_helper_name(name)
-            }
-            strong_names.update(
-                name
-                for name, target in _module_security_aliases(target_tree).items()
-                if target in {"pytest.raises", "pytest.warns"}
-            )
-            weak_names = {
-                name
-                for name in _local_weak_assertion_helpers(target_tree, target_aliases)
-                if _is_oracle_helper_name(name)
-            }
+                name for name in strong_summary if _is_oracle_helper_name(name)
+            } | exported_assertions
+            weak_names = {name for name in weak_summary if _is_oracle_helper_name(name)}
             selected = (
                 [symbol]
                 if symbol in strong_names
                 else [f"{local}.{name}" for name in strong_names]
-                if symbol is None or symbol not in strong_names
-                else []
             )
             for resolved_symbol in selected:
                 edges.add(
@@ -4023,8 +4024,6 @@ def _build_oracle_context(
                 [symbol]
                 if symbol in weak_names
                 else [f"{local}.{name}" for name in weak_names]
-                if symbol is None or symbol not in weak_names
-                else []
             )
             for resolved_symbol in selected_weak:
                 edges.add((caller, target, "assertion_helper", resolved_symbol, "weak"))

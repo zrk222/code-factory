@@ -4241,6 +4241,143 @@ def test_security_scan_reports_weak_only_test_oracles(tmp_path, body, reason):
     assert reason in result["findings"][0]["message"]
 
 
+def test_oracle_builder_summarizes_imported_helpers_once_per_snapshot(
+    tmp_path, monkeypatch
+):
+    import ast
+    from pathlib import Path
+
+    import factoryline.review_audits as module
+
+    helpers = tmp_path / "helpers.py"
+    first = tmp_path / "first.py"
+    second = tmp_path / "second.py"
+    helpers.write_text(
+        "def assert_expected(actual, expected):\n    assert actual == expected\n"
+        "\ndef assert_present(value):\n    assert value is not None\n",
+        encoding="utf-8",
+    )
+    first.write_text(
+        "import helpers as helper_alias\n"
+        "from helpers import assert_expected as direct_assertion\n"
+        "from helpers import assert_present as weak_assertion\n",
+        encoding="utf-8",
+    )
+    second.write_text("import helpers as other_alias\n", encoding="utf-8")
+    files = [helpers, first, second]
+    snapshots = {
+        path: ast.parse(path.read_text(encoding="utf-8"), filename=path.name)
+        for path in files
+    }
+    strong_calls = []
+    weak_calls = []
+    original_strong = module._local_assertion_helpers
+    original_weak = module._local_weak_assertion_helpers
+
+    def count_strong(*args, **kwargs):
+        strong_calls.append(None)
+        return original_strong(*args, **kwargs)
+
+    def count_weak(*args, **kwargs):
+        weak_calls.append(None)
+        return original_weak(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_local_assertion_helpers", count_strong)
+    monkeypatch.setattr(module, "_local_weak_assertion_helpers", count_weak)
+    _contexts, edges = module._build_oracle_context(tmp_path, files, snapshots, set())
+
+    assert len(strong_calls) == 1
+    assert len(weak_calls) == 1
+    helper_edges = {
+        (row["caller"], row["symbol"], row["strength"])
+        for row in edges
+        if row["target"] == Path("helpers.py").as_posix()
+        and row["kind"] == "assertion_helper"
+    }
+    assert helper_edges == {
+        ("first.py", "helper_alias.assert_expected", "strong"),
+        ("first.py", "helper_alias.assert_present", "weak"),
+        ("first.py", "assert_expected", "strong"),
+        ("first.py", "direct_assertion.assert_present", "weak"),
+        ("first.py", "weak_assertion.assert_expected", "strong"),
+        ("first.py", "assert_present", "weak"),
+        ("second.py", "other_alias.assert_expected", "strong"),
+        ("second.py", "other_alias.assert_present", "weak"),
+    }
+
+
+def test_local_weak_helper_uses_supplied_strong_summary_without_recomputing(
+    monkeypatch,
+):
+    import ast
+
+    import factoryline.review_audits as module
+
+    tree = ast.parse("def assert_present(value):\n    assert value is not None\n")
+    monkeypatch.setattr(
+        module,
+        "_local_assertion_helpers",
+        lambda *args, **kwargs: pytest.fail("strong helpers were recomputed"),
+    )
+
+    assert module._local_weak_assertion_helpers(tree, {}, strong_helpers=set()) == {
+        "assert_present"
+    }
+
+
+def test_oracle_builder_refreshes_helper_summary_for_changed_snapshot(tmp_path):
+    import ast
+
+    import factoryline.review_audits as module
+
+    helper_path = tmp_path / "helpers.py"
+    caller_path = tmp_path / "test_case.py"
+    helper_path.write_text(
+        "def assert_expected(actual, expected):\n    assert actual == expected\n",
+        encoding="utf-8",
+    )
+    caller_path.write_text("from helpers import assert_expected\n", encoding="utf-8")
+    files = [helper_path, caller_path]
+    first_snapshots = {
+        path: ast.parse(path.read_text(encoding="utf-8"), filename=path.name)
+        for path in files
+    }
+    _first_contexts, first_edges = module._build_oracle_context(
+        tmp_path, files, first_snapshots, set()
+    )
+    helper_path.write_text(
+        "def assert_expected(value):\n    assert value is not None\n",
+        encoding="utf-8",
+    )
+    second_snapshots = {
+        path: ast.parse(path.read_text(encoding="utf-8"), filename=path.name)
+        for path in files
+    }
+    _second_contexts, second_edges = module._build_oracle_context(
+        tmp_path, files, second_snapshots, set()
+    )
+
+    first_edge_keys = {
+        (edge["caller"], edge["target"], edge["kind"], edge["symbol"], edge["strength"])
+        for edge in first_edges
+    }
+    second_edge_keys = {
+        (edge["caller"], edge["target"], edge["kind"], edge["symbol"], edge["strength"])
+        for edge in second_edges
+    }
+    strong_edge = (
+        "test_case.py",
+        "helpers.py",
+        "assertion_helper",
+        "assert_expected",
+        "strong",
+    )
+    weak_edge = (*strong_edge[:-1], "weak")
+    assert strong_edge in first_edge_keys
+    assert weak_edge in second_edge_keys
+    assert strong_edge not in second_edge_keys
+
+
 def test_security_scan_accepts_local_helper_with_independent_assertion(tmp_path):
     (tmp_path / "test_case.py").write_text(
         "def assert_expected(actual, expected):\n"

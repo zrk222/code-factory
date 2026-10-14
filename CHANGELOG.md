@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reuse imported assertion-helper summaries within each scan instead of
+  recomputing them across aliases and import edges; preserve detector output,
+  source/configuration invalidation and the existing file limits.
 - Seal lifecycle ledger outputs to the canonical run/sequence path so duplicate
   same-sequence writes cannot publish alternate receipt names.
 - Bind context-cache hits to recomputed packet digests and reject reparse-point
