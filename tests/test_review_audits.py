@@ -105,6 +105,45 @@ def _redirect_flow_source(
     )
 
 
+@pytest.mark.parametrize("sanitize", [False, True])
+def test_redirect_source_findings_direct_api(sanitize):
+    import ast
+
+    from factoryline.review_audits import _security_aliases
+    from factoryline.review_integrity import (
+        bind_security_call_scopes,
+        redirect_source_findings,
+    )
+
+    tree = ast.parse(_redirect_flow_source(sanitize=sanitize))
+    nodes = list(ast.walk(tree))
+    aliases = _security_aliases(nodes)
+    bind_security_call_scopes(tree)
+    findings = redirect_source_findings("app.py", tree, aliases, nodes)
+    expected = [] if sanitize else ["SECURITY_OPEN_REDIRECT"]
+    assert [row["code"] for row in findings] == expected
+
+
+@pytest.mark.parametrize("request_derived", [False, True])
+def test_security_source_sink_findings_direct_api(request_derived):
+    import ast
+
+    from factoryline.review_audits import _security_aliases
+    from factoryline.review_integrity import security_source_sink_findings
+
+    target = "request.args['url']" if request_derived else "'https://example.com/items'"
+    tree = ast.parse(
+        "from flask import request\nimport requests\n"
+        f"def fetch():\n    return requests.get({target})\n"
+    )
+    nodes = list(ast.walk(tree))
+    findings = security_source_sink_findings(
+        "app.py", tree, nodes, _security_aliases(nodes)
+    )
+    expected = ["SECURITY_SSRF"] if request_derived else []
+    assert [row["code"] for row in findings] == expected
+
+
 @pytest.mark.parametrize(
     "source,expected",
     [
