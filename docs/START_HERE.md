@@ -1,7 +1,25 @@
-# Start Here: from idea to enterprise evidence
+# Start Here: scan, review, repair
 
-Code Factory uses one local evidence model at every level. You can begin with
-an outcome instead of a framework, then add rigor only when the work needs it.
+Start with your existing repository and test suite. You do not need to learn
+internal engine names or introduce another development process.
+
+| I want to… | Run |
+| --- | --- |
+| Review my code | `factory scan --root .` |
+| Open the visual workspace | `factory studio --root .` |
+| Understand scan options | `factory scan --help` |
+| Check my installation | `factory doctor --strict --json` |
+| Find advanced commands | `factory --help-all` |
+
+Review each finding, make a focused repair, then run your existing tests and the
+affected checks. Keep your pytest, mutation-testing, CodeQL/Semgrep and CI policy
+setup. CF complements their evidence; it does not replace them.
+
+Advanced vocabulary translates to familiar tasks: a receipt is a local evidence
+record; a proof graph links checks to source; a capability pack declares tool
+permissions; a runtime budget limits enrolled agent activity; a challenge tests
+whether a check detects an intentional failure. These are optional controls for
+specific workflows. They are not a checklist required for a basic scan.
 
 ## 0. Run your first repository scan
 
@@ -41,15 +59,11 @@ factory proof-card .factory/e2e-proof/<receipt>.json --root .
 The card contains only the bounded result and source-receipt hash. Commands,
 paths, repository names, prompts, logs, and user identity are excluded.
 
-```mermaid
-flowchart LR
-    I["Describe an outcome"] --> M["Instant local MVP"]
-    M --> V["Run explicit proof commands"]
-    V --> G["Inspect Unified Graph Ops"]
-    G --> T["Product Missions and team review"]
-    T --> E["Policy, assurance, and tenant controls"]
-    E --> H{"Human release authority"}
-```
+## Optional workflows
+
+The first scan is complete as a workflow without adopting the sections below.
+Choose only the workflow that matches your task. Missing runtime evidence still
+means the assessment is incomplete; it does not require enabling every feature.
 
 ## 1. Instant MVP — no factory vocabulary required
 

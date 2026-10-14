@@ -96,9 +96,34 @@ def _emit_version(as_json: bool) -> int:
     return 0
 
 
+_QUICK_HELP = """Code Factory - review your code with less setup.
+
+Start here:
+  Scan my code       factory scan --root .
+  Open dashboard     factory studio --root .
+  Get guidance       factory guide
+
+Next steps:
+  More scan options  factory scan --help
+  Check setup        factory doctor --strict --json
+  All commands       factory --help-all
+
+Scan reads eligible Python source without running your project.
+Review findings, verify repairs with your tests, then rerun affected checks.
+Keep pytest, mutation testing, CodeQL and Semgrep in your existing CI.
+Missing evidence means INCOMPLETE; a scan is not release approval.
+No adoption, signing keys or tenant configuration needed for a basic scan.
+"""
+
+
 def main(argv=None) -> int:
-    """Dispatch version probes without loading the 490-command registry."""
+    """Show quick help and version probes without loading the command registry."""
     values = list(sys.argv[1:] if argv is None else argv)
+    if values in (["--help"], ["-h"]):
+        print(_QUICK_HELP, end="")
+        return 0
+    if values == ["--help-all"]:
+        values = ["--help"]
     if values and values[0] == "--version":
         return _emit_version("--json" in values)
     from .cli import main as cli_main
