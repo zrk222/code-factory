@@ -146,6 +146,11 @@
         "max_lines": 2000,
         "max_bytes": 76000,
         "rationale": "Bound shared runtime evidence validation before moving existing candidate-manifest helpers here; retain runner limits and the fixed Python-file inventory."
+      },
+      "factoryline/change_review.py": {
+        "max_lines": 1400,
+        "max_bytes": 56000,
+        "rationale": "Predeclare bounded relocation of existing receipt-control verification into change review before growing source-sink coverage; keep all previous ceilings and the fixed Python inventory."
       }
     },
     "required_paths": [
@@ -154,6 +159,7 @@
       "factoryline/audit_taxonomy.py",
       "factoryline/audit_trace.py",
       "factoryline/benchmark_lab.py",
+      "factoryline/change_review.py",
       "factoryline/cli.py",
       "factoryline/deep_audit.py",
       "factoryline/deep_audit_attestation.py",

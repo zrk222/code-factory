@@ -1279,6 +1279,7 @@ def test_scanner_and_capture_file_limits_are_pinned_before_growth():
         "factoryline/review_integrity.py": (5000, 180000),
         "factoryline/runtime_audit_runner.py": (1300, 53000),
         "factoryline/runtime_audit_common.py": (2000, 76000),
+        "factoryline/change_review.py": (1400, 56000),
         "factoryline/review_audits.py": (5997, 225000),
     }
     for name, (lines, size) in expected.items():
