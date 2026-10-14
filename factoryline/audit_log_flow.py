@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+from itertools import chain
 import re
+
+_LOGGING_LEVELS = frozenset("debug info warning error critical exception log".split())
 
 
 def audit_log_source_findings(relative, tree, nodes, aliases):
@@ -16,6 +19,7 @@ def audit_log_source_findings(relative, tree, nodes, aliases):
         _security_flow_bindings,
         _security_module_scope,
         _security_scope_local_names,
+        _security_ast_span_contains,
         security_call_name,
     )
 
@@ -23,6 +27,7 @@ def audit_log_source_findings(relative, tree, nodes, aliases):
     for scope in nodes:
         if not isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
+        calls_by_statement = getattr(scope, "_security_calls_by_statement", {})
         reader = _LogReader(
             relative,
             scope,
@@ -35,6 +40,9 @@ def audit_log_source_findings(relative, tree, nodes, aliases):
             security_call_name,
             _security_module_scope,
             _security_scope_local_names,
+            _security_ast_span_contains,
+            calls_by_statement,
+            tuple(chain.from_iterable(calls_by_statement.values())),
         )
         reader._block(scope.body, {})
     return findings
@@ -55,6 +63,9 @@ class _LogReader:
     resolve: object
     module_scope: object
     module_names: object
+    span_contains: object
+    calls_by_statement: dict
+    scope_calls: tuple
 
     def _block(self, body, tainted, snapshots=None):
         for statement in body:
@@ -69,14 +80,17 @@ class _LogReader:
                 self._loop(statement, tainted)
                 continue
             if isinstance(statement, ast.If):
-                self._calls([statement.test], tainted)
+                self._calls(statement.test, tainted, statement)
                 branches = [dict(tainted), dict(tainted)]
                 self._block(statement.body, branches[0], snapshots)
                 self._block(statement.orelse, branches[1], snapshots)
                 tainted.clear()
                 tainted.update(_merge_flow(branches))
                 continue
-            self._calls([statement], tainted)
+            if isinstance(statement, (ast.With, ast.AsyncWith)):
+                self._with_block(statement, tainted, snapshots)
+                continue
+            self._calls(statement, tainted)
             if isinstance(statement, (ast.Assign, ast.AnnAssign)):
                 self._assign(statement, tainted, snapshots)
             elif not isinstance(
@@ -85,17 +99,26 @@ class _LogReader:
                 for name in self.audit._bound_names(statement):
                     tainted.pop(name, None)
 
+    def _with_block(self, statement, tainted, snapshots):
+        for item in statement.items:
+            self._calls(item.context_expr, tainted, statement)
+        for item in statement.items:
+            if item.optional_vars is not None:
+                for name in self.audit._bound_names(item.optional_vars):
+                    tainted.pop(name, None)
+        self._block(statement.body, tainted, snapshots)
+
     def _loop(self, statement, tainted):
-        self._calls(
-            [statement.test if isinstance(statement, ast.While) else statement.iter],
-            tainted,
+        expression = (
+            statement.test if isinstance(statement, ast.While) else statement.iter
         )
+        self._calls(expression, tainted, statement)
         entry, body = dict(tainted), dict(tainted)
         if isinstance(statement, (ast.For, ast.AsyncFor)):
             for name in self.audit._bound_names(statement.target):
                 body.pop(name, None)
-                if self._has_source(statement.iter, entry):
-                    body[name] = self._expression(statement.iter, entry)
+                if self._flow(statement.iter, entry, True):
+                    body[name] = self._flow(statement.iter, entry)
         self._block(statement.body, body)
         self._block(statement.orelse, body)
         tainted.clear()
@@ -120,92 +143,79 @@ class _LogReader:
         tainted.clear()
         tainted.update(merged)
 
-    def _calls(self, statements, tainted):
-        for statement in statements:
-            for call in ast.walk(statement):
-                if (
-                    not isinstance(call, ast.Call)
-                    or getattr(call, "_security_lexical_scope", self.scope)
-                    is not self.scope
-                ):
-                    continue
-                name = self._logging_name(call)
-                if name and self._unsafe(call, tainted, name):
-                    self.findings.append(
-                        self.audit._security_finding(
-                            "SECURITY_LOG_INJECTION",
-                            self.relative,
-                            call,
-                            "Input may reach a log message without neutralizing carriage return and line feed.",
-                            "HIGH",
-                            call=name,
-                            source="input_or_request_parameter",
-                            cwe="CWE-117",
-                        )
+    def _calls(self, expression, tainted, owner=None):
+        calls = self.calls_by_statement.get(id(owner), ()) if owner else ()
+        if not calls:
+            calls = self.scope_calls
+        for call in calls:
+            if not self.span_contains(call, expression):
+                continue
+            name = self._logging_name(call)
+            if name and self._unsafe(call, tainted, name):
+                self.findings.append(
+                    self.audit._security_finding(
+                        "SECURITY_LOG_INJECTION",
+                        self.relative,
+                        call,
+                        "Input may reach a log message without neutralizing carriage return and line feed.",
+                        "HIGH",
+                        call=name,
+                        source="input_or_request_parameter",
+                        cwe="CWE-117",
                     )
+                )
 
     def _logging_name(self, call):
-        name = self.resolve(call, self.aliases)
-        accepted = {
-            f"logging.{level}"
-            for level in (
-                "debug",
-                "info",
-                "warning",
-                "error",
-                "critical",
-                "exception",
-                "log",
-            )
-        }
-        return name if name in accepted else ""
+        resolved, _constants = self.flow_bindings(call, self.aliases)
+        name = self.resolve(call, self.aliases).replace(
+            "logging.Logger.", "logging.", 1
+        )
+        imported_logging = any(
+            target == "logging" or target.startswith("logging.")
+            for target in resolved.values()
+        )
+        return (
+            name
+            if imported_logging
+            and name.startswith("logging.")
+            and name.removeprefix("logging.") in _LOGGING_LEVELS
+            else ""
+        )
 
     def _unsafe(self, call, tainted, name):
         keyword = next(
             (item.value for item in call.keywords if item.arg == "msg"), None
         )
-        if name == "logging.log":
-            message = call.args[1] if len(call.args) > 1 else keyword
-        else:
-            message = call.args[0] if call.args else keyword
+        index = 1 if name == "logging.log" else 0
+        offset = index + 1
+        positional = len(call.args) > index
+        message = call.args[index] if positional else keyword
         if message is None:
             return False
-        values = [message]
-        if name == "logging.log":
-            values.extend(call.args[2:])
-        else:
-            values.extend(
-                call.args[1:] if call.args and message is call.args[0] else []
-            )
+        values = [message, *(call.args[offset:] if positional else [])]
         values.extend(
             item.value for item in call.keywords if item.arg in {"args", "values"}
         )
         if self._percent_repr(message, values[1:], tainted):
             return False
         return any(
-            self._expression(value, tainted) and not self._safe(value, tainted)
+            self._flow(value, tainted) and not self._safe(value, tainted)
             for value in values
         )
 
-    def _expression(self, node, tainted):
+    def _flow(self, node, tainted, provenance=False):
         if isinstance(node, ast.Name):
-            return tainted.get(node.id, False)
+            return node.id in tainted if provenance else tainted.get(node.id, False)
         if self._builtin_integer(node):
             return False
         if self._source(node):
             return True
-        if self._has_source(node, tainted):
+        children = self._children(node)
+        if provenance:
+            return any(self._flow(child, tainted, True) for child in children)
+        if any(self._flow(child, tainted, True) for child in children):
             return not self._safe(node, tainted)
-        return any(self._expression(child, tainted) for child in self._children(node))
-
-    def _has_source(self, node, tainted):
-        if isinstance(node, ast.Name) and node.id in tainted:
-            return True
-        if self._builtin_integer(node):
-            return False
-        return self._source(node) or any(
-            self._has_source(child, tainted) for child in self._children(node)
-        )
+        return any(self._flow(child, tainted) for child in children)
 
     def _source(self, node):
         if isinstance(node, ast.Call):
@@ -214,21 +224,22 @@ class _LogReader:
                 node, name
             ):
                 return True
-        base = node.value if isinstance(node, ast.Subscript) else None
-        if (
-            isinstance(node, ast.Call)
+        base = (
+            node.value
+            if isinstance(node, ast.Subscript)
+            else getattr(node.func, "value", None)
+            if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "get"
-        ):
-            base = node.func.value
+            else None
+        )
         if not isinstance(base, ast.Attribute):
             return False
         flow = getattr(node, "_security_flow_statement", None)
-        if base.attr in {"args", "form"} and self.flask_source(
-            base, self.aliases, self.scope, flow, base.attr
-        ):
-            return True
-        return self.django_source(base, self.aliases, self.scope, flow)
+        return (
+            base.attr in {"args", "form"}
+            and self.flask_source(base, self.aliases, self.scope, flow, base.attr)
+        ) or self.django_source(base, self.aliases, self.scope, flow)
 
     def _safe(self, node, tainted):
         if isinstance(node, ast.JoinedStr):
@@ -236,9 +247,9 @@ class _LogReader:
                 item for item in node.values if isinstance(item, ast.FormattedValue)
             ]
             return bool(values) and all(
-                not self._has_source(item.value, tainted)
+                not self._flow(item.value, tainted, True)
                 or item.conversion == ord("r")
-                or not self._expression(item.value, tainted)
+                or not self._flow(item.value, tainted)
                 for item in values
             )
         if (
@@ -252,14 +263,14 @@ class _LogReader:
             return (
                 bool(slots)
                 and all(code == "r" for code in slots)
-                and self._has_source(node.right, tainted)
+                and self._flow(node.right, tainted, True)
             )
         if isinstance(node, ast.Call):
             name = self.resolve(node, self.aliases)
             if name in {"repr", "builtins.repr"} and self._builtin_unshadowed(
                 node, name
             ):
-                return any(self._has_source(arg, tainted) for arg in node.args)
+                return any(self._flow(arg, tainted, True) for arg in node.args)
             return self._safe_newline_replacement(node, tainted)
         return False
 
@@ -275,14 +286,12 @@ class _LogReader:
             if not all(
                 isinstance(item, ast.Constant) and isinstance(item.value, str)
                 for item in (old, new)
-            ):
-                return False
-            if any(char in new.value for char in "\r\n"):
+            ) or any(char in new.value for char in "\r\n"):
                 return False
             if old.value in {"\r", "\n"}:
                 replaced.add(old.value)
             current = current.func.value
-        return replaced == {"\r", "\n"} and self._has_source(current, tainted)
+        return replaced == {"\r", "\n"} and self._flow(current, tainted, True)
 
     def _percent_repr(self, message, values, tainted):
         if not isinstance(message, ast.Constant) or not isinstance(message.value, str):
@@ -296,12 +305,10 @@ class _LogReader:
         )
 
     def _builtin_integer(self, node):
-        if not isinstance(node, ast.Call) or self.resolve(node, self.aliases) not in {
-            "int",
-            "builtins.int",
-        }:
+        if not isinstance(node, ast.Call):
             return False
-        return self._builtin_unshadowed(node, self.resolve(node, self.aliases))
+        name = self.resolve(node, self.aliases)
+        return name in {"int", "builtins.int"} and self._builtin_unshadowed(node, name)
 
     def _children(self, node):
         if isinstance(node, ast.Lambda):
@@ -352,11 +359,11 @@ class _LogReader:
         if (
             snapshots is not None
             and self._builtin_integer(value)
-            and any(self._has_source(arg, tainted) for arg in value.args)
+            and any(self._flow(arg, tainted, True) for arg in value.args)
         ):
             snapshots.append(dict(tainted))
-        marked = isinstance(value, ast.AST) and self._has_source(value, tainted)
-        unsafe = isinstance(value, ast.AST) and self._expression(value, tainted)
+        marked = isinstance(value, ast.AST) and self._flow(value, tainted, True)
+        unsafe = isinstance(value, ast.AST) and self._flow(value, tainted)
         for target in targets:
             if isinstance(target, ast.Name):
                 tainted.pop(target.id, None)
@@ -366,21 +373,23 @@ class _LogReader:
 
 def _catches_value_error(node):
     accepted = {"ValueError", "Exception", "BaseException"}
-    if node is None:
-        return True
-    if isinstance(node, ast.Name):
-        return node.id in accepted
-    return isinstance(node, ast.Tuple) and any(
-        isinstance(item, ast.Name) and item.id in accepted for item in node.elts
+    return (
+        node is None
+        or (isinstance(node, ast.Name) and node.id in accepted)
+        or (
+            isinstance(node, ast.Tuple)
+            and any(
+                isinstance(item, ast.Name) and item.id in accepted for item in node.elts
+            )
+        )
     )
 
 
 def _merge_flow(states):
-    merged = {}
-    for state in states:
-        for name, unsafe in state.items():
-            merged[name] = merged.get(name, False) or unsafe
-    return merged
+    return {
+        name: any(state.get(name, False) for state in states)
+        for name in set().union(*states)
+    }
 
 
 def _percent_codes(value):

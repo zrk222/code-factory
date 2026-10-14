@@ -3844,6 +3844,70 @@ def test_security_tree_scan_reuses_one_ast_inventory_for_alias_and_tenant_checks
     assert [finding["code"] for finding in findings] == ["SECURITY_SHELL_COMMAND"]
 
 
+def test_security_log_flow_reuses_prebound_call_inventory(tmp_path, monkeypatch):
+    import ast
+
+    import factoryline.review_audits as module
+
+    source = (
+        "import logging\ndef record():\n    raw = input()\n    logging.error(raw)\n"
+    )
+    tree = ast.parse(source)
+    path = tmp_path / "service.py"
+    path.write_text(source, encoding="utf-8")
+    original_walk = ast.walk
+    calls = 0
+
+    def counted_walk(node):
+        nonlocal calls
+        calls += 1
+        return original_walk(node)
+
+    monkeypatch.setattr(module.ast, "walk", counted_walk)
+    findings = module._security_scan_tree(tmp_path, path, tree, (), {})
+
+    assert calls == 1
+    assert [finding["code"] for finding in findings] == ["SECURITY_LOG_INJECTION"]
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        pytest.param(
+            "import logging\ndef record():\n    logging.error('plain')\n",
+            False,
+            id="constant-log-message-does-not-crash",
+        ),
+        pytest.param(
+            "import logging\ndef record():\n    logging.error('plain' + ' text')\n",
+            False,
+            id="binop-log-message-does-not-crash",
+        ),
+        pytest.param(
+            "import logging\ndef record():\n    if True:\n        if logging.error(input()):\n            pass\n",
+            True,
+            id="nested-if-header-input-is-logged",
+        ),
+        pytest.param(
+            "import logging\ndef record():\n    if True:\n        while logging.error(input()):\n            break\n",
+            True,
+            id="nested-loop-header-input-is-logged",
+        ),
+        pytest.param(
+            "import logging\ndef record():\n    if True:\n        with logging.error(input()):\n            pass\n",
+            True,
+            id="nested-with-header-input-is-logged",
+        ),
+    ],
+)
+def test_security_log_flow_handles_plain_messages_and_nested_headers(
+    tmp_path, source, expected
+):
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert ("SECURITY_LOG_INJECTION" in result["finding_counts"]) is expected
+
+
 def test_security_scan_reports_parse_errors_fail_closed(tmp_path):
     (tmp_path / "broken.py").write_text("def broken(:\n", encoding="utf-8")
     result = security_scan(tmp_path)
@@ -7560,6 +7624,65 @@ def test_builtin_repr_type_check_oracle_is_weak_only_when_unshadowed(
             "    logging.error(request.args.get('q'))\n",
             False,
         ),
+        (
+            "class Fake:\n"
+            "    def error(self, value):\n"
+            "        pass\n"
+            "logging = Fake()\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logging.error(raw)\n",
+            False,
+        ),
+        (
+            "import logging\n"
+            "logger = logging.getLogger(__name__)\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logger.error(raw)\n",
+            True,
+        ),
+        (
+            "import logging as logmod\n"
+            "logger = logmod.getLogger(__name__)\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logger.error(raw)\n",
+            True,
+        ),
+        (
+            "from logging import getLogger as make_logger\n"
+            "logger = make_logger(__name__)\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logger.error(raw)\n",
+            True,
+        ),
+        (
+            "from logging import Logger\n"
+            "logger = Logger(__name__)\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logger.error(raw)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "logger = logging.getLogger(__name__)\n"
+            "logger = object()\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logger.error(raw)\n",
+            False,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    with open('input.txt'):\n"
+            "        raw = input()\n"
+            "        logging.error(raw)\n",
+            True,
+        ),
     ],
     ids=[
         "direct-input-concatenation",
@@ -7610,6 +7733,13 @@ def test_builtin_repr_type_check_oracle_is_weak_only_when_unshadowed(
         "rebound-builtins-module-is-not-safe-repr",
         "shadowed-logging-module",
         "rebound-flask-request-safe",
+        "fake-global-logging-name-is-not-stdlib",
+        "stdlib-getlogger-return-is-a-proven-logger",
+        "stdlib-module-alias-getlogger-return-is-proven",
+        "imported-getlogger-alias-return-is-proven",
+        "imported-logger-class-return-is-proven",
+        "rebound-logger-variable-is-not-stdlib",
+        "with-body-direct-input-logging",
     ],
 )
 def test_security_scan_input_and_request_log_injection(tmp_path, source, expected):
