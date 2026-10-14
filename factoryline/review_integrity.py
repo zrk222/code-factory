@@ -3206,8 +3206,6 @@ _REDIRECT_EXCEPTION_TYPES = {
 
 def redirect_source_findings(relative, tree, aliases, nodes):
     """Find bounded request-path flows into imported redirect exception APIs."""
-    from . import review_audits as audit
-
     api = _redirect_api_bindings(tree)
     if not api["requests"] or not api["redirects"]:
         return []
