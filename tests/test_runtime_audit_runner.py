@@ -498,8 +498,6 @@ def test_capture_diagnostic_summary_reports_bound_gate_facts():
 
 
 def test_local_production_mutation_capture_records_real_all_case_failure(tmp_path):
-    from hashlib import sha256
-
     test, assertion_line = _mutation_project(tmp_path, parameterized=True)
     original_test = test.read_bytes()
     original_source = (tmp_path / "app.py").read_bytes()
@@ -515,7 +513,50 @@ def test_local_production_mutation_capture_records_real_all_case_failure(tmp_pat
         timeout_seconds=30,
     )
 
+    _assert_local_candidate_envelope(result)
+    _assert_local_candidate_test(result, test, assertion_line)
+    _assert_local_capture_bindings(
+        result, test, original_test, original_source, tmp_path
+    )
+    _assert_local_capture_observations(result, tmp_path)
+    _assert_saved_local_candidate(result, tmp_path)
+    _assert_local_candidate_negative_controls(result)
+
+
+def _assert_local_candidate_envelope(result):
+    projection = result["v3_candidate_projection"]
     assert result["schema"] == "factory.local-production-mutation-capture.v1"
+    assert projection["schema"] == "factory.local-production-mutation-v3-candidate.v1"
+    assert projection["oracle_schema"] == "factory.test-oracle-attestation.v3"
+    assert projection["status"] == "CANDIDATE", projection["missing_evidence"]
+    assert projection["signature_status"] == "UNSIGNED"
+    assert projection["observer_integrity"] == "IN_PROCESS_NOT_ATTESTED"
+    assert projection["authority"] == "none"
+    assert projection["trust_admission"] == "NOT_PERFORMED"
+    assert projection["attestation_envelope"] is None
+
+
+def _assert_local_candidate_test(result, test, assertion_line):
+    candidate_test = result["v3_candidate_projection"]["test_candidate"]
+    assert (
+        candidate_test["line"]
+        == test.read_text().splitlines().index("def test_value(value):") + 1
+    )
+    assert candidate_test["symbol"] == "test_value"
+    assert candidate_test["baseline"]["case_ids"] == [
+        "test_app.py::test_value[a]",
+        "test_app.py::test_value[b]",
+    ]
+    assert {
+        row["line"] for row in candidate_test["baseline"]["assertion_observations"]
+    } == {assertion_line}
+
+
+def _assert_local_capture_bindings(
+    result, test, original_test, original_source, tmp_path
+):
+    from hashlib import sha256
+
     expected_cases = ["test_app.py::test_value[a]", "test_app.py::test_value[b]"]
     diagnostics = _capture_diagnostic_summary(result, expected_cases)
     assert result["status"] == "OBSERVED", json.dumps(diagnostics, sort_keys=True)
@@ -528,42 +569,181 @@ def test_local_production_mutation_capture_records_real_all_case_failure(tmp_pat
         result["production_mutation"]["original_sha256"]
         == sha256(original_source).hexdigest()
     )
-    assert result["baseline_observation"]["collected"] == [
-        "test_app.py::test_value[a]",
-        "test_app.py::test_value[b]",
-    ]
-    baseline_context = result["baseline_observation"]
-    mutant_context = result["mutant_observation"]
+    assert result["baseline_observation"]["collected"] == expected_cases
+
+
+def _assert_local_capture_observations(result, tmp_path):
+    baseline, mutant = result["baseline_observation"], result["mutant_observation"]
+    assert baseline["runtime_context_before"] == baseline["runtime_context_after"]
     assert (
-        baseline_context["runtime_context_before"]
-        == baseline_context["runtime_context_after"]
-    )
-    assert (
-        baseline_context["runtime_context_normalized_before"]
-        == mutant_context["runtime_context_normalized_before"]
+        baseline["runtime_context_normalized_before"]
+        == mutant["runtime_context_normalized_before"]
     )
     for trial in (result["baseline"], result["mutant"]):
         identity = trial["execution_identity"]
         assert identity["command_template"].startswith("python -B -c ")
         assert identity["argument_roles"][-1] == "observation-output"
-        assert len(identity["argv_sha256"]) == 64
-        assert len(identity["interpreter_sha256"]) == 64
+        assert len(identity["argv_sha256"]) == len(identity["interpreter_sha256"]) == 64
         assert identity["interpreter_version"]
         assert str(tmp_path) not in json.dumps(identity)
-    for trial_name in ("baseline_observation", "mutant_observation"):
-        observation = result[trial_name]
+    _assert_local_assertion_observations(result)
+
+
+def _assert_local_assertion_observations(result):
+    mutant = result["mutant_observation"]
+    for name in ("baseline_observation", "mutant_observation"):
+        observation = result[name]
         assert observation["collection_incomplete"] is False
         assert observation["collection_report_sha256"]
         assert {row["hits"] for row in observation["assertion_observations"]} == {1}
     assert all(
         row["outcome"] == "FAIL" and row["failure_visible"] is True
-        for row in result["mutant_observation"]["assertion_observations"]
+        for row in mutant["assertion_observations"]
     )
+
+
+def _assert_saved_local_candidate(result, tmp_path):
+    projection = result["v3_candidate_projection"]
     assert result["cleanup"]["removed"] is True
     saved = json.loads((tmp_path / ".factory/capture-one/capture.json").read_text())
     assert saved["schema"] == "factory.local-production-mutation-capture.v1"
+    assert saved["v3_candidate_projection"] == projection
     assert saved["signature_status"] == "UNSIGNED"
     assert str(tmp_path) not in json.dumps(saved)
+
+
+def _assert_local_candidate_negative_controls(result):
+    from copy import deepcopy
+    from factoryline.runtime_audit_runner import (
+        project_local_production_mutation_v3_candidate,
+    )
+
+    cases = []
+    missing_definition = deepcopy(result)
+    del missing_definition["selection"]["test_definition_line"]
+    cases.append(missing_definition)
+    tampered_manifest = deepcopy(result)
+    tampered_manifest["source_manifest"][0]["sha256"] = "0" * 64
+    cases.append(tampered_manifest)
+    missing_config = deepcopy(result)
+    missing_config["collection_config"]["config"] = {"state": "missing"}
+    cases.append(missing_config)
+    missing_runtime = deepcopy(result)
+    del missing_runtime["baseline"]["execution_identity"]["interpreter_sha256"]
+    cases.append(missing_runtime)
+    missing_origin = deepcopy(result)
+    missing_origin["baseline_observation"]["executed_modules"] = [
+        row
+        for row in missing_origin["baseline_observation"]["executed_modules"]
+        if row.get("path") != "app.py"
+    ]
+    cases.append(missing_origin)
+    tampered_checker = deepcopy(result)
+    tampered_checker["mutant_observation"]["tool_sha256"] = "bad"
+    cases.append(tampered_checker)
+    assert all(
+        project_local_production_mutation_v3_candidate(item)["status"] == "INCOMPLETE"
+        for item in cases
+    )
+
+
+def _refresh_candidate_manifest_digests(capture):
+    from hashlib import sha256
+
+    capture["source_manifest"].sort(key=lambda row: row["path"])
+    pairs = [[row["path"], row["sha256"]] for row in capture["source_manifest"]]
+    capture["source_manifest_sha256"] = sha256(
+        json.dumps(pairs, separators=(",", ":")).encode()
+    ).hexdigest()
+    manifest = dict(pairs)
+    for name in ("baseline", "mutant"):
+        executed = dict(manifest)
+        if name == "mutant":
+            mutation = capture["production_mutation"]
+            executed[mutation["path"]] = mutation["mutant_sha256"]
+        capture[f"{name}_observation"]["executed_source_manifest_sha256"] = sha256(
+            json.dumps(executed, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
+
+def test_native_v3_candidate_binds_full_config_and_each_case_definition(tmp_path):
+    from copy import deepcopy
+    from hashlib import sha256
+    from factoryline.runtime_audit_runner import (
+        project_local_production_mutation_v3_candidate,
+    )
+
+    test, assertion_line = _mutation_project(tmp_path, parameterized=True)
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\npython_files = test_*.py\n", encoding="utf-8"
+    )
+    (tmp_path / "conftest.py").write_text("pytest_plugins = []\n", encoding="utf-8")
+    capture = capture_local_production_mutation(
+        tmp_path,
+        "test_app.py::test_value",
+        assertion_line,
+        "app.py",
+        "value",
+        "return 1",
+        "return 0",
+        ".factory/native-v3-full-config",
+        timeout_seconds=30,
+    )
+    projection = capture["v3_candidate_projection"]
+    assert projection["status"] == "CANDIDATE", projection["missing_evidence"]
+    baseline = projection["test_candidate"]["baseline"]["collection_catalog"]
+    mutant = projection["test_candidate"]["mutation"]["collection_catalog"]
+    expected = [
+        {
+            "path": "conftest.py",
+            "sha256": sha256((tmp_path / "conftest.py").read_bytes()).hexdigest(),
+        },
+        {
+            "path": "pytest.ini",
+            "sha256": sha256((tmp_path / "pytest.ini").read_bytes()).hexdigest(),
+        },
+    ]
+    assert baseline["config_manifest"] == mutant["config_manifest"] == expected
+    assert baseline["config_manifest_sha256"] == mutant["config_manifest_sha256"]
+
+    escaped = deepcopy(capture)
+    escaped["source_manifest"].append({"path": "../unused.py", "sha256": "a" * 64})
+    _refresh_candidate_manifest_digests(escaped)
+    assert (
+        project_local_production_mutation_v3_candidate(escaped)["status"]
+        == "INCOMPLETE"
+    )
+
+    swapped = deepcopy(capture)
+    for name in ("baseline_observation", "mutant_observation"):
+        for row in swapped[name]["executed_modules"]:
+            if (
+                row.get("nodeid") == "test_app.py::test_value[b]"
+                and row.get("frame_qualname") == "test_value"
+            ):
+                row["frame_qualname"] = "helper"
+    assert (
+        project_local_production_mutation_v3_candidate(swapped)["status"]
+        == "INCOMPLETE"
+    )
+
+    omitted = deepcopy(capture)
+    omitted["collection_config"]["manifest"] = [
+        row
+        for row in omitted["collection_config"]["manifest"]
+        if row["path"] != "conftest.py"
+    ]
+    omitted["collection_config"]["identity_sha256"] = sha256(
+        json.dumps(
+            omitted["collection_config"]["manifest"],
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    assert (
+        project_local_production_mutation_v3_candidate(omitted)["status"]
+        == "INCOMPLETE"
+    )
 
 
 def test_local_production_mutation_avoids_same_timestamp_bytecode_cache(

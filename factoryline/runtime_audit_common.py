@@ -209,6 +209,194 @@ def validate_production_mutation_trial(observation, selector, line, outcome, vis
     )
 
 
+def _candidate_manifest(capture):
+    from .runtime_attestation import MAX_TEST_ORACLE_BYTES
+
+    rows = capture.get("source_manifest")
+    if not isinstance(rows, list) or not rows or len(rows) > 4096:
+        raise ValueError("source manifest missing")
+    if (
+        len(json.dumps(rows, sort_keys=True, separators=(",", ":")).encode())
+        > MAX_TEST_ORACLE_BYTES
+    ):
+        raise ValueError("source manifest exceeds size limit")
+    entries = [_candidate_manifest_entry(row) for row in rows]
+    manifest = dict(entries)
+    if len(manifest) != len(rows) or rows != sorted(
+        rows, key=lambda item: item["path"]
+    ):
+        raise ValueError("source manifest is not canonical")
+    digest = hashlib.sha256(
+        json.dumps(
+            [[p, v] for p, v in manifest.items()], separators=(",", ":")
+        ).encode()
+    ).hexdigest()
+    if digest != capture.get("source_manifest_sha256"):
+        raise ValueError("source manifest digest differs")
+    return manifest
+
+
+def _candidate_manifest_entry(row):
+    from .runtime_attestation import _oracle_relative_py
+
+    if not isinstance(row, dict) or set(row) != {"path", "sha256"}:
+        raise ValueError("source manifest malformed")
+    path = _oracle_relative_py(row["path"], "source_manifest.path", test_source=True)
+    digest = row["sha256"]
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("source manifest malformed")
+    return path, digest
+
+
+def _candidate_call_origins(observation, run_manifest):
+    origins = []
+    for row in observation.get("executed_modules", []):
+        if not isinstance(row, dict) or row.get("phase") != "call":
+            continue
+        path = row.get("path")
+        if not all(
+            (
+                row.get("origin") == path,
+                row.get("status") == "BOUND",
+                row.get("observation_kind") == "executed_frame",
+                isinstance(path, str),
+                run_manifest.get(path) == row.get("source_sha256"),
+            )
+        ):
+            raise ValueError("call-phase origin is unbound")
+        origins.append(
+            {
+                "case_id": row.get("nodeid"),
+                "phase": "call",
+                "source_path": path,
+                "module_name": row.get("module_name"),
+                "source_sha256": row.get("source_sha256"),
+                "observation_kind": "executed_frame",
+                "frame_qualname": row.get("frame_qualname"),
+            }
+        )
+    return origins
+
+
+def _candidate_configuration_inputs(capture):
+    from .runtime_attestation import MAX_TEST_ORACLE_CONFIG_FILES
+
+    record = capture.get("collection_config")
+    config = record.get("config", {}) if isinstance(record, dict) else {}
+    configs = record.get("manifest") if isinstance(record, dict) else None
+    if (
+        not isinstance(record, dict)
+        or record.get("complete") is not True
+        or not isinstance(config, dict)
+        or config.get("state") not in {"read", "missing"}
+        or not isinstance(configs, list)
+        or len(configs) > MAX_TEST_ORACLE_CONFIG_FILES
+    ):
+        raise ValueError(
+            "pytest configuration manifest is incomplete or exceeds bounds"
+        )
+    return record, config, configs
+
+
+def _candidate_configuration_manifest(capture, test_path, source_manifest):
+    record, config, configs = _candidate_configuration_inputs(capture)
+    paths = test_path.split("/")
+    expected = (
+        [{"path": config["path"], "sha256": config["sha256"]}]
+        if config["state"] == "read"
+        else []
+    ) + [
+        {"path": p, "sha256": source_manifest[p]}
+        for i in range(len(paths))
+        if (p := "/".join(paths[:i] + ["conftest.py"])) in source_manifest
+    ]
+    expected.sort(key=lambda row: row["path"])
+    digest = hashlib.sha256(
+        json.dumps(configs, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if configs != expected or record.get("identity_sha256") != digest:
+        raise ValueError(
+            "pytest configuration manifest is incomplete, changed, or unbound"
+        )
+    return configs, digest
+
+
+def _candidate_run_evidence(capture, name, selector):
+    observation, trial = capture.get(f"{name}_observation"), capture.get(name)
+    selection, mutation = capture.get("selection"), capture.get("production_mutation")
+    if not all(
+        isinstance(value, dict) for value in (observation, trial, selection, mutation)
+    ):
+        raise ValueError(f"{name} observations missing")
+    expected, visible, exit_code = {
+        "baseline": ("passed", False, 0),
+        "mutant": ("failed", True, 1),
+    }[name]
+    process, observation_file = trial.get("process"), trial.get("observation")
+    if not all(
+        (
+            isinstance(process, dict),
+            process.get("timed_out") is False,
+            process.get("output_limit_exceeded") is False,
+            process.get("cleanup_confirmed") is True,
+            process.get("launch_error") is False,
+            process.get("exit_code") == 0,
+            observation.get("exit_code") == exit_code,
+            isinstance(observation_file, dict),
+            re.fullmatch(r"[0-9a-f]{64}", str(observation_file.get("sha256"))),
+            validate_production_mutation_trial(
+                observation,
+                selector,
+                selection.get("assertion_line"),
+                expected,
+                visible,
+            ),
+            observation.get("origin_status") == "BOUND",
+            observation.get("origin_limit_exceeded") is False,
+            re.fullmatch(
+                r"[0-9a-f]{64}", str(observation.get("collection_report_sha256"))
+            ),
+            observation.get("runtime_context_before")
+            == observation.get("runtime_context_after"),
+            re.fullmatch(
+                r"[0-9a-f]{64}",
+                str(observation.get("runtime_context_normalized_before")),
+            ),
+            observation.get("runtime_context_normalized_before")
+            == observation.get("runtime_context_normalized_after"),
+        )
+    ):
+        raise ValueError(
+            f"{name} lifecycle, assertion, origin, or context evidence incomplete"
+        )
+    return observation, trial, selection, mutation, expected, visible, observation_file
+
+
+def _candidate_definition_frame_bound(observation, selection, cases):
+    rows = observation.get("executed_modules", [])
+    return all(
+        any(
+            isinstance(row, dict)
+            and all(
+                (
+                    row.get("nodeid") == case,
+                    row.get("phase") == "call",
+                    row.get("path") == selection.get("test_path"),
+                    row.get("origin") == selection.get("test_path"),
+                    row.get("status") == "BOUND",
+                    row.get("observation_kind") == "executed_frame",
+                    row.get("frame_qualname")
+                    == selection.get("test_definition_qualname"),
+                    row.get("frame_firstlineno")
+                    == selection.get("test_code_firstlineno"),
+                )
+            )
+            for row in rows
+        )
+        for case in cases
+    )
+
+
 def _mutation_origin_path_valid(root, path, digest):
     try:
         candidate = (root / path).resolve(strict=True)
