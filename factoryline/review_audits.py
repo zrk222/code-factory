@@ -5233,7 +5233,7 @@ def _security_scan_tree(
         if isinstance(cls, ast.ClassDef) and cls.name in context.get("mixins", ()):
             unittest_methods.update(id(method) for method in cls.body)
     class_helpers = _class_oracle_helpers(tree, oracle_aliases, unittest_methods)
-    from .review_integrity import bind_security_call_scopes
+    from .review_integrity import bind_security_call_scopes, redirect_source_findings
 
     bind_security_call_scopes(tree)
     findings = _tenant_read_findings(
@@ -5267,6 +5267,7 @@ def _security_scan_tree(
         findings.extend(
             _security_node_findings(relative, node, aliases, roundtrip_aliases)
         )
+    findings.extend(redirect_source_findings(relative, tree, aliases, nodes))
     return findings
 
 

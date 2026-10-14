@@ -3193,6 +3193,750 @@ def security_assignment_findings(relative, node, aliases):
     )
 
 
+_REDIRECT_EXCEPTION_TYPES = {
+    "HTTPMultipleChoices",
+    "HTTPMovedPermanently",
+    "HTTPFound",
+    "HTTPSeeOther",
+    "HTTPUseProxy",
+    "HTTPTemporaryRedirect",
+    "HTTPPermanentRedirect",
+}
+
+
+def redirect_source_findings(relative, tree, aliases, nodes):
+    """Find bounded request-path flows into imported redirect exception APIs."""
+    from . import review_audits as audit
+
+    api = _redirect_api_bindings(tree)
+    if not api["requests"] or not api["redirects"]:
+        return []
+    functions = [
+        node
+        for node in nodes
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    helpers = _redirect_clone_summaries(functions, api)
+    findings = []
+    for function in functions:
+        function_api = _redirect_scope_api(api, function)
+        requests = _redirect_request_parameters(function, function_api["requests"])
+        sinks = _redirect_sink_parameters(function, function_api)
+        if not requests or not sinks:
+            continue
+        findings.extend(
+            _redirect_function_flow(
+                relative, function, requests, sinks, api, helpers, aliases
+            )
+        )
+    return findings
+
+
+def _redirect_api_bindings(tree):
+    api = {"requests": set(), "redirects": set(), "moves": set(), "regex": set()}
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            _redirect_add_import_bindings(node, api)
+        else:
+            _redirect_remove_api_bindings(node, api)
+    return api
+
+
+def _redirect_remove_api_bindings(node, api):
+    from . import review_audits as audit
+
+    names = audit._bound_names(node)
+    for values in api.values():
+        values.difference_update(names)
+
+
+def _redirect_scope_api(api, function):
+    scoped = {key: values.copy() for key, values in api.items()}
+    bound = _security_scope_local_names(function)
+    bound.update(
+        item.arg
+        for item in [
+            *function.args.posonlyargs,
+            *function.args.args,
+            *function.args.kwonlyargs,
+        ]
+    )
+    for values in scoped.values():
+        values.difference_update(bound)
+    return scoped
+
+
+def _redirect_add_import_bindings(node, api):
+    if isinstance(node, ast.Import):
+        api["regex"].update(
+            item.asname or "re" for item in node.names if item.name == "re"
+        )
+    if isinstance(node, ast.ImportFrom):
+        _redirect_add_from_bindings(node, api)
+
+
+def _redirect_add_from_bindings(node, api):
+    module = node.module or ""
+    if _redirect_request_import(node, module):
+        api["requests"].update(
+            item.asname or item.name for item in node.names if item.name == "Request"
+        )
+    if _redirect_exception_import(node, module):
+        for item in node.names:
+            if item.name in _REDIRECT_EXCEPTION_TYPES | {"HTTPMove"}:
+                local = item.asname or item.name
+                if item.name == "HTTPMove":
+                    api["moves"].add(local)
+                else:
+                    api["redirects"].add(local)
+
+
+def _redirect_request_import(node, module):
+    return module in {"aiohttp.web_request", "aiohttp.web"} or bool(
+        node.level and module == "web_request"
+    )
+
+
+def _redirect_exception_import(node, module):
+    return module in {"aiohttp.web_exceptions", "aiohttp.web"} or bool(
+        node.level and module == "web_exceptions"
+    )
+
+
+def _redirect_request_parameters(function, request_types):
+    parameters = [
+        *function.args.posonlyargs,
+        *function.args.args,
+        *function.args.kwonlyargs,
+    ]
+    return {
+        parameter.arg
+        for parameter in parameters
+        if isinstance(parameter.annotation, ast.Name)
+        and parameter.annotation.id in request_types
+    }
+
+
+def _redirect_clone_summaries(functions, api):
+    summaries = {}
+    for function in functions:
+        summary = _redirect_clone_summary(function, api["requests"])
+        if summary is not None or _redirect_clone_assignment(
+            function, _redirect_request_parameters(function, api["requests"])
+        ):
+            summaries[function.name] = summary
+    return summaries
+
+
+def _redirect_clone_summary(function, request_types):
+    requests = _redirect_request_parameters(function, request_types)
+    if not requests:
+        return None
+    result = _redirect_clone_assignment(function, set(requests))
+    if result is None:
+        return None
+    clone_name, path_name = result
+    if not _redirect_clone_binding_stable(function, clone_name):
+        return None
+    positions, return_safe = _redirect_return_positions(function, clone_name, requests)
+    if positions is None or len(positions) != 1:
+        return None
+    clone_index, success_index = next(iter(positions))
+    return (
+        function.name,
+        _redirect_parameter_index(function, path_name),
+        path_name,
+        clone_index,
+        success_index,
+        return_safe,
+    )
+
+
+def _redirect_clone_binding_stable(function, clone_name):
+    writes = 0
+    for node in _redirect_walk_body(function):
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if clone_name in _redirect_target_names(targets):
+                writes += 1
+    return writes == 1
+
+
+def _redirect_clone_assignment(function, aliases):
+    result = None
+    for node in _redirect_walk_body(function):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Name):
+            if node.value.id in aliases:
+                aliases.update(_redirect_target_names(node.targets))
+        if not _redirect_clone_uses_request(node, aliases):
+            continue
+        path = next((kw.value for kw in node.keywords if kw.arg == "rel_url"), None)
+        assignment = getattr(node, "_security_flow_statement", None)
+        if isinstance(path, ast.Name) and isinstance(assignment, ast.Assign):
+            targets = _redirect_target_names(assignment.targets)
+            if len(targets) == 1 and isinstance(assignment.value, ast.Call):
+                result = next(iter(targets)), path.id
+    return result
+
+
+def _redirect_clone_uses_request(node, aliases):
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "clone"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id in aliases
+    )
+
+
+def _redirect_parameter_index(function, name):
+    parameters = [
+        *function.args.posonlyargs,
+        *function.args.args,
+    ]
+    return next(
+        (index for index, item in enumerate(parameters) if item.arg == name), -1
+    )
+
+
+def _redirect_walk_body(function):
+    pending = list(function.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        yield node
+        pending.extend(ast.iter_child_nodes(node))
+
+
+def _redirect_target_names(targets):
+    return {
+        node.id
+        for target in targets
+        for node in ast.walk(target)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+
+
+def _redirect_return_positions(function, clone_name, requests):
+    positions = set()
+    return_safe = True
+    for node in _redirect_walk_body(function):
+        has_success, current, safe = _redirect_success_return_pair(
+            node, clone_name, requests
+        )
+        if not has_success:
+            continue
+        if current is None or (positions and positions != {current}):
+            return None, False
+        positions.add(current)
+        return_safe = return_safe and safe
+    return positions, return_safe
+
+
+def _redirect_success_return_pair(node, clone_name, requests):
+    if not isinstance(node, ast.Return):
+        return False, None, False
+    if _redirect_explicit_failure_return(node.value):
+        return False, None, False
+    if not isinstance(node.value, (ast.Tuple, ast.List)):
+        return True, None, False
+    return _redirect_tuple_return_pair(node.value.elts, clone_name, requests)
+
+
+def _redirect_tuple_return_pair(elements, clone_name, requests):
+    candidates = [
+        index
+        for index, item in enumerate(elements)
+        if isinstance(item, ast.Name) and item.id in requests | {clone_name}
+    ]
+    if len(candidates) != 1:
+        return True, None, False
+    request_index = candidates[0]
+    statuses = [index for index in range(len(elements)) if index != request_index]
+    if len(statuses) != 1:
+        return True, None, False
+    success_index = statuses[0]
+    success = elements[success_index]
+    if isinstance(success, ast.Constant) and success.value is False:
+        return False, None, False
+    if isinstance(success, ast.Constant) and not success.value:
+        return False, None, False
+    pair = request_index, success_index
+    return True, pair, elements[request_index].id == clone_name
+
+
+def _redirect_explicit_failure_return(value):
+    return isinstance(value, ast.Constant) and value.value is False
+
+
+def _redirect_sink_parameters(function, api):
+    scopes = [function]
+    parent = getattr(function, "_security_parent_scope", None)
+    while isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        scopes.append(parent)
+        parent = getattr(parent, "_security_parent_scope", None)
+    sinks = set().union(*(_redirect_scope_sink_names(scope, api) for scope in scopes))
+    return sinks | api["redirects"]
+
+
+def _redirect_scope_sink_names(scope, api):
+    positional = [*scope.args.posonlyargs, *scope.args.args]
+    defaults = (
+        dict(
+            zip(
+                [item.arg for item in positional[-len(scope.args.defaults) :]],
+                scope.args.defaults,
+            )
+        )
+        if scope.args.defaults
+        else {}
+    )
+    defaults.update(
+        {
+            item.arg: default
+            for item, default in zip(scope.args.kwonlyargs, scope.args.kw_defaults)
+            if default is not None
+        }
+    )
+    parameters = [*positional, *scope.args.kwonlyargs]
+    return {
+        parameter.arg
+        for parameter in parameters
+        if _redirect_is_sink_parameter(parameter, defaults.get(parameter.arg), api)
+    }
+
+
+def _redirect_is_sink_parameter(parameter, default, api):
+    annotation = parameter.annotation
+    if not isinstance(annotation, ast.Subscript):
+        return False
+    item = annotation.slice
+    return (
+        _name(annotation.value).split(".")[-1] == "Type"
+        and isinstance(item, ast.Name)
+        and item.id in api["moves"]
+        and isinstance(default, ast.Name)
+        and default.id in api["redirects"]
+    )
+
+
+def _redirect_function_flow(relative, function, requests, sinks, api, helpers, aliases):
+    bound = _security_scope_local_names(function)
+    bound.update(
+        item.arg
+        for item in [
+            *function.args.posonlyargs,
+            *function.args.args,
+            *function.args.kwonlyargs,
+        ]
+    )
+    helpers = {
+        name: None if name in bound else summary for name, summary in helpers.items()
+    }
+    state = {"requests": set(requests), "values": {}, "lists": {}, "guarded": {}}
+    return _redirect_flow_block(
+        relative, function.body, state, sinks, api, helpers, aliases, function
+    )[1]
+
+
+def _redirect_flow_block(
+    relative, statements, state, sinks, api, helpers, aliases, function
+):
+    findings = []
+    current = _redirect_copy_state(state)
+    for statement in statements:
+        if isinstance(statement, ast.If):
+            results = [
+                _redirect_flow_block(
+                    relative,
+                    block,
+                    _redirect_guard_branch(current, statement.test, truth),
+                    sinks,
+                    api,
+                    helpers,
+                    aliases,
+                    function,
+                )
+                for block, truth in (
+                    (statement.body, True),
+                    (statement.orelse, False),
+                )
+            ]
+            current = _redirect_merge_states([row[0] for row in results])
+            findings.extend(item for row in results for item in row[1])
+            continue
+        if isinstance(statement, (ast.For, ast.AsyncFor)):
+            loop_state, loop_findings = _redirect_for_flow(
+                relative,
+                statement,
+                current,
+                sinks,
+                api,
+                helpers,
+                aliases,
+                function,
+            )
+            findings.extend(loop_findings)
+            current = loop_state
+            continue
+        findings.extend(
+            _redirect_statement_sinks(
+                relative, statement, current, sinks, api, function
+            )
+        )
+        findings.extend(
+            _redirect_apply_statement(statement, current, api, helpers, aliases)
+        )
+    return current, findings
+
+
+def _redirect_for_flow(
+    relative, statement, state, sinks, api, helpers, aliases, function
+):
+    findings = []
+    current = state
+    for _ in range(3):
+        nested = _redirect_copy_state(current)
+        iterable = _redirect_expression_state(statement.iter, current, api, aliases)
+        list_name = statement.iter.id if isinstance(statement.iter, ast.Name) else None
+        status = current["lists"].get(list_name, iterable)
+        if status in {"path", "url", "unsafe"}:
+            for name in _redirect_target_names([statement.target]):
+                nested["values"][name] = status
+        nested, found = _redirect_flow_block(
+            relative, statement.body, nested, sinks, api, helpers, aliases, function
+        )
+        findings.extend(found)
+        merged = _redirect_merge_states([state, nested])
+        if merged == current:
+            break
+        current = merged
+    unique = {}
+    for finding in findings:
+        key = (finding.get("code"), finding.get("line"), finding.get("sink"))
+        unique[key] = finding
+    return current, list(unique.values())
+
+
+def _redirect_copy_state(state):
+    return {key: value.copy() for key, value in state.items()}
+
+
+def _redirect_guard_branch(state, test, truth):
+    name = test.id if isinstance(test, ast.Name) else None
+    if (
+        isinstance(test, ast.UnaryOp)
+        and isinstance(test.op, ast.Not)
+        and isinstance(test.operand, ast.Name)
+    ):
+        name = test.operand.id
+        truth = not truth
+    for request, (guard, status) in state["guarded"].items():
+        if name == guard:
+            if truth and status == "safe":
+                state["requests"].discard(request)
+            else:
+                state["requests"].add(request)
+        else:
+            state["requests"].add(request)
+    return state
+
+
+def _redirect_merge_states(states):
+    merged = {"requests": set(), "values": {}, "lists": {}, "guarded": {}}
+    for key in merged:
+        names = set().union(*(state[key] for state in states))
+        if key == "requests":
+            merged[key] = names
+            continue
+        if key == "guarded":
+            for name in names:
+                values = {state[key].get(name) for state in states}
+                if len(values) == 1:
+                    merged[key][name] = next(iter(values))
+            continue
+        for name in names:
+            values = {state[key].get(name) for state in states}
+            merged[key][name] = _redirect_merge_status(*values)
+    return merged
+
+
+def _redirect_expression_state(node, state, api, aliases):
+    source = _redirect_source_kind(node, state)
+    if source is not None:
+        return source
+    if isinstance(node, ast.Name):
+        return state["values"].get(node.id)
+    statuses = _redirect_child_statuses(node, state, api, aliases)
+    return _redirect_merge_status(*statuses)
+
+
+def _redirect_source_kind(node, state):
+    if isinstance(node, ast.Attribute):
+        return _redirect_request_attribute(node, state)
+    if isinstance(node, ast.Call):
+        return _redirect_query_value(node, state)
+
+
+def _redirect_request_attribute(node, state):
+    if not isinstance(node.value, ast.Name) or node.value.id not in state["requests"]:
+        return None
+    return {"raw_path": "path", "url": "url"}.get(node.attr)
+
+
+def _redirect_query_value(node, state):
+    if not isinstance(node.func, ast.Attribute) or node.func.attr != "get":
+        return None
+    query = node.func.value
+    if not isinstance(query, ast.Attribute) or query.attr != "query":
+        return None
+    request = query.value
+    return (
+        "url"
+        if isinstance(request, ast.Name) and request.id in state["requests"]
+        else None
+    )
+
+
+def _redirect_child_statuses(node, state, api, aliases):
+    return {
+        value
+        for child in ast.iter_child_nodes(node)
+        if (value := _redirect_expression_state(child, state, api, aliases)) is not None
+    }
+
+
+def _redirect_is_sanitizer(node, state, api, aliases):
+    if not isinstance(node, ast.Call) or len(node.args) != 3 or node.keywords:
+        return False
+    from .review_audits import security_call_name
+
+    pattern, replacement, value = node.args
+    return (
+        security_call_name(node, aliases) == "re.sub"
+        and bool(api["regex"])
+        and isinstance(pattern, ast.Constant)
+        and pattern.value == "^//+"
+        and isinstance(replacement, ast.Constant)
+        and replacement.value == "/"
+        and _redirect_expression_state(value, state, api, aliases) == "path"
+    )
+
+
+def _redirect_apply_statement(statement, state, api, helpers, aliases):
+    _redirect_record_append(statement, state, api, aliases)
+    if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+        return []
+    value = statement.value
+    targets = (
+        statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+    )
+    names = _redirect_target_names(targets)
+    call = value.value if isinstance(value, ast.Await) else value
+    if _redirect_is_clone_helper_call(call, helpers):
+        _redirect_invalidate_guards(names, state)
+        summary = helpers[call.func.id]
+        if summary is None:
+            _redirect_mark_unknown_clone_result(targets, state)
+        else:
+            _redirect_apply_clone_call(call, targets, summary, state)
+        return []
+    _redirect_apply_assignment(value, targets, names, state, api, aliases)
+    return []
+
+
+def _redirect_apply_assignment(value, targets, names, state, api, aliases):
+    _redirect_invalidate_guards(names, state)
+    _redirect_transfer_request_aliases(value, names, state)
+    status = (
+        "safe"
+        if _redirect_is_sanitizer(value, state, api, aliases)
+        else _redirect_expression_state(value, state, api, aliases)
+    )
+    split_values = _redirect_split_values(value, targets, state, api, aliases)
+    _redirect_store_values(names, status, split_values, value, state)
+
+
+def _redirect_transfer_request_aliases(value, names, state):
+    for name in names:
+        state["requests"].discard(name)
+    if isinstance(value, ast.Name) and value.id in state["requests"]:
+        state["requests"].update(name for name in names if name != value.id)
+
+
+def _redirect_store_values(names, status, split_values, value, state):
+    for name in names:
+        state["values"].pop(name, None)
+        state["lists"].pop(name, None)
+    if split_values:
+        state["values"].update(split_values)
+    elif isinstance(value, (ast.List, ast.Tuple)) and status is not None:
+        for name in names:
+            state["lists"][name] = status
+    elif status is not None:
+        for name in names:
+            state["values"][name] = status
+
+
+def _redirect_invalidate_guards(names, state):
+    state["guarded"] = {
+        request: binding
+        for request, binding in state["guarded"].items()
+        if request not in names and binding[0] not in names
+    }
+
+
+def _redirect_record_append(statement, state, api, aliases):
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return
+    call = statement.value
+    if not isinstance(call.func, ast.Attribute) or call.func.attr != "append":
+        return
+    name = _name(call.func.value)
+    status = (
+        _redirect_expression_state(call.args[0], state, api, aliases)
+        if call.args
+        else None
+    )
+    if status is not None:
+        state["lists"][name] = _redirect_merge_status(state["lists"].get(name), status)
+
+
+def _redirect_is_clone_helper_call(call, helpers):
+    return (
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id in helpers
+    )
+
+
+def _redirect_mark_unknown_clone_result(targets, state):
+    target = (
+        targets[0]
+        if len(targets) == 1 and isinstance(targets[0], (ast.Tuple, ast.List))
+        else None
+    )
+    if target is None:
+        return
+    state["requests"].update(
+        item.id for item in target.elts if isinstance(item, ast.Name)
+    )
+
+
+def _redirect_split_values(value, targets, state, api, aliases):
+    if not _redirect_is_query_split(value, state, api, aliases):
+        return {}
+    target = (
+        targets[0] if len(targets) == 1 and isinstance(targets[0], ast.Tuple) else None
+    )
+    if target is None or len(target.elts) != 2:
+        return {}
+    first, second = target.elts
+    if not isinstance(first, ast.Name) or not isinstance(second, ast.Name):
+        return {}
+    return {first.id: "unsafe", second.id: "safe"}
+
+
+def _redirect_is_query_split(value, state, api, aliases):
+    if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Attribute):
+        return False
+    if value.func.attr != "split" or not value.args:
+        return False
+    delimiter = value.args[0]
+    return (
+        isinstance(delimiter, ast.Constant)
+        and delimiter.value == "?"
+        and _redirect_expression_state(value.func.value, state, api, aliases) == "path"
+    )
+
+
+def _redirect_apply_clone_call(call, targets, summary, state):
+    _helper, path_index, path_name, tuple_index, success_index, return_safe = summary
+    actual = _redirect_call_argument(call, path_index, path_name)
+    status = state["values"].get(actual) if actual else None
+    target = (
+        targets[0]
+        if len(targets) == 1 and isinstance(targets[0], (ast.Tuple, ast.List))
+        else None
+    )
+    if target is None or tuple_index >= len(target.elts):
+        return
+    request_target = target.elts[tuple_index]
+    success_target = target.elts[success_index]
+    if not isinstance(request_target, ast.Name) or not isinstance(
+        success_target, ast.Name
+    ):
+        return
+    state["requests"].add(request_target.id)
+    state["guarded"][request_target.id] = (
+        success_target.id,
+        status if return_safe else "unsafe",
+    )
+
+
+def _redirect_call_argument(call, index, name):
+    if 0 <= index < len(call.args) and isinstance(call.args[index], ast.Name):
+        return call.args[index].id
+    keyword_value = next(
+        (
+            keyword.value.id
+            for keyword in call.keywords
+            if keyword.arg == name and isinstance(keyword.value, ast.Name)
+        ),
+        None,
+    )
+    if keyword_value is not None:
+        return keyword_value
+    return None
+
+
+def _redirect_statement_sinks(relative, statement, state, sinks, api, function):
+    from . import review_audits as audit
+
+    findings = []
+    for node in ast.walk(statement):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        imported_sink = node.func.id in api["redirects"]
+        if not imported_sink and (
+            node.func.id not in sinks or not isinstance(statement, ast.Raise)
+        ):
+            continue
+        if not _redirect_sink_argument_unsafe(node, state, api):
+            continue
+        findings.append(
+            audit._security_finding(
+                "SECURITY_OPEN_REDIRECT",
+                relative,
+                node,
+                "A request-derived path reaches an aiohttp redirect response without a proven leading-slash normalization.",
+                "HIGH",
+                cwe="CWE-601",
+                source="aiohttp Request.raw_path",
+                sink=node.func.id,
+                flow="request clone helper and returned tuple slot",
+            )
+        )
+    return findings
+
+
+def _redirect_sink_argument_unsafe(call, state, api):
+    values = [*call.args, *(keyword.value for keyword in call.keywords)]
+    return any(
+        _redirect_expression_state(value, state, api, {}) in {"path", "url", "unsafe"}
+        for value in values
+    )
+
+
+def _redirect_merge_status(*values):
+    if "url" in values:
+        return "url"
+    if set(values) & {"path", "unsafe"}:
+        return "path"
+    return "safe" if set(values) == {"safe"} else "unknown"
+
+
 def _security_flow_bindings(node, aliases):
     """Read unconditional preceding bindings; uncertain branches invalidate them."""
     scope = getattr(node, "_security_lexical_scope", None) or getattr(
