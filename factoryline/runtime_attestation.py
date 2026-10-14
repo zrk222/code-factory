@@ -48,11 +48,15 @@ TEST_ORACLE_VERIFICATION_SCHEMA = "factory.test-oracle-verification.v1"
 TEST_ORACLE_SCHEMA_V2 = "factory.test-oracle-attestation.v2"
 TEST_ORACLE_PAYLOAD_TYPE_V2 = "application/vnd.factory.test-oracle-attestation.v2+json"
 TEST_ORACLE_VERIFICATION_SCHEMA_V2 = "factory.test-oracle-verification.v2"
+TEST_ORACLE_SCHEMA_V3 = "factory.test-oracle-attestation.v3"
+TEST_ORACLE_PAYLOAD_TYPE_V3 = "application/vnd.factory.test-oracle-attestation.v3+json"
+TEST_ORACLE_VERIFICATION_SCHEMA_V3 = "factory.test-oracle-verification.v3"
 MAX_VALIDITY = timedelta(hours=24)
 MAX_TEST_ORACLE_BYTES = 1_048_576
 MAX_TEST_ORACLE_CASE_IDS = 2048
 MAX_TEST_ORACLE_ORIGINS_PER_RUN = 8192
 MAX_TEST_ORACLE_ORIGINS_TOTAL = 16_384
+MAX_TEST_ORACLE_CONFIG_FILES = 64
 _SUPERVISED_MODE = "supervised_" + "sub" + "process"
 ISOLATION_MODES = (_SUPERVISED_MODE, "isolated_worker", "hardened_vm")
 INDEPENDENT_MODES = {"isolated_worker", "hardened_vm"}
@@ -718,6 +722,19 @@ def _oracle_relative_py(value: object, field: str, *, test_source: bool) -> str:
     return path
 
 
+def _oracle_relative_path(value: object, field: str) -> str:
+    path = require_str(value, field, maximum=512)
+    parts = path.split("/")
+    if (
+        "\\" in path
+        or path.startswith("/")
+        or any(part in {"", ".", ".."} for part in parts)
+        or re.match(r"^[A-Za-z]:", path)
+    ):
+        _oracle_fail("E_ORACLE_PATH", f"{field} must be a safe relative POSIX path")
+    return path
+
+
 def _oracle_case_ids(value: object, field: str, path: str, symbol: str) -> list[str]:
     if not isinstance(value, list) or not 1 <= len(value) <= MAX_TEST_ORACLE_CASE_IDS:
         _oracle_fail("E_ORACLE_CASES", f"{field} must contain 1..2048 node ids")
@@ -735,6 +752,233 @@ def _oracle_case_ids(value: object, field: str, path: str, symbol: str) -> list[
     return sorted(case_ids)
 
 
+def _oracle_collection_catalog(
+    value: object, *, field: str, test_path: str, test_sha: str, symbol: str
+) -> dict[str, Any]:
+    catalog = _oracle_exact(
+        value,
+        {
+            "status",
+            "phase",
+            "complete",
+            "scope",
+            "source_path",
+            "source_sha256",
+            "config_manifest",
+            "config_manifest_sha256",
+            "config_identity",
+            "report_sha256",
+            "case_ids",
+        },
+        field,
+    )
+    if (
+        catalog["status"] != "PASS"
+        or catalog["phase"] != "collection"
+        or catalog["complete"] is not True
+        or catalog["scope"] != "test_function"
+    ):
+        _oracle_fail("E_ORACLE_COLLECTION", f"{field} must be a complete collection")
+    source_path = _oracle_relative_py(
+        catalog["source_path"], f"{field}.source_path", test_source=True
+    )
+    source_sha = require_digest(catalog["source_sha256"], f"{field}.source_sha256")
+    if source_path != test_path or source_sha != test_sha:
+        _oracle_fail("E_ORACLE_COLLECTION", f"{field} source binding differs")
+    raw_manifest = catalog["config_manifest"]
+    if (
+        not isinstance(raw_manifest, list)
+        or len(raw_manifest) > MAX_TEST_ORACLE_CONFIG_FILES
+    ):
+        _oracle_fail("E_ORACLE_COLLECTION", f"{field}.config_manifest exceeds bounds")
+    manifest = []
+    for index, item in enumerate(raw_manifest):
+        row = _oracle_exact(
+            item, {"path", "sha256"}, f"{field}.config_manifest[{index}]"
+        )
+        manifest.append(
+            {
+                "path": _oracle_relative_path(
+                    row["path"], f"{field}.config_manifest.path"
+                ),
+                "sha256": require_digest(
+                    row["sha256"], f"{field}.config_manifest.sha256"
+                ),
+            }
+        )
+    if manifest != sorted(manifest, key=lambda item: item["path"]) or len(
+        {item["path"] for item in manifest}
+    ) != len(manifest):
+        _oracle_fail("E_ORACLE_COLLECTION", f"{field}.config_manifest is not canonical")
+    identity = require_str(
+        catalog["config_identity"], f"{field}.config_identity", maximum=128
+    )
+    if identity != ("manifest" if manifest else "pytest-default"):
+        _oracle_fail("E_ORACLE_COLLECTION", f"{field}.config_identity is invalid")
+    manifest_bytes = json.dumps(
+        manifest, sort_keys=True, separators=(",", ":")
+    ).encode()
+    manifest_sha = require_digest(
+        catalog["config_manifest_sha256"], f"{field}.config_manifest_sha256"
+    )
+    if hashlib.sha256(manifest_bytes).hexdigest() != manifest_sha:
+        _oracle_fail("E_ORACLE_COLLECTION", f"{field} config manifest digest differs")
+    return {
+        "status": "PASS",
+        "phase": "collection",
+        "complete": True,
+        "scope": "test_function",
+        "source_path": source_path,
+        "source_sha256": source_sha,
+        "config_manifest": manifest,
+        "config_manifest_sha256": manifest_sha,
+        "config_identity": identity,
+        "report_sha256": require_digest(
+            catalog["report_sha256"], f"{field}.report_sha256"
+        ),
+        "case_ids": _oracle_case_ids(
+            catalog["case_ids"], f"{field}.case_ids", test_path, symbol
+        ),
+    }
+
+
+def _oracle_assertion_observations(
+    value: object,
+    *,
+    field: str,
+    case_ids: list[str],
+    test_path: str,
+    test_sha: str,
+    outcome: str,
+    failure_visible: bool,
+) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or not 1 <= len(value) <= 8192:
+        _oracle_fail("E_ORACLE_ASSERTION", f"{field} must contain 1..8192 records")
+    rows = []
+    identities = set()
+    for index, item in enumerate(value):
+        row = _oracle_exact(
+            item,
+            {
+                "case_id",
+                "source_path",
+                "source_sha256",
+                "callback_qualname",
+                "line",
+                "assertion_kind",
+                "hits",
+                "outcome",
+                "failure_visible",
+            },
+            f"{field}[{index}]",
+        )
+        case_id = require_str(row["case_id"], f"{field}.case_id", maximum=1024)
+        source_path = _oracle_relative_py(
+            row["source_path"], f"{field}.source_path", test_source=True
+        )
+        source_sha = require_digest(row["source_sha256"], f"{field}.source_sha256")
+        qualname = require_str(
+            row["callback_qualname"], f"{field}.callback_qualname", maximum=1024
+        )
+        if any(
+            part != "<locals>" and not part.isidentifier()
+            for part in qualname.split(".")
+        ):
+            _oracle_fail("E_ORACLE_ASSERTION", f"{field} has invalid callback name")
+        line = require_int(row["line"], f"{field}.line", minimum=1, maximum=10_000_000)
+        hits = require_int(row["hits"], f"{field}.hits", minimum=1, maximum=1_000_000)
+        if (
+            case_id not in case_ids
+            or source_path != test_path
+            or source_sha != test_sha
+            or row["assertion_kind"] != "assert"
+            or row["outcome"] != outcome
+            or row["failure_visible"] is not failure_visible
+        ):
+            _oracle_fail(
+                "E_ORACLE_ASSERTION",
+                f"{field} does not bind a visible test-source assertion result",
+            )
+        identity = (case_id, qualname, line)
+        if identity in identities:
+            _oracle_fail("E_ORACLE_ASSERTION", f"{field} has duplicate assertion sites")
+        identities.add(identity)
+        rows.append(
+            {
+                "case_id": case_id,
+                "source_path": source_path,
+                "source_sha256": source_sha,
+                "callback_qualname": qualname,
+                "line": line,
+                "assertion_kind": "assert",
+                "hits": hits,
+                "outcome": outcome,
+                "failure_visible": failure_visible,
+            }
+        )
+    if {row["case_id"] for row in rows} != set(case_ids):
+        _oracle_fail(
+            "E_ORACLE_ASSERTION", f"{field} lacks an observation for each case"
+        )
+    return rows
+
+
+def _oracle_origin_record(item, *, field, index, case_ids, version_three):
+    record = _oracle_exact(
+        item,
+        {
+            "case_id",
+            "phase",
+            "source_path",
+            "module_name",
+            "source_sha256",
+            "observation_kind",
+        }
+        | ({"frame_qualname"} if version_three else set()),
+        f"{field}[{index}]",
+    )
+    case_id = require_str(record["case_id"], f"{field}.case_id", maximum=1024)
+    phase = require_str(record["phase"], f"{field}.phase", maximum=32)
+    path = _oracle_relative_py(
+        record["source_path"], f"{field}.source_path", test_source=True
+    )
+    module = require_str(record["module_name"], f"{field}.module_name", maximum=512)
+    digest = require_digest(record["source_sha256"], f"{field}.source_sha256")
+    kind = require_str(
+        record["observation_kind"], f"{field}.observation_kind", maximum=32
+    )
+    qualname = None
+    if version_three:
+        qualname = record["frame_qualname"]
+        if kind == "executed_frame":
+            qualname = require_str(qualname, f"{field}.frame_qualname", maximum=1024)
+            if any(
+                part != "<locals>" and not part.isidentifier()
+                for part in qualname.split(".")
+            ):
+                _oracle_fail("E_ORACLE_ORIGIN", f"{field} has invalid frame name")
+        elif qualname is not None:
+            _oracle_fail("E_ORACLE_ORIGIN", f"{field} import frame must be null")
+    if (
+        case_id not in case_ids
+        or phase != "call"
+        or not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", module)
+        or kind not in {"imported_module", "executed_frame"}
+    ):
+        _oracle_fail(
+            "E_ORACLE_ORIGIN", f"{field} contains an unknown or unmatched origin"
+        )
+    return {
+        "case_id": case_id,
+        "phase": phase,
+        "source_path": path,
+        "module_name": module,
+        "source_sha256": digest,
+        "observation_kind": kind,
+        **({"frame_qualname": qualname} if version_three else {}),
+    }
+
+
 def _oracle_origins(
     value: object,
     *,
@@ -744,51 +988,36 @@ def _oracle_origins(
     test_sha: str,
     source_path: str,
     source_sha: str,
-) -> list[dict[str, str]]:
+    version_three: bool = False,
+) -> list[dict[str, Any]]:
     if (
         not isinstance(value, list)
         or not 2 <= len(value) <= MAX_TEST_ORACLE_ORIGINS_PER_RUN
     ):
         _oracle_fail("E_ORACLE_ORIGIN", f"{field} must contain 2..8192 origin records")
-    normalized: list[dict[str, str]] = []
-    seen: set[tuple[str, str, str, str]] = set()
+    normalized: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str, str | None]] = set()
     digest_by_source: dict[tuple[str, str], str] = {}
     path_by_module: dict[tuple[str, str], str] = {}
     for index, item in enumerate(value):
-        record = _oracle_exact(
+        row = _oracle_origin_record(
             item,
-            {
-                "case_id",
-                "phase",
-                "source_path",
-                "module_name",
-                "source_sha256",
-                "observation_kind",
-            },
-            f"{field}[{index}]",
+            field=field,
+            index=index,
+            case_ids=case_ids,
+            version_three=version_three,
         )
-        case_id = require_str(record["case_id"], f"{field}.case_id", maximum=1024)
-        phase = require_str(record["phase"], f"{field}.phase", maximum=32)
-        path = _oracle_relative_py(
-            record["source_path"], f"{field}.source_path", test_source=True
+        case_id = row["case_id"]
+        path = row["source_path"]
+        module_name = row["module_name"]
+        digest = row["source_sha256"]
+        identity = (
+            case_id,
+            path,
+            module_name,
+            row["observation_kind"],
+            row.get("frame_qualname"),
         )
-        module_name = require_str(
-            record["module_name"], f"{field}.module_name", maximum=512
-        )
-        digest = require_digest(record["source_sha256"], f"{field}.source_sha256")
-        observation = require_str(
-            record["observation_kind"], f"{field}.observation_kind", maximum=32
-        )
-        if (
-            case_id not in case_ids
-            or phase != "call"
-            or not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", module_name)
-            or observation not in {"imported_module", "executed_frame"}
-        ):
-            _oracle_fail(
-                "E_ORACLE_ORIGIN", f"{field} contains an unknown or unmatched origin"
-            )
-        identity = (case_id, path, module_name, observation)
         source_identity = (case_id, path)
         module_identity = (case_id, module_name)
         if identity in seen:
@@ -812,16 +1041,7 @@ def _oracle_origins(
         seen.add(identity)
         digest_by_source[source_identity] = digest
         path_by_module[module_identity] = path
-        normalized.append(
-            {
-                "case_id": case_id,
-                "phase": phase,
-                "source_path": path,
-                "module_name": module_name,
-                "source_sha256": digest,
-                "observation_kind": observation,
-            }
-        )
+        normalized.append(row)
     for case_id in case_ids:
         executed = {
             (item["source_path"], item["source_sha256"])
@@ -840,23 +1060,92 @@ def _oracle_origins(
     return normalized
 
 
-def _oracle_test(value: object, *, schema: str = TEST_ORACLE_SCHEMA) -> dict[str, Any]:
-    version_two = schema == TEST_ORACLE_SCHEMA_V2
-    test = _oracle_exact(
-        value,
-        {"path", "line", "symbol", "test_sha256", "baseline", "mutation"},
-        "test",
+def _oracle_v3_metadata(
+    baseline, mutation, path, test_sha, symbol, baseline_cases, mutation_cases
+):
+    if baseline["setup_status"] != "PASS" or baseline["teardown_status"] != "PASS":
+        _oracle_fail("E_ORACLE_BASELINE", "baseline setup and teardown must PASS")
+    if (
+        mutation["setup_status"] != "PASS"
+        or mutation["teardown_status"] != "PASS"
+        or mutation["failure_kind"] != "assertion"
+    ):
+        _oracle_fail(
+            "E_ORACLE_MUTATION", "v3 lifecycle and assertion failure are incomplete"
+        )
+    baseline_catalog = _oracle_collection_catalog(
+        baseline["collection_catalog"],
+        field="baseline.collection_catalog",
+        test_path=path,
+        test_sha=test_sha,
+        symbol=symbol,
     )
-    path = _oracle_relative_py(test["path"], "test.path", test_source=True)
-    line = require_int(test["line"], "test.line", minimum=1, maximum=10_000_000)
-    symbol = require_str(test["symbol"], "test.symbol", maximum=256)
-    if not symbol.isidentifier() or not symbol.startswith("test_"):
-        _oracle_fail("E_ORACLE_TEST", "test.symbol must be a valid test_* identifier")
-    test_sha = require_digest(test["test_sha256"], "test_sha256")
-    run_fields = {"status", "phase", "collection_complete", "case_ids", "report_sha256"}
+    mutation_catalog = _oracle_collection_catalog(
+        mutation["collection_catalog"],
+        field="mutation.collection_catalog",
+        test_path=path,
+        test_sha=test_sha,
+        symbol=symbol,
+    )
+    for field, catalog in (
+        ("baseline.collection_catalog", baseline_catalog),
+        ("mutation.collection_catalog", mutation_catalog),
+    ):
+        if not set(baseline_cases) <= set(catalog["case_ids"]):
+            _oracle_fail("E_ORACLE_COLLECTION", f"{field} omits a selected test case")
+    common_fields = (
+        "source_path",
+        "source_sha256",
+        "config_manifest",
+        "config_manifest_sha256",
+        "config_identity",
+        "case_ids",
+    )
+    if any(baseline_catalog[key] != mutation_catalog[key] for key in common_fields):
+        _oracle_fail(
+            "E_ORACLE_COLLECTION", "baseline and mutation collection scope differs"
+        )
+    baseline_assertions = _oracle_assertion_observations(
+        baseline["assertion_observations"],
+        field="baseline.assertion_observations",
+        case_ids=baseline_cases,
+        test_path=path,
+        test_sha=test_sha,
+        outcome="PASS",
+        failure_visible=False,
+    )
+    mutation_assertions = _oracle_assertion_observations(
+        mutation["assertion_observations"],
+        field="mutation.assertion_observations",
+        case_ids=mutation_cases,
+        test_path=path,
+        test_sha=test_sha,
+        outcome="FAIL",
+        failure_visible=True,
+    )
+
+    def assertion_sites(rows):
+        return {(row["case_id"], row["callback_qualname"], row["line"]) for row in rows}
+
+    if assertion_sites(baseline_assertions) != assertion_sites(mutation_assertions):
+        _oracle_fail(
+            "E_ORACLE_ASSERTION", "baseline and mutation assertion sites differ"
+        )
+    return baseline_catalog, mutation_catalog, baseline_assertions, mutation_assertions
+
+
+def _oracle_baseline_input(test, path, symbol, version_two, version_three):
+    fields = {"status", "phase", "collection_complete", "case_ids", "report_sha256"}
+    if version_three:
+        fields |= {
+            "collection_catalog",
+            "setup_status",
+            "teardown_status",
+            "assertion_observations",
+        }
     baseline = _oracle_exact(
         test["baseline"],
-        run_fields | ({"module_origins"} if version_two else set()),
+        fields | ({"module_origins"} if version_two else set()),
         "baseline",
     )
     if (
@@ -865,13 +1154,15 @@ def _oracle_test(value: object, *, schema: str = TEST_ORACLE_SCHEMA) -> dict[str
         or baseline["collection_complete"] is not True
     ):
         _oracle_fail("E_ORACLE_BASELINE", "baseline must PASS during the call phase")
-    baseline_cases = _oracle_case_ids(
-        baseline["case_ids"], "baseline.case_ids", path, symbol
-    )
-    baseline_report = require_digest(
-        baseline["report_sha256"], "baseline.report_sha256"
-    )
-    mutation_fields = {
+    cases = _oracle_case_ids(baseline["case_ids"], "baseline.case_ids", path, symbol)
+    report = require_digest(baseline["report_sha256"], "baseline.report_sha256")
+    return baseline, cases, report
+
+
+def _oracle_mutation_input(
+    test, path, symbol, version_two, version_three, baseline_cases
+):
+    fields = {
         "source_path",
         "source_sha256",
         "mutant_sha256",
@@ -881,9 +1172,16 @@ def _oracle_test(value: object, *, schema: str = TEST_ORACLE_SCHEMA) -> dict[str
         "failure_kind",
         "report_sha256",
     }
+    if version_three:
+        fields |= {
+            "collection_catalog",
+            "setup_status",
+            "teardown_status",
+            "assertion_observations",
+        }
     mutation = _oracle_exact(
         test["mutation"],
-        mutation_fields | ({"module_origins"} if version_two else set()),
+        fields | ({"module_origins"} if version_two else set()),
         "mutation",
     )
     source_path = _oracle_relative_py(
@@ -899,10 +1197,8 @@ def _oracle_test(value: object, *, schema: str = TEST_ORACLE_SCHEMA) -> dict[str
         )
     if mutation["status"] != "FAIL" or mutation["phase"] != "call":
         _oracle_fail("E_ORACLE_MUTATION", "mutation must FAIL during the call phase")
-    mutation_cases = _oracle_case_ids(
-        mutation["case_ids"], "mutation.case_ids", path, symbol
-    )
-    if mutation_cases != baseline_cases:
+    cases = _oracle_case_ids(mutation["case_ids"], "mutation.case_ids", path, symbol)
+    if cases != baseline_cases:
         _oracle_fail(
             "E_ORACLE_CASES", "baseline and mutation case ids must match exactly"
         )
@@ -910,6 +1206,49 @@ def _oracle_test(value: object, *, schema: str = TEST_ORACLE_SCHEMA) -> dict[str
     if failure_kind not in {"assertion", "exception"}:
         _oracle_fail(
             "E_ORACLE_MUTATION", "mutation failure must be assertion or exception"
+        )
+    report = require_digest(mutation["report_sha256"], "mutation.report_sha256")
+    return mutation, source_path, source_sha, mutant_sha, cases, failure_kind, report
+
+
+def _oracle_test(value: object, *, schema: str = TEST_ORACLE_SCHEMA) -> dict[str, Any]:
+    version_two = schema in {TEST_ORACLE_SCHEMA_V2, TEST_ORACLE_SCHEMA_V3}
+    version_three = schema == TEST_ORACLE_SCHEMA_V3
+    test = _oracle_exact(
+        value,
+        {"path", "line", "symbol", "test_sha256", "baseline", "mutation"},
+        "test",
+    )
+    path = _oracle_relative_py(test["path"], "test.path", test_source=True)
+    line = require_int(test["line"], "test.line", minimum=1, maximum=10_000_000)
+    symbol = require_str(test["symbol"], "test.symbol", maximum=256)
+    if not symbol.isidentifier() or not symbol.startswith("test_"):
+        _oracle_fail("E_ORACLE_TEST", "test.symbol must be a valid test_* identifier")
+    test_sha = require_digest(test["test_sha256"], "test_sha256")
+    baseline, baseline_cases, baseline_report = _oracle_baseline_input(
+        test, path, symbol, version_two, version_three
+    )
+    (
+        mutation,
+        source_path,
+        source_sha,
+        mutant_sha,
+        mutation_cases,
+        failure_kind,
+        mutation_report,
+    ) = _oracle_mutation_input(
+        test, path, symbol, version_two, version_three, baseline_cases
+    )
+    baseline_catalog = mutation_catalog = None
+    baseline_assertions = mutation_assertions = None
+    if version_three:
+        (
+            baseline_catalog,
+            mutation_catalog,
+            baseline_assertions,
+            mutation_assertions,
+        ) = _oracle_v3_metadata(
+            baseline, mutation, path, test_sha, symbol, baseline_cases, mutation_cases
         )
     normalized_baseline = {
         "status": "PASS",
@@ -926,10 +1265,25 @@ def _oracle_test(value: object, *, schema: str = TEST_ORACLE_SCHEMA) -> dict[str
         "phase": "call",
         "case_ids": mutation_cases,
         "failure_kind": failure_kind,
-        "report_sha256": require_digest(
-            mutation["report_sha256"], "mutation.report_sha256"
-        ),
+        "report_sha256": mutation_report,
     }
+    if version_three:
+        normalized_baseline.update(
+            {
+                "setup_status": "PASS",
+                "teardown_status": "PASS",
+                "collection_catalog": baseline_catalog,
+                "assertion_observations": baseline_assertions,
+            }
+        )
+        normalized_mutation.update(
+            {
+                "setup_status": "PASS",
+                "teardown_status": "PASS",
+                "collection_catalog": mutation_catalog,
+                "assertion_observations": mutation_assertions,
+            }
+        )
     if version_two:
         normalized_baseline["module_origins"] = _oracle_origins(
             baseline["module_origins"],
@@ -939,6 +1293,7 @@ def _oracle_test(value: object, *, schema: str = TEST_ORACLE_SCHEMA) -> dict[str
             test_sha=test_sha,
             source_path=source_path,
             source_sha=source_sha,
+            version_three=version_three,
         )
         normalized_mutation["module_origins"] = _oracle_origins(
             mutation["module_origins"],
@@ -948,6 +1303,7 @@ def _oracle_test(value: object, *, schema: str = TEST_ORACLE_SCHEMA) -> dict[str
             test_sha=test_sha,
             source_path=source_path,
             source_sha=mutant_sha,
+            version_three=version_three,
         )
     return {
         "path": path,
@@ -1009,7 +1365,7 @@ def _oracle_payload(
     if not isinstance(tests, list) or not 1 <= len(tests) <= 460:
         _oracle_fail("E_ORACLE_TESTS", "tests must contain 1..460 test observations")
     normalized = [_oracle_test(item, schema=payload_schema) for item in tests]
-    if payload_schema == TEST_ORACLE_SCHEMA_V2:
+    if payload_schema in {TEST_ORACLE_SCHEMA_V2, TEST_ORACLE_SCHEMA_V3}:
         origin_count = sum(
             len(test[run]["module_origins"])
             for test in normalized
@@ -1035,7 +1391,11 @@ def _oracle_payload(
 
 def _oracle_payload_schema(value: object) -> str:
     schema = value.get("schema") if isinstance(value, dict) else None
-    if schema == TEST_ORACLE_SCHEMA or schema == TEST_ORACLE_SCHEMA_V2:
+    if schema in {
+        TEST_ORACLE_SCHEMA,
+        TEST_ORACLE_SCHEMA_V2,
+        TEST_ORACLE_SCHEMA_V3,
+    }:
         return schema
     _oracle_fail("E_ORACLE_SCHEMA", "unexpected test-oracle schema or authority")
 
@@ -1045,6 +1405,8 @@ def _oracle_signature_type(schema: object) -> tuple[str, str]:
         return TEST_ORACLE_SCHEMA, TEST_ORACLE_PAYLOAD_TYPE
     if schema == TEST_ORACLE_SCHEMA_V2:
         return TEST_ORACLE_SCHEMA_V2, TEST_ORACLE_PAYLOAD_TYPE_V2
+    if schema == TEST_ORACLE_SCHEMA_V3:
+        return TEST_ORACLE_SCHEMA_V3, TEST_ORACLE_PAYLOAD_TYPE_V3
     _oracle_fail("E_ORACLE_SCHEMA", "unexpected test-oracle schema")
 
 
@@ -1149,7 +1511,9 @@ def verify_signed_test_oracles(
             )
         return {
             "schema": (
-                TEST_ORACLE_VERIFICATION_SCHEMA_V2
+                TEST_ORACLE_VERIFICATION_SCHEMA_V3
+                if normalized["schema"] == TEST_ORACLE_SCHEMA_V3
+                else TEST_ORACLE_VERIFICATION_SCHEMA_V2
                 if normalized["schema"] == TEST_ORACLE_SCHEMA_V2
                 else TEST_ORACLE_VERIFICATION_SCHEMA
             ),
@@ -1171,7 +1535,8 @@ def verify_signed_test_oracles(
             "authority": "none",
             "claim_boundary": (
                 "Verified signer claims only; verification does not execute or sign tests, apply mutations, or grant approval, and does not establish independent test execution, mutation application, or test-oracle accuracy."
-                if normalized["schema"] == TEST_ORACLE_SCHEMA_V2
+                if normalized["schema"]
+                in {TEST_ORACLE_SCHEMA_V2, TEST_ORACLE_SCHEMA_V3}
                 else "Verified signer attestation only; independent test execution, mutation application, and test-oracle accuracy are not established by signature verification."
             ),
         }

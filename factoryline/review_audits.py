@@ -29,6 +29,7 @@ except ModuleNotFoundError:  # Python 3.10
 from .audit_action_refs import audit_remediation_packet
 from .deep_audit_io import local_file
 from .runtime_audit_common import RuntimeAuditError
+from .review_integrity import security_assignment_findings, security_call_name
 
 SCHEMA = "factory.review-audit-policy.v1"
 FINGERPRINT_SCHEMA = "factory.code-review-fingerprint.v1"
@@ -1404,6 +1405,8 @@ def _os_command_finding(
 def _shell_command_finding(
     call: str, relative: str, node: ast.Call
 ) -> dict[str, Any] | None:
+    from .review_integrity import shell_execution_enabled
+
     if call not in {
         "subprocess.run",
         "subprocess.Popen",
@@ -1412,10 +1415,7 @@ def _shell_command_finding(
         "subprocess.check_output",
     }:
         return None
-    shell = next(
-        (keyword.value for keyword in node.keywords if keyword.arg == "shell"), None
-    )
-    if not isinstance(shell, ast.Constant) or shell.value is not True:
+    if not shell_execution_enabled(node):
         return None
     return _security_finding(
         "SECURITY_SHELL_COMMAND",
@@ -1469,12 +1469,9 @@ def _unsafe_yaml_finding(
 def _disabled_tls_finding(
     call: str, relative: str, node: ast.Call
 ) -> dict[str, Any] | None:
-    if call not in {"requests.get", "requests.post", "httpx.get", "httpx.post"}:
-        return None
-    verify = next(
-        (keyword.value for keyword in node.keywords if keyword.arg == "verify"), None
-    )
-    if not isinstance(verify, ast.Constant) or verify.value is not False:
+    from .review_integrity import tls_verification_disabled
+
+    if not tls_verification_disabled(call, node):
         return None
     return _security_finding(
         "SECURITY_TLS_VERIFY_DISABLED",
@@ -4066,23 +4063,9 @@ def _static_type_edges(
 
 
 def _weak_assertion_call_reason(node: ast.Call, aliases: dict) -> str | None:
-    if _click_callback_oracle(node, aliases) == "weak":
-        return "invoked command callback exposes only a weak assertion"
-    leaf = _normalized_call_name(node, aliases).rsplit(".", 1)[-1]
-    if leaf == "assertIsNotNone" or (
-        leaf == "assertIs"
-        and len(node.args) == 2
-        and any(
-            isinstance(arg, ast.Constant) and arg.value is None for arg in node.args
-        )
-    ):
-        return "non-null assertion does not verify the expected behavior"
-    if (
-        leaf in {"assert_called", "assert_called_once"}
-        and not _mock_argument_oracle(node, aliases)
-    ) or (leaf == "assert_called_once_with" and _mock_self_check(node)):
-        return "mock invocation state does not verify its result or arguments"
-    return None
+    from .review_integrity import weak_assertion_call_reason
+
+    return weak_assertion_call_reason(node, aliases)
 
 
 def _weak_assertion_reason(
@@ -5148,7 +5131,7 @@ def _security_node_findings(
     roundtrip_aliases: dict | None = None,
 ) -> list[dict[str, Any]]:
     if isinstance(node, ast.Call):
-        call = _normalized_call_name(node, aliases)
+        call = security_call_name(node, aliases)
         finding = _security_call_finding(call, relative, node)
         if finding and finding["code"] == "SECURITY_UNSAFE_DESERIALIZATION":
             if _test_serialization_roundtrip(relative, node, roundtrip_aliases or {}):
@@ -5163,7 +5146,7 @@ def _security_node_findings(
         finding = _bare_except_finding(relative, node)
         return [finding] if finding is not None else []
     if isinstance(node, (ast.Assign, ast.AnnAssign)):
-        return _literal_assignment_diagnostics(relative, node)
+        return security_assignment_findings(relative, node, aliases)
     return []
 
 
@@ -5277,6 +5260,9 @@ def _security_scan_tree(
         )
     )
     roundtrip_aliases = _unmodified_serialization_aliases(nodes, aliases)
+    from .review_integrity import bind_security_call_scopes
+
+    bind_security_call_scopes(tree)
     for node in nodes:
         findings.extend(
             _security_node_findings(relative, node, aliases, roundtrip_aliases)
@@ -5792,14 +5778,16 @@ def _reconcile_runtime_oracles(workspace: Path, core: dict, evidence: tuple) -> 
             "Runtime oracle evidence rejected: " + type(error).__name__
         ) from error
     rows = {(row["path"], row["line"], row["symbol"]): row for row in verified["tests"]}
+    from .review_integrity import runtime_finding_coverage
+
     retained, reconciled = [], []
+
     for finding in core["findings"]:
         key = (finding["path"], finding["line"], finding["facts"].get("symbol"))
         row = rows.get(key)
-        if (
-            finding["code"] == "QUALITY_HOLLOW_TEST"
-            and finding["facts"].get("runtime_oracle_eligible")
-            and row
+        arguments = (workspace, finding, row, verified.get("schema", ""))
+        if runtime_finding_coverage(
+            *arguments, core["oracle_context"]["configuration_sources"]
         ):
             reconciled.append({"static_finding": finding, "runtime_evidence": row})
         else:

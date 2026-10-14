@@ -21,6 +21,319 @@ from factoryline.cli import main
 
 
 @pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("import httpx\nhttpx.Client(verify=False)", True),
+        ("from httpx import AsyncClient as Client\nClient(verify=False)", True),
+        ("import ssl\nssl._create_unverified_context()", True),
+        ("from ssl import _create_unverified_context as context\ncontext()", True),
+        ("import requests\nrequests.put(url, verify=False)", True),
+        ("import httpx\nhttpx.stream('GET', url, verify=False)", True),
+        ("import httpx\nhttpx.Client(verify=True)", False),
+        ("import httpx\nhttpx.Client()", False),
+        ("import ssl\nssl.create_default_context()", False),
+        ("class Client:\n    pass\nClient(verify=False)", False),
+        ("import httpx\ndef f(httpx):\n    return httpx.Client(verify=False)", False),
+    ],
+)
+def test_tls_api_boundaries_detect_explicit_bypass(tmp_path, source, expected):
+    (tmp_path / "app.py").write_text(source + "\n", encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert ("SECURITY_TLS_VERIFY_DISABLED" in result["finding_counts"]) is expected
+    assert result["audit_coverage"]["complete"] is True
+
+
+def test_tls_default_expression_uses_enclosing_import_not_parameter(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "import httpx\ndef f(httpx=httpx.Client(verify=False)):\n    return httpx\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert result["finding_counts"]["SECURITY_TLS_VERIFY_DISABLED"] == 1
+
+
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        ("session = requests.Session()\n    session.verify = False", True),
+        ("session = requests.Session()\n    session.verify = True", False),
+        ("session = object()\n    session.verify = False", False),
+        (
+            "session = requests.Session()\n    session = object()\n    session.verify = False",
+            False,
+        ),
+        (
+            "requests = custom\n    session = requests.Session()\n    session.verify = False",
+            False,
+        ),
+        (
+            "if condition:\n        session = requests.Session()\n    session.verify = False",
+            False,
+        ),
+    ],
+)
+def test_session_tls_assignment_requires_known_unrebound_receiver(
+    tmp_path, body, expected
+):
+    (tmp_path / "app.py").write_text(
+        "import requests\ndef configure():\n    " + body + "\n", encoding="utf-8"
+    )
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert ("SECURITY_TLS_VERIFY_DISABLED" in result["finding_counts"]) is expected
+
+
+@pytest.mark.parametrize(
+    "body,code,expected",
+    [
+        (
+            "flag = True\n    subprocess.run(command, shell=flag)",
+            "SECURITY_SHELL_COMMAND",
+            True,
+        ),
+        (
+            "flag = True\n    alias = flag\n    subprocess.run(command, shell=alias)",
+            "SECURITY_SHELL_COMMAND",
+            True,
+        ),
+        (
+            "flag = True\n    flag = False\n    subprocess.run(command, shell=flag)",
+            "SECURITY_SHELL_COMMAND",
+            False,
+        ),
+        (
+            "flag = True\n    if condition:\n        flag = False\n    subprocess.run(command, shell=flag)",
+            "SECURITY_SHELL_COMMAND",
+            False,
+        ),
+        (
+            "reader = pickle.loads\n    reader(data)",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+            True,
+        ),
+        (
+            "reader = pickle.loads\n    other = reader\n    other(data)",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+            True,
+        ),
+        (
+            "reader = pickle.loads\n    reader = lambda value: value\n    reader(data)",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+            False,
+        ),
+        (
+            "reader = pickle.loads\n    if condition:\n        reader = safe\n    reader(data)",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+            False,
+        ),
+        (
+            "pickle = custom\n    reader = pickle.loads\n    reader(data)",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+            False,
+        ),
+        (
+            "import httpx\n    httpx.Client(verify=False)",
+            "SECURITY_TLS_VERIFY_DISABLED",
+            True,
+        ),
+    ],
+)
+def test_security_binding_flow_rejects_uncertain_or_rebound_aliases(
+    tmp_path, body, code, expected
+):
+    (tmp_path / "app.py").write_text(
+        "import subprocess\nimport pickle\ndef operate(httpx=None):\n    "
+        + body
+        + "\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert (code in result["finding_counts"]) is expected
+
+
+def test_security_flow_cache_preserves_per_call_alias_state(monkeypatch):
+    import ast
+    import factoryline.review_integrity as integrity
+    from factoryline.review_integrity import (
+        bind_security_call_scopes,
+        security_call_name,
+    )
+
+    tree = ast.parse(
+        "import pickle\ndef f(data):\n    reader = pickle.loads\n    reader(data)\n    reader = safe\n    reader(data)\n"
+    )
+    bind_security_call_scopes(tree)
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+    original = integrity._security_flow_snapshots
+    visits = []
+
+    def count(scope, aliases):
+        visits.append(scope)
+        return original(scope, aliases)
+
+    monkeypatch.setattr(integrity, "_security_flow_snapshots", count)
+    assert security_call_name(calls[0], {"pickle": "pickle"}) == "pickle.loads"
+    assert security_call_name(calls[1], {"pickle": "pickle"}) == "reader"
+    assert security_call_name(calls[0], {"pickle": "pickle"}) == "pickle.loads"
+    assert len(visits) == len(set(visits)) == 2
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (
+            "def f():\n    reader(data)\n    from pickle import loads as reader\n",
+            False,
+        ),
+        (
+            "def f():\n    from pickle import loads as reader\n    reader(data)\n",
+            True,
+        ),
+        (
+            "import pickle\ndef outer():\n    reader = pickle.loads\n"
+            "    def inner():\n        reader(data)\n",
+            True,
+        ),
+        (
+            "import pickle\ndef outer():\n    reader = pickle.loads\n"
+            "    def middle():\n        def inner():\n            reader(data)\n",
+            True,
+        ),
+        (
+            "import pickle\ndef outer():\n    reader = pickle.loads\n"
+            "    def inner():\n        reader(data)\n    reader = safe\n",
+            False,
+        ),
+        (
+            "import pickle\ndef outer():\n    if condition:\n"
+            "        reader = pickle.loads\n    def inner():\n        reader(data)\n",
+            False,
+        ),
+    ],
+)
+def test_security_alias_flow_tracks_late_imports_and_stable_closures(
+    tmp_path, source, expected
+):
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert ("SECURITY_UNSAFE_DESERIALIZATION" in result["finding_counts"]) is expected
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (
+            "import subprocess\ndef outer():\n    flag = True\n"
+            "    def inner():\n        subprocess.run(command, shell=flag)\n",
+            True,
+        ),
+        (
+            "import subprocess\ndef outer():\n    flag = True\n"
+            "    def inner():\n        subprocess.run(command, shell=flag)\n    flag = False\n",
+            False,
+        ),
+        (
+            "import subprocess\ndef outer():\n    if condition:\n        flag = True\n"
+            "    def inner():\n        subprocess.run(command, shell=flag)\n",
+            False,
+        ),
+    ],
+)
+def test_shell_flag_closure_requires_stable_unconditional_binding(
+    tmp_path, source, expected
+):
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert ("SECURITY_SHELL_COMMAND" in result["finding_counts"]) is expected
+
+
+def test_security_flow_separates_class_defaults_from_method_globals(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "class TestClient:\n"
+        "    from pickle import loads as reader\n"
+        "    def method(self):\n        reader(data)\n"
+        "\nimport httpx\n"
+        "class App:\n"
+        "    def request(self, client=httpx.Client(verify=False)):\n        return client\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert result["finding_counts"]["SECURITY_TLS_VERIFY_DISABLED"] == 1
+    assert "SECURITY_UNSAFE_DESERIALIZATION" not in result["finding_counts"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from pickle import loads as reader\n"
+        "def outer(reader):\n    def inner():\n        reader(data)\n",
+        "from pickle import loads as reader\n"
+        "def outer():\n    reader = safe\n"
+        "    def nested():\n        global reader\n"
+        "    def inner():\n        reader(data)\n",
+        "from pickle import loads as reader\n"
+        "def outer(reader):\n    def middle():\n"
+        "        def inner():\n            reader(data)\n",
+    ],
+)
+def test_security_closure_shadow_never_resurrects_module_import(tmp_path, source):
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert "SECURITY_UNSAFE_DESERIALIZATION" not in result["finding_counts"]
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (
+            "def fetch(httpx):\n    httpx.get(url, verify=False)\n",
+            False,
+        ),
+        (
+            "def fetch():\n    requests = custom\n"
+            "    requests.get(url, verify=False)\n",
+            False,
+        ),
+        (
+            "import httpx as client\n"
+            "def fetch(httpx):\n    client.get(url, verify=False)\n",
+            True,
+        ),
+    ],
+)
+def test_tls_call_requires_unshadowed_import_binding(tmp_path, source, expected):
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert ("SECURITY_TLS_VERIFY_DISABLED" in result["finding_counts"]) is expected
+
+
+def test_class_body_does_not_see_module_import_after_class_definition(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "class C:\n    reader(data)\nfrom pickle import loads as reader\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert "SECURITY_UNSAFE_DESERIALIZATION" not in result["finding_counts"]
+
+
+def test_shell_flow_cache_preserves_boolean_changes_without_cross_call_leakage():
+    import ast
+    from factoryline.review_integrity import (
+        bind_security_call_scopes,
+        shell_execution_enabled,
+    )
+
+    tree = ast.parse(
+        "def f(command):\n    enabled = True\n    launch(command, shell=enabled)\n"
+        "    enabled = False\n    launch(command, shell=enabled)\n"
+    )
+    bind_security_call_scopes(tree)
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+    assert shell_execution_enabled(calls[0]) is True
+    assert shell_execution_enabled(calls[1]) is False
+    assert shell_execution_enabled(calls[0]) is True
+
+
+@pytest.mark.parametrize(
     "body,hollow",
     [
         ("import product.interface", False),
@@ -4860,6 +5173,234 @@ def test_scan_keeps_constant_assertion_despite_runtime_receipt(tmp_path, monkeyp
     assert result["runtime_oracles"]["reconciled_count"] == 0
 
 
+def test_scan_keeps_parameterized_test_without_full_collection_catalog(
+    tmp_path, monkeypatch
+):
+    import factoryline.runtime_attestation as attestation
+
+    _module, row, kwargs = _runtime_oracle_scan_fixture(tmp_path)
+    (tmp_path / "test_app.py").write_text(
+        "import pytest\nfrom app import validate\n"
+        "@pytest.mark.parametrize('value', [1, 2])\n"
+        "def test_validate(value):\n    validate(value)\n",
+        encoding="utf-8",
+    )
+    row["line"] = 4
+    row["test_sha256"] = hashlib.sha256(
+        (tmp_path / "test_app.py").read_bytes()
+    ).hexdigest()
+    for run in ("baseline", "mutation"):
+        row[run]["case_ids"] = ["test_app.py::test_validate[1]"]
+    monkeypatch.setattr(
+        attestation, "verify_signed_test_oracles", lambda *a, **k: {"tests": [row]}
+    )
+    result = security_scan(tmp_path, **kwargs)
+    assert result["finding_counts"]["QUALITY_HOLLOW_TEST"] == 1
+    assert result["runtime_oracles"]["reconciled_count"] == 0
+    assert result["findings"][0]["facts"]["runtime_case_coverage"]["eligible"] is False
+
+
+@pytest.mark.parametrize("complete", [True, False])
+def test_scan_applies_v3_callback_coverage_without_clearing_partial_cases(
+    tmp_path, monkeypatch, complete
+):
+    import factoryline.runtime_attestation as attestation
+
+    _module, row, kwargs = _runtime_oracle_scan_fixture(tmp_path)
+    source = (
+        "from app import validate\ndef test_validate():\n"
+        "    def callback():\n        assert observed == expected\n"
+        "    validate(callback)\n"
+    )
+    (tmp_path / "test_app.py").write_text(source, encoding="utf-8")
+    row["test_sha256"] = hashlib.sha256(
+        (tmp_path / "test_app.py").read_bytes()
+    ).hexdigest()
+    selected = ["test_app.py::test_validate[a]"]
+    if complete:
+        selected.append("test_app.py::test_validate[b]")
+    catalog = {
+        "status": "PASS",
+        "phase": "collection",
+        "complete": True,
+        "scope": "test_function",
+        "source_path": row["path"],
+        "source_sha256": row["test_sha256"],
+        "config_manifest": [],
+        "config_identity": "pytest-default",
+        "case_ids": ["test_app.py::test_validate[a]", "test_app.py::test_validate[b]"],
+    }
+    for phase in ("baseline", "mutation"):
+        run = row[phase]
+        run.update(
+            case_ids=selected,
+            collection_catalog=catalog,
+            setup_status="PASS",
+            teardown_status="PASS",
+        )
+        run["module_origins"] = [
+            {
+                "case_id": case,
+                "source_path": path,
+                "source_sha256": digest,
+                "observation_kind": "executed_frame",
+                "frame_qualname": qualname,
+            }
+            for case in selected
+            for path, digest, qualname in (
+                (row["path"], row["test_sha256"], "test_validate.<locals>.callback"),
+                (
+                    "app.py",
+                    row["mutation"][
+                        "mutant_sha256" if phase == "mutation" else "source_sha256"
+                    ],
+                    "validate",
+                ),
+            )
+        ]
+        run["assertion_observations"] = [
+            {
+                "case_id": case,
+                "callback_qualname": "test_validate.<locals>.callback",
+                "line": 4,
+                "assertion_kind": "assert",
+                "hits": 1,
+                "outcome": "PASS" if phase == "baseline" else "FAIL",
+                "failure_visible": phase == "mutation",
+            }
+            for case in selected
+        ]
+    row["mutation"]["failure_kind"] = "assertion"
+    monkeypatch.setattr(
+        attestation,
+        "verify_signed_test_oracles",
+        lambda *a, **k: {
+            "schema": "factory.test-oracle-verification.v3",
+            "tests": [row],
+        },
+    )
+    result = security_scan(tmp_path, **kwargs)
+    assert result["runtime_oracles"]["reconciled_count"] == int(complete)
+    assert ("QUALITY_HOLLOW_TEST" in result["finding_counts"]) is not complete
+    if not complete:
+        coverage = result["findings"][0]["facts"]["runtime_case_coverage"]
+        assert coverage["remaining_case_ids"] == ["test_app.py::test_validate[b]"]
+
+
+def test_scan_v3_oracle_cannot_bypass_callback_check_for_unparameterized_smoke(
+    tmp_path, monkeypatch
+):
+    import factoryline.runtime_attestation as attestation
+
+    _module, row, kwargs = _runtime_oracle_scan_fixture(tmp_path)
+    row["mutation"]["failure_kind"] = "assertion"
+    catalog = {
+        "status": "PASS",
+        "phase": "collection",
+        "complete": True,
+        "scope": "test_function",
+        "source_path": row["path"],
+        "source_sha256": row["test_sha256"],
+        "config_manifest": [],
+        "config_identity": "pytest-default",
+        "case_ids": list(row["baseline"]["case_ids"]),
+    }
+    for run in (row["baseline"], row["mutation"]):
+        run.update(
+            collection_catalog=catalog,
+            setup_status="PASS",
+            teardown_status="PASS",
+            module_origins=[],
+            assertion_observations=[],
+        )
+    monkeypatch.setattr(
+        attestation,
+        "verify_signed_test_oracles",
+        lambda *args, **values: {
+            "schema": attestation.TEST_ORACLE_VERIFICATION_SCHEMA_V3,
+            "tests": [row],
+        },
+    )
+
+    result = security_scan(tmp_path, **kwargs)
+
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert result["runtime_oracles"]["reconciled_count"] == 0
+    assert result["findings"][0]["facts"]["runtime_case_coverage"]["eligible"] is False
+
+
+def test_scan_keeps_finding_if_test_source_changes_after_oracle_binding(
+    tmp_path, monkeypatch
+):
+    import factoryline.review_audits as audit
+    import factoryline.runtime_attestation as attestation
+
+    _module, row, kwargs = _runtime_oracle_scan_fixture(tmp_path)
+    core = security_scan(tmp_path)
+    original_read = audit._security_source_bytes
+    test_reads = 0
+
+    def drift_after_binding(workspace, relative):
+        nonlocal test_reads
+        if relative == row["path"]:
+            test_reads += 1
+            if test_reads == 3:
+                return b"def test_replaced():\n    pass\n"
+        return original_read(workspace, relative)
+
+    monkeypatch.setattr(audit, "_security_source_bytes", drift_after_binding)
+    monkeypatch.setattr(
+        attestation,
+        "verify_signed_test_oracles",
+        lambda *args, **values: {
+            "schema": attestation.TEST_ORACLE_VERIFICATION_SCHEMA_V2,
+            "tests": [row],
+        },
+    )
+
+    result = audit._reconcile_runtime_oracles(tmp_path, core, tuple(kwargs.values()))
+
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert result["runtime_oracles"]["reconciled_count"] == 0
+
+
+def test_scan_keeps_finding_if_test_body_changes_after_oracle_binding(
+    tmp_path, monkeypatch
+):
+    import factoryline.review_audits as audit
+    import factoryline.runtime_attestation as attestation
+
+    _module, row, kwargs = _runtime_oracle_scan_fixture(tmp_path)
+    core = security_scan(tmp_path)
+    original_read = audit._security_source_bytes
+    test_reads = 0
+
+    def drift_after_binding(workspace, relative):
+        nonlocal test_reads
+        if relative == row["path"]:
+            test_reads += 1
+            if test_reads == 3:
+                return (
+                    b"from app import validate\ndef test_validate():\n    validate(6)\n"
+                )
+        return original_read(workspace, relative)
+
+    monkeypatch.setattr(audit, "_security_source_bytes", drift_after_binding)
+    monkeypatch.setattr(
+        attestation,
+        "verify_signed_test_oracles",
+        lambda *args, **values: {
+            "schema": attestation.TEST_ORACLE_VERIFICATION_SCHEMA_V2,
+            "tests": [row],
+        },
+    )
+
+    result = audit._reconcile_runtime_oracles(tmp_path, core, tuple(kwargs.values()))
+
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert result["runtime_oracles"]["reconciled_count"] == 0
+
+
 def test_scan_rejects_partial_runtime_evidence_configuration(tmp_path):
     _module, _row, kwargs = _runtime_oracle_scan_fixture(tmp_path)
     del kwargs["oracle_environment_sha256"]
@@ -5498,6 +6039,35 @@ def test_virtual_dispatch_unsupported_guard_and_same_line_mutation_fail_closed(
     )
 
 
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (
+            "def configure():\n    client = rq.Session()\n"
+            "    client.verify = False\n    import requests as rq\n",
+            0,
+        ),
+        (
+            "def configure():\n    import requests as rq\n"
+            "    client = rq.Session()\n    client.verify = False\n",
+            1,
+        ),
+        (
+            "import requests as rq\ndef configure():\n"
+            "    rq = object()\n    client = rq.Session()\n"
+            "    client.verify = False\n",
+            0,
+        ),
+    ],
+)
+def test_session_tls_constructor_respects_import_execution_order(
+    tmp_path, source, expected
+):
+    (tmp_path / "service.py").write_text(source)
+    result = security_scan(tmp_path)
+    assert result["finding_counts"].get("SECURITY_TLS_VERIFY_DISABLED", 0) == expected
+
+
 def test_security_scan_reports_production_implementation_completeness(tmp_path):
     (tmp_path / "service.py").write_text("def build():\n    pass\n")
     result = security_scan(tmp_path)
@@ -5516,3 +6086,61 @@ def test_security_scan_keeps_legitimate_stub_interfaces_and_tests(tmp_path):
     assert (
         "QUALITY_EMPTY_IMPLEMENTATION" not in security_scan(tmp_path)["finding_counts"]
     )
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (
+            "def test_repr():\n    value = object()\n"
+            "    assert isinstance(repr(value), str)\n",
+            {"QUALITY_WEAK_TEST_ORACLE": 1},
+        ),
+        (
+            "def test_result_type():\n    assert isinstance(compute(), str)\n",
+            {},
+        ),
+        (
+            "def test_repr_contents():\n    value = object()\n"
+            '    assert repr(value) == "expected"\n',
+            {},
+        ),
+        (
+            "def test_repr():\n    isinstance = check\n    repr = render\n"
+            "    str = expected_type\n"
+            "    assert isinstance(repr(object()), str)\n",
+            {},
+        ),
+        (
+            "isinstance = check\nrepr = render\nstr = expected_type\n"
+            "def test_repr():\n    assert isinstance(repr(object()), str)\n",
+            {},
+        ),
+        (
+            "def test_repr(isinstance, repr, str):\n"
+            "    assert isinstance(repr(object()), str)\n",
+            {},
+        ),
+    ],
+    ids=[
+        "builtin-repr-weak",
+        "actual-result-type",
+        "repr-equality",
+        "local-shadow",
+        "module-shadow",
+        "parameter-shadow",
+    ],
+)
+def test_builtin_repr_type_check_oracle_is_weak_only_when_unshadowed(
+    tmp_path, source, expected
+):
+    (tmp_path / "test_repr_oracle.py").write_text(source, encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert result["finding_counts"] == expected
+    if expected:
+        finding = next(
+            item
+            for item in result["findings"]
+            if item["code"] == "QUALITY_WEAK_TEST_ORACLE"
+        )
+        assert "does not verify the expected representation" in finding["message"]

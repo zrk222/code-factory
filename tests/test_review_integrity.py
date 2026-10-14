@@ -1,9 +1,12 @@
+import ast
 import json
+import textwrap
 from pathlib import Path
 from factoryline.review_integrity import (
     verify_intent_diff,
     verify_receipt_freshness,
     verify_policy_pack,
+    runtime_callback_coverage,
 )
 import hashlib
 import pytest
@@ -22,6 +25,335 @@ from factoryline.workflow_audit import CATEGORIES, audit_workflows
 def w(p, v):
     p.write_text(json.dumps(v))
     return p
+
+
+def _runtime_callback_row(selected=None):
+    source = (
+        "async def test_socket():\n"
+        "    class WebSocketApp:\n"
+        "        async def on_disconnect(self):\n"
+        "            assert observed_value == expected_value\n"
+    )
+    test = ast.parse(source).body[0]
+    callback = test.body[0].body[0]
+    assertion = callback.body[0]
+    test_sha = hashlib.sha256(source.encode()).hexdigest()
+    source_path = "tests/test_socket.py"
+    target_path = "src/socket_app.py"
+    source_sha = hashlib.sha256(b"baseline production source").hexdigest()
+    mutant_sha = hashlib.sha256(b"mutated production source").hexdigest()
+    all_cases = [
+        "tests/test_socket.py::test_socket[case-1]",
+        "tests/test_socket.py::test_socket[case-2]",
+    ]
+    case_ids = list(selected if selected is not None else all_cases)
+    qualname = "test_socket.<locals>.WebSocketApp.on_disconnect"
+
+    def run_origins(mutation=False):
+        return [
+            {
+                "case_id": case_id,
+                "source_path": source_path,
+                "source_sha256": test_sha,
+                "observation_kind": "executed_frame",
+                "frame_qualname": qualname,
+            }
+            for case_id in case_ids
+        ] + [
+            {
+                "case_id": case_id,
+                "source_path": target_path,
+                "source_sha256": mutant_sha if mutation else source_sha,
+                "observation_kind": "executed_frame",
+                "frame_qualname": "socket_app.handle",
+            }
+            for case_id in case_ids
+        ]
+
+    def assertions(outcome):
+        return [
+            {
+                "case_id": case_id,
+                "callback_qualname": qualname,
+                "line": assertion.lineno,
+                "assertion_kind": "assert",
+                "hits": 1,
+                "outcome": outcome,
+                "failure_visible": outcome == "FAIL",
+            }
+            for case_id in case_ids
+        ]
+
+    catalog = {
+        "status": "PASS",
+        "phase": "collection",
+        "complete": True,
+        "scope": "test_function",
+        "source_path": source_path,
+        "source_sha256": test_sha,
+        "case_ids": all_cases,
+        "config_manifest": [],
+        "config_identity": "pytest-default",
+    }
+    return (
+        test,
+        callback,
+        {
+            "path": source_path,
+            "test_sha256": test_sha,
+            "baseline": {
+                "status": "PASS",
+                "phase": "call",
+                "setup_status": "PASS",
+                "teardown_status": "PASS",
+                "case_ids": case_ids,
+                "collection_catalog": catalog,
+                "module_origins": run_origins(),
+                "assertion_observations": assertions("PASS"),
+            },
+            "mutation": {
+                "status": "FAIL",
+                "phase": "call",
+                "setup_status": "PASS",
+                "teardown_status": "PASS",
+                "failure_kind": "assertion",
+                "case_ids": case_ids,
+                "source_path": target_path,
+                "source_sha256": source_sha,
+                "mutant_sha256": mutant_sha,
+                "collection_catalog": catalog,
+                "module_origins": run_origins(mutation=True),
+                "assertion_observations": assertions("FAIL"),
+            },
+        },
+    )
+
+
+def test_runtime_callback_coverage_requires_async_assertion_for_every_case():
+    from factoryline.review_audits import (
+        _effective_assertion,
+        _strong_local_assertion,
+    )
+
+    test, _callback, row = _runtime_callback_row()
+    coverage = runtime_callback_coverage(
+        test,
+        row,
+        verified_schema="factory.test-oracle-verification.v3",
+        test_qualname="test_socket",
+        current_config_manifest={},
+        strong_assertion=_strong_local_assertion,
+        effective_assertion=_effective_assertion,
+    )
+
+    assert coverage["eligible"] is True
+    assert (
+        coverage["covered_case_ids"]
+        == row["baseline"]["collection_catalog"]["case_ids"]
+    )
+    assert coverage["remaining_case_ids"] == []
+    assert coverage["callback_qualnames"] == [
+        "test_socket.<locals>.WebSocketApp.on_disconnect"
+    ]
+
+
+def test_runtime_callback_coverage_keeps_unselected_collection_cases_unresolved():
+    from factoryline.review_audits import (
+        _effective_assertion,
+        _strong_local_assertion,
+    )
+
+    all_cases = [
+        "tests/test_socket.py::test_socket[case-1]",
+        "tests/test_socket.py::test_socket[case-2]",
+    ]
+    test, _callback, row = _runtime_callback_row(selected=all_cases[:1])
+    coverage = runtime_callback_coverage(
+        test,
+        row,
+        verified_schema="factory.test-oracle-verification.v3",
+        test_qualname="test_socket",
+        current_config_manifest={},
+        strong_assertion=_strong_local_assertion,
+        effective_assertion=_effective_assertion,
+    )
+
+    assert coverage["eligible"] is False
+    assert coverage["covered_case_ids"] == all_cases[:1]
+    assert coverage["remaining_case_ids"] == all_cases[1:]
+
+
+def test_runtime_callback_coverage_rejects_unrelated_assertion_site():
+    from factoryline.review_audits import (
+        _effective_assertion,
+        _strong_local_assertion,
+    )
+
+    test, _callback, row = _runtime_callback_row()
+    for run in (row["baseline"], row["mutation"]):
+        for observation in run["assertion_observations"]:
+            observation["callback_qualname"] = "test_socket.<locals>.other_callback"
+    coverage = runtime_callback_coverage(
+        test,
+        row,
+        verified_schema="factory.test-oracle-verification.v3",
+        test_qualname="test_socket",
+        current_config_manifest={},
+        strong_assertion=_strong_local_assertion,
+        effective_assertion=_effective_assertion,
+    )
+
+    assert coverage["eligible"] is False
+    assert coverage["covered_case_ids"] == []
+    assert len(coverage["remaining_case_ids"]) == 2
+
+
+def test_runtime_callback_coverage_rejects_nonempty_config_manifest_drift():
+    from factoryline.review_audits import (
+        _effective_assertion,
+        _strong_local_assertion,
+    )
+
+    test, _callback, row = _runtime_callback_row()
+    stale_digest = hashlib.sha256(b"collected config").hexdigest()
+    current_digest = hashlib.sha256(b"current config").hexdigest()
+    for run in (row["baseline"], row["mutation"]):
+        catalog = run["collection_catalog"]
+        catalog["config_manifest"] = [{"path": "pytest.ini", "sha256": stale_digest}]
+        catalog["config_identity"] = "manifest"
+    coverage = runtime_callback_coverage(
+        test,
+        row,
+        verified_schema="factory.test-oracle-verification.v3",
+        test_qualname="test_socket",
+        current_config_manifest={"pytest.ini": current_digest},
+        strong_assertion=_strong_local_assertion,
+        effective_assertion=_effective_assertion,
+    )
+
+    assert coverage["eligible"] is False
+    assert coverage["covered_case_ids"] == []
+    assert len(coverage["remaining_case_ids"]) == 2
+
+
+def test_runtime_callback_coverage_rejects_rebound_callback_name():
+    from factoryline.review_audits import (
+        _effective_assertion,
+        _strong_local_assertion,
+    )
+
+    test, _callback, row = _runtime_callback_row()
+    test.body[0].body.append(
+        ast.Assign(
+            targets=[ast.Name(id="on_disconnect", ctx=ast.Store())],
+            value=ast.Name(id="replacement", ctx=ast.Load()),
+        )
+    )
+    coverage = runtime_callback_coverage(
+        test,
+        row,
+        verified_schema="factory.test-oracle-verification.v3",
+        test_qualname="test_socket",
+        current_config_manifest={},
+        strong_assertion=_strong_local_assertion,
+        effective_assertion=_effective_assertion,
+    )
+
+    assert coverage["eligible"] is False
+    assert coverage["covered_case_ids"] == []
+
+
+def test_runtime_callback_coverage_rejects_duplicate_callback_qualname():
+    import copy
+
+    from factoryline.review_audits import (
+        _effective_assertion,
+        _strong_local_assertion,
+    )
+
+    test, callback, row = _runtime_callback_row()
+    test.body[0].body.append(copy.deepcopy(callback))
+    coverage = runtime_callback_coverage(
+        test,
+        row,
+        verified_schema="factory.test-oracle-verification.v3",
+        test_qualname="test_socket",
+        current_config_manifest={},
+        strong_assertion=_strong_local_assertion,
+        effective_assertion=_effective_assertion,
+    )
+
+    assert coverage["eligible"] is False
+    assert coverage["covered_case_ids"] == []
+
+
+def test_runtime_callback_coverage_requires_production_frame_in_both_runs():
+    from factoryline.review_audits import (
+        _effective_assertion,
+        _strong_local_assertion,
+    )
+
+    test, _callback, row = _runtime_callback_row()
+    row["mutation"]["module_origins"] = [
+        origin
+        for origin in row["mutation"]["module_origins"]
+        if origin["source_path"] != "src/socket_app.py"
+    ]
+    coverage = runtime_callback_coverage(
+        test,
+        row,
+        verified_schema="factory.test-oracle-verification.v3",
+        test_qualname="test_socket",
+        current_config_manifest={},
+        strong_assertion=_strong_local_assertion,
+        effective_assertion=_effective_assertion,
+    )
+
+    assert coverage["eligible"] is False
+    assert coverage["covered_case_ids"] == []
+    assert len(coverage["remaining_case_ids"]) == 2
+
+
+@pytest.mark.parametrize(
+    "callback_body",
+    [
+        "try:\n    assert observed_value == expected_value\nexcept AssertionError:\n    pass",
+        "assert True",
+    ],
+)
+def test_runtime_callback_coverage_rejects_swallowed_or_vacuous_assertions(
+    callback_body,
+):
+    from factoryline.review_audits import (
+        _effective_assertion,
+        _strong_local_assertion,
+    )
+
+    test, _callback, row = _runtime_callback_row()
+    lines = test.body[0].body[0].body
+    lines[:] = ast.parse(textwrap.dedent(callback_body)).body
+    callback = test.body[0].body[0]
+    assertion = next(
+        (node for node in ast.walk(callback) if isinstance(node, ast.Assert)), None
+    )
+    if assertion is None:
+        row["baseline"]["assertion_observations"] = []
+        row["mutation"]["assertion_observations"] = []
+    else:
+        for run, outcome in ((row["baseline"], "PASS"), (row["mutation"], "FAIL")):
+            for item in run["assertion_observations"]:
+                item["line"] = assertion.lineno
+    coverage = runtime_callback_coverage(
+        test,
+        row,
+        verified_schema="factory.test-oracle-verification.v3",
+        test_qualname="test_socket",
+        current_config_manifest={},
+        strong_assertion=_strong_local_assertion,
+        effective_assertion=_effective_assertion,
+    )
+
+    assert coverage["eligible"] is False
 
 
 def test_three_senior_review_controls_fail_closed(tmp_path: Path):
