@@ -339,6 +339,7 @@ def _runtime_config_bindings(core):
 
 
 def runtime_config_sources(workspace, core, row, schema):
+    """Return configuration bindings applicable to this verified oracle schema."""
     if schema != "factory.test-oracle-verification.v3":
         return core.get("oracle_context", {}).get("configuration_sources", [])
     from .review_audits import _pytest_collection_config

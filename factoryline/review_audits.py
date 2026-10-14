@@ -5782,7 +5782,7 @@ def _reconcile_runtime_oracles(workspace: Path, core: dict, evidence: tuple) -> 
             environment_sha256=environment_sha256,
         )
         sources = {item["path"]: item["sha256"] for item in core["sources"]}
-        schema = verified["schema"]
+        schema = verified.get("schema", "")
         manifests = {}
         for row in verified["tests"]:
             _oracle_bound_row(workspace, row, sources)
