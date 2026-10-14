@@ -29,7 +29,11 @@ except ModuleNotFoundError:  # Python 3.10
 from .audit_action_refs import audit_remediation_packet
 from .deep_audit_io import local_file
 from .runtime_audit_common import RuntimeAuditError
-from .review_integrity import security_assignment_findings, security_call_name
+from .review_integrity import (
+    security_assignment_findings,
+    security_call_name,
+    security_source_sink_findings,
+)
 
 SCHEMA = "factory.review-audit-policy.v1"
 FINGERPRINT_SCHEMA = "factory.code-review-fingerprint.v1"
@@ -5217,6 +5221,7 @@ def _security_scan_tree(
     relative = path.relative_to(root).as_posix()
     nodes = list(ast.walk(tree))
     aliases = _security_aliases(nodes)
+    source_sink_findings = security_source_sink_findings(relative, tree, nodes, aliases)
     for node in nodes:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             node._oracle_module = tree
@@ -5233,9 +5238,8 @@ def _security_scan_tree(
         if isinstance(cls, ast.ClassDef) and cls.name in context.get("mixins", ()):
             unittest_methods.update(id(method) for method in cls.body)
     class_helpers = _class_oracle_helpers(tree, oracle_aliases, unittest_methods)
-    from .review_integrity import bind_security_call_scopes, redirect_source_findings
+    from .review_integrity import redirect_source_findings
 
-    bind_security_call_scopes(tree)
     findings = _tenant_read_findings(
         relative, nodes, tenant_read_calls, aliases, tenant_read_bindings or {}
     )
@@ -5244,6 +5248,7 @@ def _security_scan_tree(
             relative, nodes, aliases, set(tenant_read_calls)
         )
     )
+    findings.extend(source_sink_findings)
     findings.extend(
         _test_oracle_findings(
             relative,
