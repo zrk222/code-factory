@@ -5,15 +5,202 @@ from __future__ import annotations
 import hashlib
 import os
 import signal
+import shutil
+import stat
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
 from typing import BinaryIO
 
 from . import assembly_process
+from .runtime_audit_common import (
+    RuntimeAuditError,
+    validate_production_mutation_origins,
+    validate_production_mutation_trial,
+)
 
 MAX_OUTPUT = 8 * 1024 * 1024
+
+
+def validate_production_mutation_process(facts: dict) -> bool:
+    """Accept only bounded child execution with confirmed cleanup and pytest exit codes."""
+    return (
+        isinstance(facts, dict)
+        and facts.get("timed_out") is False
+        and facts.get("output_limit_exceeded") is False
+        and facts.get("cleanup_confirmed") is True
+        and facts.get("launch_error") is False
+        and facts.get("exit_code") in {0, 1}
+    )
+
+
+def mutation_trial_observed(trial, prepared, root, target, manifest, outcome, visible):
+    """Require supervised completion, selected case evidence, and bound module origins."""
+    data = trial.get("data")
+    return (
+        validate_production_mutation_process(trial.get("process", {}))
+        and isinstance(data, dict)
+        and data.get("runtime_context_before") == data.get("runtime_context_after")
+        and isinstance(data.get("runtime_context_normalized_before"), str)
+        and data.get("runtime_context_normalized_before")
+        == data.get("runtime_context_normalized_after")
+        and validate_production_mutation_trial(
+            data, prepared["selector"], prepared["line"], outcome, visible
+        )
+        and validate_production_mutation_origins(data, root, manifest, target)
+    )
+
+
+def same_mutation_case_catalogs(baseline, mutation) -> bool:
+    """Require exact selected-case identity across baseline and mutant runs."""
+    first = baseline.get("data", {}).get("collected")
+    second = mutation.get("data", {}).get("collected")
+    return isinstance(first, list) and isinstance(second, list) and first == second
+
+
+def new_output_path_inside(root: Path, path: Path) -> Path:
+    """Resolve a new contained output path after rejecting linked existing ancestors."""
+    root = Path(root).resolve(strict=True)
+    candidate = Path(os.path.abspath(path if path.is_absolute() else root / path))
+    try:
+        parts = candidate.relative_to(root).parts
+    except ValueError as exc:
+        raise RuntimeAuditError(
+            "E_OUTPUT_ESCAPE", "output path escapes workspace"
+        ) from exc
+    current = root
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    for part in parts:
+        current /= part
+        if current.exists() or current.is_symlink():
+            info = current.stat()
+            if current.is_symlink() or getattr(info, "st_file_attributes", 0) & reparse:
+                raise RuntimeAuditError(
+                    "E_MUTATION_OUTPUT", "output path has a linked ancestor"
+                )
+    if candidate == root or candidate.exists():
+        raise RuntimeAuditError(
+            "E_MUTATION_OUTPUT", "output path must be new inside workspace"
+        )
+    return candidate
+
+
+def bounded_file_sha256(path: Path, maximum: int, *, include_bytes=False):
+    """Hash one regular file while reading at most its declared byte limit."""
+    if type(maximum) is not int or maximum < 0:
+        raise ValueError("maximum must be a nonnegative integer")
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        content = stream.read(maximum + 1)
+    if len(content) > maximum:
+        raise ValueError("captured file exceeded its size limit")
+    digest.update(content)
+    result = digest.hexdigest()
+    return (result, content) if include_bytes else result
+
+
+def tree_has_no_links_or_reparse_points(
+    root: Path, ignored: set[str] | None = None
+) -> bool:
+    """Check a bounded copy tree for symbolic links and Windows reparse points."""
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    ignored = ignored or set()
+    files, total_bytes = 0, 0
+    for directory, dirs, names in os.walk(root):
+        dirs[:] = [name for name in dirs if name not in ignored]
+        for name in dirs + names:
+            path = Path(directory) / name
+            try:
+                info = path.stat()
+                if (
+                    path.is_symlink()
+                    or getattr(info, "st_file_attributes", 0) & reparse
+                ):
+                    return False
+                if path.is_file():
+                    files += 1
+                    total_bytes += info.st_size
+            except OSError:
+                return False
+            if files > 20000 or total_bytes > 512 * 1024 * 1024:
+                return False
+    return True
+
+
+def regular_target_within(root: Path, target: Path) -> bool:
+    """Require a regular target and every lexical ancestor to remain nonlinked under root."""
+    try:
+        root = Path(root).resolve(strict=True)
+        lexical = Path(
+            os.path.abspath(target if target.is_absolute() else root / target)
+        )
+        lexical.relative_to(root)
+        reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+        for path in (lexical, *lexical.parents):
+            if path != root and not path.is_relative_to(root):
+                continue
+            info = path.stat()
+            if path.is_symlink() or getattr(info, "st_file_attributes", 0) & reparse:
+                return False
+        resolved = lexical.resolve(strict=True)
+        resolved.relative_to(root)
+        return resolved.is_file()
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def path_chain_has_no_links(root: Path, target: Path) -> bool:
+    """Require a lexical path and every existing ancestor to stay nonlinked under root."""
+    try:
+        root = Path(root).resolve(strict=True)
+        lexical = Path(
+            os.path.abspath(target if target.is_absolute() else root / target)
+        )
+        parts = lexical.relative_to(root).parts
+        reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+        current = root
+        for part in parts:
+            current /= part
+            if current.exists() or current.is_symlink():
+                info = current.lstat()
+                if (
+                    current.is_symlink()
+                    or getattr(info, "st_file_attributes", 0) & reparse
+                ):
+                    return False
+        return lexical.resolve(strict=False).is_relative_to(root)
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def create_bounded_temp_directory(prefix: str) -> tuple[Path, Path]:
+    """Create a uniquely named child of the system temporary directory."""
+    parent = Path(tempfile.gettempdir()).resolve()
+    root = Path(tempfile.mkdtemp(prefix=prefix)).resolve()
+    if root.parent != parent:
+        shutil.rmtree(root, ignore_errors=True)
+        raise RuntimeAuditError(
+            "E_MUTATION_TEMP", "temporary directory escaped system temp"
+        )
+    return parent, root
+
+
+def remove_bounded_temp_directory(root: Path | None, parent: Path, prefix: str) -> bool:
+    """Remove only a nonlinked, named temporary directory directly under its parent."""
+    if root is None:
+        return False
+    try:
+        lexical = Path(os.path.abspath(root))
+        if lexical.parent != parent or not lexical.name.startswith(prefix):
+            return False
+        if not path_chain_has_no_links(parent, lexical):
+            return False
+        shutil.rmtree(lexical)
+        return not lexical.exists()
+    except OSError:
+        return False
 
 
 def _facts() -> dict:

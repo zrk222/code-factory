@@ -645,6 +645,104 @@ _AGENT_USAGE_PACK = json.loads(
 )
 _AGENT_USAGE_CONTRACT["six_lane_review"] = _AGENT_USAGE_PACK["agent_six_lane_review"]
 _AGENT_USAGE_CONTRACT["native_harness"] = _AGENT_USAGE_PACK["native_harness"]
+_AGENT_USAGE_CONTRACT["native_test_probes"] = {
+    "route": "python -m factoryline.pytest_readiness",
+    "execution": "Explicit local operator/worker invocation only; reviewers inspect supplied output.",
+    "supported_kinds": [
+        {
+            "kind": "assertion",
+            "schema": "factory.assertion-propagation-probe.v1",
+            "kind_argument": ["--kind", "assertion"],
+            "selectors": ["--kind", "--root", "--nodeid", "--line"],
+            "evidence": [
+                "status",
+                "source_sha256",
+                "tool_sha256",
+                "source_manifest_status",
+                "module_origin_status",
+                "baseline.origin_status",
+                "baseline.executed_modules",
+                "challenge.origin_status",
+                "challenge.executed_modules",
+                "semantic_strength",
+                "observer_integrity",
+            ],
+            "claim_limit": "Executed/imported source-origin binding is not semantic strength; semantic_strength remains NOT_ASSESSED.",
+        },
+        {
+            "kind": "call",
+            "schema": "factory.call-propagation-probe.v1",
+            "kind_argument": ["--kind", "call"],
+            "selectors": ["--kind", "--root", "--nodeid", "--line"],
+            "evidence": [
+                "status",
+                "source_sha256",
+                "tool_sha256",
+                "source_manifest_status",
+                "module_origin_status",
+                "baseline.origin_status",
+                "baseline.executed_modules",
+                "challenge.origin_status",
+                "challenge.executed_modules",
+                "semantic_quality",
+                "observer_integrity",
+            ],
+            "claim_limit": "Executed/imported source-origin binding is not production mutation sensitivity; semantic_quality remains NOT_ASSESSED.",
+        },
+        {
+            "kind": "attribute",
+            "schema": "factory.attribute-removal-probe.v1",
+            "kind_argument": ["--kind", "attribute"],
+            "selectors": ["--kind", "--root", "--nodeid", "--line"],
+            "evidence": [
+                "status",
+                "source_sha256",
+                "tool_sha256",
+                "semantic_quality",
+                "observer_integrity",
+            ],
+        },
+        {
+            "kind": "typecheck",
+            "schema": "factory.typecheck-transfer-probe.v1",
+            "kind_argument": ["--kind", "typecheck"],
+            "selectors": [
+                "--kind",
+                "--root",
+                "--nodeid",
+                "--checker-config",
+                "--signature-line",
+                "--transfer-line",
+                "--signature-kind",
+                "--parameter-name",
+            ],
+            "evidence": [
+                "status",
+                "source_sha256",
+                "mypy_version",
+                "config_sha256",
+                "mypy_distribution_sha256",
+                "dependency_manifest_sha256",
+                "resolver_manifest_sha256",
+                "source_unchanged",
+                "checker_inputs_stable",
+                "resolver_stable",
+            ],
+            "limit": "Local mypy transfer evidence only; no runtime behavior, correctness, or release claim.",
+        },
+    ],
+    "result_states": ["OBSERVED", "INCOMPLETE", "INVALID"],
+    "invalid_input": {
+        "schema": "factory.probe-validation.v1",
+        "status": "INVALID",
+        "exit_code": 2,
+    },
+    "shared_limits": [
+        "OBSERVED is limited to the selected probe's stated point claim and stable bound inputs.",
+        "Local in-process observation is not attested or an isolation boundary; verify runtime provenance when using an installed CLI.",
+        "Probe output cannot suppress or clear scanner findings or grant approval, merge, or release authority.",
+    ],
+}
 
 
 _ACTION_REFERENCE_FIELDS = {
