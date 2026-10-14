@@ -28,7 +28,7 @@ except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 from .audit_action_refs import audit_remediation_packet
 from .deep_audit_io import local_file
-from .runtime_audit_common import RuntimeAuditError
+from .runtime_audit_common import RuntimeAuditError, runtime_config_sources
 from . import review_integrity as integrity
 from .review_integrity import security_call_name as security_call_name
 
@@ -5782,11 +5782,13 @@ def _reconcile_runtime_oracles(workspace: Path, core: dict, evidence: tuple) -> 
             environment_sha256=environment_sha256,
         )
         sources = {item["path"]: item["sha256"] for item in core["sources"]}
+        schema = verified["schema"]
+        manifests = {}
         for row in verified["tests"]:
             _oracle_bound_row(workspace, row, sources)
-        _verify_security_bindings(
-            workspace, core["sources"] + core["oracle_context"]["configuration_sources"]
-        )
+            manifests[id(row)] = runtime_config_sources(workspace, core, row, schema)
+        bindings = core["sources"] + core["oracle_context"]["configuration_sources"]
+        _verify_security_bindings(workspace, bindings)
     except (RuntimeAttestationError, RuntimeAuditError, OSError, ValueError) as error:
         raise ReviewAuditError(
             "Runtime oracle evidence rejected: " + type(error).__name__
@@ -5800,9 +5802,8 @@ def _reconcile_runtime_oracles(workspace: Path, core: dict, evidence: tuple) -> 
         key = (finding["path"], finding["line"], finding["facts"].get("symbol"))
         row = rows.get(key)
         arguments = (workspace, finding, row, verified.get("schema", ""))
-        if runtime_finding_coverage(
-            *arguments, core["oracle_context"]["configuration_sources"]
-        ):
+        config_manifest = manifests.get(id(row), []) if row is not None else []
+        if runtime_finding_coverage(*arguments, config_manifest):
             reconciled.append({"static_finding": finding, "runtime_evidence": row})
         else:
             retained.append(finding)

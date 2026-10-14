@@ -2740,6 +2740,181 @@ def test_pytest_custom_collection_pattern_is_respected_and_cache_bound(tmp_path)
     assert _oracle_context_cache_info()["misses"] > misses_before
 
 
+def test_runtime_oracle_config_uses_active_config_and_test_ancestor_conftests(tmp_path):
+    from factoryline.review_audits import _pytest_collection_config
+    from factoryline.runtime_audit_common import runtime_config_sources
+
+    def bind(path, content):
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+        return {
+            "path": path,
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "bytes": len(content),
+        }
+
+    config = bind("pyproject.toml", b"[tool.pytest.ini_options]\ntestpaths=['tests']\n")
+    root_conf = bind("conftest.py", b"# root\n")
+    tests_conf = bind("tests/conftest.py", b"# tests\n")
+    nested_conf = bind("tests/unit/conftest.py", b"# unit\n")
+    sibling_conf = bind("other/conftest.py", b"# sibling\n")
+    selected = _pytest_collection_config(tmp_path)[1]
+    assert selected["path"] == "pyproject.toml"
+    core = {
+        "sources": [root_conf, tests_conf, nested_conf, sibling_conf],
+        "oracle_context": {"configuration_sources": [config]},
+    }
+
+    result = runtime_config_sources(
+        tmp_path,
+        core,
+        {
+            "path": "tests/unit/test_case.py",
+            "baseline": {"collection_catalog": {}},
+            "mutation": {"collection_catalog": {}},
+        },
+        "factory.test-oracle-verification.v3",
+    )
+
+    assert result == sorted(
+        [
+            {"path": "pyproject.toml", "sha256": config["sha256"]},
+            {"path": "conftest.py", "sha256": root_conf["sha256"]},
+            {"path": "tests/conftest.py", "sha256": tests_conf["sha256"]},
+            {"path": "tests/unit/conftest.py", "sha256": nested_conf["sha256"]},
+        ],
+        key=lambda item: item["path"],
+    )
+    assert all(item["path"] != sibling_conf["path"] for item in result)
+
+
+def test_runtime_oracle_config_missing_primary_and_unbound_conftest_fail_closed(
+    tmp_path,
+):
+    from factoryline.review_audits import _pytest_collection_config
+    from factoryline.runtime_audit_common import (
+        RuntimeAuditError,
+        runtime_config_sources,
+    )
+
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "conftest.py").write_text("# inherited\n", encoding="utf-8")
+    selected = _pytest_collection_config(tmp_path)[1]
+    assert selected["state"] == "missing"
+    core = {"sources": [], "oracle_context": {"configuration_sources": []}}
+    with pytest.raises(RuntimeAuditError, match="ancestor conftest is unbound"):
+        runtime_config_sources(
+            tmp_path,
+            core,
+            {
+                "path": "tests/test_case.py",
+                "baseline": {"collection_catalog": {}},
+                "mutation": {"collection_catalog": {}},
+            },
+            "factory.test-oracle-verification.v3",
+        )
+
+
+def test_runtime_oracle_config_rejects_duplicate_scan_bindings(tmp_path):
+    from factoryline.runtime_audit_common import (
+        RuntimeAuditError,
+        runtime_config_sources,
+    )
+
+    row = {
+        "path": "test_case.py",
+        "baseline": {"collection_catalog": {}},
+        "mutation": {"collection_catalog": {}},
+    }
+    duplicate = {"path": "test_case.py", "sha256": "a" * 64}
+    cases = (
+        [duplicate, duplicate.copy()],
+        [{"path": "test_case.py", "sha256": "bad"}],
+    )
+    for source_rows in cases:
+        core = {
+            "sources": source_rows,
+            "oracle_context": {"configuration_sources": []},
+        }
+        with pytest.raises(RuntimeAuditError, match="scan bindings are malformed"):
+            runtime_config_sources(
+                tmp_path, core, row, "factory.test-oracle-verification.v3"
+            )
+
+
+def test_runtime_oracle_config_rejects_stale_active_config_binding(tmp_path):
+    from factoryline.review_audits import _pytest_collection_config
+    from factoryline.runtime_audit_common import (
+        RuntimeAuditError,
+        runtime_config_sources,
+    )
+
+    data = b"[pytest]\npython_files = test_*.py\n"
+    (tmp_path / "pytest.ini").write_bytes(data)
+    selected = _pytest_collection_config(tmp_path)[1]
+    assert selected["path"] == "pytest.ini"
+    core = {
+        "sources": [],
+        "oracle_context": {
+            "configuration_sources": [{"path": "pytest.ini", "sha256": "0" * 64}]
+        },
+    }
+    row = {
+        "path": "test_case.py",
+        "baseline": {"collection_catalog": {}},
+        "mutation": {"collection_catalog": {}},
+    }
+    with pytest.raises(RuntimeAuditError, match="pytest configuration is unbound"):
+        runtime_config_sources(
+            tmp_path, core, row, "factory.test-oracle-verification.v3"
+        )
+
+
+def test_runtime_oracle_config_errors_are_normalized_by_reconciliation(
+    tmp_path, monkeypatch
+):
+    import factoryline.review_audits as audit
+    import factoryline.runtime_attestation as attestation
+
+    _module, row, kwargs = _runtime_oracle_scan_fixture(tmp_path)
+    core = security_scan(tmp_path)
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\npython_files = test_*.py\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        attestation,
+        "verify_signed_test_oracles",
+        lambda *args, **values: {
+            "schema": attestation.TEST_ORACLE_VERIFICATION_SCHEMA_V3,
+            "tests": [
+                {
+                    **row,
+                    "baseline": {**row["baseline"], "collection_catalog": {}},
+                    "mutation": {**row["mutation"], "collection_catalog": {}},
+                }
+            ],
+        },
+    )
+    with pytest.raises(ReviewAuditError, match="Runtime oracle evidence rejected"):
+        audit._reconcile_runtime_oracles(tmp_path, core, tuple(kwargs.values()))
+
+
+def test_runtime_oracle_config_preserves_legacy_config_sources(tmp_path):
+    from factoryline.runtime_audit_common import runtime_config_sources
+
+    (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    legacy = [{"path": "pyproject.toml", "sha256": "a" * 64}]
+    core = {"oracle_context": {"configuration_sources": legacy}}
+    row = {"path": "test_case.py", "baseline": {}, "mutation": {}}
+    assert (
+        runtime_config_sources(
+            tmp_path, core, row, "factory.test-oracle-verification.v2"
+        )
+        == legacy
+    )
+
+
 @pytest.mark.parametrize(
     "config",
     [

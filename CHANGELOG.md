@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Match signed callback evidence against the active pytest configuration and
+  source-bound ancestor conftests. Keep exact configuration hashes and complete
+  parameter-case requirements without changing existing source receipt digests.
+
 - Accept compiler-generated Python frame names in v3 runtime origins while
   retaining strict callback assertion identities, so captured comprehension
   frames can pass the unsigned production-mutation projection.
