@@ -3694,20 +3694,108 @@ def test_oracle_context_cache_invalidates_when_projector_helper_changes(
     test_path = tmp_path / "test_case.py"
     test_path.write_text("def test_case():\n    assert True\n", encoding="utf-8")
     module._oracle_context_cache_clear()
-    first_contexts, _, _ = module._project_oracle_context(
+    first_contexts, _, _, _ = module._project_oracle_context(
         tmp_path, module._security_source_files(tmp_path), cache_enabled=True
     )
     first_misses = module._oracle_context_cache_info()["misses"]
     monkeypatch.setattr(
         module, "_click_runner_fixtures", lambda tree, aliases: {"runner": True}
     )
-    changed_contexts, _, _ = module._project_oracle_context(
+    changed_contexts, _, _, _ = module._project_oracle_context(
         tmp_path, module._security_source_files(tmp_path), cache_enabled=True
     )
     assert (
         first_contexts[test_path]["click_runners"]
         != changed_contexts[test_path]["click_runners"]
     )
+    assert module._oracle_context_cache_info()["misses"] > first_misses
+
+
+def test_security_scan_reuses_projected_source_bytes_on_cache_miss_and_hit(
+    tmp_path, monkeypatch
+):
+    import factoryline.review_audits as module
+
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    module._oracle_context_cache_clear()
+    reads = []
+    original = module._security_source_bytes
+
+    def counted_read(root, relative):
+        if relative == "app.py":
+            reads.append(relative)
+        return original(root, relative)
+
+    monkeypatch.setattr(module, "_security_source_bytes", counted_read)
+    first = security_scan(tmp_path, cache_enabled=True)
+    assert len(reads) == 3
+    reads.clear()
+
+    second = security_scan(tmp_path, cache_enabled=True)
+
+    assert first == second
+    assert len(reads) == 3
+
+
+def test_security_scan_falls_back_to_secure_reads_when_bytes_are_not_retained(
+    tmp_path, monkeypatch
+):
+    import factoryline.review_audits as module
+
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    module._oracle_context_cache_clear()
+    expected = security_scan(tmp_path, cache_enabled=False)
+    reads = []
+    original_read = module._security_source_bytes
+    original_inputs = module._oracle_source_inputs
+
+    def counted_read(root, relative):
+        if relative == "app.py":
+            reads.append(relative)
+        return original_read(root, relative)
+
+    def discard_retained(root, files):
+        _, bindings, manifest, cacheable = original_inputs(root, files)
+        return {}, bindings, manifest, cacheable
+
+    monkeypatch.setattr(module, "_security_source_bytes", counted_read)
+    monkeypatch.setattr(module, "_oracle_source_inputs", discard_retained)
+    actual = security_scan(tmp_path, cache_enabled=False)
+
+    assert actual == expected
+    assert len(reads) == 5
+
+
+@pytest.mark.parametrize(
+    "collaborator", ["builder", "configuration"], ids=["builder", "configuration"]
+)
+def test_oracle_context_cache_invalidates_when_direct_collaborator_changes(
+    tmp_path, monkeypatch, collaborator
+):
+    import factoryline.review_audits as module
+    from factoryline import review_integrity
+
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    module._oracle_context_cache_clear()
+    files = module._security_source_files(tmp_path)
+    module._project_oracle_context(tmp_path, files, cache_enabled=True)
+    first_misses = module._oracle_context_cache_info()["misses"]
+    owner, name = (
+        (module, "_build_oracle_context")
+        if collaborator == "builder"
+        else (review_integrity, "oracle_configuration")
+    )
+    original = getattr(owner, name)
+    calls = []
+
+    def wrapped(*args, **kwargs):
+        calls.append(None)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(owner, name, wrapped)
+    module._project_oracle_context(tmp_path, files, cache_enabled=True)
+
+    assert calls == [None]
     assert module._oracle_context_cache_info()["misses"] > first_misses
 
 
