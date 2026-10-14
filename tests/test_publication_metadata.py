@@ -15,6 +15,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_mypy_transfer_checker_is_pinned_in_the_dev_extra():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert "mypy==2.1.0" in project["project"]["optional-dependencies"]["dev"]
+
+
 def test_support_sla_is_explicitly_proposed_until_activation_evidence_exists():
     policy = json.loads(
         (ROOT / "docs" / "SUPPORT_SLA_POLICY.json").read_text(encoding="utf-8")
@@ -55,13 +61,21 @@ def test_public_audit_condition_count_is_recomputed_from_source():
         + result["crosscutting_rejection_conditions"]
     )
     assert "E_POLICY" in result["crosscutting_condition_codes"]
-    assert set(module.NON_CONDITION_MODULES) == {"runtime_audit_process.py"}
-    assert not {
+    process_codes = {
         code
-        for helper in module.NON_CONDITION_MODULES
-        for code in module._markers(helper)
+        for code in module._markers("runtime_audit_process.py")
         if code.startswith(module.REJECTION_PREFIXES)
     }
+    assert process_codes == {
+        "E_MUTATION_OUTPUT",
+        "E_MUTATION_TEMP",
+        "E_OUTPUT_ESCAPE",
+    }
+    assert "runtime_audit_process.py" in module.CROSSCUT_MODULES
+    assert not module.NON_CONDITION_MODULES
+    assert process_codes <= set(result["crosscutting_condition_codes"])
+    assert result["crosscutting_rejection_conditions"] == 95
+    assert result["total_coded_rejection_conditions"] == 183
     claim = module.public_claim(result)
     breakdown = module.public_breakdown(result)
     for relative in ("docs/LLM_PRODUCT_CARD.md", "docs/AUDIT_CONDITION_INVENTORY.md"):

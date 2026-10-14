@@ -1246,14 +1246,20 @@ def test_junie_native_python_security_receipt_and_completeness_guidance():
         assert "QUALITY_PLACEHOLDER_OUTPUT" in text
         assert "QUALITY_OMISSION_MARKER" in text
         assert "QUALITY_PRODUCTION_MOCK" in text
-        assert "do not infer a defect, security-critical issue" in text
+        assert "QUALITY_HOLLOW_TEST" in text
+        assert "QUALITY_WEAK_TEST_ORACLE" in text
+        assert "QUALITY_TYPECHECK_NOT_VERIFIED" in text
+        assert "QUALITY_BENCHMARK_NOT_VERIFIED" in text
+        assert "do not infer defect, production failure, or scanner accuracy" in text
         assert "factory.enterprise-proof-runner.v1" in text
         assert "output_complete" in text and "output_truncated" in text
         assert "output_limit" in text and "8 MiB per stream" in text
         assert "cleanup_scope" in text
         assert "NOT_INDEPENDENTLY_VERIFIED" in text
         assert "container cleanup" in text
-        assert "Do not invent native assertion probes" in text
+        assert "static suggested native-probe descriptor as metadata only" in text
+        assert "typecheck transfer" in text
+        assert "do not establish semantic test strength or scanner accuracy" in text
         assert "python -m factoryline.pytest_readiness" in text
         assert "--kind attribute" in text
         assert "factory.attribute-removal-probe.v1" in text
@@ -1292,13 +1298,35 @@ def test_junie_native_python_security_receipt_and_completeness_guidance():
         "NOT_INDEPENDENTLY_VERIFIED",
     ):
         assert field in runner
-    probe = limits["native_attribute_probe"]
-    assert "python -m factoryline.pytest_readiness" in probe
-    assert "factory.attribute-removal-probe.v1" in probe
-    assert "INCOMPLETE" in probe
-    assert "factory.probe-validation.v1 INVALID" in probe
-    assert "exit code 2" in probe
-    assert "does not execute it" in probe
+    probes = limits["native_test_probes"]
+    assert (
+        probes
+        == taxonomy["audit_taxonomy"]["agent_usage_contract"]["native_test_probes"]
+    )
+    assert probes["route"] == "python -m factoryline.pytest_readiness"
+    assert probes["result_states"] == ["OBSERVED", "INCOMPLETE", "INVALID"]
+    assert probes["invalid_input"] == {
+        "schema": "factory.probe-validation.v1",
+        "status": "INVALID",
+        "exit_code": 2,
+    }
+    supported = {row["kind"]: row for row in probes["supported_kinds"]}
+    assert set(supported) == {"assertion", "call", "attribute", "typecheck"}
+    assert supported["assertion"]["schema"] == "factory.assertion-propagation-probe.v1"
+    assert supported["call"]["schema"] == "factory.call-propagation-probe.v1"
+    assert supported["attribute"]["schema"] == "factory.attribute-removal-probe.v1"
+    assert supported["typecheck"]["schema"] == "factory.typecheck-transfer-probe.v1"
+    for kind, row in supported.items():
+        assert row["kind_argument"] == ["--kind", kind]
+        assert "--kind" in row["selectors"]
+    assert "baseline.executed_modules" in supported["assertion"]["evidence"]
+    assert "semantic_strength" in supported["assertion"]["evidence"]
+    assert "challenge.executed_modules" in supported["call"]["evidence"]
+    assert "semantic_quality" in supported["call"]["evidence"]
+    assert "--checker-config" in supported["typecheck"]["selectors"]
+    assert "resolver_stable" in supported["typecheck"]["evidence"]
+    assert any("not attested" in item for item in probes["shared_limits"])
+    assert any("cannot suppress or clear" in item for item in probes["shared_limits"])
     assert taxonomy["authority"] == {
         "agent_start": False,
         "source_modify": False,

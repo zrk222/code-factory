@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import ast
 import json
 import math
 import os
@@ -50,6 +51,250 @@ class RuntimeAuditError(ValueError):
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
+
+
+def _mutation_qualname(node: ast.AST, parents: dict) -> str:
+    parts = []
+    while node is not None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            parts.append(node.name)
+        node = parents.get(node)
+    return ".".join(reversed(parts))
+
+
+def _mutation_function_matches(
+    tree: ast.AST, line: int, end_line: int, symbol: str
+) -> list[str]:
+    parents = {
+        child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+    }
+    matches = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.lineno > line or end_line > node.end_lineno:
+            continue
+        qualified = _mutation_qualname(node, parents)
+        if qualified == symbol or ("." not in symbol and node.name == symbol):
+            matches.append(qualified)
+    return matches
+
+
+def validate_production_mutation_source(source: bytes, symbol: str, before: bytes):
+    """Bind one exact mutation patch to one complete production function span."""
+    if (
+        not isinstance(source, bytes)
+        or not isinstance(symbol, str)
+        or not isinstance(before, bytes)
+        or not source
+        or not symbol
+        or not before
+    ):
+        raise RuntimeAuditError(
+            "E_MUTATION_INPUT", "source, symbol, and patch are required"
+        )
+    if source.count(before) != 1:
+        raise RuntimeAuditError(
+            "E_MUTATION_INPUT", "patch bytes must match exactly once"
+        )
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        raise RuntimeAuditError(
+            "E_MUTATION_INPUT", "production source is invalid Python"
+        ) from exc
+    line = source[: source.index(before)].count(b"\n") + 1
+    matches = _mutation_function_matches(tree, line, line + before.count(b"\n"), symbol)
+    if len(matches) != 1:
+        raise RuntimeAuditError(
+            "E_MUTATION_INPUT", "patch is not inside one named production function"
+        )
+    return line, matches[0]
+
+
+def _mutation_cases_valid(cases, selector):
+    if (
+        not isinstance(selector, str)
+        or not isinstance(cases, list)
+        or not cases
+        or len(cases) > 128
+    ):
+        return False
+    if any(not isinstance(case, str) for case in cases) or len(cases) != len(
+        set(cases)
+    ):
+        return False
+    prefix = selector + "["
+    return all(case == selector or case.startswith(prefix) for case in cases)
+
+
+def _mutation_collection_reports_valid(reports):
+    return (
+        isinstance(reports, list)
+        and bool(reports)
+        and all(
+            isinstance(row, dict)
+            and row.get("outcome") == "passed"
+            and row.get("failed") is False
+            and row.get("skipped") is False
+            for row in reports
+        )
+    )
+
+
+def validate_production_mutation_collection(observation, selector):
+    """Require a complete, unique catalog containing only the selected function cases."""
+    return (
+        isinstance(observation, dict)
+        and observation.get("collection_incomplete") is False
+        and _mutation_cases_valid(observation.get("collected"), selector)
+        and _mutation_collection_reports_valid(observation.get("collection_reports"))
+    )
+
+
+def _mutation_phases_valid(cases, reports, outcome):
+    if not all(isinstance(row, dict) for row in reports):
+        return False
+    expected = [
+        (case, phase) for case in cases for phase in ("setup", "call", "teardown")
+    ]
+    if [(row.get("nodeid"), row.get("phase")) for row in reports] != expected:
+        return False
+    if any(row.get("xfail") or row.get("outcome") == "skipped" for row in reports):
+        return False
+    phases = {
+        (row.get("nodeid"), row.get("phase")): row.get("outcome") for row in reports
+    }
+    return all(
+        phases.get((case, phase)) == expected_outcome
+        for case in cases
+        for phase, expected_outcome in (
+            ("setup", "passed"),
+            ("teardown", "passed"),
+            ("call", outcome),
+        )
+    )
+
+
+def _mutation_assertions_valid(assertions, cases, line, outcome, visible):
+    if len(assertions) != len(cases) or any(
+        not isinstance(row, dict) for row in assertions
+    ):
+        return False
+    expected = "PASS" if outcome == "passed" else "FAIL"
+    return all(
+        row.get("case_id") == case
+        and row.get("line") == line
+        and row.get("hits", 0) >= 1
+        and row.get("outcome") == expected
+        and row.get("failure_visible") is visible
+        for row, case in zip(assertions, cases, strict=True)
+    )
+
+
+def validate_production_mutation_trial(observation, selector, line, outcome, visible):
+    """Check phase order and natural selected-assertion evidence for every collected case."""
+    if not validate_production_mutation_collection(observation, selector):
+        return False
+    cases = observation["collected"]
+    reports, assertions = (
+        observation.get("reports"),
+        observation.get("assertion_observations"),
+    )
+    return (
+        isinstance(reports, list)
+        and isinstance(assertions, list)
+        and _mutation_phases_valid(cases, reports, outcome)
+        and _mutation_assertions_valid(assertions, cases, line, outcome, visible)
+    )
+
+
+def _mutation_origin_path_valid(root, path, digest):
+    try:
+        candidate = (root / path).resolve(strict=True)
+        if not candidate.is_relative_to(root) or candidate.is_symlink():
+            return None
+        if hashlib.sha256(candidate.read_bytes()).hexdigest() != digest:
+            return None
+    except (OSError, ValueError, RuntimeError):
+        return None
+    return True
+
+
+def _mutation_origin_row(row, root, manifest, cases):
+    if not isinstance(row, dict):
+        return None
+    path, case = row.get("path"), row.get("nodeid")
+    if not isinstance(path, str) or not isinstance(case, str):
+        return None
+    digest = row.get("source_sha256")
+    facts = (
+        row.get("status") == "BOUND",
+        case in cases,
+        path in manifest,
+        digest == manifest.get(path),
+        row.get("origin") == path,
+    )
+    if not all(facts) or not _mutation_origin_path_valid(root, path, digest):
+        return None
+    call_frame = (row.get("phase"), row.get("observation_kind")) == (
+        "call",
+        "executed_frame",
+    )
+    collection_import = (row.get("phase"), row.get("observation_kind")) == (
+        "collection",
+        "imported_module",
+    )
+    if not call_frame and not collection_import:
+        return None
+    return path, case, call_frame
+
+
+def _mutation_case_catalog_valid(cases):
+    return (
+        isinstance(cases, list)
+        and all(isinstance(case, str) for case in cases)
+        and cases
+        and len(cases) <= 128
+        and len(cases) == len(set(cases))
+    )
+
+
+def _mutation_origin_inputs(observation):
+    if not isinstance(observation, dict) or observation.get("origin_status") != "BOUND":
+        return None
+    rows, cases = observation.get("executed_modules"), observation.get("collected")
+    if (
+        observation.get("origin_limit_exceeded") is not False
+        or not isinstance(rows, list)
+        or not rows
+        or not _mutation_case_catalog_valid(cases)
+    ):
+        return None
+    return rows, cases
+
+
+def validate_production_mutation_origins(observation, root, manifest, production_path):
+    """Require per-case executed frames for test and mutated production source bytes."""
+    inputs = _mutation_origin_inputs(observation)
+    if inputs is None:
+        return False
+    rows, cases = inputs
+    test_paths = {case.split("::", 1)[0] for case in cases}
+    production_relative = production_path.relative_to(root).as_posix()
+    found = {
+        (path, case): False
+        for path in test_paths | {production_relative}
+        for case in cases
+    }
+    for row in rows:
+        valid = _mutation_origin_row(row, root, manifest, cases)
+        if valid is None:
+            return False
+        path, case, call_frame = valid
+        if call_frame and (path, case) in found:
+            found[(path, case)] = True
+    return all(found.values())
 
 
 def canonical_bytes(value: object) -> bytes:

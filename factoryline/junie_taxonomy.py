@@ -506,13 +506,14 @@ def junie_taxonomy(root: Path | str) -> dict[str, object]:
     """Return the complete read-only taxonomy Junie can discover through MCP."""
     workspace = _workspace(root)
     stages = [dict(stage, tools=list(stage["tools"])) for stage in _STAGES]
+    canonical_audit_taxonomy = audit_taxonomy()
     core = {
         "schema": TAXONOMY_SCHEMA,
         "marker": "JUNIE_FACTORYLINE_TAXONOMY_READY",
         "workspace_root": str(workspace),
         "governance": "supervised",
         "stages": stages,
-        "audit_taxonomy": audit_taxonomy(),
+        "audit_taxonomy": canonical_audit_taxonomy,
         "tool_count": len(_all_tools()),
         "working_rules": [
             "Read the relevant status before proposing a change; do not invent absent evidence.",
@@ -536,9 +537,11 @@ def junie_taxonomy(root: Path | str) -> dict[str, object]:
             "audit_limits": {
                 "change_review": "Pattern and guard-path audits require the project's .factory/review-audits.json; the review lane does not execute tests.",
                 "security": "The local Python AST receipt is created by `factory audit security --root . --json`; read it separately through `factory mission-control status --root . --json` or factory.mission_control_status. Mission Control is read-only and does not execute scans. Discover CodeQL, Semgrep, OSV, Syft, Gitleaks and Trivy in audit_taxonomy.native_workers; preserve each scope and admission gap.",
-                "python_implementation_completeness": "QUALITY_EMPTY_IMPLEMENTATION, QUALITY_PLACEHOLDER_OUTPUT, QUALITY_OMISSION_MARKER and QUALITY_PRODUCTION_MOCK are bounded MEDIUM review signals with intent UNKNOWN; inspect source, callers and contract, and do not infer defect or security-critical status. This Python AST pass is not complete placeholder coverage or runtime proof.",
+                "python_implementation_completeness": "QUALITY_EMPTY_IMPLEMENTATION, QUALITY_PLACEHOLDER_OUTPUT, QUALITY_OMISSION_MARKER and QUALITY_PRODUCTION_MOCK are bounded MEDIUM review signals with intent UNKNOWN; inspect source, callers and contract, and do not infer defect or security-critical status. QUALITY_HOLLOW_TEST, QUALITY_WEAK_TEST_ORACLE, QUALITY_TYPECHECK_NOT_VERIFIED and QUALITY_BENCHMARK_NOT_VERIFIED are separate test/verification review signals, not proof of production failure or scanner accuracy. This Python AST pass is not complete placeholder coverage or runtime proof.",
                 "enterprise_proof_runner": "For factory.enterprise-proof-runner.v1 receipts, distinguish caller output_limit display truncation (output_truncated) from process capture: capture_limit_bytes_per_stream is 8 MiB per stream. output_complete is false for timeout, overflow, incomplete capture read/cleanup, unconfirmed host-child cleanup, or display truncation. process_facts.cleanup_scope covers only the host child and captured stream readers. container_cleanup is NOT_INDEPENDENTLY_VERIFIED for Docker; an aborted Docker command does not prove container cleanup. An incomplete receipt is not a pass or verified proof.",
-                "native_attribute_probe": "An authorized operator/worker may run `python -m factoryline.pytest_readiness --root <project-root> --nodeid <exact-nodeid> --line <line> --kind attribute`; it prints factory.attribute-removal-probe.v1 JSON to stdout and runs the selected test baseline plus in-memory export removal. OBSERVED requires a passing baseline, same source/tool/runtime context and exact natural missing-export failure; supported-run limits or uncertainty remain INCOMPLETE. Source or shape validation rejection returns factory.probe-validation.v1 INVALID with exit code 2. The probe is local, observer integrity is not attested, and it proves only the selected failure path. The read-only proof reviewer inspects supplied output and does not execute it.",
+                "native_test_probes": canonical_audit_taxonomy["agent_usage_contract"][
+                    "native_test_probes"
+                ],
                 "forgeline": "Repository-wide inventory is static and does not substitute for a feature-scoped release gate.",
                 "runtime_evidence": "Native coverage+JUnit and Atheris report executed behavior; statement/branch counts and fuzz lower bounds do not prove oracle strength, full exploration or runner identity.",
                 "agent_review": "An independent specialty AI review, multi-pass consensus, and reviewer's identity are not authenticated by local MCP receipts.",

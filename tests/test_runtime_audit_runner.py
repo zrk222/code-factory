@@ -2,13 +2,25 @@ from __future__ import annotations
 
 import json
 import io
+import os
 from pathlib import Path
+import py_compile
 import sys
 import threading
 import pytest
 
-from factoryline.runtime_audit_process import _drain_stream, _stop, run_bounded_command
-from factoryline.runtime_audit_runner import run_runtime_audit_plan
+from factoryline.runtime_audit_process import (
+    _drain_stream,
+    _stop,
+    create_bounded_temp_directory,
+    remove_bounded_temp_directory,
+    run_bounded_command,
+    validate_production_mutation_process,
+)
+from factoryline.runtime_audit_runner import (
+    capture_local_production_mutation,
+    run_runtime_audit_plan,
+)
 from factoryline.runtime_audit_contract import verify_runtime_audit_plan
 from test_runtime_audit_contract import D, signed_plan
 
@@ -298,6 +310,509 @@ def test_supervisor_times_out_and_hashes_output_without_retaining_it(tmp_path):
     assert "safe" not in json.dumps(result)
 
 
+def _mutation_project(root, *, parameterized=False):
+    (root / "pyproject.toml").write_text(
+        "[tool.pytest.ini_options]\npython_files = ['test_*.py']\n",
+        encoding="utf-8",
+    )
+    production = root / "app.py"
+    production.write_text("def value():\n    return 1\n", encoding="utf-8")
+    test = root / "test_app.py"
+    decorator = (
+        "@__import__('pytest').mark.parametrize('value', [1, 1], ids=['a', 'b'])\n"
+        if parameterized
+        else ""
+    )
+    expected = "value" if parameterized else "1"
+    test.write_text(
+        "import app\n"
+        + decorator
+        + f"def test_value({'' if not parameterized else 'value'}):\n    assert app.value() == {expected}\n",
+        encoding="utf-8",
+    )
+    return test, 4 if parameterized else 3
+
+
+def _mutation_mtime_writer(mutant_bytes, mutation_stats, original_write_bytes):
+    def write_mutant_with_original_mtime(path, data):
+        if path.name == "app.py" and data == mutant_bytes and path.is_file():
+            before = path.stat()
+            written = original_write_bytes(path, data)
+            os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+            after = path.stat()
+            mutation_stats.update(
+                before_size=before.st_size,
+                after_size=after.st_size,
+                before_mtime_ns=before.st_mtime_ns,
+                after_mtime_ns=after.st_mtime_ns,
+            )
+            return written
+        return original_write_bytes(path, data)
+
+    return write_mutant_with_original_mtime
+
+
+def _capture_diagnostic_record(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _capture_diagnostic_equal(left, right):
+    if not isinstance(left, str) or not left:
+        return None
+    if not isinstance(right, str) or not right:
+        return None
+    return left == right
+
+
+def _capture_diagnostic_catalog_match(baseline_cases, mutant_cases):
+    valid_catalogs = (
+        isinstance(baseline_cases, list)
+        and bool(baseline_cases)
+        and all(isinstance(case, str) and case for case in baseline_cases)
+        and isinstance(mutant_cases, list)
+        and bool(mutant_cases)
+        and all(isinstance(case, str) and case for case in mutant_cases)
+    )
+    return baseline_cases == mutant_cases if valid_catalogs else None
+
+
+def _capture_diagnostic_phase(payload, phase, expected_cases):
+    trial = _capture_diagnostic_record(payload.get(phase))
+    process = _capture_diagnostic_record(trial.get("process"))
+    observation = _capture_diagnostic_record(payload.get(f"{phase}_observation"))
+    hits = _capture_diagnostic_record(observation.get("case_hits"))
+    return {
+        "process_exit": process.get("exit_code"),
+        "process_timed_out": process.get("timed_out"),
+        "process_cleanup_confirmed": process.get("cleanup_confirmed"),
+        "observation_exit": observation.get("exit_code"),
+        "origin_status": observation.get("origin_status"),
+        "collection_incomplete": observation.get("collection_incomplete"),
+        "case_hits": {case: hits.get(case) for case in expected_cases},
+    }
+
+
+def _capture_diagnostic_summary(result, expected_cases):
+    payload = _capture_diagnostic_record(result)
+    baseline_observation = _capture_diagnostic_record(
+        payload.get("baseline_observation")
+    )
+    mutant_observation = _capture_diagnostic_record(payload.get("mutant_observation"))
+    cleanup = _capture_diagnostic_record(payload.get("cleanup"))
+    source_unchanged = payload.get("source_unchanged")
+    if not isinstance(source_unchanged, bool):
+        source_unchanged = None
+    cleanup_removed = cleanup.get("removed")
+    if not isinstance(cleanup_removed, bool):
+        cleanup_removed = None
+    return {
+        "baseline": _capture_diagnostic_phase(payload, "baseline", expected_cases),
+        "mutant": _capture_diagnostic_phase(payload, "mutant", expected_cases),
+        "baseline_raw_context_stable": _capture_diagnostic_equal(
+            baseline_observation.get("runtime_context_before"),
+            baseline_observation.get("runtime_context_after"),
+        ),
+        "mutant_raw_context_stable": _capture_diagnostic_equal(
+            mutant_observation.get("runtime_context_before"),
+            mutant_observation.get("runtime_context_after"),
+        ),
+        "normalized_context_matches": _capture_diagnostic_equal(
+            baseline_observation.get("runtime_context_normalized_before"),
+            mutant_observation.get("runtime_context_normalized_before"),
+        ),
+        "source_unchanged": source_unchanged,
+        "case_catalog_matches": _capture_diagnostic_catalog_match(
+            baseline_observation.get("collected"), mutant_observation.get("collected")
+        ),
+        "capture_cleanup_removed": cleanup_removed,
+    }
+
+
+def test_capture_diagnostic_summary_marks_missing_observations_unknown():
+    summary = _capture_diagnostic_summary(
+        {
+            "baseline": None,
+            "mutant": {},
+            "baseline_observation": None,
+            "mutant_observation": None,
+            "cleanup": None,
+        },
+        ["test_app.py::test_value[a]", "test_app.py::test_value[b]"],
+    )
+
+    assert summary["baseline"]["process_exit"] is None
+    assert summary["baseline"]["case_hits"] == {
+        "test_app.py::test_value[a]": None,
+        "test_app.py::test_value[b]": None,
+    }
+    assert summary["baseline_raw_context_stable"] is None
+    assert summary["mutant_raw_context_stable"] is None
+    assert summary["normalized_context_matches"] is None
+    assert summary["case_catalog_matches"] is None
+
+
+def test_capture_diagnostic_summary_reports_bound_gate_facts():
+    cases = ["test_app.py::test_value[a]", "test_app.py::test_value[b]"]
+    observation = {
+        "exit_code": 0,
+        "origin_status": "BOUND",
+        "collection_incomplete": False,
+        "collected": cases,
+        "case_hits": dict.fromkeys(cases, 1),
+        "runtime_context_before": "raw-context",
+        "runtime_context_after": "raw-context",
+        "runtime_context_normalized_before": "normalized-context",
+    }
+    result = {
+        "baseline": {
+            "process": {"exit_code": 0, "timed_out": False, "cleanup_confirmed": True}
+        },
+        "mutant": {
+            "process": {"exit_code": 0, "timed_out": False, "cleanup_confirmed": True}
+        },
+        "baseline_observation": observation,
+        "mutant_observation": {
+            **observation,
+            "runtime_context_before": "other-raw-context",
+            "runtime_context_after": "other-raw-context",
+        },
+        "source_unchanged": True,
+        "cleanup": {"removed": True},
+    }
+
+    summary = _capture_diagnostic_summary(result, cases)
+
+    assert summary["baseline"]["process_exit"] == 0
+    assert summary["baseline"]["process_timed_out"] is False
+    assert summary["baseline"]["process_cleanup_confirmed"] is True
+    assert summary["baseline"]["observation_exit"] == 0
+    assert summary["baseline"]["origin_status"] == "BOUND"
+    assert summary["baseline"]["collection_incomplete"] is False
+    assert summary["baseline"]["case_hits"] == dict.fromkeys(cases, 1)
+    assert summary["baseline_raw_context_stable"] is True
+    assert summary["mutant_raw_context_stable"] is True
+    assert summary["normalized_context_matches"] is True
+    assert summary["source_unchanged"] is True
+    assert summary["case_catalog_matches"] is True
+    assert summary["capture_cleanup_removed"] is True
+
+
+def test_local_production_mutation_capture_records_real_all_case_failure(tmp_path):
+    from hashlib import sha256
+
+    test, assertion_line = _mutation_project(tmp_path, parameterized=True)
+    original_test = test.read_bytes()
+    original_source = (tmp_path / "app.py").read_bytes()
+    result = capture_local_production_mutation(
+        tmp_path,
+        "test_app.py::test_value",
+        assertion_line,
+        "app.py",
+        "value",
+        "return 1",
+        "return 0",
+        ".factory/capture-one",
+        timeout_seconds=30,
+    )
+
+    assert result["schema"] == "factory.local-production-mutation-capture.v1"
+    expected_cases = ["test_app.py::test_value[a]", "test_app.py::test_value[b]"]
+    diagnostics = _capture_diagnostic_summary(result, expected_cases)
+    assert result["status"] == "OBSERVED", json.dumps(diagnostics, sort_keys=True)
+    assert result["signature_status"] == "UNSIGNED"
+    assert result["authority"] == "none"
+    assert result["source_unchanged"] is True
+    assert test.read_bytes() == original_test
+    assert (tmp_path / "app.py").read_bytes() == original_source
+    assert (
+        result["production_mutation"]["original_sha256"]
+        == sha256(original_source).hexdigest()
+    )
+    assert result["baseline_observation"]["collected"] == [
+        "test_app.py::test_value[a]",
+        "test_app.py::test_value[b]",
+    ]
+    baseline_context = result["baseline_observation"]
+    mutant_context = result["mutant_observation"]
+    assert (
+        baseline_context["runtime_context_before"]
+        == baseline_context["runtime_context_after"]
+    )
+    assert (
+        baseline_context["runtime_context_normalized_before"]
+        == mutant_context["runtime_context_normalized_before"]
+    )
+    for trial in (result["baseline"], result["mutant"]):
+        identity = trial["execution_identity"]
+        assert identity["command_template"].startswith("python -B -c ")
+        assert identity["argument_roles"][-1] == "observation-output"
+        assert len(identity["argv_sha256"]) == 64
+        assert len(identity["interpreter_sha256"]) == 64
+        assert identity["interpreter_version"]
+        assert str(tmp_path) not in json.dumps(identity)
+    for trial_name in ("baseline_observation", "mutant_observation"):
+        observation = result[trial_name]
+        assert observation["collection_incomplete"] is False
+        assert observation["collection_report_sha256"]
+        assert {row["hits"] for row in observation["assertion_observations"]} == {1}
+    assert all(
+        row["outcome"] == "FAIL" and row["failure_visible"] is True
+        for row in result["mutant_observation"]["assertion_observations"]
+    )
+    assert result["cleanup"]["removed"] is True
+    saved = json.loads((tmp_path / ".factory/capture-one/capture.json").read_text())
+    assert saved["schema"] == "factory.local-production-mutation-capture.v1"
+    assert saved["signature_status"] == "UNSIGNED"
+    assert str(tmp_path) not in json.dumps(saved)
+
+
+def test_local_production_mutation_avoids_same_timestamp_bytecode_cache(
+    tmp_path, monkeypatch
+):
+    test, assertion_line = _mutation_project(tmp_path)
+    production = tmp_path / "app.py"
+    py_compile.compile(str(production), doraise=True)
+    assert list((tmp_path / "__pycache__").glob("app.*.pyc"))
+    original_write_bytes = Path.write_bytes
+    mutant_bytes = production.read_bytes().replace(b"return 1", b"return 0", 1)
+    mutation_stats = {}
+    writer = _mutation_mtime_writer(mutant_bytes, mutation_stats, original_write_bytes)
+    monkeypatch.setattr(Path, "write_bytes", writer)
+    result = capture_local_production_mutation(
+        tmp_path,
+        "test_app.py::test_value",
+        assertion_line,
+        "app.py",
+        "value",
+        "return 1",
+        "return 0",
+        ".factory/capture-timestamp-cache",
+        timeout_seconds=30,
+    )
+
+    assert mutation_stats["before_size"] == mutation_stats["after_size"]
+    assert mutation_stats["before_mtime_ns"] == mutation_stats["after_mtime_ns"]
+    assert result["status"] == "OBSERVED"
+    assert result["baseline"]["execution_identity"]["command_template"].startswith(
+        "python -B -c "
+    )
+    assert all(
+        row["outcome"] == "FAIL" and row["failure_visible"] is True
+        for row in result["mutant_observation"]["assertion_observations"]
+    )
+
+
+def test_local_production_mutation_rejects_unrelated_assertion_failure(tmp_path):
+    test, _ = _mutation_project(tmp_path)
+    test.write_text(
+        "import app\n"
+        "def test_value():\n"
+        "    assert app.value() == 1\n"
+        "    assert app.other() == 1\n",
+        encoding="utf-8",
+    )
+    production = tmp_path / "app.py"
+    production.write_text(
+        "def value():\n    return 1\n\ndef other():\n    return 1  # other\n",
+        encoding="utf-8",
+    )
+    result = capture_local_production_mutation(
+        tmp_path,
+        "test_app.py::test_value",
+        3,
+        "app.py",
+        "other",
+        "return 1  # other",
+        "return 0",
+        ".factory/capture-unrelated",
+        timeout_seconds=30,
+    )
+
+    assert result["status"] == "INCOMPLETE"
+    observation = result["mutant_observation"]
+    assert observation["case_hits"]["test_app.py::test_value"] == 1
+    assert observation["assertion_observations"] == [
+        {
+            "case_id": "test_app.py::test_value",
+            "callback_qualname": "test_value",
+            "line": 3,
+            "assertion_kind": "assert",
+            "hits": 1,
+            "outcome": "FAIL",
+            "failure_visible": False,
+        }
+    ]
+
+
+def test_local_production_mutation_capture_rejects_unbound_patch(tmp_path):
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    _, assertion_line = _mutation_project(tmp_path)
+    with pytest.raises(RuntimeAuditError, match="E_MUTATION_INPUT"):
+        capture_local_production_mutation(
+            tmp_path,
+            "test_app.py::test_value",
+            assertion_line,
+            "app.py",
+            "value",
+            "return 3",
+            "return 0",
+            ".factory/capture-invalid",
+            timeout_seconds=10,
+        )
+    assert not (tmp_path / ".factory/capture-invalid").exists()
+
+
+def test_local_production_mutation_capture_rejects_duplicate_patch_bytes(tmp_path):
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    _, assertion_line = _mutation_project(tmp_path)
+    (tmp_path / "app.py").write_text(
+        "def value():\n    return 1\n\ndef other():\n    return 1\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeAuditError, match="E_MUTATION_INPUT"):
+        capture_local_production_mutation(
+            tmp_path,
+            "test_app.py::test_value",
+            assertion_line,
+            "app.py",
+            "value",
+            "return 1",
+            "return 0",
+            ".factory/capture-invalid",
+            timeout_seconds=10,
+        )
+    assert not (tmp_path / ".factory/capture-invalid").exists()
+
+
+def test_local_production_mutation_does_not_credit_assertion_error_from_production(
+    tmp_path,
+):
+    test, assertion_line = _mutation_project(tmp_path)
+    result = capture_local_production_mutation(
+        tmp_path,
+        "test_app.py::test_value",
+        assertion_line,
+        "app.py",
+        "value",
+        "return 1",
+        "raise AssertionError('from production')",
+        ".factory/capture-production-assertion",
+        timeout_seconds=30,
+    )
+    observation = result["mutant_observation"]
+    assert result["status"] == "INCOMPLETE"
+    assert observation["assertion_observations"][0]["hits"] == 1
+    assert observation["assertion_observations"][0]["failure_visible"] is False
+
+
+def test_local_production_mutation_keeps_pytest_deselection_incomplete(tmp_path):
+    test, assertion_line = _mutation_project(tmp_path, parameterized=True)
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.pytest.ini_options]\npython_files = ['test_*.py']\naddopts = '-k b'\n",
+        encoding="utf-8",
+    )
+    result = capture_local_production_mutation(
+        tmp_path,
+        "test_app.py::test_value",
+        assertion_line,
+        "app.py",
+        "value",
+        "return 1",
+        "return 0",
+        ".factory/capture-deselected",
+        timeout_seconds=30,
+    )
+    assert result["status"] == "INCOMPLETE"
+    assert result["baseline_observation"]["collection_incomplete"] is True
+    saved = json.loads(
+        (tmp_path / ".factory/capture-deselected/capture.json").read_text()
+    )
+    assert saved["status"] == "INCOMPLETE"
+    assert saved["baseline_observation"]["collection_incomplete"] is True
+
+
+def test_production_mutation_requires_identical_case_catalogs():
+    from factoryline.runtime_audit_process import same_mutation_case_catalogs
+
+    baseline = {"data": {"collected": ["test_app.py::test_value[a]"]}}
+    mutant = {"data": {"collected": ["test_app.py::test_value[b]"]}}
+    assert not same_mutation_case_catalogs(baseline, mutant)
+    mutant["data"]["collected"] = baseline["data"]["collected"]
+    assert same_mutation_case_catalogs(baseline, mutant)
+
+
+def test_local_production_mutation_config_drift_is_incomplete(tmp_path):
+    test, assertion_line = _mutation_project(tmp_path)
+    test.write_text(
+        "from pathlib import Path\n"
+        "import app\n"
+        "def test_value():\n"
+        "    Path('pyproject.toml').write_text('[tool.pytest.ini_options]\\n', encoding='utf-8')\n"
+        "    assert app.value() == 1\n",
+        encoding="utf-8",
+    )
+    result = capture_local_production_mutation(
+        tmp_path,
+        "test_app.py::test_value",
+        5,
+        "app.py",
+        "value",
+        "return 1",
+        "return 0",
+        ".factory/capture-config-drift",
+        timeout_seconds=30,
+    )
+    assert result["status"] == "INCOMPLETE"
+    saved = json.loads(
+        (tmp_path / ".factory/capture-config-drift/capture.json").read_text()
+    )
+    assert saved["status"] == "INCOMPLETE"
+    assert saved["baseline_observation"] is not None
+
+
+def test_local_production_mutation_rejects_target_symlink_after_baseline(
+    tmp_path, monkeypatch
+):
+    import os
+
+    import factoryline.runtime_audit_runner as runner
+
+    test, assertion_line = _mutation_project(tmp_path)
+    original = tmp_path / "app.py"
+    original_bytes = original.read_bytes()
+    run_trial = runner._run_local_mutation_trial
+
+    def replace_copy_target_after_baseline(*args, **kwargs):
+        result = run_trial(*args, **kwargs)
+        if args[7] == "baseline":
+            copied_target = args[0] / "app.py"
+            copied_target.unlink()
+            try:
+                os.symlink(original, copied_target)
+            except OSError as exc:
+                pytest.skip(f"symlink unavailable for CAP06 control: {exc}")
+        return result
+
+    monkeypatch.setattr(
+        runner, "_run_local_mutation_trial", replace_copy_target_after_baseline
+    )
+    result = capture_local_production_mutation(
+        tmp_path,
+        "test_app.py::test_value",
+        assertion_line,
+        "app.py",
+        "value",
+        "return 1",
+        "return 0",
+        ".factory/capture-linked-target",
+        timeout_seconds=30,
+    )
+    assert result["status"] == "INCOMPLETE"
+    assert original.read_bytes() == original_bytes
+
+
 def test_supervisor_times_out_before_a_late_child_exit_is_polled(monkeypatch):
     from factoryline.runtime_audit_process import _wait_for_exit_or_limit
 
@@ -402,3 +917,261 @@ def test_stream_drainer_hashes_and_counts_without_retaining_payload():
     digest, size = streams["stdout"]
     assert size == len(b"receipt-only")
     assert len(digest) == 64
+
+
+def test_validate_production_mutation_source_binds_complete_named_function():
+    from factoryline.runtime_audit_common import (
+        RuntimeAuditError,
+        validate_production_mutation_source,
+    )
+
+    source = b"def value():\n    return 1\n"
+    assert validate_production_mutation_source(source, "value", b"return 1") == (
+        2,
+        "value",
+    )
+    with pytest.raises(RuntimeAuditError, match="E_MUTATION_INPUT"):
+        validate_production_mutation_source(source, "other", b"return 1")
+
+
+def test_validate_production_mutation_collection_requires_exact_complete_catalog():
+    from factoryline.runtime_audit_common import (
+        validate_production_mutation_collection,
+    )
+
+    observation = {
+        "collection_incomplete": False,
+        "collected": ["test_app.py::test_value[a]", "test_app.py::test_value[b]"],
+        "collection_reports": [
+            {"outcome": "passed", "failed": False, "skipped": False},
+            {"outcome": "passed", "failed": False, "skipped": False},
+        ],
+    }
+    assert validate_production_mutation_collection(
+        observation, "test_app.py::test_value"
+    )
+    observation["collection_incomplete"] = True
+    assert not validate_production_mutation_collection(
+        observation, "test_app.py::test_value"
+    )
+
+
+def test_validate_production_mutation_trial_requires_hit_and_visible_failure():
+    from factoryline.runtime_audit_common import validate_production_mutation_trial
+
+    case = "test_app.py::test_value"
+    observation = {
+        "collection_incomplete": False,
+        "collected": [case],
+        "collection_reports": [
+            {"outcome": "passed", "failed": False, "skipped": False}
+        ],
+        "reports": [
+            {"nodeid": case, "phase": phase, "outcome": outcome, "xfail": False}
+            for phase, outcome in (
+                ("setup", "passed"),
+                ("call", "failed"),
+                ("teardown", "passed"),
+            )
+        ],
+        "assertion_observations": [
+            {
+                "case_id": case,
+                "line": 3,
+                "hits": 1,
+                "outcome": "FAIL",
+                "failure_visible": True,
+            }
+        ],
+    }
+    assert validate_production_mutation_trial(
+        observation, "test_app.py::test_value", 3, "failed", True
+    )
+    observation["assertion_observations"][0]["failure_visible"] = False
+    assert not validate_production_mutation_trial(
+        observation, "test_app.py::test_value", 3, "failed", True
+    )
+
+
+def test_validate_production_mutation_origins_requires_per_case_source_frames(
+    tmp_path,
+):
+    from hashlib import sha256
+
+    from factoryline.runtime_audit_common import validate_production_mutation_origins
+
+    test_path = tmp_path / "test_app.py"
+    production_path = tmp_path / "app.py"
+    test_path.write_bytes(b"def test_value(): pass\n")
+    production_path.write_bytes(b"def value(): return 1\n")
+    case = "test_app.py::test_value"
+    manifest = {
+        "test_app.py": sha256(test_path.read_bytes()).hexdigest(),
+        "app.py": sha256(production_path.read_bytes()).hexdigest(),
+    }
+    rows = [
+        {
+            "path": path,
+            "origin": path,
+            "nodeid": case,
+            "phase": "call",
+            "observation_kind": "executed_frame",
+            "source_sha256": digest,
+            "status": "BOUND",
+        }
+        for path, digest in manifest.items()
+    ]
+    observation = {
+        "origin_status": "BOUND",
+        "origin_limit_exceeded": False,
+        "collected": [case],
+        "executed_modules": rows,
+    }
+    assert validate_production_mutation_origins(
+        observation, tmp_path, manifest, production_path
+    )
+    rows[0]["observation_kind"] = "imported_module"
+    assert not validate_production_mutation_origins(
+        observation, tmp_path, manifest, production_path
+    )
+    observation["executed_modules"] = [None]
+    assert not validate_production_mutation_origins(
+        observation, tmp_path, manifest, production_path
+    )
+
+
+def test_validate_production_mutation_process_requires_confirmed_supervision():
+    facts = {
+        "timed_out": False,
+        "output_limit_exceeded": False,
+        "cleanup_confirmed": True,
+        "launch_error": False,
+        "exit_code": 1,
+    }
+    assert validate_production_mutation_process(facts)
+    facts["cleanup_confirmed"] = False
+    assert not validate_production_mutation_process(facts)
+
+
+def test_bounded_file_hash_rejects_oversized_input(tmp_path):
+    from factoryline.runtime_audit_process import bounded_file_sha256
+
+    path = tmp_path / "small.bin"
+    path.write_bytes(b"123")
+    assert len(bounded_file_sha256(path, 3)) == 64
+    with pytest.raises(ValueError, match="size limit"):
+        bounded_file_sha256(path, 2)
+
+
+def test_tree_and_target_path_helpers_reject_escape_and_accept_regular_files(tmp_path):
+    from factoryline.runtime_audit_process import (
+        new_output_path_inside,
+        path_chain_has_no_links,
+        regular_target_within,
+        tree_has_no_links_or_reparse_points,
+    )
+
+    root = tmp_path / "root"
+    root.mkdir()
+    source = root / "source.py"
+    source.write_text("x = 1\n", encoding="utf-8")
+    assert tree_has_no_links_or_reparse_points(root)
+    assert regular_target_within(root, source)
+    assert path_chain_has_no_links(root, root / ".factory/output.json")
+    assert not path_chain_has_no_links(root, tmp_path / "outside")
+    assert (
+        new_output_path_inside(root, Path(".factory/output"))
+        == root / ".factory/output"
+    )
+    with pytest.raises(ValueError, match="escapes"):
+        new_output_path_inside(root, tmp_path / "outside")
+
+
+def test_bounded_temp_directory_stays_under_system_parent_and_is_removed():
+    parent, root = create_bounded_temp_directory("cf-capture-test-")
+    try:
+        assert root.parent == parent
+        assert root.is_dir()
+    finally:
+        assert remove_bounded_temp_directory(root, parent, "cf-capture-test-")
+    assert not root.exists()
+
+
+def test_mutation_trial_observed_rejects_context_drift_with_bound_phase_evidence(
+    tmp_path,
+):
+    import hashlib
+
+    from factoryline.runtime_audit_process import mutation_trial_observed
+
+    root = tmp_path.resolve()
+    test_path = root / "test_app.py"
+    target = root / "app.py"
+    test_path.write_bytes(b"def test_value():\n    pass\n")
+    target.write_bytes(b"def value():\n    return 1\n")
+    case = "test_app.py::test_value"
+    manifest = {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in (test_path, target)
+    }
+    observation = {
+        "collection_incomplete": False,
+        "collection_reports": [
+            {"outcome": "passed", "failed": False, "skipped": False}
+        ],
+        "collected": [case],
+        "reports": [
+            {"nodeid": case, "phase": phase, "outcome": outcome, "xfail": False}
+            for phase, outcome in (
+                ("setup", "passed"),
+                ("call", "failed"),
+                ("teardown", "passed"),
+            )
+        ],
+        "assertion_observations": [
+            {
+                "case_id": case,
+                "line": 3,
+                "hits": 1,
+                "outcome": "FAIL",
+                "failure_visible": True,
+            }
+        ],
+        "origin_status": "BOUND",
+        "origin_limit_exceeded": False,
+        "executed_modules": [
+            {
+                "path": name,
+                "origin": name,
+                "nodeid": case,
+                "phase": "call",
+                "observation_kind": "executed_frame",
+                "source_sha256": digest,
+                "status": "BOUND",
+            }
+            for name, digest in manifest.items()
+        ],
+        "runtime_context_before": "raw-context",
+        "runtime_context_after": "raw-context",
+        "runtime_context_normalized_before": "normalized-context",
+        "runtime_context_normalized_after": "normalized-context",
+    }
+    trial = {
+        "process": {
+            "timed_out": False,
+            "output_limit_exceeded": False,
+            "cleanup_confirmed": True,
+            "launch_error": False,
+            "exit_code": 1,
+        },
+        "data": observation,
+    }
+    prepared = {"selector": case, "line": 3}
+
+    assert mutation_trial_observed(
+        trial, prepared, root, target, manifest, "failed", True
+    )
+    observation["runtime_context_after"] = "changed-context"
+    assert not mutation_trial_observed(
+        trial, prepared, root, target, manifest, "failed", True
+    )

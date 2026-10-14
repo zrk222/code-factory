@@ -1,4 +1,5 @@
 """Deterministically inventory runtime-assurance rejection conditions."""
+
 from __future__ import annotations
 
 import ast
@@ -21,8 +22,9 @@ CROSSCUT_MODULES = (
     "runtime_audit_runner.py",
     "runtime_audit_integrity.py",
     "runtime_audit.py",
+    "runtime_audit_process.py",
 )
-NON_CONDITION_MODULES = {"runtime_audit_process.py"}
+NON_CONDITION_MODULES: set[str] = set()
 REJECTION_PREFIXES = ("E_", "RUNTIME_", "CROSS_", "HOLLOW_", "INCOMPLETE_")
 LANE_LABELS = {
     "stateful workflows": "Stateful workflows and business invariants",
@@ -33,10 +35,17 @@ LANE_LABELS = {
     "performance and resources": "Performance, memory and resource regression",
 }
 NON_REJECTION_MARKERS = {
-    "ABSTAIN", "BOUND_LOCAL_EVIDENCE", "REGRESSION_GATES",
-    "PASS", "FAIL", "INCOMPLETE", "STATEFUL_INVARIANTS_HELD",
-    "TENANT_MATRIX_HELD", "RECOVERY_INVARIANTS_HELD",
-    "CONSUMER_CONTRACTS_HELD", "MIGRATION_REHEARSAL_HELD",
+    "ABSTAIN",
+    "BOUND_LOCAL_EVIDENCE",
+    "REGRESSION_GATES",
+    "PASS",
+    "FAIL",
+    "INCOMPLETE",
+    "STATEFUL_INVARIANTS_HELD",
+    "TENANT_MATRIX_HELD",
+    "RECOVERY_INVARIANTS_HELD",
+    "CONSUMER_CONTRACTS_HELD",
+    "MIGRATION_REHEARSAL_HELD",
     "PERFORMANCE_AND_RESOURCES_HELD",
 }
 
@@ -44,7 +53,8 @@ NON_REJECTION_MARKERS = {
 def _markers(module: str) -> set[str]:
     tree = ast.parse((ROOT / "factoryline" / module).read_text(encoding="utf-8"))
     values = {
-        node.value for node in ast.walk(tree)
+        node.value
+        for node in ast.walk(tree)
         if isinstance(node, ast.Constant)
         and isinstance(node.value, str)
         and len(node.value) >= 4
@@ -55,7 +65,9 @@ def _markers(module: str) -> set[str]:
 
 
 def inventory() -> dict[str, object]:
-    classified_modules = set(LANE_MODULES.values()) | set(CROSSCUT_MODULES) | NON_CONDITION_MODULES
+    classified_modules = (
+        set(LANE_MODULES.values()) | set(CROSSCUT_MODULES) | NON_CONDITION_MODULES
+    )
     discovered_modules = {
         path.name for path in (ROOT / "factoryline").glob("runtime_audit*.py")
     }
@@ -66,7 +78,9 @@ def inventory() -> dict[str, object]:
             + ", ".join(unclassified_modules)
         )
     condition_codes_in_helpers = {
-        module: sorted(code for code in _markers(module) if code.startswith(REJECTION_PREFIXES))
+        module: sorted(
+            code for code in _markers(module) if code.startswith(REJECTION_PREFIXES)
+        )
         for module in NON_CONDITION_MODULES
     }
     condition_codes_in_helpers = {
@@ -77,10 +91,14 @@ def inventory() -> dict[str, object]:
             "condition-free runtime-audit helpers now contain rejection codes: "
             + json.dumps(condition_codes_in_helpers, sort_keys=True)
         )
-    lane_codes = {name: sorted(_markers(module)) for name, module in LANE_MODULES.items()}
+    lane_codes = {
+        name: sorted(_markers(module)) for name, module in LANE_MODULES.items()
+    }
     crosscut = set()
     for module in CROSSCUT_MODULES:
-        crosscut.update(code for code in _markers(module) if code.startswith(REJECTION_PREFIXES))
+        crosscut.update(
+            code for code in _markers(module) if code.startswith(REJECTION_PREFIXES)
+        )
     lane_total = sum(len(codes) for codes in lane_codes.values())
     return {
         "schema": "factory.runtime-audit-condition-inventory.v1",
@@ -116,11 +134,13 @@ def markdown_table(result: dict[str, object]) -> str:
         "| --- | ---: |",
     ]
     rows.extend(f"| {LANE_LABELS[name]} | {lanes[name]} |" for name in LANE_MODULES)
-    rows.extend((
-        "| Cross-cutting contract, policy, provenance, evidence and execution integrity "
-        f"| {result['crosscutting_rejection_conditions']} |",
-        f"| **Total** | **{result['total_coded_rejection_conditions']}** |",
-    ))
+    rows.extend(
+        (
+            "| Cross-cutting contract, policy, provenance, evidence and execution integrity "
+            f"| {result['crosscutting_rejection_conditions']} |",
+            f"| **Total** | **{result['total_coded_rejection_conditions']}** |",
+        )
+    )
     return "\n".join(rows)
 
 
