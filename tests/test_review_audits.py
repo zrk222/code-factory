@@ -3844,6 +3844,70 @@ def test_security_tree_scan_reuses_one_ast_inventory_for_alias_and_tenant_checks
     assert [finding["code"] for finding in findings] == ["SECURITY_SHELL_COMMAND"]
 
 
+def test_security_log_flow_reuses_prebound_call_inventory(tmp_path, monkeypatch):
+    import ast
+
+    import factoryline.review_audits as module
+
+    source = (
+        "import logging\ndef record():\n    raw = input()\n    logging.error(raw)\n"
+    )
+    tree = ast.parse(source)
+    path = tmp_path / "service.py"
+    path.write_text(source, encoding="utf-8")
+    original_walk = ast.walk
+    calls = 0
+
+    def counted_walk(node):
+        nonlocal calls
+        calls += 1
+        return original_walk(node)
+
+    monkeypatch.setattr(module.ast, "walk", counted_walk)
+    findings = module._security_scan_tree(tmp_path, path, tree, (), {})
+
+    assert calls == 1
+    assert [finding["code"] for finding in findings] == ["SECURITY_LOG_INJECTION"]
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        pytest.param(
+            "import logging\ndef record():\n    logging.error('plain')\n",
+            False,
+            id="constant-log-message-does-not-crash",
+        ),
+        pytest.param(
+            "import logging\ndef record():\n    logging.error('plain' + ' text')\n",
+            False,
+            id="binop-log-message-does-not-crash",
+        ),
+        pytest.param(
+            "import logging\ndef record():\n    if True:\n        if logging.error(input()):\n            pass\n",
+            True,
+            id="nested-if-header-input-is-logged",
+        ),
+        pytest.param(
+            "import logging\ndef record():\n    if True:\n        while logging.error(input()):\n            break\n",
+            True,
+            id="nested-loop-header-input-is-logged",
+        ),
+        pytest.param(
+            "import logging\ndef record():\n    if True:\n        with logging.error(input()):\n            pass\n",
+            True,
+            id="nested-with-header-input-is-logged",
+        ),
+    ],
+)
+def test_security_log_flow_handles_plain_messages_and_nested_headers(
+    tmp_path, source, expected
+):
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert ("SECURITY_LOG_INJECTION" in result["finding_counts"]) is expected
+
+
 def test_security_scan_reports_parse_errors_fail_closed(tmp_path):
     (tmp_path / "broken.py").write_text("def broken(:\n", encoding="utf-8")
     result = security_scan(tmp_path)
@@ -7199,3 +7263,491 @@ def test_builtin_repr_type_check_oracle_is_weak_only_when_unshadowed(
             if item["code"] == "QUALITY_WEAK_TEST_ORACLE"
         )
         assert "does not verify the expected representation" in finding["message"]
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logging.error('bad: ' + raw)\n",
+            True,
+        ),
+        (
+            "from builtins import input as read_input\n"
+            "import logging\n"
+            "def record():\n"
+            "    logging.error(read_input())\n",
+            True,
+        ),
+        (
+            "import builtins\nimport logging\nlogging.info(builtins.input())\n",
+            True,
+        ),
+        (
+            "import builtins as bi\nimport logging\nlogging.info(bi.input())\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    alias = raw\n"
+            "    logging.error(f'bad: {alias}')\n",
+            True,
+        ),
+        (
+            "from logging import error as log_error\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    log_error('bad: %s', raw)\n",
+            True,
+        ),
+        (
+            "def record():\n"
+            "    from logging import error as log_error\n"
+            "    log_error(input())\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    log_error = logging.error\n"
+            "    log_error(input())\n",
+            True,
+        ),
+        (
+            "import logging as log\ndef record():\n    log.error(input())\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    if enabled:\n"
+            "        raw = input()\n"
+            "    logging.error(raw)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    try:\n"
+            "        raw = input()\n"
+            "        raw = int(raw)\n"
+            "    except ValueError:\n"
+            "        logging.error('bad integer: ' + raw)\n",
+            True,
+        ),
+        (
+            "from flask import request\n"
+            "import logging\n"
+            "def record():\n"
+            "    raw = request.args.get('q')\n"
+            "    logging.error(raw)\n",
+            True,
+        ),
+        (
+            "from django.http import HttpRequest\n"
+            "import logging\n"
+            "def record(request: HttpRequest):\n"
+            "    raw = request.GET['q']\n"
+            "    logging.error(raw)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logging.error(f'bad: {raw!r}')\n",
+            False,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    callback = lambda: input()\n"
+            "    logging.info(callback)\n",
+            False,
+        ),
+        (
+            "import logging\ndef record():\n    logging.info((lambda: input())())\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logging.error('%r', raw)\n",
+            False,
+        ),
+        (
+            "import builtins\n"
+            "import logging\n"
+            "raw = builtins.input()\n"
+            "logging.info(builtins.repr(raw))\n",
+            False,
+        ),
+        (
+            "import builtins\n"
+            "import logging\n"
+            "raw = builtins.input()\n"
+            "logging.info(builtins.int(raw))\n",
+            False,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logging.error('%s', raw)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logging.error(msg=raw)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logging.log(logging.INFO, msg=raw)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logging.error(msg='%r', args=(raw,))\n",
+            False,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logging.error(msg='%s', args=(raw,))\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    clean = raw.replace('\\r', '').replace('\\n', '')\n"
+            "    logging.error(clean)\n",
+            False,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    clean = raw.replace('\\n', '')\n"
+            "    logging.error(clean)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    clean = raw.replace('\\n', '\\n')\n"
+            "    logging.error(clean)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    clean = raw.replace('\\n', '', 0).replace('\\r', '')\n"
+            "    logging.error(clean)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    clean = raw.replace('\\n', '', 1).replace('\\r', '')\n"
+            "    logging.error(clean)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    clean = raw.replace('\\r', '').replace('\\n', '')\n"
+            "    unsafe = clean.replace('x', '\\n')\n"
+            "    logging.error(unsafe)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    try:\n"
+            "        raw = input()\n"
+            "        number = int(raw)\n"
+            "    except ValueError:\n"
+            "        logging.error(raw)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    try:\n"
+            "        raw = input()\n"
+            "        number = int(raw)\n"
+            "    except Exception:\n"
+            "        logging.error(raw)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    try:\n"
+            "        raw = input()\n"
+            "        number = int(raw)\n"
+            "    except:\n"
+            "        logging.error(raw)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    try:\n"
+            "        raw = input()\n"
+            "        number = int(raw)\n"
+            "    except ValueError:\n"
+            "        pass\n"
+            "    else:\n"
+            "        logging.error(raw)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    try:\n"
+            "        raw = input()\n"
+            "    finally:\n"
+            "        logging.error(raw)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    for raw in [input()]:\n"
+            "        pass\n"
+            "    logging.error(raw)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    value = input()\n"
+            "    for value in ['fixed']:\n"
+            "        logging.info(value)\n",
+            False,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    value = input()\n"
+            "    for value in ['fixed']:\n"
+            "        pass\n"
+            "    logging.info(value)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    clean = raw.replace('\\n', '\\n').replace('\\r', '')\n"
+            "    logging.error(clean)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    count = int(raw)\n"
+            "    logging.error('count %s', count)\n",
+            False,
+        ),
+        (
+            "import logging\n"
+            "int = lambda value: value\n"
+            "value = input()\n"
+            "logging.info(int(value))\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "repr = lambda value: value\n"
+            "value = input()\n"
+            "logging.info(repr(value))\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    raw = 'constant'\n"
+            "    logging.error(raw)\n",
+            False,
+        ),
+        (
+            "import logging\n"
+            "def shadowed(input):\n"
+            "    logging.error(input())\n"
+            "def unrelated():\n"
+            "    logger.error(input())\n",
+            False,
+        ),
+        (
+            "import logging\nbuiltins = object()\nlogging.info(builtins.input())\n",
+            False,
+        ),
+        (
+            "import logging\n"
+            "builtins = object()\n"
+            "raw = input()\n"
+            "logging.info(builtins.repr(raw))\n",
+            True,
+        ),
+        (
+            "import logging\ndef shadowed(logging):\n    logging.error(input())\n",
+            False,
+        ),
+        (
+            "from flask import request\n"
+            "import logging\n"
+            "def record():\n"
+            "    request = object()\n"
+            "    logging.error(request.args.get('q'))\n",
+            False,
+        ),
+        (
+            "class Fake:\n"
+            "    def error(self, value):\n"
+            "        pass\n"
+            "logging = Fake()\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logging.error(raw)\n",
+            False,
+        ),
+        (
+            "import logging\n"
+            "logger = logging.getLogger(__name__)\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logger.error(raw)\n",
+            True,
+        ),
+        (
+            "import logging as logmod\n"
+            "logger = logmod.getLogger(__name__)\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logger.error(raw)\n",
+            True,
+        ),
+        (
+            "from logging import getLogger as make_logger\n"
+            "logger = make_logger(__name__)\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logger.error(raw)\n",
+            True,
+        ),
+        (
+            "from logging import Logger\n"
+            "logger = Logger(__name__)\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logger.error(raw)\n",
+            True,
+        ),
+        (
+            "import logging\n"
+            "logger = logging.getLogger(__name__)\n"
+            "logger = object()\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logger.error(raw)\n",
+            False,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    with open('input.txt'):\n"
+            "        raw = input()\n"
+            "        logging.error(raw)\n",
+            True,
+        ),
+    ],
+    ids=[
+        "direct-input-concatenation",
+        "imported-builtin-input-alias",
+        "imported-builtins-input-source",
+        "aliased-builtins-input-source",
+        "input-alias-fstring",
+        "imported-log-function-format-args",
+        "locally-imported-log-function",
+        "assigned-logging-function-alias",
+        "imported-logging-module-alias",
+        "if-branch-source-reaches-log",
+        "valueerror-keeps-preassignment-raw",
+        "exception-keeps-preassignment-raw",
+        "bare-handler-keeps-preassignment-raw",
+        "proven-flask-request-args-get",
+        "proven-django-request-get",
+        "fstring-repr-is-safe",
+        "deferred-lambda-input-is-not-evaluated",
+        "immediate-lambda-input-is-evaluated",
+        "percent-repr-is-safe",
+        "imported-builtins-repr-is-safe",
+        "imported-builtins-int-is-safe",
+        "percent-string-is-unsafe",
+        "keyword-message-is-unsafe",
+        "logging-log-keyword-message-is-unsafe",
+        "keyword-percent-repr-is-safe",
+        "keyword-percent-string-is-unsafe",
+        "both-crlf-neutralized",
+        "partial-newline-neutralization",
+        "no-op-newline-replacement-is-unsafe",
+        "replace-count-zero-is-not-sanitization",
+        "replace-positive-count-is-not-complete",
+        "outer-replacement-cannot-reintroduce-newline",
+        "rhs-source-snapshot-for-valueerror",
+        "try-else-flow-is-analyzed",
+        "try-finally-flow-is-analyzed",
+        "loop-taint-survives-after-loop",
+        "loop-safe-target-clears-prior-taint-in-body",
+        "loop-zero-iteration-retains-prior-taint-afterward",
+        "replacement-reintroduces-newline",
+        "successful-int-result-safe",
+        "module-rebound-int-is-not-sanitizer",
+        "module-rebound-repr-is-not-sanitizer",
+        "source-rebound-to-constant",
+        "shadowed-input-and-unrelated-logger",
+        "rebound-builtins-module-is-not-input-source",
+        "rebound-builtins-module-is-not-safe-repr",
+        "shadowed-logging-module",
+        "rebound-flask-request-safe",
+        "fake-global-logging-name-is-not-stdlib",
+        "stdlib-getlogger-return-is-a-proven-logger",
+        "stdlib-module-alias-getlogger-return-is-proven",
+        "imported-getlogger-alias-return-is-proven",
+        "imported-logger-class-return-is-proven",
+        "rebound-logger-variable-is-not-stdlib",
+        "with-body-direct-input-logging",
+    ],
+)
+def test_security_scan_input_and_request_log_injection(tmp_path, source, expected):
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+    log_findings = [
+        item for item in findings if item["code"] == "SECURITY_LOG_INJECTION"
+    ]
+    assert bool(log_findings) is expected
+    if expected:
+        assert all(item["facts"]["cwe"] == "CWE-117" for item in log_findings)

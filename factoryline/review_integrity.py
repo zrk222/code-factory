@@ -2022,7 +2022,7 @@ def _awaited_virtual_bindings(invoke, bindings, invalid, methods, aliases, effec
 def verify_intent_diff(
     root: Path, contract_path: Path, diff_path: Path, out: Path
 ) -> dict[str, Any]:
-    """Validate a declared diff against approved intent and write its review receipt."""
+    """Validate intent diff against approved contract and write receipt."""
     from .change_review import verify_intent_diff as verify
 
     return verify(root, contract_path, diff_path, out)
@@ -2031,14 +2031,14 @@ def verify_intent_diff(
 def verify_receipt_freshness(
     root: Path, manifest_path: Path, out: Path
 ) -> dict[str, Any]:
-    """Check receipt age and context against the manifest, then write the result."""
+    """Check receipt age and manifest context; write result."""
     from .change_review import verify_receipt_freshness as verify
 
     return verify(root, manifest_path, out)
 
 
 def verify_policy_pack(root: Path, pack_path: Path, out: Path) -> dict[str, Any]:
-    """Validate a versioned, human-owned policy pack and write its verification receipt."""
+    """Verify the versioned human-owned pack and write receipt."""
     from .change_review import verify_policy_pack as verify
 
     return verify(root, pack_path, out)
@@ -2649,6 +2649,16 @@ def bind_security_call_scopes(tree: ast.AST) -> None:
     tree._security_nonlocal_names = set()
     tree._security_calls_by_statement = {}
     _bind_security_scope_node(tree, tree, set(), tree)
+
+
+def _security_ast_span_contains(node, container):
+    return (container.lineno, container.col_offset) <= (
+        node.lineno,
+        node.col_offset,
+    ) and (node.end_lineno, node.end_col_offset) <= (
+        container.end_lineno,
+        container.end_col_offset,
+    )
 
 
 def _bind_security_scope_node(node, scope, shadowed, tree, flow_statement=None):
@@ -3755,6 +3765,20 @@ def _security_flow_snapshot(node, resolved, constants):
     )
 
 
+def _security_flow_logger_factory_alias(value, resolved, call_name):
+    if not isinstance(value, ast.Call):
+        return None
+    called = call_name(value.func)
+    head, _, tail = called.partition(".")
+    reference = resolved.get(head)
+    if reference is None:
+        return None
+    factory = reference + ("." + tail if tail else "")
+    return (
+        "logging.Logger" if factory in {"logging.getLogger", "logging.Logger"} else None
+    )
+
+
 def _security_flow_assignment(statement, resolved, constants):
     from . import review_audits as audit
 
@@ -3768,6 +3792,9 @@ def _security_flow_assignment(statement, resolved, constants):
     head, _, tail = name.partition(".")
     reference = resolved.get(head)
     alias = reference + ("." + tail if tail else "") if reference else None
+    factory_alias = _security_flow_logger_factory_alias(value, resolved, audit._name)
+    if factory_alias is not None:
+        alias = factory_alias
     literal = value.value if isinstance(value, ast.Constant) else constants.get(name)
     bindings = audit._bound_names(statement)
     for binding in bindings:
@@ -3814,6 +3841,8 @@ def security_call_name(node, aliases):
 
 def security_source_sink_findings(relative, tree, nodes, aliases):
     """Return bounded static findings for proven request and parameter sink flows."""
+    from .audit_log_flow import audit_log_source_findings
+
     bind_security_call_scopes(tree)
     helpers = _security_connector_cursor_helpers(tree, aliases)
     findings = []
@@ -3826,6 +3855,7 @@ def security_source_sink_findings(relative, tree, nodes, aliases):
         findings.extend(
             _security_scope_source_sink_findings(relative, scope, aliases, helpers)
         )
+    findings.extend(audit_log_source_findings(relative, tree, nodes, aliases))
     return findings
 
 
