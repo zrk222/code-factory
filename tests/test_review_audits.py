@@ -5107,7 +5107,12 @@ def test_scan_reconciles_bound_completion_oracle_and_retains_static_history(
     def verified(*args, **values):
         assert values["source_manifest_sha256"] == initial["source_manifest_sha256"]
         assert values["environment_sha256"] == "e" * 64
-        return {"state": "VERIFIED", "tests": [row], "receipt_sha256": "f" * 64}
+        return {
+            "schema": attestation.TEST_ORACLE_VERIFICATION_SCHEMA,
+            "state": "VERIFIED",
+            "tests": [row],
+            "receipt_sha256": "f" * 64,
+        }
 
     monkeypatch.setattr(attestation, "verify_signed_test_oracles", verified)
     module._oracle_bound_row(
@@ -6066,6 +6071,20 @@ def test_session_tls_constructor_respects_import_execution_order(
     (tmp_path / "service.py").write_text(source)
     result = security_scan(tmp_path)
     assert result["finding_counts"].get("SECURITY_TLS_VERIFY_DISABLED", 0) == expected
+
+
+def test_security_flow_indexes_conditional_function_default_at_parent_statement(
+    tmp_path,
+):
+    (tmp_path / "service.py").write_text(
+        "import httpx\n"
+        "if ENABLED:\n"
+        "    def configure(client=httpx.Client(verify=False)):\n"
+        "        return client\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"].get("SECURITY_TLS_VERIFY_DISABLED", 0) == 1
 
 
 def test_security_scan_reports_production_implementation_completeness(tmp_path):
