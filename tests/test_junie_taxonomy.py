@@ -1227,6 +1227,7 @@ def test_junie_native_python_security_receipt_and_completeness_guidance():
         _junie_proof_agent_bytes,
         junie_taxonomy,
     )
+    from factoryline.pytest_readiness import _cli_parser
 
     playbook = _guidance().decode("utf-8")
     proof_agent = _junie_proof_agent_bytes().decode("utf-8")
@@ -1261,6 +1262,13 @@ def test_junie_native_python_security_receipt_and_completeness_guidance():
         assert "typecheck transfer" in text
         assert "do not establish semantic test strength or scanner accuracy" in text
         assert "python -m factoryline.pytest_readiness" in text
+        assert "production mutation" in text
+        assert "factory.local-production-mutation-capture.v1" in text
+        assert "Python 3.10, 3.11, and 3.12" in text
+        assert "pytest engine or a direct helper/testbody" in text
+        assert (
+            "qualname, first line, root-relative source path, and source hash" in text
+        )
         assert "--kind attribute" in text
         assert "factory.attribute-removal-probe.v1" in text
         assert "does not write a receipt file" in text
@@ -1311,7 +1319,14 @@ def test_junie_native_python_security_receipt_and_completeness_guidance():
         "exit_code": 2,
     }
     supported = {row["kind"]: row for row in probes["supported_kinds"]}
-    assert set(supported) == {"assertion", "call", "attribute", "typecheck"}
+    parser = _cli_parser()
+    parser_actions = {
+        option: action for action in parser._actions for option in action.option_strings
+    }
+    kind_choices = next(
+        action.choices for action in parser._actions if action.dest == "kind"
+    )
+    assert set(supported) == set(kind_choices)
     assert supported["assertion"]["schema"] == "factory.assertion-propagation-probe.v1"
     assert supported["call"]["schema"] == "factory.call-propagation-probe.v1"
     assert supported["attribute"]["schema"] == "factory.attribute-removal-probe.v1"
@@ -1319,12 +1334,49 @@ def test_junie_native_python_security_receipt_and_completeness_guidance():
     for kind, row in supported.items():
         assert row["kind_argument"] == ["--kind", kind]
         assert "--kind" in row["selectors"]
+        assert set(row["selectors"] + row.get("optional_selectors", [])) <= set(
+            parser_actions
+        )
     assert "baseline.executed_modules" in supported["assertion"]["evidence"]
     assert "semantic_strength" in supported["assertion"]["evidence"]
     assert "challenge.executed_modules" in supported["call"]["evidence"]
     assert "semantic_quality" in supported["call"]["evidence"]
     assert "--checker-config" in supported["typecheck"]["selectors"]
     assert "resolver_stable" in supported["typecheck"]["evidence"]
+    production = supported["production-mutation"]
+    assert production["schema"] == "factory.local-production-mutation-capture.v1"
+    assert production["optional_selectors"] == ["--python", "--timeout"]
+    assert {
+        "--production-path",
+        "--production-symbol",
+        "--mutation-before",
+        "--mutation-after",
+        "--evidence",
+    } <= set(production["selectors"])
+    assert {
+        "signature_status",
+        "observer_integrity",
+        "authority",
+        "source_manifest_sha256",
+        "selection.callback_qualname",
+        "production_mutation.original_sha256",
+        "production_mutation.mutant_sha256",
+        "baseline_observation",
+        "mutant_observation",
+        "cleanup",
+    } <= set(production["evidence"])
+    assert "UNSIGNED" in production["claim_limit"]
+    assert "not a sandbox" in production["claim_limit"]
+    assert "accuracy claim" in production["claim_limit"]
+    assert "finding suppression" in production["claim_limit"]
+    assert any(
+        "Python 3.10, 3.11, and 3.12" in item for item in probes["shared_limits"]
+    )
+    assert any(
+        "pytest-engine runs from direct helper/testbody runs" in item
+        for item in probes["shared_limits"]
+    )
+    assert any("root-relative source path" in item for item in probes["shared_limits"])
     assert any("not attested" in item for item in probes["shared_limits"])
     assert any("cannot suppress or clear" in item for item in probes["shared_limits"])
     assert taxonomy["authority"] == {
@@ -1340,6 +1392,38 @@ def test_junie_native_python_security_receipt_and_completeness_guidance():
         "network": False,
         "connector": False,
     }
+
+
+def test_cloudflare_security_review_guidance_is_pinned_and_shared(tmp_path):
+    from factoryline.junie_taxonomy import _guidance, _junie_proof_agent_bytes
+
+    pin = "c1c8a8c1471069fb0e188eeaff69b8e8db6564a8"
+    taxonomy = junie_taxonomy(tmp_path)
+    review = taxonomy["audit_taxonomy"]["agent_usage_contract"]["six_lane_review"][
+        "security_review_skill"
+    ]
+    assert review["repository"] == "https://github.com/cloudflare/security-audit-skill"
+    assert review["revision"] == pin
+    assert review["skill_path"] == "skills/security-audit/SKILL.md"
+    assert review["default_mode"] == "guidance"
+    assert review["record_states"] == ["confirmed", "needs_validation", "rejected"]
+    assert "Only an explicit full audit request" in review["full_audit"]
+    assert "Only confirmed" in review["severity"]
+    assert "native CF finding codes and raw severity separately" in review["severity"]
+    assert "every upstream OS sandbox" in review["execution"]
+    assert review["validators"] == [
+        "validate-findings.cjs",
+        "validate-coverage-ledger.cjs",
+    ]
+    assert "no automatic execution" in review["authority"]
+    for output in (_guidance(), _junie_proof_agent_bytes()):
+        text = output.decode("utf-8")
+        assert pin in text
+        assert "Cloudflare security review guidance" in text
+        assert "Source reviewers stay read-only" in text
+        assert "needs_validation" in text
+        assert "neither scanner accuracy nor release authority" in text
+        assert len(output) <= 64 * 1024
 
 
 def test_junie_beginner_acceptance_keeps_evidence_and_repair_authority():
