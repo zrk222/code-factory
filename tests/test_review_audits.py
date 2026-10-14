@@ -2334,6 +2334,227 @@ def test_security_scan_classifies_test_roundtrip_as_nonblocking(tmp_path, librar
 
 
 @pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            "from flask import request\n"
+            "def download():\n"
+            "    name = request.args.get('name')\n"
+            "    open(name)\n",
+            "SECURITY_PATH_TRAVERSAL",
+        ),
+        (
+            "from flask import request\n"
+            "def download():\n"
+            "    name = request.args.get('name')\n"
+            "    open(secure_filename(name))\n",
+            "SECURITY_PATH_TRAVERSAL",
+        ),
+        (
+            "import mysql.connector\n"
+            "def get_connection():\n"
+            "    return mysql.connector.connect()\n"
+            "def lookup(name):\n"
+            "    cursor = get_connection().cursor()\n"
+            "    query = \"SELECT * FROM records WHERE name = '%s'\" % name\n"
+            "    cursor.execute(query)\n",
+            "SECURITY_SQL_INJECTION",
+        ),
+        (
+            "import mysql.connector\n"
+            "def get_connection():\n"
+            "    return mysql.connector.connect()\n"
+            "def lookup(name):\n"
+            "    cursor = get_connection().cursor()\n"
+            "    query = f\"SELECT * FROM records WHERE name='{name}'\"\n"
+            "    cursor.execute(query, (name,))\n",
+            "SECURITY_SQL_INJECTION",
+        ),
+        (
+            "from flask import request as incoming\n"
+            "import requests\n"
+            "def fetch():\n"
+            "    host = incoming.args['host']\n"
+            "    url = 'https://' + host + '/items'\n"
+            "    requests.get(url)\n",
+            "SECURITY_SSRF",
+        ),
+        (
+            "from flask import request\n"
+            "import requests\n"
+            "def fetch():\n"
+            "    if requests.get(request.args.get('url')).ok:\n"
+            "        pass\n",
+            "SECURITY_SSRF",
+        ),
+        (
+            "from flask import request\n"
+            "import requests\n"
+            "def fetch():\n"
+            "    while requests.get(request.args.get('url')).ok:\n"
+            "        break\n",
+            "SECURITY_SSRF",
+        ),
+        (
+            "from flask import request\n"
+            "import requests\n"
+            "def fetch():\n"
+            "    for item in requests.get(request.args.get('url')).json():\n"
+            "        consume(item)\n",
+            "SECURITY_SSRF",
+        ),
+    ],
+)
+def test_security_scan_finds_bounded_request_to_sink_flows(tmp_path, source, expected):
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert [finding["code"] for finding in result["findings"]].count(expected) == 1
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import mysql.connector\n"
+        "def get_connection():\n"
+        "    return mysql.connector.connect()\n"
+        "def lookup(name):\n"
+        "    cursor = get_connection().cursor()\n"
+        '    query = "SELECT * FROM records WHERE name = %s"\n'
+        "    cursor.execute(query, (name,))\n",
+        "from flask import request\n"
+        "import requests\n"
+        "import urllib.parse\n"
+        "def fetch():\n"
+        "    host = request.args.get('host')\n"
+        "    url = 'https://' + host + '/items'\n"
+        "    if urllib.parse.urlparse(url).hostname in {'api.example.test'}:\n"
+        "        requests.get(url)\n",
+        "def read():\n"
+        "    open('welcome.txt')\n"
+        "import requests\n"
+        "def fetch():\n"
+        "    requests.get('https://example.test/items')\n",
+        "from flask import request\n"
+        "def download():\n"
+        "    request = object()\n"
+        "    name = request.args.get('name')\n"
+        "    open(name)\n",
+        "from flask import request\n"
+        "def download():\n"
+        "    name = request.args.get('name')\n"
+        "    name = 'welcome.txt'\n"
+        "    open(name)\n",
+        "import mysql.connector\n"
+        "def get_connection():\n"
+        "    return mysql.connector.connect()\n"
+        "def lookup(name):\n"
+        "    get_connection = lambda: object()\n"
+        "    cursor = get_connection().cursor()\n"
+        "    query = f\"SELECT * FROM records WHERE name='{name}'\"\n"
+        "    cursor.execute(query)\n",
+        "import requests\n"
+        "def pass_through(path, url):\n"
+        "    open(path)\n"
+        "    requests.get(url)\n",
+    ],
+)
+def test_security_scan_source_flow_controls_keep_safety_distinctions(tmp_path, source):
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    codes = {
+        finding["code"]
+        for finding in security_scan(tmp_path, cache_enabled=False)["findings"]
+    }
+    assert not codes.intersection(
+        {"SECURITY_PATH_TRAVERSAL", "SECURITY_SQL_INJECTION", "SECURITY_SSRF"}
+    )
+
+
+def test_security_scan_rejects_url_string_prefix_as_allowlist(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "from flask import request\n"
+        "import requests\n"
+        "def fetch():\n"
+        "    host = request.args.get('host')\n"
+        "    url = 'https://' + host + '/items'\n"
+        "    if url.startswith('https://example.test'):\n"
+        "        requests.get(url)\n",
+        encoding="utf-8",
+    )
+    codes = {
+        finding["code"]
+        for finding in security_scan(tmp_path, cache_enabled=False)["findings"]
+    }
+    assert "SECURITY_SSRF" in codes
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        "urllib.parse.urlparse(url).hostname not in {'api.example.test'}",
+        "urllib.parse.urlparse(url).hostname in ALLOWED_HOSTS",
+        "urllib.parse.urlparse(other).hostname in {'api.example.test'}",
+    ],
+)
+def test_security_scan_does_not_trust_incomplete_host_guards(tmp_path, condition):
+    (tmp_path / "app.py").write_text(
+        "from flask import request\n"
+        "import requests\n"
+        "import urllib.parse\n"
+        "def fetch():\n"
+        "    host = request.args.get('host')\n"
+        "    url = 'https://' + host + '/items'\n"
+        "    other = 'https://fixed.example.test/items'\n"
+        f"    if {condition}:\n"
+        "        requests.get(url)\n",
+        encoding="utf-8",
+    )
+    codes = {
+        finding["code"]
+        for finding in security_scan(tmp_path, cache_enabled=False)["findings"]
+    }
+    assert "SECURITY_SSRF" in codes
+
+
+def test_security_scan_does_not_suppress_url_rebound_inside_host_guard(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "from flask import request\n"
+        "import requests\n"
+        "import urllib.parse\n"
+        "def fetch():\n"
+        "    host = request.args.get('host')\n"
+        "    url = 'https://' + host + '/items'\n"
+        "    if urllib.parse.urlparse(url).hostname in {'api.example.test'}:\n"
+        "        url = 'https://' + request.args.get('other')\n"
+        "        requests.get(url)\n",
+        encoding="utf-8",
+    )
+    codes = {
+        finding["code"]
+        for finding in security_scan(tmp_path, cache_enabled=False)["findings"]
+    }
+    assert "SECURITY_SSRF" in codes
+
+
+def test_security_scan_does_not_trust_nested_call_after_host_guard(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "from flask import request\n"
+        "import requests\n"
+        "import urllib.parse\n"
+        "def fetch():\n"
+        "    host = request.args.get('host')\n"
+        "    url = 'https://' + host + '/items'\n"
+        "    if urllib.parse.urlparse(url).hostname in {'api.example.test'}:\n"
+        "        dispatch(mutate(url), requests.get(url))\n",
+        encoding="utf-8",
+    )
+    codes = {
+        finding["code"]
+        for finding in security_scan(tmp_path, cache_enabled=False)["findings"]
+    }
+    assert "SECURITY_SSRF" in codes
+
+
+@pytest.mark.parametrize(
     ("filename", "expression"),
     [
         ("production.py", "pickle.loads(pickle.dumps(value))"),

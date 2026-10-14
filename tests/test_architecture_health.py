@@ -1268,6 +1268,27 @@ def test_large_module_coverage_gaps_fails_closed_for_missing_or_outside_producti
     assert gaps[1]["error"] == "outside_root"
 
 
+def test_scanner_and_capture_file_limits_are_pinned_before_growth():
+    import json
+    from factoryline.architecture_guard import file_size_guard_is_pinned
+
+    policy = json.loads(
+        (Path(__file__).resolve().parents[1] / "architecture-policy.json").read_text()
+    )["file_size_guard"]
+    expected = {
+        "factoryline/review_integrity.py": (5000, 180000),
+        "factoryline/runtime_audit_runner.py": (1300, 53000),
+        "factoryline/review_audits.py": (5997, 225000),
+    }
+    for name, (lines, size) in expected.items():
+        assert name in policy["required_paths"]
+        assert policy["files"][name]["max_lines"] == lines
+        assert policy["files"][name]["max_bytes"] == size
+    assert file_size_guard_is_pinned(policy)
+    policy["files"]["factoryline/runtime_audit_runner.py"]["max_lines"] += 1
+    assert not file_size_guard_is_pinned(policy)
+
+
 def test_trace_and_jev_file_limits_are_pinned_before_growth():
     root = Path(__file__).resolve().parents[1]
     guard = json.loads((root / "architecture-policy.json").read_text())[

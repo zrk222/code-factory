@@ -4147,13 +4147,652 @@ def security_call_name(node, aliases):
     name = audit._call_name(node)
     head, _, tail = name.partition(".")
     if head in resolved:
-        return resolved[head] + ("." + tail if tail else "")
+        reference = resolved[head]
+        if name == reference or name.startswith(reference + "."):
+            return name
+        return reference + ("." + tail if tail else "")
     if head in aliases:
         return ""
     if head in getattr(node, "_security_shadowed_names", set()):
         if audit._security_call_finding(name, "", node) is not None:
             return ""
     return name
+
+
+def security_source_sink_findings(relative, tree, nodes, aliases):
+    bind_security_call_scopes(tree)
+    helpers = _security_connector_cursor_helpers(tree, aliases)
+    findings = []
+    scopes = [
+        node
+        for node in nodes
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    for scope in scopes:
+        findings.extend(
+            _security_scope_source_sink_findings(relative, scope, aliases, helpers)
+        )
+    return findings
+
+
+def _security_connector_cursor_helpers(tree, aliases):
+    from . import review_audits as audit
+
+    helpers = {}
+    for statement in tree.body:
+        names = audit._bound_names(statement)
+        for name in names:
+            helpers.pop(name, None)
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            kind = _security_function_connector_return_kind(statement, aliases, helpers)
+            if kind:
+                helpers[statement.name] = kind
+    return helpers
+
+
+def _security_function_connector_return_kind(function, aliases, helpers):
+    connections = set()
+    cursors = set()
+    for statement in function.body:
+        kind = _security_return_kind(statement, aliases, helpers, connections, cursors)
+        if kind:
+            return kind
+        _security_track_connector_assignment(
+            statement, aliases, helpers, connections, cursors
+        )
+    return ""
+
+
+def _security_return_kind(statement, aliases, helpers, connections, cursors):
+    if not isinstance(statement, ast.Return):
+        return ""
+    value = statement.value
+    if isinstance(value, ast.Name):
+        if value.id in connections:
+            return "connection"
+        if value.id in cursors:
+            return "cursor"
+    if _security_connector_connection(value, aliases) or _security_helper_call(
+        value, "connection", aliases, helpers
+    ):
+        return "connection"
+    return (
+        "cursor" if _security_cursor_value(value, aliases, connections, helpers) else ""
+    )
+
+
+def _security_track_connector_assignment(
+    statement, aliases, helpers, connections, cursors
+):
+    value = getattr(statement, "value", None)
+    if not isinstance(statement, (ast.Assign, ast.AnnAssign)) or not isinstance(
+        value, ast.AST
+    ):
+        return
+    targets = (
+        statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+    )
+    is_connection = _security_connector_connection(value, aliases) or (
+        _security_helper_call(value, "connection", aliases, helpers)
+    )
+    is_cursor = _security_cursor_value(value, aliases, connections, helpers)
+    for target in targets:
+        if isinstance(target, ast.Name):
+            connections.discard(target.id)
+            cursors.discard(target.id)
+            if is_connection:
+                connections.add(target.id)
+            if is_cursor:
+                cursors.add(target.id)
+
+
+def _security_cursor_value(node, aliases, connections, helpers):
+    if not isinstance(node, ast.Call) or _security_call_leaf(node) != "cursor":
+        return False
+    receiver = node.func.value if isinstance(node.func, ast.Attribute) else None
+    return (
+        _security_connector_connection(receiver, aliases)
+        or (isinstance(receiver, ast.Name) and receiver.id in connections)
+        or _security_helper_call(receiver, "connection", aliases, helpers)
+    )
+
+
+def _security_helper_call(node, kind, aliases, helpers):
+    if not isinstance(node, ast.Call):
+        return False
+    name = security_call_name(node, aliases)
+    return helpers.get(name) == kind and _security_call_unshadowed(node, name)
+
+
+def _security_connector_connection(node, aliases):
+    if not isinstance(node, ast.Call):
+        return False
+    return security_call_name(node, aliases) == "mysql.connector.connect"
+
+
+def _security_call_leaf(node):
+    return node.func.attr if isinstance(node.func, ast.Attribute) else ""
+
+
+def _security_scope_source_sink_findings(relative, scope, aliases, helpers):
+    requests = set()
+    parameters = set(getattr(scope, "_security_parameter_names", set()))
+    connection_names = set()
+    cursor_names = set()
+    body = getattr(scope, "body", [])
+    return _security_analyze_source_sink_block(
+        relative,
+        body,
+        scope,
+        aliases,
+        requests,
+        parameters,
+        connection_names,
+        cursor_names,
+        helpers,
+    )
+
+
+def _security_analyze_source_sink_block(
+    relative,
+    body,
+    scope,
+    aliases,
+    requests,
+    parameters,
+    connection_names,
+    cursor_names,
+    helpers,
+):
+    findings = []
+    for statement in body:
+        if isinstance(statement, ast.If):
+            findings.extend(
+                _security_statement_call_findings(
+                    relative,
+                    statement.test,
+                    scope,
+                    aliases,
+                    requests,
+                    parameters,
+                    connection_names,
+                    cursor_names,
+                    helpers,
+                )
+            )
+            findings.extend(
+                _security_branch_findings(
+                    relative,
+                    statement,
+                    scope,
+                    aliases,
+                    requests,
+                    parameters,
+                    connection_names,
+                    cursor_names,
+                    helpers,
+                )
+            )
+            continue
+        if isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
+            findings.extend(
+                _security_loop_findings(
+                    relative,
+                    statement,
+                    scope,
+                    aliases,
+                    requests,
+                    parameters,
+                    connection_names,
+                    cursor_names,
+                    helpers,
+                )
+            )
+            continue
+        if isinstance(
+            statement,
+            (ast.Assign, ast.AnnAssign, ast.Expr, ast.Return, ast.Assert, ast.Raise),
+        ):
+            findings.extend(
+                _security_statement_call_findings(
+                    relative,
+                    statement,
+                    scope,
+                    aliases,
+                    requests,
+                    parameters,
+                    connection_names,
+                    cursor_names,
+                    helpers,
+                )
+            )
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            _security_flow_source_assignment(
+                statement,
+                aliases,
+                requests,
+                parameters,
+                connection_names,
+                cursor_names,
+                helpers,
+            )
+        elif not isinstance(statement, (ast.Expr, ast.Return, ast.Assert, ast.Raise)):
+            from . import review_audits as audit
+
+            for name in audit._bound_names(statement):
+                requests.discard(name)
+                parameters.discard(name)
+                connection_names.discard(name)
+                cursor_names.discard(name)
+    return findings
+
+
+def _security_branch_findings(
+    relative,
+    statement,
+    scope,
+    aliases,
+    requests,
+    parameters,
+    connections,
+    cursors,
+    helpers,
+):
+    before = (requests.copy(), parameters.copy(), connections.copy(), cursors.copy())
+    branches = []
+    findings = []
+    for body in (statement.body, statement.orelse):
+        branch = [values.copy() for values in before]
+        branches.append(branch)
+        if body:
+            findings.extend(
+                _security_analyze_source_sink_block(
+                    relative,
+                    body,
+                    scope,
+                    aliases,
+                    branch[0],
+                    branch[1],
+                    branch[2],
+                    branch[3],
+                    helpers,
+                )
+            )
+    _security_merge_branch_states(
+        (requests, parameters, connections, cursors), branches
+    )
+    return findings
+
+
+def _security_merge_branch_states(target, branches):
+    for index, values in enumerate(target):
+        values.update(*(branch[index] for branch in branches))
+
+
+def _security_loop_findings(
+    relative,
+    statement,
+    scope,
+    aliases,
+    requests,
+    parameters,
+    connections,
+    cursors,
+    helpers,
+):
+    before = (requests.copy(), parameters.copy(), connections.copy(), cursors.copy())
+    test = (
+        statement.iter
+        if isinstance(statement, (ast.For, ast.AsyncFor))
+        else statement.test
+    )
+    found = _security_statement_call_findings(
+        relative,
+        test,
+        scope,
+        aliases,
+        requests,
+        parameters,
+        connections,
+        cursors,
+        helpers,
+    )
+    found.extend(
+        _security_analyze_source_sink_block(
+            relative,
+            statement.body,
+            scope,
+            aliases,
+            requests,
+            parameters,
+            connections,
+            cursors,
+            helpers,
+        )
+    )
+    _security_merge_branch_states(
+        (requests, parameters, connections, cursors),
+        [before, (requests, parameters, connections, cursors)],
+    )
+    return found
+
+
+def _security_statement_call_findings(
+    relative,
+    statement,
+    scope,
+    aliases,
+    requests,
+    parameters,
+    connections,
+    cursors,
+    helpers,
+):
+    findings = []
+    for call in ast.walk(statement):
+        if (
+            not isinstance(call, ast.Call)
+            or getattr(call, "_security_lexical_scope", None) is not scope
+        ):
+            continue
+        finding = _security_source_sink_call(
+            relative, call, aliases, requests, parameters, connections, cursors, helpers
+        )
+        if finding is not None:
+            findings.append(finding)
+    return findings
+
+
+def _security_source_sink_call(
+    relative,
+    call,
+    aliases,
+    requests,
+    parameters,
+    connection_names,
+    cursor_names,
+    helpers,
+):
+    from . import review_audits as audit
+
+    name = security_call_name(call, aliases)
+    if _security_unsafe_open(call, requests, aliases):
+        return audit._security_finding(
+            "SECURITY_PATH_TRAVERSAL",
+            relative,
+            call,
+            "Request-derived path reaches open without a proven containment check.",
+            "HIGH",
+            call="open",
+        )
+    if _security_unsafe_sql(
+        call,
+        name,
+        parameters,
+        requests,
+        aliases,
+        connection_names,
+        cursor_names,
+        helpers,
+    ):
+        return audit._security_finding(
+            "SECURITY_SQL_INJECTION",
+            relative,
+            call,
+            "Interpolated SQL reaches a proven MySQL connector cursor without parameters.",
+            "HIGH",
+            call="mysql.connector.cursor.execute",
+        )
+    if _security_unsafe_request_url(call, name, requests, aliases):
+        return audit._security_finding(
+            "SECURITY_SSRF",
+            relative,
+            call,
+            "Request-derived URL reaches a Requests outbound call without a parsed-host allowlist.",
+            "HIGH",
+            call=name,
+        )
+    return None
+
+
+def _security_unsafe_open(call, requests, aliases):
+    from .review_audits import _call_name
+
+    return (
+        _call_name(call) == "open"
+        and "open" not in getattr(call, "_security_shadowed_names", set())
+        and bool(call.args)
+        and _security_expr_tainted(call.args[0], requests, set(), aliases)
+    )
+
+
+def _security_unsafe_sql(
+    call, name, parameters, requests, aliases, connection_names, cursor_names, helpers
+):
+    if _security_call_leaf(call) != "execute" or not isinstance(
+        call.func, ast.Attribute
+    ):
+        return False
+    receiver = call.func.value
+    if not _security_is_proven_cursor(
+        receiver, aliases, connection_names, cursor_names, helpers
+    ):
+        return False
+    if not call.args:
+        return False
+    return _security_expr_tainted(call.args[0], requests, parameters, aliases)
+
+
+def _security_is_proven_cursor(
+    receiver, aliases, connection_names, cursor_names, helpers
+):
+    if isinstance(receiver, ast.Name):
+        return receiver.id in cursor_names
+    if _security_cursor_value(receiver, aliases, connection_names, helpers):
+        return True
+    return _security_helper_call(receiver, "cursor", aliases, helpers)
+
+
+def _security_unsafe_request_url(call, name, tainted, aliases):
+    if (
+        name
+        not in {
+            "requests.get",
+            "requests.post",
+            "requests.put",
+            "requests.patch",
+            "requests.delete",
+            "requests.head",
+            "requests.options",
+        }
+        or not call.args
+    ):
+        return False
+    if not _security_expr_tainted(call.args[0], tainted, set(), aliases):
+        return False
+    return not _security_parsed_host_allowlist(call, aliases)
+
+
+def _security_parsed_host_allowlist(call, aliases):
+    guard = getattr(call, "_security_flow_statement", None)
+    if not isinstance(guard, ast.If) or not _security_guard_has_direct_sink(
+        guard, call
+    ):
+        return False
+    test = _security_host_allowlist_test(guard.test)
+    if test is None:
+        return False
+    hostname = test.left
+    if not isinstance(hostname, ast.Attribute) or hostname.attr != "hostname":
+        return False
+    parser = hostname.value
+    if not isinstance(parser, ast.Call) or not parser.args:
+        return False
+    parser_name = security_call_name(parser, aliases)
+    return parser_name in {
+        "urllib.parse.urlparse",
+        "urllib.parse.urlsplit",
+    } and _security_expr_same(parser.args[0], call.args[0])
+
+
+def _security_host_allowlist_test(test):
+    return (
+        test
+        if isinstance(test, ast.Compare)
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], ast.In)
+        and _security_literal_host_allowlist(test.comparators[0])
+        else None
+    )
+
+
+def _security_guard_has_direct_sink(guard, call):
+    if len(guard.body) != 1:
+        return False
+    statement = guard.body[0]
+    value = getattr(statement, "value", None)
+    return (
+        isinstance(statement, (ast.Expr, ast.Assign, ast.AnnAssign, ast.Return))
+        and value is call
+    )
+
+
+def _security_literal_host_allowlist(node):
+    return (
+        isinstance(node, (ast.Set, ast.Tuple, ast.List))
+        and bool(node.elts)
+        and all(
+            isinstance(item, ast.Constant)
+            and isinstance(item.value, str)
+            and item.value
+            for item in node.elts
+        )
+    )
+
+
+def _security_expr_same(left, right):
+    return ast.dump(left, include_attributes=False) == ast.dump(
+        right, include_attributes=False
+    )
+
+
+def _security_expr_tainted(node, requests, parameters, aliases):
+    if isinstance(node, ast.Name):
+        return node.id in requests or node.id in parameters
+    return _security_composite_tainted(node, requests, parameters, aliases)
+
+
+def _security_composite_tainted(node, requests, parameters, aliases):
+    if isinstance(node, ast.Call):
+        return _security_call_source_tainted(node, requests, parameters, aliases)
+    if isinstance(node, ast.Subscript) and _security_request_args(node.value, aliases):
+        return True
+    if isinstance(node, ast.JoinedStr):
+        return any(
+            _security_expr_tainted(value.value, requests, parameters, aliases)
+            for value in node.values
+            if isinstance(value, ast.FormattedValue)
+        )
+    if isinstance(node, ast.FormattedValue):
+        return _security_expr_tainted(node.value, requests, parameters, aliases)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Div, ast.Mod)):
+        return _security_expr_tainted(
+            node.left, requests, parameters, aliases
+        ) or _security_expr_tainted(node.right, requests, parameters, aliases)
+    return False
+
+
+def _security_call_source_tainted(node, requests, parameters, aliases):
+    from .review_audits import _name
+
+    name = security_call_name(node, aliases) if aliases else ""
+    if name.startswith("flask.request.args."):
+        return True
+    if name in {"os.path.join", "pathlib.Path", "pathlib.PurePath"}:
+        return any(
+            _security_expr_tainted(arg, requests, parameters, aliases)
+            for arg in node.args
+        )
+    if _name(node.func).endswith("secure_filename"):
+        return any(
+            _security_expr_tainted(arg, requests, parameters, aliases)
+            for arg in node.args
+        )
+    return False
+
+
+def _security_request_args(node, aliases):
+    from .review_audits import _name
+
+    name = _name(node)
+    head, _, tail = name.partition(".")
+    resolved, _constants = _security_flow_bindings(node, aliases)
+    if head not in resolved:
+        return False
+    canonical = resolved[head] + ("." + tail if tail else "")
+    return canonical == "flask.request.args"
+
+
+def _security_flow_source_assignment(
+    statement, aliases, requests, parameters, connection_names, cursor_names, helpers
+):
+    from . import review_audits as audit
+
+    value = getattr(statement, "value", None)
+    bindings = audit._bound_names(statement)
+    flags = (
+        isinstance(value, ast.AST)
+        and _security_expr_tainted(value, requests, set(), aliases),
+        isinstance(value, ast.AST)
+        and _security_expr_tainted(value, requests, parameters, aliases),
+        _security_connector_connection(value, aliases)
+        or _security_helper_call(value, "connection", aliases, helpers),
+        _security_cursor_expression(value, aliases, connection_names, helpers),
+    )
+    known = (requests, parameters, connection_names, cursor_names)
+    for names in known:
+        names.difference_update(bindings)
+    _security_assign_flow_names(statement, value, flags, known)
+
+
+def _security_assign_flow_names(statement, value, flags, known):
+    if not isinstance(statement, (ast.Assign, ast.AnnAssign)) or not isinstance(
+        value, ast.AST
+    ):
+        return
+    targets = (
+        statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+    )
+    for target in targets:
+        if isinstance(target, ast.Name):
+            for tainted, names in zip(flags, known):
+                if tainted:
+                    names.add(target.id)
+
+
+def _security_cursor_expression(value, aliases, connections, helpers):
+    if not isinstance(value, ast.Call):
+        return False
+    if _security_call_leaf(value) != "cursor":
+        return _security_helper_call(value, "cursor", aliases, helpers)
+    receiver = value.func.value if isinstance(value.func, ast.Attribute) else None
+    if _security_connector_connection(receiver, aliases):
+        return True
+    if _security_helper_call(receiver, "connection", aliases, helpers):
+        return True
+    if isinstance(receiver, ast.Name):
+        return receiver.id in connections
+    if isinstance(receiver, ast.Call):
+        return _security_helper_call(receiver, "connection", aliases, helpers)
+    return False
+
+
+def _security_call_unshadowed(node, name):
+    from .review_audits import _call_name
+
+    raw = _call_name(node)
+    head = raw.split(".", 1)[0]
+    return head == name and head not in getattr(node, "_security_shadowed_names", set())
 
 
 def shell_execution_enabled(node):

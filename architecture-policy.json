@@ -126,6 +126,21 @@
         "max_lines": 1100,
         "max_bytes": 65000,
         "rationale": "Bound trace evaluation and Jev dispatch growth before editing; split or consolidate within existing file inventory before exceeding either ceiling."
+      },
+      "factoryline/review_integrity.py": {
+        "max_lines": 5000,
+        "max_bytes": 180000,
+        "rationale": "Enforce the predeclared bounded scanner and native evidence scope; reuse or decompose within the existing Python file inventory before exceeding either limit."
+      },
+      "factoryline/runtime_audit_runner.py": {
+        "max_lines": 1300,
+        "max_bytes": 53000,
+        "rationale": "Enforce the predeclared bounded scanner and native evidence scope; reuse or decompose within the existing Python file inventory before exceeding either limit."
+      },
+      "factoryline/review_audits.py": {
+        "max_lines": 5997,
+        "max_bytes": 225000,
+        "rationale": "Enforce the predeclared bounded scanner and native evidence scope; reuse or decompose within the existing Python file inventory before exceeding either limit."
       }
     },
     "required_paths": [
@@ -148,6 +163,9 @@
       "factoryline/junie_taxonomy.py",
       "factoryline/mcp.py",
       "factoryline/operations.py",
+      "factoryline/review_audits.py",
+      "factoryline/review_integrity.py",
+      "factoryline/runtime_audit_runner.py",
       "scripts/evaluate_jev.mjs",
       "scripts/evaluate_jev.test.mjs"
     ]
