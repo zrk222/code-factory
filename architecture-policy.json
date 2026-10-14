@@ -141,6 +141,11 @@
         "max_lines": 5997,
         "max_bytes": 225000,
         "rationale": "Enforce the predeclared bounded scanner and native evidence scope; reuse or decompose within the existing Python file inventory before exceeding either limit."
+      },
+      "factoryline/runtime_audit_common.py": {
+        "max_lines": 2000,
+        "max_bytes": 76000,
+        "rationale": "Bound shared runtime evidence validation before moving existing candidate-manifest helpers here; retain runner limits and the fixed Python-file inventory."
       }
     },
     "required_paths": [
@@ -165,6 +170,7 @@
       "factoryline/operations.py",
       "factoryline/review_audits.py",
       "factoryline/review_integrity.py",
+      "factoryline/runtime_audit_common.py",
       "factoryline/runtime_audit_runner.py",
       "scripts/evaluate_jev.mjs",
       "scripts/evaluate_jev.test.mjs"

@@ -33,8 +33,21 @@ from .runtime_audit_common import (
     read_stable_json,
     sha256_bytes,
     validate_production_mutation_source,
+    _candidate_manifest,
+    _candidate_manifest_entry as _candidate_manifest_entry,
+    _candidate_call_origins,
+    _candidate_configuration_inputs as _candidate_configuration_inputs,
+    _candidate_configuration_manifest,
+    _candidate_definition_frame_bound,
+    _candidate_run_evidence,
 )
-from .runtime_attestation import capture_supervised_attestation
+from .runtime_attestation import (
+    MAX_TEST_ORACLE_CONFIG_FILES,
+    TEST_ORACLE_SCHEMA_V3,
+    RuntimeAttestationError,
+    _oracle_test,
+    capture_supervised_attestation,
+)
 from .runtime_audit_contract import _hash_regular_file_bounded, _relative_file
 
 
@@ -226,6 +239,40 @@ def _bind_mutation_test(root, selector, line):
     return test_path, qualname, firstlineno
 
 
+def _mutation_test_identity(test_path, selector):
+    parts = selector.split("::")[1:]
+    symbol, classpath = parts[-1], parts[:-1]
+    tree = ast.parse(test_path.read_text(encoding="utf-8"))
+    matches = []
+
+    def visit(body, classes):
+        for node in body:
+            if isinstance(node, ast.ClassDef):
+                visit(node.body, (*classes, node.name))
+            elif (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and tuple(classes) == tuple(classpath)
+                and node.name == symbol
+            ):
+                matches.append(node)
+
+    visit(tree.body, ())
+    if len(matches) != 1:
+        raise RuntimeAuditError(
+            "E_MUTATION_INPUT", "selected test definition is ambiguous or missing"
+        )
+    definition = matches[0]
+    return {
+        "line": definition.lineno,
+        "code_firstlineno": min(
+            [definition.lineno, *(item.lineno for item in definition.decorator_list)]
+        ),
+        "symbol": symbol,
+        "classpath": classpath,
+        "qualname": ".".join((*classpath, symbol)),
+    }
+
+
 def _bind_mutation_source(root, test_path, path, symbol, before_text, after_text):
     target = _relative_file(root, path, "production_path")
     if target.suffix != ".py" or target == test_path:
@@ -274,6 +321,24 @@ def _mutation_context(root, test_path, target, source):
             "E_MUTATION_DRIFT", "production source changed during input binding"
         )
     patterns, config = _pytest_collection_config(root)
+    paths = test_path.relative_to(root).as_posix().split("/")[:-1]
+    configs = (
+        [{"path": config["path"], "sha256": config["sha256"]}]
+        if config.get("state") == "read"
+        else []
+    ) + [
+        {"path": p, "sha256": manifest[p]}
+        for i in range(len(paths) + 1)
+        if (p := "/".join((*paths[:i], "conftest.py"))) in manifest
+    ]
+    configs.sort(key=lambda row: row["path"])
+    config_identity = hashlib.sha256(
+        json.dumps(configs, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if len(configs) > MAX_TEST_ORACLE_CONFIG_FILES:
+        raise RuntimeAuditError(
+            "E_MUTATION_INPUT", "pytest config manifest exceeds bounds"
+        )
     return {
         "manifest": manifest,
         "target_relative": target_relative,
@@ -281,7 +346,13 @@ def _mutation_context(root, test_path, target, source):
         "test_hash": hashlib.sha256(test_path.read_bytes()).hexdigest(),
         "original_hash": source_hash,
         "config_hash": _challenge_runtime_context(root),
-        "collection_config": {"patterns": sorted(patterns), "config": config},
+        "collection_config": {
+            "patterns": sorted(patterns),
+            "config": config,
+            "complete": True,
+            "manifest": configs,
+            "identity_sha256": config_identity,
+        },
     }
 
 
@@ -290,6 +361,7 @@ def _prepare_mutation_capture(
 ):
     _validate_mutation_request(selector, line, before, after, timeout)
     test_path, qualname, firstlineno = _bind_mutation_test(root, selector, line)
+    test_identity = _mutation_test_identity(test_path, selector)
     target, source, mutant, patch_before, patch_after, target_line, resolved_symbol = (
         _bind_mutation_source(root, test_path, production_path, symbol, before, after)
     )
@@ -302,6 +374,7 @@ def _prepare_mutation_capture(
         "test_path": test_path,
         "qualname": qualname,
         "firstlineno": firstlineno,
+        "test_identity": test_identity,
         "target": target,
         "source": source,
         "mutant": mutant,
@@ -350,9 +423,9 @@ def _copy_mutation_candidate(root, temp_root, prepared):
     from .review_audits import _pytest_collection_config
 
     patterns, config = _pytest_collection_config(trial_root)
-    if {"patterns": sorted(patterns), "config": config} != prepared[
-        "collection_config"
-    ]:
+    if {"patterns": sorted(patterns), "config": config} != {
+        key: prepared["collection_config"][key] for key in ("patterns", "config")
+    }:
         raise RuntimeAuditError(
             "E_MUTATION_DRIFT", "temporary collection config differs from source"
         )
@@ -473,6 +546,10 @@ def _mutation_sources_unchanged(root, prepared):
 
 def _mutation_base_payload(prepared):
     """Bind common source, selector, and authority limits for every outcome."""
+    source_manifest = [
+        {"path": path, "sha256": digest}
+        for path, digest in prepared["manifest"].items()
+    ]
     return {
         "schema": "factory.local-production-mutation-capture.v1",
         "signature_status": "UNSIGNED",
@@ -484,6 +561,11 @@ def _mutation_base_payload(prepared):
             "callback_qualname": prepared["qualname"],
             "test_path": prepared["test_path"].relative_to(prepared["root"]).as_posix(),
             "test_sha256": prepared["test_hash"],
+            "test_definition_line": prepared["test_identity"]["line"],
+            "test_code_firstlineno": prepared["test_identity"]["code_firstlineno"],
+            "test_symbol": prepared["test_identity"]["symbol"],
+            "test_classpath": prepared["test_identity"]["classpath"],
+            "test_definition_qualname": prepared["test_identity"]["qualname"],
         },
         "production_mutation": {
             "path": prepared["target_relative"],
@@ -495,8 +577,245 @@ def _mutation_base_payload(prepared):
             "changed_only_in_temporary_copy": prepared.get("mutation_applied", False),
         },
         "source_manifest_sha256": prepared["source_manifest_hash"],
+        "source_manifest": source_manifest,
         "configuration_context_sha256": prepared["config_hash"],
     }
+
+
+def _candidate_run_observation(capture, name, cases, source_manifest, selector):
+    observation, trial, selection, mutation, expected, visible, observation_file = (
+        _candidate_run_evidence(capture, name, selector)
+    )
+    run_manifest = dict(source_manifest)
+    if name == "mutant":
+        run_manifest[mutation["path"]] = mutation["mutant_sha256"]
+    executed_manifest = hashlib.sha256(
+        json.dumps(run_manifest, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if observation.get("executed_source_manifest_sha256") != executed_manifest:
+        raise ValueError(f"{name} executed source manifest differs")
+    origins = _candidate_call_origins(observation, run_manifest)
+    test_path = selection["test_path"]
+    test_sha = selection["test_sha256"]
+    assertions = [
+        {**row, "source_path": test_path, "source_sha256": test_sha}
+        for row in observation["assertion_observations"]
+    ]
+    configs, config_manifest_sha = _candidate_configuration_manifest(
+        capture, test_path, source_manifest
+    )
+    catalog = {
+        "status": "PASS",
+        "phase": "collection",
+        "complete": True,
+        "scope": "test_function",
+        "source_path": test_path,
+        "source_sha256": test_sha,
+        "config_manifest": configs,
+        "config_manifest_sha256": config_manifest_sha,
+        "config_identity": "manifest" if configs else "pytest-default",
+        "report_sha256": observation["collection_report_sha256"],
+        "case_ids": cases,
+    }
+    projected = {
+        "status": {"baseline": "PASS", "mutant": "FAIL"}[name],
+        "phase": "call",
+        "collection_complete": True,
+        "case_ids": cases,
+        "report_sha256": observation_file["sha256"],
+        "setup_status": "PASS",
+        "teardown_status": "PASS",
+        "collection_catalog": catalog,
+        "assertion_observations": assertions,
+        "module_origins": origins,
+    }
+    if name == "mutant":
+        projected.pop("collection_complete")
+        projected.update(
+            {
+                "source_path": mutation["path"],
+                "source_sha256": mutation["original_sha256"],
+                "mutant_sha256": mutation["mutant_sha256"],
+                "failure_kind": "assertion",
+            }
+        )
+    return projected
+
+
+def project_local_production_mutation_v3_candidate(capture):
+    """Project local evidence into an unsigned candidate; never admit or sign it."""
+    projection = {
+        "schema": "factory.local-production-mutation-v3-candidate.v1",
+        "oracle_schema": TEST_ORACLE_SCHEMA_V3,
+        "status": "INCOMPLETE",
+        "signature_status": "UNSIGNED",
+        "observer_integrity": "IN_PROCESS_NOT_ATTESTED",
+        "authority": "none",
+        "trust_admission": "NOT_PERFORMED",
+        "test_candidate": None,
+        "attestation_envelope": None,
+        "missing_evidence": [],
+        "claim_boundary": "Local candidate projection only; not an independent oracle, finding suppression, trust admission, signature, approval, or release authorization.",
+    }
+    try:
+        manifest, selection, mutation = _candidate_capture_inputs(capture)
+        test_path, test_sha = selection.get("test_path"), selection.get("test_sha256")
+        source_path = mutation.get("path")
+        if not all(
+            (
+                manifest.get(test_path) == test_sha,
+                manifest.get(source_path) == mutation.get("original_sha256"),
+                isinstance(selection.get("test_definition_line"), int),
+                isinstance(selection.get("test_code_firstlineno"), int),
+                isinstance(selection.get("test_symbol"), str),
+                isinstance(selection.get("test_classpath"), list),
+            )
+        ):
+            raise ValueError("test definition or source manifest binding missing")
+        baseline_obs, mutant_obs = (
+            capture.get("baseline_observation"),
+            capture.get("mutant_observation"),
+        )
+        if not all((isinstance(baseline_obs, dict), isinstance(mutant_obs, dict))):
+            raise ValueError("raw baseline or mutant observation missing")
+        if not all(
+            _candidate_definition_frame_bound(
+                observation, selection, baseline_obs.get("collected", [])
+            )
+            for observation in (baseline_obs, mutant_obs)
+        ):
+            raise ValueError("test definition frame is not bound in both runs")
+        cases = baseline_obs.get("collected")
+        if not isinstance(cases, list) or cases != mutant_obs.get("collected"):
+            raise ValueError("baseline and mutant case catalogs differ")
+        selector = selection.get("nodeid_selector")
+        baseline = _candidate_run_observation(
+            capture, "baseline", cases, manifest, selector
+        )
+        mutant = _candidate_run_observation(
+            capture, "mutant", cases, manifest, selector
+        )
+        if baseline_obs.get("runtime_context_normalized_before") != mutant_obs.get(
+            "runtime_context_normalized_before"
+        ):
+            raise ValueError("baseline and mutant runtime contexts differ")
+        test = {
+            "path": test_path,
+            "line": selection["test_definition_line"],
+            "symbol": selection["test_symbol"],
+            "test_sha256": test_sha,
+            "baseline": baseline,
+            "mutation": mutant,
+        }
+        normalized = _oracle_test(test, schema=TEST_ORACLE_SCHEMA_V3)
+        bindings = {
+            "source_manifest": capture["source_manifest"],
+            "source_manifest_sha256": capture["source_manifest_sha256"],
+            "configuration_context_sha256": capture.get("configuration_context_sha256"),
+            "configuration_context_sha256_before": capture.get(
+                "configuration_context_sha256_before"
+            ),
+            "configuration_context_sha256_after": capture.get(
+                "configuration_context_sha256_after"
+            ),
+            "test_definition_qualname": selection.get("test_definition_qualname"),
+            "test_classpath": selection.get("test_classpath"),
+            "baseline": _candidate_runtime_bindings(capture, "baseline"),
+            "mutant": _candidate_runtime_bindings(capture, "mutant"),
+        }
+        context_digest = capture.get("configuration_context_sha256")
+        if not all(
+            (
+                re.fullmatch(r"[0-9a-f]{64}", str(context_digest)),
+                capture.get("configuration_context_sha256_before") == context_digest,
+                capture.get("configuration_context_sha256_after") == context_digest,
+            )
+        ):
+            raise ValueError("configuration context binding is incomplete or drifted")
+        if not all(
+            _candidate_runtime_bindings_complete(bindings[name])
+            for name in ("baseline", "mutant")
+        ):
+            raise ValueError("runtime, tool, interpreter, or context binding missing")
+        projection.update(
+            status="CANDIDATE", test_candidate=normalized, evidence_bindings=bindings
+        )
+    except (
+        AttributeError,
+        KeyError,
+        TypeError,
+        ValueError,
+        RuntimeAttestationError,
+    ) as exc:
+        projection["missing_evidence"] = [str(exc)[:256]]
+    return projection
+
+
+def _candidate_capture_inputs(capture):
+    if (
+        not isinstance(capture, dict)
+        or capture.get("schema") != "factory.local-production-mutation-capture.v1"
+    ):
+        raise ValueError("local capture schema missing")
+    if not all(
+        (
+            capture.get("signature_status") == "UNSIGNED",
+            capture.get("observer_integrity") == "IN_PROCESS_NOT_ATTESTED",
+            capture.get("authority") == "none",
+            capture.get("status") == "OBSERVED",
+            capture.get("source_unchanged") is True,
+            isinstance(capture.get("cleanup"), dict),
+            capture["cleanup"].get("removed") is True,
+        )
+    ):
+        raise ValueError("capture is not a complete local observation")
+    manifest = _candidate_manifest(capture)
+    selection = capture.get("selection")
+    mutation = capture.get("production_mutation")
+    if not all((isinstance(selection, dict), isinstance(mutation, dict))):
+        raise ValueError("selection or mutation binding missing")
+    return manifest, selection, mutation
+
+
+def _candidate_runtime_bindings(capture, name):
+    observation = capture.get(f"{name}_observation", {})
+    trial = capture.get(name, {})
+    identity = trial.get("execution_identity", {}) if isinstance(trial, dict) else {}
+    runtime = (
+        observation.get("python_runtime", {}) if isinstance(observation, dict) else {}
+    )
+    return {
+        "argv_sha256": identity.get("argv_sha256"),
+        "runtime_context_sha256": observation.get("runtime_context_before"),
+        "normalized_runtime_context_sha256": observation.get(
+            "runtime_context_normalized_before"
+        ),
+        "tool_sha256": observation.get("tool_sha256"),
+        "python_implementation": runtime.get("implementation"),
+        "python_version": runtime.get("version"),
+        "interpreter_sha256": identity.get("interpreter_sha256"),
+        "interpreter_version": identity.get("interpreter_version"),
+        "executed_source_manifest_sha256": observation.get(
+            "executed_source_manifest_sha256"
+        ),
+    }
+
+
+def _candidate_runtime_bindings_complete(bindings):
+    digests = (
+        "argv_sha256",
+        "runtime_context_sha256",
+        "normalized_runtime_context_sha256",
+        "tool_sha256",
+        "interpreter_sha256",
+        "executed_source_manifest_sha256",
+    )
+    versions = ("python_implementation", "python_version", "interpreter_version")
+    return all(
+        re.fullmatch(r"[0-9a-f]{64}", bindings.get(key, "")) for key in digests
+    ) and all(
+        isinstance(bindings.get(key), str) and bool(bindings[key]) for key in versions
+    )
 
 
 def _write_mutation_capture(prepared, cleanup, baseline, mutation, mutation_ok, stable):
@@ -559,15 +878,24 @@ def _cleanup_mutation_capture(temp_root, temp_parent, evidence, cleanup, payload
     cleanup["removed"] = remove_bounded_temp_directory(
         temp_root, temp_parent, "cf-production-mutation-"
     )
-    if not cleanup["removed"] and payload is not None:
+    if all((not cleanup["removed"], payload is not None)):
         payload["status"] = "INCOMPLETE"
+    if payload is not None:
+        payload["v3_candidate_projection"] = (
+            project_local_production_mutation_v3_candidate(payload)
+        )
     record = evidence / "capture.json"
-    if cleanup["record_owned"] and path_chain_has_no_links(root, record):
+    if all((cleanup["record_owned"], path_chain_has_no_links(root, record))):
         try:
             _, contents = bounded_file_sha256(record, 1024 * 1024, include_bytes=True)
             saved = json.loads(contents.decode("utf-8"))
             if isinstance(saved, dict):
                 saved["cleanup"] = cleanup
+                saved["v3_candidate_projection"] = (
+                    payload.get("v3_candidate_projection")
+                    if payload is not None
+                    else None
+                )
                 if not cleanup["removed"]:
                     saved["status"] = "INCOMPLETE"
                 record.write_text(
