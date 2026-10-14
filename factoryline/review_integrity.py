@@ -2022,6 +2022,7 @@ def _awaited_virtual_bindings(invoke, bindings, invalid, methods, aliases, effec
 def verify_intent_diff(
     root: Path, contract_path: Path, diff_path: Path, out: Path
 ) -> dict[str, Any]:
+    """Validate a declared diff against approved intent and write its review receipt."""
     from .change_review import verify_intent_diff as verify
 
     return verify(root, contract_path, diff_path, out)
@@ -2030,12 +2031,14 @@ def verify_intent_diff(
 def verify_receipt_freshness(
     root: Path, manifest_path: Path, out: Path
 ) -> dict[str, Any]:
+    """Check receipt age and context against the manifest, then write the result."""
     from .change_review import verify_receipt_freshness as verify
 
     return verify(root, manifest_path, out)
 
 
 def verify_policy_pack(root: Path, pack_path: Path, out: Path) -> dict[str, Any]:
+    """Validate a versioned, human-owned policy pack and write its verification receipt."""
     from .change_review import verify_policy_pack as verify
 
     return verify(root, pack_path, out)
