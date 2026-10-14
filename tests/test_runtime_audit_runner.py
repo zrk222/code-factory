@@ -331,6 +331,151 @@ def _mutation_project(root, *, parameterized=False):
     return test, 4 if parameterized else 3
 
 
+def _capture_diagnostic_record(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _capture_diagnostic_equal(left, right):
+    if not isinstance(left, str) or not left:
+        return None
+    if not isinstance(right, str) or not right:
+        return None
+    return left == right
+
+
+def _capture_diagnostic_catalog_match(baseline_cases, mutant_cases):
+    valid_catalogs = (
+        isinstance(baseline_cases, list)
+        and bool(baseline_cases)
+        and all(isinstance(case, str) and case for case in baseline_cases)
+        and isinstance(mutant_cases, list)
+        and bool(mutant_cases)
+        and all(isinstance(case, str) and case for case in mutant_cases)
+    )
+    return baseline_cases == mutant_cases if valid_catalogs else None
+
+
+def _capture_diagnostic_phase(payload, phase, expected_cases):
+    trial = _capture_diagnostic_record(payload.get(phase))
+    process = _capture_diagnostic_record(trial.get("process"))
+    observation = _capture_diagnostic_record(payload.get(f"{phase}_observation"))
+    hits = _capture_diagnostic_record(observation.get("case_hits"))
+    return {
+        "process_exit": process.get("exit_code"),
+        "process_timed_out": process.get("timed_out"),
+        "process_cleanup_confirmed": process.get("cleanup_confirmed"),
+        "observation_exit": observation.get("exit_code"),
+        "origin_status": observation.get("origin_status"),
+        "collection_incomplete": observation.get("collection_incomplete"),
+        "case_hits": {case: hits.get(case) for case in expected_cases},
+    }
+
+
+def _capture_diagnostic_summary(result, expected_cases):
+    payload = _capture_diagnostic_record(result)
+    baseline_observation = _capture_diagnostic_record(
+        payload.get("baseline_observation")
+    )
+    mutant_observation = _capture_diagnostic_record(payload.get("mutant_observation"))
+    cleanup = _capture_diagnostic_record(payload.get("cleanup"))
+    source_unchanged = payload.get("source_unchanged")
+    if not isinstance(source_unchanged, bool):
+        source_unchanged = None
+    cleanup_removed = cleanup.get("removed")
+    if not isinstance(cleanup_removed, bool):
+        cleanup_removed = None
+    return {
+        "baseline": _capture_diagnostic_phase(payload, "baseline", expected_cases),
+        "mutant": _capture_diagnostic_phase(payload, "mutant", expected_cases),
+        "baseline_raw_context_stable": _capture_diagnostic_equal(
+            baseline_observation.get("runtime_context_before"),
+            baseline_observation.get("runtime_context_after"),
+        ),
+        "mutant_raw_context_stable": _capture_diagnostic_equal(
+            mutant_observation.get("runtime_context_before"),
+            mutant_observation.get("runtime_context_after"),
+        ),
+        "normalized_context_matches": _capture_diagnostic_equal(
+            baseline_observation.get("runtime_context_normalized_before"),
+            mutant_observation.get("runtime_context_normalized_before"),
+        ),
+        "source_unchanged": source_unchanged,
+        "case_catalog_matches": _capture_diagnostic_catalog_match(
+            baseline_observation.get("collected"), mutant_observation.get("collected")
+        ),
+        "capture_cleanup_removed": cleanup_removed,
+    }
+
+
+def test_capture_diagnostic_summary_marks_missing_observations_unknown():
+    summary = _capture_diagnostic_summary(
+        {
+            "baseline": None,
+            "mutant": {},
+            "baseline_observation": None,
+            "mutant_observation": None,
+            "cleanup": None,
+        },
+        ["test_app.py::test_value[a]", "test_app.py::test_value[b]"],
+    )
+
+    assert summary["baseline"]["process_exit"] is None
+    assert summary["baseline"]["case_hits"] == {
+        "test_app.py::test_value[a]": None,
+        "test_app.py::test_value[b]": None,
+    }
+    assert summary["baseline_raw_context_stable"] is None
+    assert summary["mutant_raw_context_stable"] is None
+    assert summary["normalized_context_matches"] is None
+    assert summary["case_catalog_matches"] is None
+
+
+def test_capture_diagnostic_summary_reports_bound_gate_facts():
+    cases = ["test_app.py::test_value[a]", "test_app.py::test_value[b]"]
+    observation = {
+        "exit_code": 0,
+        "origin_status": "BOUND",
+        "collection_incomplete": False,
+        "collected": cases,
+        "case_hits": dict.fromkeys(cases, 1),
+        "runtime_context_before": "raw-context",
+        "runtime_context_after": "raw-context",
+        "runtime_context_normalized_before": "normalized-context",
+    }
+    result = {
+        "baseline": {
+            "process": {"exit_code": 0, "timed_out": False, "cleanup_confirmed": True}
+        },
+        "mutant": {
+            "process": {"exit_code": 0, "timed_out": False, "cleanup_confirmed": True}
+        },
+        "baseline_observation": observation,
+        "mutant_observation": {
+            **observation,
+            "runtime_context_before": "other-raw-context",
+            "runtime_context_after": "other-raw-context",
+        },
+        "source_unchanged": True,
+        "cleanup": {"removed": True},
+    }
+
+    summary = _capture_diagnostic_summary(result, cases)
+
+    assert summary["baseline"]["process_exit"] == 0
+    assert summary["baseline"]["process_timed_out"] is False
+    assert summary["baseline"]["process_cleanup_confirmed"] is True
+    assert summary["baseline"]["observation_exit"] == 0
+    assert summary["baseline"]["origin_status"] == "BOUND"
+    assert summary["baseline"]["collection_incomplete"] is False
+    assert summary["baseline"]["case_hits"] == dict.fromkeys(cases, 1)
+    assert summary["baseline_raw_context_stable"] is True
+    assert summary["mutant_raw_context_stable"] is True
+    assert summary["normalized_context_matches"] is True
+    assert summary["source_unchanged"] is True
+    assert summary["case_catalog_matches"] is True
+    assert summary["capture_cleanup_removed"] is True
+
+
 def test_local_production_mutation_capture_records_real_all_case_failure(tmp_path):
     from hashlib import sha256
 
@@ -350,7 +495,9 @@ def test_local_production_mutation_capture_records_real_all_case_failure(tmp_pat
     )
 
     assert result["schema"] == "factory.local-production-mutation-capture.v1"
-    assert result["status"] == "OBSERVED"
+    expected_cases = ["test_app.py::test_value[a]", "test_app.py::test_value[b]"]
+    diagnostics = _capture_diagnostic_summary(result, expected_cases)
+    assert result["status"] == "OBSERVED", json.dumps(diagnostics, sort_keys=True)
     assert result["signature_status"] == "UNSIGNED"
     assert result["authority"] == "none"
     assert result["source_unchanged"] is True

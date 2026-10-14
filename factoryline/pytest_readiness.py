@@ -28,11 +28,14 @@ def _mutation_failure_visible(excinfo, path, line, qualname, firstlineno):
     if excinfo is None or not isinstance(excinfo.value, AssertionError):
         return False
     entry = excinfo.traceback[-1]
+    code = entry.frame.raw.f_code
+    code_qualname = getattr(code, "co_qualname", None)
     return (
         Path(str(entry.path)).resolve() == path
         and entry.lineno + 1 == line
-        and entry.frame.raw.f_code.co_qualname == qualname
-        and entry.frame.raw.f_code.co_firstlineno == firstlineno
+        and code.co_name == qualname.rsplit(".", 1)[-1]
+        and (code_qualname is None or code_qualname == qualname)
+        and code.co_firstlineno == firstlineno
     )
 
 
@@ -1061,7 +1064,7 @@ def _challenge_source_digest(path, byte_limit):
                 break
             consumed += len(chunk)
             if consumed > byte_limit:
-                raise ValueError("Source binding exceeds the 128 MiB probe limit")
+                raise ValueError("Source binding exceeds its byte budget")
             digest.update(chunk)
     return digest.hexdigest(), consumed
 
@@ -2215,7 +2218,7 @@ def _typecheck_distribution_manifest():
     if len(files) > 4096:
         raise ValueError("Mypy installation exceeds the file limit")
     paths = [Path(distribution.locate_file(item)) for item in files]
-    rows = _typecheck_file_manifest(paths, 64 * 1024 * 1024)
+    rows = _typecheck_file_manifest(paths, 96 * 1024 * 1024)
     identity = {
         "version": distribution.version,
         "files": rows,

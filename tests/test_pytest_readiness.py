@@ -1438,9 +1438,96 @@ def test_challenge_source_digest_bounds_growth_after_size_check(tmp_path, monkey
         return original_open(candidate, mode, *args, **kwargs)
 
     monkeypatch.setattr(Path, "open", open_growing_stream)
-    with pytest.raises(ValueError, match="128 MiB"):
+    with pytest.raises(ValueError, match="byte budget"):
         _challenge_source_digest(path, 5)
     assert stream.requests == [6]
+
+
+def test_mutation_failure_visible_matches_full_frame_identity(tmp_path):
+    from factoryline.pytest_readiness import _mutation_failure_visible
+
+    path = tmp_path / "case.py"
+    namespace = {}
+    exec(compile("def target():\n    assert False\n", str(path), "exec"), namespace)
+    with pytest.raises(AssertionError) as caught:
+        namespace["target"]()
+
+    assert _mutation_failure_visible(caught, path, 2, "target", 1)
+    assert not _mutation_failure_visible(caught, path, 2, "other", 1)
+    assert not _mutation_failure_visible(caught, path, 3, "target", 1)
+    assert not _mutation_failure_visible(caught, path, 2, "target", 2)
+
+
+def test_mutation_failure_visible_supports_python310_code_identity(tmp_path):
+    from types import SimpleNamespace
+
+    from factoryline.pytest_readiness import _mutation_failure_visible
+
+    path = tmp_path / "case.py"
+    code = SimpleNamespace(co_name="target", co_firstlineno=4)
+    frame = SimpleNamespace(raw=SimpleNamespace(f_code=code))
+    entry = SimpleNamespace(path=path, lineno=8, frame=frame)
+    caught = SimpleNamespace(value=AssertionError(), traceback=[entry])
+
+    assert _mutation_failure_visible(caught, path, 9, "outer.target", 4)
+    code.co_name = "other"
+    assert not _mutation_failure_visible(caught, path, 9, "outer.target", 4)
+
+
+def test_typecheck_distribution_manifest_hashes_all_files_with_measured_budget(
+    tmp_path, monkeypatch
+):
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from factoryline import pytest_readiness
+
+    files = {
+        ".py": b"python source",
+        ".pyc": b"python bytecode",
+        ".so": b"compiled runtime",
+        ".h": b"runtime header",
+    }
+    paths = []
+    for suffix, content in files.items():
+        path = tmp_path / f"checker{suffix}"
+        path.write_bytes(content)
+        paths.append(path)
+    distribution = SimpleNamespace(
+        files=paths,
+        version="2.1.0",
+        locate_file=lambda item: Path(item),
+    )
+    monkeypatch.setattr(
+        pytest_readiness.importlib.metadata,
+        "distribution",
+        lambda name: distribution if name == "mypy" else None,
+    )
+    observed_limits = []
+    manifest = pytest_readiness._typecheck_file_manifest
+
+    def capture_limit(candidates, byte_limit):
+        observed_limits.append(byte_limit)
+        return manifest(candidates, byte_limit)
+
+    monkeypatch.setattr(pytest_readiness, "_typecheck_file_manifest", capture_limit)
+    before, version = pytest_readiness._typecheck_distribution_manifest()
+    assert version == "2.1.0"
+    assert observed_limits == [96 * 1024 * 1024]
+
+    paths[2].write_bytes(b"changed compiled runtime")
+    after, _ = pytest_readiness._typecheck_distribution_manifest()
+    assert after != before
+    assert observed_limits == [96 * 1024 * 1024, 96 * 1024 * 1024]
+
+
+def test_typecheck_file_manifest_rejects_aggregate_byte_budget_overflow(tmp_path):
+    from factoryline.pytest_readiness import _typecheck_file_manifest
+
+    path = tmp_path / "checker.py"
+    path.write_bytes(b"four")
+    with pytest.raises(ValueError, match="byte budget"):
+        _typecheck_file_manifest([path], 3)
 
 
 def test_assertion_probe_requires_exact_terminal_reports():
