@@ -1313,3 +1313,24 @@ def test_trace_and_jev_file_limits_are_pinned_before_growth():
         drift = json.loads(json.dumps(guard))
         drift["files"][name]["max_lines"] += 1
         assert not file_size_guard_is_pinned(drift)
+
+
+def test_log_flow_reader_has_predeclared_pinned_small_module_budget():
+    root = Path(__file__).resolve().parents[1]
+    policy = json.loads((root / "architecture-policy.json").read_text())
+    guard = policy["file_size_guard"]
+    name = "factoryline/audit_log_flow.py"
+    assert policy["budgets"]["max_python_files"] == 460
+    assert name in guard["required_paths"]
+    budget = guard["files"][name]
+    assert (budget["max_lines"], budget["max_bytes"]) == (400, 18000)
+    assert file_size_guard_is_pinned(guard)
+    text = (root / name).read_text(encoding="utf-8")
+    assert len(text.splitlines()) <= 400
+    assert len(text.encode()) <= 18000
+    drift = json.loads(json.dumps(guard))
+    drift["files"][name]["max_lines"] += 1
+    assert not file_size_guard_is_pinned(drift)
+    guard["required_paths"].remove(name)
+    guard["files"].pop(name)
+    assert not file_size_guard_is_pinned(guard)

@@ -3814,6 +3814,8 @@ def security_call_name(node, aliases):
 
 def security_source_sink_findings(relative, tree, nodes, aliases):
     """Return bounded static findings for proven request and parameter sink flows."""
+    from .audit_log_flow import audit_log_source_findings
+
     bind_security_call_scopes(tree)
     helpers = _security_connector_cursor_helpers(tree, aliases)
     findings = []
@@ -3826,6 +3828,7 @@ def security_source_sink_findings(relative, tree, nodes, aliases):
         findings.extend(
             _security_scope_source_sink_findings(relative, scope, aliases, helpers)
         )
+    findings.extend(audit_log_source_findings(relative, tree, nodes, aliases))
     return findings
 
 

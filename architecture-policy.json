@@ -151,11 +151,17 @@
         "max_lines": 1400,
         "max_bytes": 56000,
         "rationale": "Predeclare bounded relocation of existing receipt-control verification into change review before growing source-sink coverage; keep all previous ceilings and the fixed Python inventory."
+      },
+      "factoryline/audit_log_flow.py": {
+        "max_lines": 400,
+        "max_bytes": 18000,
+        "rationale": "Predeclare a dedicated bounded log source/control-flow reader; preserve all prior ceilings and the 460 Python inventory by consolidating related native-lane tests."
       }
     },
     "required_paths": [
       "factoryline/analysis_evidence.py",
       "factoryline/architecture_health.py",
+      "factoryline/audit_log_flow.py",
       "factoryline/audit_taxonomy.py",
       "factoryline/audit_trace.py",
       "factoryline/benchmark_lab.py",
@@ -238,6 +244,18 @@
         "release cadence is measured",
         "version bump has a changelog entry",
         "exceptions carry human release authority"
+      ]
+    },
+    {
+      "id": "ARCH-LOG-FLOW-01",
+      "target": "factoryline/audit_log_flow.py",
+      "outcome": "Keep log input and exception-state analysis in one bounded verification module rather than expanding receipt controls or already-full scanner modules.",
+      "acceptance": [
+        "All prior ceilings remain unchanged",
+        "Dedicated module remains within 400 lines and 18000 bytes",
+        "460 Python files maximum",
+        "Native Hypothesis test AST and node coverage preserved in related runtime lane tests",
+        "New source/sink and negative controls have exact execution evidence"
       ]
     }
   ],
