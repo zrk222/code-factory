@@ -142,6 +142,11 @@
         "max_bytes": 225000,
         "rationale": "Enforce the predeclared bounded scanner and native evidence scope; reuse or decompose within the existing Python file inventory before exceeding either limit."
       },
+      "factoryline/security_configuration.py": {
+        "max_lines": 300,
+        "max_bytes": 16000,
+        "rationale": "Bound static security-configuration readers for template escaping, legacy TLS defaults, and XML/XSLT capabilities without inferring runtime exploitation."
+      },
       "factoryline/runtime_audit_common.py": {
         "max_lines": 2000,
         "max_bytes": 76000,
@@ -184,6 +189,7 @@
       "factoryline/review_integrity.py",
       "factoryline/runtime_audit_common.py",
       "factoryline/runtime_audit_runner.py",
+      "factoryline/security_configuration.py",
       "scripts/evaluate_jev.mjs",
       "scripts/evaluate_jev.test.mjs"
     ]

@@ -1477,17 +1477,10 @@ def _unsafe_yaml_finding(
 def _disabled_tls_finding(
     call: str, relative: str, node: ast.Call
 ) -> dict[str, Any] | None:
-    from .review_integrity import tls_verification_disabled
+    from .security_configuration import tls_finding
 
-    if not tls_verification_disabled(call, node):
-        return None
-    return _security_finding(
-        "SECURITY_TLS_VERIFY_DISABLED",
-        relative,
-        node,
-        "TLS certificate verification is disabled for an outbound request.",
-        "HIGH",
-        call=call,
+    return tls_finding(
+        call, relative, node, getattr(node, "_security_configuration_aliases", {})
     )
 
 
@@ -5139,6 +5132,7 @@ def _security_node_findings(
     roundtrip_aliases: dict | None = None,
 ) -> list[dict[str, Any]]:
     if isinstance(node, ast.Call):
+        node._security_configuration_aliases = aliases
         call = integrity.security_call_name(node, aliases)
         finding = _security_call_finding(call, relative, node)
         if finding and finding["code"] == "SECURITY_UNSAFE_DESERIALIZATION":
@@ -5245,6 +5239,7 @@ def _security_scan_tree(
             unittest_methods.update(id(method) for method in cls.body)
     class_helpers = _class_oracle_helpers(tree, oracle_aliases, unittest_methods)
     from .review_integrity import redirect_source_findings
+    from .security_configuration import configuration_findings
 
     findings = _tenant_read_findings(
         relative, nodes, tenant_read_calls, aliases, tenant_read_bindings or {}
@@ -5278,6 +5273,7 @@ def _security_scan_tree(
         findings.extend(
             _security_node_findings(relative, node, aliases, roundtrip_aliases)
         )
+    findings.extend(configuration_findings(tree, aliases, relative))
     findings.extend(redirect_source_findings(relative, tree, aliases, nodes))
     return findings
 
