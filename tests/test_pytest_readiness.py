@@ -1977,3 +1977,27 @@ def test_collection_skip_cannot_satisfy_readiness(tmp_path: Path) -> None:
     )
     result = collect_pytest_readiness([str(suite)])
     assert result == {"exit_code": 5, "passed": 0, "skipped": 1, "xfailed": 0}
+
+
+def test_runner_temp_alias_is_canonicalized_but_project_link_stays_rejected(
+    tmp_path: Path,
+) -> None:
+    from factoryline.pytest_readiness import (
+        _challenge_path,
+        _runner_temp_root,
+        _typecheck_path_chain_linked,
+    )
+
+    canonical = tmp_path / "runner-temp"
+    canonical.mkdir()
+    (canonical / "test_case.py").write_text("def test_case(): pass\n")
+    alias = tmp_path / "runner-temp-alias"
+    try:
+        alias.symlink_to(canonical, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"directory symlinks unavailable: {type(error).__name__}")
+
+    assert _runner_temp_root(alias) == canonical.resolve()
+    assert _typecheck_path_chain_linked(alias / "test_case.py") is True
+    with pytest.raises(ValueError, match="linked path"):
+        _challenge_path(alias, "test_case.py::test_case")

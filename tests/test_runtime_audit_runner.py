@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import io
+import os
 from pathlib import Path
+import py_compile
 import sys
 import threading
 import pytest
@@ -331,6 +333,25 @@ def _mutation_project(root, *, parameterized=False):
     return test, 4 if parameterized else 3
 
 
+def _mutation_mtime_writer(mutant_bytes, mutation_stats, original_write_bytes):
+    def write_mutant_with_original_mtime(path, data):
+        if path.name == "app.py" and data == mutant_bytes and path.is_file():
+            before = path.stat()
+            written = original_write_bytes(path, data)
+            os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+            after = path.stat()
+            mutation_stats.update(
+                before_size=before.st_size,
+                after_size=after.st_size,
+                before_mtime_ns=before.st_mtime_ns,
+                after_mtime_ns=after.st_mtime_ns,
+            )
+            return written
+        return original_write_bytes(path, data)
+
+    return write_mutant_with_original_mtime
+
+
 def _capture_diagnostic_record(value):
     return value if isinstance(value, dict) else {}
 
@@ -523,7 +544,7 @@ def test_local_production_mutation_capture_records_real_all_case_failure(tmp_pat
     )
     for trial in (result["baseline"], result["mutant"]):
         identity = trial["execution_identity"]
-        assert identity["command_template"].startswith("python -c ")
+        assert identity["command_template"].startswith("python -B -c ")
         assert identity["argument_roles"][-1] == "observation-output"
         assert len(identity["argv_sha256"]) == 64
         assert len(identity["interpreter_sha256"]) == 64
@@ -543,6 +564,42 @@ def test_local_production_mutation_capture_records_real_all_case_failure(tmp_pat
     assert saved["schema"] == "factory.local-production-mutation-capture.v1"
     assert saved["signature_status"] == "UNSIGNED"
     assert str(tmp_path) not in json.dumps(saved)
+
+
+def test_local_production_mutation_avoids_same_timestamp_bytecode_cache(
+    tmp_path, monkeypatch
+):
+    test, assertion_line = _mutation_project(tmp_path)
+    production = tmp_path / "app.py"
+    py_compile.compile(str(production), doraise=True)
+    assert list((tmp_path / "__pycache__").glob("app.*.pyc"))
+    original_write_bytes = Path.write_bytes
+    mutant_bytes = production.read_bytes().replace(b"return 1", b"return 0", 1)
+    mutation_stats = {}
+    writer = _mutation_mtime_writer(mutant_bytes, mutation_stats, original_write_bytes)
+    monkeypatch.setattr(Path, "write_bytes", writer)
+    result = capture_local_production_mutation(
+        tmp_path,
+        "test_app.py::test_value",
+        assertion_line,
+        "app.py",
+        "value",
+        "return 1",
+        "return 0",
+        ".factory/capture-timestamp-cache",
+        timeout_seconds=30,
+    )
+
+    assert mutation_stats["before_size"] == mutation_stats["after_size"]
+    assert mutation_stats["before_mtime_ns"] == mutation_stats["after_mtime_ns"]
+    assert result["status"] == "OBSERVED"
+    assert result["baseline"]["execution_identity"]["command_template"].startswith(
+        "python -B -c "
+    )
+    assert all(
+        row["outcome"] == "FAIL" and row["failure_visible"] is True
+        for row in result["mutant_observation"]["assertion_observations"]
+    )
 
 
 def test_local_production_mutation_rejects_unrelated_assertion_failure(tmp_path):

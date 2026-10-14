@@ -45,6 +45,8 @@ _MUTATION_COPY_IGNORES = {
     "venv",
     "node_modules",
     "__pycache__",
+    "*.pyc",
+    "*.pyo",
     ".pytest_cache",
     "build",
     "dist",
@@ -108,6 +110,7 @@ def _run_local_mutation_trial(
     )
     command = [
         str(python_executable),
+        "-B",
         "-c",
         script,
         package_root,
@@ -126,9 +129,10 @@ def _run_local_mutation_trial(
     result = {
         "process": facts,
         "execution_identity": {
-            "command_template": "python -c <worker> <tool-root> <project-root> <config> <observation>",
+            "command_template": "python -B -c <worker> <tool-root> <project-root> <config> <observation>",
             "argument_roles": [
                 "interpreter",
+                "python-option",
                 "python-option",
                 "worker-script",
                 "tool-root",

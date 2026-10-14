@@ -1074,8 +1074,9 @@ def _run_assertion_challenge(config, timeout):
 
     config = dict(config)
     with tempfile.TemporaryDirectory(prefix="cf-assertion-probe-") as directory:
-        output = Path(directory) / "observation.json"
-        manifest_path = Path(directory) / "source-manifest.json"
+        scratch = _runner_temp_root(directory)
+        output = scratch / "observation.json"
+        manifest_path = scratch / "source-manifest.json"
         source_manifest = _challenge_runner_manifest(config)
         if source_manifest is None:
             return {
@@ -1131,6 +1132,14 @@ def _run_assertion_challenge(config, timeout):
                 == config["launch_context_sha256"]
             )
         return observation
+
+
+def _runner_temp_root(directory):
+    """Canonicalize only a root returned by tempfile.TemporaryDirectory."""
+    path = Path(directory).resolve(strict=True)
+    if not path.is_dir():
+        raise ValueError("Runner temporary root is not a directory")
+    return path
 
 
 def _challenge_runner_manifest(config):
@@ -3159,7 +3168,7 @@ def _typecheck_run_phases(root, source, config, original, mutated, timeout):
     from .runtime_audit_process import _environment
 
     with tempfile.TemporaryDirectory(prefix="cf-typecheck-probe-") as directory:
-        path = Path(directory)
+        path = _runner_temp_root(directory)
         shadow, cache = path / source.name, path / "cache"
         shadow.write_bytes(original)
         environment = _environment(path)
