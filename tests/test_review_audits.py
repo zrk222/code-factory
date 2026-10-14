@@ -8142,7 +8142,9 @@ def test_builtin_repr_type_check_oracle_is_weak_only_when_unshadowed(
         "with-body-direct-input-logging",
     ],
 )
-def test_security_scan_input_and_request_log_injection(tmp_path, source, expected):
+def test_audit_log_source_findings_via_security_scan_input_and_request_log_injection(
+    tmp_path, source, expected
+):
     (tmp_path / "app.py").write_text(source, encoding="utf-8")
     findings = security_scan(tmp_path, cache_enabled=False)["findings"]
     log_findings = [

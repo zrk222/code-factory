@@ -38,6 +38,267 @@ def test_tls_verification_disabled_classifies_only_supported_explicit_bypasses()
     assert not tls_verification_disabled("urllib.request.urlopen", unrelated_call)
 
 
+def test_jinja_configuration_reports_only_proven_html_environment_misses():
+    from factoryline.review_audits import _security_aliases
+    from factoryline.security_configuration import configuration_findings
+
+    tree = ast.parse(
+        "from jinja2 import Environment as Env\n"
+        "unsafe = Env()\n"
+        "unsafe.get_template('page.html')\n"
+        "false = Env(autoescape=False)\n"
+        "false.get_template('other.HTML')\n"
+        "safe = Env(autoescape=True)\n"
+        "safe.get_template('safe.html')\n"
+        "dynamic = Env(autoescape=policy)\n"
+        "dynamic.get_template('dynamic.html')\n"
+        "unsafe.get_template('plain.txt')\n"
+    )
+    aliases = _security_aliases(list(ast.walk(tree)))
+
+    findings = configuration_findings(tree, aliases)
+
+    assert [item["code"] for item in findings] == [
+        "SECURITY_JINJA_AUTOESCAPE_DISABLED",
+        "SECURITY_JINJA_AUTOESCAPE_DISABLED",
+    ]
+    assert [item["facts"]["template"] for item in findings] == [
+        "page.html",
+        "other.HTML",
+    ]
+    assert all(item["facts"]["input_trust"] == "unknown" for item in findings)
+
+
+def test_jinja_configuration_rejects_shadowed_and_rebound_environment_aliases():
+    from factoryline.review_audits import _security_aliases
+    from factoryline.security_configuration import configuration_findings
+
+    tree = ast.parse(
+        "from jinja2 import Environment as Env\n"
+        "def shadowed(Env):\n"
+        "    local = Env()\n"
+        "    local.get_template('shadowed.html')\n"
+        "Env = factory.Environment\n"
+        "rebound = Env()\n"
+        "rebound.get_template('rebound.html')\n"
+    )
+
+    assert configuration_findings(tree, _security_aliases(list(ast.walk(tree)))) == []
+
+
+def test_tls_finding_and_legacy_tls_configuration_handles_aliases_client_server_and_positions():
+    from factoryline.review_audits import _security_aliases
+    from factoryline.review_integrity import bind_security_call_scopes
+    from factoryline.security_configuration import legacy_tls_verification_risk
+
+    tree = ast.parse(
+        "import ssl as tls\n"
+        "tls.wrap_socket(sock)\n"
+        "tls.wrap_socket(sock, None, None, False, tls.CERT_NONE)\n"
+        "tls.wrap_socket(sock, None, None, True)\n"
+        "tls.wrap_socket(sock, cert_reqs=tls.CERT_REQUIRED)\n"
+        "tls.wrap_socket(sock, cert_reqs=policy)\n"
+    )
+    bind_security_call_scopes(tree)
+    aliases = _security_aliases(list(ast.walk(tree)))
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+
+    assert [
+        legacy_tls_verification_risk("ssl.wrap_socket", call, aliases) for call in calls
+    ] == [True, True, False, False, False]
+    from factoryline.security_configuration import tls_finding
+
+    assert (
+        tls_finding("ssl.wrap_socket", "app.py", calls[0], aliases)["severity"]
+        == "MEDIUM"
+    )
+
+
+def test_legacy_tls_configuration_ignores_shadowed_and_rebound_ssl_aliases():
+    from factoryline.review_audits import _security_aliases
+    from factoryline.review_integrity import (
+        bind_security_call_scopes,
+        security_call_name,
+    )
+    from factoryline.security_configuration import legacy_tls_verification_risk
+
+    tree = ast.parse(
+        "import ssl as tls\n"
+        "def shadowed(tls):\n"
+        "    tls.wrap_socket(sock)\n"
+        "tls = factory\n"
+        "tls.wrap_socket(sock)\n"
+    )
+    bind_security_call_scopes(tree)
+    aliases = _security_aliases(list(ast.walk(tree)))
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+
+    assert not any(
+        legacy_tls_verification_risk(security_call_name(call, aliases), call, aliases)
+        for call in calls
+    )
+
+
+def test_xml_configuration_distinguishes_entity_and_xslt_capabilities():
+    from factoryline.review_audits import _security_aliases
+    from factoryline.security_configuration import configuration_findings
+
+    tree = ast.parse(
+        "from lxml import etree as xml\n"
+        "xml.XMLParser(resolve_entities=True, no_network=True)\n"
+        "xml.XMLParser(resolve_entities=False)\n"
+        "xml.XMLParser(resolve_entities=policy)\n"
+        "xml.XSLTAccessControl(read_network=True, read_file=False)\n"
+        "xml.XSLTAccessControl()\n"
+        "xml.XSLTAccessControl(read_file=False, read_network=False)\n"
+        "xml.XSLTAccessControl.DENY_ALL\n"
+    )
+    aliases = _security_aliases(list(ast.walk(tree)))
+
+    findings = configuration_findings(tree, aliases)
+
+    assert [item["code"] for item in findings] == [
+        "SECURITY_XML_ENTITY_RESOLUTION",
+        "SECURITY_XSLT_EXTERNAL_ACCESS",
+        "SECURITY_XSLT_EXTERNAL_ACCESS",
+        "SECURITY_XSLT_EXTERNAL_ACCESS",
+    ]
+    assert [item["facts"]["capability"] for item in findings] == [
+        "resolve_entities",
+        "read_network",
+        "read_file",
+        "read_network",
+    ]
+    assert all(item["facts"]["input_trust"] == "unknown" for item in findings)
+
+
+def test_security_scan_adapter_emits_only_conditional_configuration_findings():
+    from factoryline.review_audits import _security_scan_tree
+
+    root = Path.cwd()
+    tree = ast.parse(
+        "from jinja2 import Environment\n"
+        "from ssl import wrap_socket\n"
+        "from lxml import etree\n"
+        "def configure():\n"
+        "    env = Environment()\n"
+        "    env.get_template('page.html')\n"
+        "    wrap_socket(sock)\n"
+        "    etree.XMLParser(resolve_entities=True, no_network=True)\n"
+        "    etree.XSLTAccessControl(read_network=True, read_file=False)\n"
+    )
+
+    findings = _security_scan_tree(root, root / "candidate.py", tree)
+    configuration = [
+        finding
+        for finding in findings
+        if finding["code"]
+        in {
+            "SECURITY_JINJA_AUTOESCAPE_DISABLED",
+            "SECURITY_TLS_VERIFY_DISABLED",
+            "SECURITY_XML_ENTITY_RESOLUTION",
+            "SECURITY_XSLT_EXTERNAL_ACCESS",
+        }
+    ]
+
+    assert [finding["code"] for finding in configuration] == [
+        "SECURITY_TLS_VERIFY_DISABLED",
+        "SECURITY_JINJA_AUTOESCAPE_DISABLED",
+        "SECURITY_XML_ENTITY_RESOLUTION",
+        "SECURITY_XSLT_EXTERNAL_ACCESS",
+    ]
+    assert [finding["severity"] for finding in configuration] == [
+        "MEDIUM",
+        "MEDIUM",
+        "MEDIUM",
+        "MEDIUM",
+    ]
+    assert configuration[0]["facts"]["runtime_availability"] == "unknown"
+    assert all(
+        finding["facts"]["input_trust"] == "unknown" for finding in configuration[1:]
+    )
+
+
+def test_security_config_ordered_rebinding_keeps_prior_findings_only():
+    from factoryline.review_audits import _security_aliases
+    from factoryline.security_configuration import configuration_findings
+
+    tree = ast.parse(
+        "from jinja2 import Environment as Env\n"
+        "first = Env()\nfirst.get_template('before.html')\n"
+        "Env = factory.Environment\n"
+        "later = Env()\nlater.get_template('after.html')\n"
+        "import ssl as tls\ntls.wrap_socket(sock)\n"
+        "tls = fake\ntls.wrap_socket(other)\n"
+    )
+    findings = configuration_findings(tree, _security_aliases(list(ast.walk(tree))))
+
+    assert [finding["facts"].get("template") for finding in findings] == ["before.html"]
+    from factoryline.review_audits import _security_scan_tree
+
+    scanned = _security_scan_tree(Path.cwd(), Path.cwd() / "candidate.py", tree)
+    assert (
+        sum(finding["code"] == "SECURITY_TLS_VERIFY_DISABLED" for finding in scanned)
+        == 1
+    )
+
+
+def test_jinja_autoescape_instance_state_is_sequential_and_branches_abstain():
+    from factoryline.review_audits import _security_aliases
+    from factoryline.security_configuration import configuration_findings
+
+    tree = ast.parse(
+        "from jinja2 import Environment\n"
+        "safe = Environment()\nsafe.autoescape = True\n"
+        "safe.get_template('safe.html')\n"
+        "unsafe = Environment()\nunsafe.autoescape = False\n"
+        "unsafe.get_template('first.html')\nunsafe.autoescape = True\n"
+        "unsafe.get_template('second.html')\n"
+        "uncertain = Environment(autoescape=False)\n"
+        "if policy:\n    uncertain.autoescape = True\n"
+        "uncertain.get_template('branch.html')\n"
+    )
+    findings = configuration_findings(tree, _security_aliases(list(ast.walk(tree))))
+
+    assert [finding["facts"]["template"] for finding in findings] == ["first.html"]
+
+
+def test_security_configuration_requires_canonical_module_bindings():
+    from factoryline.review_audits import _security_aliases
+    from factoryline.security_configuration import configuration_findings
+
+    tree = ast.parse(
+        "from .jinja2 import Environment\n"
+        "local = Environment()\nlocal.get_template('relative.html')\n"
+        "ssl = fake\nssl.wrap_socket(sock, cert_reqs=ssl.CERT_NONE)\n"
+        "import lxml.etree as xml\n"
+        "xml.XMLParser(resolve_entities=True)\n"
+        "class Plain:\n    pass\n"
+    )
+    findings = configuration_findings(tree, _security_aliases(list(ast.walk(tree))))
+
+    assert [finding["code"] for finding in findings] == [
+        "SECURITY_XML_ENTITY_RESOLUTION"
+    ]
+
+
+def test_security_configuration_star_arguments_keep_defaults_unknown():
+    from factoryline.review_audits import _security_aliases
+    from factoryline.security_configuration import configuration_findings
+
+    tree = ast.parse(
+        "from jinja2 import Environment\n"
+        "from lxml import etree\n"
+        "import ssl\n"
+        "env = Environment(**settings)\nenv.get_template('unknown.html')\n"
+        "ssl.wrap_socket(sock, *args)\n"
+        "etree.XSLTAccessControl(**options)\n"
+    )
+    findings = configuration_findings(tree, _security_aliases(list(ast.walk(tree))))
+
+    assert findings == []
+
+
 def test_session_tls_findings_requires_proven_requests_session_identity():
     from factoryline.review_integrity import (
         bind_security_call_scopes,
@@ -1578,3 +1839,62 @@ def test_assertion_challenge_imports_trusted_worker_before_project_root(
 
     assert observation["chosen_value"] == "project"
     assert Path(observation["worker_file"]) == worker_path
+
+
+def test_security_configuration_plain_class_scan_does_not_crash(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "model.py").write_text("class Plain:\n    pass\n")
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert result["audit_coverage"]["complete"] is True
+    assert result["files_scanned"] == 1
+
+
+def test_security_configuration_relative_tls_and_positional_autoescape_are_not_false_positives():
+    from factoryline.review_audits import _security_scan_tree
+
+    root = Path.cwd()
+    positional = ", ".join(["None"] * 16 + ["True"])
+    source = (
+        "from jinja2 import Environment\nenv = Environment("
+        + positional
+        + ")\nenv.get_template('safe.html')\nfrom .ssl import wrap_socket\nwrap_socket(sock)\n"
+    )
+    findings = _security_scan_tree(root, root / "case.py", ast.parse(source))
+    assert not any(
+        f["code"]
+        in {"SECURITY_TLS_VERIFY_DISABLED", "SECURITY_JINJA_AUTOESCAPE_DISABLED"}
+        for f in findings
+    )
+
+
+def test_configuration_relative_import_is_scoped_and_jinja_rhs_is_observed():
+    from factoryline.review_audits import _security_scan_tree
+
+    cases = [
+        (
+            "import ssl\nssl.wrap_socket(sock)\ndef other():\n    from .ssl import helper\n",
+            "SECURITY_TLS_VERIFY_DISABLED",
+            1,
+        ),
+        (
+            "from jinja2 import Environment as E\ne=E()\ne.get_template('x.html')\nfrom .jinja2 import Environment as E\n",
+            "SECURITY_JINJA_AUTOESCAPE_DISABLED",
+            1,
+        ),
+        (
+            "from jinja2 import Environment\nenv=Environment()\nf=lambda env: env.get_template('x.html')\n",
+            "SECURITY_JINJA_AUTOESCAPE_DISABLED",
+            0,
+        ),
+        (
+            "from jinja2 import Environment\nenv=Environment()\nenv=env.get_template('x.html')\n",
+            "SECURITY_JINJA_AUTOESCAPE_DISABLED",
+            1,
+        ),
+    ]
+    for source, code, expected in cases:
+        findings = _security_scan_tree(
+            Path.cwd(), Path.cwd() / "case.py", ast.parse(source)
+        )
+        assert sum(f["code"] == code for f in findings) == expected, source

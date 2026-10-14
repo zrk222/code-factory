@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Detect source-bound HTML autoescape, legacy client TLS certificate defaults,
+  and explicit XML/XSLT external-access configuration risks. Keep unknown
+  input trust and exploitability distinct; dynamic settings remain unassessed.
+  Reuse existing lexical binding analysis and preserve the 460 Python-file cap.
+
 - Match signed callback evidence against the active pytest configuration and
   source-bound ancestor conftests. Keep exact configuration hashes and complete
   parameter-case requirements without changing existing source receipt digests.
