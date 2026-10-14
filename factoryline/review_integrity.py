@@ -4160,6 +4160,7 @@ def security_call_name(node, aliases):
 
 
 def security_source_sink_findings(relative, tree, nodes, aliases):
+    """Return bounded static findings for proven request and parameter sink flows."""
     bind_security_call_scopes(tree)
     helpers = _security_connector_cursor_helpers(tree, aliases)
     findings = []
@@ -4489,7 +4490,7 @@ def _security_statement_call_findings(
     helpers,
 ):
     findings = []
-    for call in ast.walk(statement):
+    for call in _lexical_nodes(statement):
         if (
             not isinstance(call, ast.Call)
             or getattr(call, "_security_lexical_scope", None) is not scope
