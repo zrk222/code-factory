@@ -477,6 +477,48 @@ def test_session_tls_assignment_requires_known_unrebound_receiver(
             True,
         ),
         (
+            "import _pickle as cPickle\n    cPickle.loads(data)",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+            True,
+        ),
+        (
+            "from _pickle import loads as reader\n    reader(data)",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+            True,
+        ),
+        pytest.param(
+            "import _pickle as cPickle\n    cPickle.load(handle)",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+            True,
+            id="pickle-load-module",
+        ),
+        pytest.param(
+            "from _pickle import load as reader\n    reader(handle)",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+            True,
+            id="pickle-load-import",
+        ),
+        (
+            "import _pickle as cPickle\n    reader = cPickle.loads\n    reader(data)",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+            True,
+        ),
+        (
+            "import _pickle as cPickle\n    cPickle = custom\n    cPickle.loads(data)",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+            False,
+        ),
+        (
+            "import _pickle as cPickle\n    def nested(cPickle):\n        cPickle.loads(data)",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+            False,
+        ),
+        (
+            "import _pickle as cPickle\n    cPickle.dumps(data)",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+            False,
+        ),
+        (
             "reader = pickle.loads\n    reader = lambda value: value\n    reader(data)",
             "SECURITY_UNSAFE_DESERIALIZATION",
             False,

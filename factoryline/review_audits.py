@@ -1434,7 +1434,14 @@ def _shell_command_finding(
 def _unsafe_deserialization_finding(
     call: str, relative: str, node: ast.AST
 ) -> dict[str, Any] | None:
-    if call not in {"pickle.load", "pickle.loads", "dill.load", "dill.loads"}:
+    if call not in {
+        "pickle.load",
+        "pickle.loads",
+        "_pickle.load",
+        "_pickle.loads",
+        "dill.load",
+        "dill.loads",
+    }:
         return None
     return _security_finding(
         "SECURITY_UNSAFE_DESERIALIZATION",
