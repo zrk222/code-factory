@@ -14,13 +14,6 @@ _DEFERRED_TYPES = tuple(
 )
 
 
-def _scopes(tree):
-    yield tree
-    for node in ast.walk(tree):
-        if isinstance(node, _SCOPE_TYPES):
-            yield node
-
-
 def _canonical(node, aliases):
     from .review_integrity import _security_flow_bindings
     from .review_audits import _call_name
@@ -39,13 +32,13 @@ def _canonical(node, aliases):
 
 
 def _relative_binding(node, head):
-    from .review_integrity import _security_module_scope
+    from .review_integrity import _security_module_scope, _security_scope_body
 
     scope = getattr(node, "_security_lexical_scope", None)
     module = _security_module_scope(scope)
     for owner in (scope, module):
         relative = None
-        for statement in getattr(owner, "body", []):
+        for statement in _security_scope_body(owner):
             if owner is scope and statement is getattr(
                 node, "_security_flow_statement", None
             ):
@@ -71,8 +64,11 @@ def _targets(node):
     return _bound_names(node)
 
 
-def _keyword(call, name):
-    return next((item.value for item in call.keywords if item.arg == name), None)
+def _keyword(call, name, position=None):
+    value = next((item.value for item in call.keywords if item.arg == name), None)
+    if value is None and position is not None and len(call.args) > position:
+        return call.args[position]
+    return value
 
 
 def _literal_bool(node):
@@ -153,7 +149,7 @@ def _jinja_load(node, environments):
 
 def _jinja_records(tree, aliases):
     records = []
-    for scope in _scopes(tree):
+    for scope in [tree] + [n for n in ast.walk(tree) if isinstance(n, _SCOPE_TYPES)]:
         environments = {}
         for statement in scope.body:
             if isinstance(statement, _CONTROL_TYPES):
@@ -231,7 +227,10 @@ def configuration_findings(tree, aliases, relative="<source>"):
 
     from .review_integrity import bind_security_call_scopes
 
-    bind_security_call_scopes(tree)
+    if not any(v.startswith(("jinja2", "lxml")) for v in aliases.values()):
+        return []
+    if not hasattr(tree, "_security_scope_kind"):
+        bind_security_call_scopes(tree)
     messages = _jinja_records(tree, aliases) + _xml_records(tree, aliases)
     return [
         _security_finding(code, relative, node, message, severity, **facts)
@@ -242,18 +241,18 @@ def configuration_findings(tree, aliases, relative="<source>"):
 def legacy_tls_verification_risk(call, node, aliases=None):
     """Recognize client use of ssl.wrap_socket with omitted or CERT_NONE checks."""
     aliases = aliases or {}
-    if _canonical(node, aliases) != "ssl.wrap_socket" or _expanded(node):
+    if (
+        call != "ssl.wrap_socket"
+        or _expanded(node)
+        or _canonical(node, aliases) != call
+    ):
         return False
-    server = _keyword(node, "server_side")
-    if server is None and len(node.args) > 3:
-        server = node.args[3]
+    server = _keyword(node, "server_side", 3)
     if _literal_bool(server) is True or (
         server is not None and _literal_bool(server) is None
     ):
         return False
-    verification = _keyword(node, "cert_reqs")
-    if verification is None and len(node.args) > 4:
-        verification = node.args[4]
+    verification = _keyword(node, "cert_reqs", 4)
     if verification is None:
         return True
     from .review_integrity import _security_scope_request_aliases

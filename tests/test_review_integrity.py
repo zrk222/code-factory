@@ -86,7 +86,7 @@ def test_jinja_configuration_rejects_shadowed_and_rebound_environment_aliases():
     assert configuration_findings(tree, _security_aliases(list(ast.walk(tree)))) == []
 
 
-def test_legacy_tls_configuration_handles_aliases_client_server_and_positions():
+def test_tls_finding_and_legacy_tls_configuration_handles_aliases_client_server_and_positions():
     from factoryline.review_audits import _security_aliases
     from factoryline.review_integrity import bind_security_call_scopes
     from factoryline.security_configuration import legacy_tls_verification_risk
@@ -106,6 +106,12 @@ def test_legacy_tls_configuration_handles_aliases_client_server_and_positions():
     assert [
         legacy_tls_verification_risk("ssl.wrap_socket", call, aliases) for call in calls
     ] == [True, True, False, False, False]
+    from factoryline.security_configuration import tls_finding
+
+    assert (
+        tls_finding("ssl.wrap_socket", "app.py", calls[0], aliases)["severity"]
+        == "MEDIUM"
+    )
 
 
 def test_legacy_tls_configuration_ignores_shadowed_and_rebound_ssl_aliases():
