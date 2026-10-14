@@ -4050,6 +4050,7 @@ def _security_analyze_source_sink_block(
                 parameters.discard(name)
                 connection_names.discard(name)
                 cursor_names.discard(name)
+                _security_clear_upload_tags(requests, {name})
     return findings
 
 
@@ -4200,6 +4201,15 @@ def _security_source_sink_call(
     from . import review_audits as audit
 
     name = security_call_name(call, aliases)
+    if _security_unsafe_flask_file_save(call, aliases, requests):
+        return audit._security_finding(
+            "SECURITY_PATH_TRAVERSAL",
+            relative,
+            call,
+            "An uploaded filename reaches Flask FileStorage.save without secure_filename sanitization.",
+            "HIGH",
+            call="flask.FileStorage.save",
+        )
     if _security_unsafe_open(call, requests, aliases):
         return audit._security_finding(
             "SECURITY_PATH_TRAVERSAL",
@@ -4237,6 +4247,120 @@ def _security_source_sink_call(
             call=name,
         )
     return None
+
+
+def _security_clear_upload_tags(requests, names):
+    requests.difference_update(
+        item
+        for item in tuple(requests)
+        if isinstance(item, tuple) and len(item) == 2 and item[1] in names
+    )
+
+
+def _security_unsafe_flask_file_save(call, aliases, requests):
+    if not isinstance(call.func, ast.Attribute) or call.func.attr != "save":
+        return False
+    receiver = call.func.value
+    if (
+        not isinstance(receiver, ast.Name)
+        or ("flask-upload", receiver.id) not in requests
+    ):
+        return False
+    destination = (
+        call.args[0]
+        if call.args
+        else next(
+            (keyword.value for keyword in call.keywords if keyword.arg == "dst"), None
+        )
+    )
+    return _security_upload_path_expression(
+        destination,
+        aliases,
+        requests,
+        getattr(call, "_security_lexical_scope", None),
+        call,
+    )
+
+
+def _security_upload_path_expression(node, aliases, requests, scope, flow_statement):
+    if isinstance(node, ast.Name):
+        return ("upload-path", node.id) in requests
+    if isinstance(node, ast.Attribute) and node.attr == "filename":
+        return _security_flask_upload_expression(
+            node.value, aliases, scope, flow_statement
+        ) or (
+            isinstance(node.value, ast.Name)
+            and ("flask-upload", node.value.id) in requests
+        )
+    if isinstance(node, ast.JoinedStr):
+        return any(
+            isinstance(value, ast.FormattedValue)
+            and _security_upload_path_expression(
+                value.value, aliases, requests, scope, flow_statement
+            )
+            for value in node.values
+        )
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Div)):
+        return _security_upload_path_expression(
+            node.left, aliases, requests, scope, flow_statement
+        ) or _security_upload_path_expression(
+            node.right, aliases, requests, scope, flow_statement
+        )
+    if not isinstance(node, ast.Call):
+        return False
+    if _security_is_proven_secure_filename(node, aliases):
+        return False
+    return any(
+        _security_upload_path_expression(
+            argument, aliases, requests, scope, flow_statement
+        )
+        for argument in [
+            *node.args,
+            *(keyword.value for keyword in node.keywords),
+        ]
+    )
+
+
+def _security_is_proven_secure_filename(call, aliases):
+    from .review_audits import _call_name
+
+    if security_call_name(call, aliases) != "werkzeug.utils.secure_filename":
+        return False
+    raw = _call_name(call)
+    head, _, tail = raw.partition(".")
+    resolved, _constants = _security_flow_bindings(call, aliases)
+    canonical = resolved.get(head, "") + ("." + tail if tail else "")
+    return canonical == "werkzeug.utils.secure_filename"
+
+
+def _security_flask_upload_expression(node, aliases, scope, flow_statement):
+    if isinstance(node, ast.Subscript):
+        return _security_flask_request_collection(
+            node.value, aliases, scope, flow_statement, "files"
+        )
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and _security_flask_request_collection(
+            node.func.value, aliases, scope, flow_statement, "files"
+        )
+    )
+
+
+def _security_flask_request_collection(
+    node, aliases, scope, flow_statement, collection
+):
+    from .review_audits import _name
+
+    if not isinstance(node, ast.Attribute) or node.attr != collection:
+        return False
+    raw = _name(node)
+    head, _, tail = raw.partition(".")
+    canonical = _security_scope_request_aliases(scope, aliases, flow_statement).get(
+        head, ""
+    ) + ("." + tail if tail else "")
+    return canonical == f"flask.request.{collection}"
 
 
 def _security_unsafe_open(call, requests, aliases):
@@ -4508,15 +4632,8 @@ def _security_call_source_tainted(node, requests, parameters, aliases):
 
 
 def _security_request_args(node, aliases, scope=None, flow_statement=None):
-    from .review_audits import _name
-
-    name = _name(node)
-    head, _, tail = name.partition(".")
-    resolved = _security_scope_request_aliases(scope, aliases, flow_statement)
-    if head in resolved:
-        canonical = resolved[head] + ("." + tail if tail else "")
-        if canonical == "flask.request.args":
-            return True
+    if _security_flask_request_collection(node, aliases, scope, flow_statement, "args"):
+        return True
     return _security_django_request_parameter(node, aliases, scope, flow_statement)
 
 
@@ -4587,10 +4704,28 @@ def _security_flow_source_assignment(
         or _security_helper_call(value, "connection", aliases, helpers),
         _security_cursor_expression(value, aliases, connection_names, helpers),
     )
+    scope = getattr(statement, "_security_lexical_scope", None)
+    upload_object = isinstance(value, ast.AST) and (
+        _security_flask_upload_expression(value, aliases, scope, statement)
+        or (isinstance(value, ast.Name) and ("flask-upload", value.id) in requests)
+    )
+    upload_path = isinstance(value, ast.AST) and _security_upload_path_expression(
+        value, aliases, requests, scope, statement
+    )
     known = (requests, password_fields, parameters, connection_names, cursor_names)
     for names in known:
         names.difference_update(bindings)
+    _security_clear_upload_tags(requests, bindings)
     _security_assign_flow_names(statement, value, flags, known)
+    targets = (
+        statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+    )
+    for target in targets:
+        if isinstance(target, ast.Name):
+            if upload_object:
+                requests.add(("flask-upload", target.id))
+            if upload_path:
+                requests.add(("upload-path", target.id))
 
 
 def _security_assign_flow_names(statement, value, flags, known):

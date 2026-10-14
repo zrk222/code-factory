@@ -169,6 +169,13 @@ def test_security_source_sink_findings_direct_api(request_derived):
             True,
         ),
         (
+            "import flask\n"
+            "def process_request():\n"
+            "    if flask.request.args['password'] == 'myPa55word':\n"
+            "        return True\n",
+            True,
+        ),
+        (
             "from django.http import HttpResponse\n"
             "def process_request(request):\n"
             "    if request.GET['password'] == 'myPa55word':\n"
@@ -322,6 +329,7 @@ def test_security_source_sink_findings_direct_api(request_derived):
         "django-password-alias",
         "flask-password-direct",
         "flask-password-bound-alias",
+        "flask-module-qualified-request-args",
         "django-password-direct",
         "django-password-bound-alias",
         "safe-url-comparison",
@@ -358,6 +366,177 @@ def test_security_scan_request_password_literal_comparison(tmp_path, source, exp
             finding["facts"].get("name") == "password_comparison"
             for finding in secret_findings
         )
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (
+            "from flask import request\n"
+            "def save_upload():\n"
+            "    uploaded = request.files['file']\n"
+            "    uploaded.save('/uploads/' + uploaded.filename)\n",
+            True,
+        ),
+        (
+            "from flask import request as req\nimport os\n"
+            "def save_upload():\n"
+            "    uploaded = req.files.get('file')\n"
+            "    name = uploaded.filename\n"
+            "    target = os.path.join('/uploads', name)\n"
+            "    uploaded.save(target)\n",
+            True,
+        ),
+        (
+            "import flask\n"
+            "def save_upload():\n"
+            "    uploaded = flask.request.files['file']\n"
+            "    uploaded.save('/uploads/' + uploaded.filename)\n",
+            True,
+        ),
+        (
+            "from flask import request\n"
+            "def save_upload():\n"
+            "    uploaded = request.files['file']\n"
+            "    alias = uploaded\n"
+            "    alias.save('/uploads/' + alias.filename)\n",
+            True,
+        ),
+        (
+            "from flask import request\n"
+            "def save_upload():\n"
+            "    uploaded = request.files['file']\n"
+            "    uploaded.save(f'/uploads/{uploaded.filename}')\n",
+            True,
+        ),
+        (
+            "from flask import request\n"
+            "def save_upload():\n"
+            "    uploaded = request.files['file']\n"
+            "    uploaded.save('/uploads/' + identity(value=uploaded.filename))\n",
+            True,
+        ),
+        (
+            "from flask import request\n"
+            "from pathlib import Path\n"
+            "def save_upload():\n"
+            "    uploaded = request.files['file']\n"
+            "    uploaded.save(Path('/uploads') / uploaded.filename)\n",
+            True,
+        ),
+        (
+            "from flask import request\n"
+            "def save_upload():\n"
+            "    uploaded = request.files['file']\n"
+            "    uploaded.save('/uploads/fixed.bin')\n",
+            False,
+        ),
+        (
+            "from flask import request\n"
+            "from werkzeug.utils import secure_filename\n"
+            "def save_upload():\n"
+            "    uploaded = request.files['file']\n"
+            "    uploaded.save('/uploads/' + secure_filename(uploaded.filename))\n",
+            False,
+        ),
+        (
+            "from flask import request\n"
+            "from werkzeug.utils import secure_filename\n"
+            "def save_upload(secure_filename):\n"
+            "    uploaded = request.files['file']\n"
+            "    uploaded.save('/uploads/' + secure_filename(uploaded.filename))\n",
+            True,
+        ),
+        (
+            "from flask import request\n"
+            "from werkzeug.utils import secure_filename\n"
+            "def save_upload():\n"
+            "    clean = secure_filename\n"
+            "    uploaded = request.files['file']\n"
+            "    uploaded.save('/uploads/' + clean(uploaded.filename))\n",
+            False,
+        ),
+        (
+            "from flask import request\n"
+            "from werkzeug.utils import secure_filename\n"
+            "def save_upload():\n"
+            "    clean = secure_filename\n"
+            "    clean = identity\n"
+            "    uploaded = request.files['file']\n"
+            "    uploaded.save('/uploads/' + clean(uploaded.filename))\n",
+            True,
+        ),
+        (
+            "from flask import request\n"
+            "def save_upload(request):\n"
+            "    uploaded = request.files['file']\n"
+            "    uploaded.save(uploaded.filename)\n",
+            False,
+        ),
+        (
+            "from flask import request\n"
+            "def save_upload(other):\n"
+            "    uploaded = request.files['file']\n"
+            "    uploaded = other\n"
+            "    uploaded.save(uploaded.filename)\n",
+            False,
+        ),
+        (
+            "from flask import request\n"
+            "def save_upload():\n"
+            "    fake = object()\n"
+            "    fake.save(request.files['file'].filename)\n",
+            False,
+        ),
+        (
+            "from flask import request\n"
+            "def save_upload(flag):\n"
+            "    uploaded = request.files['file']\n"
+            "    if flag:\n        uploaded = object()\n"
+            "    else:\n        uploaded = object()\n"
+            "    uploaded.save(uploaded.filename)\n",
+            False,
+        ),
+        (
+            "from flask import request\n"
+            "def save_upload(flag):\n"
+            "    uploaded = request.files['file']\n"
+            "    if flag:\n        uploaded = object()\n"
+            "    uploaded.save(uploaded.filename)\n",
+            True,
+        ),
+    ],
+    ids=[
+        "direct-request-files-subscript",
+        "get-bound-alias-join-path",
+        "module-qualified-flask-request-files",
+        "upload-object-alias",
+        "fstring-destination",
+        "unknown-keyword-wrapper-preserves-path-taint",
+        "pathlib-destination",
+        "constant-destination",
+        "werkzeug-secure-filename",
+        "shadowed-secure-filename-does-not-sanitize",
+        "bound-secure-filename-import-alias",
+        "rebound-sanitizer-alias-is-not-proven",
+        "shadowed-flask-request-parameter",
+        "rebound-upload-alias",
+        "unrelated-save-method",
+        "both-branches-rebind-upload",
+        "one-branch-retains-possible-upload",
+    ],
+)
+def test_security_scan_flask_upload_filename_save_paths(tmp_path, source, expected):
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    findings = [
+        finding
+        for finding in security_scan(tmp_path, cache_enabled=False)["findings"]
+        if finding["code"] == "SECURITY_PATH_TRAVERSAL"
+    ]
+    assert len(findings) == int(expected)
+    if findings:
+        assert findings[0]["facts"] == {"call": "flask.FileStorage.save"}
+        assert findings[0]["severity"] == "HIGH"
 
 
 def test_security_scan_synthetic_django_password_comparison(tmp_path):
