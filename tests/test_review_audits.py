@@ -147,6 +147,239 @@ def test_security_source_sink_findings_direct_api(request_derived):
 @pytest.mark.parametrize(
     "source,expected",
     [
+        (
+            "from django.http import HttpResponse\n"
+            "def process_request(request):\n"
+            "    password = request.GET['password']\n"
+            "    if password == 'myPa55word':\n        return HttpResponse()\n",
+            True,
+        ),
+        (
+            "from flask import request\n"
+            "def process_request():\n"
+            "    if request.args['password'] == 'myPa55word':\n"
+            "        return True\n",
+            True,
+        ),
+        (
+            "from flask import request as web_request\n"
+            "def process_request():\n"
+            "    supplied = web_request.args['password']\n"
+            "    if supplied == 'myPa55word':\n        return True\n",
+            True,
+        ),
+        (
+            "from django.http import HttpResponse\n"
+            "def process_request(request):\n"
+            "    if request.GET['password'] == 'myPa55word':\n"
+            "        return HttpResponse()\n",
+            True,
+        ),
+        (
+            "from django.http import HttpResponse\n"
+            "def process_request(request):\n"
+            "    supplied = request.GET['password']\n"
+            "    password = supplied\n"
+            "    if password == 'myPa55word':\n        return HttpResponse()\n",
+            True,
+        ),
+        (
+            "from django.http import HttpResponse\n"
+            "def process_request(request):\n"
+            "    if request.GET['next'] == 'https://example.com/login':\n"
+            "        return HttpResponse()\n",
+            False,
+        ),
+        (
+            "def process_request(password):\n"
+            "    if password == 'myPa55word':\n        return True\n",
+            False,
+        ),
+        (
+            "from django.http import HttpResponse\n"
+            "def process_request(request):\n"
+            "    request = object()\n"
+            "    if request.GET['password'] == 'myPa55word':\n"
+            "        return HttpResponse()\n",
+            False,
+        ),
+        (
+            "from django.http import HttpResponse\nimport os\n"
+            "def process_request(request):\n"
+            "    password = os.getenv('PASSWORD')\n"
+            "    if password == 'myPa55word':\n        return HttpResponse()\n",
+            False,
+        ),
+        (
+            "from django.http import HttpResponse\n"
+            "def process_request(request, supplied):\n"
+            "    password = request.GET['password']\n"
+            "    password = supplied\n"
+            "    if password == 'myPa55word':\n        return HttpResponse()\n",
+            False,
+        ),
+        (
+            "from django.http import HttpResponse\n"
+            "def process_request(request, expected):\n"
+            "    password = request.GET['password']\n"
+            "    if password == expected:\n        return HttpResponse()\n",
+            False,
+        ),
+        (
+            "from django.http import HttpResponse\n"
+            "def process_request(request, flag):\n"
+            "    password = request.GET['password']\n"
+            "    if flag:\n        password = ''\n"
+            "    if password == 'myPa55word':\n        return HttpResponse()\n",
+            True,
+        ),
+        (
+            "from flask import request as web_request\n"
+            "def process_request(web_request):\n"
+            "    if web_request.args['password'] == 'myPa55word':\n"
+            "        return True\n",
+            False,
+        ),
+        (
+            "from django.http import HttpResponse\n"
+            "def process_request(request):\n"
+            "    if request.GET['url'] == \"%!*'();:@&=+$,/?#[] \":\n"
+            "        return HttpResponse()\n",
+            False,
+        ),
+        (
+            "from flask import request\nrequest = custom\n"
+            "def check():\n"
+            "    if request.args['password'] == 'literal-value':\n"
+            "        return True\n",
+            False,
+        ),
+        (
+            "def check():\n"
+            "    if request.args['password'] == 'literal-value':\n"
+            "        return True\n"
+            "    from flask import request\n",
+            False,
+        ),
+        (
+            "def check():\n"
+            "    from flask import request\n"
+            "    if request.args['password'] == 'literal-value':\n"
+            "        return True\n",
+            True,
+        ),
+        (
+            "from django.http import HttpResponse\n"
+            "def check(request, flag, clean_a, clean_b):\n"
+            "    supplied = request.GET['password']\n"
+            "    if flag:\n        supplied = clean_a\n"
+            "    else:\n        supplied = clean_b\n"
+            "    if supplied == 'literal-value':\n        return HttpResponse()\n",
+            False,
+        ),
+        (
+            "from django.http import HttpResponse\n"
+            "def check(request):\n"
+            "    if request.GET['password'] == 'https://example.test/secret':\n"
+            "        return HttpResponse()\n",
+            True,
+        ),
+        (
+            "from django.http import HttpResponse\n"
+            "def check(request):\n"
+            "    password = request.GET['password']\n"
+            "    if password == 'todo':\n"
+            "        return HttpResponse()\n",
+            True,
+        ),
+        (
+            "from flask import request\n"
+            "def check():\n"
+            "    for item in [0]:\n"
+            "        password = request.args['password']\n"
+            "    if password == 'literal-value':\n"
+            "        return True\n",
+            True,
+        ),
+        (
+            "from flask import request\n"
+            "def check():\n"
+            "    if request.args['password'] == 'literal-value':\n"
+            "        return True\n"
+            "    from flask import request\n",
+            False,
+        ),
+        (
+            "from flask import request\n"
+            "def check():\n"
+            "    if request.args['password'] == 'literal-value':\n"
+            "        return True\n"
+            "    request = custom\n",
+            False,
+        ),
+    ],
+    ids=[
+        "django-password-alias",
+        "flask-password-direct",
+        "flask-password-bound-alias",
+        "django-password-direct",
+        "django-password-bound-alias",
+        "safe-url-comparison",
+        "ordinary-source-parameter",
+        "local-request-rebind",
+        "environment-value",
+        "password-source-rebind",
+        "nonliteral-comparison",
+        "branch-rebind-possible-source",
+        "flask-local-request-shadow",
+        "url-quoting-safe-key",
+        "flask-module-rebind",
+        "flask-local-import-after-comparison",
+        "flask-local-import-before-comparison",
+        "both-branches-kill-password-source",
+        "hardcoded-url-password-value",
+        "hardcoded-placeholder-password-value",
+        "loop-introduced-password-source-survives",
+        "module-flask-alias-late-local-import-clears",
+        "module-flask-alias-late-assignment-clears",
+    ],
+)
+def test_security_scan_request_password_literal_comparison(tmp_path, source, expected):
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+    secret_findings = [
+        finding
+        for finding in findings
+        if finding["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert bool(secret_findings) is expected
+    if expected:
+        assert all(
+            finding["facts"].get("name") == "password_comparison"
+            for finding in secret_findings
+        )
+
+
+def test_security_scan_synthetic_django_password_comparison(tmp_path):
+    source = (
+        "from django.http import HttpResponse\n"
+        "def compare_password(request):\n"
+        "    candidate = request.GET['password']\n"
+        "    if candidate == 'synthetic-password-value':\n"
+        "        return HttpResponse()\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+    assert any(
+        finding["code"] == "SECURITY_HARDCODED_SECRET"
+        and finding["facts"].get("name") == "password_comparison"
+        for finding in findings
+    )
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
         (_redirect_flow_source(sanitize=False), True),
         (_redirect_flow_source(sanitize=True), False),
         (
