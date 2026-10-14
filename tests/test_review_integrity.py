@@ -22,6 +22,109 @@ from factoryline import workflow_audit as workflow_audit_module
 from factoryline.workflow_audit import CATEGORIES, audit_workflows
 
 
+def test_tls_verification_disabled_classifies_only_supported_explicit_bypasses():
+    from factoryline.review_integrity import tls_verification_disabled
+
+    requests_call = ast.parse("requests.get(url, verify=False)", mode="eval").body
+    httpx_client = ast.parse("httpx.Client(verify=False)", mode="eval").body
+    verify_true = ast.parse("requests.get(url, verify=True)", mode="eval").body
+    unrelated_call = ast.parse(
+        "urllib.request.urlopen(url, verify=False)", mode="eval"
+    ).body
+
+    assert tls_verification_disabled("requests.get", requests_call)
+    assert tls_verification_disabled("httpx.Client", httpx_client)
+    assert not tls_verification_disabled("requests.get", verify_true)
+    assert not tls_verification_disabled("urllib.request.urlopen", unrelated_call)
+
+
+def test_session_tls_findings_requires_proven_requests_session_identity():
+    from factoryline.review_integrity import (
+        bind_security_call_scopes,
+        session_tls_findings,
+    )
+    from factoryline.review_audits import _security_aliases, _security_finding
+
+    tree = ast.parse(
+        "import requests\nsession = requests.Session()\nsession.verify = False\n"
+        "other.verify = False\n"
+    )
+    bind_security_call_scopes(tree)
+    aliases = _security_aliases(list(ast.walk(tree)))
+    findings = session_tls_findings(
+        "service.py", tree.body[2], aliases, _security_finding
+    )
+    unknown = session_tls_findings(
+        "service.py", tree.body[3], aliases, _security_finding
+    )
+
+    assert [finding["facts"]["receiver"] for finding in findings] == ["session"]
+    assert findings[0]["code"] == "SECURITY_TLS_VERIFY_DISABLED"
+    assert unknown == []
+
+
+def test_security_assignment_findings_uses_proven_session_and_flags_literal():
+    from factoryline.review_integrity import (
+        bind_security_call_scopes,
+        security_assignment_findings,
+    )
+    from factoryline.review_audits import _security_aliases
+
+    tree = ast.parse(
+        "import requests\nsession = requests.Session()\nsession.verify = False\n"
+        "plain = False\nAPI_KEY = 'sk_live_fixture_1234567890'\n"
+    )
+    bind_security_call_scopes(tree)
+    aliases = _security_aliases(list(ast.walk(tree)))
+
+    findings = security_assignment_findings("service.py", tree.body[2], aliases)
+    plain_assignment = security_assignment_findings("service.py", tree.body[3], aliases)
+    credential_assignment = security_assignment_findings(
+        "service.py", tree.body[4], aliases
+    )
+
+    assert len(findings) == 1
+    assert findings[0]["code"] == "SECURITY_TLS_VERIFY_DISABLED"
+    assert findings[0]["facts"]["call"] == "requests.Session.verify"
+    assert plain_assignment == []
+    assert [finding["code"] for finding in credential_assignment] == [
+        "SECURITY_HARDCODED_SECRET"
+    ]
+
+
+def test_weak_assertion_call_reason_separates_weak_and_value_assertions():
+    from factoryline.review_integrity import weak_assertion_call_reason
+
+    weak = ast.parse("self.assertIsNotNone(value)", mode="eval").body
+    strong = ast.parse("self.assertEqual(actual, expected)", mode="eval").body
+
+    assert "non-null" in weak_assertion_call_reason(weak, {})
+    assert weak_assertion_call_reason(strong, {}) is None
+
+
+def test_builtin_repr_type_check_requires_unshadowed_builtin_names():
+    from factoryline.review_integrity import (
+        bind_security_call_scopes,
+        builtin_repr_type_check,
+    )
+
+    builtins = ast.parse("isinstance(repr(value), str)", mode="eval").body
+    shadowed_tree = ast.parse(
+        "repr = render\ndef test_value():\n    return isinstance(repr(value), str)\n"
+    )
+    bind_security_call_scopes(shadowed_tree)
+    shadowed = next(
+        node
+        for node in ast.walk(shadowed_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "isinstance"
+    )
+
+    assert builtin_repr_type_check(builtins)
+    assert not builtin_repr_type_check(shadowed)
+
+
 def w(p, v):
     p.write_text(json.dumps(v))
     return p
@@ -354,6 +457,98 @@ def test_runtime_callback_coverage_rejects_swallowed_or_vacuous_assertions(
     )
 
     assert coverage["eligible"] is False
+
+
+def _runtime_finding_coverage_fixture(tmp_path):
+    source = "def test_legacy_case():\n    assert compute() == expected\n"
+    test_path = tmp_path / "tests" / "test_runtime_coverage.py"
+    test_path.parent.mkdir(parents=True, exist_ok=True)
+    test_path.write_text(source, encoding="utf-8")
+    return tmp_path, {
+        "path": "tests/test_runtime_coverage.py",
+        "line": 1,
+        "symbol": "test_legacy_case",
+        "test_sha256": hashlib.sha256(test_path.read_bytes()).hexdigest(),
+        "baseline": {"case_ids": ["tests/test_runtime_coverage.py::test_legacy_case"]},
+    }
+
+
+def test_runtime_finding_coverage_directly_accepts_legacy_v1_and_v2(tmp_path):
+    from factoryline.review_integrity import runtime_finding_coverage
+    from factoryline.runtime_attestation import (
+        TEST_ORACLE_VERIFICATION_SCHEMA,
+        TEST_ORACLE_VERIFICATION_SCHEMA_V2,
+    )
+
+    workspace, row = _runtime_finding_coverage_fixture(tmp_path)
+    finding = {
+        "code": "QUALITY_HOLLOW_TEST",
+        "facts": {"runtime_oracle_eligible": True},
+    }
+    assert (
+        runtime_finding_coverage(
+            workspace, finding, row, TEST_ORACLE_VERIFICATION_SCHEMA, []
+        )
+        is True
+    )
+    assert (
+        runtime_finding_coverage(
+            workspace, finding, row, TEST_ORACLE_VERIFICATION_SCHEMA_V2, []
+        )
+        is True
+    )
+
+
+def test_runtime_finding_coverage_directly_rejects_v3_without_callback_or_unknown(
+    tmp_path,
+):
+    from factoryline.review_integrity import runtime_finding_coverage
+    from factoryline.runtime_attestation import TEST_ORACLE_VERIFICATION_SCHEMA_V3
+
+    workspace, row = _runtime_finding_coverage_fixture(tmp_path)
+    finding = {
+        "code": "QUALITY_HOLLOW_TEST",
+        "facts": {"runtime_oracle_eligible": True},
+    }
+    assert (
+        runtime_finding_coverage(
+            workspace, finding, row, TEST_ORACLE_VERIFICATION_SCHEMA_V3, []
+        )
+        is False
+    )
+    assert (
+        runtime_finding_coverage(
+            workspace, finding, row, "factory.unknown-verification.v99", []
+        )
+        is False
+    )
+
+
+def test_runtime_finding_coverage_directly_rejects_source_drift_and_nonhollow(
+    tmp_path,
+):
+    from factoryline.review_integrity import runtime_finding_coverage
+    from factoryline.runtime_attestation import TEST_ORACLE_VERIFICATION_SCHEMA
+
+    workspace, row = _runtime_finding_coverage_fixture(tmp_path)
+    finding = {
+        "code": "QUALITY_HOLLOW_TEST",
+        "facts": {"runtime_oracle_eligible": True},
+    }
+    changed_row = {**row, "test_sha256": "0" * 64}
+    assert (
+        runtime_finding_coverage(
+            workspace, finding, changed_row, TEST_ORACLE_VERIFICATION_SCHEMA, []
+        )
+        is False
+    )
+    nonhollow_finding = {"code": "QUALITY_WEAK_TEST_ORACLE", "facts": {}}
+    assert (
+        runtime_finding_coverage(
+            workspace, nonhollow_finding, row, TEST_ORACLE_VERIFICATION_SCHEMA, []
+        )
+        is False
+    )
 
 
 def test_three_senior_review_controls_fail_closed(tmp_path: Path):
