@@ -1579,6 +1579,11 @@ def test_assertion_probe_matches_decorated_nested_function(tmp_path):
     result = probe_assertion_propagation(tmp_path, "test_case.py::test_case", 6)
     assert result["status"] == "OBSERVED"
     assert result["semantic_strength"] == "NOT_ASSESSED"
+    assert any(
+        row["frame_qualname"] == "test_case.<locals>.check"
+        for row in result["baseline"]["executed_modules"]
+        if row["observation_kind"] == "executed_frame"
+    )
 
 
 @pytest.mark.parametrize("layout", ["flat", "src", "namespace"])
@@ -1745,6 +1750,238 @@ def test_call_probe_binds_project_module_origin(tmp_path):
     )
 
 
+def test_assertion_probe_preserves_distinct_project_frame_identities(tmp_path):
+    from factoryline.pytest_readiness import probe_assertion_propagation
+
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "production.py").write_text(
+        "def inner():\n    return True\n\ndef outer():\n    return inner()\n",
+        encoding="utf-8",
+    )
+    test_source = (
+        "from pkg.production import outer\n"
+        "def test_case():\n    assert outer() is True\n"
+    )
+    (tmp_path / "test_case.py").write_text(test_source, encoding="utf-8")
+    result = probe_assertion_propagation(
+        tmp_path, "test_case.py::test_case", len(test_source.splitlines())
+    )
+
+    assert result["status"] == "OBSERVED"
+    production_frames = [
+        row
+        for row in result["baseline"]["executed_modules"]
+        if row["path"] == "pkg/production.py"
+        and row["observation_kind"] == "executed_frame"
+    ]
+    assert {row["frame_qualname"] for row in production_frames} == {"inner", "outer"}
+    assert {row["frame_firstlineno"] for row in production_frames} == {1, 4}
+    assert all(row["status"] == "BOUND" for row in production_frames)
+
+
+def test_challenge_frame_identity_ast_fallback_and_fails_closed(tmp_path):
+    import hashlib
+    from types import SimpleNamespace
+
+    from factoryline.pytest_readiness import (
+        _AssertionChallenge,
+        _challenge_frame_identity,
+        _challenge_origin_row_shape_valid,
+    )
+
+    source = tmp_path / "test_case.py"
+    source.write_text(
+        "def outer():\n    def inner():\n        return True\n", encoding="utf-8"
+    )
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    fallback_code = type(
+        "CodeWithoutQualname",
+        (),
+        {"co_filename": str(source), "co_name": "inner", "co_firstlineno": 2},
+    )()
+    root_frame = SimpleNamespace(f_code=fallback_code)
+    assert _challenge_frame_identity(
+        root_frame, tmp_path, {"test_case.py": digest}, {}, {}
+    ) == (
+        "outer.<locals>.inner",
+        2,
+    )
+    module_code = compile(source.read_text(encoding="utf-8"), str(source), "exec")
+    assert _challenge_frame_identity(
+        SimpleNamespace(f_code=module_code),
+        tmp_path,
+        {"test_case.py": digest},
+        {},
+        {},
+    ) == ("<module>", 1)
+    mismatched_code = type(
+        "MismatchedCode",
+        (),
+        {
+            "co_filename": str(source),
+            "co_name": "inner",
+            "co_firstlineno": 2,
+            "co_qualname": "different.inner",
+        },
+    )()
+    mismatched = SimpleNamespace(f_code=mismatched_code)
+    assert (
+        _challenge_frame_identity(
+            mismatched, tmp_path, {"test_case.py": digest}, {}, {}
+        )
+        is None
+    )
+    plugin = _AssertionChallenge(
+        source,
+        1,
+        False,
+        "inner",
+        2,
+        root=tmp_path,
+        source_manifest={"test_case.py": digest},
+    )
+    plugin.phase = "call"
+    plugin.active = True
+    plugin.current_nodeid = "test_case.py::test_case"
+    plugin._record_project_frame(
+        SimpleNamespace(f_code=mismatched_code, f_globals={"__name__": "test_case"})
+    )
+    assert plugin.origin_status == "INCOMPLETE"
+    assert plugin.origins[0]["frame_qualname"] is None
+    assert plugin.origins[0]["status"] == "INCOMPLETE"
+    source.write_text("values = (lambda: 1, lambda: 2)\n", encoding="utf-8")
+    ambiguous_digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    ambiguous_code = type(
+        "AmbiguousCode",
+        (),
+        {"co_filename": str(source), "co_name": "<lambda>", "co_firstlineno": 1},
+    )()
+    ambiguous = SimpleNamespace(f_code=ambiguous_code)
+    assert (
+        _challenge_frame_identity(
+            ambiguous, tmp_path, {"test_case.py": ambiguous_digest}, {}, {}
+        )
+        is None
+    )
+    assert not _challenge_origin_row_shape_valid(
+        {
+            "nodeid": "test_case.py::test_case",
+            "phase": "call",
+            "status": "BOUND",
+            "observation_kind": "executed_frame",
+        },
+        "test_case.py::test_case",
+    )
+
+
+def test_challenge_frame_identity_comprehension_scopes_are_exact(tmp_path):
+    import hashlib
+    from types import SimpleNamespace
+
+    from factoryline.pytest_readiness import _challenge_frame_identity
+
+    source = tmp_path / "test_case.py"
+    source.write_text(
+        "def build():\n"
+        "    source = (item for item in range(3))\n"
+        "    return [tuple(value for value in range(index)) for index in source]\n",
+        encoding="utf-8",
+    )
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    manifest = {"test_case.py": digest}
+
+    def identity(code_name, firstlineno):
+        code = type(
+            "CodeWithoutQualname",
+            (),
+            {
+                "co_filename": str(source),
+                "co_name": code_name,
+                "co_firstlineno": firstlineno,
+            },
+        )()
+        return _challenge_frame_identity(
+            SimpleNamespace(f_code=code), tmp_path, manifest, {}, {}
+        )
+
+    assert identity("<genexpr>", 2) == (
+        "build.<locals>.<genexpr>",
+        2,
+    )
+    assert identity("<listcomp>", 3) == (
+        "build.<locals>.<listcomp>",
+        3,
+    )
+    assert identity("<genexpr>", 3) == (
+        "build.<locals>.<listcomp>.<genexpr>",
+        3,
+    )
+
+    source.write_text(
+        "def build(flag): return (left for left in range(1)) if flag else (right for right in range(2))\n",
+        encoding="utf-8",
+    )
+    ambiguous_digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    ambiguous_code = type(
+        "CodeWithoutQualname",
+        (),
+        {
+            "co_filename": str(source),
+            "co_name": "<genexpr>",
+            "co_firstlineno": 1,
+        },
+    )()
+    assert (
+        _challenge_frame_identity(
+            SimpleNamespace(f_code=ambiguous_code),
+            tmp_path,
+            {"test_case.py": ambiguous_digest},
+            {},
+            {},
+        )
+        is None
+    )
+
+
+def test_challenge_frame_identity_comprehension_lambda_qualname(tmp_path):
+    import hashlib
+    from types import SimpleNamespace
+
+    from factoryline.pytest_readiness import _challenge_frame_identity
+
+    source = tmp_path / "test_case.py"
+    source.write_text(
+        "def make():\n    return [lambda: 7 for item in range(1)][0]\n",
+        encoding="utf-8",
+    )
+    namespace = {}
+    exec(compile(source.read_text(encoding="utf-8"), str(source), "exec"), namespace)
+    actual_code = namespace["make"]().__code__
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    manifest = {"test_case.py": digest}
+    runtime_qualname = getattr(actual_code, "co_qualname", None)
+    if runtime_qualname is not None:
+        assert runtime_qualname == "make.<locals>.<listcomp>.<lambda>"
+    assert _challenge_frame_identity(
+        SimpleNamespace(f_code=actual_code), tmp_path, manifest, {}, {}
+    ) == ("make.<locals>.<listcomp>.<lambda>", 2)
+
+    fallback_code = type(
+        "CodeWithoutQualname",
+        (),
+        {
+            "co_filename": str(source),
+            "co_name": "<lambda>",
+            "co_firstlineno": 2,
+        },
+    )()
+    assert _challenge_frame_identity(
+        SimpleNamespace(f_code=fallback_code), tmp_path, manifest, {}, {}
+    ) == ("make.<locals>.<listcomp>.<lambda>", 2)
+
+
 def test_challenge_binds_aliased_editable_loader_from_inventory(tmp_path):
     import hashlib
     import importlib.machinery
@@ -1807,6 +2044,8 @@ def test_challenge_origin_validation_rejects_missing_and_changed_sources(tmp_pat
                 "phase": "call",
                 "module_name": "test_case",
                 "observation_kind": "executed_frame",
+                "frame_qualname": "test_case",
+                "frame_firstlineno": 1,
                 "origin": "test_case.py",
                 "path": "test_case.py",
                 "source_sha256": digest,
