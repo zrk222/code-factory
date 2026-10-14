@@ -1878,6 +1878,7 @@ def test_challenge_frame_identity_ast_fallback_and_fails_closed(tmp_path):
 
 def test_challenge_frame_identity_comprehension_scopes_are_exact(tmp_path):
     import hashlib
+    import sys
     from types import SimpleNamespace
 
     from factoryline.pytest_readiness import _challenge_frame_identity
@@ -1910,14 +1911,18 @@ def test_challenge_frame_identity_comprehension_scopes_are_exact(tmp_path):
         "build.<locals>.<genexpr>",
         2,
     )
-    assert identity("<listcomp>", 3) == (
-        "build.<locals>.<listcomp>",
-        3,
-    )
-    assert identity("<genexpr>", 3) == (
-        "build.<locals>.<listcomp>.<genexpr>",
-        3,
-    )
+    if sys.version_info >= (3, 12):
+        assert identity("<listcomp>", 3) is None
+        assert identity("<genexpr>", 3) == ("build.<locals>.<genexpr>", 3)
+    else:
+        assert identity("<listcomp>", 3) == (
+            "build.<locals>.<listcomp>",
+            3,
+        )
+        assert identity("<genexpr>", 3) == (
+            "build.<locals>.<listcomp>.<genexpr>",
+            3,
+        )
 
     source.write_text(
         "def build(flag): return (left for left in range(1)) if flag else (right for right in range(2))\n",
@@ -1947,6 +1952,7 @@ def test_challenge_frame_identity_comprehension_scopes_are_exact(tmp_path):
 
 def test_challenge_frame_identity_comprehension_lambda_qualname(tmp_path):
     import hashlib
+    import sys
     from types import SimpleNamespace
 
     from factoryline.pytest_readiness import _challenge_frame_identity
@@ -1962,11 +1968,17 @@ def test_challenge_frame_identity_comprehension_lambda_qualname(tmp_path):
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     manifest = {"test_case.py": digest}
     runtime_qualname = getattr(actual_code, "co_qualname", None)
-    if runtime_qualname is not None:
-        assert runtime_qualname == "make.<locals>.<listcomp>.<lambda>"
+    if sys.version_info >= (3, 12):
+        expected_qualname = "make.<locals>.<lambda>"
+        assert runtime_qualname == expected_qualname
+    elif runtime_qualname is not None:
+        expected_qualname = "make.<locals>.<listcomp>.<lambda>"
+        assert runtime_qualname == expected_qualname
+    else:
+        expected_qualname = "make.<locals>.<listcomp>.<lambda>"
     assert _challenge_frame_identity(
         SimpleNamespace(f_code=actual_code), tmp_path, manifest, {}, {}
-    ) == ("make.<locals>.<listcomp>.<lambda>", 2)
+    ) == (expected_qualname, 2)
 
     fallback_code = type(
         "CodeWithoutQualname",
@@ -1979,7 +1991,90 @@ def test_challenge_frame_identity_comprehension_lambda_qualname(tmp_path):
     )()
     assert _challenge_frame_identity(
         SimpleNamespace(f_code=fallback_code), tmp_path, manifest, {}, {}
-    ) == ("make.<locals>.<listcomp>.<lambda>", 2)
+    ) == (expected_qualname, 2)
+
+
+def test_challenge_compiled_frame_names_do_not_execute_source(tmp_path):
+    import hashlib
+
+    from factoryline.pytest_readiness import _challenge_frame_name_map
+
+    marker = tmp_path / "must-not-exist"
+    source = tmp_path / "test_case.py"
+    source.write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('ran')\n"
+        "def target():\n    return 1\n",
+        encoding="utf-8",
+    )
+    names = _challenge_frame_name_map(
+        source, hashlib.sha256(source.read_bytes()).hexdigest()
+    )
+
+    assert names[("target", 3)] == "target"
+    assert not marker.exists()
+
+
+def test_challenge_compiled_frame_names_follow_runtime_comprehension_scopes(
+    tmp_path,
+):
+    import asyncio
+    import hashlib
+    import sys
+    from types import SimpleNamespace
+
+    from factoryline.pytest_readiness import _challenge_frame_identity
+
+    source = tmp_path / "test_case.py"
+    source.write_text(
+        "module_values = [lambda: 0 for _ in (0,)]\n"
+        "class Container:\n    values = {lambda: 1 for _ in (0,)}\n"
+        "def build():\n"
+        "    return ([lambda: 2 for _ in (0,)][0],\n"
+        "            {lambda: 3 for _ in (0,)}.pop(),\n"
+        "            {0: lambda: 4 for _ in (0,)}[0],\n"
+        "            next(lambda: 5 for _ in (0,)))\n"
+        "async def build_async():\n"
+        "    return [lambda: 6 for _ in (0,)][0]\n",
+        encoding="utf-8",
+    )
+    namespace = {}
+    exec(compile(source.read_text(encoding="utf-8"), str(source), "exec"), namespace)
+    functions = [
+        namespace["module_values"][0],
+        namespace["Container"].values.pop(),
+        *namespace["build"](),
+        asyncio.run(namespace["build_async"]()),
+    ]
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    manifest = {"test_case.py": digest}
+
+    for function in functions:
+        assert _challenge_frame_identity(
+            SimpleNamespace(f_code=function.__code__), tmp_path, manifest, {}, {}
+        ) == (function.__qualname__, function.__code__.co_firstlineno)
+    if sys.version_info >= (3, 12):
+        assert all("<listcomp>" not in function.__qualname__ for function in functions)
+        assert "<genexpr>" in functions[5].__qualname__
+
+
+def test_challenge_compiled_frame_name_limit_fails_closed(tmp_path):
+    import hashlib
+
+    from factoryline.pytest_readiness import _challenge_frame_name_map
+
+    source = tmp_path / "many_frames.py"
+    source.write_text(
+        "".join(f"def frame_{index}(): pass\n" for index in range(2048)),
+        encoding="utf-8",
+    )
+    names = _challenge_frame_name_map(
+        source, hashlib.sha256(source.read_bytes()).hexdigest()
+    )
+
+    if hasattr(compile("pass", "<probe>", "exec"), "co_qualname"):
+        assert not names
+    else:
+        assert names[("frame_0", 1)] == "frame_0"
 
 
 def test_challenge_binds_aliased_editable_loader_from_inventory(tmp_path):

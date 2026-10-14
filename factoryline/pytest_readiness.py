@@ -18,7 +18,7 @@ import tempfile
 import threading
 import time
 import tokenize
-from types import ModuleType
+from types import CodeType, ModuleType
 
 import pytest
 from pathlib import Path
@@ -663,7 +663,11 @@ def _challenge_frame_name_map(path, expected_digest):
         ):
             return {}
         encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
-        tree = ast.parse(raw.decode(encoding))
+        source = raw.decode(encoding)
+        compiled = compile(source, str(path), "exec")
+        if hasattr(compiled, "co_qualname"):
+            return _challenge_compiled_frame_names(compiled)
+        tree = ast.parse(source)
         names = {}
         _challenge_collect_ast_frame_names(tree, (), names)
         return names
@@ -676,6 +680,21 @@ def _challenge_frame_name_map(path, expected_digest):
         RecursionError,
     ):
         return {}
+
+
+def _challenge_compiled_frame_names(root_code):
+    names = {}
+    pending = [root_code]
+    visited = 0
+    while pending:
+        code = pending.pop()
+        visited += 1
+        if visited > 2048:
+            return {}
+        key = (code.co_name, code.co_firstlineno)
+        names[key] = None if key in names else code.co_qualname
+        pending.extend(value for value in code.co_consts if isinstance(value, CodeType))
+    return names
 
 
 def _challenge_collect_ast_frame_names(node, scopes, names):
