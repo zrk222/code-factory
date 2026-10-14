@@ -18,7 +18,7 @@ import tempfile
 import threading
 import time
 import tokenize
-from types import ModuleType
+from types import CodeType, ModuleType
 
 import pytest
 from pathlib import Path
@@ -75,6 +75,8 @@ class _AssertionChallenge:
         }
         self.origins = []
         self._origin_seen = set()
+        self._frame_name_cache = {}
+        self._frame_identity_cache = {}
         self.origin_limit_exceeded = False
         self.origin_status = "BOUND"
         self.phase = "collection"
@@ -129,12 +131,59 @@ class _AssertionChallenge:
         name = frame.f_globals.get("__name__")
         module = sys.modules.get(name)
         nodeid = self.current_nodeid or (self.collected[0] if self.collected else "")
-        key = (self.phase, nodeid, name, frame.f_code.co_filename)
+        frame_identity = _challenge_frame_identity(
+            frame,
+            self.root,
+            self.source_manifest,
+            self._frame_identity_cache,
+            self._frame_name_cache,
+        )
+        frame_qualname = frame_identity[0] if frame_identity else None
+        frame_firstlineno = frame_identity[1] if frame_identity else None
+        if not self._remember_project_frame_identity(
+            frame, nodeid, name, frame_qualname, frame_firstlineno
+        ):
+            return
+        self._store_project_frame_origin(
+            name,
+            module,
+            nodeid,
+            frame,
+            frame_qualname,
+            frame_firstlineno,
+            frame_identity is not None,
+        )
+
+    def _remember_project_frame_identity(
+        self, frame, nodeid, name, frame_qualname, frame_firstlineno
+    ):
+        key = (
+            self.phase,
+            nodeid,
+            name,
+            frame.f_code.co_filename,
+            frame_qualname or frame.f_code.co_name,
+            frame_firstlineno or frame.f_code.co_firstlineno,
+            frame.f_code if frame_qualname is None else None,
+        )
         if key in self._origin_seen:
-            return
+            return False
         if not self._remember_origin(key):
-            return
+            return False
         self._origin_seen.add(key)
+
+        return True
+
+    def _store_project_frame_origin(
+        self,
+        name,
+        module,
+        nodeid,
+        frame,
+        frame_qualname,
+        frame_firstlineno,
+        identity_bound,
+    ):
         row = _challenge_module_origin(
             name,
             module,
@@ -146,10 +195,16 @@ class _AssertionChallenge:
             "executed_frame",
             self.module_aliases,
         )
-        if row is not None:
-            self._add_origin(row)
+        if row is None:
+            self._record_unbound_project_frame(
+                name, frame, frame_qualname, frame_firstlineno
+            )
             return
-        self._record_unbound_project_frame(name, frame)
+        row["frame_qualname"] = frame_qualname
+        row["frame_firstlineno"] = frame_firstlineno
+        if not identity_bound and row["status"] == "BOUND":
+            row["status"] = "INCOMPLETE"
+        self._add_origin(row)
 
     def _project_frame_relevant(self, frame):
         if not self.active or frame.f_code.co_filename.startswith("<"):
@@ -161,7 +216,10 @@ class _AssertionChallenge:
             name in self.module_aliases or filename in self.source_filenames
         )
 
-    def _record_unbound_project_frame(self, name, frame):
+    def _record_unbound_project_frame(
+        self, name, frame, frame_qualname, frame_firstlineno
+    ):
+        self.origin_status = "INCOMPLETE"
         try:
             source = Path(frame.f_code.co_filename).resolve(strict=True)
             if source.is_relative_to(self.root) and source.suffix == ".py":
@@ -176,6 +234,8 @@ class _AssertionChallenge:
                         "path": relative,
                         "source_sha256": None,
                         "loader": None,
+                        "frame_qualname": frame_qualname,
+                        "frame_firstlineno": frame_firstlineno,
                         "status": "INCOMPLETE",
                     }
                 )
@@ -558,6 +618,181 @@ def _challenge_module_origin(
         "loader": type(getattr(spec, "loader", None)).__name__,
         "status": status,
     }
+
+
+def _challenge_frame_identity(frame, root, source_manifest, identity_cache, name_cache):
+    code = frame.f_code
+    if code in identity_cache:
+        return identity_cache[code]
+    if len(identity_cache) >= 2048:
+        return None
+    firstlineno = code.co_firstlineno
+    try:
+        source = Path(code.co_filename).resolve(strict=True)
+        relative = source.relative_to(root).as_posix()
+        expected = source_manifest[relative]
+    except (KeyError, OSError, ValueError, RuntimeError):
+        identity_cache[code] = None
+        return None
+    cache_key = (relative, expected)
+    if cache_key not in name_cache:
+        if len(name_cache) >= 512:
+            identity_cache[code] = None
+            return None
+        name_cache[cache_key] = _challenge_frame_name_map(source, expected)
+    names = name_cache[cache_key]
+    qualname = names.get((code.co_name, firstlineno)) if names else None
+    runtime_qualname = getattr(code, "co_qualname", None)
+    if not qualname or (runtime_qualname and runtime_qualname != qualname):
+        identity_cache[code] = None
+        return None
+    identity = (qualname, firstlineno)
+    identity_cache[code] = identity
+    return identity
+
+
+def _challenge_frame_name_map(path, expected_digest):
+    try:
+        if _typecheck_path_chain_linked(path):
+            return {}
+        with path.open("rb") as stream:
+            raw = stream.read(4 * 1024 * 1024 + 1)
+        if (
+            len(raw) > 4 * 1024 * 1024
+            or hashlib.sha256(raw).hexdigest() != expected_digest
+        ):
+            return {}
+        encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
+        source = raw.decode(encoding)
+        compiled = compile(source, str(path), "exec")
+        if hasattr(compiled, "co_qualname"):
+            return _challenge_compiled_frame_names(compiled)
+        tree = ast.parse(source)
+        names = {}
+        _challenge_collect_ast_frame_names(tree, (), names)
+        return names
+    except (
+        OSError,
+        SyntaxError,
+        UnicodeError,
+        ValueError,
+        LookupError,
+        RecursionError,
+    ):
+        return {}
+
+
+def _challenge_compiled_frame_names(root_code):
+    names = {}
+    pending = [root_code]
+    visited = 0
+    while pending:
+        code = pending.pop()
+        visited += 1
+        if visited > 2048:
+            return {}
+        key = (code.co_name, code.co_firstlineno)
+        names[key] = None if key in names else code.co_qualname
+        pending.extend(value for value in code.co_consts if isinstance(value, CodeType))
+    return names
+
+
+def _challenge_collect_ast_frame_names(node, scopes, names):
+    code_name, scope_name, is_function = _challenge_ast_frame_scope(node)
+    if code_name is not None:
+        qualname = _challenge_ast_qualname(scopes, scope_name)
+        for line in _challenge_ast_frame_lines(node):
+            key = (code_name, line)
+            names[key] = qualname if key not in names else None
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        _challenge_collect_ast_definition_children(
+            node, scopes, scopes + ((scope_name, is_function),), names
+        )
+        return
+    if isinstance(node, ast.Lambda):
+        _challenge_collect_ast_lambda_children(
+            node, scopes, scopes + ((scope_name, is_function),), names
+        )
+        return
+    if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+        _challenge_collect_ast_comprehension_children(
+            node, scopes, scopes + ((scope_name, is_function),), names
+        )
+        return
+    next_scopes = (
+        scopes + ((scope_name, is_function),)
+        if code_name and not isinstance(node, ast.Module)
+        else scopes
+    )
+    for child in ast.iter_child_nodes(node):
+        _challenge_collect_ast_frame_names(child, next_scopes, names)
+
+
+def _challenge_collect_ast_definition_children(node, outer_scopes, inner_scopes, names):
+    for child in ast.iter_child_nodes(node):
+        child_scopes = inner_scopes if child in node.body else outer_scopes
+        _challenge_collect_ast_frame_names(child, child_scopes, names)
+
+
+def _challenge_collect_ast_lambda_children(node, outer_scopes, inner_scopes, names):
+    _challenge_collect_ast_frame_names(node.body, inner_scopes, names)
+    for argument in node.args.defaults + node.args.kw_defaults:
+        if argument is not None:
+            _challenge_collect_ast_frame_names(argument, outer_scopes, names)
+
+
+def _challenge_collect_ast_comprehension_children(
+    node, outer_scopes, inner_scopes, names
+):
+    for index, generator in enumerate(node.generators):
+        iterable_scopes = outer_scopes if index == 0 else inner_scopes
+        _challenge_collect_ast_frame_names(generator.iter, iterable_scopes, names)
+        _challenge_collect_ast_frame_names(generator.target, inner_scopes, names)
+        for condition in generator.ifs:
+            _challenge_collect_ast_frame_names(condition, inner_scopes, names)
+    result_nodes = (
+        (node.key, node.value) if isinstance(node, ast.DictComp) else (node.elt,)
+    )
+    for result_node in result_nodes:
+        _challenge_collect_ast_frame_names(result_node, inner_scopes, names)
+
+
+def _challenge_ast_frame_scope(node):
+    if isinstance(node, ast.Module):
+        return "<module>", "<module>", False
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return node.name, node.name, not isinstance(node, ast.ClassDef)
+    if isinstance(node, ast.Lambda):
+        return "<lambda>", "<lambda>", True
+    for node_type, code_name in (
+        (ast.ListComp, "<listcomp>"),
+        (ast.SetComp, "<setcomp>"),
+        (ast.DictComp, "<dictcomp>"),
+        (ast.GeneratorExp, "<genexpr>"),
+    ):
+        if isinstance(node, node_type):
+            return code_name, code_name, False
+    return None, None, False
+
+
+def _challenge_ast_qualname(scopes, name):
+    parts = []
+    for index, (scope_name, _) in enumerate(scopes):
+        if index and scopes[index - 1][1]:
+            parts.append("<locals>")
+        parts.append(scope_name)
+    if scopes and scopes[-1][1]:
+        parts.append("<locals>")
+    parts.append(name)
+    return ".".join(parts)
+
+
+def _challenge_ast_frame_lines(node):
+    if isinstance(node, ast.Module):
+        return {1}
+    lines = {node.lineno}
+    lines.update(decorator.lineno for decorator in getattr(node, "decorator_list", ()))
+    return lines
 
 
 def _probe_exception_contains(error, expected, depth=0):
@@ -1336,6 +1571,21 @@ def _challenge_origin_row_shape_valid(row, nodeid):
         and row.get("phase") in {"collection", "call"}
         and row.get("status") == "BOUND"
         and row.get("observation_kind") in {"imported_module", "executed_frame"}
+        and (
+            row.get("observation_kind") != "executed_frame"
+            or _challenge_origin_frame_identity_valid(row)
+        )
+    )
+
+
+def _challenge_origin_frame_identity_valid(row):
+    firstlineno = row.get("frame_firstlineno")
+    return (
+        isinstance(row.get("frame_qualname"), str)
+        and bool(row["frame_qualname"])
+        and isinstance(firstlineno, int)
+        and not isinstance(firstlineno, bool)
+        and firstlineno > 0
     )
 
 

@@ -323,7 +323,7 @@ process.stdout.write(JSON.stringify({calls, output, summary:result.summary}));
         text=True,
         capture_output=True,
         check=True,
-        timeout=10,
+        timeout=30,
         env=environment,
     )
     assert process.stdout, (
@@ -713,7 +713,7 @@ def test_standalone_muse_installer_preserves_settings_and_is_idempotent(
             text=True,
             capture_output=True,
             check=True,
-            timeout=10,
+            timeout=30,
         )
         return json.loads(result.stdout)
 

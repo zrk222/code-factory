@@ -43,6 +43,328 @@ def test_tls_api_boundaries_detect_explicit_bypass(tmp_path, source, expected):
     assert result["audit_coverage"]["complete"] is True
 
 
+def _redirect_flow_source(
+    *, sanitize, aliases=False, reverse_tuple=False, branch=False
+):
+    request_name = "Incoming" if aliases else "Request"
+    sink_name = "Found" if aliases else "HTTPFound"
+    request_import = (
+        f"from aiohttp.web_request import Request as {request_name}"
+        if aliases
+        else "from aiohttp.web_request import Request"
+    )
+    sink_import = (
+        f"from aiohttp.web_exceptions import HTTPFound as {sink_name}"
+        if aliases
+        else "from aiohttp.web_exceptions import HTTPFound"
+    )
+    clone_return = "return copied, True" if reverse_tuple else "return True, copied"
+    caller_unpack = "clone, matched" if reverse_tuple else "matched, clone"
+    candidate_alias = "path" if aliases else "candidate"
+    normalize = (
+        f"        {candidate_alias} = re.sub('^//+', '/', {candidate_alias})\n"
+        if sanitize
+        else ""
+    )
+    if branch:
+        normalize = (
+            "        if enabled:\n"
+            f"            {candidate_alias} = re.sub('^//+', '/', {candidate_alias})\n"
+        )
+    imports = (
+        f"{request_import}\n{sink_import}\n"
+        "from aiohttp.web_exceptions import HTTPMove, HTTPPermanentRedirect\n"
+        "from typing import Type\nimport re\n"
+    )
+    return (
+        imports
+        + "async def resolve(source: "
+        + request_name
+        + ", target):\n"
+        + "    copied = source.clone(rel_url=target)\n"
+        + "    "
+        + clone_return
+        + "\n"
+        + "    return False, source\n"
+        + "async def handle(request: "
+        + request_name
+        + ", redirect_class: Type[HTTPMove] = HTTPPermanentRedirect):\n"
+        + "    original, query = request.raw_path.split('?', 1)\n"
+        + "    candidates = [original]\n"
+        + "    for "
+        + candidate_alias
+        + " in candidates:\n"
+        + normalize
+        + "        "
+        + caller_unpack
+        + " = await resolve(request, "
+        + candidate_alias
+        + ")\n"
+        + "        if matched:\n"
+        + "            raise redirect_class(clone.raw_path + query)\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (_redirect_flow_source(sanitize=False), True),
+        (_redirect_flow_source(sanitize=True), False),
+        (
+            _redirect_flow_source(sanitize=False, aliases=True, reverse_tuple=True),
+            True,
+        ),
+        (_redirect_flow_source(sanitize=True, branch=True), True),
+    ],
+)
+def test_aiohttp_request_clone_tuple_redirect_flow(tmp_path, source, expected):
+    compile(source, "redirect_fixture.py", "exec")
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert ("SECURITY_OPEN_REDIRECT" in report["finding_counts"]) is expected
+    assert report["audit_coverage"]["complete"] is True
+    if expected:
+        finding = next(
+            item
+            for item in report["findings"]
+            if item["code"] == "SECURITY_OPEN_REDIRECT"
+        )
+        assert finding["facts"]["cwe"] == "CWE-601"
+
+
+def test_aiohttp_clone_summary_rejects_competing_success_return(tmp_path):
+    source = _redirect_flow_source(sanitize=True).replace(
+        "    return True, copied\n    return False, source\n",
+        "    if bypass:\n        return bypass, source\n    return True, copied\n",
+    )
+    compile(source, "redirect_competing_return.py", "exec")
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"]["SECURITY_OPEN_REDIRECT"] == 1
+
+
+def test_aiohttp_clone_summary_rejects_rebound_clone_value(tmp_path):
+    source = _redirect_flow_source(sanitize=True).replace(
+        "    copied = source.clone(rel_url=target)\n",
+        "    copied = source.clone(rel_url=target)\n    copied = source\n",
+    )
+    compile(source, "redirect_rebound_clone.py", "exec")
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"]["SECURITY_OPEN_REDIRECT"] == 1
+
+
+def test_aiohttp_clone_summary_rejects_unknown_success_request_slot(tmp_path):
+    source = (
+        _redirect_flow_source(sanitize=True)
+        .replace(
+            "async def resolve(source: Request, target):",
+            "async def resolve(source: Request, target, bypass=False):",
+        )
+        .replace(
+            "    return True, copied\n    return False, source\n",
+            "    alias = source\n"
+            "    if bypass:\n"
+            "        return True, alias\n"
+            "    return True, copied\n"
+            "    return False, source\n",
+        )
+    )
+    compile(source, "redirect_unknown_success_slot.py", "exec")
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"]["SECURITY_OPEN_REDIRECT"] == 1
+
+
+def test_aiohttp_second_clone_call_does_not_clear_aliased_first_tuple(tmp_path):
+    source = (
+        _redirect_flow_source(sanitize=True)
+        .replace(
+            "        matched, clone = await resolve(request, candidate)\n",
+            "        matched, clone = await resolve(request, original)\n"
+            "        old_clone = clone\n"
+            "        matched, clone = await resolve(request, candidate)\n",
+        )
+        .replace(
+            "raise redirect_class(clone.raw_path + query)",
+            "raise redirect_class(old_clone.raw_path + query)",
+        )
+    )
+    compile(source, "redirect_reused_tuple_guard.py", "exec")
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"]["SECURITY_OPEN_REDIRECT"] == 1
+
+
+@pytest.mark.parametrize("binding", ["matched = False", "clone = request"])
+def test_aiohttp_assignment_invalidates_success_tuple_guard(tmp_path, binding):
+    source = _redirect_flow_source(sanitize=True).replace(
+        "        if matched:\n", f"        {binding}\n        if matched:\n"
+    )
+    compile(source, "redirect_overwritten_guard.py", "exec")
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"]["SECURITY_OPEN_REDIRECT"] == 1
+
+
+@pytest.mark.parametrize(
+    "loop",
+    [
+        "for candidate in [request.raw_path]:",
+        "for candidate in request.raw_path.split('?'):",
+    ],
+)
+def test_aiohttp_redirect_flow_handles_expression_iterables(tmp_path, loop):
+    source = _redirect_flow_source(sanitize=False).replace(
+        "    candidates = [original]\n    for candidate in candidates:",
+        f"    {loop}",
+    )
+    compile(source, "redirect_expression_loop.py", "exec")
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"]["SECURITY_OPEN_REDIRECT"] == 1
+
+
+def test_aiohttp_clone_helper_supports_keyword_only_path_argument(tmp_path):
+    source = (
+        _redirect_flow_source(sanitize=False)
+        .replace(
+            "async def resolve(source: Request, target):",
+            "async def resolve(*, source: Request, target):",
+        )
+        .replace(
+            "await resolve(request, candidate)",
+            "await resolve(source=request, target=candidate)",
+        )
+    )
+    compile(source, "redirect_keyword_only.py", "exec")
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"]["SECURITY_OPEN_REDIRECT"] == 1
+
+
+@pytest.mark.parametrize(
+    "shadow",
+    ["parameter", "local"],
+)
+def test_aiohttp_clone_helper_name_rebinding_is_not_trusted(tmp_path, shadow):
+    source = _redirect_flow_source(sanitize=True)
+    signature = "async def handle(request: Request, redirect_class: Type[HTTPMove] = HTTPPermanentRedirect):"
+    if shadow == "parameter":
+        source = source.replace(
+            signature,
+            "async def handle(request: Request, resolve, redirect_class: Type[HTTPMove] = HTTPPermanentRedirect):",
+        )
+    else:
+        source = source.replace(
+            "    original, query = request.raw_path.split('?', 1)",
+            "    resolve = other\n    original, query = request.raw_path.split('?', 1)",
+        )
+    compile(source, "redirect_shadowed_helper.py", "exec")
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"]["SECURITY_OPEN_REDIRECT"] == 1
+
+
+def test_aiohttp_loop_carried_path_reaches_later_iteration_sink(tmp_path):
+    source = (
+        "from aiohttp.web_request import Request\n"
+        "from aiohttp.web_exceptions import HTTPFound\n"
+        "def send(request: Request):\n"
+        "    target = '/'\n"
+        "    for item in (1, 2):\n"
+        "        if item == 2:\n"
+        "            raise HTTPFound(target)\n"
+        "        target = request.raw_path\n"
+    )
+    compile(source, "redirect_loop_carried.py", "exec")
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"]["SECURITY_OPEN_REDIRECT"] == 1
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from aiohttp.web_request import Request\n"
+        "from aiohttp.web_exceptions import HTTPBadRequest\n"
+        "def send(request: Request):\n"
+        "    raise HTTPBadRequest(request.raw_path)\n",
+        "from aiohttp.web_request import Request\n"
+        "from aiohttp.web_exceptions import HTTPFound\n"
+        "HTTPFound = custom\n"
+        "def send(request: Request):\n"
+        "    raise HTTPFound(request.raw_path)\n",
+    ],
+)
+def test_nonredirect_or_rebound_exception_is_not_redirect_sink(tmp_path, source):
+    compile(source, "redirect_sink_control.py", "exec")
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert "SECURITY_OPEN_REDIRECT" not in report["finding_counts"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from aiohttp.web_request import Request as Incoming\n"
+        "Incoming = CustomRequest\n"
+        "from aiohttp.web_exceptions import HTTPFound\n"
+        "def send(request: Incoming):\n"
+        "    raise HTTPFound(request.raw_path)\n",
+        "from aiohttp.web_request import Request\n"
+        "from aiohttp.web_exceptions import HTTPFound\n"
+        "def send(request: Request, HTTPFound):\n"
+        "    raise HTTPFound(request.raw_path)\n",
+    ],
+)
+def test_aiohttp_rebound_request_or_local_sink_is_not_trusted(tmp_path, source):
+    compile(source, "redirect_binding_control.py", "exec")
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert "SECURITY_OPEN_REDIRECT" not in report["finding_counts"]
+
+
+def test_aiohttp_redirect_alias_flags_full_url_despite_path_only_rewrite(tmp_path):
+    source = (
+        "from aiohttp.web_request import Request as Incoming\n"
+        "from aiohttp.web_exceptions import HTTPFound as Found\n"
+        "import re\n"
+        "def send(request: Incoming):\n"
+        "    target = request.url\n"
+        "    target = re.sub('^//+', '/', target)\n"
+        "    raise Found(target)\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"]["SECURITY_OPEN_REDIRECT"] == 1
+
+
+def test_aiohttp_normalized_candidate_without_success_guard_is_not_cleared(tmp_path):
+    source = _redirect_flow_source(sanitize=True).replace(
+        "        if matched:\n            raise redirect_class(",
+        "        raise redirect_class(",
+    )
+    compile(source, "redirect_control.py", "exec")
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"]["SECURITY_OPEN_REDIRECT"] == 1
+
+
+def test_untyped_clone_lookalike_does_not_claim_aiohttp_flow(tmp_path):
+    source = (
+        "class Request:\n"
+        "    def clone(self, rel_url):\n"
+        "        return self\n"
+        "def send(request):\n"
+        "    copy = request.clone(rel_url=request.path)\n"
+        "    raise redirect(copy.path)\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert "SECURITY_OPEN_REDIRECT" not in report["finding_counts"]
+
+
 def test_tls_default_expression_uses_enclosing_import_not_parameter(tmp_path):
     (tmp_path / "app.py").write_text(
         "import httpx\ndef f(httpx=httpx.Client(verify=False)):\n    return httpx\n",
