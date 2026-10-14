@@ -14,8 +14,11 @@ from factoryline.runtime_attestation import (
     SCHEMA,
     TEST_ORACLE_PAYLOAD_TYPE,
     TEST_ORACLE_PAYLOAD_TYPE_V2,
+    TEST_ORACLE_PAYLOAD_TYPE_V3,
     TEST_ORACLE_SCHEMA,
     TEST_ORACLE_SCHEMA_V2,
+    TEST_ORACLE_SCHEMA_V3,
+    TEST_ORACLE_VERIFICATION_SCHEMA_V3,
     TEST_ORACLE_VERIFICATION_SCHEMA_V2,
     RuntimeAttestationError,
     capture_supervised_attestation,
@@ -263,6 +266,67 @@ def _oracle_payload_v2(*, now: datetime | None = None) -> dict:
     return payload
 
 
+def _oracle_payload_v3(*, now: datetime | None = None) -> dict:
+    payload = _oracle_payload_v2(now=now)
+    payload["schema"] = TEST_ORACLE_SCHEMA_V3
+    test = payload["tests"][0]
+    case_id = test["baseline"]["case_ids"][0]
+    callback = "test_example.<locals>.callback"
+    assertion = {
+        "case_id": case_id,
+        "source_path": test["path"],
+        "source_sha256": test["test_sha256"],
+        "callback_qualname": callback,
+        "line": 10,
+        "assertion_kind": "assert",
+        "hits": 1,
+    }
+    manifest_sha = _digest("[]")
+    for run_name in ("baseline", "mutation"):
+        run = test[run_name]
+        run["setup_status"] = "PASS"
+        run["teardown_status"] = "PASS"
+        run["collection_catalog"] = {
+            "status": "PASS",
+            "phase": "collection",
+            "complete": True,
+            "scope": "test_function",
+            "source_path": test["path"],
+            "source_sha256": test["test_sha256"],
+            "config_manifest": [],
+            "config_manifest_sha256": manifest_sha,
+            "config_identity": "pytest-default",
+            "report_sha256": _digest(f"{run_name} collection report"),
+            "case_ids": list(run["case_ids"]),
+        }
+        run["assertion_observations"] = [
+            {
+                **assertion,
+                "outcome": "PASS" if run_name == "baseline" else "FAIL",
+                "failure_visible": run_name == "mutation",
+            }
+        ]
+        for origin in run["module_origins"]:
+            if origin["source_path"] == test["path"]:
+                origin["frame_qualname"] = "test_example"
+            else:
+                origin["frame_qualname"] = "product_call"
+        run["module_origins"].append(
+            {
+                "case_id": case_id,
+                "phase": "call",
+                "source_path": test["path"],
+                "module_name": "tests.test_example",
+                "source_sha256": test["test_sha256"],
+                "observation_kind": "executed_frame",
+                "frame_qualname": callback,
+            }
+        )
+    test["baseline"]["module_origins"][0]["frame_qualname"] = "test_example"
+    test["mutation"]["module_origins"][0]["frame_qualname"] = "test_example"
+    return payload
+
+
 def _signed_oracle(tmp_path: Path, payload: dict | None = None):
     keys = generate_key_material(
         out_dir=tmp_path / "oracle-keys",
@@ -280,6 +344,8 @@ def _signed_oracle(tmp_path: Path, payload: dict | None = None):
         payload_type=(
             TEST_ORACLE_PAYLOAD_TYPE_V2
             if payload["schema"] == TEST_ORACLE_SCHEMA_V2
+            else TEST_ORACLE_PAYLOAD_TYPE_V3
+            if payload["schema"] == TEST_ORACLE_SCHEMA_V3
             else TEST_ORACLE_PAYLOAD_TYPE
         ),
         private_key_path=Path(keys["private_key"]),
@@ -359,6 +425,176 @@ def test_signed_test_oracle_v2_allows_consistent_module_aliases(tmp_path: Path):
     result = _verify_oracle(receipt, trust, payload)
 
     assert result["state"] == "VERIFIED"
+
+
+def test_signed_test_oracle_v3_verifies_collection_and_assertion_observations(
+    tmp_path: Path,
+):
+    payload = _oracle_payload_v3()
+    receipt, trust, _, _ = _signed_oracle(tmp_path, payload)
+
+    result = _verify_oracle(receipt, trust, payload)
+
+    assert result["state"] == "VERIFIED"
+    assert result["schema"] == TEST_ORACLE_VERIFICATION_SCHEMA_V3
+    assert result["tests"][0]["baseline"]["collection_catalog"]["case_ids"]
+    assert (
+        result["tests"][0]["mutation"]["assertion_observations"][0]["failure_visible"]
+        is True
+    )
+
+
+def test_signed_test_oracle_v3_rejects_wrong_dsse_payload_type(tmp_path: Path):
+    keys = generate_key_material(
+        out_dir=tmp_path / "oracle-keys",
+        keyid="oracle-key",
+        identity="oracle@example",
+        issuer="local",
+    )
+    trust_path = Path(keys["trust_root"])
+    trust = json.loads(trust_path.read_text(encoding="utf-8"))
+    trust["keys"][0]["roles"] = ["oracle-verifier"]
+    trust_path.write_text(json.dumps(trust), encoding="utf-8")
+    payload = _oracle_payload_v3()
+    envelope = sign_payload(
+        payload,
+        payload_type=TEST_ORACLE_PAYLOAD_TYPE_V2,
+        private_key_path=Path(keys["private_key"]),
+        keyid=keys["keyid"],
+        identity=keys["identity"],
+        issuer=keys["issuer"],
+    )
+    receipt = tmp_path / "wrong-v3-payload-type.json"
+    receipt.write_text(json.dumps(envelope), encoding="utf-8")
+
+    with pytest.raises(RuntimeAttestationError, match="E_PAYLOAD_TYPE_MISMATCH"):
+        _verify_oracle(receipt, trust_path, payload)
+
+
+def _oracle_assertion_observation_rows(test: dict, count: int) -> list[dict]:
+    return [
+        {
+            "case_id": test["baseline"]["case_ids"][0],
+            "source_path": test["path"],
+            "source_sha256": test["test_sha256"],
+            "callback_qualname": f"test_example.<locals>.callback_{index}",
+            "line": 10,
+            "assertion_kind": "assert",
+            "hits": 1,
+            "outcome": "PASS",
+            "failure_visible": False,
+        }
+        for index in range(count)
+    ]
+
+
+def test_oracle_assertion_record_limit_boundary_is_accepted():
+    from factoryline.runtime_attestation import _oracle_assertion_observations
+
+    test = _oracle_payload_v3()["tests"][0]
+    observations = _oracle_assertion_observation_rows(test, 8192)
+
+    result = _oracle_assertion_observations(
+        observations,
+        field="baseline.assertion_observations",
+        case_ids=test["baseline"]["case_ids"],
+        test_path=test["path"],
+        test_sha=test["test_sha256"],
+        outcome="PASS",
+        failure_visible=False,
+    )
+
+    assert len(result) == 8192
+
+
+def test_oracle_assertion_record_limit_is_enforced():
+    payload = _oracle_payload_v3()
+    from factoryline.runtime_attestation import _oracle_assertion_observations
+
+    test = payload["tests"][0]
+    observations = _oracle_assertion_observation_rows(test, 8193)
+
+    with pytest.raises(RuntimeAttestationError, match="E_ORACLE_ASSERTION"):
+        _oracle_assertion_observations(
+            observations,
+            field="baseline.assertion_observations",
+            case_ids=test["baseline"]["case_ids"],
+            test_path=test["path"],
+            test_sha=test["test_sha256"],
+            outcome="PASS",
+            failure_visible=False,
+        )
+
+
+def test_signed_test_oracle_v3_accepts_subset_of_complete_collection_for_partial_use(
+    tmp_path: Path,
+):
+    payload = _oracle_payload_v3()
+    test = payload["tests"][0]
+    test["baseline"]["collection_catalog"]["case_ids"].append(
+        "tests/test_example.py::test_example[case-2]"
+    )
+    test["mutation"]["collection_catalog"]["case_ids"].append(
+        "tests/test_example.py::test_example[case-2]"
+    )
+    receipt, trust, _, _ = _signed_oracle(tmp_path, payload)
+
+    result = _verify_oracle(receipt, trust, payload)
+
+    assert result["state"] == "VERIFIED"
+    assert len(result["tests"][0]["baseline"]["case_ids"]) == 1
+    assert len(result["tests"][0]["baseline"]["collection_catalog"]["case_ids"]) == 2
+
+
+def test_signed_test_oracle_v2_rejects_v3_collection_fields(tmp_path: Path):
+    payload = _oracle_payload_v2()
+    payload["tests"][0]["baseline"]["collection_catalog"] = {}
+    receipt, trust, _, _ = _signed_oracle(tmp_path, payload)
+
+    with pytest.raises(RuntimeAttestationError, match="E_ORACLE_SCHEMA"):
+        _verify_oracle(receipt, trust, payload)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "code"),
+    [
+        (
+            lambda p: p["tests"][0]["baseline"]["collection_catalog"].update(
+                config_identity="manifest"
+            ),
+            "E_ORACLE_COLLECTION",
+        ),
+        (
+            lambda p: p["tests"][0]["mutation"].update(setup_status="FAIL"),
+            "E_ORACLE_MUTATION",
+        ),
+        (
+            lambda p: p["tests"][0]["baseline"]["assertion_observations"][0].update(
+                source_sha256=_digest("changed test source")
+            ),
+            "E_ORACLE_ASSERTION",
+        ),
+        (
+            lambda p: p["tests"][0]["mutation"]["assertion_observations"][0].update(
+                failure_visible=False
+            ),
+            "E_ORACLE_ASSERTION",
+        ),
+        (
+            lambda p: p["tests"][0]["mutation"]["module_origins"].pop(1),
+            "E_ORACLE_ORIGIN",
+        ),
+    ],
+)
+def test_signed_test_oracle_v3_rejects_incomplete_callback_claims(
+    tmp_path: Path, mutate, code: str
+):
+    payload = _oracle_payload_v3()
+    mutate(payload)
+    receipt, trust, _, _ = _signed_oracle(tmp_path, payload)
+
+    with pytest.raises(RuntimeAttestationError, match=code):
+        _verify_oracle(receipt, trust, payload)
 
 
 def test_signed_test_oracle_v2_requires_origins_for_each_selected_case(

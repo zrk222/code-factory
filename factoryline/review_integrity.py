@@ -941,16 +941,304 @@ def _callback_registration_body(register, registry):
 def _callback_has_live_assertion(
     callback, aliases, strong_assertion, effective_assertion
 ):
-    if isinstance(callback, ast.AsyncFunctionDef) or _callback_catches_assertion(
-        callback
-    ):
+    if _callback_catches_assertion(callback):
         return False
-    if any(isinstance(node, (ast.Yield, ast.YieldFrom)) for node in ast.walk(callback)):
+    nodes = list(_lexical_nodes(callback))
+    if any(isinstance(node, (ast.Yield, ast.YieldFrom)) for node in nodes):
         return False
     return strong_assertion(callback, aliases) and any(
         isinstance(node, ast.Assert) and effective_assertion(node, aliases)
-        for node in ast.walk(callback)
+        for node in nodes
     )
+
+
+def _runtime_callback_nodes(test: ast.AST, test_qualname: str) -> dict[str, ast.AST]:
+    callbacks = {}
+
+    def visit(scope, qualname, class_scope=False):
+        for child in ast.iter_child_nodes(scope):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                separator = "." if class_scope else ".<locals>."
+                child_name = qualname + separator + child.name
+                callbacks.setdefault(child_name, []).append(child)
+                visit(child, child_name)
+            elif isinstance(child, ast.ClassDef):
+                child_name = qualname + ".<locals>." + child.name
+                visit(child, child_name, class_scope=True)
+            elif not isinstance(child, (ast.Lambda,)):
+                visit(child, qualname, class_scope)
+
+    visit(test, test_qualname)
+    return callbacks
+
+
+def _runtime_callback_rebound(test: ast.AST, callback: ast.AST) -> bool:
+    for node in ast.walk(test):
+        if isinstance(node, ast.Name) and node.id == callback.name:
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                return True
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == callback.name
+            and node.attr == "__code__"
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+        ):
+            return True
+    return False
+
+
+def _runtime_callback_frame_for_case(
+    origins, case_id, test_path, test_sha, qualname=None
+):
+    return any(
+        item["case_id"] == case_id
+        and item["source_path"] == test_path
+        and item["source_sha256"] == test_sha
+        and item["observation_kind"] == "executed_frame"
+        and (qualname is None or item.get("frame_qualname") == qualname)
+        for item in origins
+    )
+
+
+def _runtime_callback_assertion_for_case(
+    observations, case_id, qualname, line, outcome
+):
+    return any(
+        row["case_id"] == case_id
+        and row["callback_qualname"] == qualname
+        and row["line"] == line
+        and row["assertion_kind"] == "assert"
+        and row["hits"] > 0
+        and row["outcome"] == outcome
+        and row["failure_visible"] is (outcome == "FAIL")
+        for row in observations
+    )
+
+
+def _runtime_assertion_is_strong(assertion, strong_assertion, aliases):
+    wrapper = ast.FunctionDef(
+        name="test_runtime_assertion",
+        args=ast.arguments(
+            posonlyargs=[],
+            args=[],
+            vararg=None,
+            kwonlyargs=[],
+            kw_defaults=[],
+            defaults=[],
+        ),
+        body=[assertion],
+        decorator_list=[],
+    )
+    return strong_assertion(ast.fix_missing_locations(wrapper), aliases)
+
+
+def _runtime_callback_context(oracle_row, test_qualname, current_config_manifest):
+    baseline, mutation = oracle_row.get("baseline"), oracle_row.get("mutation")
+    if not isinstance(baseline, dict) or not isinstance(mutation, dict):
+        return None, "v3 baseline and mutation records are required"
+    lifecycle = (
+        baseline.get("status") == "PASS"
+        and baseline.get("phase") == "call"
+        and baseline.get("setup_status") == "PASS"
+        and baseline.get("teardown_status") == "PASS"
+        and mutation.get("status") == "FAIL"
+        and mutation.get("phase") == "call"
+        and mutation.get("setup_status") == "PASS"
+        and mutation.get("teardown_status") == "PASS"
+        and mutation.get("failure_kind") == "assertion"
+    )
+    if not lifecycle:
+        return None, "baseline or visible assertion mutation lifecycle is incomplete"
+    baseline_catalog = baseline.get("collection_catalog")
+    mutation_catalog = mutation.get("collection_catalog")
+    if not isinstance(baseline_catalog, dict) or not isinstance(mutation_catalog, dict):
+        return None, "complete v3 function collection catalogs are required"
+    catalogs = (baseline_catalog, mutation_catalog)
+    if any(
+        item.get("status") != "PASS"
+        or item.get("phase") != "collection"
+        or item.get("complete") is not True
+        or item.get("scope") != "test_function"
+        or item.get("source_path") != oracle_row["path"]
+        or item.get("source_sha256") != oracle_row["test_sha256"]
+        for item in catalogs
+    ):
+        return None, "signed function collection catalog is incomplete"
+    if current_config_manifest is None:
+        return None, "current static configuration binding is unavailable"
+    manifest = [
+        {"path": path, "sha256": digest}
+        for path, digest in sorted(current_config_manifest.items())
+    ]
+    identity = "manifest" if manifest else "pytest-default"
+    if any(
+        item["config_manifest"] != manifest or item["config_identity"] != identity
+        for item in catalogs
+    ):
+        return None, "collection config does not match current scan config"
+    if baseline_catalog["case_ids"] != mutation_catalog["case_ids"]:
+        return None, "baseline and mutation collection scope differs"
+    prefix = oracle_row["path"] + "::" + test_qualname.replace(".", "::")
+    catalog_cases = baseline_catalog["case_ids"]
+    if any(
+        case != prefix and not case.startswith(prefix + "[") for case in catalog_cases
+    ):
+        return None, "collection catalog does not match the exact test qualname"
+    if baseline["case_ids"] != mutation["case_ids"]:
+        return None, "baseline and mutation selected cases differ"
+    return (baseline, mutation, catalog_cases), None
+
+
+def _runtime_callback_case_match(
+    case_id, qualname, assertions, oracle_row, baseline, mutation
+):
+    if case_id not in baseline["case_ids"] or case_id not in mutation["case_ids"]:
+        return False
+    path, test_sha = oracle_row["path"], oracle_row["test_sha256"]
+    baseline_origins, mutation_origins = (
+        baseline["module_origins"],
+        mutation["module_origins"],
+    )
+    for assertion in assertions:
+        if (
+            _runtime_callback_frame_for_case(
+                baseline_origins, case_id, path, test_sha, qualname
+            )
+            and _runtime_callback_frame_for_case(
+                mutation_origins, case_id, path, test_sha, qualname
+            )
+            and _runtime_callback_frame_for_case(
+                baseline_origins,
+                case_id,
+                mutation["source_path"],
+                mutation["source_sha256"],
+            )
+            and _runtime_callback_frame_for_case(
+                mutation_origins,
+                case_id,
+                mutation["source_path"],
+                mutation["mutant_sha256"],
+            )
+            and _runtime_callback_assertion_for_case(
+                baseline["assertion_observations"],
+                case_id,
+                qualname,
+                assertion.lineno,
+                "PASS",
+            )
+            and _runtime_callback_assertion_for_case(
+                mutation["assertion_observations"],
+                case_id,
+                qualname,
+                assertion.lineno,
+                "FAIL",
+            )
+        ):
+            return True
+    return False
+
+
+def _runtime_callback_covered(
+    test,
+    test_qualname,
+    catalog,
+    oracle_row,
+    baseline,
+    mutation,
+    aliases,
+    strong_assertion,
+    effective_assertion,
+):
+    covered, used = set(), set()
+    candidates = _runtime_callback_nodes(test, test_qualname)
+    for qualname, nodes in candidates.items():
+        if len(nodes) != 1 or not qualname.startswith(test_qualname + ".<locals>."):
+            continue
+        callback = nodes[0]
+        if _runtime_callback_rebound(
+            test, callback
+        ) or not _callback_has_live_assertion(
+            callback, aliases, strong_assertion, effective_assertion
+        ):
+            continue
+        assertions = [
+            node
+            for node in _lexical_nodes(callback)
+            if isinstance(node, ast.Assert)
+            and effective_assertion(node, aliases)
+            and _runtime_assertion_is_strong(node, strong_assertion, aliases)
+        ]
+        matched = {
+            case_id
+            for case_id in catalog
+            if _runtime_callback_case_match(
+                case_id, qualname, assertions, oracle_row, baseline, mutation
+            )
+        }
+        if matched:
+            covered.update(matched)
+            used.add(qualname)
+    return covered, used
+
+
+def runtime_callback_coverage(
+    test: ast.AST,
+    oracle_row: dict,
+    *,
+    verified_schema: str,
+    test_qualname: str,
+    current_config_manifest: dict[str, str] | None,
+    strong_assertion,
+    effective_assertion,
+    aliases: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Reconcile exact signed callback assertion coverage without clearing partial cases."""
+    result = {
+        "eligible": False,
+        "covered_case_ids": [],
+        "remaining_case_ids": [],
+        "callback_qualnames": [],
+        "reason": "runtime callback evidence is incomplete",
+    }
+    baseline = oracle_row.get("baseline")
+    if isinstance(baseline, dict):
+        catalog = baseline.get("collection_catalog")
+        if isinstance(catalog, dict) and isinstance(catalog.get("case_ids"), list):
+            result["remaining_case_ids"] = list(catalog["case_ids"])
+    if verified_schema != "factory.test-oracle-verification.v3":
+        result["reason"] = "verified v3 origin and assertion schema is required"
+        return result
+    context, reason = _runtime_callback_context(
+        oracle_row, test_qualname, current_config_manifest
+    )
+    if reason:
+        result["reason"] = reason
+        return result
+    baseline, mutation, catalog = context
+    result["remaining_case_ids"] = list(catalog)
+    aliases = aliases or {}
+    covered, used_callbacks = _runtime_callback_covered(
+        test,
+        test_qualname,
+        catalog,
+        oracle_row,
+        baseline,
+        mutation,
+        aliases,
+        strong_assertion,
+        effective_assertion,
+    )
+    result["covered_case_ids"] = sorted(covered)
+    result["remaining_case_ids"] = sorted(set(catalog) - covered)
+    result["callback_qualnames"] = sorted(used_callbacks)
+    result["eligible"] = not result["remaining_case_ids"]
+    result["reason"] = (
+        "all collected cases have matching visible callback assertion failures"
+        if result["eligible"]
+        else "callback evidence covers only a subset of the function collection"
+    )
+    return result
 
 
 def _callback_registry_dispatch(test, registry, registration, register, callbacks):
@@ -2679,3 +2967,649 @@ def decode_structural_context(payload):
         **{key: set(payload.get(key, [])) for key in _STRUCTURAL_SET_FIELDS},
         **{key: payload.get(key, {}) for key in _STRUCTURAL_MAP_FIELDS},
     }
+
+
+def tls_verification_disabled(call: str, node: ast.Call) -> bool:
+    """Recognize explicit verification bypasses on known TLS API boundaries."""
+    if call == "ssl._create_unverified_context":
+        return True
+    methods = {"get", "post", "put", "patch", "delete", "head", "options", "request"}
+    supported = {
+        f"{module}.{method}" for module in ("requests", "httpx") for method in methods
+    }
+    supported.update({"httpx.Client", "httpx.AsyncClient", "httpx.stream"})
+    if call not in supported:
+        return False
+    return any(
+        keyword.arg == "verify"
+        and isinstance(keyword.value, ast.Constant)
+        and keyword.value.value is False
+        for keyword in node.keywords
+    )
+
+
+def bind_security_call_scopes(tree: ast.AST) -> None:
+    """Retain lexical parameter shadowing for nested security call readers."""
+    tree._security_parent_scope = None
+    tree._security_scope_kind = "module"
+    tree._security_local_names = set()
+    tree._security_nonlocal_names = set()
+    tree._security_calls_by_statement = {}
+    _bind_security_scope_node(tree, tree, set(), tree)
+
+
+def _bind_security_scope_node(node, scope, shadowed, tree, flow_statement=None):
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        _bind_security_function(node, scope, shadowed, tree, flow_statement)
+        return
+    if isinstance(node, ast.ClassDef):
+        _bind_security_class(node, scope, shadowed, tree, flow_statement)
+        return
+    if isinstance(node, ast.Call):
+        node._security_shadowed_names = shadowed
+        node._security_lexical_scope = scope
+        node._security_flow_statement = flow_statement
+        calls = getattr(scope, "_security_calls_by_statement", {})
+        calls.setdefault(id(flow_statement), []).append(node)
+        scope._security_calls_by_statement = calls
+    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+        node._security_lexical_scope = scope
+    for child in ast.iter_child_nodes(node):
+        direct = child if node is scope else flow_statement
+        _bind_security_scope_node(child, scope, shadowed, tree, direct)
+
+
+def _bind_security_function(node, scope, shadowed, tree, flow_statement):
+    arguments = node.args
+    body = node.body if isinstance(node.body, list) else [node.body]
+    definition_statement = flow_statement or node
+    for decorator in getattr(node, "decorator_list", []):
+        _bind_security_scope_node(
+            decorator, scope, shadowed, tree, definition_statement
+        )
+    for default in [*arguments.defaults, *arguments.kw_defaults]:
+        if default is not None:
+            _bind_security_scope_node(
+                default, scope, shadowed, tree, definition_statement
+            )
+    for annotation in _function_annotations(node):
+        _bind_security_scope_node(
+            annotation, scope, shadowed, tree, definition_statement
+        )
+    lexical_parent = (
+        getattr(scope, "_security_parent_scope", tree)
+        if isinstance(scope, ast.ClassDef)
+        else scope
+    )
+    node._security_parent_scope = lexical_parent
+    node._security_class_scope = scope if isinstance(scope, ast.ClassDef) else None
+    arguments_names = {
+        argument.arg
+        for argument in [
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+            *[arg for arg in (arguments.vararg, arguments.kwarg) if arg],
+        ]
+    }
+    node._security_parameter_names = arguments_names
+    node._security_local_names = _security_scope_local_names(node)
+    node._security_nonlocal_names = _security_scope_nonlocal_names(node)
+    node._security_scope_kind = "function"
+    node._security_calls_by_statement = {}
+    child_shadowed = shadowed | arguments_names | node._security_local_names
+    for child in body:
+        _bind_security_scope_node(child, node, child_shadowed, tree, child)
+
+
+def _bind_security_class(node, scope, shadowed, tree, flow_statement):
+    for child in [*node.decorator_list, *node.bases]:
+        _bind_security_scope_node(child, scope, shadowed, tree, flow_statement or node)
+    for keyword in node.keywords:
+        _bind_security_scope_node(
+            keyword.value, scope, shadowed, tree, flow_statement or node
+        )
+    node._security_parent_scope = scope
+    node._security_scope_kind = "class"
+    node._security_local_names = _security_scope_local_names(node)
+    node._security_nonlocal_names = _security_scope_nonlocal_names(node)
+    node._security_calls_by_statement = {}
+    for child in node.body:
+        _bind_security_scope_node(child, node, shadowed, tree, child)
+
+
+def _function_annotations(node):
+    args = node.args
+    values = [
+        arg.annotation for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs]
+    ]
+    values.extend(arg.annotation for arg in (args.vararg, args.kwarg) if arg)
+    if getattr(node, "returns", None) is not None:
+        values.append(node.returns)
+    return [value for value in values if value is not None]
+
+
+def _security_scope_local_names(scope):
+    from . import review_audits as audit
+
+    names = set()
+    body = getattr(scope, "body", [])
+    statements = body if isinstance(body, list) else [body]
+    for statement in statements:
+        if not isinstance(statement, ast.AST):
+            continue
+        names.update(audit._bound_names(statement))
+    return (
+        names
+        - _security_scope_declared_names(scope, ast.Global)
+        - (_security_scope_declared_names(scope, ast.Nonlocal))
+    )
+
+
+def _security_scope_nonlocal_names(scope):
+    return _security_scope_declared_names(scope, ast.Nonlocal)
+
+
+def _security_scope_declared_names(scope, declaration):
+    body = getattr(scope, "body", [])
+    statements = body if isinstance(body, list) else [body]
+    names = set()
+    pending = list(statements)
+    while pending:
+        node = pending.pop()
+        if not isinstance(node, ast.AST):
+            continue
+        if node is not scope and isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        if isinstance(node, declaration):
+            names.update(node.names)
+        pending.extend(ast.iter_child_nodes(node))
+    return names
+
+
+def session_tls_findings(relative, node, aliases, emit):
+    """Recognize verify=False assignments only on a direct, unrebound Session."""
+    if not isinstance(node.value, ast.Constant) or node.value.value is not False:
+        return []
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    scope = getattr(node, "_security_lexical_scope", None) or getattr(
+        node, "_oracle_scope", None
+    )
+    constructors = _session_tls_constructor_map(scope, node, aliases)
+    if constructors is None:
+        return []
+    return [
+        emit(
+            "SECURITY_TLS_VERIFY_DISABLED",
+            relative,
+            node,
+            "TLS certificate verification is disabled on a proven Requests session.",
+            "HIGH",
+            call="requests.Session.verify",
+            receiver=target.value.id,
+        )
+        for target in targets
+        if isinstance(target, ast.Attribute)
+        and target.attr == "verify"
+        and isinstance(target.value, ast.Name)
+        and target.value.id in constructors
+    ]
+
+
+def _session_tls_constructor_map(scope, node, aliases):
+    from . import review_audits as audit
+
+    constructors = {}
+    for statement in getattr(scope, "body", []):
+        if statement is node:
+            return constructors
+        bindings = audit._bound_names(statement)
+        constructors = {
+            name: value for name, value in constructors.items() if name not in bindings
+        }
+        if isinstance(statement, ast.Assign) and isinstance(statement.value, ast.Call):
+            call = security_call_name(statement.value, aliases)
+            resolved, _ = _security_flow_bindings(statement.value, aliases)
+            head = audit._call_name(statement.value).split(".", 1)[0]
+            if call == "requests.Session" and head in resolved:
+                constructors.update(
+                    {
+                        target.id: call
+                        for target in statement.targets
+                        if isinstance(target, ast.Name)
+                    }
+                )
+    return None
+
+
+def security_assignment_findings(relative, node, aliases):
+    """Combine literal diagnostics with proven session verification changes."""
+    from . import review_audits as audit
+
+    return audit._literal_assignment_diagnostics(relative, node) + session_tls_findings(
+        relative, node, aliases, audit._security_finding
+    )
+
+
+def _security_flow_bindings(node, aliases):
+    """Read unconditional preceding bindings; uncertain branches invalidate them."""
+    scope = getattr(node, "_security_lexical_scope", None) or getattr(
+        node, "_oracle_scope", None
+    )
+    if scope is None:
+        return dict(aliases), {}
+    return _security_flow_scope_snapshots(scope, aliases).get(id(node), ({}, {}))
+
+
+def _security_flow_scope_snapshots(scope, aliases):
+    key = tuple(sorted(aliases.items()))
+    cache = getattr(scope, "_security_flow_cache", {})
+    if key not in cache:
+        cache[key] = _security_flow_snapshots(scope, aliases)
+        scope._security_flow_cache = cache
+    return cache[key]
+
+
+def _security_scope_body(scope):
+    if isinstance(
+        scope,
+        (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
+    ):
+        return scope.body
+    if isinstance(scope, ast.Lambda):
+        return [scope.body]
+    return []
+
+
+def _security_module_scope(scope):
+    pending = [scope]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, ast.Module):
+            return current
+        parent = getattr(current, "_security_parent_scope", None)
+        if parent is not None:
+            pending.append(parent)
+        class_scope = getattr(current, "_security_class_scope", None)
+        if class_scope is not None:
+            pending.append(class_scope)
+    return None
+
+
+def _security_scope_initial(scope, aliases):
+    if isinstance(scope, ast.Module):
+        return {}, {}
+    parent = getattr(scope, "_security_parent_scope", None)
+    if parent is not None:
+        _security_flow_scope_snapshots(parent, aliases)
+    resolved, constants = _security_scope_base(scope, aliases)
+    closure, shadowed = _security_scope_closure(scope)
+    _security_remove_bindings(resolved, constants, shadowed)
+    if closure is not None:
+        resolved.update(closure[0])
+        constants.update(closure[1])
+    if getattr(scope, "_security_scope_kind", None) == "function":
+        locals_ = (
+            getattr(scope, "_security_local_names", set())
+            | getattr(scope, "_security_parameter_names", set())
+            | getattr(scope, "_security_nonlocal_names", set())
+        )
+        _security_remove_bindings(resolved, constants, locals_)
+    return resolved, constants
+
+
+def _security_scope_base(scope, aliases):
+    if isinstance(scope, ast.ClassDef):
+        seed = getattr(scope, "_security_scope_seed", ({}, {}))
+        return dict(seed[0]), dict(seed[1])
+    module = _security_module_scope(scope)
+    if module is None:
+        return {}, {}
+    _security_flow_scope_snapshots(module, aliases)
+    resolved, constants = getattr(module, "_security_flow_final", ({}, {}))
+    return dict(resolved), dict(constants)
+
+
+def _security_scope_closure(scope):
+    closure = getattr(scope, "_security_closure_seed", None)
+    closure_shadowed = getattr(scope, "_security_closure_shadowed", set())
+    class_scope = getattr(scope, "_security_class_scope", None)
+    if class_scope is not None:
+        closure = getattr(class_scope, "_security_closure_seed", closure)
+        closure_shadowed = getattr(
+            class_scope, "_security_closure_shadowed", closure_shadowed
+        )
+    if closure is None and isinstance(scope, ast.ClassDef):
+        closure = getattr(scope, "_security_scope_seed", None)
+    return closure, closure_shadowed
+
+
+def _security_remove_bindings(resolved, constants, names):
+    for name in names:
+        resolved.pop(name, None)
+        constants.pop(name, None)
+
+
+def _security_definition_seed(child, parent, resolved, constants, remaining):
+    if isinstance(child, ast.ClassDef):
+        child._security_scope_seed = (dict(resolved), dict(constants))
+        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            child._security_scope_shadowed = (
+                set(getattr(parent, "_security_local_names", set()))
+                | set(getattr(parent, "_security_parameter_names", set()))
+                | set(getattr(parent, "_security_nonlocal_names", set()))
+            )
+        else:
+            child._security_scope_shadowed = set()
+    if not isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return
+    from . import review_audits as audit
+
+    stable_names = set(getattr(parent, "_security_local_names", set()))
+    inherited_shadowed = set(getattr(parent, "_security_closure_shadowed", set()))
+    stable_names.update(inherited_shadowed)
+    shadowed_names = (
+        stable_names
+        | set(getattr(parent, "_security_parameter_names", set()))
+        | set(getattr(parent, "_security_nonlocal_names", set()))
+    )
+    unstable = set(getattr(child, "_security_nonlocal_names", set()))
+    for statement in remaining:
+        unstable.update(audit._bound_names(statement))
+    stable_names -= unstable
+    child._security_closure_shadowed = shadowed_names
+    child._security_closure_seed = (
+        {name: resolved[name] for name in stable_names if name in resolved},
+        {name: constants[name] for name in stable_names if name in constants},
+    )
+
+
+def _security_flow_snapshots(scope, aliases):
+    from . import review_audits as audit
+
+    resolved, constants = _security_scope_initial(scope, aliases)
+    snapshots = {}
+    body = _security_scope_body(scope)
+    calls_by_statement = getattr(scope, "_security_calls_by_statement", {})
+    for index, statement in enumerate(body):
+        for call in calls_by_statement.get(id(statement), ()):
+            snapshots[id(call)] = _security_flow_snapshot(call, resolved, constants)
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            _security_definition_seed(
+                statement, scope, resolved, constants, body[index + 1 :]
+            )
+        if isinstance(statement, (ast.Import, ast.ImportFrom)):
+            resolved.update(audit._security_aliases([statement]))
+            continue
+        _security_flow_assignment(statement, resolved, constants)
+    scope._security_flow_final = (dict(resolved), dict(constants))
+    return snapshots
+
+
+def _security_flow_snapshot(node, resolved, constants):
+    from . import review_audits as audit
+
+    head = audit._call_name(node).split(".", 1)[0]
+    shell = next((kw.value for kw in node.keywords if kw.arg == "shell"), None)
+    names = {shell.id} if isinstance(shell, ast.Name) else set()
+    return (
+        {head: resolved[head]} if head in resolved else {},
+        {name: constants[name] for name in names if name in constants},
+    )
+
+
+def _security_flow_assignment(statement, resolved, constants):
+    from . import review_audits as audit
+
+    value = getattr(statement, "value", None)
+    if isinstance(statement, (ast.Global, ast.Nonlocal)):
+        for name in statement.names:
+            resolved.pop(name, None)
+            constants.pop(name, None)
+        return
+    name = audit._name(value) if isinstance(value, ast.AST) else ""
+    head, _, tail = name.partition(".")
+    reference = resolved.get(head)
+    alias = reference + ("." + tail if tail else "") if reference else None
+    literal = value.value if isinstance(value, ast.Constant) else constants.get(name)
+    bindings = audit._bound_names(statement)
+    for binding in bindings:
+        resolved.pop(binding, None)
+        constants.pop(binding, None)
+    if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+        targets = (
+            statement.targets
+            if isinstance(statement, ast.Assign)
+            else [statement.target]
+        )
+        for target in targets:
+            if not isinstance(target, ast.Name):
+                continue
+            if alias is not None:
+                resolved[target.id] = alias
+            if type(literal) is bool:
+                constants[target.id] = literal
+
+
+def security_call_name(node, aliases):
+    """Resolve a call through preceding imports and stable local aliases.
+
+    Calls whose names are shadowed in their lexical scope are left unresolved
+    when their raw spelling would otherwise trigger a security diagnostic.
+    """
+    from . import review_audits as audit
+
+    resolved, _constants = _security_flow_bindings(node, aliases)
+    name = audit._call_name(node)
+    head, _, tail = name.partition(".")
+    if head in resolved:
+        return resolved[head] + ("." + tail if tail else "")
+    if head in aliases:
+        return ""
+    if head in getattr(node, "_security_shadowed_names", set()):
+        if audit._security_call_finding(name, "", node) is not None:
+            return ""
+    return name
+
+
+def shell_execution_enabled(node):
+    """Return true only when shell execution is statically proven enabled."""
+    from . import review_audits as audit
+
+    shell = next((kw.value for kw in node.keywords if kw.arg == "shell"), None)
+    if isinstance(shell, ast.Constant):
+        return shell.value is True
+    if not isinstance(shell, ast.Name):
+        return False
+    scope = getattr(node, "_security_lexical_scope", None)
+    aliases = (
+        audit._module_security_aliases(scope) if isinstance(scope, ast.Module) else {}
+    )
+    _resolved, constants = _security_flow_bindings(node, aliases)
+    return constants.get(shell.id) is True
+
+
+def runtime_finding_coverage(workspace, finding, row, schema, config_sources):
+    """Keep incomplete callback and parameter-case evidence visible in findings."""
+    from . import review_audits as audit
+
+    if finding["code"] != "QUALITY_HOLLOW_TEST" or row is None:
+        return False
+    loaded = _runtime_finding_node(workspace, row)
+    if loaded is None:
+        return False
+    tree, node = loaded
+    cases = row["baseline"]["case_ids"]
+    parameterized = _runtime_test_is_parameterized(cases, node)
+    from .runtime_attestation import (
+        TEST_ORACLE_VERIFICATION_SCHEMA,
+        TEST_ORACLE_VERIFICATION_SCHEMA_V2,
+    )
+
+    if _runtime_completion_only_eligible(
+        schema,
+        finding.get("facts", {}).get("runtime_oracle_eligible"),
+        parameterized,
+        TEST_ORACLE_VERIFICATION_SCHEMA,
+        TEST_ORACLE_VERIFICATION_SCHEMA_V2,
+    ):
+        return True
+    qualname = cases[0].split("[", 1)[0].split("::", 1)[1].replace("::", ".")
+    coverage = runtime_callback_coverage(
+        node,
+        row,
+        verified_schema=schema,
+        test_qualname=qualname,
+        current_config_manifest={
+            item["path"]: item["sha256"] for item in config_sources
+        },
+        strong_assertion=audit._strong_local_assertion,
+        effective_assertion=audit._effective_assertion,
+        aliases=audit._module_security_aliases(tree),
+    )
+    finding["facts"]["runtime_case_coverage"] = coverage
+    return coverage["eligible"]
+
+
+def _runtime_finding_node(workspace, row):
+    from . import review_audits as audit
+
+    try:
+        raw = audit._security_source_bytes(workspace, row["path"])
+        if hashlib.sha256(raw).hexdigest() != row["test_sha256"]:
+            return None
+        tree = ast.parse(raw)
+        node = next(
+            (
+                item
+                for item in ast.walk(tree)
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and item.lineno == row["line"]
+                and item.name == row["symbol"]
+            ),
+            None,
+        )
+    except (OSError, KeyError, SyntaxError, TypeError, ValueError):
+        return None
+    if node is None:
+        return None
+    return tree, node
+
+
+def _runtime_test_is_parameterized(cases, node):
+    return any("[" in case for case in cases) or any(
+        "parametrize" in ast.unparse(decorator) for decorator in node.decorator_list
+    )
+
+
+def _runtime_completion_only_eligible(
+    schema, eligible, parameterized, schema_v1, schema_v2
+):
+    if schema in {schema_v1, schema_v2} and eligible and not parameterized:
+        return True
+    return False
+
+
+def weak_assertion_call_reason(node, aliases):
+    """Explain weak assertion call shapes without changing their evidence class."""
+    from . import review_audits as audit
+
+    if builtin_repr_type_check(node):
+        return "repr type check does not verify the expected representation"
+    if audit._click_callback_oracle(node, aliases) == "weak":
+        return "invoked command callback exposes only a weak assertion"
+    leaf = audit._normalized_call_name(node, aliases).rsplit(".", 1)[-1]
+    return _weak_assertion_leaf_reason(node, leaf, aliases, audit)
+
+
+def _weak_assertion_leaf_reason(node, leaf, aliases, audit):
+    if _weak_nonnull_assertion(node, leaf):
+        return "non-null assertion does not verify the expected behavior"
+    if _weak_mock_assertion(node, leaf, aliases, audit):
+        return "mock invocation state does not verify its result or arguments"
+    return None
+
+
+def _weak_nonnull_assertion(node, leaf):
+    if leaf == "assertIsNotNone":
+        return True
+    return (
+        leaf == "assertIs"
+        and len(node.args) == 2
+        and any(
+            isinstance(arg, ast.Constant) and arg.value is None for arg in node.args
+        )
+    )
+
+
+def _weak_mock_assertion(node, leaf, aliases, audit):
+    if leaf in {"assert_called", "assert_called_once"}:
+        return not audit._mock_argument_oracle(node, aliases)
+    return leaf == "assert_called_once_with" and audit._mock_self_check(node)
+
+
+def builtin_repr_type_check(node):
+    """Match a repr type-only oracle only when its names resolve to builtins."""
+    return _builtin_repr_call_shape(node) and not _builtin_repr_names_shadowed(node)
+
+
+def _builtin_repr_call_shape(node):
+    if not _builtin_repr_is_call(node, "isinstance", 2):
+        return False
+    rendered, expected_type = node.args
+    return (
+        _builtin_repr_is_call(rendered, "repr", 1)
+        and isinstance(expected_type, ast.Name)
+        and expected_type.id == "str"
+    )
+
+
+def _builtin_repr_is_call(node, name, argument_count):
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == name
+        and len(node.args) == argument_count
+        and not node.keywords
+    )
+
+
+def _builtin_repr_names_shadowed(node):
+    builtin_names = {"isinstance", "repr", "str"}
+    if builtin_names & set(getattr(node, "_security_shadowed_names", set())):
+        return True
+    scope = getattr(node, "_security_lexical_scope", None) or getattr(
+        node, "_oracle_scope", None
+    )
+    if scope is None:
+        return False
+    if builtin_names & _builtin_repr_scope_names(scope):
+        return True
+    module = _security_module_scope(scope) or getattr(node, "_oracle_module", None)
+    return module is not None and bool(
+        builtin_names & _security_scope_local_names(module)
+    )
+
+
+def _builtin_repr_scope_names(scope):
+    names = set(getattr(scope, "_security_local_names", set()))
+    names.update(_security_scope_local_names(scope))
+    names.update(getattr(scope, "_security_parameter_names", set()))
+    names.update(getattr(scope, "_security_nonlocal_names", set()))
+    arguments = getattr(scope, "args", None)
+    if arguments is not None:
+        names.update(_builtin_repr_argument_names(arguments))
+    return names
+
+
+def _builtin_repr_argument_names(arguments):
+    parameters = [
+        *arguments.posonlyargs,
+        *arguments.args,
+        *arguments.kwonlyargs,
+        arguments.vararg,
+        arguments.kwarg,
+    ]
+    return {argument.arg for argument in parameters if argument is not None}
