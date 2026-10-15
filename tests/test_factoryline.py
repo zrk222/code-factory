@@ -568,6 +568,24 @@ def test_receipt_roundtrip(tmp_path):
     assert data["run_id"]
 
 
+def test_receipt_atomic_replace_failure_preserves_prior_payload(tmp_path, monkeypatch):
+    import factoryline.contract as contract
+
+    receipt = Receipt("specline", "strict", "atomic", True, run_id="same-attempt")
+    path = receipt.write(tmp_path)
+    original = path.read_bytes()
+
+    def fail_replace(source, target):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(contract.os, "replace", fail_replace)
+    receipt.ok = False
+    with pytest.raises(OSError, match="replace failed"):
+        receipt.write(tmp_path)
+    assert path.read_bytes() == original
+    assert list(path.parent.glob("tmp*")) == []
+
+
 def test_trace_refuses_empty_receipt_set(tmp_path):
     ensure_layout(tmp_path)
     import pytest

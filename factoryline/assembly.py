@@ -21,7 +21,7 @@ from .meter import MeterLog, StageTiming, stopwatch
 from .attribution import Attribution
 from .agent_contract import AgentContractError, validate_agent_contract
 from .live_activity import LiveActivity
-from .assembly_process import run_cli
+from .assembly_process import run_cli, run_cli_detailed
 
 
 @dataclass
@@ -781,6 +781,62 @@ def _assembly_stage_outputs(
     return outputs
 
 
+def _cli_action_id(
+    run_id: str, stage: _AssemblyStage, attempt: int, release_binding: dict[str, str]
+) -> str:
+    command = json.dumps(
+        {"cli": stage.cli, "args": stage.args}, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    identity = {
+        "assembly_run_id": run_id,
+        "stage_id": stage.stage_id,
+        "attempt": attempt,
+        "command_sha256": hashlib.sha256(command).hexdigest(),
+        "release_binding_sha256": hashlib.sha256(
+            json.dumps(release_binding, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest(),
+    }
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _cli_action_result(result: object) -> tuple[bool, dict]:
+    malformed = not isinstance(result, dict)
+    if not isinstance(result, dict):
+        result = {}
+    stdout, stderr = result.get("stdout"), result.get("stderr")
+    streams_valid = isinstance(stdout, bytes) and isinstance(stderr, bytes)
+    exit_code, reason = result.get("exit_code"), result.get("reason")
+    ok = (
+        streams_valid
+        and result.get("ok") is True
+        and type(exit_code) is int
+        and exit_code == 0
+        and reason in (None, "")
+        and result.get("cleanup_confirmed") is True
+        and result.get("streams_closed") is True
+    )
+    return ok, {
+        "state": "COMPLETED" if ok else "INCOMPLETE",
+        "exit_code": exit_code if type(exit_code) is int else None,
+        "reason": reason[:200]
+        if isinstance(reason, str)
+        else "malformed runner result"
+        if malformed or reason is not None
+        else None,
+        "cleanup_confirmed": result.get("cleanup_confirmed") is True,
+        "streams_closed": result.get("streams_closed") is True,
+        "stdout_bytes": len(stdout) if streams_valid else None,
+        "stdout_sha256": hashlib.sha256(stdout).hexdigest() if streams_valid else None,
+        "stderr_bytes": len(stderr) if streams_valid else None,
+        "stderr_sha256": hashlib.sha256(stderr).hexdigest() if streams_valid else None,
+    }
+
+
 def _execute_assembly_stage(
     root: Path,
     feature: str,
@@ -792,10 +848,64 @@ def _execute_assembly_stage(
     activity: LiveActivity,
 ) -> bool:
     """Execute one present stage and record its timing, meter, and receipt."""
+    attempt = 1 + sum(
+        row.get("module") == stage.module and row.get("stage") == stage.name
+        for row in report["stages"]
+    )
+    action_id = _cli_action_id(run_id, stage, attempt, release_binding)
+    receipt = Receipt(
+        module=stage.module,
+        stage=stage.name,
+        feature=feature,
+        ok=False,
+        run_id=action_id,
+        inputs=dict(release_binding),
+        outputs={
+            "assembly_run_id": run_id,
+            "cli_action": {
+                "schema": "factory.assembly-cli-action.v1",
+                "state": "ENROLLED",
+                "action_id": action_id,
+                "assembly_run_id": run_id,
+                "stage_id": stage.stage_id,
+                "attempt": attempt,
+                "command_sha256": hashlib.sha256(
+                    json.dumps(
+                        {"cli": stage.cli, "args": stage.args},
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest(),
+            },
+        },
+    )
+    receipt.write(root)
     activity.stage_started(stage.module, stage.name)
     with stopwatch() as sw:
-        ok, out = _run_cli(stage.cli, stage.args, root, heartbeat=activity.heartbeat)
-    attribution_block = _attribution_from_output(out)
+        try:
+            result = run_cli_detailed(
+                stage.cli, stage.args, root, heartbeat=activity.heartbeat
+            )
+        except Exception as exc:
+            result = {
+                "ok": False,
+                "output": "",
+                "stdout": b"",
+                "stderr": b"",
+                "exit_code": None,
+                "cleanup_confirmed": False,
+                "streams_closed": False,
+                "reason": f"runner exception: {type(exc).__name__}",
+            }
+    ok, action_result = _cli_action_result(result)
+    out = result.get("output", "") if isinstance(result, dict) else ""
+    if not isinstance(out, str):
+        out = ""
+    receipt.ok = ok
+    receipt.outputs.update(_assembly_stage_outputs(root, feature, stage, out))
+    receipt.outputs["cli_action"].update(action_result)
+    receipt.attribution = _attribution_from_output(out)
+    attribution_block = receipt.attribution
     module_meter, usage_reported = _meter_from_output(out)
     stage_meter = Meter(
         wall_ms=sw.wall_ms,
@@ -817,16 +927,8 @@ def _execute_assembly_stage(
             run_id=run_id,
         )
     )
-    Receipt(
-        module=stage.module,
-        stage=stage.name,
-        feature=feature,
-        ok=ok,
-        inputs=dict(release_binding),
-        meter=stage_meter,
-        outputs=_assembly_stage_outputs(root, feature, stage, out),
-        attribution=attribution_block,
-    ).write(root)
+    receipt.meter = stage_meter
+    receipt.write(root)
     report["stages"].append(
         {
             "module": stage.module,

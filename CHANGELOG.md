@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Capture Assembly CLI attempts in existing receipts with pre-launch enrollment,
+  exit/output/cleanup facts and unique attempt identities. Replace receipts
+  atomically so an ordinary failed final write preserves previous evidence.
+
 - Reconcile native scanner actions against the exact manifest lane set in the
   existing event chain. Missing, duplicate, out-of-order or mismatched actions
   leave execution coverage incomplete; local readback grants no review authority.

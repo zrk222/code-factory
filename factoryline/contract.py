@@ -56,6 +56,8 @@ from pathlib import Path
 import datetime as _dt
 import hashlib
 import json
+import os
+import tempfile
 import uuid
 
 from .protocol import RECEIPT_SCHEMA, package_version
@@ -181,7 +183,20 @@ class Receipt:
                 "build_hash": None,
                 "identity_complete": False,
             }
-        p.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        encoded = json.dumps(payload, indent=2, sort_keys=True)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", dir=d, delete=False
+            ) as stream:
+                temporary = Path(stream.name)
+                stream.write(encoded)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, p)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
         return p
 
     @classmethod
