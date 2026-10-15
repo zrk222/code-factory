@@ -2142,20 +2142,19 @@ def _implementation_scope_nodes(scope: ast.AST) -> list[ast.AST]:
     return found
 
 
-def _implementation_bound_names(scope: ast.AST) -> set[str]:
-    nodes = _implementation_scope_nodes(scope)
+def _implementation_bound_names(scope: ast.AST, nodes=None) -> set[str]:
+    nodes = _implementation_scope_nodes(scope) if nodes is None else nodes
     names = {
         node.id
         for node in nodes
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))
     }
+    definitions = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
     names.update(
-        node.name for node in nodes if isinstance(node, ast.ExceptHandler) and node.name
-    )
-    names.update(
-        node.name
-        for node in nodes
-        if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name
+        n.name
+        for n in nodes
+        if isinstance(n, definitions)
+        or (isinstance(n, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and n.name)
     )
     names.update(
         node.rest for node in nodes if isinstance(node, ast.MatchMapping) and node.rest
@@ -2170,15 +2169,7 @@ def _implementation_bound_names(scope: ast.AST) -> set[str]:
                 *arguments.kwonlyargs,
             ]
         )
-        if arguments.vararg:
-            names.add(arguments.vararg.arg)
-        if arguments.kwarg:
-            names.add(arguments.kwarg.arg)
-    names.update(
-        node.name
-        for node in nodes
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-    )
+        names.update(arg.arg for arg in (arguments.vararg, arguments.kwarg) if arg)
     return names
 
 
@@ -2187,7 +2178,7 @@ def _implementation_scope_aliases(
 ) -> dict[str, str]:
     nodes = _implementation_scope_nodes(scope)
     imports = _implementation_imports(nodes)
-    bound = _implementation_bound_names(scope)
+    bound = _implementation_bound_names(scope, nodes)
     aliases = {name: value for name, value in inherited.items() if name not in bound}
     aliases.update(
         {name: value for name, value in imports.items() if name not in bound}
@@ -2249,9 +2240,16 @@ def _implementation_aliases_for(
     module_aliases: dict[str, str],
     module: ast.Module,
 ) -> dict[str, str]:
+    cache = getattr(module, "_implementation_alias_cache", None)
+    scopes = tuple(_implementation_scope_chain(node, parents))
+    key = (scopes, tuple(module_aliases.items())) if cache is not None else None
+    if cache is not None and key in cache:
+        return dict(cache[key])
     aliases = _implementation_scope_aliases(module, module_aliases)
-    for scope in _implementation_scope_chain(node, parents):
+    for scope in scopes:
         aliases = _implementation_scope_aliases(scope, aliases)
+    if cache is not None:
+        cache[key] = dict(aliases)
     return aliases
 
 
@@ -2564,24 +2562,28 @@ def implementation_completeness_findings(
     module_aliases = _implementation_imports(tree.body)
     module_aliases.update(supplied)
     parents = _implementation_parents(tree)
-    findings = _implementation_comment_findings(
-        relative, source, tree, parents, module_aliases
-    )
-    findings.extend(
-        _implementation_function_findings(relative, tree, parents, module_aliases)
-    )
-    findings.extend(
-        _implementation_mock_findings(relative, tree, parents, module_aliases)
-    )
-    return sorted(
-        findings,
-        key=lambda item: (
-            item["line"],
-            item["column"],
-            item["code"],
-            item["facts"].get("symbol", item["facts"].get("api", "")),
-        ),
-    )
+    tree._implementation_alias_cache = {}
+    try:
+        findings = _implementation_comment_findings(
+            relative, source, tree, parents, module_aliases
+        )
+        findings.extend(
+            _implementation_function_findings(relative, tree, parents, module_aliases)
+        )
+        findings.extend(
+            _implementation_mock_findings(relative, tree, parents, module_aliases)
+        )
+        return sorted(
+            findings,
+            key=lambda item: (
+                item["line"],
+                item["column"],
+                item["code"],
+                item["facts"].get("symbol", item["facts"].get("api", "")),
+            ),
+        )
+    finally:
+        tree.__dict__.pop("_implementation_alias_cache", None)
 
 
 def _invalidate_mutable_constants(statement, known):
