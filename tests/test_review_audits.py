@@ -560,6 +560,58 @@ def test_security_scan_request_password_literal_comparison(tmp_path, source, exp
             "    uploaded.save(uploaded.filename)\n",
             True,
         ),
+        (
+            "from flask import request\nimport os\n"
+            "from werkzeug.utils import secure_filename\n"
+            "def save_upload():\n"
+            "    uploaded = request.files['file']\n"
+            "    directory = request.form['directory']\n"
+            "    clean = secure_filename(uploaded.filename)\n"
+            "    uploaded.save(os.path.join(directory, clean))\n",
+            True,
+        ),
+        (
+            "from flask import request\nimport os\n"
+            "from werkzeug.utils import secure_filename\n"
+            "def save_upload(flag):\n"
+            "    uploaded = request.files['file']\n"
+            "    directory = request.form['directory']\n"
+            "    if flag:\n        clean = secure_filename(uploaded.filename)\n"
+            "    else:\n        clean = request.form['name']\n"
+            "    uploaded.save(os.path.join(directory, clean))\n",
+            True,
+        ),
+        (
+            "from flask import request\nimport os\n"
+            "from werkzeug.utils import secure_filename\n"
+            "def save_upload(flag):\n"
+            "    uploaded = request.files['file']\n"
+            "    directory = '/uploads'\n"
+            "    if flag:\n        clean = secure_filename(uploaded.filename)\n"
+            "    else:\n        clean = secure_filename(uploaded.filename)\n"
+            "    uploaded.save(os.path.join(directory, clean))\n",
+            False,
+        ),
+        (
+            "from flask import request\nimport os\n"
+            "from werkzeug.utils import secure_filename\n"
+            "def save_upload(flag):\n"
+            "    uploaded = request.files['file']\n"
+            "    directory = request.form['directory']\n"
+            "    if flag:\n        directory = secure_filename(directory)\n"
+            "    uploaded.save(os.path.join(directory, 'fixed.txt'))\n",
+            True,
+        ),
+        (
+            "from flask import request\nimport os\n"
+            "from werkzeug.utils import secure_filename\n"
+            "def save_upload(flags):\n"
+            "    uploaded = request.files['file']\n"
+            "    directory = request.form['directory']\n"
+            "    for flag in flags:\n        directory = secure_filename(directory)\n"
+            "    uploaded.save(os.path.join(directory, 'fixed.txt'))\n",
+            True,
+        ),
     ],
     ids=[
         "direct-request-files-subscript",
@@ -579,6 +631,11 @@ def test_security_scan_request_password_literal_comparison(tmp_path, source, exp
         "unrelated-save-method",
         "both-branches-rebind-upload",
         "one-branch-retains-possible-upload",
+        "sanitized-leaf-does-not-contain-untrusted-directory",
+        "one-branch-unsafe-upload-leaf-still-finds",
+        "both-branches-sanitize-upload-leaf",
+        "one-branch-sanitizes-directory-still-finds",
+        "zero-iteration-loop-retains-directory-taint",
     ],
 )
 def test_security_scan_flask_upload_filename_save_paths(tmp_path, source, expected):
@@ -3481,6 +3538,35 @@ def test_security_scan_classifies_test_roundtrip_as_nonblocking(tmp_path, librar
             "        consume(item)\n",
             "SECURITY_SSRF",
         ),
+        (
+            "from flask import request\nimport requests\n"
+            "def get_url():\n    return request.args.get('url')\n"
+            "url_helper = get_url\n"
+            "def fetch():\n    requests.get(url_helper())\n",
+            "SECURITY_SSRF",
+        ),
+        (
+            "from flask import request\nimport requests\n"
+            "def identity(value):\n    return value\n"
+            "def fetch():\n"
+            "    requests.get(identity(value=request.form['url']))\n",
+            "SECURITY_SSRF",
+        ),
+        (
+            "from flask import request\n"
+            "def get_path():\n    return request.form['path']\n"
+            "def download():\n    open(get_path())\n",
+            "SECURITY_PATH_TRAVERSAL",
+        ),
+        (
+            "from flask import request\nimport mysql.connector\n"
+            "def get_name():\n    return request.form.get('name')\n"
+            "def lookup():\n"
+            "    value = get_name()\n"
+            "    query = f\"SELECT * FROM records WHERE name='{value}'\"\n"
+            "    mysql.connector.connect().cursor().execute(query)\n",
+            "SECURITY_SQL_INJECTION",
+        ),
     ],
 )
 def test_security_scan_finds_bounded_request_to_sink_flows(tmp_path, source, expected):
@@ -3534,6 +3620,32 @@ def test_security_scan_finds_bounded_request_to_sink_flows(tmp_path, source, exp
         "def pass_through(path, url):\n"
         "    open(path)\n"
         "    requests.get(url)\n",
+        "from flask import request\nimport requests\n"
+        "def helper():\n    return 'https://fixed.example.test'\n"
+        "def fetch():\n    requests.get(helper())\n",
+        "from flask import request\nimport requests\n"
+        "def helper():\n    return request.args.get('url')\n"
+        "helper = lambda: 'https://fixed.example.test'\n"
+        "requests.get(helper())\n",
+        "from flask import request\nimport requests\n"
+        "def helper():\n"
+        "    if enabled:\n        return request.args.get('url')\n"
+        "    return 'https://fixed.example.test'\n"
+        "def fetch():\n    requests.get(helper())\n",
+        "from flask import request\nimport requests\n"
+        "def helper():\n    return helper()\n"
+        "def fetch():\n    requests.get(helper())\n",
+        "from flask import request\nimport requests\n"
+        "def helper():\n    return request.args.get('url')\n"
+        "def fetch(helper):\n    requests.get(helper())\n",
+        "from flask import request\nimport requests\n"
+        "def helper():\n    return request.args.get('url')\n"
+        "helper = lambda: 'https://fixed.example.test'\n"
+        "alias = helper\nrequests.get(alias())\n",
+        "from flask import request\nimport requests\n"
+        "def identity(value, /):\n    return value\n"
+        "def fetch():\n"
+        "    requests.get(identity(value=request.args.get('url')))\n",
     ],
 )
 def test_security_scan_source_flow_controls_keep_safety_distinctions(tmp_path, source):

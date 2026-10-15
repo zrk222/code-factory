@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Extend request-to-sink analysis through resolved local helper returns and
+  argument bindings for HTTP, file and SQL calls. Check upload destination
+  components independently of filename sanitization; retain shadowing and
+  rebinding boundaries. Synthetic regressions do not establish held-out accuracy.
 - Refresh the checksum-bound offline OSV PyPI snapshot after its previous upstream
   object generation expired; retain matching worker/profile/verifier identities.
 - Simplify Studio refresh ownership and share overlapping dashboard reads. Remove

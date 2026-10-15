@@ -3984,23 +3984,10 @@ def _security_call_leaf(node):
 
 
 def _security_scope_source_sink_findings(relative, scope, aliases, helpers):
-    requests = set()
-    password_fields = set()
-    parameters = set(getattr(scope, "_security_parameter_names", set()))
-    connection_names = set()
-    cursor_names = set()
-    body = getattr(scope, "body", [])
+    states = tuple(set() for _ in range(5))
+    states[2].update(getattr(scope, "_security_parameter_names", set()))
     return _security_analyze_source_sink_block(
-        relative,
-        body,
-        scope,
-        aliases,
-        requests,
-        password_fields,
-        parameters,
-        connection_names,
-        cursor_names,
-        helpers,
+        relative, scope.body, scope, aliases, *states, helpers
     )
 
 
@@ -4017,6 +4004,8 @@ def _security_analyze_source_sink_block(
     helpers,
 ):
     findings = []
+    flow = (requests, password_fields, parameters, connection_names, cursor_names)
+    sink_flow = (requests, parameters, connection_names, cursor_names)
     for statement in body:
         value = getattr(statement, "test", getattr(statement, "value", None))
         password_finding = _security_password_comparison_finding(
@@ -4027,45 +4016,19 @@ def _security_analyze_source_sink_block(
         if isinstance(statement, ast.If):
             findings.extend(
                 _security_statement_call_findings(
-                    relative,
-                    statement.test,
-                    scope,
-                    aliases,
-                    requests,
-                    parameters,
-                    connection_names,
-                    cursor_names,
-                    helpers,
+                    relative, statement.test, scope, aliases, *sink_flow, helpers
                 )
             )
             findings.extend(
                 _security_branch_findings(
-                    relative,
-                    statement,
-                    scope,
-                    aliases,
-                    requests,
-                    password_fields,
-                    parameters,
-                    connection_names,
-                    cursor_names,
-                    helpers,
+                    relative, statement, scope, aliases, *flow, helpers
                 )
             )
             continue
         if isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
             findings.extend(
                 _security_loop_findings(
-                    relative,
-                    statement,
-                    scope,
-                    aliases,
-                    requests,
-                    password_fields,
-                    parameters,
-                    connection_names,
-                    cursor_names,
-                    helpers,
+                    relative, statement, scope, aliases, *flow, helpers
                 )
             )
             continue
@@ -4075,38 +4038,18 @@ def _security_analyze_source_sink_block(
         ):
             findings.extend(
                 _security_statement_call_findings(
-                    relative,
-                    statement,
-                    scope,
-                    aliases,
-                    requests,
-                    parameters,
-                    connection_names,
-                    cursor_names,
-                    helpers,
+                    relative, statement, scope, aliases, *sink_flow, helpers
                 )
             )
         if isinstance(statement, (ast.Assign, ast.AnnAssign)):
-            _security_flow_source_assignment(
-                statement,
-                aliases,
-                requests,
-                password_fields,
-                parameters,
-                connection_names,
-                cursor_names,
-                helpers,
-            )
+            _security_flow_source_assignment(statement, aliases, *flow, helpers)
         elif not isinstance(statement, (ast.Expr, ast.Return, ast.Assert, ast.Raise)):
             from . import review_audits as audit
 
-            for name in audit._bound_names(statement):
-                requests.discard(name)
-                password_fields.discard(name)
-                parameters.discard(name)
-                connection_names.discard(name)
-                cursor_names.discard(name)
-                _security_clear_upload_tags(requests, {name})
+            bound = audit._bound_names(statement)
+            for names in flow:
+                names.difference_update(bound)
+            _security_clear_upload_tags(requests, bound)
     return findings
 
 
@@ -4122,13 +4065,8 @@ def _security_branch_findings(
     cursors,
     helpers,
 ):
-    before = (
-        requests.copy(),
-        password_fields.copy(),
-        parameters.copy(),
-        connections.copy(),
-        cursors.copy(),
-    )
+    states = (requests, password_fields, parameters, connections, cursors)
+    before = tuple(values.copy() for values in states)
     branches = []
     findings = []
     for body in (statement.body, statement.orelse):
@@ -4137,27 +4075,24 @@ def _security_branch_findings(
         if body:
             findings.extend(
                 _security_analyze_source_sink_block(
-                    relative,
-                    body,
-                    scope,
-                    aliases,
-                    branch[0],
-                    branch[1],
-                    branch[2],
-                    branch[3],
-                    branch[4],
-                    helpers,
+                    relative, body, scope, aliases, *branch, helpers
                 )
             )
-    _security_merge_branch_states(
-        (requests, password_fields, parameters, connections, cursors), branches
-    )
+    _security_merge_branch_states(states, branches)
     return findings
 
 
 def _security_merge_branch_states(target, branches):
     for index, values in enumerate(target):
         merged = set().union(*(branch[index] for branch in branches))
+        if index == 0:
+            safe = set.intersection(*(branch[index] for branch in branches))
+            unsafe_safety = {
+                item
+                for item in merged
+                if isinstance(item, tuple) and item[0] == "secure-upload-leaf"
+            } - safe
+            merged.difference_update(unsafe_safety)
         values.clear()
         values.update(merged)
 
@@ -4174,13 +4109,8 @@ def _security_loop_findings(
     cursors,
     helpers,
 ):
-    before = (
-        requests.copy(),
-        password_fields.copy(),
-        parameters.copy(),
-        connections.copy(),
-        cursors.copy(),
-    )
+    states = (requests, password_fields, parameters, connections, cursors)
+    before = tuple(values.copy() for values in states)
     test = (
         statement.iter
         if isinstance(statement, (ast.For, ast.AsyncFor))
@@ -4199,21 +4129,12 @@ def _security_loop_findings(
     )
     found.extend(
         _security_analyze_source_sink_block(
-            relative,
-            statement.body,
-            scope,
-            aliases,
-            requests,
-            password_fields,
-            parameters,
-            connections,
-            cursors,
-            helpers,
+            relative, statement.body, scope, aliases, *states, helpers
         )
     )
     _security_merge_branch_states(
-        (requests, password_fields, parameters, connections, cursors),
-        [before, (requests, password_fields, parameters, connections, cursors)],
+        states,
+        [before, states],
     )
     return found
 
@@ -4317,9 +4238,8 @@ def _security_unsafe_flask_file_save(call, aliases, requests):
     if not isinstance(call.func, ast.Attribute) or call.func.attr != "save":
         return False
     receiver = call.func.value
-    if (
-        not isinstance(receiver, ast.Name)
-        or ("flask-upload", receiver.id) not in requests
+    if not (
+        isinstance(receiver, ast.Name) and ("flask-upload", receiver.id) in requests
     ):
         return False
     destination = (
@@ -4366,14 +4286,28 @@ def _security_upload_path_expression(node, aliases, requests, scope, flow_statem
         return False
     if _security_is_proven_secure_filename(node, aliases):
         return False
+    if security_call_name(node, aliases) in {
+        "os.path.join",
+        "pathlib.Path",
+        "pathlib.PurePath",
+    } and any(
+        _security_expr_tainted(argument, requests, set(), aliases)
+        and not (
+            isinstance(argument, ast.Call)
+            and _security_is_proven_secure_filename(argument, aliases)
+        )
+        and not (
+            isinstance(argument, ast.Name)
+            and ("secure-upload-leaf", argument.id) in requests
+        )
+        for argument in [*node.args, *(keyword.value for keyword in node.keywords)]
+    ):
+        return True
     return any(
         _security_upload_path_expression(
             argument, aliases, requests, scope, flow_statement
         )
-        for argument in [
-            *node.args,
-            *(keyword.value for keyword in node.keywords),
-        ]
+        for argument in [*node.args, *(keyword.value for keyword in node.keywords)]
     )
 
 
@@ -4643,10 +4577,6 @@ def _security_django_request_parameter(node, aliases, scope=None, flow_statement
 def _security_expr_tainted(node, requests, parameters, aliases):
     if isinstance(node, ast.Name):
         return node.id in requests or node.id in parameters
-    return _security_composite_tainted(node, requests, parameters, aliases)
-
-
-def _security_composite_tainted(node, requests, parameters, aliases):
     if isinstance(node, ast.Call):
         return _security_call_source_tainted(node, requests, parameters, aliases)
     if isinstance(node, ast.Subscript) and _security_request_args(node.value, aliases):
@@ -4672,17 +4602,102 @@ def _security_call_source_tainted(node, requests, parameters, aliases):
     name = security_call_name(node, aliases) if aliases else ""
     if name.startswith(("flask.request.args.", "flask.request.form.")):
         return True
-    if name in {"os.path.join", "pathlib.Path", "pathlib.PurePath"}:
+    if name in {"os.path.join", "pathlib.Path", "pathlib.PurePath"} or _name(
+        node.func
+    ).endswith("secure_filename"):
         return any(
             _security_expr_tainted(arg, requests, parameters, aliases)
             for arg in node.args
         )
-    if _name(node.func).endswith("secure_filename"):
-        return any(
-            _security_expr_tainted(arg, requests, parameters, aliases)
-            for arg in node.args
+    definition = _security_local_helper_definition(node)
+    return definition is not None and _security_helper_return_tainted(
+        node, definition, requests, parameters, aliases
+    )
+
+
+def _security_local_helper_definition(call):
+    from . import review_audits as audit
+
+    if not isinstance(call.func, ast.Name):
+        return None
+    name = call.func.id
+    scope = current = getattr(call, "_security_lexical_scope", None)
+    while scope is not None:
+        bindings = {}
+        for item in _security_scope_body(scope):
+            if scope is current and item is call._security_flow_statement:
+                break
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                bindings[item.name] = item
+            else:
+                bound = audit._bound_names(item)
+                value = getattr(item, "value", None)
+                targets = getattr(item, "targets", [getattr(item, "target", None)])
+                alias = bindings.get(value.id) if isinstance(value, ast.Name) else None
+                for bound_name in bound:
+                    bindings[bound_name] = (
+                        alias
+                        if (
+                            len(targets) == 1
+                            and isinstance(targets[0], ast.Name)
+                            and targets[0].id == bound_name
+                        )
+                        else None
+                    )
+        local = getattr(scope, "_security_local_names", set()) | getattr(
+            scope, "_security_parameter_names", set()
         )
-    return False
+        if isinstance(scope, ast.Module):
+            return bindings.get(name)
+        if name in local:
+            return bindings.get(name)
+        if name in _security_scope_declared_names(scope, ast.Global):
+            scope = _security_module_scope(scope)
+        elif name in getattr(scope, "_security_nonlocal_names", set()):
+            current, scope = scope, getattr(scope, "_security_parent_scope", None)
+        else:
+            current, scope = scope, getattr(scope, "_security_parent_scope", None)
+    return None
+
+
+def _security_helper_return_tainted(call, function, requests, parameters, aliases):
+    if (
+        not isinstance(function, ast.FunctionDef)
+        or function.decorator_list
+        or function.args.vararg
+        or function.args.kwarg
+        or getattr(function, "_security_helper_active", False)
+        or len(function.body) != 1
+    ):
+        return False
+    positional = [*function.args.posonlyargs, *function.args.args]
+    names = {arg.arg for arg in [*positional, *function.args.kwonlyargs]}
+    if len(call.args) > len(positional):
+        return False
+    actuals = dict(zip((arg.arg for arg in positional), call.args))
+    for keyword in call.keywords:
+        if keyword.arg not in names or keyword.arg in {
+            arg.arg for arg in function.args.posonlyargs
+        }:
+            return False
+        if keyword.arg in actuals:
+            return False
+        actuals[keyword.arg] = keyword.value
+    if set(actuals) != names:
+        return False
+    returned = function.body[0]
+    if not isinstance(returned, ast.Return) or returned.value is None:
+        return False
+    tainted = {
+        name
+        for name, value in actuals.items()
+        if _security_expr_tainted(value, requests, parameters, aliases)
+    }
+    function._security_helper_active = True
+    try:
+        return _security_expr_tainted(returned.value, set(), tainted, aliases)
+    finally:
+        function._security_helper_active = False
 
 
 def _security_request_args(node, aliases, scope=None, flow_statement=None):
@@ -4716,15 +4731,11 @@ def _security_apply_import_bindings(body, resolved, stop, audit):
     for statement in body:
         if statement is stop:
             break
-        if isinstance(statement, (ast.Import, ast.ImportFrom)):
-            imported = audit._security_aliases([statement])
-            for name in audit._bound_names(statement):
-                resolved.pop(name, None)
-                if name in imported:
-                    resolved[name] = imported[name]
-        else:
-            for name in audit._bound_names(statement):
-                resolved.pop(name, None)
+        imported = audit._security_aliases([statement])
+        for name in audit._bound_names(statement):
+            resolved.pop(name, None)
+            if name in imported:
+                resolved[name] = imported[name]
     return resolved
 
 
@@ -4767,27 +4778,13 @@ def _security_flow_source_assignment(
     upload_path = isinstance(value, ast.AST) and _security_upload_path_expression(
         value, aliases, requests, scope, statement
     )
+    safe_upload_leaf = isinstance(
+        value, ast.Call
+    ) and _security_is_proven_secure_filename(value, aliases)
     known = (requests, password_fields, parameters, connection_names, cursor_names)
     for names in known:
         names.difference_update(bindings)
     _security_clear_upload_tags(requests, bindings)
-    _security_assign_flow_names(statement, value, flags, known)
-    targets = (
-        statement.targets if isinstance(statement, ast.Assign) else [statement.target]
-    )
-    for target in targets:
-        if isinstance(target, ast.Name):
-            if upload_object:
-                requests.add(("flask-upload", target.id))
-            if upload_path:
-                requests.add(("upload-path", target.id))
-
-
-def _security_assign_flow_names(statement, value, flags, known):
-    if not isinstance(statement, (ast.Assign, ast.AnnAssign)) or not isinstance(
-        value, ast.AST
-    ):
-        return
     targets = (
         statement.targets if isinstance(statement, ast.Assign) else [statement.target]
     )
@@ -4796,6 +4793,12 @@ def _security_assign_flow_names(statement, value, flags, known):
             for tainted, names in zip(flags, known):
                 if tainted:
                     names.add(target.id)
+            if upload_object:
+                requests.add(("flask-upload", target.id))
+            if upload_path:
+                requests.add(("upload-path", target.id))
+            if safe_upload_leaf:
+                requests.add(("secure-upload-leaf", target.id))
 
 
 def _security_cursor_expression(value, aliases, connections, helpers):
