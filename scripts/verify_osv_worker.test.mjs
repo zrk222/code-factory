@@ -1,6 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateOSVControl } from './verify_osv_worker.mjs';
+import { validateOSVControl, createOSVContract } from './verify_osv_worker.mjs';
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+
+test('native OSV contract binds the primary database artifact to the shipped profile and image', () => {
+  const profile = JSON.parse(readFileSync(new URL('../deploy/deep-adapters/profiles/osv.json', import.meta.url)));
+  const image = `sha256:${'a'.repeat(64)}`;
+  const value = createOSVContract(profile, 'root-config-fixed', [], image);
+  assert.equal(value.lane.image, image);
+  assert.equal(value.lane.native_policy.database_path, '/opt/factory/osv-db/osv-scanner/PyPI/all.zip');
+  assert.equal(value.lane.native_policy.database_sha256, profile.ruleset_sha256);
+  assert.equal(value.lane.native_policy.baseline_config_sha256, createHash('sha256').update('\n').digest('hex'));
+  assert.deepEqual(value.obligations, []); // Three seeded controls do not constitute signed challenge admission.
+  assert.throws(() => createOSVContract({ ...profile, ruleset_sha256: 'unknown' }, 'fixed', [], image), /binding/);
+  assert.throws(() => createOSVContract(profile, 'fixed', [], 'mutable-tag'), /binding/);
+});
 
 const bundle = (hits = 1) => ({ artifacts: {
   'report.json': { factory_lookup_execution: { schema: 'factory.osv-lookup-execution.v1', queries: [{}] },

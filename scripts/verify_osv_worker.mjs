@@ -11,6 +11,19 @@ const canonical = value => Array.isArray(value) ? value.map(canonical)
   : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
 const digest = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(canonical(value))).digest('hex');
 
+export function createOSVContract(profile, name, entries, image) {
+  if (!/^[a-f0-9]{64}$/.test(profile.ruleset_sha256) || !/^sha256:[a-f0-9]{64}$/.test(image))
+    throw new Error('Missing immutable OSV database or image binding');
+  return { schema: 'factory.deep-adapter-input.v1', run_id: `osv-native-${name}`,
+    manifest_sha256: digest(entries), inventory: { candidate_sha256: digest(entries), files: entries },
+    lane: { engine: 'osv', mode: profile.mode, tool_version: profile.tool_version, image,
+      ruleset_sha256: profile.ruleset_sha256, timeout_seconds: 90, memory_mib: 512,
+      report: 'report.json', coverage: 'coverage.json', challenge_report: 'challenges.json', languages: ['text'], rule_ids: [],
+      native_policy: { database_path: '/opt/factory/osv-db/osv-scanner/PyPI/all.zip',
+        database_sha256: profile.ruleset_sha256, baseline_config_sha256: digest('\n'), advisory_aliases: {} } },
+    obligations: [] };
+}
+
 export function validateOSVControl(bundle, expectedHits) {
   const report = bundle?.artifacts?.['report.json'];
   const coverage = bundle?.artifacts?.['coverage.json'];
@@ -49,12 +62,7 @@ export function verifyOSVWorker(image, output) {
         mkdirSync(dirname(join(source, path)), { recursive: true }); writeFileSync(join(source, path), body);
         return { path, bytes: Buffer.byteLength(body), sha256: digest(body), language: 'text' };
       });
-      const contract = { schema: 'factory.deep-adapter-input.v1', run_id: `osv-native-${name}`,
-        manifest_sha256: digest(entries), inventory: { candidate_sha256: digest(entries), files: entries },
-        lane: { engine: 'osv', mode: profile.mode, tool_version: profile.tool_version,
-          ruleset_sha256: profile.ruleset_sha256, timeout_seconds: 90, memory_mib: 512,
-          report: 'report.json', coverage: 'coverage.json', challenge_report: 'challenges.json', languages: ['text'], rule_ids: [] },
-        obligations: [] };
+      const contract = createOSVContract(profile, name, entries, result.image_id);
       const contractPath = join(directory, `${name}.json`); writeFileSync(contractPath, JSON.stringify(contract));
       const container = `factory-osv-control-${randomUUID()}`;
       let execution;
