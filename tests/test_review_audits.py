@@ -4317,6 +4317,118 @@ def test_security_scan_receipt_measures_complete_supported_source_coverage(tmp_p
     }
 
 
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("def run():\n    hidden = [x for x in range(10)]\n", {"run"}),
+        ("async def run():\n    hidden = [x for x in range(10)]\n", {"run"}),
+        ("class Run:\n    hidden = [x for x in range(10)]\n", {"Run"}),
+        ("lambda: [x for x in range(10)]", set()),
+    ],
+)
+def test_bound_definition_names_do_not_walk_deferred_bodies(
+    monkeypatch, source, expected
+):
+    import ast
+    import factoryline.review_audits as module
+
+    node = ast.parse(source).body[0]
+    if isinstance(node, ast.Expr):
+        node = node.value
+
+    def forbidden_walk(_node):
+        pytest.fail("bound-name lookup traversed a deferred definition body")
+
+    monkeypatch.setattr(module, "_iter_ast_nodes", forbidden_walk)
+    assert module._bound_names(node) == expected
+
+
+def test_scan_bound_name_cache_reuses_walk_and_copies_results(monkeypatch):
+    import ast
+    import factoryline.review_audits as module
+
+    statement = ast.parse("values = [x for x in source if (seen := x)]").body[0]
+    statement._scan_bound_names = None
+    walk = module._iter_ast_nodes
+    calls = []
+
+    def counted(node):
+        calls.append(node)
+        yield from walk(node)
+
+    monkeypatch.setattr(module, "_iter_ast_nodes", counted)
+    first = module._bound_names(statement)
+    count = len(calls)
+    first.add("caller_only")
+    assert module._bound_names(statement) == {"values", "seen"}
+    assert len(calls) == count
+
+
+def test_scanner_resets_binding_cache_for_reused_changed_ast(tmp_path):
+    import ast
+    import factoryline.review_audits as module
+
+    tree = ast.parse("values = [x for x in source]")
+    statement = tree.body[0]
+    module._security_scan_tree(tmp_path, tmp_path / "app.py", tree)
+    assert module._bound_names(statement) == {"values"}
+    statement.targets.append(ast.Name(id="changed", ctx=ast.Store()))
+    module._security_scan_tree(tmp_path, tmp_path / "app.py", tree)
+    assert module._bound_names(statement) == {"values", "changed"}
+
+
+@pytest.mark.parametrize("root_name", ["tmp", "vendor", "project"])
+def test_security_inventory_prunes_ignored_descendants_not_workspace(
+    tmp_path, monkeypatch, root_name
+):
+    import factoryline.review_audits as module
+
+    root = tmp_path / root_name
+    root.mkdir()
+    (root / "app.py").write_text("value = 1\n", encoding="utf-8")
+    for ignored in (".factory", "node_modules", ".venv", "vendor"):
+        folder = root / ignored / "nested"
+        folder.mkdir(parents=True)
+        (folder / "cached.py").write_text("value = 2\n", encoding="utf-8")
+    visited = []
+    walk = module.os.walk
+
+    def observed_walk(*args, **kwargs):
+        for row in walk(*args, **kwargs):
+            visited.append(row[0])
+            yield row
+
+    monkeypatch.setattr(module.os, "walk", observed_walk)
+    assert module._security_source_files(root) == [root / "app.py"]
+    assert visited == [str(root)]
+
+
+def test_import_index_reuses_resolved_sources_without_reindexing(tmp_path, monkeypatch):
+    import ast
+    import factoryline.review_audits as module
+
+    source = tmp_path / "helpers.py"
+    source.write_text("def check():\n    assert value\n", encoding="utf-8")
+    caller = tmp_path / "test_app.py"
+    tree = ast.parse("from helpers import check\n")
+    index = {source.resolve(): source}
+    expected = module._oracle_imports(tmp_path, caller, tree, {source})
+    original = type(source).resolve
+    calls = []
+
+    def observed_resolve(path, *args, **kwargs):
+        if path == source:
+            calls.append(path)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(source), "resolve", observed_resolve)
+    assert module._oracle_imports(tmp_path, caller, tree, index) == expected
+    indexed_calls = len(calls)
+    calls.clear()
+    assert module._oracle_imports(tmp_path, caller, tree, {source}) == expected
+    assert len(calls) == indexed_calls + 1
+
+
 def test_oracle_context_cache_reuses_only_context_and_preserves_report(tmp_path):
     import factoryline.review_audits as module
 
