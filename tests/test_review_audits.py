@@ -2737,7 +2737,221 @@ def test_mock_oracle_does_not_credit_unawaited_async_dependency(tmp_path):
         "    perform(dependency)\n    dependency.assert_not_awaited()\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_HOLLOW_TEST": 1,
+        "QUALITY_UNAWAITED_COROUTINE": 1,
+    }
+
+
+def test_execution_findings_resolves_module_helpers_without_sync_credit():
+    import ast
+    from factoryline import review_audits as audit, review_integrity as integrity
+
+    tree = ast.parse(
+        "def test_example():\n    check()\nasync def check():\n    return 1\n"
+    )
+    test, helper = tree.body
+    call = test.body[0].value
+    candidates, body = integrity._oracle_call_candidates(
+        "check", test, tree, ast.AsyncFunctionDef
+    )
+    assert candidates == [helper]
+    assert body is tree.body
+    assert integrity._oracle_stable_call(helper, call, test, body, True) is True
+    assert integrity.assigned_sync_function_call(call, test, tree) is False
+    findings, shadowed = integrity.test_execution_findings(
+        test, "test_example.py", audit._oracle_ancestor_map(tree.body), tree
+    )
+    assert shadowed is False
+    assert [(item["code"], item["line"]) for item in findings] == [
+        ("QUALITY_UNAWAITED_COROUTINE", 2)
+    ]
+
+
+def test_unawaited_local_async_test_helper_is_reported_even_with_other_assertion(
+    tmp_path,
+):
+    (tmp_path / "test_case.py").write_text(
+        "async def test_behavior():\n"
+        "    async def check():\n        assert compute() == 3\n"
+        "    check()\n    assert compute() == 4\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNAWAITED_COROUTINE": 1
+    }
+
+
+def test_unawaited_module_async_test_helper_survives_comprehension_and_lambda_scopes(
+    tmp_path,
+):
+    (tmp_path / "test_case.py").write_text(
+        "async def check():\n    assert compute()\n"
+        "async def test_behavior():\n"
+        "    [check for check in helpers]\n"
+        "    identity = lambda check: check\n"
+        "    check()\n    assert compute()\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNAWAITED_COROUTINE": 1
+    }
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "from helpers import check",
+        "if enabled:\n    async def check():\n        pass",
+        "try:\n    pass\nexcept Exception as check:\n    pass",
+        "match value:\n    case check:\n        pass",
+    ],
+)
+def test_unawaited_module_async_helper_rejects_rebound_scope_names(tmp_path, binding):
+    (tmp_path / "test_case.py").write_text(
+        "async def check():\n    pass\n"
+        "async def test_behavior():\n    "
+        + binding.replace("\n", "\n    ")
+        + "\n    check()\n    assert compute()\n",
+        encoding="utf-8",
+    )
+    assert (
+        "QUALITY_UNAWAITED_COROUTINE" not in security_scan(tmp_path)["finding_counts"]
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "await check()",
+        "pending = check()",
+        "return check()",
+        "schedule(check())",
+        "register(check)",
+        "external_check()",
+        "check()\ncheck = replacement",
+        "nested()\n    async def nested():\n        check()",
+    ],
+)
+def test_unawaited_local_async_test_helper_requires_discarded_direct_call(
+    tmp_path, body
+):
+    (tmp_path / "test_case.py").write_text(
+        "async def test_behavior():\n"
+        "    async def check():\n        assert compute() == 3\n"
+        "    " + body.replace("\n", "\n    ") + "\n    assert compute() == 4\n",
+        encoding="utf-8",
+    )
+    assert (
+        "QUALITY_UNAWAITED_COROUTINE" not in security_scan(tmp_path)["finding_counts"]
+    )
+
+
+def test_unawaited_local_async_test_helper_excludes_decorated_and_generator_defs(
+    tmp_path,
+):
+    (tmp_path / "test_case.py").write_text(
+        "def decorate(function):\n    return function\n"
+        "async def test_behavior():\n"
+        "    @decorate\n    async def decorated():\n        pass\n"
+        "    async def generator():\n        yield 1\n"
+        "    decorated()\n    generator()\n"
+        "    assert compute() == 4\n",
+        encoding="utf-8",
+    )
+    assert (
+        "QUALITY_UNAWAITED_COROUTINE" not in security_scan(tmp_path)["finding_counts"]
+    )
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (
+            "def test_after():\n    check()\n    assert actual == expected\n"
+            "async def check():\n    return 1\n",
+            True,
+        ),
+        (
+            "async def check():\n    return 1\n"
+            "def test_default():\n"
+            "    identity = lambda value=(check := lambda: None): value\n"
+            "    check()\n    assert actual == expected\n",
+            False,
+        ),
+        (
+            "async def check():\n    return 1\n"
+            "def test_body():\n"
+            "    identity = lambda: (check := lambda: None)\n"
+            "    check()\n    assert actual == expected\n",
+            True,
+        ),
+        (
+            "async def check():\n    return 1\n"
+            "def test_nested_default():\n"
+            "    identity = lambda value=(lambda value=(check := lambda: None): value): value\n"
+            "    check()\n    assert actual == expected\n",
+            False,
+        ),
+    ],
+    ids=[
+        "module-definition-after-test",
+        "evaluated-default-rebinds",
+        "deferred-body-is-local",
+        "nested-evaluated-default",
+    ],
+)
+def test_unawaited_coroutine_respects_module_loading_and_lambda_defaults(
+    tmp_path, source, expected
+):
+    (tmp_path / "test_async.py").write_text(source, encoding="utf-8")
+    findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+    assert (
+        any(item["code"] == "QUALITY_UNAWAITED_COROUTINE" for item in findings)
+        is expected
+    )
+
+
+def test_shadowed_duplicate_module_test_reports_only_shadow_and_final_binding(
+    tmp_path,
+):
+    (tmp_path / "test_case.py").write_text(
+        "def test_behavior():\n    assert compute() == 3\n"
+        "def test_behavior():\n    pass\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_SHADOWED_TEST": 1,
+        "QUALITY_HOLLOW_TEST": 1,
+    }
+
+
+def test_shadowed_duplicate_class_test_is_reported(tmp_path):
+    (tmp_path / "test_case.py").write_text(
+        "class TestCases:\n"
+        "    def test_behavior(self):\n        assert compute() == 3\n"
+        "    def test_behavior(self):\n        assert compute() == 4\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_SHADOWED_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "class TestA:\n    def test_behavior(self):\n        assert compute() == 3\n"
+        "class TestB:\n    def test_behavior(self):\n        assert compute() == 4\n",
+        "if flag:\n    def test_behavior():\n        assert compute() == 3\n"
+        "else:\n    def test_behavior():\n        assert compute() == 4\n",
+        "def test_behavior():\n    def helper():\n        pass\n"
+        "def test_other():\n    def helper():\n        pass\n",
+    ],
+)
+def test_shadowed_duplicate_test_requires_same_direct_module_or_class_body(
+    tmp_path, source
+):
+    (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
+    assert "QUALITY_SHADOWED_TEST" not in security_scan(tmp_path)["finding_counts"]
 
 
 def test_explicit_pyright_type_source_credits_only_real_type_assertion(tmp_path):

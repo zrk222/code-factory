@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Report discarded calls to proven local or module coroutine helpers and test
+  definitions shadowed by later direct siblings. Preserve deferred lambda bodies,
+  evaluated default bindings, separate test scopes and synchronous-helper checks.
+
 - Detect asserted but uncalled mock assertion-method attributes using proven
   unittest.mock bindings; preserve real calls, custom properties and rebinding
   controls. Consolidate existing weak-oracle predicates without new modules.

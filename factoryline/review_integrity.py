@@ -25,15 +25,11 @@ def _resolve(node: ast.AST | None, aliases: dict[str, str]) -> str:
 
 
 def _lexical_nodes(node: ast.AST):
-    pending = [node]
-    while pending:
-        child = pending.pop()
-        yield child
-        if child is not node and isinstance(
-            child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
-        ):
-            continue
-        pending.extend(ast.iter_child_nodes(child))
+    from .review_audits import _body_nodes
+
+    yield node
+    for child in ast.iter_child_nodes(node):
+        yield from _body_nodes(child)
 
 
 def _reachable_scope_nodes(statements):
@@ -46,25 +42,6 @@ def _reachable_scope_nodes(statements):
             yield statement
         else:
             yield from _lexical_nodes(statement)
-
-
-def _local_binding_names(statement: ast.stmt) -> set[str]:
-    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        return {statement.name}
-    bound = {
-        node.id
-        for node in _lexical_nodes(statement)
-        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))
-    }
-    if isinstance(statement, (ast.Import, ast.ImportFrom)):
-        bound.update(
-            item.asname or item.name.split(".")[0]
-            if isinstance(statement, ast.Import)
-            else item.asname or item.name
-            for item in statement.names
-            if item.name != "*"
-        )
-    return bound
 
 
 def _direct_vacuous_assertions(node, aliases, vacuous_check, remember):
@@ -480,7 +457,7 @@ def _benchmark_rebindings(test):
         a.arg for a in (*test.args.posonlyargs, *test.args.args, *test.args.kwonlyargs)
     }
     names.update(a.arg for a in (test.args.vararg, test.args.kwarg) if a)
-    names.update(name for stmt in test.body for name in _local_binding_names(stmt))
+    names.update(name for stmt in test.body for name in _oracle_bound_names(stmt))
     return names
 
 
@@ -509,7 +486,7 @@ def _module_benchmark_marker(tree):
     ):
         return False
     return not any(
-        head in _local_binding_names(n) or "pytestmark" in _local_binding_names(n)
+        head in _oracle_bound_names(n) or "pytestmark" in _oracle_bound_names(n)
         for n in tree.body
         if n is not marks[0] and not isinstance(n, ast.Import)
     )
@@ -581,7 +558,7 @@ def bind_benchmark_context(contexts, snapshots, benchmark_sources):
             path in benchmark_sources and _module_benchmark_marker(snapshots[path])
         )
         tree = snapshots[path]
-        names = [_local_binding_names(stmt) for stmt in tree.body]
+        names = [_oracle_bound_names(stmt) for stmt in tree.body]
         constants = {
             stmt.targets[0].id: stmt.value.value
             for stmt in tree.body
@@ -624,91 +601,121 @@ def _annotated_stub(fn: ast.AST) -> bool:
 
 
 def assigned_sync_function_call(
-    call: ast.Call, scope: ast.AST, module: ast.AST
+    call: ast.Call, scope: ast.AST, module: ast.AST, async_only=False
 ) -> bool:
-    """Accept assigned calls only when their direct callee is a stable source function."""
+    """Resolve one stable direct helper; async mode reports discarded coroutines."""
     if isinstance(call.func, ast.Lambda):
-        return True
+        return not async_only
     if not isinstance(call.func, ast.Name):
         return False
-    name = call.func.id
+    kind = ast.AsyncFunctionDef if async_only else ast.FunctionDef
+    candidates, body = _oracle_call_candidates(call.func.id, scope, module, kind)
+    return len(candidates) == 1 and _oracle_stable_call(
+        candidates[0], call, scope, body, async_only
+    )
+
+
+def _oracle_call_candidates(name, scope, module, kind):
+    from .review_audits import _scope_parameters
+
     local = [
-        item
-        for item in scope.body
-        if isinstance(item, ast.FunctionDef) and item.name == name
+        item for item in scope.body if isinstance(item, kind) and item.name == name
     ]
-    if local:
-        candidates, body = local, scope.body
-    else:
-        if _oracle_function_shadowed(scope, name):
-            return False
-        candidates = [
-            item
-            for item in module.body
-            if isinstance(item, ast.FunctionDef) and item.name == name
-        ]
-        body = module.body
-    if not _oracle_unique_sync(candidates):
+    body = scope.body if local else module.body
+    if not local and (
+        name in _scope_parameters(scope)
+        or any(name in _oracle_bound_names(stmt) for stmt in scope.body)
+    ):
+        return [], body
+    return local or [
+        item for item in body if isinstance(item, kind) and item.name == name
+    ], body
+
+
+def _oracle_stable_call(candidate, call, scope, body, async_only):
+    from .review_audits import _body_nodes
+
+    if candidate.decorator_list:
         return False
-    if candidates[0].lineno >= call.lineno:
+    if candidate.lineno >= call.lineno and (body is scope.body or not async_only):
+        return False
+    if async_only and any(
+        isinstance(child, ast.Yield)
+        for stmt in candidate.body
+        for child in _body_nodes(stmt)
+    ):
         return False
     bindings = [
         item
-        for statement in body
-        for item in _oracle_bound_names(statement)
-        if item in {name, "*"}
+        for stmt in body
+        for item in _oracle_bound_names(stmt)
+        if item in {call.func.id, "*"}
     ]
-    return len(bindings) == 1 and "*" not in bindings
+    return bindings == [call.func.id]
 
 
-def _oracle_function_shadowed(scope, name):
-    parameters = [*scope.args.posonlyargs, *scope.args.args, *scope.args.kwonlyargs]
-    parameters += [item for item in (scope.args.vararg, scope.args.kwarg) if item]
-    if any(item.arg == name for item in parameters):
-        return True
-    return any(name in _oracle_bound_names(statement) for statement in scope.body)
+def test_execution_findings(node, relative, parents, module):
+    """Report shadowed test definitions and discarded local async-helper calls."""
+    from .review_audits import _body_nodes, _security_finding
 
-
-def _oracle_unique_sync(candidates):
-    return len(candidates) == 1 and not candidates[0].decorator_list
-
-
-def _oracle_binding_nodes(statement):
-    pending = [statement]
-    while pending:
-        node = pending.pop()
-        yield node
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            pending.extend(ast.iter_child_nodes(node))
+    owner = (parents.get(id(node)) or ((module, node),))[-1][0]
+    shadow = (
+        next(
+            (
+                item
+                for item in owner.body
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and item.name == node.name
+                and item.lineno > node.lineno
+            ),
+            None,
+        )
+        if isinstance(owner, (ast.Module, ast.ClassDef))
+        else None
+    )
+    if shadow is not None:
+        return [
+            _security_finding(
+                "QUALITY_SHADOWED_TEST",
+                relative,
+                node,
+                "A later direct test definition replaces this test binding; only the final definition is collected.",
+                "MEDIUM",
+                symbol=node.name,
+                shadowed_by_line=shadow.lineno,
+            )
+        ], True
+    findings = []
+    for child in _body_nodes(ast.Module(body=node.body, type_ignores=[])):
+        if (
+            isinstance(child, ast.Expr)
+            and isinstance(child.value, ast.Call)
+            and assigned_sync_function_call(child.value, node, module, True)
+        ):
+            findings.append(
+                _security_finding(
+                    "QUALITY_UNAWAITED_COROUTINE",
+                    relative,
+                    child,
+                    "A direct call to a local async test helper creates a coroutine that is discarded without execution.",
+                    "MEDIUM",
+                    symbol=node.name,
+                )
+            )
+    return findings, False
 
 
 def _oracle_bound_names(statement: ast.AST) -> set[str]:
-    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        return {statement.name}
-    names = set()
-    for child in _oracle_binding_nodes(statement):
+    from .review_audits import _body_nodes, _bound_names
+
+    names = _bound_names(statement)
+    for child in _body_nodes(statement):
         if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             names.add(child.name)
-        elif isinstance(child, ast.Name) and isinstance(
-            child.ctx, (ast.Store, ast.Del)
-        ):
-            names.add(child.id)
-        elif isinstance(child, (ast.Import, ast.ImportFrom)):
-            if isinstance(child, ast.ImportFrom) and any(
-                item.name == "*" for item in child.names
-            ):
-                names.add("*")
-            names.update(
-                item.asname or item.name.split(".")[0]
-                for item in child.names
-                if item.name != "*"
-            )
-        elif isinstance(child, ast.ExceptHandler) and child.name:
-            names.add(child.name)
-        elif isinstance(child, (ast.MatchAs, ast.MatchStar)) and child.name:
-            names.add(child.name)
-        elif isinstance(child, ast.MatchMapping) and child.rest:
-            names.add(child.rest)
+        if isinstance(child, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
+            for default in [*child.args.defaults, *child.args.kw_defaults]:
+                if default is not None:
+                    names.update(_oracle_bound_names(default))
     return names
 
 
