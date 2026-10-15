@@ -603,38 +603,45 @@ def _annotated_stub(fn: ast.AST) -> bool:
 def assigned_sync_function_call(
     call: ast.Call, scope: ast.AST, module: ast.AST, async_only=False
 ) -> bool:
-    """Accept assigned calls only when their direct callee is a stable source function."""
-    function_type = ast.AsyncFunctionDef if async_only else ast.FunctionDef
+    """Resolve one stable direct helper; async mode reports discarded coroutines."""
     if isinstance(call.func, ast.Lambda):
         return not async_only
     if not isinstance(call.func, ast.Name):
         return False
-    name = call.func.id
+    kind = ast.AsyncFunctionDef if async_only else ast.FunctionDef
+    candidates, body = _oracle_call_candidates(call.func.id, scope, module, kind)
+    return len(candidates) == 1 and _oracle_stable_call(
+        candidates[0], call, scope, body, async_only
+    )
+
+
+def _oracle_call_candidates(name, scope, module, kind):
+    from .review_audits import _scope_parameters
+
     local = [
-        item
-        for item in scope.body
-        if isinstance(item, function_type) and item.name == name
+        item for item in scope.body if isinstance(item, kind) and item.name == name
     ]
     body = scope.body if local else module.body
-    if not local:
-        from .review_audits import _scope_parameters
+    if not local and (
+        name in _scope_parameters(scope)
+        or any(name in _oracle_bound_names(stmt) for stmt in scope.body)
+    ):
+        return [], body
+    return local or [
+        item for item in body if isinstance(item, kind) and item.name == name
+    ], body
 
-        if name in _scope_parameters(scope) or any(
-            name in _oracle_bound_names(statement) for statement in scope.body
-        ):
-            return False
-    candidates = local or [
-        item for item in body if isinstance(item, function_type) and item.name == name
-    ]
-    if len(candidates) != 1 or candidates[0].decorator_list:
-        return False
-    if candidates[0].lineno >= call.lineno and (local or not async_only):
-        return False
+
+def _oracle_stable_call(candidate, call, scope, body, async_only):
     from .review_audits import _body_nodes
 
-    if isinstance(candidates[0], ast.AsyncFunctionDef) and any(
+    if candidate.decorator_list:
+        return False
+    if candidate.lineno >= call.lineno and (body is scope.body or not async_only):
+        return False
+    if async_only and any(
         isinstance(child, ast.Yield)
-        for stmt in candidates[0].body
+        for stmt in candidate.body
         for child in _body_nodes(stmt)
     ):
         return False
@@ -642,9 +649,9 @@ def assigned_sync_function_call(
         item
         for stmt in body
         for item in _oracle_bound_names(stmt)
-        if item in {name, "*"}
+        if item in {call.func.id, "*"}
     ]
-    return bindings == [name]
+    return bindings == [call.func.id]
 
 
 def test_execution_findings(node, relative, parents, module):
@@ -679,38 +686,32 @@ def test_execution_findings(node, relative, parents, module):
             )
         ], True
     findings = []
-    for statement in node.body:
-        for child in _body_nodes(statement):
-            if (
-                isinstance(child, ast.Expr)
-                and isinstance(child.value, ast.Call)
-                and assigned_sync_function_call(child.value, node, module, True)
-            ):
-                findings.append(
-                    _security_finding(
-                        "QUALITY_UNAWAITED_COROUTINE",
-                        relative,
-                        child,
-                        "A direct call to a local async test helper creates a coroutine that is discarded without execution.",
-                        "MEDIUM",
-                        symbol=node.name,
-                    )
+    for child in _body_nodes(ast.Module(body=node.body, type_ignores=[])):
+        if (
+            isinstance(child, ast.Expr)
+            and isinstance(child.value, ast.Call)
+            and assigned_sync_function_call(child.value, node, module, True)
+        ):
+            findings.append(
+                _security_finding(
+                    "QUALITY_UNAWAITED_COROUTINE",
+                    relative,
+                    child,
+                    "A direct call to a local async test helper creates a coroutine that is discarded without execution.",
+                    "MEDIUM",
+                    symbol=node.name,
                 )
+            )
     return findings, False
 
 
 def _oracle_bound_names(statement: ast.AST) -> set[str]:
-    from .review_audits import _binding_name, _body_nodes, _bound_names
+    from .review_audits import _body_nodes, _bound_names
 
     names = _bound_names(statement)
-    names.update(
-        name
-        for child in _body_nodes(statement)
-        if child is not statement
-        and isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-        and (name := _binding_name(child))
-    )
     for child in _body_nodes(statement):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(child.name)
         if isinstance(child, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
             for default in [*child.args.defaults, *child.args.kw_defaults]:
                 if default is not None:

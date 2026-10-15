@@ -2743,6 +2743,31 @@ def test_mock_oracle_does_not_credit_unawaited_async_dependency(tmp_path):
     }
 
 
+def test_execution_findings_resolves_module_helpers_without_sync_credit():
+    import ast
+    from factoryline import review_audits as audit, review_integrity as integrity
+
+    tree = ast.parse(
+        "def test_example():\n    check()\nasync def check():\n    return 1\n"
+    )
+    test, helper = tree.body
+    call = test.body[0].value
+    candidates, body = integrity._oracle_call_candidates(
+        "check", test, tree, ast.AsyncFunctionDef
+    )
+    assert candidates == [helper]
+    assert body is tree.body
+    assert integrity._oracle_stable_call(helper, call, test, body, True) is True
+    assert integrity.assigned_sync_function_call(call, test, tree) is False
+    findings, shadowed = integrity.test_execution_findings(
+        test, "test_example.py", audit._oracle_ancestor_map(tree.body), tree
+    )
+    assert shadowed is False
+    assert [(item["code"], item["line"]) for item in findings] == [
+        ("QUALITY_UNAWAITED_COROUTINE", 2)
+    ]
+
+
 def test_unawaited_local_async_test_helper_is_reported_even_with_other_assertion(
     tmp_path,
 ):
