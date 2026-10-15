@@ -115,3 +115,16 @@ prior receipt if a final write fails; power-loss durability is not claimed.
 Process completion does not prove correct task output, provider/model identity,
 validated token usage or release readiness. The existing audit and review gates
 still apply. Missing process observations remain incomplete.
+
+## Repair selected findings (source candidate)
+
+```text
+factory repair scope --change-list "Selected fixes" --audit-run-id RUN_ID --finding-id FINDING_SHA256 --out-dir .factory/scopes --root . --json
+```
+
+Repeat `--finding-id` for additional selected findings.
+CF derives only their source paths, seals the current audit origin, and rejects
+stale or mismatched selections. The existing candidate, approval and isolated
+repair commands follow; approval inherits the selected scope's origin.
+Preparation does not write a patch, approve changes or execute repairs. Local
+unsigned audit observations remain untrusted and do not certify a finding.

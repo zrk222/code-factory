@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Prepare the existing sealed repair scope from explicitly selected native audit
+  finding IDs, retaining current origin and exact path bindings through approval.
+  Relative repair artifact directories now resolve under the selected workspace.
+
 - Capture Assembly CLI attempts in existing receipts with pre-launch enrollment,
   exit/output/cleanup facts and unique attempt identities. Replace receipts
   atomically so an ordinary failed final write preserves previous evidence.

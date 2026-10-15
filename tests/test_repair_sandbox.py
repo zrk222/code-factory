@@ -77,6 +77,29 @@ def _git_repair_case(root: Path) -> tuple[Path, Path]:
     return scope_path, patch_path
 
 
+def _selected_origin(root, monkeypatch, findings=None):
+    _git_repair_case(root)
+    run_id, finding_id = "a" * 32, "b" * 64
+    origin = {
+        "run_id": run_id,
+        "sequence": 4,
+        **dict.fromkeys(
+            ("candidate_sha256", "manifest_sha256", "event_sha256"), "c" * 64
+        ),
+    }
+    default_finding = {"finding_id": finding_id, "path": "src/value.py"}
+    run = {
+        "run_id": run_id,
+        "observed_state": "INCOMPLETE",
+        "lanes": [
+            {"findings": findings if findings is not None else [default_finding]}
+        ],
+    }
+    monkeypatch.setattr("factoryline.deep_audit.deep_run_status", lambda *_: run)
+    monkeypatch.setattr(repair_sandbox, "_repair_origin_binding", lambda *_: origin)
+    return run_id, finding_id, origin
+
+
 def test_inventory_excludes_only_untracked_generated_factory_state(
     tmp_path: Path,
 ) -> None:
@@ -92,6 +115,12 @@ def test_inventory_excludes_only_untracked_generated_factory_state(
     ignored_build = tmp_path / "build" / "cache.bin"
     ignored_build.parent.mkdir(parents=True)
     ignored_build.write_bytes(b"generated build input")
+    lifecycle = tmp_path / ".factory" / "ops" / "lifecycle"
+    lifecycle.mkdir(parents=True)
+    generated_lifecycle = lifecycle / f"{'a' * 32}.json"
+    generated_lifecycle.write_text("{}\n", encoding="utf-8")
+    unknown_factory = lifecycle / "unknown.py"
+    unknown_factory.write_text("VALUE = 1\n", encoding="utf-8")
     with (tmp_path / ".gitignore").open("a", encoding="utf-8") as stream:
         stream.write("build/\n")
     _git(tmp_path, "add", ".gitignore")
@@ -99,9 +128,11 @@ def test_inventory_excludes_only_untracked_generated_factory_state(
 
     inventory = inventory_candidate(tmp_path)
     codes_and_paths = {(gap["code"], gap["path"]) for gap in inventory["gaps"]}
+    unknown_path = unknown_factory.relative_to(tmp_path).as_posix()
+    assert ("IGNORED_INPUT_SCOPE", unknown_path) in codes_and_paths
     assert not any(
-        code == "IGNORED_INPUT_SCOPE" and path.startswith(".factory/")
-        for code, path in codes_and_paths
+        path == generated_lifecycle.relative_to(tmp_path).as_posix()
+        for _, path in codes_and_paths
     )
     assert ("IGNORED_INPUT_SCOPE", "build/cache.bin") in codes_and_paths
     assert scope_path.relative_to(tmp_path).as_posix() not in {
@@ -111,14 +142,14 @@ def test_inventory_excludes_only_untracked_generated_factory_state(
         item["path"] for item in inventory["files"]
     }
 
-    collision = tmp_path / ".factory" / "scopes" / "collision.py"
+    collision = lifecycle / f"{'b' * 32}.json"
     collision.write_text("VALUE = 1\n", encoding="utf-8")
     _git(tmp_path, "add", "-f", collision.relative_to(tmp_path).as_posix())
     _git(tmp_path, "commit", "--quiet", "-m", "track generated-path collision")
     tracked_collision = inventory_candidate(tmp_path)
     assert any(
         gap["code"] == "E_RESERVED_SOURCE"
-        and gap["path"] == ".factory/scopes/collision.py"
+        and gap["path"] == collision.relative_to(tmp_path).as_posix()
         for gap in tracked_collision["gaps"]
     )
 
@@ -486,6 +517,31 @@ def test_runtime_authority_denial_before_launch_still_checks_cleanup(
     assert calls == ["cleanup"]
 
 
+def test_container_run_argv_never_pulls(tmp_path, monkeypatch):
+    observed = {}
+    empty = {"ok": True, "stdout": b""}
+    monkeypatch.setattr(repair_sandbox, "_docker", lambda *_args: empty)
+    monkeypatch.setattr(repair_sandbox, "_remove_container", lambda *_args: True)
+    monkeypatch.setattr(repair_sandbox, "_tool_path", lambda _name: "docker")
+
+    def run(_executable, argv, *_args, **_kwargs):
+        observed["argv"] = argv
+        return {"exit_code": 0, "stdout": b"ok", "stderr": b""}
+
+    monkeypatch.setattr(repair_sandbox, "run_cli_detailed", run)
+    result = repair_sandbox._container_check(
+        tmp_path,
+        tmp_path,
+        "image",
+        "context",
+        {"argv": ["python"]},
+        "attempt",
+        lambda: True,
+    )
+    assert {"--pull=never", "--network=none"} <= set(observed["argv"])
+    assert result["result"]["stdout"] == b"ok"
+
+
 def test_workflow_runtime_authority_rechecks_role_during_execution(
     tmp_path, monkeypatch
 ):
@@ -687,6 +743,178 @@ def test_repair_scope_is_explicit_deterministic_and_does_not_write_by_default(
         ]
         == scope["scope_sha256"]
     )
+
+
+def test_selected_audit_scope_binds_ids_paths_and_keeps_legacy_core(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_id, finding_id, _ = _selected_origin(tmp_path, monkeypatch)
+    scope = create_repair_scope(
+        tmp_path, "Selected finding", audit_run_id=run_id, finding_ids=[finding_id]
+    )
+    with pytest.raises(RepairSandboxError, match="malformed"):
+        repair_sandbox._scope_core({**scope, "finding_ids": None})
+    assert scope["paths"][0]["path"] == "src/value.py"
+    assert verify_repair_scope(scope, tmp_path)["scope_id"] == scope["scope_id"]
+    packet = write_repair_scope_artifacts(
+        scope, tmp_path, tmp_path / ".factory" / "selected-scope"
+    )
+    saved = json.loads(Path(packet["paths"]["json"]).read_text(encoding="utf-8"))
+    assert saved["origin_audit"]["run_id"] == run_id
+    assert saved["finding_ids"] == [finding_id]
+    legacy = create_repair_scope(tmp_path, "Legacy paths", ["src/value.py"])
+    assert "origin_audit" not in repair_sandbox._scope_core(legacy)
+    assert (
+        repair_sandbox._sha(repair_sandbox._scope_core(legacy))
+        == legacy["scope_sha256"]
+    )
+
+
+@pytest.mark.parametrize(
+    "ids,findings,code",
+    [
+        (
+            ["b" * 64, "b" * 64],
+            [{"finding_id": "b" * 64, "path": "src/value.py"}],
+            "REPAIR_SCOPE_INPUT_INVALID",
+        ),
+        (["b" * 64], [], "REPAIR_FINDING_SELECTION_INVALID"),
+        (["b" * 64], [{"finding_id": "b" * 64}], "REPAIR_SCOPE_PATH_REJECTED"),
+        (
+            ["b" * 64],
+            [{"finding_id": "b" * 64, "path": "../outside.py"}],
+            "REPAIR_SCOPE_PATH_REJECTED",
+        ),
+        (
+            ["b" * 64],
+            [{"finding_id": [], "path": "src/value.py"}],
+            "REPAIR_FINDING_SELECTION_INVALID",
+        ),
+        (
+            [[]],
+            [{"finding_id": "b" * 64, "path": "src/value.py"}],
+            "REPAIR_SCOPE_INPUT_INVALID",
+        ),
+    ],
+)
+def test_selected_audit_scope_rejects_bad_selection_and_locations(
+    tmp_path, monkeypatch, ids, findings, code
+):
+    run_id, _, _ = _selected_origin(tmp_path, monkeypatch, findings)
+    with pytest.raises(RepairSandboxError) as caught:
+        create_repair_scope(
+            tmp_path, "Selected finding", audit_run_id=run_id, finding_ids=ids
+        )
+    assert caught.value.code == code
+
+
+def test_selected_audit_scope_requires_run_and_rechecks_origin(tmp_path, monkeypatch):
+    run_id, finding_id, origin = _selected_origin(tmp_path, monkeypatch)
+    calls = []
+
+    def origin_reader(_root, selected_run):
+        calls.append(selected_run)
+        return origin
+
+    monkeypatch.setattr(repair_sandbox, "_repair_origin_binding", origin_reader)
+    with pytest.raises(RepairSandboxError) as missing:
+        create_repair_scope(tmp_path, "Selected finding", finding_ids=[finding_id])
+    assert missing.value.code == "REPAIR_SCOPE_INPUT_INVALID"
+    assert calls == []
+
+    changed = {**origin, "event_sha256": "f" * 64}
+    observed = iter((origin, changed))
+    monkeypatch.setattr(
+        repair_sandbox, "_repair_origin_binding", lambda *_: next(observed)
+    )
+    with pytest.raises(RepairSandboxError) as stale:
+        create_repair_scope(
+            tmp_path, "Selected finding", audit_run_id=run_id, finding_ids=[finding_id]
+        )
+    assert stale.value.code == "REPAIR_SCOPE_ORIGIN_DRIFT"
+
+
+def test_selected_scope_rederives_ids_and_rejects_conflicting_approval(
+    tmp_path, monkeypatch
+):
+    run_id, finding_id, origin = _selected_origin(tmp_path, monkeypatch)
+    scope = create_repair_scope(
+        tmp_path, "Selected finding", audit_run_id=run_id, finding_ids=[finding_id]
+    )
+    path = repair_sandbox._baseline_entry(tmp_path, ".gitignore")
+    forged = {**scope, "paths": [path]}
+    forged["scope_sha256"] = repair_sandbox._sha(repair_sandbox._scope_core(forged))
+    forged["scope_id"] = f"repair-scope-{forged['scope_sha256'][:12]}"
+    with pytest.raises(RepairSandboxError) as drift:
+        verify_repair_scope(forged, tmp_path)
+    assert drift.value.code == "REPAIR_SCOPE_ORIGIN_DRIFT"
+    malformed = {**scope, "paths": [None]}
+    malformed["scope_sha256"] = repair_sandbox._sha(
+        repair_sandbox._scope_core(malformed)
+    )
+    with pytest.raises(RepairSandboxError) as bad_paths:
+        verify_repair_scope(malformed, tmp_path)
+    assert bad_paths.value.code == "REPAIR_SCOPE_INVALID"
+
+    packet = write_repair_scope_artifacts(
+        scope, tmp_path, tmp_path / ".factory" / "selected-scope"
+    )
+    scope_path, patch_path = (
+        Path(packet["paths"]["json"]),
+        tmp_path / ".factory" / "candidate.diff",
+    )
+    candidate = inspect_repair_candidate(tmp_path, scope_path, patch_path)
+    monkeypatch.setattr(
+        repair_sandbox, "_docker_identity", lambda *_args: {"context": "ctx"}
+    )
+    monkeypatch.setattr(
+        repair_sandbox, "_image_ref", lambda *_args: "python@sha256:" + "1" * 64
+    )
+    _mock_docker_tool_lookup(monkeypatch)
+    with pytest.raises(RepairSandboxError) as conflict:
+        create_repair_approval(
+            tmp_path,
+            scope_path,
+            patch_path,
+            approved_by="operator",
+            confirmation="APPROVE REPAIR " + candidate["candidate_sha256"],
+            expires_at=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+            container_image="python",
+            container_digest="1" * 64,
+            checks=_repair_checks(),
+            audit_run_id="f" * 32,
+        )
+    assert conflict.value.code == "REPAIR_ORIGIN_CONFLICT"
+    assert not (tmp_path / ".factory" / "repair-approvals").exists()
+
+
+def test_repair_scope_cli_accepts_selected_finding_without_execution(
+    tmp_path, monkeypatch, capsys
+):
+    run_id, finding_id, _ = _selected_origin(tmp_path, monkeypatch)
+    result = main(
+        [
+            "repair",
+            "scope",
+            "--root",
+            str(tmp_path),
+            "--change-list",
+            "selected",
+            "--audit-run-id",
+            run_id,
+            "--finding-id",
+            finding_id,
+            "--out-dir",
+            ".factory/scopes",
+            "--json",
+        ]
+    )
+    assert result == 0
+    output = json.loads(capsys.readouterr().out)
+    artifact = Path(output["artifacts"]["paths"]["json"])
+    assert artifact.is_file()
+    assert artifact.parent == tmp_path / ".factory" / "scopes"
+    assert not (tmp_path / ".factory" / "repair-attempts").exists()
 
 
 def test_repair_scope_artifacts_are_explicit_local_and_hash_bound(
