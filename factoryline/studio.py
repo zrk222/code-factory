@@ -2027,9 +2027,7 @@ catch(error){{renderFailure({{code:'NETWORK_ERROR',message:String(error)}});}}fi
 </script><script src="/studio_audit.js" defer></script></body></html>"""
 
 
-def _current_audit(
-    root: Path, payload: dict[str, Any], fields: set[str]
-) -> dict[str, Any]:
+def _audit(root: Path, payload: dict[str, Any], fields: set[str]) -> dict[str, Any]:
     if set(payload) != fields:
         raise StudioRequestError("AUDIT_REQUEST_INVALID", "invalid request fields")
     projection = deep_scan_projection(root)[0]
@@ -2041,7 +2039,8 @@ def _current_audit(
 
 
 def prepare_studio_repair_scope(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
-    projection = _current_audit(
+    """Prepare a sealed local proposal from current selected audit findings."""
+    projection = _audit(
         root, payload, {"run_id", "expected_state_content_sha256", "finding_ids"}
     )
     if projection.get("observed_state") in {"RUNNING", "PAUSE_REQUESTED"}:
@@ -2076,9 +2075,8 @@ def prepare_studio_repair_scope(root: Path, payload: dict[str, Any]) -> dict[str
 
 
 def request_studio_audit_pause(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
-    projection = _current_audit(
-        root, payload, {"run_id", "expected_state_content_sha256"}
-    )
+    """Request runner cooperation to pause the exact current audit origin."""
+    projection = _audit(root, payload, {"run_id", "expected_state_content_sha256"})
     if projection.get("observed_state") != "RUNNING":
         raise StudioRequestError("AUDIT_NOT_RUNNING", "audit is not running", 409)
     return pause_deep_run(root, projection["run_id"])

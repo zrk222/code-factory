@@ -12,6 +12,8 @@ except ModuleNotFoundError:  # pragma: no cover - exercised by the Python 3.10 C
     import tomli as tomllib
 from pathlib import Path
 
+from factoryline.release_integrity import _python_package_data_check
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -175,9 +177,20 @@ def test_python_wheel_data_is_explicit_and_does_not_depend_on_package_discovery(
 
     assert "include-package-data = false" in project
     assert (
-        'factoryline = ["builtin_packs/**/*.json", "builtin_packs/**/*.yaml", "data/*.json", "hosted_console.html", "graph_ops.html"]'
+        'factoryline = ["builtin_packs/**/*.json", "builtin_packs/**/*.yaml", "data/*.json", "hosted_console.html", "graph_ops.html", "studio_audit.js"]'
         in project
     )
+
+
+def test_release_integrity_rejects_unlisted_studio_asset(tmp_path: Path) -> None:
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    project = project.replace(', "studio_audit.js"', "")
+    (tmp_path / "pyproject.toml").write_text(project, encoding="utf-8")
+
+    result = _python_package_data_check(tmp_path)
+
+    assert result["id"] == "PYTHON_PACKAGE_DATA_EXPLICIT"
+    assert result["passed"] is False
 
 
 def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():

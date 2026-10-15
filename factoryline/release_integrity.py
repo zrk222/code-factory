@@ -558,7 +558,7 @@ def _python_package_data_check(root: Path) -> dict[str, Any]:
     project = _read_source(root, "pyproject.toml")
     passed = (
         "include-package-data = false" in project
-        and 'factoryline = ["builtin_packs/**/*.json", "builtin_packs/**/*.yaml", "data/*.json", "hosted_console.html", "graph_ops.html"]'
+        and 'factoryline = ["builtin_packs/**/*.json", "builtin_packs/**/*.yaml", "data/*.json", "hosted_console.html", "graph_ops.html", "studio_audit.js"]'
         in project
         and "[tool.setuptools.exclude-package-data]" in project
         and 'factoryline = ["**/__pycache__/*", "**/*.py[cod]"]' in project
