@@ -424,8 +424,10 @@ def _exception_run_identity(value: dict[str, Any]) -> tuple[str, str]:
     return run_id, run_attempt
 
 
-def _require_cadence_exceptions_enabled(root: Path) -> None:
-    """Reject exception receipts unless the release-train policy enables them."""
+def _require_cadence_exceptions_enabled(
+    root: Path, value: dict[str, Any], identity: dict[str, Any]
+) -> str | None:
+    """Require policy enablement or this exact owner-approved version opt-in."""
     policy_path = _inside(root, Path("release-train.json"), "release train policy")
     try:
         policy = json.loads(policy_path.read_text(encoding="utf-8"))
@@ -439,8 +441,27 @@ def _require_cadence_exceptions_enabled(root: Path) -> None:
         raise ValueError(
             "release cadence policy must declare boolean exceptions_enabled"
         )
-    if not enabled:
+    if enabled:
+        return None
+    version = identity["version"]
+    opted_in = value.get("one_time_version_opt_in")
+    approved = {
+        ("core", "0.48.2", "v0.48.2", "pypi"),
+        ("vscode", "1.2.0", "vscode-v1.2.0", "openvsx"),
+        ("vscode", "1.2.0", "vscode-v1.2.0", "vscode-marketplace"),
+        ("jetbrains", "1.2.0", "jetbrains-v1.2.0", "jetbrains-marketplace"),
+    }
+    expected = (
+        identity["channel"],
+        version,
+        identity["candidate_tag"],
+        value.get("environment"),
+    )
+    if expected not in approved or opted_in != version:
         raise ValueError("new release cadence exceptions are disabled by policy")
+    if os.environ.get("GITHUB_ACTOR") != "zrk222":
+        raise ValueError("one-time version opt-in requires owner dispatch")
+    return opted_in
 
 
 def _cadence_exception_payload(
@@ -454,7 +475,6 @@ def _cadence_exception_payload(
     """Load one exact, expiring release exception without granting authority."""
     if path is None:
         return None
-    _require_cadence_exceptions_enabled(root)
     candidate = _inside(Path(root).resolve(), Path(path), "cadence exception")
     value = json.loads(candidate.read_text(encoding="utf-8-sig"))
     if (
@@ -480,11 +500,15 @@ def _cadence_exception_payload(
     }
     allowed = {
         ("core", "0.48.1", "v0.48.1", "pypi"),
+        ("core", "0.48.2", "v0.48.2", "pypi"),
         ("vscode", "1.1.4", "vscode-v1.1.4", "openvsx"),
         ("vscode", "1.1.4", "vscode-v1.1.4", "vscode-marketplace"),
         ("vscode", "1.1.4", "vscode-v1.1.4+build.1", "openvsx"),
         ("vscode", "1.1.4", "vscode-v1.1.4+build.1", "vscode-marketplace"),
+        ("vscode", "1.2.0", "vscode-v1.2.0", "openvsx"),
+        ("vscode", "1.2.0", "vscode-v1.2.0", "vscode-marketplace"),
         ("jetbrains", "1.1.4", "jetbrains-v1.1.4", "jetbrains-marketplace"),
+        ("jetbrains", "1.2.0", "jetbrains-v1.2.0", "jetbrains-marketplace"),
     }
     approved = next(
         (
@@ -497,23 +521,31 @@ def _cadence_exception_payload(
     )
     if approved is None:
         raise ValueError(
-            "this one-time cadence exception is restricted to core v0.48.1, vscode v1.1.4, or jetbrains v1.1.4"
+            "this one-time cadence exception is restricted to the exact approved release candidates"
         )
     expected_environments = (
         {"openvsx", "vscode-marketplace"} if channel == "vscode" else {approved}
     )
     if any(value.get(key) != expected for key, expected in identity.items()):
         raise ValueError("cadence exception does not match the candidate identity")
+    version_opt_in = _require_cadence_exceptions_enabled(root, value, identity)
     monthly_cap_candidate = (
         channel == "vscode"
         and identity["version"] == "1.1.4"
         and candidate_tag == "vscode-v1.1.4+build.1"
-    )
+    ) or (channel, identity["version"], candidate_tag, value.get("environment")) in {
+        ("core", "0.48.2", "v0.48.2", "pypi"),
+        ("vscode", "1.2.0", "vscode-v1.2.0", "openvsx"),
+        ("vscode", "1.2.0", "vscode-v1.2.0", "vscode-marketplace"),
+        ("jetbrains", "1.2.0", "jetbrains-v1.2.0", "jetbrains-marketplace"),
+    }
     monthly_cap_exception = value.get("monthly_cap_exception", False)
     if not isinstance(monthly_cap_exception, bool) or (
         monthly_cap_exception and not monthly_cap_candidate
     ):
-        raise ValueError("monthly cap exception is restricted to vscode-v1.1.4+build.1")
+        raise ValueError(
+            "monthly cap exception is restricted to an exact approved candidate"
+        )
     if (
         value.get("environment") not in expected_environments
         or value.get("environment_authorized") is not True
@@ -548,6 +580,7 @@ def _cadence_exception_payload(
         "expires_at": expires.isoformat().replace("+00:00", "Z"),
         "reason": reason.strip(),
         "monthly_cap_exception": monthly_cap_exception,
+        "one_time_version_opt_in": version_opt_in,
     }
 
 
@@ -604,6 +637,24 @@ def _cadence_admission(
         and exception.get("channel") == "vscode"
         and exception.get("version") == "1.1.4"
         and exception.get("candidate_tag") == "vscode-v1.1.4+build.1"
+        or (
+            cadence.get("release_train_status") == "valid"
+            and cadence.get("available") is True
+            and cadence.get("admission") is False
+            and cadence.get("state") == "rate_limited"
+            and monthly_cap_reached
+            and exception.get("monthly_cap_exception") is True
+            and (
+                exception.get("channel"),
+                exception.get("version"),
+                exception.get("candidate_tag"),
+            )
+            in {
+                ("core", "0.48.2", "v0.48.2"),
+                ("vscode", "1.2.0", "vscode-v1.2.0"),
+                ("jetbrains", "1.2.0", "jetbrains-v1.2.0"),
+            }
+        )
     )
     if not cooldown_only and not monthly_cap_override:
         return admitted, check, blocker
