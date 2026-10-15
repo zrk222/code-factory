@@ -256,3 +256,127 @@ def test_daily_schedule_rechecks_parent_identity_after_open(tmp_path, monkeypatc
 
     monkeypatch.setattr(os, "open", concurrent_change)
     assert daily_schedule_plan(tmp_path, "nested/checks.json")["state"] == "INCOMPLETE"
+
+
+def test_linear_connect_callback_rejects_bad_host_and_closes_listener(
+    monkeypatch, capsys
+):
+    import http.client
+    import threading
+    from http.server import HTTPServer
+    from factoryline import cli_integrations as cli
+
+    requests, threads = [], []
+    bound = {}
+
+    class EphemeralServer(HTTPServer):
+        def __init__(self, address, handler):
+            assert address == ("127.0.0.1", 8767)
+            super().__init__(("127.0.0.1", 0), handler)
+            bound["server"] = self
+
+    def browser_open(url):
+        assert url == "https://linear.app/oauth/authorize?public-parameters"
+
+        def callbacks():
+            for host, code, status in [
+                ("evil.test", "bad", 400),
+                ("127.0.0.1:8767", "bad", 400),
+                ("127.0.0.1:8767", "valid", 200),
+            ]:
+                connection = http.client.HTTPConnection(
+                    *bound["server"].server_address, timeout=4
+                )
+                connection.request(
+                    "GET", "/linear/callback?code=" + code, headers={"Host": host}
+                )
+                response = connection.getresponse()
+                requests.append((response.status, response.read()))
+                assert response.status == status
+                connection.close()
+
+        thread = threading.Thread(target=callbacks)
+        threads.append(thread)
+        thread.start()
+        return True
+
+    def complete(session, url, alias):
+        assert alias == "work"
+        if not url.endswith("code=valid"):
+            raise ValueError("rejected")
+        return {"state": "CONNECTED", "connection": alias}
+
+    monkeypatch.setattr(cli, "HTTPServer", EphemeralServer)
+    monkeypatch.setattr(cli.webbrowser, "open", browser_open)
+    result = cli._linear_connect_callback(
+        {"authorization_url": "https://linear.app/oauth/authorize?public-parameters"},
+        "work",
+        complete,
+    )
+    for thread in threads:
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+    assert result["state"] == "CONNECTED"
+    assert [status for status, _ in requests] == [400, 400, 200]
+    assert bound["server"].fileno() == -1
+    assert "code=" not in capsys.readouterr().err
+
+
+def test_issues_rejects_linear_connection_for_jira(monkeypatch, capsys):
+    from factoryline import cli_integrations as cli
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("must not access the Linear vault or Jira provider")
+
+    monkeypatch.setattr(cli, "_run_issue_evidence", forbidden)
+    args = __import__("argparse").Namespace(
+        action="import", provider="jira", connection="work", expert_token=False
+    )
+    assert cli._run_issues(args) == 2
+    assert "incomplete" in capsys.readouterr().err
+
+
+def test_linear_callback_stops_after_consumed_session_failure(monkeypatch):
+    from factoryline import cli_integrations as cli
+
+    session, outcome = {"state": "ephemeral"}, {}
+
+    def failed(current, *_args):
+        current.clear()
+        raise ValueError("private provider response must not be disclosed")
+
+    handler = cli._linear_callback_handler(session, "work", failed, outcome)
+    callback = object.__new__(handler)
+    callback.path = "/linear/callback?code=private&state=ephemeral"
+    callback.headers = __import__("email.message", fromlist=["Message"]).Message()
+    callback.headers["Host"] = "127.0.0.1:8767"
+    errors = []
+    monkeypatch.setattr(callback, "send_error", lambda *values: errors.append(values))
+    callback.do_GET()
+    assert outcome == {"error": "Linear token exchange or secure storage failed"}
+    assert errors == [(400, "Connection not completed")]
+    assert not session
+
+
+def test_issues_routes_named_linear_and_explicit_jira_expert(monkeypatch):
+    from factoryline import cli_integrations as cli, integrations
+    from contextlib import contextmanager
+    from argparse import Namespace
+
+    selected = []
+
+    @contextmanager
+    def connection(alias):
+        selected.append(alias)
+        yield
+
+    monkeypatch.setattr(integrations, "use_linear_connection", connection)
+    monkeypatch.setattr(cli, "_run_issue_evidence", lambda args: 0)
+    args = Namespace(
+        action="import", provider="linear", connection="work", expert_token=False
+    )
+    assert cli._run_issues(args) == 0
+    assert selected == ["work"]
+    args.provider, args.connection, args.expert_token = "jira", None, True
+    assert cli._run_issues(args) == 0
+    assert selected == ["work"]

@@ -61,33 +61,45 @@ This candidate guidance is not evidence of installation, registry publication
 or a replacement of immutable public `0.48.1` packages. Required CI and versioned
 distribution gates remain separate.
 
-## Work from a Linear or Jira issue
+## Connect your own Linear workspace
 
-The source candidate adds one optional ticket workflow. Configure credentials
-privately in `FACTORY_LINEAR_TOKEN` (personal key by default; set
-`FACTORY_LINEAR_AUTH=oauth` for an existing OAuth access token), or
-`FACTORY_JIRA_EMAIL` and `FACTORY_JIRA_TOKEN` for Jira Cloud. No SDK, daemon or
-background polling is required. Tokens are not saved in issue artifacts.
+The source candidate uses a public Code Factory OAuth application, so every CF
+user can authorize their own workspace. No owner account or shared API token is
+required. Install CF with the `issues` extra to enable secure OS-vault storage.
 
 ```console
-factory issues import --provider linear --issue APP-123 --criterion "Returns expected value" --json
+factory issues connect --connection work
+factory issues status --connection work --json
+factory issues import --connection work --provider linear --issue APP-123 --criterion "Returns expected value" --json
 factory issues draft --imported .factory/issues/import-<hash>.json --contract checks.json --observations observations.json --json
-factory issues publish --draft .factory/issues/draft-<hash>.json --confirmation publish:<draft-sha256> --json
+factory issues publish --connection work --draft .factory/issues/draft-<hash>.json --confirmation publish:<draft-sha256> --json
+factory issues disconnect --connection work
 ```
 
-For Jira, import with `--provider jira --site https://your-team.atlassian.net`.
-Review the imported text as untrusted data; repeat `--criterion` for each
-operator-reviewed acceptance requirement. The draft reuses the existing
-workflow audit and maps requirements to check IDs, profiles and evidence hashes.
-Its PASS means recorded evidence completeness, not semantic correctness.
+Connect opens Linear's own consent screen using PKCE S256. Each connection pins
+the consenting user and workspace; tokens stay in that local user's secure OS
+credential vault. Only read and comment creation are requested. No client secret
+is embedded. Named connections permit separate workspaces without sharing
+credentials; refresh preserves identity pins and disconnect confirms revocation.
+The fixed loopback callback closes after completion or timeout.
 
-Inspect the complete draft before confirming publication. CF records the exact
-body, destination and candidate confirmation; this is operator intent, not
-authenticated reviewer identity. Publication checks freshness, deduplicates the
-comment and requires exact remote readback. Ambiguous deliveries stop for
-reconciliation; more than 100 existing comments also stops safely. No issue is
-closed and no repair, release or code execution is authorized by a ticket.
+Review imported ticket text as untrusted data; repeat `--criterion` for each
+operator-reviewed requirement. The local draft reuses the existing workflow audit
+and maps requirements to check IDs, profiles and evidence hashes. Its PASS means
+recorded evidence completeness, not semantic correctness. Inspect the exact draft
+before confirming. Publication rechecks freshness, deduplicates and requires
+remote readback. Uncertain writes and more than 100 comments stop safely.
 
-API-shaped fixture tests are local development evidence. Actual authenticated
-provider operation, new-issue creation, background synchronization and Linear
-agent-session support require separate integration evidence and remain pending.
+Jira Cloud and automation may use explicit `--expert-token` mode with private
+`FACTORY_JIRA_EMAIL`/`FACTORY_JIRA_TOKEN` or `FACTORY_LINEAR_TOKEN`. Jira import
+also requires `--site https://your-team.atlassian.net`. An existing Linear OAuth
+access token uses `FACTORY_LINEAR_AUTH=oauth`. No issue is automatically closed;
+a ticket never authorizes code execution, repair or release.
+
+The public OAuth app is registered. Live Windows consent, OS-vault storage,
+refresh rotation, identity verification and issue import have been exercised in
+one workspace. A separate customer workspace and live comment publication remain
+unverified; fixture tests do not prove those flows.
+New-issue creation, background synchronization and Linear agent sessions remain
+follow-on work. A user's ChatGPT Linear connection is separate from CF's product
+authorization and is not distributed to other users.

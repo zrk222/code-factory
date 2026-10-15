@@ -499,6 +499,7 @@ def test_issue_cli_parser_and_private_errors(issue_workspace, issue_provider, ca
                 "APP-123",
                 "--criterion",
                 "Returns expected value",
+                "--expert-token",
                 "--json",
             ]
         )
@@ -534,3 +535,323 @@ def test_issue_file_binding_scope_and_redirect_rejected(
         _IssueNoRedirect().redirect_request(
             None, None, 302, "redirect", {}, "https://evil.test"
         )
+
+
+class _FakeLinearVault:
+    def __init__(self):
+        self.values = {}
+
+    def get_password(self, service, username):
+        return self.values.get((service, username))
+
+    def set_password(self, service, username, value):
+        self.values[(service, username)] = value
+
+    def delete_password(self, service, username):
+        del self.values[(service, username)]
+
+
+@pytest.fixture
+def linear_vault(monkeypatch):
+    import factoryline.integrations as module
+
+    vault = _FakeLinearVault()
+    monkeypatch.setattr(module, "_linear_secure_keyring", lambda: (None, vault))
+    return module, vault
+
+
+def test_linear_pkce_connect_is_one_shot_and_vault_metadata_only(
+    linear_vault, monkeypatch
+):
+    from urllib.parse import parse_qs, urlsplit
+
+    module, vault = linear_vault
+    exchanged = []
+
+    def exchange(url, values, **kwargs):
+        exchanged.append((url, values.copy()))
+        return {
+            "access_token": "access-secret",
+            "refresh_token": "refresh-secret",
+            "expires_in": 3600,
+            "scope": ["read", "comments:create"],
+        }
+
+    monkeypatch.setattr(module, "_linear_http_form", exchange)
+    monkeypatch.setattr(module, "_linear_viewer", lambda token: ("viewer-1", "org-1"))
+    session = module.begin_linear_oauth("public-client")
+    query = parse_qs(urlsplit(session["authorization_url"]).query)
+    assert query["actor"] == ["user"] and query["prompt"] == ["consent"]
+    assert query["scope"] == ["read,comments:create"]
+    assert query["redirect_uri"] == [module._LINEAR_REDIRECT]
+    state, verifier = session["state"], session["verifier"]
+    with pytest.raises(module.IssueIntegrationError, match="CALLBACK_INVALID"):
+        module.complete_linear_oauth(
+            session, f"{module._LINEAR_REDIRECT}?state=wrong&code=bad", "work"
+        )
+    assert session.get("verifier")
+    result = module.complete_linear_oauth(
+        session, f"{module._LINEAR_REDIRECT}?state={state}&code=code-1", "work"
+    )
+    assert (
+        result["state"] == "CONNECTED" and exchanged[0][1]["code_verifier"] == verifier
+    )
+    assert exchanged[0][0] == module._LINEAR_TOKEN_URL
+    assert "client_secret" not in exchanged[0][1]
+    assert vault.values
+    status = module.linear_connection_status("work")
+    assert status["viewer_id"] == "viewer-1" and status["organization_id"] == "org-1"
+    assert "access_token" not in status and "refresh_token" not in status
+    with pytest.raises(module.IssueIntegrationError, match="SESSION_INVALID"):
+        module.complete_linear_oauth(
+            session, f"{module._LINEAR_REDIRECT}?state={state}&code=again", "other"
+        )
+    assert len(exchanged) == 1
+
+
+@pytest.mark.parametrize(
+    "scope", [["read", "comments:create", "admin"], ["read", "read"]]
+)
+def test_linear_rejects_extra_or_duplicate_scopes_before_vault_write(
+    linear_vault, monkeypatch, scope
+):
+    module, vault = linear_vault
+    viewer_calls = []
+    monkeypatch.setattr(
+        module,
+        "_linear_http_form",
+        lambda *a, **k: {
+            "access_token": "a",
+            "refresh_token": "r",
+            "expires_in": 3600,
+            "scope": scope,
+        },
+    )
+    monkeypatch.setattr(module, "_linear_viewer", lambda _: viewer_calls.append(1))
+    session = module.begin_linear_oauth("client")
+    with pytest.raises(module.IssueIntegrationError, match="RESPONSE_INVALID"):
+        module.complete_linear_oauth(
+            session,
+            f"{module._LINEAR_REDIRECT}?state={session['state']}&code=valid",
+            "work",
+        )
+    assert not vault.values and not viewer_calls
+
+
+def test_linear_cancel_discards_pending_verifier(linear_vault):
+    module, _ = linear_vault
+    session = module.begin_linear_oauth("client")
+    state = session["state"]
+    module.cancel_linear_oauth(session)
+    assert session == {}
+    with pytest.raises(module.IssueIntegrationError, match="SESSION_INVALID"):
+        module.complete_linear_oauth(
+            {"state": state},
+            f"{module._LINEAR_REDIRECT}?state={state}&code=valid",
+            "work",
+        )
+
+
+def test_linear_connection_lock_rejects_concurrent_holder_and_releases(
+    linear_vault, monkeypatch, tmp_path
+):
+    import multiprocessing
+
+    module, _ = linear_vault
+    monkeypatch.setattr(module.Path, "home", classmethod(lambda cls: tmp_path))
+    ctx = multiprocessing.get_context("spawn")
+    with module._linear_connection_lock("work"):
+        process = ctx.Process(target=_linear_lock_child, args=(str(tmp_path), True))
+        process.start()
+        process.join(15)
+        assert process.exitcode == 0
+    process = ctx.Process(target=_linear_lock_child, args=(str(tmp_path), False))
+    process.start()
+    process.join(15)
+    assert process.exitcode == 0
+
+
+def _linear_lock_child(home, busy):
+    from unittest.mock import patch
+    from pathlib import Path
+
+    import factoryline.integrations as module
+
+    with patch.object(module.Path, "home", return_value=Path(home)):
+        try:
+            with module._linear_connection_lock("work"):
+                pass
+        except module.IssueIntegrationError as error:
+            if not busy or str(error) != "LINEAR_CONNECTION_BUSY":
+                raise
+        else:
+            if busy:
+                raise RuntimeError("lock unexpectedly acquired")
+
+
+def test_issue_opener_tls_is_validating_and_rejects_redirects(monkeypatch):
+    import ssl
+    import sys
+    from types import SimpleNamespace
+
+    import factoryline.integrations as module
+
+    protocols, handlers = [], []
+    monkeypatch.setitem(
+        sys.modules,
+        "truststore",
+        SimpleNamespace(
+            SSLContext=lambda protocol: protocols.append(protocol)
+            or ssl.create_default_context()
+        ),
+    )
+    monkeypatch.setattr(
+        module.urllib.request,
+        "build_opener",
+        lambda *items: handlers.extend(items) or object(),
+    )
+    module._issue_opener()
+    monkeypatch.setitem(sys.modules, "truststore", None)
+    module._issue_opener()
+    assert protocols == [ssl.PROTOCOL_TLS_CLIENT]
+    assert sum(isinstance(item, module._IssueNoRedirect) for item in handlers) == 2
+    handlers = [
+        item
+        for item in handlers
+        if isinstance(item, module.urllib.request.HTTPSHandler)
+    ]
+    assert len(handlers) == 2 and all(
+        item._context.verify_mode == ssl.CERT_REQUIRED and item._context.check_hostname
+        for item in handlers
+    )
+
+
+@pytest.mark.parametrize(
+    "callback",
+    [
+        "http://127.0.0.1:8767/linear/callback?state={state}&code=x&code=y",
+        "http://localhost:8767/linear/callback?state={state}&code=x",
+        "http://127.0.0.1:8767/other?state={state}&code=x",
+        "http://127.0.0.1:8767/linear/callback?state=wrong&code=x",
+        "http://127.0.0.1:8767/linear/callback?state={state}&error=denied",
+    ],
+)
+def test_linear_callback_rejects_invalid_shape(linear_vault, monkeypatch, callback):
+    module, _ = linear_vault
+    calls = []
+    monkeypatch.setattr(module, "_linear_http_form", lambda *a, **k: calls.append(a))
+    session = module.begin_linear_oauth("public-client")
+    with pytest.raises(module.IssueIntegrationError, match="CALLBACK_INVALID"):
+        module.complete_linear_oauth(
+            session, callback.format(state=session["state"]), "work"
+        )
+    assert calls == []
+
+
+def test_linear_expiry_refresh_pins_two_connections(linear_vault, monkeypatch):
+    module, _ = linear_vault
+    record = {
+        "schema": "factory.linear-oauth-connection.v1",
+        "client_id": "client",
+        "access_token": "old",
+        "refresh_token": "refresh",
+        "expires_at": 1,
+        "viewer_id": "v1",
+        "organization_id": "o1",
+    }
+    module._linear_vault_set("first", record)
+    module._linear_vault_set(
+        "second",
+        {
+            **record,
+            "access_token": "old-2",
+            "expires_at": int(module.time.time()) + 3600,
+            "viewer_id": "v2",
+            "organization_id": "o2",
+        },
+    )
+    module._linear_vault_set(
+        "mismatch", {**record, "viewer_id": "v3", "organization_id": "o3"}
+    )
+    monkeypatch.setattr(
+        module,
+        "_linear_http_form",
+        lambda url, values, **kw: {
+            "access_token": "new",
+            "refresh_token": "rotated",
+            "expires_in": 3600,
+            "scope": "read comments:create",
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "_linear_viewer",
+        lambda token: ("v2", "o2") if token == "old-2" else ("v1", "o1"),
+    )
+    with module.use_linear_connection("first"):
+        assert module._issue_credentials("linear") == "Bearer new"
+        with pytest.raises(module.IssueIntegrationError, match="CREDENTIALS_MISSING"):
+            module._issue_credentials("jira")
+    with module.use_linear_connection("second"):
+        assert module._issue_credentials("linear") == "Bearer old-2"
+    with pytest.raises(module.IssueIntegrationError, match="IDENTITY_CHANGED"):
+        with module.use_linear_connection("mismatch"):
+            pass
+    assert module.linear_connection_status("first")["viewer_id"] == "v1"
+    assert module.linear_connection_status("second")["viewer_id"] == "v2"
+    assert module._linear_vault_get("mismatch")["refresh_token"] == "refresh"
+
+
+def test_linear_expired_authorization_session_is_consumed(linear_vault, monkeypatch):
+    module, _ = linear_vault
+    clock, calls = [1000], []
+    monkeypatch.setattr(module.time, "time", lambda: clock[0])
+    monkeypatch.setattr(module, "_linear_http_form", lambda *a, **k: calls.append(a))
+    session = module.begin_linear_oauth("public-client")
+    state = session["state"]
+    clock[0] += 601
+    callback = f"{module._LINEAR_REDIRECT}?state={state}&code=code"
+    with pytest.raises(module.IssueIntegrationError, match="SESSION_EXPIRED"):
+        module.complete_linear_oauth(session, callback, "work")
+    assert calls == []
+    with pytest.raises(module.IssueIntegrationError, match="SESSION_INVALID"):
+        module.complete_linear_oauth(session, callback, "work")
+
+
+def test_linear_disconnect_keeps_vault_on_revocation_failure(linear_vault, monkeypatch):
+    module, _ = linear_vault
+    record = {
+        "schema": "factory.linear-oauth-connection.v1",
+        "client_id": "client",
+        "access_token": "a",
+        "refresh_token": "r",
+        "expires_at": 9999999999,
+        "viewer_id": "v",
+        "organization_id": "o",
+    }
+    module._linear_vault_set("work", record)
+    monkeypatch.setattr(
+        module,
+        "_linear_http_form",
+        lambda *a, **k: (_ for _ in ()).throw(
+            module.IssueIntegrationError("LINEAR_OAUTH_PROVIDER_FAILED")
+        ),
+    )
+    with pytest.raises(module.IssueIntegrationError, match="PROVIDER_FAILED"):
+        module.disconnect_linear_connection("work")
+    assert module._linear_vault_get("work") == record
+    monkeypatch.setattr(module, "_linear_http_form", lambda *a, **k: {})
+    assert module.disconnect_linear_connection("work")["revocation"] == "CONFIRMED"
+    assert module.linear_connection_status("work")["state"] == "NOT_CONNECTED"
+
+
+def test_linear_vault_rejects_unencrypted_backend(monkeypatch):
+    import sys
+    import types
+    import factoryline.integrations as module
+
+    monkeypatch.setitem(
+        sys.modules, "keyring", types.SimpleNamespace(get_keyring=object)
+    )
+    with pytest.raises(module.IssueIntegrationError, match="SECURE_VAULT_UNAVAILABLE"):
+        module._linear_secure_keyring()

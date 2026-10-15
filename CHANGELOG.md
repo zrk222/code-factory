@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Connect each user's own Linear workspace through the public Code Factory PKCE
+  app and secure OS vault. Pin user/workspace identity, rotate refresh tokens,
+  retain validating native HTTPS and close failed loopback callbacks promptly.
+  Import Linear/Jira tickets into the existing workflow audit and require exact
+  reviewed, freshness-checked comment publication; Jira token mode stays explicit.
+
 - Detect source-bound HTML autoescape, legacy client TLS certificate defaults,
   and explicit XML/XSLT external-access configuration risks. Keep unknown
   input trust and exploitability distinct; dynamic settings remain unassessed.

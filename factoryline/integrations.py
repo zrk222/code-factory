@@ -9,16 +9,24 @@ webhook or unsigned header from becoming an authority decision.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
+import ssl
+import threading
+import time
 import urllib.error
 import urllib.request
 import base64
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from .control_plane import ControlPlaneError, Principal, canonical_json
 
@@ -238,6 +246,17 @@ def event_json(event: SCMEvent) -> bytes:
 
 # Explicit ticket operations share the existing workflow audit, not another runner.
 _ISSUE_LIMIT = 1_048_576
+_LINEAR_REDIRECT = "http://127.0.0.1:8767/linear/callback"
+_LINEAR_AUTHORIZE = "https://linear.app/oauth/authorize"
+_LINEAR_TOKEN_URL = "https://api.linear.app/oauth/token"
+_LINEAR_REVOKE = "https://api.linear.app/oauth/revoke"
+_LINEAR_VAULT = "factoryline-linear-oauth-v1"
+_LINEAR_SCOPES = ("read", "comments:create")
+_LINEAR_TOKEN_CONTEXT: ContextVar[str | None] = ContextVar(
+    "factoryline_linear_oauth_token", default=None
+)
+_LINEAR_OAUTH_SESSIONS: dict[str, dict[str, Any]] = {}
+_LINEAR_OAUTH_LOCK = threading.RLock()
 
 
 class IssueIntegrationError(ValueError):
@@ -273,16 +292,33 @@ class _IssueNoRedirect(urllib.request.HTTPRedirectHandler):
         raise IssueIntegrationError("ISSUE_REDIRECT_REJECTED")
 
 
-def _issue_credentials(provider: str) -> str:
+def _issue_opener():
+    try:
+        import truststore
+    except ImportError:
+        context = ssl.create_default_context()
+    else:
+        context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    return urllib.request.build_opener(
+        _IssueNoRedirect(), urllib.request.HTTPSHandler(context=context)
+    )
+
+
+def _issue_credentials(provider: str, *, token: str | None = None) -> str:
     if provider == "linear":
-        token = os.environ.get("FACTORY_LINEAR_TOKEN", "")
-        mode = os.environ.get("FACTORY_LINEAR_AUTH", "api-key")
+        selected = token or _LINEAR_TOKEN_CONTEXT.get()
+        token = selected or os.environ.get("FACTORY_LINEAR_TOKEN", "")
+        mode = "oauth" if selected else os.environ.get("FACTORY_LINEAR_AUTH", "api-key")
         if mode not in {"api-key", "oauth"}:
             raise IssueIntegrationError("ISSUE_AUTH_MODE_INVALID")
-        result = ("Bearer " if mode == "oauth" else "") + token
+        result = ("Bearer " if selected or mode == "oauth" else "") + token
     else:
         token = os.environ.get("FACTORY_JIRA_TOKEN", "")
-        email = os.environ.get("FACTORY_JIRA_EMAIL", "")
+        email = (
+            ""
+            if _LINEAR_TOKEN_CONTEXT.get()
+            else os.environ.get("FACTORY_JIRA_EMAIL", "")
+        )
         if not email or any(c in email for c in "\r\n:"):
             raise IssueIntegrationError(
                 "ISSUE_CREDENTIALS_MISSING: set Jira email privately"
@@ -304,7 +340,9 @@ def _issue_pairs(items):
     return result
 
 
-def _issue_request(provider, issue, site, method, suffix="", payload=None):
+def _issue_request(
+    provider, issue, site, method, suffix="", payload=None, *, token=None
+):
     base = _issue_target(provider, issue, site)
     url = base if provider == "linear" else f"{base}/rest/api/3/issue/{issue}{suffix}"
     data = canonical_json(payload) if payload is not None else None
@@ -313,15 +351,13 @@ def _issue_request(provider, issue, site, method, suffix="", payload=None):
         data=data,
         method=method,
         headers={
-            "Authorization": _issue_credentials(provider),
+            "Authorization": _issue_credentials(provider, token=token),
             "Content-Type": "application/json",
             "Accept": "application/json",
         },
     )
     try:
-        with urllib.request.build_opener(_IssueNoRedirect()).open(
-            request, timeout=20
-        ) as response:
+        with _issue_opener().open(request, timeout=20) as response:
             raw = response.read(_ISSUE_LIMIT + 1)
         if len(raw) > _ISSUE_LIMIT:
             raise IssueIntegrationError("ISSUE_RESPONSE_TOO_LARGE")
@@ -339,7 +375,7 @@ def _issue_request(provider, issue, site, method, suffix="", payload=None):
     return value
 
 
-def _issue_graphql(issue, query, variables):
+def _issue_graphql(issue, query, variables, *, token=None):
     value = _issue_request(
         "linear",
         issue,
@@ -349,10 +385,413 @@ def _issue_graphql(issue, query, variables):
             "query": query,
             "variables": variables,
         },
+        token=token,
     ).get("data", {})
     if not isinstance(value, dict):
         raise IssueIntegrationError("ISSUE_PROVIDER_FAILED: missing GraphQL data")
     return value
+
+
+def _linear_alias(value: object) -> str:
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", value
+    ):
+        raise IssueIntegrationError("LINEAR_CONNECTION_INVALID")
+    return value
+
+
+def _linear_secure_keyring():
+    try:
+        import keyring
+
+        backend = keyring.get_keyring()
+    except Exception:
+        raise IssueIntegrationError("LINEAR_SECURE_VAULT_UNAVAILABLE") from None
+    safe = {
+        ("keyring.backends.Windows", "WinVaultKeyring"),
+        ("keyring.backends.macOS", "Keyring"),
+        ("keyring.backends.SecretService", "Keyring"),
+        ("keyring.backends.kwallet", "DBusKeyring"),
+        ("keyring.backends.kwallet", "DBusKeyringKWallet4"),
+        ("keyring.backends.libsecret", "Keyring"),
+    }
+    kind = (type(backend).__module__, type(backend).__name__)
+    if kind in safe:
+        return keyring, backend
+    if kind == ("keyring.backends.chainer", "ChainerBackend"):
+        backends = getattr(backend, "backends", ())
+        if backends and all(
+            (type(item).__module__, type(item).__name__) in safe for item in backends
+        ):
+            return keyring, backend
+    raise IssueIntegrationError("LINEAR_SECURE_VAULT_UNAVAILABLE")
+
+
+def _linear_vault_get(connection: str) -> dict[str, Any] | None:
+    _, backend = _linear_secure_keyring()
+    try:
+        raw = backend.get_password(_LINEAR_VAULT, connection)
+        value = json.loads(raw) if raw is not None else None
+    except Exception:
+        raise IssueIntegrationError("LINEAR_SECURE_VAULT_UNAVAILABLE") from None
+    if value is None:
+        return None
+    required = set(
+        "schema client_id access_token refresh_token expires_at viewer_id organization_id".split()
+    )
+    if (
+        not isinstance(value, dict)
+        or set(value) != required
+        or value.get("schema") != "factory.linear-oauth-connection.v1"
+        or not all(
+            isinstance(value.get(name), str) and value[name]
+            for name in required - {"expires_at", "schema"}
+        )
+        or type(value.get("expires_at")) not in {int, float}
+    ):
+        raise IssueIntegrationError("LINEAR_SECURE_VAULT_INVALID")
+    return value
+
+
+def _linear_vault_set(connection: str, value: dict[str, Any]) -> None:
+    keyring, backend = _linear_secure_keyring()
+    try:
+        backend.set_password(
+            _LINEAR_VAULT,
+            connection,
+            json.dumps(value, sort_keys=True, separators=(",", ":")),
+        )
+    except Exception:
+        raise IssueIntegrationError("LINEAR_SECURE_VAULT_UNAVAILABLE") from None
+
+
+def _linear_vault_delete(connection: str) -> None:
+    keyring, backend = _linear_secure_keyring()
+    try:
+        backend.delete_password(_LINEAR_VAULT, connection)
+    except Exception:
+        raise IssueIntegrationError("LINEAR_SECURE_VAULT_UNAVAILABLE") from None
+
+
+@contextmanager
+def _linear_connection_lock(connection: str):
+    alias = _linear_alias(connection)
+    root = Path.home().resolve()
+    relative = (
+        Path(".cache/code-factory/linear")
+        / f"{hashlib.sha256(alias.encode()).hexdigest()}.lock"
+    )
+    target = _issue_local(root, relative)
+    target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    target = _issue_local(root, relative)
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(target, flags, 0o600)
+        if os.name == "nt":
+            import msvcrt
+
+            if not os.fstat(descriptor).st_size:
+                os.write(descriptor, b"\0")
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            os.fchmod(descriptor, 0o600)
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (OSError, ImportError):
+        if "descriptor" in locals():
+            os.close(descriptor)
+        raise IssueIntegrationError("LINEAR_CONNECTION_BUSY") from None
+    with os.fdopen(descriptor, "r+b"):
+        yield
+
+
+def _linear_http_form(
+    url: str, values: dict[str, str], *, revoke=False
+) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        data=urlencode(values).encode("ascii"),
+        method="POST",
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with _issue_opener().open(request, timeout=20) as response:
+            status, raw = response.status, response.read(_ISSUE_LIMIT + 1)
+    except Exception:
+        raise IssueIntegrationError("LINEAR_OAUTH_PROVIDER_FAILED") from None
+    if len(raw) > _ISSUE_LIMIT or status != 200:
+        raise IssueIntegrationError("LINEAR_OAUTH_PROVIDER_FAILED")
+    if revoke:
+        return {}
+    try:
+        value = json.loads(raw, object_pairs_hook=_issue_pairs)
+    except (ValueError, TypeError):
+        raise IssueIntegrationError("LINEAR_OAUTH_RESPONSE_INVALID") from None
+    if not isinstance(value, dict) or value.get("error"):
+        raise IssueIntegrationError("LINEAR_OAUTH_RESPONSE_INVALID")
+    return value
+
+
+def _linear_tokens(value: dict[str, Any], *, previous=None) -> dict[str, Any]:
+    access, refresh = value.get("access_token"), value.get("refresh_token")
+    expires = value.get("expires_in")
+    scope = value.get("scope")
+    if isinstance(scope, str):
+        scope = scope.replace(",", " ").split()
+    if (
+        not isinstance(access, str)
+        or not access
+        or not isinstance(refresh, str)
+        or not refresh
+        or type(expires) is not int
+        or not 1 <= expires <= 31 * 86400
+        or not isinstance(scope, list)
+        or not all(isinstance(item, str) for item in scope)
+        or len(scope) != len(_LINEAR_SCOPES)
+        or set(scope) != set(_LINEAR_SCOPES)
+    ):
+        raise IssueIntegrationError("LINEAR_OAUTH_RESPONSE_INVALID")
+    return {
+        "schema": "factory.linear-oauth-connection.v1",
+        "client_id": previous["client_id"] if previous else value.get("client_id", ""),
+        "access_token": access,
+        "refresh_token": refresh,
+        "expires_at": int(time.time()) + expires,
+        "viewer_id": previous["viewer_id"] if previous else "",
+        "organization_id": previous["organization_id"] if previous else "",
+    }
+
+
+def _linear_viewer(token: str) -> tuple[str, str]:
+    value = _issue_graphql(
+        "CF-1",
+        "query CFConnectionViewer { viewer { id organization { id } } }",
+        {},
+        token=token,
+    ).get("viewer")
+    try:
+        viewer = _issue_text(value["id"], 128)
+        organization = _issue_text(value["organization"]["id"], 128)
+    except (KeyError, TypeError, IssueIntegrationError):
+        raise IssueIntegrationError("LINEAR_IDENTITY_UNVERIFIED")
+    return viewer, organization
+
+
+def begin_linear_oauth(client_id: str) -> dict[str, Any]:
+    """Create a ten-minute, single-use PKCE authorization request."""
+    if not isinstance(client_id, str) or not client_id.strip() or len(client_id) > 256:
+        raise IssueIntegrationError("LINEAR_CLIENT_ID_INVALID")
+    state, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(64)
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+        .decode()
+        .rstrip("=")
+    )
+    expires_at = int(time.time()) + 600
+    session = {
+        "state": state,
+        "verifier": verifier,
+        "client_id": client_id.strip(),
+        "expires_at": expires_at,
+    }
+    query = urlencode(
+        {
+            "response_type": "code",
+            "client_id": session["client_id"],
+            "redirect_uri": _LINEAR_REDIRECT,
+            "scope": ",".join(_LINEAR_SCOPES),
+            "actor": "user",
+            "prompt": "consent",
+            "state": state,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+        }
+    )
+    with _LINEAR_OAUTH_LOCK:
+        _LINEAR_OAUTH_SESSIONS[state] = session.copy()
+    return {**session, "authorization_url": f"{_LINEAR_AUTHORIZE}?{query}"}
+
+
+def complete_linear_oauth(
+    session: dict[str, Any], callback_url: str, connection: str
+) -> dict[str, Any]:
+    """Verify the loopback callback, then pin its verified Linear identity."""
+    alias = _linear_alias(connection)
+    state, expected = _linear_pending_session(session)
+    code = _linear_callback_code(callback_url, expected)
+    with _LINEAR_OAUTH_LOCK:
+        if _LINEAR_OAUTH_SESSIONS.get(state) != expected:
+            raise IssueIntegrationError("LINEAR_OAUTH_SESSION_INVALID")
+        _LINEAR_OAUTH_SESSIONS.pop(state)
+    session.clear()
+    return _linear_connect(alias, expected, code)
+
+
+def _linear_pending_session(session):
+    state = session.get("state") if isinstance(session, dict) else None
+    if not isinstance(state, str):
+        raise IssueIntegrationError("LINEAR_OAUTH_SESSION_INVALID")
+    with _LINEAR_OAUTH_LOCK:
+        expected = _LINEAR_OAUTH_SESSIONS.get(state)
+    if expected is None or any(
+        session.get(key) != expected.get(key) for key in expected
+    ):
+        raise IssueIntegrationError("LINEAR_OAUTH_SESSION_INVALID")
+    if expected["expires_at"] <= int(time.time()):
+        with _LINEAR_OAUTH_LOCK:
+            if _LINEAR_OAUTH_SESSIONS.get(state) == expected:
+                _LINEAR_OAUTH_SESSIONS.pop(state, None)
+        session.clear()
+        raise IssueIntegrationError("LINEAR_OAUTH_SESSION_EXPIRED")
+    return state, expected
+
+
+def _linear_callback_code(callback_url, expected):
+    try:
+        parts = urlsplit(callback_url)
+        query = parse_qs(parts.query, keep_blank_values=True, strict_parsing=True)
+    except (ValueError, TypeError):
+        raise IssueIntegrationError("LINEAR_OAUTH_CALLBACK_INVALID") from None
+    if (
+        parts.scheme != "http"
+        or parts.netloc != "127.0.0.1:8767"
+        or parts.path != "/linear/callback"
+        or parts.fragment
+        or set(query) != {"state", "code"}
+        or any(len(items) != 1 or not items[0] for items in query.values())
+        or not hmac.compare_digest(
+            query["state"][0].encode(), expected["state"].encode()
+        )
+        or len(query["code"][0]) > 4096
+    ):
+        raise IssueIntegrationError("LINEAR_OAUTH_CALLBACK_INVALID")
+    return query["code"][0]
+
+
+def _linear_connect(alias, expected, code):
+    with _linear_connection_lock(alias):
+        if _linear_vault_get(alias) is not None:
+            raise IssueIntegrationError("LINEAR_CONNECTION_EXISTS")
+        tokens = _linear_http_form(
+            _LINEAR_TOKEN_URL,
+            {
+                "grant_type": "authorization_code",
+                "client_id": expected["client_id"],
+                "code": code,
+                "redirect_uri": _LINEAR_REDIRECT,
+                "code_verifier": expected["verifier"],
+            },
+        )
+        record = _linear_tokens(tokens)
+        record["client_id"] = expected["client_id"]
+        record["viewer_id"], record["organization_id"] = _linear_viewer(
+            record["access_token"]
+        )
+        _linear_vault_set(alias, record)
+        return {
+            "connection": alias,
+            "viewer_id": record["viewer_id"],
+            "organization_id": record["organization_id"],
+            "expires_at": record["expires_at"],
+            "state": "CONNECTED",
+        }
+
+
+def cancel_linear_oauth(session: dict[str, Any]) -> None:
+    """Discard one pending PKCE verifier when the loopback flow is abandoned."""
+    state = session.get("state") if isinstance(session, dict) else None
+    if isinstance(state, str):
+        with _LINEAR_OAUTH_LOCK:
+            expected = _LINEAR_OAUTH_SESSIONS.get(state)
+            if expected and all(
+                session.get(key) == value for key, value in expected.items()
+            ):
+                _LINEAR_OAUTH_SESSIONS.pop(state, None)
+    if isinstance(session, dict):
+        session.clear()
+
+
+def linear_connection_status(connection: str) -> dict[str, Any]:
+    """Return connection state and pinned identity without exposing tokens."""
+    alias = _linear_alias(connection)
+    record = _linear_vault_get(alias)
+    if record is None:
+        return {"connection": alias, "state": "NOT_CONNECTED"}
+    return {
+        "connection": alias,
+        "state": "EXPIRED" if record["expires_at"] <= int(time.time()) else "CONNECTED",
+        "viewer_id": record["viewer_id"],
+        "organization_id": record["organization_id"],
+        "expires_at": record["expires_at"],
+    }
+
+
+def _linear_refresh(connection: str, record: dict[str, Any]) -> dict[str, Any]:
+    tokens = _linear_http_form(
+        _LINEAR_TOKEN_URL,
+        {
+            "grant_type": "refresh_token",
+            "client_id": record["client_id"],
+            "refresh_token": record["refresh_token"],
+        },
+    )
+    refreshed = _linear_tokens(tokens, previous=record)
+    viewer, organization = _linear_viewer(refreshed["access_token"])
+    if (viewer, organization) != (record["viewer_id"], record["organization_id"]):
+        raise IssueIntegrationError("LINEAR_IDENTITY_CHANGED")
+    _linear_vault_set(connection, refreshed)
+    return refreshed
+
+
+@contextmanager
+def use_linear_connection(connection: str):
+    """Bind a verified alias token to the current operation context."""
+    alias = _linear_alias(connection)
+    with _linear_connection_lock(alias):
+        record = _linear_vault_get(alias)
+        if record is None:
+            raise IssueIntegrationError("LINEAR_CONNECTION_MISSING")
+        refreshed = record["expires_at"] <= int(time.time()) + 60
+        if refreshed:
+            record = _linear_refresh(alias, record)
+        viewer, organization = (record["viewer_id"], record["organization_id"])
+        if not refreshed:
+            viewer, organization = _linear_viewer(record["access_token"])
+            if (viewer, organization) != (
+                record["viewer_id"],
+                record["organization_id"],
+            ):
+                raise IssueIntegrationError("LINEAR_IDENTITY_CHANGED")
+    token = _LINEAR_TOKEN_CONTEXT.set(record["access_token"])
+    try:
+        yield {
+            "connection": alias,
+            "viewer_id": viewer,
+            "organization_id": organization,
+        }
+    finally:
+        _LINEAR_TOKEN_CONTEXT.reset(token)
+
+
+def disconnect_linear_connection(connection: str) -> dict[str, Any]:
+    """Revoke provider credentials before removing the secure local record."""
+    alias = _linear_alias(connection)
+    with _linear_connection_lock(alias):
+        record = _linear_vault_get(alias)
+        if record is None:
+            return {"connection": alias, "state": "DISCONNECTED"}
+        _linear_http_form(
+            _LINEAR_REVOKE,
+            {"token": record["refresh_token"], "token_type_hint": "refresh_token"},
+            revoke=True,
+        )
+        _linear_vault_delete(alias)
+        return {"connection": alias, "state": "DISCONNECTED", "revocation": "CONFIRMED"}
 
 
 def _issue_object(value):

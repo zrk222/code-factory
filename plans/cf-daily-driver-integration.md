@@ -130,3 +130,10 @@ repair/resume links and consumer projections, authenticated provider trials and
 measured issue-to-verified-fix time. Optional webhook/agent-session adapters must
 preserve the same contract. Provider integration adds workflow convenience;
 it does not establish improved detection accuracy or complete T0-T9.
+
+Product requirement: each CF user authorizes their own Linear workspace through
+the public Code Factory PKCE OAuth app. The owner’s ChatGPT connection is not the
+product integration. Named OS-vault connections pin user/workspace identity;
+minimal scopes, rotation, revocation and callback/session cleanup must be tested.
+Keep API-token mode an explicit expert choice. Verify separate-workspace consent
+before claiming general end-user onboarding is validated.
