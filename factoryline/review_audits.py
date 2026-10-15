@@ -251,7 +251,7 @@ def _symbol(tree: ast.Module, symbol: str):
             raise ReviewAuditError(f"Missing or ambiguous symbol: {symbol}")
         selected = matches[0]
         body = selected.body
-    if not isinstance(selected, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    if not isinstance(selected, _FUNCTION_NODES):
         raise ReviewAuditError(f"Target is not a function: {symbol}")
     return selected
 
@@ -863,13 +863,13 @@ def _module_security_aliases(tree: ast.Module) -> dict[str, str]:
 def _scope_body(node: ast.AST) -> list[ast.stmt] | None:
     if isinstance(node, ast.Module):
         return node.body
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    if isinstance(node, _FUNCTION_NODES):
         return node.body
     return None
 
 
 def _scope_parameters(node: ast.AST) -> set[str]:
-    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    if not isinstance(node, _FUNCTION_NODES):
         return set()
     arguments = node.args
     names = {
@@ -2017,7 +2017,7 @@ def _module_has_rebinding(module, name, fixture):
 
 def _mock_patch_parameter(scope, name, aliases):
     if (
-        not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+        not isinstance(scope, _FUNCTION_NODES)
         or not scope.decorator_list
         or _scope_binds_name(scope, name)
         or any(not _default_mock_patch(item, aliases) for item in scope.decorator_list)
@@ -2044,7 +2044,7 @@ def _default_mock_patch(decorator, aliases):
 
 def _mock_context_patch_parameter(scope, name, assertion, aliases):
     nodes = _test_oracle_body_nodes(scope, aliases)
-    return isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+    return isinstance(scope, _FUNCTION_NODES) and any(
         isinstance(node, ast.With)
         and _in_current_test_body(node)
         and any(parent is node for parent, _ in assertion._oracle_ancestors)
@@ -2528,7 +2528,7 @@ def _unittest_test_methods(tree: ast.Module, aliases: dict[str, str]) -> set[int
         methods.update(
             id(method)
             for method in classes[name].body
-            if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+            if isinstance(method, _FUNCTION_NODES)
         )
         pending.extend(base for base in base_names.get(name, ()) if base in classes)
     return methods
@@ -2554,7 +2554,7 @@ def _empty_test_parameters(node, aliases):
 
 
 def _unconditionally_skipped_test(node: ast.AST) -> bool:
-    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    if not isinstance(node, _FUNCTION_NODES):
         return False
     for decorator in node.decorator_list:
         target = decorator.func if isinstance(decorator, ast.Call) else decorator
@@ -2570,7 +2570,7 @@ def _performance_benchmark_test(
     node: ast.AST, aliases: dict[str, str] | None = None
 ) -> bool:
     """Exclude only explicitly typed or marked benchmark bodies."""
-    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    if not isinstance(node, _FUNCTION_NODES):
         return False
     if not node.name.startswith("test_"):
         return False
@@ -2633,7 +2633,7 @@ def _benchmark_fixture_use(node: ast.AST) -> bool:
     """Match ``benchmark(...)`` calls and ``@benchmark`` on a nested function."""
     if isinstance(node, ast.Call):
         return _call_name(node).split(".", 1)[0] == "benchmark"
-    return isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+    return isinstance(node, _FUNCTION_NODES) and any(
         isinstance(decorator, ast.Name) and decorator.id == "benchmark"
         for decorator in node.decorator_list
     )
@@ -2738,9 +2738,7 @@ def _local_assertion_helpers(
     tree: ast.Module, aliases: dict[str, str], *, unittest_context: bool = False
 ) -> set[str]:
     functions = {
-        node.name: node
-        for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        node.name: node for node in tree.body if isinstance(node, _FUNCTION_NODES)
     }
     helpers: set[str] = set()
     changed = True
@@ -2766,9 +2764,7 @@ def _local_weak_assertion_helpers(
     strong_helpers: set[str] | None = None,
 ) -> set[str]:
     functions = {
-        node.name: node
-        for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        node.name: node for node in tree.body if isinstance(node, _FUNCTION_NODES)
     }
     strong = strong_helpers
     if strong is None:
@@ -2791,11 +2787,7 @@ def _local_weak_assertion_helpers(
 def _class_oracle_helpers(tree: ast.Module, aliases: dict, methods: set[int]) -> dict:
     result = {}
     for cls in (item for item in tree.body if isinstance(item, ast.ClassDef)):
-        functions = [
-            item
-            for item in cls.body
-            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-        ]
+        functions = [item for item in cls.body if isinstance(item, _FUNCTION_NODES)]
         context = any(id(item) in methods for item in functions)
         helpers = _local_assertion_helpers(
             ast.Module(body=functions, type_ignores=[]),
@@ -2810,7 +2802,7 @@ def _class_oracle_helpers(tree: ast.Module, aliases: dict, methods: set[int]) ->
 def _nested_helper_definitions(test: ast.AST) -> dict[str, ast.AST] | None:
     definitions = {}
     for child in test.body:
-        if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if not isinstance(child, _FUNCTION_NODES):
             continue
         if child.name in definitions:
             return None
@@ -3147,11 +3139,7 @@ def _inherited_source_methods(cls, tree, depth=0):
         if isinstance(base, ast.Name) and base.id in classes:
             methods.update(_inherited_source_methods(classes[base.id], tree, depth + 1))
     methods.update(
-        {
-            item.name: item
-            for item in cls.body
-            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-        }
+        {item.name: item for item in cls.body if isinstance(item, _FUNCTION_NODES)}
     )
     return methods
 
@@ -3309,9 +3297,7 @@ def _local_virtual_dispatch_classes(test, invokers, aliases, helpers):
         ):
             continue
         methods = {
-            item.name: item
-            for item in cls.body
-            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+            item.name: item for item in cls.body if isinstance(item, _FUNCTION_NODES)
         }
         if (
             "__init__" in methods
@@ -3497,7 +3483,7 @@ def _invoked_nested_assertion_helpers(
     test: ast.AST, aliases: dict[str, str], inherited: set[str]
 ) -> set[str]:
     """Find directly invoked nested helpers with effective assertions."""
-    if not isinstance(test, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    if not isinstance(test, _FUNCTION_NODES):
         return set()
     definitions = _nested_helper_definitions(test)
     if not definitions or not _nested_helper_names_are_unbound(test, definitions):
@@ -3857,8 +3843,7 @@ def _imported_pytest_bases(tree, imports):
     references = []
     for cls in (item for item in tree.body if isinstance(item, ast.ClassDef)):
         if not cls.name.startswith("Test") or any(
-            isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and member.name == "__init__"
+            isinstance(member, _FUNCTION_NODES) and member.name == "__init__"
             for member in cls.body
         ):
             continue
@@ -3885,8 +3870,7 @@ def _bind_imported_pytest_bases(tree, imports, snapshots, contexts):
         contexts[source]["pytest_inherited"].update(
             f"{symbol}.{method.name}"
             for method in target_class.body
-            if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and method.name.startswith("test_")
+            if isinstance(method, _FUNCTION_NODES) and method.name.startswith("test_")
         )
 
 
@@ -3896,7 +3880,7 @@ def _pytest_inherited_method_ids(tree, inherited_names):
         for cls in tree.body
         if isinstance(cls, ast.ClassDef)
         for method in cls.body
-        if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+        if isinstance(method, _FUNCTION_NODES)
         and f"{cls.name}.{method.name}" in inherited_names
     }
 
@@ -4142,7 +4126,7 @@ def _weak_test_oracle_finding(
     unittest_context: bool = False,
     weak_helper_names: set[str] | None = None,
 ) -> dict[str, Any] | None:
-    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    if not isinstance(node, _FUNCTION_NODES):
         return None
     if not node.name.startswith("test_"):
         return None
@@ -4199,7 +4183,7 @@ def _hollow_test_finding(
     unittest_context: bool = False,
     oracle_context: dict | None = None,
 ) -> dict[str, Any] | None:
-    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    if not isinstance(node, _FUNCTION_NODES):
         return None
     if not node.name.startswith("test_"):
         return None
@@ -4776,7 +4760,7 @@ def _tenant_read_findings(
     return [
         finding
         for function in nodes
-        if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+        if isinstance(function, _FUNCTION_NODES)
         for finding in _tenant_function_findings(
             relative, function, calls, aliases, bindings
         )
@@ -4826,8 +4810,10 @@ def _test_oracle_findings(
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     parents = _oracle_ancestor_map(nodes[0].body)
+    from .review_integrity import test_execution_findings
+
     for node in nodes:
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or any(
+        if not isinstance(node, _FUNCTION_NODES) or any(
             isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
             for parent, _child in parents.get(id(node), ())
         ):
@@ -4844,6 +4830,10 @@ def _test_oracle_findings(
             inherited_pytest_methods or set(),
             nodes,
         ):
+            continue
+        results, shadowed = test_execution_findings(node, relative, parents, nodes[0])
+        findings.extend(results)
+        if shadowed:
             continue
         if id(node) not in unittest_methods and _empty_test_parameters(node, aliases):
             findings.append(
@@ -4951,8 +4941,7 @@ def _collected_test_function(
 
 def _pytest_collects_class(cls, parents):
     if not cls.name.startswith("Test") or any(
-        isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and member.name == "__init__"
+        isinstance(member, _FUNCTION_NODES) and member.name == "__init__"
         for member in cls.body
     ):
         return False
@@ -4968,8 +4957,7 @@ def _pytest_inherited_by_collected_class(base, nodes):
     classes = {node.name: node for node in nodes if isinstance(node, ast.ClassDef)}
     for child in classes.values():
         if not child.name.startswith("Test") or any(
-            isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and member.name == "__init__"
+            isinstance(member, _FUNCTION_NODES) and member.name == "__init__"
             for member in child.body
         ):
             continue
@@ -4993,6 +4981,7 @@ def _pytest_class_inherits(cls, target, classes, seen):
 
 
 _TEST_FILE_PATTERNS = ("test_*.py", "*_test.py")
+_FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 
 def _pytest_collection_config(root):
@@ -5731,7 +5720,7 @@ def _oracle_bound_row(workspace: Path, row: dict, sources: dict) -> None:
     matches = [
         node
         for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        if isinstance(node, _FUNCTION_NODES)
         and node.name == row["symbol"]
         and node.lineno == row["line"]
     ]
@@ -5741,10 +5730,7 @@ def _oracle_bound_row(workspace: Path, row: dict, sources: dict) -> None:
     classes = [
         parent.name for parent, _child in parents if isinstance(parent, ast.ClassDef)
     ]
-    if any(
-        isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef))
-        for parent, _child in parents
-    ):
+    if any(isinstance(parent, _FUNCTION_NODES) for parent, _child in parents):
         raise ReviewAuditError(
             "Runtime oracle cannot credit a nested helper as a collected test."
         )
