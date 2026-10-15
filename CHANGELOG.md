@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Report explicit empty pytest parameter sets as an incomplete execution gap,
+  including imported aliases and keyword values. Preserve unittest collection
+  and consolidate its existing TestCase/mixin enumeration.
+
 - Detect dynamic nonempty-tuple assertions, assertions in constant-empty loops,
   universal builtin object checks and vacuous unittest boolean/equality checks.
   Share assertion classification across hollow, weak and delegated-helper paths;

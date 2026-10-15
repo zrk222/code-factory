@@ -2486,32 +2486,28 @@ def _unittest_testcase_classes(
     tree: ast.Module, aliases: dict[str, str]
 ) -> tuple[dict[str, ast.ClassDef], dict[str, tuple[str, ...]], set[str]]:
     classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
-    base_names: dict[str, tuple[str, ...]] = {}
-    for name, node in classes.items():
-        normalized = []
-        for base in node.bases:
-            base_name = _name(base)
-            # ``import unittest.mock`` binds the package name ``unittest`` to
-            # the submodule in the generic alias table, but a base written as
-            # ``unittest.TestCase`` still refers to the package's TestCase.
-            if base_name.startswith("unittest."):
-                normalized.append(base_name)
-            else:
-                head, *tail = base_name.split(".")
-                normalized.append(".".join([aliases.get(head, head), *tail]))
-        base_names[name] = tuple(normalized)
+    # Importing unittest.mock binds unittest to the submodule in the generic
+    # alias table; written unittest.TestCase still names the package's class.
+    base_names = {
+        name: tuple(
+            _name(base)
+            if _name(base).startswith("unittest.")
+            else _resolved_ast_name(base, aliases)
+            for base in node.bases
+        )
+        for name, node in classes.items()
+    }
 
     def derives_from_testcase(name: str, seen: set[str] | None = None) -> bool:
         seen = set() if seen is None else seen
         if name in seen:
             return False
         seen.add(name)
-        for base in base_names.get(name, ()):
-            if base in {"unittest.TestCase", "unittest.case.TestCase"}:
-                return True
-            if base in classes and derives_from_testcase(base, seen):
-                return True
-        return False
+        return any(
+            base in {"unittest.TestCase", "unittest.case.TestCase"}
+            or (base in classes and derives_from_testcase(base, seen))
+            for base in base_names.get(name, ())
+        )
 
     testcase_classes = {name for name in classes if derives_from_testcase(name)}
     return classes, base_names, testcase_classes
@@ -2519,37 +2515,39 @@ def _unittest_testcase_classes(
 
 def _unittest_test_methods(tree: ast.Module, aliases: dict[str, str]) -> set[int]:
     classes, base_names, testcase_classes = _unittest_testcase_classes(tree, aliases)
-    methods = {
-        id(method)
-        for name, class_node in classes.items()
-        if name in testcase_classes
-        for method in class_node.body
-        if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    # A common unittest layout puts the actual test methods in a mixin and
-    # combines that mixin with TestCase in a thin concrete class. Treat those
-    # inherited methods as unittest methods too; otherwise every self.assert*
-    # call in the mixin is incorrectly reported as a hollow test.
-    for name, class_node in classes.items():
-        if name not in testcase_classes:
+    # Enumerate concrete TestCases and their local mixins through one closure.
+    pending, seen, methods = list(testcase_classes), set(), set()
+    while pending:
+        name = pending.pop()
+        if name in seen:
             continue
-        pending = list(base for base in base_names.get(name, ()) if base in classes)
-        seen: set[str] = set()
-        while pending:
-            base = pending.pop()
-            if base in seen:
-                continue
-            seen.add(base)
-            base_node = classes[base]
-            methods.update(
-                id(method)
-                for method in base_node.body
-                if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
-            )
-            pending.extend(
-                parent for parent in base_names.get(base, ()) if parent in classes
-            )
+        seen.add(name)
+        methods.update(
+            id(method)
+            for method in classes[name].body
+            if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+        )
+        pending.extend(base for base in base_names.get(name, ()) if base in classes)
     return methods
+
+
+def _empty_test_parameters(node, aliases):
+    from .security_configuration import _keyword
+
+    for decorator in node.decorator_list:
+        if not isinstance(decorator, ast.Call) or any(
+            isinstance(arg, ast.Starred) for arg in decorator.args
+        ):
+            continue
+        if (
+            _call_name(decorator).split(".")[0] not in aliases
+            or _normalized_call_name(decorator, aliases) != "pytest.mark.parametrize"
+        ):
+            continue
+        value = _constant_value(_keyword(decorator, "argvalues", 1))
+        if isinstance(value, (str, bytes, list, tuple, dict, set)) and not value:
+            return True
+    return False
 
 
 def _unconditionally_skipped_test(node: ast.AST) -> bool:
@@ -2802,8 +2800,7 @@ def _class_oracle_helpers(tree: ast.Module, aliases: dict, methods: set[int]) ->
             unittest_context=context,
         )
         names = {"self." + name for name in helpers}
-        for method in functions:
-            result[id(method)] = names
+        result.update({id(method): names for method in functions})
     return result
 
 
@@ -4847,6 +4844,19 @@ def _test_oracle_findings(
             nodes,
         ):
             continue
+        if id(node) not in unittest_methods and _empty_test_parameters(node, aliases):
+            findings.append(
+                _security_finding(
+                    "QUALITY_EMPTY_PARAMETER_SET",
+                    relative,
+                    node,
+                    "Explicit empty pytest parameters collect no executable cases; supply cases or record this gap.",
+                    "INFO",
+                    symbol=node.name,
+                    state="INCOMPLETE",
+                )
+            )
+            continue
         node._oracle_click_runners = click_runners or set()
         node._oracle_module = nodes[0]
         node._oracle_async_functions = {
@@ -4856,17 +4866,11 @@ def _test_oracle_findings(
         }
         is_unittest_method = id(node) in unittest_methods
         helpers = helper_names | (class_helpers or {}).get(id(node), set())
-        if node.name.startswith("test_"):
-            helpers |= _invoked_nested_assertion_helpers(node, aliases, helpers)
+        helpers |= _invoked_nested_assertion_helpers(node, aliases, helpers)
         if typecheck:
             helpers = helpers | {"typing.assert_type", "typing_extensions.assert_type"}
         hollow_helpers = helpers | (weak_helper_names or set())
-        scoped_aliases = (
-            _scope_security_aliases(aliases, node)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name.startswith("test_")
-            else aliases
-        )
+        scoped_aliases = _scope_security_aliases(aliases, node)
         if _proven_dispatch_assertion(
             node, scoped_aliases, helpers, flask_apps or set(), callback_invokers or {}
         ):
