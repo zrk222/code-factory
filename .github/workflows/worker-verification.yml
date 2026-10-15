@@ -50,6 +50,12 @@ on:
       - scripts/select_worker_targets*.mjs
       - .github/workflows/worker-verification.yml
   workflow_dispatch:
+    inputs:
+      target:
+        description: Manual worker selection; automatic PR/push checks are unchanged
+        type: choice
+        options: [all, osv-worker]
+        default: all
 
 permissions:
   contents: read
@@ -89,6 +95,10 @@ jobs:
           let temporary;
           try {
             const event = JSON.parse(process.env.GITHUB_EVENT_JSON);
+            if (process.env.GITHUB_EVENT_NAME === 'workflow_dispatch' && event.inputs?.target === 'osv-worker') {
+              appendFileSync(process.env.GITHUB_OUTPUT, `sdk=true\nmatrix=${JSON.stringify(['osv-worker'])}\nreason=manual-osv-only\n`);
+              process.exit(0);
+            }
             const base = process.env.GITHUB_EVENT_NAME === 'pull_request' ? event.pull_request?.base?.sha : process.env.GITHUB_EVENT_NAME === 'push' ? event.before : null;
             if (!/^[a-f0-9]{40}$/.test(base ?? '') || /^0{40}$/.test(base)) throw new Error('no baseline');
             const source = execFileSync('git', ['show', `${base}:scripts/select_worker_targets.mjs`], { encoding: 'utf8', timeout: 10000 });
@@ -115,8 +125,9 @@ jobs:
         with:
           node-version: "22"
       - name: Check candidate worker regression and target selector controls
-        run: node --test scripts/select_worker_targets.test.mjs scripts/verify_worker_cves.test.mjs scripts/semgrep_mutation_controls.test.mjs
+        run: node --test scripts/select_worker_targets.test.mjs scripts/verify_worker_cves.test.mjs scripts/verify_osv_worker.test.mjs scripts/semgrep_mutation_controls.test.mjs
   semgrep-surface:
+    if: github.event_name != 'workflow_dispatch' || inputs.target != 'osv-worker'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -162,6 +173,39 @@ jobs:
         run: docker build --platform linux/amd64 --target "${{ matrix.target }}" -f deploy/deep-adapters/Dockerfile -t factory-worker:candidate .
       - name: Verify original fifteen CVEs and package imports using immutable image ID
         run: node scripts/verify_worker_cves.mjs factory-worker:candidate worker-verification.json "${{ matrix.target }}"
+      - name: Require actual OSV native lookup and suppression controls
+        if: matrix.target == 'osv-worker'
+        run: node scripts/verify_osv_worker.mjs factory-worker:candidate osv-native-verification.json
+      - name: Preserve native OSV results including failures
+        if: always() && matrix.target == 'osv-worker'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: osv-native-verification
+          path: |
+            osv-native-verification.json
+            osv-native-verification.json.*.bundle.json
+          if-no-files-found: error
+      - name: Export verified manual OSV image for local recovery
+        if: github.event_name == 'workflow_dispatch' && inputs.target == 'osv-worker' && matrix.target == 'osv-worker'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir worker-export
+          image_id="$(docker image inspect factory-worker:candidate --format '{{.Id}}')"
+          printf '%s\n' "$image_id" > worker-export/image-id.txt
+          git rev-parse HEAD > worker-export/source-commit.txt
+          docker save "$image_id" | gzip -1 > worker-export/osv-worker.tar.gz
+          cd worker-export
+          sha256sum osv-worker.tar.gz > archive-sha256.txt
+      - name: Retain verified manual OSV image briefly
+        if: github.event_name == 'workflow_dispatch' && inputs.target == 'osv-worker' && matrix.target == 'osv-worker'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: osv-worker-image-${{ github.sha }}
+          path: worker-export/
+          retention-days: 3
+          compression-level: 0
+          if-no-files-found: error
       - name: Verify JavaScript cross-file source-to-sink controls
         if: matrix.target == 'codeql-javascript-worker'
         run: node scripts/verify_codeql_cross_file.mjs factory-worker:candidate codeql-cross-file-verification.json

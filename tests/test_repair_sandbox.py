@@ -1628,32 +1628,103 @@ def test_deep_lineage_marks_missing_rules_and_rejects_resume_reorder(
     assert "RESUME_PARENT_NOT_IN_ORDERED_LINEAGE" in reversed_lineage["gaps"]
 
 
+def test_lineage_family_projection_requires_native_obligations_and_all_controls():
+    from factoryline.deep_audit import (
+        _lineage_family_accounting,
+        _lineage_lane_obligation_accounting,
+    )
+    from factoryline.deep_audit_io import digest
+
+    obligation = {
+        "id": "static-control",
+        "engine": "codeql",
+        "family": "static",
+        "paths": ["src/app.py"],
+    }
+    definition = {"engine": "codeql", "family": "static"}
+    challenges = {
+        "schema": "factory.deep-challenges.v1",
+        "observations": [
+            {"obligation_id": obligation["id"], "kind": kind}
+            for kind in ("positive", "negative", "mutation")
+        ],
+    }
+    coverage = {
+        "complete": False,
+        "sources": {"src/app.py": "a" * 64},
+        "obligations": [obligation["id"]],
+        "native_report_sha256": "b" * 64,
+    }
+    normalized = {
+        "state": "OBSERVED",
+        "gaps": [],
+        "challenge_sha256": digest(challenges),
+    }
+    plan = {"obligations": [obligation]}
+
+    osv_lane = {
+        "lane_id": "osv",
+        "engine": "codeql",
+        "family": "static",
+        "state": "OBSERVED",
+        "challenge_sha256": digest(challenges),
+        "obligation_accounting": _lineage_lane_obligation_accounting(
+            coverage, challenges, definition, plan, normalized
+        ),
+    }
+    auxiliary = {
+        "lane_id": "semgrep",
+        "engine": "semgrep",
+        "family": "static",
+        "state": "OBSERVED",
+        "challenge_sha256": "d" * 64,
+        "obligation_accounting": _lineage_lane_obligation_accounting(
+            {**coverage, "obligations": []},
+            {"schema": "factory.deep-challenges.v1", "observations": []},
+            {"engine": "semgrep", "family": "static"},
+            plan,
+            {"state": "OBSERVED", "gaps": [], "challenge_sha256": "d" * 64},
+        ),
+    }
+    projected = _lineage_family_accounting(plan, [osv_lane, auxiliary])
+    static = next(item for item in projected if item["family"] == "static")
+    assert static["state"] == "INCOMPLETE"
+    assert static["required_obligation_ids"] == [obligation["id"]]
+    assert static["obligations"][0]["state"] == "VERIFIED"
+    assert auxiliary["obligation_accounting"]["obligations"] == []
+
+    def state():
+        return _lineage_lane_obligation_accounting(
+            coverage, challenges, definition, plan, normalized
+        )["state"]
+
+    challenges["observations"].pop()
+    assert state() == "INCOMPLETE"
+    for ids in ([], [obligation["id"], obligation["id"]], [obligation["id"], "extra"]):
+        coverage["obligations"] = ids
+        assert state() == "INCOMPLETE"
+
+
 def test_lineage_complete_state_rejects_empty_or_unbound_rule_matrices(
     tmp_path: Path,
 ) -> None:
     from factoryline.deep_audit import (
         _lineage_chain,
+        _lineage_family_accounting,
         _lineage_lane_complete,
         _lineage_references,
         build_deep_audit_lineage,
         verify_deep_audit_lineage,
     )
     from factoryline.deep_audit_io import digest
+    from factoryline.deep_audit_contract import ENGINE_FAMILIES
 
     run_id = "3" * 32
     rerun_id = "4" * 32
     _write_lineage_run(tmp_path, run_id, request_path=None)
     _write_lineage_run(tmp_path, rerun_id, parent_run=run_id, request_path=None)
     receipt = build_deep_audit_lineage(tmp_path, [run_id, rerun_id])
-    families = [
-        ("codeql", "static"),
-        ("syft", "dependencies"),
-        ("osv", "dependencies"),
-        ("gitleaks", "secrets"),
-        ("trivy", "configuration"),
-        ("runtime", "runtime"),
-        ("atheris", "fuzz"),
-    ]
+    families = sorted(ENGINE_FAMILIES.items())
 
     def complete_lane(engine: str, family: str) -> dict:
         source = {
@@ -1670,6 +1741,7 @@ def test_lineage_complete_state_rejects_empty_or_unbound_rule_matrices(
             "rules": [{"rule_id": "R1", "sources": [source]}],
         }
         accounting["accounting_sha256"] = digest(accounting)
+        obligation_ids = [] if engine == "syft" else [engine]
         return {
             "lane_id": engine,
             "engine": engine,
@@ -1679,7 +1751,34 @@ def test_lineage_complete_state_rejects_empty_or_unbound_rule_matrices(
             "expected_rule_ids": ["R1"],
             "source_paths": ["src.py"],
             "rule_accounting": accounting,
+            "challenge_sha256": "9" * 64,
+            "obligation_accounting": {
+                "schema": "factory.deep-lane-obligations.v1",
+                "family": family,
+                "engine": engine,
+                "state": "VERIFIED",
+                "required_obligation_ids": obligation_ids,
+                "observed_obligation_ids": obligation_ids,
+                "obligations": [
+                    {
+                        "obligation_id": engine,
+                        "state": "VERIFIED",
+                        "challenge_kinds": ["mutation", "negative", "positive"],
+                    }
+                ]
+                if obligation_ids
+                else [],
+                "native_report_sha256": "e" * 64,
+                "challenge_sha256": "9" * 64,
+                "normalized_challenge_sha256": "9" * 64,
+            },
         }
+
+    plan = {
+        "obligations": [
+            dict(id=e, engine=e, family=f) for e, f in families if e != "syft"
+        ]
+    }
 
     def reseal(candidate: dict) -> dict:
         candidate["gaps"] = []
@@ -1687,8 +1786,6 @@ def test_lineage_complete_state_rejects_empty_or_unbound_rule_matrices(
         for run in candidate["runs"]:
             run["request_state"] = "BOUND"
             run["analysis_complete"] = True
-            if not run["lanes"] or run["lanes"][0].get("engine") is None:
-                run["lanes"] = [complete_lane(*item) for item in families]
         candidate["repair"] = {
             "approval_sha256": "f" * 64,
             "attempt_status": "VERIFIED",
@@ -1706,6 +1803,10 @@ def test_lineage_complete_state_rejects_empty_or_unbound_rule_matrices(
         )
         return candidate
 
+    for run in receipt["runs"]:
+        run.pop("family_accounting", None)
+        run["lanes"] = [complete_lane(*item) for item in families]
+        run["family_accounting"] = _lineage_family_accounting(plan, run["lanes"])
     valid_claim = reseal(receipt)
     assert all(
         _lineage_lane_complete(lane) for lane in valid_claim["runs"][0]["lanes"]
@@ -1717,23 +1818,54 @@ def test_lineage_complete_state_rejects_empty_or_unbound_rule_matrices(
     assert verify_deep_audit_lineage(valid_claim)["valid"], verify_deep_audit_lineage(
         valid_claim
     )
+    partial = json.loads(json.dumps(valid_claim))
+    lane = partial["runs"][0]["lanes"][0]
+    lane["obligation_accounting"]["state"] = "INCOMPLETE"
+    lane["obligation_accounting"]["obligations"][0]["state"] = "INCOMPLETE"
+    family = next(
+        row
+        for row in partial["runs"][0]["family_accounting"]
+        if row["family"] == "static"
+    )
+    family["state"] = family["obligations"][0]["state"] = "INCOMPLETE"
+    reseal(partial)
+    assert not verify_deep_audit_lineage(partial)["valid"]
 
-    mutations = []
-    missing_family = json.loads(json.dumps(valid_claim))
-    missing_family["runs"][0]["lanes"].pop()
-    mutations.append(missing_family)
-    empty_rules = json.loads(json.dumps(valid_claim))
-    empty_rules["runs"][0]["lanes"][0]["rule_accounting"]["rules"] = []
-    mutations.append(empty_rules)
-    empty_sources = json.loads(json.dumps(valid_claim))
-    empty_sources["runs"][0]["lanes"][0]["rule_accounting"]["rules"][0]["sources"] = []
-    mutations.append(empty_sources)
-    wrong_ledger_hash = json.loads(json.dumps(valid_claim))
-    wrong_ledger_hash["runs"][0]["lanes"][0]["rule_accounting_sha256"] = "0" * 64
-    mutations.append(wrong_ledger_hash)
-    malformed_rule = json.loads(json.dumps(valid_claim))
-    malformed_rule["runs"][0]["lanes"][0]["rule_accounting"]["rules"][0]["rule_id"] = []
-    mutations.append(malformed_rule)
+    lane = ("runs", 0, "lanes", 0)
+    accounting = lane + ("obligation_accounting",)
+
+    def mutate(path, edit):
+        changed = json.loads(json.dumps(valid_claim))
+        target = changed
+        for key in path:
+            target = target[key]
+        edit(target)
+        return changed
+
+    mutations = [
+        mutate(("runs", 0, "lanes"), lambda value: value.pop()),
+        mutate(lane + ("rule_accounting", "rules"), lambda value: value.clear()),
+        mutate(
+            lane + ("rule_accounting", "rules", 0, "sources"),
+            lambda value: value.clear(),
+        ),
+        mutate(
+            lane, lambda value: value.__setitem__("rule_accounting_sha256", "0" * 64)
+        ),
+        mutate(
+            lane + ("rule_accounting", "rules", 0),
+            lambda value: value.__setitem__("rule_id", []),
+        ),
+        mutate(lane, lambda value: value.__setitem__("state", "INCOMPLETE")),
+        mutate(("runs", 0), lambda value: value.pop("family_accounting")),
+        mutate(
+            accounting, lambda value: value.__setitem__("challenge_sha256", "0" * 64)
+        ),
+        mutate(
+            accounting + ("obligations", 0),
+            lambda value: value.__setitem__("state", "INAPPLICABLE"),
+        ),
+    ]
     for index, changed in enumerate(mutations):
         reseal(changed)
         assert not verify_deep_audit_lineage(changed)["valid"], index

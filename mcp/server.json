@@ -1,13 +1,25 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.zrk222/code-factory",
-  "description": "Local audit evidence for agents: source, workflows, runtime, repair and native scanner status.",
+  "description": "Read-only audit evidence for security, tests, native coverage, runtime failures and repair status.",
   "repository": {
     "url": "https://github.com/zrk222/code-factory",
     "source": "github",
     "id": "1293217553"
   },
   "version": "0.48.1",
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "discoveryTools": [
+        "factory.deep_audit_status",
+        "factory.runtime_audit_status",
+        "factory.search_audit_rules",
+        "factory.audit_taxonomy",
+        "factory.audit_agent_context"
+      ],
+      "claimBoundary": "Local read-only evidence. Missing execution, source coverage and independent accuracy remain unavailable; no approval or release authority."
+    }
+  },
   "packages": [
     {
       "registryType": "pypi",

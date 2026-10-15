@@ -525,6 +525,7 @@ def junie_taxonomy(root: Path | str) -> dict[str, object]:
         ],
         "ide_workflow": {
             "schema": "factory.junie-ide-workflow.v1",
+            "daily_action": _pack_text("daily_action_guidance"),
             "entry": "Open the JetBrains FactoryLine Junie tab, inspect this taxonomy, then open CF + ForgeLine evidence for the current project.",
             "verify": [
                 "Inspect the changed diff and sealed intent in JetBrains before choosing a lane.",
@@ -570,12 +571,17 @@ def _guidance() -> bytes:
     return (
         _pack_text("guidance_template").replace("{stages}", stages)
         + _pack_text("native_deep_audit")
+        + _pack_text("daily_action_guidance")
     ).encode("utf-8")
 
 
 def _junie_proof_agent_bytes() -> bytes:
     """Return the native Junie read-only proof-review subagent manifest."""
-    return (_pack_text("proof_agent") + _pack_text("native_deep_audit")).encode("utf-8")
+    return (
+        _pack_text("proof_agent")
+        + _pack_text("native_deep_audit")
+        + _pack_text("daily_action_guidance")
+    ).encode("utf-8")
 
 
 def _pack_text(key: str) -> str:
@@ -645,6 +651,7 @@ def junie_manifest(root: Path | str) -> dict[str, object]:
             "mcp": ".junie/mcp/mcp.json",
             "subagents": ".junie/agents/",
         },
+        "daily_action_guidance": _pack_text("daily_action_guidance"),
         "native_workers": audit_taxonomy()["native_workers"],
         "native_worker_contract": audit_taxonomy()["native_worker_contract"],
         "agent_usage_contract": audit_taxonomy()["agent_usage_contract"],

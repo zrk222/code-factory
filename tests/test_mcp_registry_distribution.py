@@ -11,6 +11,7 @@ except ModuleNotFoundError:  # Python 3.10 uses the declared test dependency.
     import tomli as tomllib
 
 from factoryline import __version__
+from factoryline.mcp import _tool_definitions
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,7 +34,6 @@ def test_registry_descriptor_is_bound_to_the_released_local_stdio_package() -> N
         == "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json"
     )
     assert server["name"] == SERVER_NAME
-    assert len(server["description"]) <= 100
     assert server["version"] == __version__
     assert server["repository"] == {
         "url": "https://github.com/zrk222/code-factory",
@@ -88,6 +88,27 @@ def test_registry_descriptor_is_shipped_with_the_source_distribution() -> None:
 
     assert "include mcp/server.json" in manifest
     assert project["version"] == __version__
+
+
+def test_publisher_discovery_tools_exist_and_are_declared_read_only() -> None:
+    server = _server()
+    discovery = server["_meta"]["io.modelcontextprotocol.registry/publisher-provided"]
+    definitions = {tool["name"]: tool for tool in _tool_definitions()}
+    assert server["version"] == __version__
+    assert server["packages"][0]["version"] == server["version"]
+    assert discovery["discoveryTools"] == [
+        "factory.deep_audit_status",
+        "factory.runtime_audit_status",
+        "factory.search_audit_rules",
+        "factory.audit_taxonomy",
+        "factory.audit_agent_context",
+    ]
+    assert set(discovery["discoveryTools"]) <= definitions.keys()
+    for name in discovery["discoveryTools"]:
+        tool = definitions[name]
+        assert tool["annotations"]["readOnlyHint"] is True
+        assert tool["annotations"]["destructiveHint"] is False
+    assert len(server["description"]) <= 100
 
 
 def test_registry_publication_is_post_pypi_oidc_and_fails_closed_on_drift() -> None:

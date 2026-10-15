@@ -1400,11 +1400,12 @@ def test_cli_no_args_returns_agent_home_with_definitive_empty_states(
     monkeypatch.chdir(tmp_path)
     assert main([]) == 0
     out = capsys.readouterr().out
-    assert "description: Five-brick spec-to-proof software factory" in out
+    assert "description: Local code audit and next action" in out
     assert "receipts: 0" in out
     assert "passports: 0" in out
     assert "loop_passports: 0" in out
-    assert "factory doctor --json" in out
+    assert "action: Inspect evidence gaps and define this task's checks" in out
+    assert not (tmp_path / ".factory").exists()
 
 
 def test_policy_writes_hollow_gate_defaults(tmp_path):
