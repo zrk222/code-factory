@@ -3197,7 +3197,6 @@ def _lineage_run(root: Path, run_id: str) -> tuple[dict, list[dict], list[dict]]
         "candidate_sha256": status.get("candidate_sha256"),
         "manifest_sha256": status.get("manifest_sha256"),
         "manifest_content_sha256": status.get("manifest_content_sha256"),
-        "action_coverage": status.get("action_coverage"),
         "authorization_sha256": status.get("authorization_sha256"),
         "parent_run": status.get("parent_run"),
         "event_sequence": status["sequence"],
