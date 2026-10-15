@@ -4505,6 +4505,71 @@ def test_oracle_precision_universal_type_shadow_controls(tmp_path, binding, scop
 
 
 @pytest.mark.parametrize(
+    "prefix,decorator,flagged",
+    [
+        ("import pytest\n", "pytest.mark.parametrize('value', [])", True),
+        ("import pytest as p\n", "p.mark.parametrize('value', ())", True),
+        ("from pytest import mark as m\n", "m.parametrize('value', {})", True),
+        (
+            "import pytest\n",
+            "pytest.mark.parametrize(argnames='value', argvalues=[])",
+            True,
+        ),
+        ("import pytest\n", "pytest.mark.parametrize('value', '')", True),
+        ("import pytest\n", "pytest.mark.parametrize('value', [1])", False),
+        ("import pytest\n", "pytest.mark.parametrize('value', values)", False),
+        ("import pytest\n", "pytest.mark.parametrize('value', build_cases())", False),
+        ("import pytest\n", "pytest.mark.parametrize(*names, [])", False),
+        ("import other as p\n", "p.mark.parametrize('value', [])", False),
+        (
+            "import pytest\npytest = custom\n",
+            "pytest.mark.parametrize('value', [])",
+            False,
+        ),
+        ("", "pytest.mark.parametrize('value', [])", False),
+    ],
+)
+def test_empty_parameter_set_reports_missing_execution(
+    tmp_path, prefix, decorator, flagged
+):
+    (tmp_path / "test_cases.py").write_text(
+        prefix + "@" + decorator + "\ndef test_value(value):\n"
+        "    assert compute(value) == 1\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert result["finding_counts"] == (
+        {"QUALITY_EMPTY_PARAMETER_SET": 1} if flagged else {}
+    )
+    if flagged:
+        finding = result["findings"][0]
+        assert finding["severity"] == "INFO"
+        assert finding["facts"]["state"] == "INCOMPLETE"
+        assert finding["facts"]["symbol"] == "test_value"
+
+
+def test_empty_parameter_set_does_not_credit_body_shadow_over_decorator(tmp_path):
+    (tmp_path / "test_cases.py").write_text(
+        "import pytest\n@pytest.mark.parametrize('pytest', [])\n"
+        "def test_value(pytest):\n    assert compute(pytest) == 1\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path, cache_enabled=False)["finding_counts"] == {
+        "QUALITY_EMPTY_PARAMETER_SET": 1
+    }
+
+
+def test_empty_parameter_set_does_not_change_unittest_method_collection(tmp_path):
+    (tmp_path / "test_cases.py").write_text(
+        "import pytest, unittest\nclass Checks(unittest.TestCase):\n"
+        "    @pytest.mark.parametrize('value', [])\n"
+        "    def test_value(self):\n        self.assertEqual(compute(), 1)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path, cache_enabled=False)["findings"] == []
+
+
+@pytest.mark.parametrize(
     "body",
     [
         "expected = 3\n    alias = expected\n    assert alias == expected",
