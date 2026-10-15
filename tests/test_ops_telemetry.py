@@ -17,15 +17,18 @@ def test_github_overview_cli_does_not_write_lifecycle_or_snapshot_data(
     assert lifecycle_inventory(tmp_path)["receipt_count"] == 0
 
 
-def test_cli_writes_privacy_safe_lifecycle_receipt(tmp_path: Path, capsys) -> None:
-    assert main(["home", "--root", str(tmp_path), "--json"]) == 0
+def test_cli_writes_privacy_safe_lifecycle_receipt(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert main(["plan"]) == 0
     capsys.readouterr()
     inventory = lifecycle_inventory(tmp_path)
     assert inventory["receipt_count"] == 1
     receipt = next((tmp_path / ".factory" / "ops" / "lifecycle").glob("*.json"))
     value = json.loads(receipt.read_text(encoding="utf-8"))
     assert value["schema"] == "factory.ops-lifecycle.v1"
-    assert value["command_family"] == "home"
+    assert value["command_family"] == "plan"
     assert str(tmp_path) not in json.dumps(value)
     assert "root" not in json.dumps(value)
     assert "provenance" in value

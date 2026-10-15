@@ -151,6 +151,10 @@ def test_home_reports_status_reader_failure_as_incomplete(
         raise OSError("local evidence unavailable")
 
     monkeypatch.setattr(status, "mission_control_status", fail)
+    direct = status.read_daily_action(tmp_path)
+    assert direct == status.incomplete_daily_action()
+    assert direct["execution"] == "NOT_RUN"
+    assert not any(direct["authority"].values())
     assert cli_main(["home", "--root", str(tmp_path), "--json"]) == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["daily_action"]["audit_state"] == "INCOMPLETE"

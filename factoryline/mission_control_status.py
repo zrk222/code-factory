@@ -69,6 +69,31 @@ def project_daily_action(
         raise ValueError("daily action requires nonnegative blocker counts")
     plan, manifest_sha256, audit_state, counts = _daily_schedule_projection(schedule)
     state = status["state"]
+    action = _daily_primary_action(state, blockers, audit_state, counts)
+    return {
+        "schema": "factory.daily-action.v1",
+        "evidence_state": state,
+        "audit_state": audit_state,
+        "freshness": "PLAN_INPUTS_ONLY" if plan is not None else "UNASSESSED",
+        "execution": "NOT_RUN",
+        "candidate": None
+        if plan is None
+        else {
+            "plan_id": plan.get("plan_id"),
+            "assurance_level": plan.get("assurance_level"),
+            "manifest_sha256": manifest_sha256,
+            "changed_paths_sha256": plan.get("changed_paths_sha256"),
+            "plan_sha256": plan.get("plan_sha256"),
+        },
+        "proof_counts": counts,
+        "blockers": {key: value for key, value in blockers.items() if value},
+        "primary_action": {"id": action[0], "label": action[1], "command": None},
+        "authority": dict(AUTHORITY),
+        "claim_boundary": "A schedule is a plan only; global completeness and execution are not established.",
+    }
+
+
+def _daily_primary_action(state, blockers, audit_state, counts):
     primary_actions = (
         (
             state == MissionControlState.BLOCKED.value or any(blockers.values()),
@@ -109,31 +134,10 @@ def project_daily_action(
             ("review_reused_proofs", "Review the exact reused proof receipts"),
         ),
     )
-    action = next(
+    return next(
         (action for matched, action in primary_actions if matched),
         ("select_task_checks", "Select the checks for this task"),
     )
-    return {
-        "schema": "factory.daily-action.v1",
-        "evidence_state": state,
-        "audit_state": audit_state,
-        "freshness": "PLAN_INPUTS_ONLY" if plan is not None else "UNASSESSED",
-        "execution": "NOT_RUN",
-        "candidate": None
-        if plan is None
-        else {
-            "plan_id": plan.get("plan_id"),
-            "assurance_level": plan.get("assurance_level"),
-            "manifest_sha256": manifest_sha256,
-            "changed_paths_sha256": plan.get("changed_paths_sha256"),
-            "plan_sha256": plan.get("plan_sha256"),
-        },
-        "proof_counts": counts,
-        "blockers": {key: value for key, value in blockers.items() if value},
-        "primary_action": {"id": action[0], "label": action[1], "command": None},
-        "authority": dict(AUTHORITY),
-        "claim_boundary": "A schedule is a plan only; global completeness and execution are not established.",
-    }
 
 
 def _daily_schedule_projection(schedule):
@@ -220,12 +224,7 @@ def daily_schedule_plan(root: Path, supplied_path: str | Path) -> dict[str, Any]
 
     try:
         workspace = Path(root).resolve()
-        raw_path = Path(supplied_path)
-        candidate = Path(
-            os.path.abspath(
-                raw_path if raw_path.is_absolute() else workspace / raw_path
-            )
-        )
+        candidate = Path(os.path.abspath(workspace / supplied_path))
         candidate.resolve().relative_to(workspace)
         relative = candidate.relative_to(workspace)
         parents = [
@@ -254,21 +253,15 @@ def daily_schedule_plan(root: Path, supplied_path: str | Path) -> dict[str, Any]
                 os.fstat(stream.fileno()),
                 stream.read(DAILY_SCHEDULE_MAX_BYTES + 1),
             )
-        after = candidate.lstat()
-
-        def identity(item):
-            return item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns
-
-        if (
-            not stat.S_ISREG(opened.st_mode)
-            or not stat.S_ISREG(after.st_mode)
-            or getattr(opened, "st_file_attributes", 0) & reparse
-            or getattr(after, "st_file_attributes", 0) & reparse
-            or identity(before) != identity(opened)
-            or identity(before) != identity(after)
-            or len(raw) > DAILY_SCHEDULE_MAX_BYTES
-            or parent_identities != [_stat_identity(path.lstat()) for path in parents]
-            or candidate.resolve() != workspace / relative
+        if not _daily_schedule_stable(
+            candidate,
+            workspace,
+            relative,
+            parents,
+            parent_identities,
+            before,
+            opened,
+            raw,
         ):
             raise ValueError("schedule changed while being read")
         manifest = validate_schedule_manifest(parse_json_bytes(raw))
@@ -281,6 +274,25 @@ def daily_schedule_plan(root: Path, supplied_path: str | Path) -> dict[str, Any]
             "state": "INCOMPLETE",
             "error_code": getattr(exc, "code", "SCHEDULE_INPUT_INVALID"),
         }
+
+
+def _daily_schedule_stable(
+    candidate, workspace, relative, parents, parent_identities, before, opened, raw
+):
+    after = candidate.lstat()
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return all(
+        (
+            stat.S_ISREG(opened.st_mode),
+            stat.S_ISREG(after.st_mode),
+            not getattr(opened, "st_file_attributes", 0) & reparse,
+            not getattr(after, "st_file_attributes", 0) & reparse,
+            _stat_identity(before) == _stat_identity(opened) == _stat_identity(after),
+            len(raw) <= DAILY_SCHEDULE_MAX_BYTES,
+            parent_identities == [_stat_identity(path.lstat()) for path in parents],
+            candidate.resolve() == workspace / relative,
+        )
+    )
 
 
 def _release_workflow_integrity(root: Path) -> dict[str, Any]:

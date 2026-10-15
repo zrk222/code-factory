@@ -86,6 +86,9 @@ def _root_from_argv(argv: list[str], fallback: Path) -> Path:
 
 def is_read_only_command(argv: Iterable[str]) -> bool:
     """Identify commands whose existing contract guarantees zero workspace writes."""
+    argv = tuple(argv)
+    if not argv:
+        return True
     prefix: list[str] = []
     for item in argv:
         value = str(item)

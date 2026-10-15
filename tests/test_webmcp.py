@@ -65,7 +65,7 @@ def test_audit_webmcp_registration_and_projection_in_node_vm() -> None:
     node = shutil.which("node")
     assert node, "Node.js is required to verify the actual browser registration code"
     html = (ROOT / "factoryline" / "graph_ops.html").read_text(encoding="utf-8")
-    assert 'const setText=(id,text)=>{byId(id).textContent=String(text);};' in html
+    assert "const setText=(id,text)=>{byId(id).textContent=String(text);};" in html
     names_start = html.index("    const WEBMCP_TOOL_NAMES=")
     names_end = html.index("\n", names_start)
     names = html[names_start:names_end]
@@ -180,7 +180,12 @@ const checks = {json.dumps(names)} + '\\n' + {json.dumps(source)} + '\\n' + `(as
         script_path = Path(node_script.name)
     try:
         result = subprocess.run(
-            [node, str(script_path)], cwd=ROOT, capture_output=True, text=True, check=False, timeout=20
+            [node, str(script_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
         )
     finally:
         script_path.unlink(missing_ok=True)
