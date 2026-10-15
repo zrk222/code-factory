@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Scan Flask form inputs and password-key lookups through existing source/sink
+  checks, including credential comparisons returned, assigned or asserted.
+- Preserve the blocked, zero-audited-files report when the security CLI exceeds
+  its source limit, rather than losing it to a generic receipt error.
+- Exclude raster documentation previews from Python source packages while
+  preserving installed runtime files and repository previews.
+
 - Prepare the existing sealed repair scope from explicitly selected native audit
   finding IDs, retaining current origin and exact path bindings through approval.
   Relative repair artifact directories now resolve under the selected workspace.

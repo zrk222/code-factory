@@ -3993,12 +3993,13 @@ def _security_analyze_source_sink_block(
 ):
     findings = []
     for statement in body:
+        value = getattr(statement, "test", getattr(statement, "value", None))
+        password_finding = _security_password_comparison_finding(
+            relative, value, password_fields, aliases, scope, statement
+        )
+        if password_finding is not None:
+            findings.append(password_finding)
         if isinstance(statement, ast.If):
-            password_finding = _security_password_comparison_finding(
-                relative, statement.test, password_fields, aliases, scope, statement
-            )
-            if password_finding is not None:
-                findings.append(password_finding)
             findings.extend(
                 _security_statement_call_findings(
                     relative,
@@ -4565,26 +4566,24 @@ def _security_password_source(
 
 
 def _security_password_request_value(node, aliases, scope=None, flow_statement=None):
-    from .review_audits import _name
-
-    if not isinstance(node, ast.Subscript):
+    if isinstance(node, ast.Call):
+        if (
+            not isinstance(node.func, ast.Attribute)
+            or _security_call_leaf(node) != "get"
+            or len(node.args) != 1
+            or node.keywords
+        ):
+            return False
+        request_value, key = node.func.value, node.args[0]
+    elif isinstance(node, ast.Subscript):
+        request_value, key = node.value, node.slice
+    else:
         return False
-    key = node.slice
     if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
         return False
     if key.value.casefold() != "password":
         return False
-    if not _security_request_args(node.value, aliases, scope, flow_statement):
-        return False
-    base_name = _name(node.value)
-    head, _, tail = base_name.partition(".")
-    request_aliases = _security_scope_request_aliases(scope, aliases, flow_statement)
-    canonical = request_aliases.get(head, "") + ("." + tail if tail else "")
-    if canonical == "flask.request.args":
-        return True
-    return _security_django_request_parameter(
-        node.value, aliases, scope, flow_statement
-    )
+    return _security_request_args(request_value, aliases, scope, flow_statement)
 
 
 def _security_django_request_parameter(node, aliases, scope=None, flow_statement=None):
@@ -4646,7 +4645,7 @@ def _security_call_source_tainted(node, requests, parameters, aliases):
     from .review_audits import _name
 
     name = security_call_name(node, aliases) if aliases else ""
-    if name.startswith("flask.request.args."):
+    if name.startswith(("flask.request.args.", "flask.request.form.")):
         return True
     if name in {"os.path.join", "pathlib.Path", "pathlib.PurePath"}:
         return any(
@@ -4662,9 +4661,10 @@ def _security_call_source_tainted(node, requests, parameters, aliases):
 
 
 def _security_request_args(node, aliases, scope=None, flow_statement=None):
-    if _security_flask_request_collection(node, aliases, scope, flow_statement, "args"):
-        return True
-    return _security_django_request_parameter(node, aliases, scope, flow_statement)
+    return any(
+        _security_flask_request_collection(node, aliases, scope, flow_statement, part)
+        for part in ("args", "form")
+    ) or _security_django_request_parameter(node, aliases, scope, flow_statement)
 
 
 def _security_scope_request_aliases(scope, aliases, flow_statement=None):

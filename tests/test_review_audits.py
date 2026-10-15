@@ -169,6 +169,54 @@ def test_security_source_sink_findings_direct_api(request_derived):
             True,
         ),
         (
+            "from flask import request\n"
+            "def process_request():\n"
+            "    if request.form['password'] == 'literal-value':\n"
+            "        return True\n",
+            True,
+        ),
+        (
+            "from flask import request\n"
+            "def process_request():\n"
+            "    if request.args.get('password') == 'literal-value':\n"
+            "        return True\n",
+            True,
+        ),
+        (
+            "from flask import request as web_request\n"
+            "def process_request():\n"
+            "    supplied = web_request.form.get('password')\n"
+            "    if supplied == 'literal-value':\n"
+            "        return True\n",
+            True,
+        ),
+        (
+            "import flask as web\n"
+            "def process_request():\n"
+            "    if web.request.form.get('password') == 'literal-value':\n"
+            "        return True\n",
+            True,
+        ),
+        (
+            "from flask import request\n"
+            "def process_request():\n"
+            "    if request.form.get('username') == 'literal-value':\n"
+            "        return True\n",
+            False,
+        ),
+        (
+            "def process_request(data):\n"
+            "    if data.get('password') == 'literal-value':\n"
+            "        return True\n",
+            False,
+        ),
+        (
+            "def process_request():\n"
+            "    if get('password') == 'literal-value':\n"
+            "        return True\n",
+            False,
+        ),
+        (
             "import flask\n"
             "def process_request():\n"
             "    if flask.request.args['password'] == 'myPa55word':\n"
@@ -329,6 +377,13 @@ def test_security_source_sink_findings_direct_api(request_derived):
         "django-password-alias",
         "flask-password-direct",
         "flask-password-bound-alias",
+        "flask-form-password-subscript",
+        "flask-query-password-get",
+        "flask-form-password-get-bound-alias",
+        "flask-module-form-password-get",
+        "flask-form-non-password-field",
+        "unrelated-get-password-key",
+        "unrelated-bare-get-password-key",
         "flask-module-qualified-request-args",
         "django-password-direct",
         "django-password-bound-alias",
@@ -3014,6 +3069,12 @@ def test_security_scan_classifies_test_roundtrip_as_nonblocking(tmp_path, librar
         (
             "from flask import request\n"
             "def download():\n"
+            "    open(request.form['path'])\n",
+            "SECURITY_PATH_TRAVERSAL",
+        ),
+        (
+            "from flask import request\n"
+            "def download():\n"
             "    name = request.args.get('name')\n"
             "    open(secure_filename(name))\n",
             "SECURITY_PATH_TRAVERSAL",
@@ -3046,6 +3107,22 @@ def test_security_scan_classifies_test_roundtrip_as_nonblocking(tmp_path, librar
             "    url = 'https://' + host + '/items'\n"
             "    requests.get(url)\n",
             "SECURITY_SSRF",
+        ),
+        (
+            "from flask import request as incoming\n"
+            "import requests\n"
+            "def fetch():\n"
+            "    requests.get(incoming.form.get('url'))\n",
+            "SECURITY_SSRF",
+        ),
+        (
+            "from flask import request\n"
+            "import mysql.connector\n"
+            "def lookup():\n"
+            "    cursor = mysql.connector.connect().cursor()\n"
+            "    query = \"SELECT * FROM records WHERE name = '%s'\" % request.form['name']\n"
+            "    cursor.execute(query)\n",
+            "SECURITY_SQL_INJECTION",
         ),
         (
             "from flask import request\n"
@@ -4061,6 +4138,47 @@ def test_security_scan_blocks_instead_of_truncating_over_limit_inventory(
     assert result["audit_coverage"]["complete"] is False
     assert result["audit_coverage"]["measurement_state"] == "blocked"
     assert result["finding_counts"] == {"SECURITY_AUDIT_INCOMPLETE": 1}
+
+
+def test_security_cli_preserves_over_limit_report_in_receipt(
+    tmp_path, monkeypatch, capsys
+):
+    import factoryline.review_audits as module
+
+    monkeypatch.setattr(module, "MAX_SECURITY_SOURCE_FILES", 2)
+    for index in range(3):
+        (tmp_path / f"module_{index}.py").write_text("VALUE = 1\n", encoding="utf-8")
+    assert main(["audit", "security", "--root", str(tmp_path), "--json"]) == 2
+    captured = capsys.readouterr()
+    assert not captured.err
+    result = json.loads(captured.out)
+    assert result["state"] == "BLOCKED"
+    assert result["audit_coverage"]["files_attempted"] == 0
+    assert result["audit_coverage"]["complete"] is False
+    assert result["finding_counts"] == {"SECURITY_AUDIT_INCOMPLETE": 1}
+    assert result["oracle_context"]["mode"] == "not_assessed_source_limit"
+    receipt = json.loads(
+        (tmp_path / ".factory/security-scan/latest.json").read_text(encoding="utf-8")
+    )
+    assert receipt["schema"] == "factory.security-scan-receipt.v1"
+    assert receipt["report"] == result
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "return request.form.get('password') == 'literal-value'",
+        "accepted = request.form.get('password') == 'literal-value'",
+        "assert request.form.get('password') == 'literal-value'",
+    ],
+)
+def test_security_password_comparison_in_value_statements(tmp_path, statement):
+    (tmp_path / "app.py").write_text(
+        f"from flask import request\ndef login():\n    {statement}\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == {"SECURITY_HARDCODED_SECRET": 1}
 
 
 def test_security_scan_tracks_import_aliases_and_unsafe_yaml_loaders(tmp_path):

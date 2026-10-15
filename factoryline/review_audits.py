@@ -5473,6 +5473,10 @@ def _blocked_security_scan_report(
             tenant_read_calls, tenant_read_bindings
         ),
         "sources": [],
+        "oracle_context": {
+            "mode": "not_assessed_source_limit",
+            "configuration_sources": [],
+        },
         "findings": [finding],
         "finding_counts": {finding["code"]: 1},
         "governance": "human_controlled",
