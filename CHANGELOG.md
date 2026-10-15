@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Show current audit findings in Studio and prepare sealed proposals from an
+  explicit selection. Preserve selected controls during unchanged polling, reject
+  stale or active-run proposals, and distinguish a pause request from a stopped
+  run. Proposal preparation grants no repair execution or approval authority.
+
 - Report discarded calls to proven local or module coroutine helpers and test
   definitions shadowed by later direct siblings. Preserve deferred lambda bodies,
   evaluated default bindings, separate test scopes and synchronous-helper checks.

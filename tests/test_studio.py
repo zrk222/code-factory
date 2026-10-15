@@ -361,6 +361,276 @@ def test_dashboard_preserves_unknowns_and_exposes_control_state(tmp_path: Path):
     assert repeated["cache"]["refresh_interval_ms"] == 5000
 
 
+def test_studio_audit_http_flow_is_token_bound_and_prepares_selected_proposal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from factoryline import studio
+    from test_repair_sandbox import _selected_origin
+
+    run_id, finding_id, _origin = _selected_origin(tmp_path, monkeypatch)
+    projection = {
+        "state": "INCOMPLETE",
+        "run_id": run_id,
+        "state_content_sha256": "d" * 64,
+        "candidate_sha256": "c" * 64,
+        "observed_state": "RUNNING",
+        "repair_tasks": [
+            {
+                "finding_id": finding_id,
+                "rule_id": "sample-rule",
+                "severity": "high",
+                "path": "src/value.py",
+                "line": 1,
+                "remediation": "Inspect this selected finding.",
+            }
+        ],
+        "truncated": False,
+    }
+    monkeypatch.setattr(
+        studio, "deep_scan_projection", lambda _root: (projection, None)
+    )
+    monkeypatch.setattr(
+        studio,
+        "pause_deep_run",
+        lambda _root, value: {"run_id": value, "state": "PAUSE_REQUESTED"},
+    )
+    server, token = create_server(tmp_path)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    conn = HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+
+    def call(method, path, body=None, *, authenticated=True):
+        headers = {}
+        if authenticated:
+            headers["X-Factory-Studio-Token"] = token
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+        conn.request(
+            method, path, json.dumps(body) if body is not None else None, headers
+        )
+        response = conn.getresponse()
+        data = response.read()
+        try:
+            body = json.loads(data) if data else None
+        except json.JSONDecodeError:
+            body = data.decode("utf-8")
+        return response.status, body
+
+    try:
+        assert call("GET", "/api/studio-audit", authenticated=False)[0] == 403
+        assert call("GET", "/studio_audit.js")[0] == 200
+        status, active = call(
+            "POST",
+            "/api/studio-audit/prepare",
+            {
+                "run_id": run_id,
+                "expected_state_content_sha256": "d" * 64,
+                "finding_ids": [finding_id],
+            },
+        )
+        assert status == 409 and active["code"] == "AUDIT_ACTIVE"
+        status, pause = call(
+            "POST",
+            "/api/studio-audit/pause",
+            {"run_id": run_id, "expected_state_content_sha256": "d" * 64},
+        )
+        assert status == 201 and pause["state"] == "PAUSE_REQUESTED"
+        projection["observed_state"] = "INCOMPLETE"
+        assert (
+            call(
+                "POST",
+                "/api/studio-audit/prepare",
+                {
+                    "run_id": run_id,
+                    "expected_state_content_sha256": "e" * 64,
+                    "finding_ids": [finding_id],
+                },
+            )[0]
+            == 409
+        )
+        status, malformed = call(
+            "POST",
+            "/api/studio-audit/prepare",
+            {
+                "run_id": run_id,
+                "expected_state_content_sha256": "d" * 64,
+                "finding_ids": [finding_id],
+                "out_dir": "../outside",
+            },
+        )
+        assert status == 400 and malformed["code"] == "AUDIT_REQUEST_INVALID"
+        status, invalid = call(
+            "POST",
+            "/api/studio-audit/prepare",
+            {
+                "run_id": run_id,
+                "expected_state_content_sha256": "d" * 64,
+                "finding_ids": ["f" * 64],
+            },
+        )
+        assert status == 409 and invalid["code"] == "REPAIR_SCOPE_REJECTED"
+        status, proposal = call(
+            "POST",
+            "/api/studio-audit/prepare",
+            {
+                "run_id": run_id,
+                "expected_state_content_sha256": "d" * 64,
+                "finding_ids": [finding_id],
+            },
+        )
+        assert status == 201, proposal
+        assert proposal["finding_ids"] == [finding_id]
+        assert set(proposal["paths"].values()) == {
+            f".factory/repair-scopes/{proposal['scope_id']}.json",
+            f".factory/repair-scopes/{proposal['scope_id']}.md",
+            f".factory/repair-scopes/{proposal['scope_id']}.mmd",
+        }
+        saved = json.loads((tmp_path / proposal["paths"]["json"]).read_text())
+        assert saved["finding_ids"] == [finding_id]
+        assert saved["authority"]["patch_apply"] is False
+    finally:
+        conn.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_studio_audit_projection_and_pause_preserve_bound_state(tmp_path, monkeypatch):
+    from factoryline import studio
+
+    projection = {
+        "run_id": "a" * 32,
+        "state_content_sha256": "b" * 64,
+        "observed_state": "RUNNING",
+    }
+    monkeypatch.setattr(studio, "deep_scan_projection", lambda root: (projection, None))
+    calls = []
+
+    def pause(root, run_id):
+        calls.append((root, run_id))
+        return {"run_id": run_id, "state": "PAUSE_REQUESTED"}
+
+    monkeypatch.setattr(studio, "pause_deep_run", pause)
+    assert studio.studio_audit_projection(tmp_path) is projection
+    payload = {
+        "run_id": projection["run_id"],
+        "expected_state_content_sha256": projection["state_content_sha256"],
+    }
+    assert studio.request_studio_audit_pause(tmp_path, payload) == {
+        "run_id": projection["run_id"],
+        "state": "PAUSE_REQUESTED",
+    }
+    assert calls == [(tmp_path, projection["run_id"])]
+    for changed in ({**payload, "run_id": "c" * 32}, {**payload, "extra": True}):
+        with pytest.raises(StudioRequestError):
+            studio.request_studio_audit_pause(tmp_path, changed)
+    projection["observed_state"] = "PAUSE_REQUESTED"
+    with pytest.raises(StudioRequestError, match="AUDIT_NOT_RUNNING"):
+        studio.request_studio_audit_pause(tmp_path, payload)
+    assert calls == [(tmp_path, projection["run_id"])]
+
+
+def test_studio_audit_refresh_preserves_selection_and_focus(tmp_path: Path):
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node is required for the Studio JavaScript execution profile")
+    script = tmp_path / "audit-refresh.cjs"
+    script.write_text(
+        r"""
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+class Element {
+  constructor(tag) { this.tag = tag; this.children = []; this.checked = false; }
+  set textContent(value) { this.text = value; this.children = []; }
+  setAttribute() {}
+  append(...items) { this.children.push(...items); }
+  appendChild(item) { this.append(item); }
+  prepend(item) { this.children.unshift(item); }
+  replaceChildren(...items) { this.children = items; }
+  addEventListener() {}
+  querySelectorAll() {
+    return this.children.flatMap(item => [
+      ...(item.tag === 'input' && item.checked ? [item] : []),
+      ...item.querySelectorAll()
+    ]);
+  }
+  querySelector() { return this.querySelectorAll()[0]; }
+}
+const grid = new Element('grid');
+const document = { querySelector: () => grid, createElement: tag => new Element(tag) };
+let refresh, fail = false;
+let projection = {run_id: 'run-1', state_content_sha256: 'hash-1', state: 'INCOMPLETE',
+  observed_state: 'INCOMPLETE', repair_tasks: [{finding_id: 'finding-1',
+    rule_id: 'rule', path: 'src/a.py', severity: 'HIGH', remediation: 'Review'}]};
+const context = {document, token: 'local-test', window: {setInterval: fn => {refresh = fn;}},
+  fetch: async () => {if (fail) throw new Error('offline');
+    return {ok: true, json: async () => structuredClone(projection)};}};
+const inputs = element => element.children.flatMap(child =>
+  [...(child.tag === 'input' ? [child] : []), ...inputs(child)]);
+const settle = () => new Promise(resolve => setImmediate(resolve));
+(async () => {
+  vm.runInNewContext(fs.readFileSync(process.argv[2], 'utf8'), context);
+  await settle();
+  const box = inputs(grid)[0];
+  assert.ok(box);
+  box.checked = true;
+  document.activeElement = box;
+  await refresh();
+  assert.equal(inputs(grid)[0], box, 'unchanged projection must retain DOM identity');
+  assert.equal(box.checked, true, 'selection must survive the polling interval');
+  assert.equal(document.activeElement, box, 'polling must not replace focused input');
+  projection.state_content_sha256 = 'hash-2';
+  await refresh();
+  assert.notEqual(inputs(grid)[0], box, 'changed evidence must invalidate selection');
+  assert.equal(inputs(grid)[0].checked, false);
+  fail = true;
+  await refresh();
+  fail = false;
+  await refresh();
+  assert.equal(inputs(grid).length, 1, 'same projection must render after recovery');
+})().catch(error => {console.error(error); process.exitCode = 1;});
+""",
+        encoding="utf-8",
+    )
+    asset = Path(__file__).parents[1] / "factoryline" / "studio_audit.js"
+    subprocess.run([node, str(script), str(asset)], check=True, timeout=10)
+
+
+def test_studio_audit_active_pause_state_and_package_asset_boundaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from factoryline import studio
+
+    running = {
+        "state": "INCOMPLETE",
+        "run_id": "a" * 32,
+        "state_content_sha256": "b" * 64,
+        "observed_state": "RUNNING",
+        "repair_tasks": [{"finding_id": "c" * 64}],
+    }
+    monkeypatch.setattr(studio, "deep_scan_projection", lambda _root: (running, None))
+    with pytest.raises(StudioRequestError, match="AUDIT_ACTIVE"):
+        studio.prepare_studio_repair_scope(
+            tmp_path,
+            {
+                "run_id": running["run_id"],
+                "expected_state_content_sha256": running["state_content_sha256"],
+                "finding_ids": ["c" * 64],
+            },
+        )
+    package_data = Path("pyproject.toml").read_text(encoding="utf-8")
+    manifest = Path("MANIFEST.in").read_text(encoding="utf-8")
+    asset = Path(studio.__file__).with_name("studio_audit.js")
+    assert asset.is_file() and asset.stat().st_size <= 6500
+    assert (
+        "studio_audit.js" in package_data and "factoryline/studio_audit.js" in manifest
+    )
+
+
 def test_context_value_reports_unknowns_without_promising_target(tmp_path):
     value = studio_dashboard(tmp_path)["context_engine"]
     assert value["schema"] == "factory.studio.context-value.v1"
