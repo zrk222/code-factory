@@ -117,3 +117,16 @@ Publication requires new immutable versions as appropriate, wheel/package-data v
 First batch: T0 failed OSV diagnostics/control repair; T1 explicit per-family evidence accounting; finish already pending WebMCP read-only checks; T2 shared risk/reuse workset; T4 compact home/Mission Control projection. T3 capture requirements are included before any measured success claim. T5-T8 follow the dependency table; avoid starting unrelated feature expansions.
 
 Integration is done only when the normal user path completes on its declared execution profiles, all applicable obligations are accounted for, repairs fail safely, evidence survives pause/resume, consumer schemas agree, resource guards hold and changed packages pass installation checks. Research completion, a seeded benchmark or a quality grade does not satisfy this definition. Current runtime work remains open.
+
+## 11. Authorized issue-tracker integration
+
+Use one existing integration surface for Linear first and Jira Cloud through the
+same task/evidence contract: import ticket -> reviewed acceptance criteria ->
+focused checks -> approved repair -> verification -> reviewed ticket update.
+The first packet implements explicit import, evidence draft and confirmed
+comment readback; ticket text grants no execution or release authority.
+Follow-on acceptance still requires deduplicated finding-to-new-issue creation,
+repair/resume links and consumer projections, authenticated provider trials and
+measured issue-to-verified-fix time. Optional webhook/agent-session adapters must
+preserve the same contract. Provider integration adds workflow convenience;
+it does not establish improved detection accuracy or complete T0-T9.

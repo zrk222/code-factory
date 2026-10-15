@@ -14,6 +14,7 @@ OWNER = "agent-integration-maintainers"
 
 def add_parser(sub: Any) -> None:
     """Register MCP and Junie integration commands without loading adapters."""
+    _add_issues_parser(sub)
     mcp = sub.add_parser("mcp", help="serve or inspect the local read-only MCP adapter")
     mcp_sub = mcp.add_subparsers(required=True, dest="mcp_cmd")
     mcp_status = mcp_sub.add_parser(
@@ -112,9 +113,80 @@ def add_parser(sub: Any) -> None:
 
 def run(args: Any) -> int:
     """Execute one MCP or Junie integration command."""
+    if args.cmd == "issues":
+        return _run_issues(args)
     if args.cmd == "mcp":
         return _run_mcp(args)
     return _run_junie(args)
+
+
+def _add_issues_parser(sub):
+    parser = sub.add_parser(
+        "issues", help="import a ticket or review/send exact CF evidence"
+    )
+    parser.add_argument("action", choices=["import", "draft", "publish"])
+    parser.add_argument("--root", default=".")
+    parser.add_argument("--provider", choices=["linear", "jira"])
+    parser.add_argument("--issue", help="project issue key, for example APP-123")
+    parser.add_argument("--site", default="", help="HTTPS Jira Cloud site (Jira only)")
+    parser.add_argument(
+        "--criterion",
+        action="append",
+        default=[],
+        help="operator-reviewed acceptance criterion; repeat as needed",
+    )
+    parser.add_argument("--imported", help="workspace-relative imported issue JSON")
+    parser.add_argument("--contract", help="existing workflow audit contract")
+    parser.add_argument("--observations", help="existing workflow audit observations")
+    parser.add_argument("--draft", help="workspace-relative exact comment draft")
+    parser.add_argument(
+        "--confirmation", help="publish:<draft sha256>; required for external write"
+    )
+    parser.add_argument("--json", action="store_true")
+
+
+def _issue_arguments(args, names):
+    if any(not getattr(args, name) for name in names):
+        raise ValueError("required issue action arguments missing")
+
+
+def _run_issues(args):
+    from .integrations import import_issue, draft_issue_update, publish_issue_update
+
+    try:
+        if args.action == "import":
+            _issue_arguments(args, ("provider", "issue"))
+            value = import_issue(
+                Path(args.root),
+                args.provider,
+                args.issue,
+                site=args.site,
+                criteria=args.criterion,
+            )
+        elif args.action == "draft":
+            _issue_arguments(args, ("imported", "contract", "observations"))
+            value = draft_issue_update(
+                Path(args.root), args.imported, args.contract, args.observations
+            )
+        else:
+            _issue_arguments(args, ("draft", "confirmation"))
+            value = publish_issue_update(Path(args.root), args.draft, args.confirmation)
+    except (ValueError, OSError, KeyError, TypeError, AttributeError):
+        print(
+            "Issue operation incomplete. Check action inputs, evidence freshness and private provider configuration; no success claimed.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.json:
+        print(json.dumps(value, indent=2, sort_keys=True))
+    else:
+        print(
+            f"Issue {args.action}: {value.get('state', 'REVIEW_REQUIRED')}\nSaved: {value['path']}"
+        )
+        if args.action == "draft":
+            print(value["body"])
+            print(f"After reviewing: --confirmation publish:{value['sha256']}")
+    return 0
 
 
 def _run_mcp(args: Any) -> int:

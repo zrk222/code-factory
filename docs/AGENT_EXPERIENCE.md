@@ -60,3 +60,34 @@ the browser tools cannot select a schedule or start an audit.
 This candidate guidance is not evidence of installation, registry publication
 or a replacement of immutable public `0.48.1` packages. Required CI and versioned
 distribution gates remain separate.
+
+## Work from a Linear or Jira issue
+
+The source candidate adds one optional ticket workflow. Configure credentials
+privately in `FACTORY_LINEAR_TOKEN` (personal key by default; set
+`FACTORY_LINEAR_AUTH=oauth` for an existing OAuth access token), or
+`FACTORY_JIRA_EMAIL` and `FACTORY_JIRA_TOKEN` for Jira Cloud. No SDK, daemon or
+background polling is required. Tokens are not saved in issue artifacts.
+
+```console
+factory issues import --provider linear --issue APP-123 --criterion "Returns expected value" --json
+factory issues draft --imported .factory/issues/import-<hash>.json --contract checks.json --observations observations.json --json
+factory issues publish --draft .factory/issues/draft-<hash>.json --confirmation publish:<draft-sha256> --json
+```
+
+For Jira, import with `--provider jira --site https://your-team.atlassian.net`.
+Review the imported text as untrusted data; repeat `--criterion` for each
+operator-reviewed acceptance requirement. The draft reuses the existing
+workflow audit and maps requirements to check IDs, profiles and evidence hashes.
+Its PASS means recorded evidence completeness, not semantic correctness.
+
+Inspect the complete draft before confirming publication. CF records the exact
+body, destination and candidate confirmation; this is operator intent, not
+authenticated reviewer identity. Publication checks freshness, deduplicates the
+comment and requires exact remote readback. Ambiguous deliveries stop for
+reconciliation; more than 100 existing comments also stops safely. No issue is
+closed and no repair, release or code execution is authorized by a ticket.
+
+API-shaped fixture tests are local development evidence. Actual authenticated
+provider operation, new-issue creation, background synchronization and Linear
+agent-session support require separate integration evidence and remain pending.
