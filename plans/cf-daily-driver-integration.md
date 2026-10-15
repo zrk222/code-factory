@@ -1,6 +1,6 @@
 # CF daily-driver integration plan
 
-Status: proposed implementation plan; not an implemented or released capability. Source basis: `2f00b23`; `6a1237f` adds only the [research decisions](../docs/DAILY_DRIVER_UPGRADE.md), with no runtime change. Current pending WebMCP edits are outside that verified source baseline and require their own checks. Rebind actual source/configuration hashes before each implementation packet. Preserve pending work and immutable public packages. All acceptance thresholds below are requirements or proposed experiment criteria, not reported results.
+Status: active implementation scope, authorized by the operator's instruction to revise the goal and fully implement/integrate this plan. All T0-T9 deliverables are required alongside existing unfinished goal work. This is not an implemented or released capability. Source basis: `2f00b23`; `6a1237f` adds only the [research decisions](../docs/DAILY_DRIVER_UPGRADE.md), with no runtime change. Current pending WebMCP edits are outside that verified source baseline and require their own checks. Rebind actual source/configuration hashes before each implementation packet. Preserve pending work and immutable public packages. All acceptance thresholds below are requirements or proposed experiment criteria, not reported results.
 
 ## 1. Outcome and operating constraints
 
