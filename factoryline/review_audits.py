@@ -880,10 +880,9 @@ def _scope_parameters(node: ast.AST) -> set[str]:
             *arguments.kwonlyargs,
         )
     }
-    if arguments.vararg:
-        names.add(arguments.vararg.arg)
-    if arguments.kwarg:
-        names.add(arguments.kwarg.arg)
+    for argument in (arguments.vararg, arguments.kwarg):
+        if argument:
+            names.add(argument.arg)
     return names
 
 
@@ -894,9 +893,7 @@ def _binding_name(node: ast.AST) -> str | None:
         return node.arg
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         return node.name
-    if isinstance(node, ast.ExceptHandler):
-        return node.name
-    if isinstance(node, (ast.MatchAs, ast.MatchStar)):
+    if isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
         return node.name
     if isinstance(node, ast.MatchMapping):
         return node.rest
@@ -904,6 +901,10 @@ def _binding_name(node: ast.AST) -> str | None:
 
 
 def _bound_names(statement: ast.AST) -> set[str]:
+    if isinstance(statement, (*_FUNCTION_NODES, ast.ClassDef, ast.Lambda)):
+        return {statement.name} if hasattr(statement, "name") else set()
+    if (cached := getattr(statement, "_scan_bound_names", None)) is not None:
+        return set(cached)
     comprehension_targets = {
         id(target)
         for child in _iter_ast_nodes(statement)
@@ -918,11 +919,7 @@ def _bound_names(statement: ast.AST) -> set[str]:
     pending = [statement]
     while pending:
         child = pending.pop()
-        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            if child is statement:
-                names.add(child.name)
-            continue
-        if isinstance(child, ast.Lambda):
+        if isinstance(child, (*_FUNCTION_NODES, ast.ClassDef, ast.Lambda)):
             continue
         pending.extend(ast.iter_child_nodes(child))
         if isinstance(child, (ast.Import, ast.ImportFrom)):
@@ -944,6 +941,8 @@ def _bound_names(statement: ast.AST) -> set[str]:
         name = _binding_name(child)
         if name:
             names.add(name)
+    if hasattr(statement, "_scan_bound_names"):
+        statement._scan_bound_names = frozenset(names)
     return names
 
 
@@ -1594,19 +1593,15 @@ def _security_source_files(root: Path) -> list[Path]:
         "__pycache__",
         "node_modules",
     }
-    # Compare ignore markers against workspace-relative parts only.  Looking at
-    # absolute ``path.parts`` made every Linux checkout rooted at ``/tmp`` look
-    # like a generated temporary tree, causing the scanner to silently inspect
-    # zero files and report CLEAN.  A security scan must never become weaker
-    # because the workspace happens to live under an ignored-looking parent.
+    # Prune ignored descendants, never workspace parents: absolute /tmp roots
+    # previously caused false CLEAN scans with zero inspected files.
     files = []
-    for path in root.rglob("*.py"):
-        if not path.is_file() and not path.is_symlink():
-            continue
-        relative_parts = path.relative_to(root).parts
-        if ignored.intersection(relative_parts):
-            continue
-        files.append(path)
+    for directory, dirs, names in os.walk(root, followlinks=False):
+        dirs[:] = [name for name in dirs if name not in ignored]
+        for name in names:
+            path = Path(directory) / name
+            if Path(name).match("*.py") and (path.is_file() or path.is_symlink()):
+                files.append(path)
     return sorted(files, key=lambda path: path.relative_to(root).as_posix())
 
 
@@ -3498,11 +3493,13 @@ def _oracle_import_source(
     path: Path,
     node: ast.AST,
     module: str,
-    eligible: set[Path],
+    eligible: set[Path] | dict[Path, Path],
     imported: str | None = None,
 ) -> Path | None:
     root_abs = root.resolve()
-    eligible_abs = {candidate.resolve(): candidate for candidate in eligible}
+    eligible_abs = (
+        eligible if isinstance(eligible, dict) else {p.resolve(): p for p in eligible}
+    )
     parts = module.split(".") if module else []
     if isinstance(node, ast.ImportFrom) and node.level:
         base = path.parent
@@ -3541,7 +3538,7 @@ def _oracle_import_source(
 
 
 def _oracle_imports(
-    root: Path, path: Path, tree: ast.Module, eligible: set[Path]
+    root: Path, path: Path, tree: ast.Module, eligible: set[Path] | dict[Path, Path]
 ) -> dict:
     imports = {}
     for node in tree.body:
@@ -3952,6 +3949,7 @@ def _build_oracle_context(
     edges = set()
     callback_summaries = {}
     helper_summaries = {}
+    eligible = {path.resolve(): path for path in files}
     for path, tree in snapshots.items():
         aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
         fixtures = {}
@@ -3964,7 +3962,7 @@ def _build_oracle_context(
         }
         contexts[path]["typecheck"] = path in typecheck_sources
         contexts[path]["flask_apps"] = _flask_context_apps(path, tree, snapshots)
-        imports = _oracle_imports(root, path, tree, set(files))
+        imports = _oracle_imports(root, path, tree, eligible)
         contexts[path].update(
             integrity._structural_oracle_context(tree, imports, snapshots)
         )
@@ -5220,12 +5218,13 @@ def _security_scan_tree(
     relative = path.relative_to(root).as_posix()
     nodes = list(ast.walk(tree))
     aliases = _security_aliases(nodes)
+    for node in nodes:
+        node._scan_bound_names = None
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            node._oracle_module = tree
     source_sink_findings = integrity.security_source_sink_findings(
         relative, tree, nodes, aliases
     )
-    for node in nodes:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            node._oracle_module = tree
     oracle_aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
     context = oracle_context or {}
     helper_names = _local_assertion_helpers(tree, oracle_aliases) | set(
