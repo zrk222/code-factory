@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Detect dynamic nonempty-tuple assertions, assertions in constant-empty loops,
+  universal builtin object checks and vacuous unittest boolean/equality checks.
+  Share assertion classification across hollow, weak and delegated-helper paths;
+  preserve tuple comparisons, loop-else checks and shadowed builtin controls.
+
 - Scan Flask form inputs and password-key lookups through existing source/sink
   checks, including credential comparisons returned, assigned or asserted.
 - Preserve the blocked, zero-audited-files report when the security CLI exceeds

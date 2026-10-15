@@ -1147,22 +1147,27 @@ def _effective_assertion(node: ast.AST, aliases: dict[str, str]) -> bool:
 
 
 def _unreachable_constant_branch(parent: ast.AST, child: ast.AST) -> bool:
-    if isinstance(parent, ast.If) and isinstance(parent.test, ast.Constant):
-        return (parent.test.value is False and child in parent.body) or (
-            parent.test.value is True and child in parent.orelse
-        )
-    if isinstance(parent, ast.IfExp) and isinstance(parent.test, ast.Constant):
-        return (parent.test.value is False and child is parent.body) or (
-            parent.test.value is True and child is parent.orelse
-        )
+    if isinstance(parent, (ast.If, ast.IfExp)) and isinstance(
+        parent.test, ast.Constant
+    ):
+        branch = {False: parent.body, True: parent.orelse}.get(parent.test.value, ())
+        return child is branch if isinstance(parent, ast.IfExp) else child in branch
+    if isinstance(parent, (ast.For, ast.While)) and child in parent.body:
+        expression = parent.iter if isinstance(parent, ast.For) else parent.test
+        value = _constant_value(expression)
+        if isinstance(parent, ast.While):
+            return value is not _UNKNOWN_CONSTANT and not bool(value)
+        return isinstance(value, (str, bytes, tuple, list, dict, set)) and not value
+    return _constant_short_circuit(parent, child)
+
+
+def _constant_short_circuit(parent: ast.AST, child: ast.AST) -> bool:
     if isinstance(parent, ast.BoolOp) and child in parent.values:
         index = parent.values.index(child)
         for preceding in parent.values[:index]:
             if not isinstance(preceding, ast.Constant):
                 continue
-            if isinstance(parent.op, ast.Or) and bool(preceding.value):
-                return True
-            if isinstance(parent.op, ast.And) and not bool(preceding.value):
+            if bool(preceding.value) == isinstance(parent.op, ast.Or):
                 return True
     return False
 
@@ -1738,13 +1743,13 @@ def _remember_direct_constant_assignment(statement, known):
 
 
 def _vacuous_assertion(node: ast.expr, known: dict[str, Any] | None = None) -> bool:
-    if _constant_truth_value(node, known or {}) is True:
+    if isinstance(node, ast.Tuple) and any(
+        not isinstance(item, ast.Starred) for item in node.elts
+    ):
         return True
-    value = _constant_value(node, known)
-    if value is not _UNKNOWN_CONSTANT:
-        return bool(value)
-    if isinstance(node, ast.Constant):
-        return bool(node.value)
+    truth = _constant_truth_value(node, known or {})
+    if truth is not None:
+        return truth
     if not isinstance(node, ast.Compare) or len(node.ops) != 1:
         return False
     if (
@@ -2633,6 +2638,72 @@ def _benchmark_fixture_use(node: ast.AST) -> bool:
     )
 
 
+def _local_assertion_nodes(
+    node: ast.AST,
+    aliases: dict[str, str],
+    helper_names: set[str] | None = None,
+    *,
+    unittest_context: bool = False,
+    strong: bool = False,
+    nodes: list[ast.AST] | None = None,
+) -> list[ast.AST]:
+    nodes = _test_oracle_body_nodes(node, aliases) if nodes is None else nodes
+    vacuous = _direct_test_vacuous_assertions(
+        node, _scope_security_aliases(aliases, node)
+    )
+    result = []
+    for child in nodes:
+        if not isinstance(child, (ast.Assert, ast.Call)) or not _effective_assertion(
+            child, aliases
+        ):
+            continue
+        if isinstance(child, ast.Assert):
+            if id(child) in vacuous or _vacuous_assertion(child.test):
+                continue
+            expression = child.test
+        elif _assertion_call(
+            child, aliases, helper_names, unittest_context=unittest_context
+        ):
+            if unittest_context and _vacuous_unittest_call(child):
+                continue
+            expression = child
+        else:
+            continue
+        if not strong or _weak_assertion_reason(expression, aliases) is None:
+            result.append(child)
+    return result
+
+
+def _vacuous_unittest_call(node: ast.Call) -> bool:
+    if not isinstance(node.func, ast.Attribute) or _name(node.func.value) not in {
+        "self",
+        "cls",
+    }:
+        return False
+    method = node.func.attr
+    if method in {"assertTrue", "assertFalse"} and node.args:
+        expression = node.args[0]
+        if method == "assertFalse":
+            expression = ast.UnaryOp(op=ast.Not(), operand=expression)
+        return _vacuous_assertion(expression)
+    if (
+        method
+        in {
+            "assertEqual",
+            "assertTupleEqual",
+            "assertListEqual",
+            "assertDictEqual",
+            "assertSetEqual",
+            "assertSequenceEqual",
+        }
+        and len(node.args) >= 2
+    ):
+        return _vacuous_assertion(
+            ast.Compare(left=node.args[0], ops=[ast.Eq()], comparators=[node.args[1]])
+        )
+    return False
+
+
 def _meaningful_local_assertion(
     node: ast.AST,
     aliases: dict[str, str],
@@ -2640,30 +2711,11 @@ def _meaningful_local_assertion(
     *,
     unittest_context: bool = False,
 ) -> bool:
-    nodes = _test_oracle_body_nodes(node, aliases)
-    vacuous = _direct_test_vacuous_assertions(
-        node, _scope_security_aliases(aliases, node)
-    )
-    return (
-        any(
-            _effective_assertion(child, aliases)
-            and _assertion_call(
-                child, aliases, helper_names, unittest_context=unittest_context
-            )
-            for child in nodes
+    return bool(
+        _local_assertion_nodes(
+            node, aliases, helper_names, unittest_context=unittest_context
         )
-        or any(
-            isinstance(child, ast.Assert)
-            and _effective_assertion(child, aliases)
-            and id(child) not in vacuous
-            and not _vacuous_assertion(child.test)
-            for child in nodes
-        )
-        or any(
-            isinstance(child, (ast.Raise, ast.With))
-            for child in _assertion_nodes(node, aliases)
-        )
-    )
+    ) or _has_manual_failure(node, aliases)
 
 
 def _strong_local_assertion(
@@ -2674,33 +2726,11 @@ def _strong_local_assertion(
     unittest_context: bool = False,
 ) -> bool:
     """Return true only when a helper carries a non-weak oracle."""
-    nodes = _test_oracle_body_nodes(node, aliases)
-    vacuous = _direct_test_vacuous_assertions(
-        node, _scope_security_aliases(aliases, node)
-    )
-    return (
-        any(
-            isinstance(child, ast.Assert)
-            and _effective_assertion(child, aliases)
-            and id(child) not in vacuous
-            and not _vacuous_assertion(child.test)
-            and _weak_assertion_reason(child.test, aliases) is None
-            for child in nodes
+    return bool(
+        _local_assertion_nodes(
+            node, aliases, helper_names, unittest_context=unittest_context, strong=True
         )
-        or any(
-            isinstance(child, ast.Call)
-            and _effective_assertion(child, aliases)
-            and _assertion_call(
-                child, aliases, helper_names, unittest_context=unittest_context
-            )
-            and _weak_assertion_reason(child, aliases) is None
-            for child in nodes
-        )
-        or any(
-            isinstance(child, (ast.Raise, ast.With))
-            for child in _assertion_nodes(node, aliases)
-        )
-    )
+    ) or _has_manual_failure(node, aliases)
 
 
 def _local_assertion_helpers(
@@ -2716,20 +2746,11 @@ def _local_assertion_helpers(
     while changed:
         changed = False
         for name, node in functions.items():
-            if (
-                name not in helpers
-                and _meaningful_local_assertion(
-                    node,
-                    _scope_security_aliases(aliases, node),
-                    helpers,
-                    unittest_context=unittest_context,
-                )
-                and _strong_local_assertion(
-                    node,
-                    _scope_security_aliases(aliases, node),
-                    helpers,
-                    unittest_context=unittest_context,
-                )
+            if name not in helpers and _strong_local_assertion(
+                node,
+                _scope_security_aliases(aliases, node),
+                helpers,
+                unittest_context=unittest_context,
             ):
                 helpers.add(name)
                 changed = True
@@ -4073,6 +4094,8 @@ def _weak_assertion_reason(
     node: ast.AST, aliases: dict[str, str] | None = None
 ) -> str | None:
     if isinstance(node, ast.Call):
+        if _universal_type_check(node):
+            return "universal object type check does not verify the expected behavior"
         return _weak_assertion_call_reason(node, aliases or {})
     if isinstance(node, ast.Compare) and len(node.ops) == 1:
         if isinstance(node.ops[0], (ast.Eq, ast.Is)) and len(node.comparators) == 1:
@@ -4101,6 +4124,17 @@ def _weak_assertion_reason(
     return None
 
 
+def _universal_type_check(node: ast.Call) -> bool:
+    from .review_integrity import _builtin_repr_is_call, _builtin_repr_names_shadowed
+
+    return (
+        _builtin_repr_is_call(node, "isinstance", 2)
+        and isinstance(node.args[1], ast.Name)
+        and node.args[1].id == "object"
+        and not _builtin_repr_names_shadowed(node, {"isinstance", "object"})
+    )
+
+
 def _weak_test_oracle_finding(
     relative: str,
     node: ast.AST,
@@ -4117,22 +4151,19 @@ def _weak_test_oracle_finding(
     if _test_oracle_exempt(node, aliases):
         return None
     nodes = _test_oracle_body_nodes(node, aliases)
-    vacuous = _direct_test_vacuous_assertions(
-        node, _scope_security_aliases(aliases, node)
-    )
     weak = [
-        (child, _weak_assertion_reason(child.test, aliases))
+        (
+            child,
+            _weak_assertion_reason(
+                child.test if isinstance(child, ast.Assert) else child, aliases
+            ),
+        )
         for child in nodes
         if isinstance(child, ast.Assert)
-    ]
-    weak.extend(
-        (child, _weak_assertion_reason(child, aliases))
-        for child in nodes
-        if isinstance(child, ast.Call)
-        and _assertion_call(
+        or _assertion_call(
             child, aliases, helper_names, unittest_context=unittest_context
         )
-    )
+    ]
     weak.extend(
         (child, "delegated helper exposes only a weak assertion")
         for child in nodes
@@ -4140,26 +4171,14 @@ def _weak_test_oracle_finding(
         and _normalized_call_name(child, aliases) in (weak_helper_names or set())
     )
     weak = [(child, reason) for child, reason in weak if reason]
-    strong_assertions = [
-        child
-        for child in nodes
-        if isinstance(child, ast.Assert)
-        and _effective_assertion(child, aliases)
-        and id(child) not in vacuous
-        and not _vacuous_assertion(child.test)
-        and _weak_assertion_reason(child.test, aliases) is None
-    ]
-    strong_assertion_calls = [
-        child
-        for child in nodes
-        if isinstance(child, ast.Call)
-        and _effective_assertion(child, aliases)
-        and _assertion_call(
-            child, aliases, helper_names, unittest_context=unittest_context
-        )
-        and _weak_assertion_reason(child, aliases) is None
-    ]
-    if not weak or strong_assertions or strong_assertion_calls:
+    if not weak or _local_assertion_nodes(
+        node,
+        aliases,
+        helper_names,
+        unittest_context=unittest_context,
+        strong=True,
+        nodes=nodes,
+    ):
         return None
     reasons = sorted({reason for _, reason in weak})
     return _security_finding(
@@ -4193,20 +4212,14 @@ def _hollow_test_finding(
         return None
     if isinstance(oracle, dict):
         return oracle
-    nodes = _test_oracle_body_nodes(node, aliases)
-    vacuous = _direct_test_vacuous_assertions(
-        node, _scope_security_aliases(aliases, node)
-    )
-    assertions = [n for n in nodes if isinstance(n, ast.Assert)]
-    if _has_manual_failure(node, aliases):
-        return None
-    if _test_has_assertion_call(nodes, aliases, helper_names, unittest_context):
-        return None
-    if assertions and any(
-        _effective_assertion(assertion, aliases)
-        and id(assertion) not in vacuous
-        and not _vacuous_assertion(assertion.test)
-        for assertion in assertions
+    if _meaningful_local_assertion(
+        node, aliases, helper_names, unittest_context=unittest_context
+    ) or any(
+        isinstance(child, ast.Call)
+        and isinstance(child.func, ast.Name)
+        and child.func.id in (helper_names or set())
+        and _effective_assertion(child, aliases)
+        for child in _test_oracle_body_nodes(node, aliases)
     ):
         return None
     return _security_finding(
@@ -4258,26 +4271,6 @@ def _test_oracle_exempt(node: ast.AST, aliases: dict[str, str]) -> bool:
     return _unconditionally_skipped_test(node) or _performance_benchmark_test(
         node, aliases
     )
-
-
-def _test_has_assertion_call(
-    nodes: list[ast.AST],
-    aliases: dict[str, str],
-    helper_names: set[str] | None,
-    unittest_context: bool,
-) -> bool:
-    for child in nodes:
-        if not isinstance(child, ast.Call) or not _effective_assertion(child, aliases):
-            continue
-        if _assertion_call(
-            child, aliases, helper_names, unittest_context=unittest_context
-        ):
-            return True
-        if isinstance(child.func, ast.Name) and child.func.id in (
-            helper_names or set()
-        ):
-            return True
-    return False
 
 
 def _tenant_contract_calls(value: tuple[str, ...]) -> tuple[str, ...]:

@@ -4424,6 +4424,87 @@ def test_security_scan_detects_local_hollow_test_oracles(tmp_path, body):
 
 
 @pytest.mark.parametrize(
+    "body,expected",
+    [
+        ("assert (compute(), expected)", "QUALITY_HOLLOW_TEST"),
+        ("assert (*values, compute())", "QUALITY_HOLLOW_TEST"),
+        ("assert isinstance(compute(), object)", "QUALITY_WEAK_TEST_ORACLE"),
+        ("while False:\n        assert compute() == 3", "QUALITY_HOLLOW_TEST"),
+        ("for item in []:\n        assert compute(item) == 3", "QUALITY_HOLLOW_TEST"),
+        ("for item in ():\n        assert compute(item) == 3", "QUALITY_HOLLOW_TEST"),
+        ("for item in {}:\n        assert compute(item) == 3", "QUALITY_HOLLOW_TEST"),
+        ("for item in '':\n        assert compute(item) == 3", "QUALITY_HOLLOW_TEST"),
+        ("assert (compute(), other()) == expected", None),
+        ("assert (*values,)", None),
+        ("assert isinstance(compute(), str)", None),
+        ("object = Expected\n    assert isinstance(compute(), object)", None),
+        ("isinstance = check\n    assert isinstance(compute(), object)", None),
+        ("for item in [1]:\n        assert compute(item) == 3", None),
+        ("for item in values:\n        assert compute(item) == 3", None),
+        ("while False:\n        pass\n    else:\n        assert compute() == 3", None),
+        (
+            "for item in []:\n        pass\n    else:\n        assert compute() == 3",
+            None,
+        ),
+        (
+            "try:\n        assert compute() == 3\n    except AssertionError:\n        pass",
+            "QUALITY_HOLLOW_TEST",
+        ),
+        ("raise AssertionError('natural failure')", None),
+    ],
+)
+def test_oracle_precision_reported_truth_and_reachability(tmp_path, body, expected):
+    (tmp_path / "test_case.py").write_text(
+        "def test_behavior():\n    " + body + "\n", encoding="utf-8"
+    )
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert result["finding_counts"] == ({expected: 1} if expected else {})
+    if expected:
+        assert result["findings"][0]["facts"]["symbol"] == "test_behavior"
+        assert result["findings"][0]["line"] > 0
+
+
+@pytest.mark.parametrize(
+    "body,hollow",
+    [
+        ("self.assertTrue(True)", True),
+        ("self.assertFalse(False)", True),
+        ("self.assertEqual(1, 1)", True),
+        ("self.assertTupleEqual((1,), (1,))", True),
+        ("self.assertListEqual([1], [1])", True),
+        ("self.assertEqual(value, value)", True),
+        ("self.assertTrue(compute())", False),
+        ("self.assertFalse(compute())", False),
+        ("self.assertEqual(compute(), 1)", False),
+        ("self.assertTupleEqual(compute(), (1,))", False),
+        ("self.assertEqual(obj.value, obj.value)", False),
+    ],
+)
+def test_oracle_precision_unittest_vacuity(tmp_path, body, hollow):
+    (tmp_path / "test_case.py").write_text(
+        "import unittest\nclass Checks(unittest.TestCase):\n"
+        "    def test_behavior(self):\n        " + body + "\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert result["finding_counts"] == ({"QUALITY_HOLLOW_TEST": 1} if hollow else {})
+
+
+@pytest.mark.parametrize("binding", ["object", "isinstance"])
+@pytest.mark.parametrize("scope", ["module", "parameter"])
+def test_oracle_precision_universal_type_shadow_controls(tmp_path, binding, scope):
+    source = (
+        f"{binding} = custom\ndef test_behavior():\n"
+        if scope == "module"
+        else f"def test_behavior({binding}):\n"
+    )
+    (tmp_path / "test_case.py").write_text(
+        source + "    assert isinstance(compute(), object)\n", encoding="utf-8"
+    )
+    assert security_scan(tmp_path, cache_enabled=False)["findings"] == []
+
+
+@pytest.mark.parametrize(
     "body",
     [
         "expected = 3\n    alias = expected\n    assert alias == expected",
