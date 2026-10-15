@@ -320,6 +320,17 @@ def test_linear_connect_callback_rejects_bad_host_and_closes_listener(
     assert [status for status, _ in requests] == [400, 400, 200]
     assert bound["server"].fileno() == -1
     assert "code=" not in capsys.readouterr().err
+    import pytest
+
+    monkeypatch.setattr(cli.webbrowser, "open", lambda _url: False)
+    with pytest.raises(ValueError, match="Browser unavailable"):
+        cli._linear_connect_callback(
+            {"authorization_url": "https://linear.app/oauth/authorize?state=private"},
+            "work",
+            complete,
+        )
+    assert bound["server"].fileno() == -1
+    assert "state=private" not in capsys.readouterr().err
 
 
 def test_issues_rejects_linear_connection_for_jira(monkeypatch, capsys):

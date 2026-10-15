@@ -326,10 +326,8 @@ def _linear_wait_callback(session, connection, complete):
             file=sys.stderr,
         )
         if not webbrowser.open(session["authorization_url"]):
-            print(
-                "Open this authorization URL in your browser: "
-                + session["authorization_url"],
-                file=sys.stderr,
+            raise ValueError(
+                "Browser unavailable; configure a default browser and retry connect"
             )
         deadline = time.monotonic() + 180
         while not outcome and time.monotonic() < deadline:
