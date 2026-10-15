@@ -18,6 +18,7 @@ from factoryline.release_integrity import (
     render_release_integrity,
     review_regression_audit,
     _fresh_reassessment_date,
+    _valid_reassessment_metrics,
 )
 from factoryline.release_route_integrity import release_route_checks
 
@@ -147,6 +148,19 @@ def _reassessment_envelope(report: dict[str, object]) -> dict[str, object]:
         "source_sha256": "a" * 64,
         "report": report,
     }
+
+
+def test_static_only_forgeline_report_remains_invalid_for_release() -> None:
+    metrics = _passing_reassessment()["metrics"]
+    assert _valid_reassessment_metrics(metrics) is True
+
+    static_only = {
+        **metrics,
+        "coverage_assessment": "static_name_match",
+        "behavioral_proof_status": "not_measured_static_only",
+    }
+
+    assert _valid_reassessment_metrics(static_only) is False
 
 
 def test_source_snapshot_digest_binds_audited_code_and_policy(tmp_path: Path) -> None:

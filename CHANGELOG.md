@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep ForgeLine doctor capability canaries compatible with explicitly static
+  coverage reports, reject contradictory metadata, and preserve the separate
+  release requirement for measured behavioral evidence.
+
 - Report explicit empty pytest parameter sets as an incomplete execution gap,
   including imported aliases and keyword values. Preserve unittest collection
   and consolidate its existing TestCase/mixin enumeration.

@@ -196,6 +196,17 @@ def _typescript_node_path(search_roots: list[Path] | None = None) -> str | None:
     )
 
 
+def _canary_metrics_ok(metrics: object) -> bool:
+    return isinstance(metrics, dict) and (
+        metrics.get("coverage_assessment"),
+        metrics.get("behavioral_proof_status"),
+    ) in (
+        ("measured", None),
+        ("measured", "available"),
+        ("static_name_match", "not_measured_static_only"),
+    )
+
+
 def _run_feature_canary(
     module,
     root: Path,
@@ -241,38 +252,23 @@ def _run_feature_canary(
     )
     stdout = result["stdout"].decode("utf-8", errors="replace")
     stderr = result["stderr"].decode("utf-8", errors="replace")
+    failure = {"ok": False, "provenance_ok": provenance_ok, "provenance": payload}
     if not result["ok"]:
-        return {
-            "ok": False,
-            "provenance_ok": provenance_ok,
+        return failure | {
             "reason": f"{suffix} feature canary failed",
             "output": str(result["output"])[-1000:] or (stdout + stderr)[-1000:],
-            "provenance": payload,
         }
     try:
         qa = json.loads(stdout)
     except json.JSONDecodeError:
-        return {
-            "ok": False,
-            "provenance_ok": provenance_ok,
-            "reason": f"{suffix} feature canary was not JSON",
-            "provenance": payload,
-        }
-    if qa.get("passed") is not True:
-        return {
-            "ok": False,
-            "provenance_ok": provenance_ok,
+        return failure | {"reason": f"{suffix} feature canary was not JSON"}
+    if not isinstance(qa, dict) or qa.get("passed") is not True:
+        return failure | {
             "reason": f"{suffix} feature QA did not pass",
             "output": stdout[-1000:],
-            "provenance": payload,
         }
-    if qa.get("metrics", {}).get("coverage_assessment") != "measured":
-        return {
-            "ok": False,
-            "provenance_ok": provenance_ok,
-            "reason": f"{suffix} symbols were not measured",
-            "provenance": payload,
-        }
+    if not _canary_metrics_ok(qa.get("metrics")):
+        return failure | {"reason": f"{suffix} symbols were not measured"}
     return None
 
 

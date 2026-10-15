@@ -419,6 +419,89 @@ def test_forgeline_doctor_canary_checks_tsx_and_rejects_nonpassing_json(
     assert (tmp_path / "services" / "canary.test.tsx").exists()
 
 
+@pytest.mark.parametrize(
+    "metrics,accepted",
+    [
+        pytest.param({"coverage_assessment": "measured"}, True, id="legacy-measured"),
+        pytest.param(
+            {
+                "coverage_assessment": "measured",
+                "behavioral_proof_status": "available",
+            },
+            True,
+            id="measured-available",
+        ),
+        pytest.param(
+            {
+                "coverage_assessment": "measured",
+                "behavioral_proof_status": "not_measured_static_only",
+            },
+            False,
+            id="measured-static-only-conflict",
+        ),
+        pytest.param(
+            {
+                "coverage_assessment": "measured",
+                "behavioral_proof_status": "unknown",
+            },
+            False,
+            id="measured-unknown-status",
+        ),
+        pytest.param(
+            {
+                "coverage_assessment": "static_name_match",
+                "behavioral_proof_status": "not_measured_static_only",
+            },
+            True,
+            id="static-only",
+        ),
+        pytest.param(
+            {
+                "coverage_assessment": "static_name_match",
+                "behavioral_proof_status": "available",
+            },
+            False,
+            id="static-cannot-claim-behavior",
+        ),
+        pytest.param(
+            {"coverage_assessment": "static_name_match"}, False, id="missing-status"
+        ),
+        pytest.param(None, False, id="null-metrics"),
+        pytest.param("malformed", False, id="wrong-metrics-type"),
+    ],
+)
+def test_forgeline_doctor_canary_accepts_only_explicit_static_metrics(
+    tmp_path, monkeypatch, metrics, accepted
+):
+    import factoryline.cli as cli
+    from types import SimpleNamespace
+
+    (tmp_path / "services").mkdir()
+    qa = {"passed": True, "metrics": metrics}
+    monkeypatch.setattr(
+        cli,
+        "_run_cli_bounded",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "stdout": json.dumps(qa).encode(),
+            "stderr": b"",
+            "exit_code": 0,
+            "cleanup_confirmed": True,
+            "streams_closed": True,
+            "output": "",
+        },
+    )
+
+    result = cli._run_feature_canary(
+        SimpleNamespace(cli="forge"), tmp_path, {"version": "0.10.8"}, True, "tsx"
+    )
+
+    if accepted:
+        assert result is None
+    else:
+        assert result["reason"] == "tsx symbols were not measured"
+
+
 def test_forgeline_doctor_only_runs_typescript_canaries_for_project_sources(
     tmp_path, monkeypatch
 ):
