@@ -2633,8 +2633,139 @@ def _lineage_normalization(
             or normalized.get("findings") != saved_findings
         ):
             gaps.append(f"NORMALIZED_LANE_BINDING_MISMATCH:{lane_id}")
+            return None
+        return normalized
     except (OSError, ValueError, KeyError, TypeError, RuntimeAuditError):
         gaps.append(f"LANE_NORMALIZATION_FAILED:{lane_id}")
+        return None
+
+
+def _lineage_lane_obligation_accounting(
+    coverage, challenges, definition, plan, normalized
+):
+    """Bind obligations assigned to one engine lane; empty means no assigned rules."""
+    family, engine = definition.get("family"), definition.get("engine")
+    obligations = [
+        item
+        for item in plan.get("obligations", [])
+        if item.get("family") == family and item.get("engine") == engine
+    ]
+    required = set(coverage.get("sources", {}))
+    observed = coverage.get("obligations", [])
+    observed_ids = set(observed) if isinstance(observed, list) else set()
+    challenge_kinds = {}
+    observations = challenges.get("observations", [])
+    if isinstance(observations, list):
+        for item in observations:
+            if isinstance(item, dict):
+                challenge_kinds.setdefault(item.get("obligation_id"), []).append(
+                    item.get("kind")
+                )
+    rows = []
+    expected_ids = []
+    for obligation in obligations:
+        obligation_id = obligation.get("id")
+        paths = obligation.get("paths", [])
+        applicable = isinstance(paths, list) and set(paths) <= required
+        if applicable and isinstance(obligation_id, str):
+            expected_ids.append(obligation_id)
+        kinds = challenge_kinds.get(obligation_id, [])
+        verified = (
+            applicable
+            and obligation_id in observed_ids
+            and sorted(kinds) == ["mutation", "negative", "positive"]
+            and normalized is not None
+            and normalized.get("state") == "OBSERVED"
+            and not normalized.get("gaps")
+        )
+        rows.append(
+            {
+                "obligation_id": obligation_id,
+                "state": "VERIFIED" if verified else "INCOMPLETE",
+                "challenge_kinds": sorted(kinds),
+            }
+        )
+    observed_list_valid = (
+        isinstance(observed, list)
+        and len(observed) == len(observed_ids)
+        and sorted(observed_ids) == sorted(expected_ids)
+    )
+    state = (
+        "VERIFIED"
+        if normalized is not None
+        and normalized.get("state") == "OBSERVED"
+        and not normalized.get("gaps")
+        and len(expected_ids) == len(obligations)
+        and len(set(expected_ids)) == len(expected_ids)
+        and observed_list_valid
+        and all(item["state"] == "VERIFIED" for item in rows)
+        else "INCOMPLETE"
+    )
+    return {
+        "schema": "factory.deep-lane-obligations.v1",
+        "family": family,
+        "engine": engine,
+        "state": state,
+        "required_obligation_ids": sorted(
+            item.get("id") for item in obligations if isinstance(item.get("id"), str)
+        ),
+        "observed_obligation_ids": sorted(observed_ids),
+        "obligations": rows,
+        "native_report_sha256": coverage.get("native_report_sha256"),
+        "challenge_sha256": _deep_audit_io.digest(challenges),
+        "normalized_challenge_sha256": (
+            normalized.get("challenge_sha256") if normalized is not None else None
+        ),
+    }
+
+
+def _lineage_family_accounting(plan, lanes):
+    from .deep_audit_contract import EXECUTION_FAMILIES
+
+    result = []
+    for family in sorted(EXECUTION_FAMILIES):
+        family_lanes = sorted(
+            (lane for lane in lanes if lane.get("family") == family),
+            key=lambda lane: lane.get("lane_id", ""),
+        )
+        declared = [
+            item for item in plan.get("obligations", []) if item.get("family") == family
+        ]
+        native = {
+            (lane.get("engine"), row.get("obligation_id")): row
+            for lane in family_lanes
+            for row in lane.get("obligation_accounting", {}).get("obligations", [])
+        }
+        obligation_rows = [
+            {
+                "obligation_id": item.get("id"),
+                "engine": item.get("engine"),
+                "state": row.get("state", "INCOMPLETE"),
+                "challenge_kinds": row.get("challenge_kinds", []),
+            }
+            for item in declared
+            for row in [native.get((item.get("engine"), item.get("id")), {})]
+        ]
+        expected_ids = sorted(item.get("id") for item in declared)
+        state = (
+            "VERIFIED"
+            if family_lanes
+            and all(_lineage_lane_complete(lane) for lane in family_lanes)
+            and declared
+            and len(set(expected_ids)) == len(expected_ids)
+            and all(row["state"] == "VERIFIED" for row in obligation_rows)
+            else "INCOMPLETE"
+        )
+        result.append(
+            {
+                "family": family,
+                "state": state,
+                "lane_ids": [lane.get("lane_id") for lane in family_lanes],
+                "required_obligation_ids": expected_ids,
+                "obligations": obligation_rows,
+            }
+        )
+    return result
 
 
 def _lineage_lane(directory, lane_id, definition, result, inventory, run_id, plan):
@@ -2667,8 +2798,15 @@ def _lineage_lane(directory, lane_id, definition, result, inventory, run_id, pla
         if digest(coverage) != result.get("coverage_sha256"):
             raise ValueError("coverage digest mismatch")
         _lineage_accounting(coverage, result, definition, lane_id, item, gaps)
-        _lineage_normalization(
+        normalized = _lineage_normalization(
             bundle, definition, inventory, run_id, result, lane_id, gaps, plan
+        )
+        item["obligation_accounting"] = _lineage_lane_obligation_accounting(
+            coverage,
+            bundle["artifacts"][definition["challenge_report"]],
+            definition,
+            plan,
+            normalized,
         )
     except (OSError, ValueError, KeyError, TypeError, RuntimeAuditError):
         gap = (
@@ -2828,6 +2966,7 @@ def _lineage_run(root: Path, run_id: str) -> tuple[dict, list[dict], list[dict]]
         "playback": playback,
         "pause_request_sha256": pause_ref,
         "lanes": lanes,
+        "family_accounting": _lineage_family_accounting(plan, lanes),
         "findings_sha256": digest(
             [
                 finding
@@ -2977,13 +3116,62 @@ def _lineage_lane_accounting_valid(lane: dict) -> bool:
         return False
     if any(not _lineage_rule_sources(rule, source_paths) for rule in rules):
         return False
-    return _lineage_accounting_digest_valid(accounting, lane)
+    return _lineage_accounting_digest_valid(accounting, lane) and (
+        _lineage_lane_obligation_accounting_valid(lane)
+    )
 
 
-def _string_list(value: object) -> bool:
+def _lineage_lane_obligation_accounting_valid(lane: dict) -> bool:
+    accounting = lane.get("obligation_accounting")
+    if not isinstance(accounting, dict):
+        return False
+    required = accounting.get("required_obligation_ids")
+    observed = accounting.get("observed_obligation_ids")
+    rows = accounting.get("obligations")
+    if (
+        accounting.get("schema") != "factory.deep-lane-obligations.v1"
+        or accounting.get("family") != lane.get("family")
+        or accounting.get("engine") != lane.get("engine")
+        or not _string_list(required, True)
+        or not _string_list(observed, True)
+        or not isinstance(rows, list)
+        or observed != required
+        or not _valid_digest(accounting.get("challenge_sha256"))
+        or accounting.get("challenge_sha256") != lane.get("challenge_sha256")
+        or accounting.get("normalized_challenge_sha256") != lane.get("challenge_sha256")
+        or not _valid_digest(accounting.get("native_report_sha256"))
+    ):
+        return False
+    row_ids = [row.get("obligation_id") for row in rows if isinstance(row, dict)]
+    if len(row_ids) != len(rows) or sorted(row_ids) != required:
+        return False
+    for row in rows:
+        if set(row) != {"obligation_id", "state", "challenge_kinds"}:
+            return False
+        kinds = row.get("challenge_kinds")
+        if (
+            row.get("state") not in {"VERIFIED", "INCOMPLETE"}
+            or not isinstance(kinds, list)
+            or any(kind not in {"positive", "negative", "mutation"} for kind in kinds)
+            or len(set(kinds)) != len(kinds)
+        ):
+            return False
+        if row["state"] == "VERIFIED" and kinds != ["mutation", "negative", "positive"]:
+            return False
+    derived = (
+        "VERIFIED"
+        if lane.get("state") == "OBSERVED"
+        and not lane.get("gaps")
+        and all(row["state"] == "VERIFIED" for row in rows)
+        else "INCOMPLETE"
+    )
+    return accounting.get("state") == derived
+
+
+def _string_list(value: object, allow_empty: bool = False) -> bool:
     return (
         isinstance(value, list)
-        and bool(value)
+        and (allow_empty or bool(value))
         and all(isinstance(item, str) and item for item in value)
         and len(set(value)) == len(value)
     )
@@ -3035,7 +3223,32 @@ def _valid_digest(value: object) -> bool:
 def _lineage_lane_complete(lane: object) -> bool:
     if not isinstance(lane, dict):
         return False
-    return lane.get("state") == "OBSERVED" and _lineage_lane_accounting_valid(lane)
+    accounting = lane.get("obligation_accounting")
+    return (
+        lane.get("state") == "OBSERVED"
+        and isinstance(accounting, dict)
+        and accounting.get("state") == "VERIFIED"
+        and _lineage_lane_accounting_valid(lane)
+    )
+
+
+def _lineage_family_accounting_valid(run: dict) -> bool:
+    lanes = run.get("lanes")
+    if not isinstance(lanes, list) or not all(
+        _lineage_lane_complete(lane) for lane in lanes
+    ):
+        return False
+    plan = {
+        "obligations": [
+            {"id": item, "engine": lane["engine"], "family": lane["family"]}
+            for lane in lanes
+            for item in lane["obligation_accounting"]["required_obligation_ids"]
+        ]
+    }
+    expected = _lineage_family_accounting(plan, lanes)
+    return run.get("family_accounting") == expected and all(
+        row["state"] == "VERIFIED" for row in expected
+    )
 
 
 def _lineage_complete_run_errors(run: object) -> list[str]:
@@ -3062,6 +3275,8 @@ def _lineage_complete_run_errors(run: object) -> list[str]:
         or any(not _lineage_lane_complete(lane) for lane in lanes)
     ):
         errors.append("complete lineage lacks executed per-rule evidence")
+    if not _lineage_family_accounting_valid(run):
+        errors.append("complete lineage lacks per-family obligation reconciliation")
     return errors
 
 
