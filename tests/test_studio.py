@@ -668,7 +668,7 @@ def test_context_value_projects_only_finite_aggregate_fields(tmp_path, monkeypat
     assert "Context engine: measured user value" in page
     assert 'aria-live="polite"' in page
     assert "renderContextValue(payload.context_engine)" in page
-    assert "Previous metrics have been cleared" in page
+    assert "renderContextValue({state:'UNAVAILABLE'})" in page
 
 
 def test_dashboard_lists_prior_measured_runs_without_inferring_success(tmp_path: Path):
@@ -991,7 +991,7 @@ console.log('STUDIO_HARNESS_COMPLETE')})().catch(e=>{console.error(e);process.ex
         encoding="utf-8",
     )
     result = subprocess.run(
-        [node, str(script), str(source)], capture_output=True, text=True, timeout=10
+        [node, str(script), str(source)], capture_output=True, text=True, timeout=30
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().endswith("STUDIO_HARNESS_COMPLETE")

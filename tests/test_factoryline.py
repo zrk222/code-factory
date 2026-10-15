@@ -1605,7 +1605,7 @@ def test_cli_no_args_returns_agent_home_with_definitive_empty_states(
     assert "receipts: 0" in out
     assert "passports: 0" in out
     assert "loop_passports: 0" in out
-    assert "action: Inspect evidence gaps and define this task's checks" in out
+    assert "action: Inspect evidence gaps\n" in out
     assert not (tmp_path / ".factory").exists()
 
 

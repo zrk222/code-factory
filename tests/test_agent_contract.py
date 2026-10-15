@@ -70,7 +70,7 @@ def test_trace_evaluation_ui_and_junie_preserve_unknowns_and_boundaries(tmp_path
     html = _studio_html("local-test-token")
     assert "Trace evaluation: evidence and gaps" in html
     assert "renderTraceEvaluation(payload.trace_evaluation)" in html
-    assert "stale values have been cleared" in html
+    assert "renderTraceEvaluation({state:'UNAVAILABLE',metrics:{}" in html
     manifest = json.loads(
         (Path(__file__).parents[1] / "factoryline/data/junie_pack.json").read_text(
             encoding="utf-8"

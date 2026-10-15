@@ -9,13 +9,44 @@ from this plan; local receipts remain in `.factory/operations-simplification/`.
 - Bind final Studio refresh and request-local meter source/tests, exact targeted
   observations and Astra review to a workflow receipt. Preserve the original
   failed attempts. Verify rendered UI checks against the current HTML bytes.
-- Resolve ForgeLine PR #5's standalone CI dependency failures and conflicts.
-  Optional CF absence must remain explicit; injected reviewer tests must work
-  without an installed CF adapter. Retest affected failures only.
 - Commit and push reviewed CF changes; complete required CI and merge gates in
   both repositories. A local receipt is not a merged or published package.
 - Carry verified capabilities into agent manifests, taxonomy, previews and the
   next immutable distribution through the existing release requirements.
+
+## Next accuracy PR, then public release
+
+Operator sequence authorized October 15: finish the current remediation PR,
+then one focused accuracy PR, then prepare public distribution from its merged
+commit. Do not publish the current intermediate candidate.
+
+- Reproduce remaining reported misses and false positives before changing rules.
+  Preserve genuine Click/Flask hits, callback execution requirements, smoke/type
+  distinctions and legitimate credential/path controls. Include all affected
+  audit families; do not define accuracy as hollow-test flag counts alone.
+- Implement stronger detection mechanics in that PR: shared source/value and
+  binding propagation through aliases/helpers, callback invocation plus escaping
+  assertion-failure evidence, coroutine/mock execution tracking, and sanitizers
+  evaluated against their actual sink and containment checks. Select concrete
+  remaining failures from the reproduction inventory; preserve bounded analysis,
+  explicit uncertainty and complete rule accounting. Do not substitute a report,
+  severity downgrade, fixture exemption or benchmark expansion for a detector fix.
+- For every changed mechanism, add a vulnerable/hollow positive, a legitimate
+  negative and a bypass/sabotage control. Retain existing real bugs. Demonstrate
+  detection on unchanged reported cases before reporting comparison metrics.
+- Freeze repository commits, case labels, scan settings and raw output hashes
+  before comparison. Use separate output directories so timing runs cannot
+  overwrite evaluation evidence. Report per-case outcomes and uncertainty;
+  model-only adjudication remains distinct from independent human labels.
+- Show matched before/after detection and clean controls for changed rules.
+  Reuse unchanged valid checks; rerun failed or invalidated checks only. Preserve
+  failed attempts and resolve review findings before merging that accuracy PR.
+- After merge, choose unused release versions, build wheel/source/editor assets
+  from that exact commit, verify clean-install user flows and package data, and
+  align agent/Junie guidance, taxonomy and previews with the shipped behavior.
+- Apply existing release cadence and publication gates. Record each platform's
+  actual state and immutable artifact hashes; preparation is not publication.
+  Publish performance/accuracy statements only at the scope the evidence proves.
 
 ## Frozen constraints
 

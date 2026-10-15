@@ -474,6 +474,33 @@ def overhead(root: Path, *, stages=None) -> dict:
     }
 
 
+def _live_activity(stages: list[StageTiming]) -> dict:
+    successful = sum(stage.ok for stage in stages)
+    failed = len(stages) - successful
+    run_ids = {stage.run_id for stage in stages if stage.run_id}
+    known_features = sorted({stage.feature for stage in stages if stage.feature})
+    latest = stages[-1] if stages else None
+    keys = "module stage feature run_id ok wall_ms usage_reported usage_quality mission_id recorded_at".split()
+    optional = {"feature", "run_id", "mission_id", "recorded_at"}
+    latest_data = (
+        {
+            key: (value or None) if key in optional else value
+            for key, value in vars(latest).items()
+            if key in keys
+        }
+        if latest
+        else None
+    )
+    return {
+        "runs_observed": len(run_ids) if run_ids else None,
+        "features_observed": known_features,
+        "stages_successful": successful,
+        "stages_failed": failed,
+        "stage_success_rate": round(successful / len(stages), 4) if stages else None,
+        "latest_stage": latest_data,
+    }
+
+
 def live_snapshot(
     root: Path,
     *,
@@ -484,11 +511,7 @@ def live_snapshot(
     """Return one current, local-only meter observation for dashboards or watches."""
     log = MeterLog(root)
     stages = log.stages() if stages is None else stages
-    successful = sum(stage.ok for stage in stages)
-    failed = len(stages) - successful
-    run_ids = {stage.run_id for stage in stages if stage.run_id}
-    known_features = sorted({stage.feature for stage in stages if stage.feature})
-    latest = stages[-1] if stages else None
+    activity = _live_activity(stages)
     return {
         "schema": "factory.meter.live.v2",
         "markers": [
@@ -507,31 +530,7 @@ def live_snapshot(
             stages=stages,
         ),
         "overhead": overhead(root, stages=stages),
-        "activity": {
-            "runs_observed": len(run_ids) if run_ids else None,
-            "features_observed": known_features,
-            "stages_successful": successful,
-            "stages_failed": failed,
-            "stage_success_rate": round(successful / len(stages), 4)
-            if stages
-            else None,
-            "latest_stage": (
-                {
-                    "module": latest.module,
-                    "stage": latest.stage,
-                    "feature": latest.feature or None,
-                    "run_id": latest.run_id or None,
-                    "ok": latest.ok,
-                    "wall_ms": latest.wall_ms,
-                    "usage_reported": latest.usage_reported,
-                    "usage_quality": latest.usage_quality,
-                    "mission_id": latest.mission_id or None,
-                    "recorded_at": latest.recorded_at or None,
-                }
-                if latest
-                else None
-            ),
-        },
+        "activity": activity,
         "scope_limits": [
             "This is a local append-only log snapshot, not a machine-independent benchmark.",
             "Token totals are measured only when a module reports its standard meter block.",

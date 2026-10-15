@@ -645,12 +645,32 @@ def _oracle_stable_call(candidate, call, scope, body, async_only):
         for child in _body_nodes(stmt)
     ):
         return False
-    return [
-        name
-        for stmt in body
-        for name in _oracle_bound_names(stmt)
-        if name in {call.func.id, "*"}
-    ] == [call.func.id]
+    bindings = [name for stmt in body for name in _oracle_bound_names(stmt)]
+    return [name for name in bindings if name in {call.func.id, "*"}] == [call.func.id]
+
+
+def _later_test_binding(owner, node):
+    for item in getattr(owner, "body", ()):
+        if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if item.name == node.name and item.lineno > node.lineno:
+            return item
+    return None
+
+
+def _asserted_coroutine_call(child, following):
+    assigned = (
+        isinstance(child, ast.Assign)
+        and len(child.targets) == 1
+        and isinstance(child.targets[0], ast.Name)
+        and isinstance(following, ast.Assert)
+        and isinstance(following.test, ast.Name)
+        and following.test.id == child.targets[0].id
+    )
+    assertion = (
+        following if assigned else child if isinstance(child, ast.Assert) else None
+    )
+    return assertion, child.value if assigned else assertion.test if assertion else None
 
 
 def test_execution_findings(node, relative, parents, module):
@@ -658,16 +678,7 @@ def test_execution_findings(node, relative, parents, module):
     from .review_audits import _body_nodes, _security_finding
 
     owner = (parents.get(id(node)) or ((module, node),))[-1][0]
-    shadow = next(
-        (
-            item
-            for item in getattr(owner, "body", ())
-            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and item.name == node.name
-            and item.lineno > node.lineno
-        ),
-        None,
-    )
+    shadow = _later_test_binding(owner, node)
     if shadow:
         return [
             _security_finding(
@@ -681,30 +692,16 @@ def test_execution_findings(node, relative, parents, module):
             )
         ], True
     findings = []
-    for index, child in enumerate(node.body):
-        following = node.body[index + 1] if index + 1 < len(node.body) else None
-        assigned = (
-            isinstance(child, ast.Assign)
-            and len(child.targets) == 1
-            and isinstance(child.targets[0], ast.Name)
-            and isinstance(following, ast.Assert)
-            and isinstance(following.test, ast.Name)
-            and following.test.id == child.targets[0].id
-        )
-        assertion = (
-            following if assigned else child if isinstance(child, ast.Assert) else None
-        )
-        call = child.value if assigned else assertion.test if assertion else None
+    for child, following in zip(node.body, [*node.body[1:], None]):
+        assertion, call = _asserted_coroutine_call(child, following)
         if isinstance(call, ast.Call) and assigned_sync_function_call(
             call, node, module, True
         ):
             findings.append(
-                _unawaited_coroutine_finding(
-                    _security_finding, relative, assertion, node.name
-                )
+                _unawaited_coroutine_finding(relative, assertion, node.name)
             )
     findings += [
-        _unawaited_coroutine_finding(_security_finding, relative, child, node.name)
+        _unawaited_coroutine_finding(relative, child, node.name)
         for child in _body_nodes(ast.Module(body=node.body, type_ignores=[]))
         if isinstance(child, ast.Expr)
         and isinstance(child.value, ast.Call)
@@ -713,8 +710,10 @@ def test_execution_findings(node, relative, parents, module):
     return findings, False
 
 
-def _unawaited_coroutine_finding(finding, relative, source, symbol):
-    return finding(
+def _unawaited_coroutine_finding(relative, source, symbol):
+    from .review_audits import _security_finding
+
+    return _security_finding(
         "QUALITY_UNAWAITED_COROUTINE",
         relative,
         source,

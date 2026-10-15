@@ -1,11 +1,4 @@
-"""Optional Jev-compatible classification for retrieved CF rules.
-
-Jev is deliberately an advisory classifier here.  BM25/BM25F finds the
-candidate rules locally; an injected transport may classify that bounded set.
-No provider call is made by default, and a missing/invalid provider always
-falls back to human review.  The result can never approve, merge, publish,
-weaken a gate, or grant credentials.
-"""
+"""Optional advisory Jev classifier; local retrieval is deterministic and failures fail closed."""
 
 from __future__ import annotations
 
@@ -1251,6 +1244,12 @@ def _fused_rule_score(
     return round(fused, 8), str(rule["ruleId"])
 
 
+def _valid_forgeline_context(context):
+    return context.get("schema") == "forge.jev-context.v1" and context.get(
+        "profile"
+    ) in {"requirements", "implementation", "test_evidence", "repair"}
+
+
 def review_forgeline_packet(packet, *, transport=None):
     """Review bound ForgeLine evidence without changing deterministic gates."""
     try:
@@ -1265,9 +1264,7 @@ def review_forgeline_packet(packet, *, transport=None):
         checked = build_evidence_review_input(
             packet, candidate_sha256=context["candidate_sha256"]
         )["packet"]
-        if context.get("schema") != "forge.jev-context.v1" or context.get(
-            "profile"
-        ) not in {"requirements", "implementation", "test_evidence", "repair"}:
+        if not _valid_forgeline_context(context):
             raise JevClassificationError("invalid context")
         manifest, material = context["source_manifest"], context["review_material"]
         candidate = _digest(manifest)
