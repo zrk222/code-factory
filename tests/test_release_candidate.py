@@ -590,7 +590,19 @@ def test_malformed_release_exception_policy_fails_closed(
 ) -> None:
     (tmp_path / "release-train.json").write_text(policy_text, encoding="utf-8")
     path = tmp_path / "exception.json"
-    path.write_text("{}", encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "factory.release-cadence-exception.v1",
+                "channel": "core",
+                "version": "0.48.1",
+                "candidate_tag": "v0.48.1",
+                "source_commit": None,
+                "requesting_actor": None,
+            }
+        ),
+        encoding="utf-8",
+    )
 
     with pytest.raises(
         ValueError, match="policy is unavailable or invalid|must declare boolean"
@@ -719,7 +731,7 @@ def test_pypi_cadence_exception_rejects_other_core_version_tag_or_environment(
     monkeypatch.setenv("GITHUB_RUN_ID", "12345")
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
 
-    with pytest.raises(ValueError, match="restricted to"):
+    with pytest.raises(ValueError, match="does not match the candidate identity"):
         candidate._cadence_exception_payload(
             tmp_path,
             path,

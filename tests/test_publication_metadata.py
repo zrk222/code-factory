@@ -602,29 +602,30 @@ def test_hosted_release_and_editor_versions_are_declared():
         encoding="utf-8"
     )
 
-    assert project["version"] == "0.48.1"
+    assert project["version"] == "0.48.2"
     assert "hosted" in project["optional-dependencies"]
-    assert vscode["version"] == "1.1.4"
+    assert vscode["version"] == "1.2.0"
     assert vscode_lock["version"] == vscode["version"]
     assert vscode_lock["packages"][""]["version"] == vscode["version"]
     assert (
         "Version 1.1.3 pairs with the published Code Factory CLI 0.48.0"
         in vscode_readme
     )
-    assert "factoryline-vscode-1.1.4.vsix" in vscode_readme
+    assert "factoryline-vscode-1.2.0.vsix" in vscode_readme
     assert "0.48.0 candidate" not in vscode_readme
     assert (
-        "Candidate: `factoryline-vscode-1.1.4.vsix` (not published)" in release_channels
+        "Candidate: `factoryline-vscode-1.2.0.vsix` (prepared, not published)"
+        in release_channels
     )
-    assert 'version = "1.1.4"' in gradle
+    assert 'version = "1.2.0"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
     assert (
-        "Candidate: `factoryline-code-factory==0.48.1` (not published)"
+        "Candidate: `factoryline-code-factory==0.48.2` (prepared, not published)"
         in release_channels
     )
     assert (
-        "The 0.48.1 source candidate is separate from the previously published 0.48.0."
+        "The 0.48.2 source candidate is separate from the previously published 0.48.1."
         in release_channels
     )
 
