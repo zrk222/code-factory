@@ -4909,29 +4909,21 @@ def weak_assertion_call_reason(node, aliases):
 
 
 def _weak_assertion_leaf_reason(node, leaf, aliases, audit):
-    if _weak_nonnull_assertion(node, leaf):
-        return "non-null assertion does not verify the expected behavior"
-    if _weak_mock_assertion(node, leaf, aliases, audit):
-        return "mock invocation state does not verify its result or arguments"
-    return None
-
-
-def _weak_nonnull_assertion(node, leaf):
-    if leaf == "assertIsNotNone":
-        return True
-    return (
+    if leaf == "assertIsNotNone" or (
         leaf == "assertIs"
         and len(node.args) == 2
         and any(
             isinstance(arg, ast.Constant) and arg.value is None for arg in node.args
         )
-    )
-
-
-def _weak_mock_assertion(node, leaf, aliases, audit):
+    ):
+        return "non-null assertion does not verify the expected behavior"
     if leaf in {"assert_called", "assert_called_once"}:
-        return not audit._mock_argument_oracle(node, aliases)
-    return leaf == "assert_called_once_with" and audit._mock_self_check(node)
+        weak_mock = not audit._mock_argument_oracle(node, aliases)
+    else:
+        weak_mock = leaf == "assert_called_once_with" and audit._mock_self_check(node)
+    if weak_mock:
+        return "mock invocation state does not verify its result or arguments"
+    return None
 
 
 def builtin_repr_type_check(node):
