@@ -1249,3 +1249,51 @@ def _fused_rule_score(
             jev_score, "Jev rule score"
         )
     return round(fused, 8), str(rule["ruleId"])
+
+
+def review_forgeline_packet(packet, *, transport=None):
+    """Review bound ForgeLine evidence without changing deterministic gates."""
+    try:
+        contexts = [
+            e["provenance"]
+            for e in packet["evidence"]
+            if e["kind"] == "forgeline_context"
+        ]
+        if len(contexts) != 1:
+            raise JevClassificationError("one context required")
+        context = contexts[0]
+        checked = build_evidence_review_input(
+            packet, candidate_sha256=context["candidate_sha256"]
+        )["packet"]
+        if context.get("schema") != "forge.jev-context.v1" or context.get(
+            "profile"
+        ) not in {"requirements", "implementation", "test_evidence", "repair"}:
+            raise JevClassificationError("invalid context")
+        manifest, material = context["source_manifest"], context["review_material"]
+        candidate = _digest(manifest)
+        if (
+            not isinstance(manifest, list)
+            or not isinstance(material, Mapping)
+            or not isinstance(context["deterministic_result"], Mapping)
+            or context["candidate_sha256"] != candidate
+            or checked["receipt_sha256"] != _digest(context)
+            or context["material_sha256"] != _digest(material)
+        ):
+            raise JevClassificationError("invalid hashes")
+    except (JevClassificationError, ValueError, TypeError, KeyError) as exc:
+        return {
+            "schema": "factory.jev-evidence-review-result.v1",
+            "status": "FORGE_CONTEXT_INVALID",
+            "claims": [],
+            "fallback_reason": type(exc).__name__,
+            "authority": "none",
+            "release_decision": False,
+        }
+    result = review_evidence(checked, candidate_sha256=candidate, transport=transport)
+    return {
+        **result,
+        "profile": context["profile"],
+        "deterministic_result": context["deterministic_result"],
+        "authority": "none",
+        "release_decision": False,
+    }
