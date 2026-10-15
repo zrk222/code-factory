@@ -988,18 +988,18 @@ def _scope_security_aliases(aliases: dict[str, str], node: ast.AST) -> dict[str,
 
 def _test_oracle_body_nodes(node: ast.AST, aliases: dict[str, str]) -> list[ast.AST]:
     """Return test-body nodes without calls shadowed by comprehension targets."""
-    nodes = [child for statement in node.body for child in _body_nodes(statement)]
-    parents = _oracle_ancestor_map(node.body, node)
+    layout = getattr(node, "_oracle_layout", None)
+    if layout is None:
+        nodes = [child for statement in node.body for child in _body_nodes(statement)]
+        parents = _oracle_ancestor_map(node.body, node)
+        if hasattr(node, "_oracle_layout"):
+            node._oracle_layout = (nodes, parents)
+    else:
+        nodes, parents = layout
     for child in nodes:
-        child._oracle_ancestors = parents.get(id(child), ())
-        child._oracle_parent = next(
-            (
-                parent
-                for parent, descendant in parents.get(id(child), ())
-                if descendant is child
-            ),
-            None,
-        )
+        ancestors = parents.get(id(child), ())
+        child._oracle_ancestors = ancestors
+        child._oracle_parent = ancestors[-1][0] if ancestors else None
         child._oracle_scope = node
     shadowed_calls: set[int] = set()
     for child in nodes:
@@ -3645,6 +3645,8 @@ def _oracle_snapshots(root: Path, files: list[Path], source_bytes: dict) -> dict
             snapshots[path] = ast.parse(
                 data, filename=path.relative_to(root).as_posix()
             )
+            for node in snapshots[path].body:
+                node._oracle_layout = None
         except (OSError, SyntaxError, UnicodeError, RuntimeAuditError):
             continue
     return snapshots
@@ -5220,6 +5222,7 @@ def _security_scan_tree(
     aliases = _security_aliases(nodes)
     for node in nodes:
         node._scan_bound_names = None
+        node._oracle_layout = None
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             node._oracle_module = tree
     source_sink_findings = integrity.security_source_sink_findings(

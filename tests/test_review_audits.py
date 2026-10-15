@@ -4364,6 +4364,88 @@ def test_scan_bound_name_cache_reuses_walk_and_copies_results(monkeypatch):
     assert len(calls) == count
 
 
+def test_oracle_layout_reuses_structure_but_restores_annotations(monkeypatch):
+    import ast
+    import factoryline.review_audits as module
+
+    function = ast.parse(
+        "def subject():\n    values = [check(x) for check in checks]\n    assert values\n"
+    ).body[0]
+    function._oracle_layout = None
+    original = module._oracle_ancestor_map
+    calls = []
+
+    def parents(*args):
+        calls.append(None)
+        return original(*args)
+
+    monkeypatch.setattr(module, "_oracle_ancestor_map", parents)
+    first = module._test_oracle_body_nodes(function, {"check": "pytest.fail"})
+    assert not any(isinstance(n, ast.Call) for n in first)
+    first.clear()
+    second = module._test_oracle_body_nodes(function, {})
+    assert any(isinstance(n, ast.Call) for n in second)
+    for child in second:
+        child._oracle_parent = object()
+        child._oracle_scope = object()
+    restored = module._test_oracle_body_nodes(function, {})
+    for child in restored:
+        expected = next(
+            (
+                parent
+                for parent, descendant in child._oracle_ancestors
+                if descendant is child
+            ),
+            None,
+        )
+        assert child._oracle_parent is expected
+        assert child._oracle_scope is function
+    assert len(calls) == 1
+
+
+def test_unenrolled_oracle_layout_is_not_cached_after_ast_changes():
+    import ast
+    import factoryline.review_audits as module
+
+    function = ast.parse("def subject(): first()").body[0]
+    module._test_oracle_body_nodes(function, {})
+    assert not hasattr(function, "_oracle_layout")
+    function.body.extend(ast.parse("second()").body)
+    nodes = module._test_oracle_body_nodes(function, {})
+    assert {n.func.id for n in nodes if isinstance(n, ast.Call)} == {"first", "second"}
+
+
+def test_scanner_resets_oracle_layout_for_changed_tree(tmp_path):
+    import ast
+    import factoryline.review_audits as module
+
+    tree = ast.parse(
+        "def test_subject():\n    result = first()\n    assert result == 1"
+    )
+    function = tree.body[0]
+    module._security_scan_tree(tmp_path, tmp_path / "test_subject.py", tree)
+    module._test_oracle_body_nodes(function, {})
+    function.body.extend(ast.parse("second()").body)
+    module._security_scan_tree(tmp_path, tmp_path / "test_subject.py", tree)
+    nodes = module._test_oracle_body_nodes(function, {})
+    assert {n.func.id for n in nodes if isinstance(n, ast.Call)} == {"first", "second"}
+
+
+def test_oracle_snapshot_layout_is_fresh_for_changed_source(tmp_path):
+    import factoryline.review_audits as module
+
+    path = tmp_path / "helper.py"
+    first = module._oracle_snapshots(tmp_path, [path], {path: b"def helper(): first()"})
+    function = first[path].body[0]
+    assert function._oracle_layout is None
+    module._test_oracle_body_nodes(function, {})
+    assert function._oracle_layout is not None
+    second = module._oracle_snapshots(
+        tmp_path, [path], {path: b"def helper(): second()"}
+    )
+    assert second[path].body[0]._oracle_layout is None
+
+
 def test_scanner_resets_binding_cache_for_reused_changed_ast(tmp_path):
     import ast
     import factoryline.review_audits as module
