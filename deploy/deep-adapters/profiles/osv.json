@@ -3,7 +3,7 @@
   "engine": "osv",
   "mode": "offline-pypi-snapshot",
   "tool_version": "2.2.0",
-  "ruleset_sha256": "36ef7d92e174230b8c7c26b952562be23837472c2239b6752de64d5d683a800e",
+  "ruleset_sha256": "013a03eb8d5a67818901fe0632728a5f1011621d6b956f14b25e5f71a7b82c5c",
   "commands": [
     {
       "argv": ["/opt/factory/bin/osv-offline", "scan", "source", "-r", "{source}", "--config", "/opt/factory/rules/osv-scanner.toml", "--offline", "--offline-vulnerabilities", "--allow-no-lockfiles", "--all-packages", "--format", "json", "--output", "{report}"],

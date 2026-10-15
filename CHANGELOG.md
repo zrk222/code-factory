@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Refresh the checksum-bound offline OSV PyPI snapshot after its previous upstream
+  object generation expired; retain matching worker/profile/verifier identities.
 - Simplify Studio refresh ownership and share overlapping dashboard reads. Remove
   overwritten wrappers and global fetch interception; keep failed reads visible.
 - Parse meter stages once per Studio dashboard request and reuse that snapshot

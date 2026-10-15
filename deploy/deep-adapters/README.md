@@ -33,7 +33,7 @@ The vendored Gitleaks rules come from the official [v8.28.0 configuration](https
 CodeQL's immutable official 2.27.1 bundle digest pins the CLI and its Python
 and JavaScript query packs. These targets do not claim compiled-language coverage. OSV uses
 offline mode because the signed host run uses `--network=none`. This
-image bundles the verified PyPI snapshot at GCS generation 1791370055357324;
+image bundles the verified PyPI snapshot at GCS generation 1792067584457782;
 it does not include other ecosystems. Trivy config scanning does not
 update the vulnerability database. The source-bound runtime and fuzz harnesses
 are candidate inputs, never copied into these images. No image should set deep
