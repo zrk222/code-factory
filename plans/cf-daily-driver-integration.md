@@ -145,6 +145,10 @@ senior-engineer review using ECC. These extend T0-T9; they are requirements,
 not completed fixes or permission to weaken checks. The review inspected installed
 ForgeLine 0.10.8 and this checkout. Confirm the authoritative ForgeLine source
 checkout before editing; do not patch installed site-packages as a substitute.
+The authoritative ForgeLine repository is zrk222/code-factory-2-forge, inspected
+at 218b61b5f73bee12579740a5dd244a0a4e8eff54; bind the actual candidate again
+before implementation. The one-time architecture review is complete; its
+implementation and acceptance controls remain open.
 
 | Priority / packet | Required change using existing surfaces | Acceptance evidence |
 | --- | --- | --- |
@@ -156,6 +160,37 @@ checkout before editing; do not patch installed site-packages as a substitute.
 | P1 / T2 | Consolidate duplicate erosion computation inside ForgeLine review (`judge_consistency` and direct review); use existing incremental scheduling and verified proof reuse across invocations. | Equivalent obligations/results with fewer actual duplicate executions; changed source/config/toolchain and corrupt outputs force RUN or BLOCK; measured matched executions/time. |
 | P1 / T5, T7 | Stop exhausted unchanged attempts under the existing dispatch budget; report recurring findings as observations, not prevented defects. | Persisted exhaustion stops dispatch; failed/interrupted attempts cannot promote; lessons alone cannot expand repair scope or count as measured prevention. |
 | P1 / T9 | Compact source distributions by excluding raster previews while retaining runtime modules, rules, UI, native profiles, textual documentation and rebuild capability. | Matched before/after archive sizes, identical wheel payloads, isolated package smoke and fixture controls; preserve public immutable artifacts and repository previews. |
+
+### Required implementation controls from the review
+
+- **Fresh evidence (P0, T3/T6):** reuse the existing receipt store with strict
+  whole-history validation for proof reuse. Reject malformed, truncated, corrupt
+  or reordered records and invalid/decreasing timestamps instead of falling back
+  to older green evidence. The
+  existing short unkeyed receipt hash supplies integrity checking, not identity.
+- **Current execution (P0, T3/T6):** bind a contained workspace-relative SSAT,
+  source/tests, manifest presence and commands, runner bytes, resolved executable
+  path/digest/version (including child binaries launched by shell commands), and
+  effective environment digest. Unresolved compound commands cannot reuse proof.
+  Check inputs before and after execution. Validate current verify/smoke receipts
+  and recheck candidate/evidence after intent verification immediately before
+  promotion. Run fresh smoke before final delivery for mutable targets; repeated
+  delivery calls must remain legal and cannot promote a failed fresh run.
+- **Accurate proof labels (P0, T1/T3):** retain static grades and complexity
+  thresholds, but label name matching as static attribution. Behavioral proof
+  requires current collection, execution and challenge evidence.
+- **Lean detector changes (P0/P1, T1/T2/T6):** consolidate repeated assertion
+  classification before adding the reported missed cases. Preserve swallowed,
+  unreachable and weak-oracle distinctions; retain legitimate controls. Keep
+  every listed miss in scope even when implementation is split into packets.
+- **One operating loop (P1, T2/T4/T5/T7):** reuse existing orchestration, erosion
+  analysis, proof reuse and dispatch budgets. Measure duplicate executions and
+  matched elapsed time; retain pending UI, repair/resume and JEV integration.
+
+Each packet must identify owned files, formatted byte/line budget, acceptance
+controls and current evidence. Passing a proposal review does not mark these
+requirements implemented. Previously merged bounded fixes and package-size
+reductions do not close the remaining goal.
 
 Service output must show current scope/candidate, applicable profiles, execution
 completeness, actionable findings, native evidence references, unresolved checks,
