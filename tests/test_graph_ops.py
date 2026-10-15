@@ -117,6 +117,57 @@ def test_daily_schedule_plan_is_bounded_read_only_and_candidate_bound(
         project_daily_action({"state": "supervised_only", "blockers": {}}, forged)
 
 
+def test_daily_schedule_stability_uses_windows_cross_api_identity(tmp_path):
+    from types import SimpleNamespace
+    import stat
+
+    from factoryline.mission_control_status import _daily_schedule_stable
+
+    def file_stat(*, ctime):
+        return SimpleNamespace(
+            st_mode=stat.S_IFREG,
+            st_dev=1,
+            st_ino=2,
+            st_size=2,
+            st_mtime_ns=3,
+            st_ctime_ns=ctime,
+            st_file_attributes=0,
+        )
+
+    candidate = SimpleNamespace(
+        lstat=lambda: file_stat(ctime=10),
+        resolve=lambda: tmp_path / "schedule.json",
+    )
+    before = file_stat(ctime=10)
+    opened_before = file_stat(ctime=20)
+    opened_after = file_stat(ctime=20)
+    assert _daily_schedule_stable(
+        candidate,
+        tmp_path,
+        Path("schedule.json"),
+        [],
+        [],
+        before,
+        opened_before,
+        opened_after,
+        b"{}",
+        windows=True,
+    )
+    changed_fd = file_stat(ctime=21)
+    assert not _daily_schedule_stable(
+        candidate,
+        tmp_path,
+        Path("schedule.json"),
+        [],
+        [],
+        before,
+        opened_before,
+        changed_fd,
+        b"{}",
+        windows=True,
+    )
+
+
 def test_graph_ops_links_local_product_mission_and_valid_completion_exactly(
     tmp_path: Path,
 ):

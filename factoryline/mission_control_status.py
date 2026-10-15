@@ -29,7 +29,12 @@ from .release_integrity import release_integrity
 from .supply_chain import supply_chain_status
 from .context_efficiency import context_efficiency_status
 from .intake_parameters import intake_parameters_status
-from .runtime_audit_common import canonical_bytes, parse_json_bytes, _stat_identity
+from .runtime_audit_common import (
+    _stable_read_identity,
+    canonical_bytes,
+    parse_json_bytes,
+    _stat_identity,
+)
 
 
 SCHEMA = "factory.mission-control-status.v1"
@@ -249,10 +254,9 @@ def daily_schedule_plan(root: Path, supplied_path: str | Path) -> dict[str, Any]
             raise ValueError("schedule file is not a bounded regular file")
         descriptor = os.open(candidate, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         with os.fdopen(descriptor, "rb") as stream:
-            opened, raw = (
-                os.fstat(stream.fileno()),
-                stream.read(DAILY_SCHEDULE_MAX_BYTES + 1),
-            )
+            opened_before = os.fstat(stream.fileno())
+            raw = stream.read(DAILY_SCHEDULE_MAX_BYTES + 1)
+            opened_after = os.fstat(stream.fileno())
         if not _daily_schedule_stable(
             candidate,
             workspace,
@@ -260,8 +264,10 @@ def daily_schedule_plan(root: Path, supplied_path: str | Path) -> dict[str, Any]
             parents,
             parent_identities,
             before,
-            opened,
+            opened_before,
+            opened_after,
             raw,
+            windows=os.name == "nt",
         ):
             raise ValueError("schedule changed while being read")
         manifest = validate_schedule_manifest(parse_json_bytes(raw))
@@ -277,17 +283,31 @@ def daily_schedule_plan(root: Path, supplied_path: str | Path) -> dict[str, Any]
 
 
 def _daily_schedule_stable(
-    candidate, workspace, relative, parents, parent_identities, before, opened, raw
+    candidate,
+    workspace,
+    relative,
+    parents,
+    parent_identities,
+    before,
+    opened_before,
+    opened_after,
+    raw,
+    *,
+    windows,
 ):
     after = candidate.lstat()
     reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
     return all(
         (
-            stat.S_ISREG(opened.st_mode),
+            stat.S_ISREG(opened_before.st_mode),
+            stat.S_ISREG(opened_after.st_mode),
             stat.S_ISREG(after.st_mode),
-            not getattr(opened, "st_file_attributes", 0) & reparse,
+            not getattr(opened_before, "st_file_attributes", 0) & reparse,
+            not getattr(opened_after, "st_file_attributes", 0) & reparse,
             not getattr(after, "st_file_attributes", 0) & reparse,
-            _stat_identity(before) == _stat_identity(opened) == _stat_identity(after),
+            _stable_read_identity(
+                before, opened_before, opened_after, after, windows=windows
+            ),
             len(raw) <= DAILY_SCHEDULE_MAX_BYTES,
             parent_identities == [_stat_identity(path.lstat()) for path in parents],
             candidate.resolve() == workspace / relative,
