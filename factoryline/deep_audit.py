@@ -152,6 +152,235 @@ def _write_event(
         emit(event)
 
 
+def _action_enrollment(state: dict, plan: dict) -> dict:
+    from .deep_audit_contract import ENGINE_FAMILIES, EXECUTION_FAMILIES
+
+    if plan.get("schema") not in {
+        "factory.deep-execution.v1",
+        "factory.deep-execution.v2",
+    }:
+        raise ValueError("unsupported action plan schema")
+    lanes = plan.get("lanes") if isinstance(plan, dict) else None
+    if not isinstance(lanes, list) or not lanes:
+        raise ValueError("action plan must declare lanes")
+    lane_ids, families = [], set()
+    for lane in lanes:
+        if not isinstance(lane, dict) or not all(
+            isinstance(lane.get(key), str) and lane[key]
+            for key in ("id", "engine", "family")
+        ):
+            raise ValueError("malformed action lane")
+        if ENGINE_FAMILIES.get(lane["engine"]) != lane["family"]:
+            raise ValueError("unregistered action engine or family")
+        lane_ids.append(lane["id"])
+        families.add(lane["family"])
+    if len(lane_ids) != len(set(lane_ids)) or families != EXECUTION_FAMILIES:
+        raise ValueError("action plan lane identities or family set mismatch")
+    actions = []
+    for lane in sorted(lanes, key=lambda item: item["id"]):
+        identity = {
+            "run_id": state["run_id"],
+            "candidate_sha256": state["candidate_sha256"],
+            "manifest_sha256": state["manifest_sha256"],
+            "manifest_content_sha256": state["manifest_content_sha256"],
+            "lane_id": lane["id"],
+            "engine": lane["engine"],
+            "family": lane["family"],
+            "attempt": 1,
+        }
+        actions.append({**identity, "action_id": digest(identity)})
+    return {
+        "schema": "factory.deep-action-enrollment.v1",
+        "actions": actions,
+        "actions_sha256": digest(actions),
+    }
+
+
+def _action_terminal(result: dict) -> dict:
+    return {
+        "state": result.get("state"),
+        "gaps": result.get("gaps"),
+        "report_sha256": result.get("report_sha256"),
+        "coverage_sha256": result.get("coverage_sha256"),
+        "rule_accounting_sha256": result.get("rule_accounting_sha256"),
+        "challenge_sha256": result.get("challenge_sha256"),
+        "findings_sha256": digest(result.get("findings", [])),
+    }
+
+
+def _action_event_counts(events, by_id):
+    starts, terminals = defaultdict(list), defaultdict(list)
+    unexpected, mismatches = set(), set()
+    for event in events:
+        kind = event.get("kind")
+        if kind not in {"lane_started", "lane_completed"}:
+            continue
+        details = event.get("details", {})
+        if not isinstance(details, dict):
+            unexpected.add("MALFORMED_DETAILS")
+            continue
+        action_id = details.get("action_id")
+        if not isinstance(action_id, str) or action_id not in by_id:
+            unexpected.add(str(action_id))
+            continue
+        if any(details.get(key) != value for key, value in by_id[action_id].items()):
+            mismatches.add(action_id)
+        (starts if kind == "lane_started" else terminals)[action_id].append(event)
+    return starts, terminals, unexpected, mismatches
+
+
+def _action_result_map(state):
+    results, duplicates = {}, set()
+    for result in state.get("lanes", []):
+        action_id = result.get("action_id")
+        if action_id in results:
+            duplicates.add(str(action_id))
+        results[action_id] = result
+    return results, duplicates
+
+
+def _action_coverage(state: dict, plan: dict, events: list[dict]) -> dict:
+    try:
+        expected = _action_enrollment(state, plan)["actions"]
+        if not isinstance(state.get("lanes"), list) or not isinstance(events, list):
+            raise ValueError("malformed action rows")
+    except (AttributeError, KeyError, TypeError, ValueError, RuntimeAuditError):
+        return _incomplete_action_coverage("MALFORMED_ACTION_DATA")
+    try:
+        return _action_coverage_rows(state, expected, events)
+    except (AttributeError, KeyError, TypeError, ValueError, RuntimeAuditError):
+        return _incomplete_action_coverage("MALFORMED_ACTION_DATA")
+
+
+def _incomplete_action_coverage(reason: str) -> dict:
+    return {
+        "schema": "factory.deep-action-coverage.v1",
+        "state": "INCOMPLETE",
+        "expected_count": 0,
+        "started_count": 0,
+        "terminal_count": 0,
+        "missing_starts": [],
+        "missing_terminals": [],
+        "duplicates": [],
+        "unexpected": [],
+        "mismatches": [reason],
+    }
+
+
+def _action_coverage_rows(state: dict, expected: list, events: list) -> dict:
+    by_id = {item["action_id"]: item for item in expected}
+    results, duplicate_results = _action_result_map(state)
+    starts, terminals, unexpected, mismatches = _action_event_counts(events, by_id)
+    duplicate = {key for key, values in starts.items() if len(values) != 1}
+    duplicate.update(key for key, values in terminals.items() if len(values) != 1)
+    duplicate.update(duplicate_results)
+    missing_starts = set(by_id) - starts.keys()
+    missing_terminals = set(by_id) - terminals.keys()
+    for action_id, action in by_id.items():
+        result = results.get(action_id)
+        start, terminal = starts.get(action_id, []), terminals.get(action_id, [])
+        result_identity = ("action_id", "lane_id", "engine", "family")
+        if result is None or any(
+            result.get(key) != action[key] for key in result_identity
+        ):
+            mismatches.add(action_id)
+        if len(start) == len(terminal) == 1:
+            if start[0]["sequence"] >= terminal[0]["sequence"]:
+                mismatches.add(action_id)
+            if any(
+                terminal[0]["details"].get(k) != v
+                for k, v in _action_terminal(result or {}).items()
+            ):
+                mismatches.add(action_id)
+    if set(results) != set(by_id):
+        mismatches.update(str(key) for key in set(results) - set(by_id))
+    verified = not (
+        duplicate or missing_starts or missing_terminals or unexpected or mismatches
+    )
+    return {
+        "schema": "factory.deep-action-coverage.v1",
+        "state": "VERIFIED" if verified else "INCOMPLETE",
+        "expected_count": len(expected),
+        "started_count": sum(len(value) for value in starts.values()),
+        "terminal_count": sum(len(value) for value in terminals.values()),
+        "missing_starts": sorted(missing_starts),
+        "missing_terminals": sorted(missing_terminals),
+        "duplicates": sorted(duplicate),
+        "unexpected": sorted(unexpected),
+        "mismatches": sorted(mismatches),
+    }
+
+
+def _verified_event_chain(directory: Path, state: dict) -> list[dict]:
+    sequence = state.get("sequence")
+    if type(sequence) is not int or not 1 <= sequence <= 100_000:
+        raise RuntimeAuditError("E_EVENT_INTEGRITY", "event sequence outside bounds")
+    events, previous, last_event = [], None, None
+    for index in range(1, sequence + 1):
+        event = _deep_audit_io.read_run_json(directory, f"event-{index:05d}.json")
+        if (
+            not isinstance(event, dict)
+            or event.get("sequence") != index
+            or event.get("run_id") != state.get("run_id")
+            or event.get("previous_sha256") != previous
+        ):
+            raise RuntimeAuditError("E_EVENT_INTEGRITY", "event chain mismatch")
+        previous = digest(event)
+        if event.get("kind") in {"lane_started", "lane_completed"}:
+            events.append(event)
+        last_event = event
+    if previous != state.get("event_sha256"):
+        raise RuntimeAuditError("E_EVENT_INTEGRITY", "event head mismatch")
+    if not events or events[-1] is not last_event:
+        events.append(last_event)
+    return events
+
+
+def _status_action_coverage(directory, state, events):
+    try:
+        plan = _deep_audit_io.read_run_json(directory, "manifest.json")
+        enrollment = _action_enrollment(state, plan)
+        if (
+            digest(plan) != state.get("manifest_content_sha256")
+            or plan.get("candidate_sha256") != state.get("candidate_sha256")
+            or state.get("action_enrollment") != enrollment
+        ):
+            raise ValueError("action enrollment binding mismatch")
+    except (
+        AttributeError,
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        RuntimeAuditError,
+    ):
+        coverage = _incomplete_action_coverage("ENROLLMENT_BINDING")
+    else:
+        coverage = _action_coverage(state, plan, events)
+    final = events[-1] if events and isinstance(events[-1], dict) else {}
+    final_details = final.get("details")
+    if final.get("kind") not in {"run_completed", "run_paused"} or not isinstance(
+        final_details, dict
+    ):
+        coverage = _incomplete_action_coverage("FINAL_EVENT_INVALID")
+    complete = (
+        state.get("analysis_complete") is True
+        and coverage["state"] == "VERIFIED"
+        and not state.get("gaps")
+        and isinstance(state.get("lanes"), list)
+        and all(
+            isinstance(lane, dict) and lane.get("state") == "OBSERVED"
+            for lane in state["lanes"]
+        )
+        and state.get("state") != "PAUSED"
+        and final.get("kind") == "run_completed"
+        and isinstance(final_details, dict)
+        and final_details.get("analysis_complete") is True
+    )
+    state["analysis_complete"] = complete
+    return coverage
+
+
 def _docker_base() -> list[str]:
     executable = shutil.which("docker")
     if executable is None:
@@ -1982,6 +2211,9 @@ def _run_lanes(
     emit,
     authorize,
 ) -> None:
+    actions = {
+        item["lane_id"]: item for item in _action_enrollment(state, plan)["actions"]
+    }
     for lane in plan["lanes"]:
         if (directory / "cancel.json").exists():
             state["gaps"].append(
@@ -1994,11 +2226,12 @@ def _run_lanes(
             state["pause_requested"] = True
             break
         state["active_lane"] = lane["id"]
+        action = actions[lane["id"]]
         _event(
             directory,
             state,
             "lane_started",
-            {"lane_id": lane["id"], "engine": lane["engine"]},
+            action,
             emit,
         )
         try:
@@ -2014,7 +2247,9 @@ def _run_lanes(
                 "findings": [],
                 "gaps": [code],
             }
-        result.update(engine=lane["engine"], family=lane["family"])
+        result.update(
+            action_id=action["action_id"], engine=lane["engine"], family=lane["family"]
+        )
         state["lanes"].append(result)
         _record_failures(
             directory,
@@ -2048,14 +2283,9 @@ def _run_lanes(
             state,
             "lane_completed",
             {
+                **action,
+                **_action_terminal(result),
                 "lane_id": lane["id"],
-                "state": result["state"],
-                "gaps": result["gaps"],
-                "report_sha256": result.get("report_sha256"),
-                "coverage_sha256": result.get("coverage_sha256"),
-                "rule_accounting_sha256": result.get("rule_accounting_sha256"),
-                "challenge_sha256": result.get("challenge_sha256"),
-                "findings_sha256": digest(result["findings"]),
                 "finding_ids": sorted(
                     item.get("finding_id", "") for item in result["findings"]
                 ),
@@ -2126,6 +2356,15 @@ def _initial_run_state(
         if request_reference
         else None,
         "request_bytes": request_reference.get("bytes") if request_reference else None,
+        "action_enrollment": _action_enrollment(
+            {
+                "run_id": run_id,
+                "candidate_sha256": plan["candidate_sha256"],
+                "manifest_sha256": manifest_sha256,
+                "manifest_content_sha256": digest(plan),
+            },
+            plan,
+        ),
         "lanes": [],
         "gaps": [],
         "authority": "none",
@@ -2221,6 +2460,14 @@ def _finish_scan(
     write_run_json,
 ) -> dict:
     state.pop("active_lane", None)
+    try:
+        events = _verified_event_chain(directory, state)
+    except (OSError, RuntimeAuditError):
+        events = []
+        state["gaps"].append(
+            _execution_gap("EVENT_CHAIN_INVALID", "Repair the run event chain.")
+        )
+    state["action_coverage"] = _action_coverage(state, plan, events)
     paused = (
         state.get("pause_requested", False) and not (directory / "cancel.json").exists()
     )
@@ -2233,6 +2480,7 @@ def _finish_scan(
         and not state["gaps"]
         and len(state["lanes"]) == len(plan["lanes"])
         and all(lane["state"] == "OBSERVED" for lane in state["lanes"])
+        and state["action_coverage"]["state"] == "VERIFIED"
     )
     state["review"] = "REQUIRED"
     _event(
@@ -2452,24 +2700,12 @@ def deep_run_status(root: Path, run_id: str) -> dict:
     state = read_run_json(directory, "state.json")
     if state.get("run_id") != run_id or state.get("schema") != "factory.deep-run.v1":
         raise RuntimeAuditError("E_RUN_INTEGRITY", "run identity mismatch")
-    sequence = state.get("sequence")
-    if type(sequence) is not int or not 1 <= sequence <= 100_000:
-        raise RuntimeAuditError("E_EVENT_INTEGRITY", "event sequence outside bounds")
-    previous = None
-    for index in range(1, sequence + 1):
-        event = read_run_json(directory, f"event-{index:05d}.json")
-        if (
-            event.get("sequence") != index
-            or event.get("run_id") != run_id
-            or event.get("previous_sha256") != previous
-        ):
-            raise RuntimeAuditError("E_EVENT_INTEGRITY", "event chain mismatch")
-        previous = digest(event)
-    if previous != state["event_sha256"]:
-        raise RuntimeAuditError("E_EVENT_INTEGRITY", "event head mismatch")
+    events = _verified_event_chain(directory, state)
+    coverage = _status_action_coverage(directory, state, events)
     # Self hashes are not authentication. Read-only status never promotes a run.
     return {
         **state,
+        "action_coverage": coverage,
         "state": "INCOMPLETE",
         "observed_state": state["state"],
         "authority": "none",
@@ -2912,6 +3148,8 @@ def _lineage_run(root: Path, run_id: str) -> tuple[dict, list[dict], list[dict]]
     status = deep_run_status(root, run_id)
     directory = run_directory(root, run_id)
     plan, inventory, gaps = _lineage_inputs(directory)
+    if status.get("action_coverage", {}).get("state") != "VERIFIED":
+        gaps.append("ACTION_COVERAGE_INCOMPLETE")
     plan_lanes = {item["id"]: item for item in plan.get("lanes", [])}
     from .deep_audit_contract import EXECUTION_FAMILIES
 
@@ -2955,9 +3193,11 @@ def _lineage_run(root: Path, run_id: str) -> tuple[dict, list[dict], list[dict]]
         "request_state": "BOUND" if request_reference else "NOT_CAPTURED",
         "observed_state": status["observed_state"],
         "analysis_complete": status.get("analysis_complete") is True,
+        "action_coverage": status.get("action_coverage"),
         "candidate_sha256": status.get("candidate_sha256"),
         "manifest_sha256": status.get("manifest_sha256"),
         "manifest_content_sha256": status.get("manifest_content_sha256"),
+        "action_coverage": status.get("action_coverage"),
         "authorization_sha256": status.get("authorization_sha256"),
         "parent_run": status.get("parent_run"),
         "event_sequence": status["sequence"],

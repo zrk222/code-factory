@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Reconcile native scanner actions against the exact manifest lane set in the
+  existing event chain. Missing, duplicate, out-of-order or mismatched actions
+  leave execution coverage incomplete; local readback grants no review authority.
+
 - Connect each user's own Linear workspace through the public Code Factory PKCE
   app and secure OS vault. Pin user/workspace identity, rotate refresh tokens,
   retain validating native HTTPS and close failed loopback callbacks promptly.
