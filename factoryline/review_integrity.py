@@ -4960,8 +4960,8 @@ def _builtin_repr_is_call(node, name, argument_count):
     )
 
 
-def _builtin_repr_names_shadowed(node):
-    builtin_names = {"isinstance", "repr", "str"}
+def _builtin_repr_names_shadowed(node, names=None):
+    builtin_names = names or {"isinstance", "repr", "str"}
     if builtin_names & set(getattr(node, "_security_shadowed_names", set())):
         return True
     scope = getattr(node, "_security_lexical_scope", None) or getattr(
@@ -4972,9 +4972,7 @@ def _builtin_repr_names_shadowed(node):
     if builtin_names & _builtin_repr_scope_names(scope):
         return True
     module = _security_module_scope(scope) or getattr(node, "_oracle_module", None)
-    return module is not None and bool(
-        builtin_names & _security_scope_local_names(module)
-    )
+    return bool(module and builtin_names & _security_scope_local_names(module))
 
 
 def _builtin_repr_scope_names(scope):
