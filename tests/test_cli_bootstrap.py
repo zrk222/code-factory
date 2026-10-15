@@ -251,7 +251,16 @@ def test_daily_schedule_rechecks_parent_identity_after_open(tmp_path, monkeypatc
     def concurrent_change(path, flags, *args, **kwargs):
         descriptor = actual(path, flags, *args, **kwargs)
         if Path(path) == candidate:
+            parent_before = nested.stat()
             (nested / "concurrent.txt").write_text("changed", encoding="utf-8")
+            # Windows may defer directory timestamps; model a stable identity change.
+            os.utime(
+                nested,
+                ns=(
+                    parent_before.st_atime_ns,
+                    parent_before.st_mtime_ns + 2_000_000_000,
+                ),
+            )
         return descriptor
 
     monkeypatch.setattr(os, "open", concurrent_change)
