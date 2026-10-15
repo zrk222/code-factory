@@ -958,9 +958,22 @@ def test_dashboard_refresh_coalesces_clears_failures(tmp_path: Path):
         pytest.skip("Node is required for the Studio JavaScript execution profile")
     page = _studio_html("local-test")
     source = tmp_path / "dashboard.js"
-    source.write_text(page[page.index("let dashboardMissionSnapshot=[];"):page.index("function addText(")]+page[page.index("function cancelDashboardMissionDecision()"):page.index("async function decideMission(decision)")], encoding="utf-8")
+    source.write_text(
+        page[
+            page.index("let dashboardMissionSnapshot=[];") : page.index(
+                "function addText("
+            )
+        ]
+        + page[
+            page.index("function cancelDashboardMissionDecision()") : page.index(
+                "async function decideMission(decision)"
+            )
+        ],
+        encoding="utf-8",
+    )
     script = tmp_path / "dashboard-refresh.cjs"
-    script.write_text(r'''
+    script.write_text(
+        r"""
 const A=require('node:assert/strict'),F=require('node:fs'),V=require('node:vm');
 class E{constructor(tag='div'){this.tag=tag;this.children=[];this.attrs={};this.disabled=false;this.value=''}set textContent(v){this.text=v;this.children=[]}setAttribute(k,v){this.attrs[k]=v}append(...xs){xs.forEach(x=>{x.parentElement=this;this.children.push(x)})}appendChild(x){this.append(x)}walk(){return [this,...this.children.flatMap(x=>x.walk())]}querySelectorAll(q){let ns=this.walk().slice(1),tags=q.includes(':is(')?['button','select','textarea']:q.includes('textarea')?['textarea']:q.includes('select')?['select']:q.includes('button')?['button']:[];return ns.filter(x=>tags.includes(x.tag)||q.includes('.dashboard-decision-form')&&x.className==='dashboard-decision-form'||q.includes('[role=')&&x.attrs.role==='alert')}querySelector(q){return this.querySelectorAll(q)[0]||null}}
 const root=new E(),grid=new E(),activity=new E(),list=new E();grid.className='dash-grid';list.id='activity-list';activity.append(list);grid.append(activity);root.append(grid);const approval=new E();approval.id='approval-list';grid.append(approval);for(const id of ['stat-stages','stat-first-pass','stat-runs','stat-flow','context-value-next']){let x=new E();x.id=id;root.append(x)}
@@ -974,10 +987,14 @@ api.choose();let form=approval.querySelector('.dashboard-decision-form'),area=fo
 api.choose();form=approval.querySelector('.dashboard-decision-form');area=form.querySelector('textarea');area.value='approved';area.oninput();let submitted=form.querySelector('button').onclick(),post=take('/api/mission-decision');A.equal(post.options.headers['X-Factory-Studio-Token'],'local-test');let read=api.refresh();take('/api/dashboard').resolve({ok:true,json:async()=>payload('after-submit',true)});await read;A.ok(approval.querySelectorAll(':is(button,select,textarea)').every(x=>x.disabled));post.resolve({ok:true,status:200,json:async()=>({})});await new Promise(setImmediate);let after=take('/api/dashboard');after.resolve({ok:true,json:async()=>payload()});await submitted;A.ok(approval.querySelectorAll(':is(button,select,textarea)').some(x=>x.tag==='button'&&!x.disabled));
 api.choose();form=approval.querySelector('.dashboard-decision-form');area=form.querySelector('textarea');area.value='retry-safe';area.oninput();submitted=form.querySelector('button').onclick();post=take('/api/mission-decision');read=api.refresh();take('/api/dashboard').reject(Error('telemetry down'));await read;post.resolve({ok:false,status:400,json:async()=>({code:'BAD',message:'definite rejection'})});await submitted;A.ok(approval.querySelectorAll(':is(button,select,textarea)').every(x=>x.disabled));A.equal(api.draft().rationale,'retry-safe');A.equal(doc.getElementById('dashboard-stop').disabled,true);A.match(rendered['proof-list'][0][1],/telemetry down/);
 console.log('STUDIO_HARNESS_COMPLETE')})().catch(e=>{console.error(e);process.exitCode=1});
-''', encoding="utf-8")
-    result = subprocess.run([node, str(script), str(source)], capture_output=True, text=True, timeout=10)
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [node, str(script), str(source)], capture_output=True, text=True, timeout=10
+    )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip().endswith('STUDIO_HARNESS_COMPLETE')
+    assert result.stdout.strip().endswith("STUDIO_HARNESS_COMPLETE")
 
 
 def test_dashboard_decision_uncertainty_requires_refresh_before_retry():
