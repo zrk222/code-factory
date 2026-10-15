@@ -439,5 +439,6 @@
       "For instrumentation validation across Python 3.10, 3.11, and 3.12, list each affected runtime profile and distinguish pytest-engine runs from direct helper/testbody runs.",
       "Bind frame evidence to qualname, first line, root-relative source path, and source hash; an imported-module observation alone is not executed-frame evidence."
     ]
-  }
+  },
+  "daily_action_guidance": "\n## One next action\n\nUse factory home --root . --json for one read-only daily_action derived from current local evidence. For an explicitly selected workspace-contained incremental manifest use factory home --root . --schedule checks.json --json. Treat RUN/REUSE/SKIP/BLOCK as a plan: PLAN_INPUTS_ONLY is not source coverage or execution, and execution remains NOT_RUN. Follow the primary_action label; an absent command means select the appropriate approved workflow, never invent a command or dummy feature. Blocked or missing evidence stays unresolved. Mission Control and factory.next_action show the same loaded projection; WebMCP cannot supply a schedule or run checks. The read-only proof agent may inspect existing projections but does not execute the CLI, workers, repair or provider operations. Native worker controls remain distinct from complete signed challenge admission and independent accuracy.\n"
 }

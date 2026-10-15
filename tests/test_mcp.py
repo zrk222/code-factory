@@ -676,8 +676,12 @@ def test_mcp_protocol_parity_is_read_only(tmp_path: Path, monkeypatch):
         "marker": "MCP_GRAPH_OPS_PARITY",
         "graph_sha256": snapshot["graph_sha256"],
         "recommendation": snapshot["recommendation"],
+        "daily_action": snapshot["mission_control"]["daily_action"],
         "authority": snapshot["authority"],
     }
+    assert next_action["daily_action"]["execution"] == "NOT_RUN"
+    assert next_action["daily_action"]["audit_state"] == "NOT_REQUESTED"
+    assert not any(next_action["daily_action"]["authority"].values())
 
     resources = dispatch(
         {"jsonrpc": "2.0", "id": 6, "method": "resources/list"}, tmp_path

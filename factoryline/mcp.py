@@ -396,7 +396,7 @@ def _tool_definitions() -> list[dict[str, object]]:
         },
         {
             "name": "factory.next_action",
-            "description": "Read the one fact-derived Graph Ops recommendation without executing it.",
+            "description": "Read the shared daily action and legacy Graph Ops recommendation without executing either.",
             "inputSchema": no_args,
             "annotations": _READ_ONLY_ANNOTATIONS,
         },
@@ -3413,6 +3413,7 @@ def _tool_call_dispatch_3(
                 "marker": "MCP_GRAPH_OPS_PARITY",
                 "graph_sha256": graph["graph_sha256"],
                 "recommendation": graph["recommendation"],
+                "daily_action": graph["mission_control"]["daily_action"],
                 "authority": graph["authority"],
             }
         )

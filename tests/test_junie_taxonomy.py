@@ -1447,3 +1447,23 @@ def test_junie_beginner_acceptance_keeps_evidence_and_repair_authority():
     assert "failed and impacted" in workflow["repair"]
     assert "not database rollback" in workflow["recovery"]
     assert "does not create a running preview" in workflow["authority"]
+
+
+def test_daily_action_guidance_is_shared_and_uses_real_read_only_commands(tmp_path):
+    from factoryline.cli import _build_parser
+    from factoryline.junie_taxonomy import _guidance, _junie_proof_agent_bytes
+
+    guidance = junie_manifest(tmp_path)["daily_action_guidance"]
+    assert junie_taxonomy(tmp_path)["ide_workflow"]["daily_action"] == guidance
+    for content in (_guidance(), _junie_proof_agent_bytes()):
+        assert guidance in content.decode("utf-8")
+    assert "PLAN_INPUTS_ONLY" in guidance and "NOT_RUN" in guidance
+    assert "RUN/REUSE/SKIP/BLOCK" in guidance
+    assert "cannot supply a schedule" in guidance
+    assert "does not execute" in guidance
+    parsed = _build_parser().parse_args(
+        ["home", "--root", str(tmp_path), "--schedule", "checks.json", "--json"]
+    )
+    assert parsed.cmd == "home" and parsed.schedule == "checks.json"
+    assert parsed.json is True
+    assert not any(junie_manifest(tmp_path)["authority"].values())
