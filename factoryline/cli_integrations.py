@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+import time
+import webbrowser
+from contextlib import nullcontext
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from functools import partial
 from pathlib import Path
 from typing import Any
 
 COMMAND_GROUP = "integrations"
 OWNER = "agent-integration-maintainers"
+LINEAR_OAUTH_CLIENT_ID = "4c540bba7b45718fd184277ee85adca6"
 
 
 def add_parser(sub: Any) -> None:
     """Register MCP and Junie integration commands without loading adapters."""
+    _add_issues_parser(sub)
     mcp = sub.add_parser("mcp", help="serve or inspect the local read-only MCP adapter")
     mcp_sub = mcp.add_subparsers(required=True, dest="mcp_cmd")
     mcp_status = mcp_sub.add_parser(
@@ -112,9 +119,224 @@ def add_parser(sub: Any) -> None:
 
 def run(args: Any) -> int:
     """Execute one MCP or Junie integration command."""
+    if args.cmd == "issues":
+        return _run_issues(args)
     if args.cmd == "mcp":
         return _run_mcp(args)
     return _run_junie(args)
+
+
+def _add_issues_parser(sub):
+    parser = sub.add_parser(
+        "issues", help="import a ticket or review/send exact CF evidence"
+    )
+    parser.add_argument(
+        "action",
+        choices=["connect", "status", "disconnect", "import", "draft", "publish"],
+    )
+    parser.add_argument(
+        "--connection", help="your local Linear connection name, for example work"
+    )
+    parser.add_argument(
+        "--client-id",
+        help="public Linear OAuth application ID (advanced/self-hosted setup)",
+    )
+    parser.add_argument("--root", default=".")
+    parser.add_argument(
+        "--expert-token",
+        action="store_true",
+        help="explicit advanced use of private environment credentials instead of a connection",
+    )
+    parser.add_argument("--provider", choices=["linear", "jira"])
+    parser.add_argument("--issue", help="project issue key, for example APP-123")
+    parser.add_argument("--site", default="", help="HTTPS Jira Cloud site (Jira only)")
+    parser.add_argument(
+        "--criterion",
+        action="append",
+        default=[],
+        help="operator-reviewed acceptance criterion; repeat as needed",
+    )
+    parser.add_argument("--imported", help="workspace-relative imported issue JSON")
+    parser.add_argument("--contract", help="existing workflow audit contract")
+    parser.add_argument("--observations", help="existing workflow audit observations")
+    parser.add_argument("--draft", help="workspace-relative exact comment draft")
+    parser.add_argument(
+        "--confirmation", help="publish:<draft sha256>; required for external write"
+    )
+    parser.add_argument("--json", action="store_true")
+
+
+def _issue_arguments(args, names):
+    if any(not getattr(args, name) for name in names):
+        raise ValueError("required issue action arguments missing")
+
+
+def _run_issues(args):
+    from .integrations import use_linear_connection
+
+    try:
+        if args.action in {"connect", "status", "disconnect"}:
+            value = _linear_connection_operation(args)
+        else:
+            if args.provider == "jira" and (args.connection or not args.expert_token):
+                raise ValueError("Jira requires explicit expert token mode")
+            if args.action != "draft" and not args.connection and not args.expert_token:
+                raise ValueError(
+                    "Connect your workspace or explicitly select expert token mode"
+                )
+            context = (
+                use_linear_connection(args.connection)
+                if args.connection and args.action != "draft"
+                else nullcontext()
+            )
+            with context:
+                return _run_issue_evidence(args)
+    except (ValueError, OSError, KeyError, TypeError):
+        print(
+            "Linear connection incomplete. Use issues connect --connection work, or select --expert-token for advanced environment credentials. Check OAuth app configuration and the OS credential vault.",
+            file=sys.stderr,
+        )
+        return 2
+    print(
+        json.dumps(value, indent=2, sort_keys=True)
+        if args.json
+        else f"Linear connection: {value.get('state', 'INCOMPLETE')}"
+    )
+    return 0
+
+
+def _run_issue_evidence(args):
+    from .integrations import import_issue, draft_issue_update, publish_issue_update
+
+    try:
+        if args.action == "import":
+            _issue_arguments(args, ("provider", "issue"))
+            value = import_issue(
+                Path(args.root),
+                args.provider,
+                args.issue,
+                site=args.site,
+                criteria=args.criterion,
+            )
+        elif args.action == "draft":
+            _issue_arguments(args, ("imported", "contract", "observations"))
+            value = draft_issue_update(
+                Path(args.root), args.imported, args.contract, args.observations
+            )
+        else:
+            _issue_arguments(args, ("draft", "confirmation"))
+            value = publish_issue_update(Path(args.root), args.draft, args.confirmation)
+    except (ValueError, OSError, KeyError, TypeError, AttributeError):
+        print(
+            "Issue operation incomplete. Check action inputs, evidence freshness and private provider configuration; no success claimed.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.json:
+        print(json.dumps(value, indent=2, sort_keys=True))
+    else:
+        print(
+            f"Issue {args.action}: {value.get('state', 'REVIEW_REQUIRED')}\nSaved: {value['path']}"
+        )
+        if args.action == "draft":
+            print(value["body"])
+            print(f"After reviewing: --confirmation publish:{value['sha256']}")
+    return 0
+
+
+def _linear_connection_operation(args):
+    from .integrations import (
+        begin_linear_oauth,
+        complete_linear_oauth,
+        linear_connection_status,
+        disconnect_linear_connection,
+    )
+
+    _issue_arguments(args, ("connection",))
+    if args.provider not in {None, "linear"}:
+        raise ValueError("OAuth connection currently supports Linear only")
+    if args.action == "status":
+        return linear_connection_status(args.connection)
+    if args.action == "disconnect":
+        return disconnect_linear_connection(args.connection)
+    linear_connection_status(
+        args.connection
+    )  # Fail early if secure storage is unavailable.
+    client_id = args.client_id or os.environ.get(
+        "FACTORY_LINEAR_CLIENT_ID", LINEAR_OAUTH_CLIENT_ID
+    )
+    session = begin_linear_oauth(client_id)
+    return _linear_connect_callback(session, args.connection, complete_linear_oauth)
+
+
+def _linear_callback_handler(session, connection, complete, outcome):
+    class Callback(BaseHTTPRequestHandler):
+        def log_message(self, *_args):
+            pass  # Authorization codes and state must never enter an access log.
+
+        def do_GET(self):
+            valid_host = self.headers.get_all("Host") == ["127.0.0.1:8767"]
+            if not valid_host or len(self.path) > 4096:
+                self.send_error(400, "Invalid callback")
+                return
+            try:
+                outcome["result"] = complete(
+                    session, "http://127.0.0.1:8767" + self.path, connection
+                )
+            except ValueError:
+                if not session:
+                    outcome["error"] = "Linear token exchange or secure storage failed"
+                self.send_error(400, "Connection not completed")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.end_headers()
+            self.wfile.write(
+                b"Linear connected to Code Factory. You may close this window."
+            )
+
+    return Callback
+
+
+def _linear_connect_callback(session, connection, complete):
+    from .integrations import cancel_linear_oauth
+
+    try:
+        return _linear_wait_callback(session, connection, complete)
+    finally:
+        cancel_linear_oauth(session)
+
+
+def _linear_wait_callback(session, connection, complete):
+    outcome = {}
+    handler = _linear_callback_handler(session, connection, complete, outcome)
+
+    class LoopbackServer(HTTPServer):
+        def get_request(self):
+            client, address = super().get_request()
+            client.settimeout(2)
+            return client, address
+
+    with LoopbackServer(("127.0.0.1", 8767), handler) as server:
+        server.timeout = 1
+        print(
+            "Authorize Code Factory in Linear. Only your selected workspace will be connected.",
+            file=sys.stderr,
+        )
+        if not webbrowser.open(session["authorization_url"]):
+            raise ValueError(
+                "Browser unavailable; configure a default browser and retry connect"
+            )
+        deadline = time.monotonic() + 180
+        while not outcome and time.monotonic() < deadline:
+            server.handle_request()
+    if "error" in outcome:
+        raise ValueError(outcome["error"])
+    if "result" not in outcome:
+        raise ValueError("Linear authorization timed out")
+    return outcome["result"]
 
 
 def _run_mcp(args: Any) -> int:

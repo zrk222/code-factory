@@ -72,6 +72,7 @@ Issues = "https://github.com/zrk222/code-factory/issues"
 Changelog = "https://github.com/zrk222/code-factory/releases"
 
 [project.optional-dependencies]
+issues = ["keyring>=25,<26", "truststore>=0.10,<1"]
 dev = [
   "psycopg[binary]>=3.2,<4",
   "reportlab>=4,<5",

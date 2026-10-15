@@ -4239,7 +4239,7 @@ def _dispatch_route_group_34(a, capture_command, p):
         from .cli_ide import run as run_ide
 
         return run_ide(a)
-    if a.cmd in {"mcp", "junie"}:
+    if a.cmd in {"mcp", "junie", "issues"}:
         from .cli_integrations import run as run_integrations
 
         return run_integrations(a)
