@@ -150,8 +150,10 @@ _GENERATED_FACTORY_PREFIXES = (
 
 
 def _generated_factory_path(name: str) -> bool:
-    return name == ".factory/candidate.diff" or name.startswith(
-        _GENERATED_FACTORY_PREFIXES
+    return (
+        name == ".factory/candidate.diff"
+        or name.startswith(_GENERATED_FACTORY_PREFIXES)
+        or re.fullmatch(r"\.factory/ops/lifecycle/[0-9a-f]{32}\.json", name) is not None
     )
 
 

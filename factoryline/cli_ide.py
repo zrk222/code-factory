@@ -28,8 +28,16 @@ def add_parser(sub) -> None:
     repair_scope.add_argument(
         "--changed",
         action="append",
-        required=True,
         help="explicit workspace-relative Change List path; repeat as needed",
+    )
+    repair_scope.add_argument(
+        "--audit-run-id",
+        help="select findings from one paused or terminal native audit",
+    )
+    repair_scope.add_argument(
+        "--finding-id",
+        action="append",
+        help="selected finding SHA-256; repeat with --audit-run-id",
     )
     repair_scope.add_argument(
         "--context-budget-bytes",
@@ -187,16 +195,19 @@ def _execute_repair_command(args, repair_sandbox):
         )
     if args.repair_cmd in {"approve", "run", "revoke", "stop"}:
         return _execute_approved_command(args, repair_sandbox)
+    out_dir = Path(args.root) / args.out_dir if args.out_dir else None
     if args.repair_cmd == "scope":
         result = repair_sandbox.create_repair_scope(
             Path(args.root),
             args.change_list,
             args.changed,
+            audit_run_id=args.audit_run_id,
+            finding_ids=args.finding_id,
             context_budget_bytes=args.context_budget_bytes,
         )
         if args.out_dir:
             result["artifacts"] = repair_sandbox.write_repair_scope_artifacts(
-                result, Path(args.root), Path(args.out_dir)
+                result, Path(args.root), out_dir
             )
         return result
     result = repair_sandbox.inspect_repair_candidate(
@@ -204,7 +215,7 @@ def _execute_repair_command(args, repair_sandbox):
     )
     if args.out_dir:
         result["artifacts"] = repair_sandbox.write_repair_candidate_artifacts(
-            result, Path(args.root), Path(args.out_dir)
+            result, Path(args.root), out_dir
         )
     return result
 

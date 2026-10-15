@@ -276,7 +276,27 @@ def _scope_core(scope: dict[str, Any]) -> dict[str, Any]:
             "REPAIR_SCOPE_INVALID",
             f"scope is missing required fields: {', '.join(missing)}",
         )
-    return {key: scope[key] for key in _CORE_SCOPE_KEYS}
+    core = {key: scope[key] for key in _CORE_SCOPE_KEYS}
+    has_origin, has_ids = "origin_audit" in scope, "finding_ids" in scope
+    origin, finding_ids = scope.get("origin_audit"), scope.get("finding_ids")
+    if has_origin or has_ids:
+        if not has_origin or not has_ids or origin is None:
+            raise RepairSandboxError(
+                "REPAIR_SCOPE_INVALID", "origin audit and finding IDs must be paired"
+            )
+        _validate_origin_shape(origin)
+        if (
+            not isinstance(finding_ids, list)
+            or not finding_ids
+            or len(finding_ids) > 64
+            or any(not _digest(item) for item in finding_ids)
+            or finding_ids != sorted(set(finding_ids))
+        ):
+            raise RepairSandboxError(
+                "REPAIR_SCOPE_INVALID", "selected finding IDs are malformed"
+            )
+        core.update(origin_audit=origin, finding_ids=finding_ids)
+    return core
 
 
 def _context_budget(paths: list[dict[str, Any]], limit_bytes: int) -> dict[str, Any]:
@@ -303,24 +323,28 @@ def _context_budget(paths: list[dict[str, Any]], limit_bytes: int) -> dict[str, 
 def create_repair_scope(
     root: Path,
     change_list: str,
-    changed: list[str],
+    changed: list[str] | None = None,
     *,
+    audit_run_id: str | None = None,
+    finding_ids: list[str] | None = None,
     context_budget_bytes: int = DEFAULT_CONTEXT_BUDGET_BYTES,
 ) -> dict[str, Any]:
     """Seal one explicit native Change List scope without writing or executing."""
     workspace = _workspace(root)
     name = _text(change_list, "change_list", MAX_CHANGE_LIST_NAME)
-    if not changed:
-        raise RepairSandboxError(
-            "REPAIR_SCOPE_INPUT_INVALID",
-            "at least one explicit Change List path is required",
-        )
+    selected, origin, changed, finding_ids = _resolve_scope_selection(
+        workspace, changed, audit_run_id, finding_ids
+    )
     try:
         review = review_change(workspace, changed=changed)
     except ChangeReviewError as exc:
         raise RepairSandboxError(
             exc.code.replace("CHANGED_", "REPAIR_SCOPE_"), str(exc)
         ) from exc
+    if selected and sorted(review["changed_paths"]) != changed:
+        raise RepairSandboxError(
+            "REPAIR_SCOPE_ORIGIN_DRIFT", "selected finding paths changed during review"
+        )
     paths = [_baseline_entry(workspace, item) for item in review["changed_paths"]]
     core = {
         "schema": REPAIR_SCOPE_SCHEMA,
@@ -342,6 +366,16 @@ def create_repair_scope(
             "A candidate patch must remain in scope and obtain independent evidence before a maintainer decides whether to apply it.",
         ],
     }
+    if selected:
+        core["scope_limits"][0] = (
+            "Scope paths are derived only from the explicitly selected local audit findings; observations remain untrusted."
+        )
+        core.update(origin_audit=origin, finding_ids=finding_ids)
+        if _repair_origin_binding(workspace, audit_run_id) != origin:
+            raise RepairSandboxError(
+                "REPAIR_SCOPE_ORIGIN_DRIFT",
+                "origin audit changed during scope preparation",
+            )
     scope_sha256 = _sha(core)
     return {
         **core,
@@ -358,6 +392,31 @@ def create_repair_scope(
         "scope_markdown": _scope_markdown({**core, "scope_sha256": scope_sha256}),
         "mermaid": _scope_mermaid({**core, "scope_sha256": scope_sha256}),
     }
+
+
+def _resolve_scope_selection(
+    workspace: Path,
+    changed: list[str] | None,
+    audit_run_id: str | None,
+    finding_ids: list[str] | None,
+) -> tuple[bool, dict[str, Any] | None, list[str] | None, list[str] | None]:
+    """Validate and resolve either explicit paths or selected audit findings."""
+    selected = audit_run_id is not None or finding_ids is not None
+    if bool(changed) == selected or (changed and finding_ids):
+        raise RepairSandboxError(
+            "REPAIR_SCOPE_INPUT_INVALID", "choose paths or an audit run and finding IDs"
+        )
+    if selected:
+        if not isinstance(audit_run_id, str) or not audit_run_id:
+            raise RepairSandboxError(
+                "REPAIR_SCOPE_INPUT_INVALID", "finding IDs require an audit run ID"
+            )
+        finding_ids = _normalize_finding_ids(finding_ids)
+        origin = _repair_origin_binding(workspace, audit_run_id)
+        changed = _selected_finding_paths(workspace, audit_run_id, finding_ids)
+    else:
+        origin = None
+    return selected, origin, changed, finding_ids
 
 
 def _scope_digest(scope: dict[str, Any], core: dict[str, Any]) -> str:
@@ -460,6 +519,23 @@ def verify_repair_scope(scope: dict[str, Any], root: Path) -> dict[str, Any]:
     workspace = _workspace(root)
     core = _scope_core(scope)
     supplied = _scope_digest(scope, core)
+    if "origin_audit" in core:
+        if not isinstance(core.get("paths"), list) or any(
+            not isinstance(item, dict) or not isinstance(item.get("path"), str)
+            for item in core["paths"]
+        ):
+            raise RepairSandboxError(
+                "REPAIR_SCOPE_INVALID", "scope paths are malformed"
+            )
+        _verify_repair_origin(workspace, core["origin_audit"])
+        paths = _selected_finding_paths(
+            workspace, core["origin_audit"]["run_id"], core["finding_ids"]
+        )
+        if paths != sorted(item.get("path") for item in core["paths"]):
+            raise RepairSandboxError(
+                "REPAIR_SCOPE_ORIGIN_DRIFT", "selected finding paths differ from origin"
+            )
+        _verify_repair_origin(workspace, core["origin_audit"])
     _verify_scope_paths(workspace, core["paths"])
     _verify_context_budget(core["context_budget"], core["paths"])
     return {**scope, "scope_id": f"repair-scope-{supplied[:12]}"}
@@ -567,6 +643,10 @@ def write_repair_scope_artifacts(
         key: checked[key]
         for key in (*_CORE_SCOPE_KEYS, "scope_id", "scope_sha256", "markers")
     }
+    if "origin_audit" in checked:
+        payload.update(
+            origin_audit=checked["origin_audit"], finding_ids=checked["finding_ids"]
+        )
     paths = {"json": json_path, "markdown": markdown_path, "mermaid": mermaid_path}
     return {
         "marker": "REPAIR_SCOPE_ARTIFACTS_WRITTEN",
@@ -1476,7 +1556,7 @@ def _repair_origin_binding(root: Path, run_id: str | None) -> dict[str, Any] | N
         raise RepairSandboxError(
             "REPAIR_ORIGIN_INVALID", "origin audit run could not be verified"
         ) from exc
-    if run.get("observed_state") == "RUNNING":
+    if run.get("observed_state") not in {"PAUSED", "INCOMPLETE"}:
         raise RepairSandboxError(
             "REPAIR_ORIGIN_ACTIVE", "origin audit must be paused or terminal"
         )
@@ -1495,19 +1575,108 @@ def _repair_origin_binding(root: Path, run_id: str | None) -> dict[str, Any] | N
     }
 
 
+def _normalize_finding_ids(values: object) -> list[str]:
+    if (
+        not isinstance(values, list)
+        or not values
+        or len(values) > 64
+        or any(not _digest(value) for value in values)
+        or len(set(values)) != len(values)
+    ):
+        raise RepairSandboxError(
+            "REPAIR_SCOPE_INPUT_INVALID", "finding IDs must be unique SHA-256 values"
+        )
+    return sorted(values)
+
+
+def _validate_origin_shape(origin: object) -> None:
+    if (
+        not _origin_binding_shape(origin)
+        or not origin["run_id"]
+        or len(origin["run_id"]) > 128
+    ):
+        raise RepairSandboxError(
+            "REPAIR_ORIGIN_INVALID", "origin audit binding is malformed"
+        )
+
+
+def _origin_binding_shape(origin: object) -> bool:
+    return (
+        isinstance(origin, dict)
+        and set(origin)
+        == {"run_id", "candidate_sha256", "manifest_sha256", "event_sha256", "sequence"}
+        and isinstance(origin.get("run_id"), str)
+        and all(
+            _digest(origin.get(key))
+            for key in ("candidate_sha256", "manifest_sha256", "event_sha256")
+        )
+        and type(origin.get("sequence")) is int
+        and origin["sequence"] >= 1
+    )
+
+
+def _selected_finding_paths(
+    root: Path, run_id: str, finding_ids: list[str]
+) -> list[str]:
+    from .deep_audit import deep_run_status
+
+    run = deep_run_status(root, run_id)
+    if run.get("run_id") != run_id or run.get("observed_state") not in {
+        "PAUSED",
+        "INCOMPLETE",
+    }:
+        raise RepairSandboxError(
+            "REPAIR_ORIGIN_ACTIVE", "origin audit must be paused or terminal"
+        )
+    selected, counts, paths = set(finding_ids), {}, set()
+    lanes = run.get("lanes")
+    if not isinstance(lanes, list):
+        raise RepairSandboxError(
+            "REPAIR_ORIGIN_INVALID", "origin findings are malformed"
+        )
+    for lane in lanes:
+        findings = lane.get("findings") if isinstance(lane, dict) else None
+        if not isinstance(findings, list):
+            raise RepairSandboxError(
+                "REPAIR_ORIGIN_INVALID", "origin findings are malformed"
+            )
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            finding_id = finding.get("finding_id")
+            if not _digest(finding_id) or finding_id not in selected:
+                continue
+            counts[finding_id] = counts.get(finding_id, 0) + 1
+            paths.update(_selected_finding_location_paths(finding))
+    if any(counts.get(item) != 1 for item in finding_ids):
+        raise RepairSandboxError(
+            "REPAIR_FINDING_SELECTION_INVALID", "finding IDs must resolve exactly once"
+        )
+    return sorted(paths)
+
+
+def _selected_finding_location_paths(finding: dict[str, Any]) -> set[str]:
+    locations = finding.get("locations")
+    if locations is None:
+        locations = [{"path": finding.get("path")}]
+    if not isinstance(locations, list) or not locations:
+        raise RepairSandboxError(
+            "REPAIR_FINDING_LOCATION_INVALID", "finding has no source location"
+        )
+    paths = set()
+    for location in locations:
+        if not isinstance(location, dict):
+            raise RepairSandboxError(
+                "REPAIR_FINDING_LOCATION_INVALID", "finding location is malformed"
+            )
+        paths.add(_relative_path(location.get("path")))
+    return paths
+
+
 def _verify_repair_origin(root: Path, origin: object) -> dict[str, Any] | None:
     if origin is None:
         return None
-    if not isinstance(origin, dict) or set(origin) != {
-        "run_id",
-        "candidate_sha256",
-        "manifest_sha256",
-        "event_sha256",
-        "sequence",
-    }:
-        raise RepairSandboxError(
-            "REPAIR_ORIGIN_INVALID", "approval origin binding is malformed"
-        )
+    _validate_origin_shape(origin)
     binding = _repair_origin_binding(root, origin.get("run_id"))
     if binding != origin:
         raise RepairSandboxError(
@@ -1548,6 +1717,11 @@ def create_repair_approval(
     patch_file = _under_workspace(workspace, patch_path, file_only=True)
     scope = json.loads(scope_file.read_text(encoding="utf-8"))
     verify_repair_scope(scope, workspace)
+    scope_origin = scope.get("origin_audit")
+    if scope_origin is not None and audit_run_id not in (None, scope_origin["run_id"]):
+        raise RepairSandboxError(
+            "REPAIR_ORIGIN_CONFLICT", "approval run differs from selected scope origin"
+        )
     candidate = inspect_repair_candidate(workspace, scope_file, patch_file)
     protected = _protected_paths(protected_paths or [])
     _check_protected(candidate, protected)
@@ -1557,7 +1731,13 @@ def create_repair_approval(
             "exact candidate confirmation is required",
         )
     normalized = _normalize_checks(checks)
-    origin = _repair_origin_binding(workspace, audit_run_id) if audit_run_id else None
+    origin = (
+        _verify_repair_origin(workspace, scope_origin)
+        if scope_origin is not None
+        else _repair_origin_binding(workspace, audit_run_id)
+        if audit_run_id
+        else None
+    )
     contract = {
         "checks": normalized,
         "docker_image": image,
@@ -1788,24 +1968,7 @@ def _verify_approval_origin_fields(approval: dict[str, Any]) -> None:
             raise RepairSandboxError(
                 "REPAIR_APPROVAL_TAMPERED", "confirmation digest is malformed"
             )
-        if origin is not None and (
-            not isinstance(origin, dict)
-            or set(origin)
-            != {
-                "run_id",
-                "candidate_sha256",
-                "manifest_sha256",
-                "event_sha256",
-                "sequence",
-            }
-            or not all(
-                _digest(origin.get(key))
-                for key in ("candidate_sha256", "manifest_sha256", "event_sha256")
-            )
-            or type(origin.get("sequence")) is not int
-            or origin["sequence"] < 1
-            or not isinstance(origin.get("run_id"), str)
-        ):
+        if origin is not None and not _origin_binding_shape(origin):
             raise RepairSandboxError(
                 "REPAIR_APPROVAL_TAMPERED", "origin audit binding is malformed"
             )
@@ -2173,7 +2336,7 @@ def _container_check(
         raise RepairSandboxError(
             "REPAIR_CONTAINER_NAME_COLLISION", "generated container name already exists"
         )
-    args = ["run", "--name", name, *_DOCKER_LIMITS]
+    args = ["run", "--pull=never", "--name", name, *_DOCKER_LIMITS]
     args.extend(["--tmpfs", "/tmp:rw,noexec,nosuid,size=64m"])
     args.extend(
         [

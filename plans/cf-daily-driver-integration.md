@@ -137,3 +137,30 @@ product integration. Named OS-vault connections pin user/workspace identity;
 minimal scopes, rotation, revocation and callback/session cleanup must be tested.
 Keep API-token mode an explicit expert choice. Verify separate-workspace consent
 before claiming general end-user onboarding is validated.
+
+## 12. Outstanding simplification and detection requirements
+
+The operator authorized these additions on October 15 after a one-time Astra
+senior-engineer review using ECC. These extend T0-T9; they are requirements,
+not completed fixes or permission to weaken checks. The review inspected installed
+ForgeLine 0.10.8 and this checkout. Confirm the authoritative ForgeLine source
+checkout before editing; do not patch installed site-packages as a substitute.
+
+| Priority / packet | Required change using existing surfaces | Acceptance evidence |
+| --- | --- | --- |
+| P0 / T3, T6 | Bind ForgeLine smoke and final transition to current source, commands, environment and outputs; reuse the existing `verify_tests` fingerprint/invalidation approach in `Orchestrator.smoke_gate` and `ship`. | Unchanged valid evidence reuses; changed source/manifest/toolchain, missing/corrupt evidence and expired mutable targets prevent promotion. |
+| P0 / T1, T3 | Keep static name-based QA attribution separate from behavioral evidence; connect actual collection, execution and mutation observations to the existing CF reconciliation. | A function name in a comment cannot supply behavioral proof; collected positive and naturally failing controls can; absent/skipped/truncated execution remains incomplete. |
+| P0 / T1, T6 | Resolve the reported detector misses: tuple assertions, universal `isinstance(x, object)`, unreachable/empty loops, empty parametrization, un-awaited coroutines, uncalled mock assertion attributes, vacuous unittest checks and shadowed duplicate tests. | Reproduce each reported miss, detect it on unchanged probes, retain legitimate controls and source locations; report per-case results, not an invented corpus accuracy. |
+| P0 / T1, T6 | Extend existing source/sink and credential modeling for `request.form[...]`, `.get("password")` and assignment aliases; assess `secure_filename` with path-use context rather than blanket trust. | Vulnerable direct/aliased inputs detected; framework shadowing, unrelated `.get`, benign fields and correctly contained paths remain clean; negative controls defeat unsafe sanitization. |
+| P1 / T2, T4, T5 | CF orchestrates the single scan → review → selected repair → verification workflow; ForgeLine owns feature invariants/gates. Keep advanced scaffolding optional for ordinary scans. | One candidate and next action across CLI/UI; existing-repo scan needs no SSAT; substantial feature changes retain their contract gates; no second scheduler or recursively nested repair loop. |
+| P1 / T2 | Consolidate duplicate erosion computation inside ForgeLine review (`judge_consistency` and direct review); use existing incremental scheduling and verified proof reuse across invocations. | Equivalent obligations/results with fewer actual duplicate executions; changed source/config/toolchain and corrupt outputs force RUN or BLOCK; measured matched executions/time. |
+| P1 / T5, T7 | Stop exhausted unchanged attempts under the existing dispatch budget; report recurring findings as observations, not prevented defects. | Persisted exhaustion stops dispatch; failed/interrupted attempts cannot promote; lessons alone cannot expand repair scope or count as measured prevention. |
+| P1 / T9 | Compact source distributions by excluding raster previews while retaining runtime modules, rules, UI, native profiles, textual documentation and rebuild capability. | Matched before/after archive sizes, identical wheel payloads, isolated package smoke and fixture controls; preserve public immutable artifacts and repository previews. |
+
+Service output must show current scope/candidate, applicable profiles, execution
+completeness, actionable findings, native evidence references, unresolved checks,
+repair outcome and one next action. Infrastructure failures and code findings
+remain distinct and unresolved until their own verification passes. No new product
+names, guard increases or removal of detector obligations is needed. External
+eight-repository adjudication remains paused; reported counts and probe results
+are acceptance inputs, not independent precision/recall measurements.

@@ -3,6 +3,10 @@
 Start with your existing repository and test suite. You do not need to learn
 internal engine names or introduce another development process.
 
+The Python source package retains text documentation and vector diagrams.
+Raster screenshots and animated previews remain in the GitHub documentation;
+they are not needed to install or run the scanner.
+
 | I want to… | Run |
 | --- | --- |
 | Review my code | `factory scan --root .` |
