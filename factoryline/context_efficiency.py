@@ -2261,93 +2261,6 @@ def _normalize_shard_retention(
     return retained
 
 
-def _accepted_shard_conflict(
-    workspace: Path,
-    artifact: dict[str, Any],
-    digest: str,
-    claims: Any,
-    accepted_shards: Any,
-    now: datetime | None,
-) -> dict[str, str] | None:
-    if not isinstance(accepted_shards, (list, tuple)):
-        return None
-    current_pairs = {
-        (str(claim.get("key", "")).strip().casefold(), _canonical(claim.get("value")))
-        for claim in claims
-        if isinstance(claim, dict)
-    }
-    for accepted in accepted_shards[:MAX_SHARD_RECORDS]:
-        if not isinstance(accepted, dict) or set(accepted) != {"candidate", "review"}:
-            continue
-        other, reviewed = accepted["candidate"], accepted["review"]
-        if not _valid_accepted_shard(workspace, artifact, other, reviewed, now):
-            continue
-        for old in other.get("claims", []):
-            if not isinstance(old, dict):
-                continue
-            pair = (
-                str(old.get("key", "")).strip().casefold(),
-                _canonical(old.get("value")),
-            )
-            if any(key == pair[0] and value != pair[1] for key, value in current_pairs):
-                return {
-                    "candidate_sha256": digest,
-                    "accepted_candidate_sha256": other.get("candidate_sha256"),
-                    "key": pair[0],
-                    "basis": "same type and normalized key with different canonical values",
-                }
-    return None
-
-
-def _valid_accepted_shard(
-    workspace: Path,
-    current: dict[str, Any],
-    other: Any,
-    reviewed: Any,
-    now: datetime | None,
-) -> bool:
-    if not isinstance(other, dict) or other.get("shard_type") != current.get(
-        "shard_type"
-    ):
-        return False
-    body = {key: value for key, value in other.items() if key != "artifact_path"}
-    if other.get("candidate_sha256") != _shard_digest(body, "candidate_sha256"):
-        return False
-    path = other.get("artifact_path")
-    if not isinstance(path, str) or not _stored_shard_matches(workspace, path, body):
-        return False
-    try:
-        if not validate_context_shard_candidate(workspace, other, now=now)["valid"]:
-            return False
-    except ContextEfficiencyError:
-        return False
-    if not isinstance(reviewed, dict):
-        return False
-    review_body = {
-        key: value for key, value in reviewed.items() if key != "artifact_path"
-    }
-    if (
-        reviewed.get("schema") != SHARD_REVIEW_SCHEMA
-        or reviewed.get("decision") != "accept"
-        or reviewed.get("state") != "CALLER_REVIEWED_ACCEPTED"
-        or reviewed.get("reviewer_identity_authenticated") is not False
-        or reviewed.get("candidate_sha256") != other.get("candidate_sha256")
-        or reviewed.get("review_sha256") != _shard_digest(review_body, "review_sha256")
-    ):
-        return False
-    return isinstance(reviewed.get("artifact_path"), str) and _stored_shard_matches(
-        workspace, reviewed["artifact_path"], review_body
-    )
-
-
-def _stored_shard_matches(workspace: Path, relative: str, body: dict[str, Any]) -> bool:
-    try:
-        path, _ = _shard_relative_path(workspace, relative, "shard artifact path")
-        return _read_bounded(path, MAX_SHARD_ARTIFACT_BYTES) == _canonical(body) + b"\n"
-    except (ContextEfficiencyError, OSError):
-        return False
-
-
 def _candidate_source_state(
     workspace: Path, artifact: dict[str, Any], packet_path: Path
 ) -> str:
@@ -2388,6 +2301,14 @@ def _candidate_source_state(
         AttributeError,
     ):
         return "STALE"
+
+
+def _stored_shard_matches(workspace: Path, relative: str, body: dict[str, Any]) -> bool:
+    try:
+        path, _ = _shard_relative_path(workspace, relative, "shard artifact path")
+        return _read_bounded(path, MAX_SHARD_ARTIFACT_BYTES) == _canonical(body) + b"\n"
+    except (ContextEfficiencyError, OSError):
+        return False
 
 
 def _accepted_shard_conflict(

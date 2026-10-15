@@ -41,7 +41,7 @@ function fixture({ failedExtractor = false, badDecision = false } = {}) {
     factory_lookup_execution: {
       schema: 'factory.osv-lookup-execution.v1',
       upstream_commit: 'a14aa98ab8408547083d4411091c5fbaf5b47d8e',
-      database_sha256: '36ef7d92e174230b8c7c26b952562be23837472c2239b6752de64d5d683a800e',
+      database_sha256: '013a03eb8d5a67818901fe0632728a5f1011621d6b956f14b25e5f71a7b82c5c',
       catalog_advisories: 1,
       catalog_sha256: catalog,
       queries: [query],

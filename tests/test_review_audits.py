@@ -2371,6 +2371,69 @@ def test_standalone_uncalled_mock_assertion_attribute_stays_hollow(tmp_path):
     assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
 
 
+def test_uninvoked_mock_assertion_is_reported_alongside_real_assertion(tmp_path):
+    (tmp_path / "test_mock_attribute.py").write_text(
+        "from unittest.mock import Mock\n"
+        "def test_behavior():\n"
+        "    send = Mock()\n"
+        "    perform(send)\n"
+        "    assert render() == '<ok>'\n"
+        "    send.assert_called_with\n",
+        encoding="utf-8",
+    )
+    findings = security_scan(tmp_path)["findings"]
+    assert [(item["code"], item["line"]) for item in findings] == [
+        ("QUALITY_WEAK_TEST_ORACLE", 6)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("source", "expected_line"),
+    [
+        (
+            "async def fetch():\n    return False\n"
+            "def test_fetch():\n    assert fetch()\n",
+            4,
+        ),
+        (
+            "async def fetch():\n    return False\n"
+            "def test_fetch():\n    result = fetch()\n    assert result\n",
+            5,
+        ),
+    ],
+    ids=["direct", "assigned"],
+)
+def test_asserting_unawaited_local_async_result_is_reported(
+    tmp_path, source, expected_line
+):
+    (tmp_path / "test_async_result.py").write_text(source, encoding="utf-8")
+    findings = security_scan(tmp_path)["findings"]
+    assert [
+        (item["code"], item["line"])
+        for item in findings
+        if item["code"] == "QUALITY_UNAWAITED_COROUTINE"
+    ] == [("QUALITY_UNAWAITED_COROUTINE", expected_line)]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "async def fetch():\n    return True\n"
+        "async def test_fetch():\n    assert await fetch()\n",
+        "def fetch():\n    return True\ndef test_fetch():\n    assert fetch()\n",
+        "async def fetch():\n    return True\n"
+        "def test_fetch():\n    result = fetch()\n    result = True\n    assert result\n",
+        "async def fetch():\n    return True\n"
+        "def test_fetch():\n    assert asyncio.run(fetch())\n",
+    ],
+)
+def test_awaited_or_reassigned_async_assertions_stay_clean(tmp_path, source):
+    (tmp_path / "test_async_result.py").write_text(source, encoding="utf-8")
+    assert (
+        "QUALITY_UNAWAITED_COROUTINE" not in security_scan(tmp_path)["finding_counts"]
+    )
+
+
 @pytest.mark.parametrize(
     "source",
     [

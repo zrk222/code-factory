@@ -44,27 +44,21 @@ SECURITY_SCAN_STATUS_SCHEMA = "factory.security-scan-status.v1"
 MAX_SECURITY_SCAN_RECEIPT_BYTES = 10_000_000
 MAX_SECURITY_SCAN_SOURCE_BYTES = 64 * 1024 * 1024
 MAX_SECURITY_SCAN_DISPLAY_FINDINGS = 24
-AUTHORITY = {
-    "execution": False,
-    "approval": False,
-    "repair": False,
-    "merge": False,
-    "publication": False,
-    "deployment": False,
-    "signing": False,
-    "messaging": False,
-    "credential": False,
-    "connector": False,
-}
+AUTHORITY = dict.fromkeys(
+    "execution approval repair merge publication deployment signing messaging credential connector".split(),
+    False,
+)
 DAILY_SCHEDULE_MAX_BYTES = 1_048_576
 
 
 def project_daily_action(
-    status: dict[str, Any], schedule: dict[str, Any] | None = None
+    status: dict[str, Any],
+    schedule: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Project one safe next action from validated status and a fresh plan."""
-    allowed_states = {member.value for member in MissionControlState}
-    if not isinstance(status, dict) or status.get("state") not in allowed_states:
+    """Choose one safe action from validated status and plan."""
+    if not isinstance(status, dict) or status.get("state") not in {
+        member.value for member in MissionControlState
+    }:
         raise ValueError("daily action requires a known Mission Control state")
     blockers = status.get("blockers")
     if not isinstance(blockers, dict) or any(
@@ -74,7 +68,7 @@ def project_daily_action(
         raise ValueError("daily action requires nonnegative blocker counts")
     plan, manifest_sha256, audit_state, counts = _daily_schedule_projection(schedule)
     state = status["state"]
-    action = _daily_primary_action(state, blockers, audit_state, counts)
+    action = _daily_primary_action(state, blockers, audit_state, counts, schedule)
     return {
         "schema": "factory.daily-action.v1",
         "evidence_state": state,
@@ -98,51 +92,48 @@ def project_daily_action(
     }
 
 
-def _daily_primary_action(state, blockers, audit_state, counts):
-    primary_actions = (
-        (
-            state == MissionControlState.BLOCKED.value or any(blockers.values()),
-            ("investigate_blockers", "Investigate blocked evidence before proceeding"),
-        ),
-        (
-            audit_state == "INCOMPLETE",
-            ("repair_schedule_input", "Correct the supplied schedule manifest"),
-        ),
-        (
-            audit_state == "PLAN_ONLY" and counts["BLOCK"] > 0,
-            (
-                "resolve_blocked_checks",
-                "Resolve blocked proof inputs before running checks",
-            ),
-        ),
-        (
-            audit_state == "PLAN_ONLY" and counts["RUN"] > 0,
-            ("run_required_checks", "Run the required checks in the approved workflow"),
-        ),
-        (
-            state == MissionControlState.REVIEW_REQUIRED.value,
-            ("review_evidence", "Review the current evidence before proceeding"),
-        ),
-        (
-            state == MissionControlState.EVIDENCE_MISSING.value,
-            (
-                "inspect_evidence_gaps",
-                "Inspect evidence gaps and define this task's checks",
-            ),
-        ),
-        (
-            audit_state == "PLAN_ONLY" and counts["SKIP"] > 0,
-            ("review_skipped_checks", "Review why checks were marked unaffected"),
-        ),
-        (
-            audit_state == "PLAN_ONLY",
-            ("review_reused_proofs", "Review the exact reused proof receipts"),
-        ),
+def _daily_primary_action(state, blockers, audit_state, counts, schedule):
+    if state == MissionControlState.BLOCKED.value or any(blockers.values()):
+        return "investigate_blockers", "Inspect blocked evidence"
+    if isinstance(schedule, dict) and schedule.get("state") == "INCOMPLETE":
+        return (
+            "repair_schedule_input",
+            f"Inspect schedule ({schedule.get('error_code', 'SCHEDULE_INPUT_INVALID')})",
+        )
+    if audit_state == "PLAN_ONLY":
+        if counts["BLOCK"]:
+            return "resolve_blocked_checks", "Review blocked check inputs"
+        if counts["RUN"]:
+            return (
+                "run_required_checks",
+                f"Review {counts['RUN']} checks; NOT_RUN, approval unresolved",
+            )
+    if state == MissionControlState.REVIEW_REQUIRED.value:
+        return "review_evidence", "Review current evidence"
+    if state == MissionControlState.EVIDENCE_MISSING.value:
+        return "inspect_evidence_gaps", "Inspect evidence gaps"
+    if audit_state == "PLAN_ONLY":
+        return (
+            ("review_skipped_checks", "Review skipped checks")
+            if counts["SKIP"]
+            else ("review_reused_proofs", "Review reused proofs")
+        )
+    return "select_task_checks", "Select task checks"
+
+
+def _daily_read_command(root, schedule_path):
+    if root is None:
+        return None
+
+    def quote(value):
+        return "'" + str(value).replace("'", "''") + "'"
+
+    route = (
+        "mission-control status"
+        if schedule_path is None
+        else f"home --schedule {quote(schedule_path)}"
     )
-    return next(
-        (action for matched, action in primary_actions if matched),
-        ("select_task_checks", "Select the checks for this task"),
-    )
+    return f"factory {route} --root {quote(Path(root).resolve())} --json"
 
 
 def _daily_schedule_projection(schedule):
@@ -193,8 +184,8 @@ def _daily_plan_hashes_valid(plan):
     )
 
 
-def incomplete_daily_action() -> dict[str, Any]:
-    """Represent a failed status read without turning missing evidence into clean."""
+def incomplete_daily_action(root: Path | None = None) -> dict[str, Any]:
+    """Keep a failed status read explicitly incomplete."""
     return {
         "schema": "factory.daily-action.v1",
         "evidence_state": "INCOMPLETE",
@@ -208,7 +199,7 @@ def incomplete_daily_action() -> dict[str, Any]:
         "primary_action": {
             "id": "inspect_status_failure",
             "label": "Mission Control status is incomplete; inspect diagnostics",
-            "command": None,
+            "command": _daily_read_command(root, None),
         },
         "authority": dict(AUTHORITY),
         "claim_boundary": "Status could not be read; no clean or complete result is inferred.",
@@ -220,7 +211,7 @@ def read_daily_action(root: Path, schedule: str | None = None) -> dict[str, Any]
     try:
         return mission_control_status(root, schedule)["daily_action"]
     except (OSError, ValueError, KeyError, TypeError, RuntimeError):
-        return incomplete_daily_action()
+        return incomplete_daily_action(root)
 
 
 def daily_schedule_plan(root: Path, supplied_path: str | Path) -> dict[str, Any]:
@@ -1055,12 +1046,14 @@ def mission_control_status(
             "repair code, alter Git, or perform any provider action."
         ),
     }
-    result["daily_action"] = project_daily_action(
+    action = project_daily_action(
         result,
         daily_schedule_plan(workspace, schedule_path)
         if schedule_path is not None
         else None,
     )
+    action["primary_action"]["command"] = _daily_read_command(workspace, schedule_path)
+    result["daily_action"] = action
     return result
 
 

@@ -645,64 +645,82 @@ def _oracle_stable_call(candidate, call, scope, body, async_only):
         for child in _body_nodes(stmt)
     ):
         return False
-    bindings = [
-        item
-        for stmt in body
-        for item in _oracle_bound_names(stmt)
-        if item in {call.func.id, "*"}
-    ]
-    return bindings == [call.func.id]
+    bindings = [name for stmt in body for name in _oracle_bound_names(stmt)]
+    return [name for name in bindings if name in {call.func.id, "*"}] == [call.func.id]
+
+
+def _later_test_binding(owner, node):
+    for item in getattr(owner, "body", ()):
+        if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if item.name == node.name and item.lineno > node.lineno:
+            return item
+    return None
+
+
+def _asserted_coroutine_call(child, following):
+    assigned = (
+        isinstance(child, ast.Assign)
+        and len(child.targets) == 1
+        and isinstance(child.targets[0], ast.Name)
+        and isinstance(following, ast.Assert)
+        and isinstance(following.test, ast.Name)
+        and following.test.id == child.targets[0].id
+    )
+    assertion = (
+        following if assigned else child if isinstance(child, ast.Assert) else None
+    )
+    return assertion, child.value if assigned else assertion.test if assertion else None
 
 
 def test_execution_findings(node, relative, parents, module):
-    """Report shadowed test definitions and discarded local async-helper calls."""
+    """Report shadowed tests and local async helpers used without awaiting."""
     from .review_audits import _body_nodes, _security_finding
 
     owner = (parents.get(id(node)) or ((module, node),))[-1][0]
-    shadow = (
-        next(
-            (
-                item
-                for item in owner.body
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and item.name == node.name
-                and item.lineno > node.lineno
-            ),
-            None,
-        )
-        if isinstance(owner, (ast.Module, ast.ClassDef))
-        else None
-    )
-    if shadow is not None:
+    shadow = _later_test_binding(owner, node)
+    if shadow:
         return [
             _security_finding(
                 "QUALITY_SHADOWED_TEST",
                 relative,
                 node,
-                "A later direct test definition replaces this test binding; only the final definition is collected.",
+                "A later direct test definition replaces this test binding.",
                 "MEDIUM",
                 symbol=node.name,
                 shadowed_by_line=shadow.lineno,
             )
         ], True
     findings = []
-    for child in _body_nodes(ast.Module(body=node.body, type_ignores=[])):
-        if (
-            isinstance(child, ast.Expr)
-            and isinstance(child.value, ast.Call)
-            and assigned_sync_function_call(child.value, node, module, True)
+    for child, following in zip(node.body, [*node.body[1:], None]):
+        assertion, call = _asserted_coroutine_call(child, following)
+        if isinstance(call, ast.Call) and assigned_sync_function_call(
+            call, node, module, True
         ):
             findings.append(
-                _security_finding(
-                    "QUALITY_UNAWAITED_COROUTINE",
-                    relative,
-                    child,
-                    "A direct call to a local async test helper creates a coroutine that is discarded without execution.",
-                    "MEDIUM",
-                    symbol=node.name,
-                )
+                _unawaited_coroutine_finding(relative, assertion, node.name)
             )
+    findings += [
+        _unawaited_coroutine_finding(relative, child, node.name)
+        for child in _body_nodes(ast.Module(body=node.body, type_ignores=[]))
+        if isinstance(child, ast.Expr)
+        and isinstance(child.value, ast.Call)
+        and assigned_sync_function_call(child.value, node, module, True)
+    ]
     return findings, False
+
+
+def _unawaited_coroutine_finding(relative, source, symbol):
+    from .review_audits import _security_finding
+
+    return _security_finding(
+        "QUALITY_UNAWAITED_COROUTINE",
+        relative,
+        source,
+        "Local async helper is used without awaiting its result.",
+        "MEDIUM",
+        symbol=symbol,
+    )
 
 
 def _oracle_bound_names(statement: ast.AST) -> set[str]:
@@ -4935,11 +4953,9 @@ def _weak_assertion_leaf_reason(node, leaf, aliases, audit):
 
 def builtin_repr_type_check(node):
     """Match a repr type-only oracle only when its names resolve to builtins."""
-    return _builtin_repr_call_shape(node) and not _builtin_repr_names_shadowed(node)
-
-
-def _builtin_repr_call_shape(node):
-    if not _builtin_repr_is_call(node, "isinstance", 2):
+    if not _builtin_repr_is_call(node, "isinstance", 2) or _builtin_repr_names_shadowed(
+        node
+    ):
         return False
     rendered, expected_type = node.args
     return (
@@ -4960,6 +4976,8 @@ def _builtin_repr_is_call(node, name, argument_count):
 
 
 def _builtin_repr_names_shadowed(node, names=None):
+    from .review_audits import _scope_parameters
+
     builtin_names = names or {"isinstance", "repr", "str"}
     if builtin_names & set(getattr(node, "_security_shadowed_names", set())):
         return True
@@ -4968,29 +4986,12 @@ def _builtin_repr_names_shadowed(node, names=None):
     )
     if scope is None:
         return False
-    if builtin_names & _builtin_repr_scope_names(scope):
+    scope_names = set(getattr(scope, "_security_local_names", set()))
+    scope_names.update(_security_scope_local_names(scope))
+    scope_names.update(getattr(scope, "_security_parameter_names", set()))
+    scope_names.update(getattr(scope, "_security_nonlocal_names", set()))
+    scope_names.update(_scope_parameters(scope))
+    if builtin_names & scope_names:
         return True
     module = _security_module_scope(scope) or getattr(node, "_oracle_module", None)
     return bool(module and builtin_names & _security_scope_local_names(module))
-
-
-def _builtin_repr_scope_names(scope):
-    names = set(getattr(scope, "_security_local_names", set()))
-    names.update(_security_scope_local_names(scope))
-    names.update(getattr(scope, "_security_parameter_names", set()))
-    names.update(getattr(scope, "_security_nonlocal_names", set()))
-    arguments = getattr(scope, "args", None)
-    if arguments is not None:
-        names.update(_builtin_repr_argument_names(arguments))
-    return names
-
-
-def _builtin_repr_argument_names(arguments):
-    parameters = [
-        *arguments.posonlyargs,
-        *arguments.args,
-        *arguments.kwonlyargs,
-        arguments.vararg,
-        arguments.kwarg,
-    ]
-    return {argument.arg for argument in parameters if argument is not None}

@@ -328,21 +328,16 @@ def _home(
     modules = _lazy_import("assembly", "detect")()
     factory_root = root / ".factory"
     counts = {
-        "receipts": len(list((factory_root / "receipts").glob("*.json")))
+        name: len(list((factory_root / directory).glob("*.json")))
         if factory_root.exists()
-        else 0,
-        "traces": len(list((factory_root / "traces").glob("*.json")))
-        if factory_root.exists()
-        else 0,
-        "challenges": len(list((factory_root / "challenges").glob("*.json")))
-        if factory_root.exists()
-        else 0,
-        "passports": len(list((factory_root / "passports").glob("*.json")))
-        if factory_root.exists()
-        else 0,
-        "loop_passports": len(list((factory_root / "loop-passports").glob("*.json")))
-        if factory_root.exists()
-        else 0,
+        else 0
+        for name, directory in (
+            ("receipts", "receipts"),
+            ("traces", "traces"),
+            ("challenges", "challenges"),
+            ("passports", "passports"),
+            ("loop_passports", "loop-passports"),
+        )
     }
     installed = sum(module.installed for module in modules)
     from .mission_control_status import read_daily_action
@@ -361,11 +356,16 @@ def _home(
     if as_json:
         print(json.dumps(payload, indent=2))
     else:
+        print(f"action: {daily_action['primary_action']['label']}")
+        print(
+            f"state: {daily_action['evidence_state']} / {daily_action['audit_state']}"
+        )
+        print(f"scope: {payload['root']}")
+        if daily_action["blockers"]:
+            print(f"blockers: {daily_action['blockers']}")
         print(f"bin: {payload['bin']}")
         print(f"description: {payload['description']}")
-        print(f"root: {payload['root']}")
         print(f"bricks: {installed} of {len(modules)} installed")
-        print(f"action: {daily_action['primary_action']['label']}")
         print("proof:")
         for name, count in counts.items():
             print(f"  {name}: {count}")

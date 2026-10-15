@@ -4153,21 +4153,35 @@ def _weak_test_oracle_finding(
         and _normalized_call_name(child, aliases) in (weak_helper_names or set())
     )
     weak = [(child, reason) for child, reason in weak if reason]
-    if not weak or _local_assertion_nodes(
-        node,
-        aliases,
-        helper_names,
-        unittest_context=unittest_context,
-        strong=True,
-        nodes=nodes,
-    ):
+    strong = bool(
+        _local_assertion_nodes(
+            node,
+            aliases,
+            helper_names,
+            unittest_context=unittest_context,
+            strong=True,
+            nodes=nodes,
+        )
+    )
+    if strong:
+        weak = [
+            (child.value, "uninvoked mock assertion attribute")
+            for child in nodes
+            if isinstance(child, ast.Expr)
+            and isinstance(child.value, ast.Attribute)
+            and _mock_argument_oracle(child.value, aliases, uncalled=True)
+        ]
+    if not weak:
         return None
     reasons = sorted({reason for _, reason in weak})
+    message = "; ".join(reasons)
+    if not strong:
+        message += ". Assert the independently expected value or state"
     return _security_finding(
         "QUALITY_WEAK_TEST_ORACLE",
         relative,
         weak[0][0],
-        "; ".join(reasons) + ". Assert the independently expected value or state.",
+        message + ".",
         "MEDIUM",
         symbol=node.name,
         reasons=reasons,

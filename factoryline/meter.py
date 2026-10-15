@@ -138,23 +138,19 @@ class stopwatch:
 
 
 def summarize(
-    root: Path, *, baseline_tokens_per_run: int = 4000, runs_projected: int = 1000
+    root: Path,
+    *,
+    baseline_tokens_per_run: int = 4000,
+    runs_projected: int = 1000,
+    stages=None,
 ) -> dict:
-    """Aggregate the meter log into a real, assumptions-stated savings summary.
-
-    baseline_tokens_per_run: what a *stateless agent* would spend re-deriving and
-        re-generating this workflow every single run (declare your own; default is
-        a deliberately conservative 4k).
-    runs_projected: how many production runs you project (savings compound here).
-    """
-    log = MeterLog(root)
-    stages = log.stages()
+    """Aggregate recorded stages using declared savings assumptions."""
+    stages = MeterLog(root).stages() if stages is None else stages
     total = Meter()
     for s in stages:
         total = total.merge(Meter(s.wall_ms, s.model_calls, s.tokens_in, s.tokens_out))
 
-    # Honesty guard: with no measured stages, there is nothing to compare. Refuse
-    # to print a savings percentage rather than show a misleading "100%".
+    # No measured stages means no honest savings percentage.
     if not stages:
         return {
             "schema": "factory.meter.summary.v2",
@@ -180,8 +176,7 @@ def summarize(
         (tokens_saved / baseline_total_tokens * 100) if baseline_total_tokens else 0.0
     )
 
-    # Second honesty guard: if modules reported no token usage, say so explicitly
-    # rather than implying the savings are proven. wall_ms is always real.
+    # Missing token usage is unknown; measured wall time remains real.
     tokens_reported = any(stage.usage_reported for stage in stages)
     flow = _flow_metrics(stages)
     return {
@@ -449,10 +444,10 @@ def _flow_metrics(stages: list[StageTiming]) -> dict:
     }
 
 
-def overhead(root: Path) -> dict:
+def overhead(root: Path, *, stages=None) -> dict:
     """Measured per-gate wall-clock overhead; no benchmark baseline is invented."""
     groups: dict[tuple[str, str], list[StageTiming]] = {}
-    for timing in MeterLog(root).stages():
+    for timing in stages if stages is not None else MeterLog(root).stages():
         groups.setdefault((timing.module, timing.stage), []).append(timing)
     gates = []
     for (module, stage), rows in sorted(groups.items()):
@@ -479,17 +474,44 @@ def overhead(root: Path) -> dict:
     }
 
 
-def live_snapshot(
-    root: Path, *, baseline_tokens_per_run: int = 4000, runs_projected: int = 1000
-) -> dict:
-    """Return one current, local-only meter observation for dashboards or watches."""
-    log = MeterLog(root)
-    stages = log.stages()
+def _live_activity(stages: list[StageTiming]) -> dict:
     successful = sum(stage.ok for stage in stages)
     failed = len(stages) - successful
     run_ids = {stage.run_id for stage in stages if stage.run_id}
     known_features = sorted({stage.feature for stage in stages if stage.feature})
     latest = stages[-1] if stages else None
+    keys = "module stage feature run_id ok wall_ms usage_reported usage_quality mission_id recorded_at".split()
+    optional = {"feature", "run_id", "mission_id", "recorded_at"}
+    latest_data = (
+        {
+            key: (value or None) if key in optional else value
+            for key, value in vars(latest).items()
+            if key in keys
+        }
+        if latest
+        else None
+    )
+    return {
+        "runs_observed": len(run_ids) if run_ids else None,
+        "features_observed": known_features,
+        "stages_successful": successful,
+        "stages_failed": failed,
+        "stage_success_rate": round(successful / len(stages), 4) if stages else None,
+        "latest_stage": latest_data,
+    }
+
+
+def live_snapshot(
+    root: Path,
+    *,
+    baseline_tokens_per_run: int = 4000,
+    runs_projected: int = 1000,
+    stages=None,
+) -> dict:
+    """Return one current, local-only meter observation for dashboards or watches."""
+    log = MeterLog(root)
+    stages = log.stages() if stages is None else stages
+    activity = _live_activity(stages)
     return {
         "schema": "factory.meter.live.v2",
         "markers": [
@@ -505,33 +527,10 @@ def live_snapshot(
             root,
             baseline_tokens_per_run=baseline_tokens_per_run,
             runs_projected=runs_projected,
+            stages=stages,
         ),
-        "overhead": overhead(root),
-        "activity": {
-            "runs_observed": len(run_ids) if run_ids else None,
-            "features_observed": known_features,
-            "stages_successful": successful,
-            "stages_failed": failed,
-            "stage_success_rate": round(successful / len(stages), 4)
-            if stages
-            else None,
-            "latest_stage": (
-                {
-                    "module": latest.module,
-                    "stage": latest.stage,
-                    "feature": latest.feature or None,
-                    "run_id": latest.run_id or None,
-                    "ok": latest.ok,
-                    "wall_ms": latest.wall_ms,
-                    "usage_reported": latest.usage_reported,
-                    "usage_quality": latest.usage_quality,
-                    "mission_id": latest.mission_id or None,
-                    "recorded_at": latest.recorded_at or None,
-                }
-                if latest
-                else None
-            ),
-        },
+        "overhead": overhead(root, stages=stages),
+        "activity": activity,
         "scope_limits": [
             "This is a local append-only log snapshot, not a machine-independent benchmark.",
             "Token totals are measured only when a module reports its standard meter block.",

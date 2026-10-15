@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Refresh the checksum-bound offline OSV PyPI snapshot after its previous upstream
+  object generation expired; retain matching worker/profile/verifier identities.
+- Simplify Studio refresh ownership and share overlapping dashboard reads. Remove
+  overwritten wrappers and global fetch interception; keep failed reads visible.
+- Parse meter stages once per Studio dashboard request and reuse that snapshot
+  across projections. New requests reload the ledger; no cross-request cache.
+- Add the shared ForgeLine JEV packet adapter for advisory evidence review,
+  retaining deterministic gate outcomes and rejecting duplicate context records.
+
+- Detect local async helpers used as truthy assertions, including an immediately
+  assigned coroutine result. Report unused proven mock assertion attributes even
+  beside a meaningful assertion; retain awaited, rebound and non-mock controls.
+
 - Show current audit findings in Studio and prepare sealed proposals from an
   explicit selection. Preserve selected controls during unchanged polling, reject
   stale or active-run proposals, and distinguish a pause request from a stopped

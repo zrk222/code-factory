@@ -559,6 +559,8 @@ def _monitor(child, unit, readers, failed, heartbeat, deadline: float) -> str:
         if child.poll() is not None and not any(
             reader.is_alive() for reader in readers
         ):
+            if failed.is_set():
+                return "output limit exceeded or stream read failed"
             return ""
         time.sleep(0.05)
 

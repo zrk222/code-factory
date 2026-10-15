@@ -136,9 +136,25 @@ def test_home_operator_flow_shows_plan_only_action_without_dummy_commands(
     assert action["execution"] == "NOT_RUN"
     assert action["proof_counts"]["RUN"] == 1
     assert action["primary_action"]["id"] == "run_required_checks"
-    assert payload["next"] == []
+    assert "NOT_RUN" in action["primary_action"]["label"]
+    assert len(payload["next"]) == 1
+    assert payload["next"][0] == action["primary_action"]["command"]
+    assert payload["next"][0].startswith("factory home ")
+    assert "--root" in payload["next"][0]
+    assert "--schedule 'schedule.json'" in payload["next"][0]
+    assert payload["next"][0].endswith(" --json")
     assert not any("init" in value or "<feature>" in value for value in payload["next"])
     assert not (tmp_path / ".factory").exists()
+
+
+def test_daily_action_reader_command_quotes_root_with_shell_metacharacters(tmp_path):
+    from factoryline.mission_control_status import _daily_read_command
+
+    root = tmp_path / "space ' &; folder"
+    assert _daily_read_command(root, None) == (
+        f"factory mission-control status --root "
+        f"'{str(root.resolve()).replace(chr(39), chr(39) * 2)}' --json"
+    )
 
 
 def test_home_reports_status_reader_failure_as_incomplete(
@@ -152,7 +168,7 @@ def test_home_reports_status_reader_failure_as_incomplete(
 
     monkeypatch.setattr(status, "mission_control_status", fail)
     direct = status.read_daily_action(tmp_path)
-    assert direct == status.incomplete_daily_action()
+    assert direct == status.incomplete_daily_action(tmp_path)
     assert direct["execution"] == "NOT_RUN"
     assert not any(direct["authority"].values())
     assert cli_main(["home", "--root", str(tmp_path), "--json"]) == 1
@@ -160,6 +176,20 @@ def test_home_reports_status_reader_failure_as_incomplete(
     assert payload["daily_action"]["audit_state"] == "INCOMPLETE"
     assert payload["daily_action"]["error_code"] == "STATUS_READ_FAILED"
     assert payload["daily_action"]["blockers"] == {}
+    assert payload["next"] == [payload["daily_action"]["primary_action"]["command"]]
+
+
+def test_home_fresh_workspace_shows_one_scoped_read_action(tmp_path, capsys):
+    from factoryline.cli import main as cli_main
+
+    assert cli_main(["home", "--root", str(tmp_path), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    action = payload["daily_action"]
+    assert action["evidence_state"] == "evidence_missing"
+    assert action["primary_action"]["id"] == "inspect_evidence_gaps"
+    assert len(payload["next"]) == 1
+    assert "mission-control status --root" in payload["next"][0]
+    assert "Inspect evidence gaps" in action["primary_action"]["label"]
 
 
 def test_daily_action_rejects_boolean_counts_and_preserves_plan_only_states(tmp_path):
@@ -193,6 +223,7 @@ def test_daily_schedule_rejects_duplicate_keys_oversize_and_source_escape(tmp_pa
     from factoryline.mission_control_status import (
         DAILY_SCHEDULE_MAX_BYTES,
         daily_schedule_plan,
+        mission_control_status,
     )
 
     candidate = tmp_path / "plan.json"
@@ -212,7 +243,12 @@ def test_daily_schedule_rejects_duplicate_keys_oversize_and_source_escape(tmp_pa
         ),
         encoding="utf-8",
     )
-    assert daily_schedule_plan(tmp_path, "plan.json")["state"] == "INCOMPLETE"
+    invalid = daily_schedule_plan(tmp_path, "plan.json")
+    assert invalid["state"] == "INCOMPLETE"
+    action = mission_control_status(tmp_path, "plan.json")["daily_action"]
+    assert action["primary_action"]["id"] == "repair_schedule_input"
+    assert invalid["error_code"] in action["primary_action"]["label"]
+    assert action["primary_action"]["command"].startswith("factory home ")
     candidate.write_bytes(b" " * (DAILY_SCHEDULE_MAX_BYTES + 1))
     assert daily_schedule_plan(tmp_path, "plan.json")["state"] == "INCOMPLETE"
     assert daily_schedule_plan(tmp_path, "../escape.json")["state"] == "INCOMPLETE"

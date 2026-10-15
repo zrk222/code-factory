@@ -1,11 +1,4 @@
-"""Optional Jev-compatible classification for retrieved CF rules.
-
-Jev is deliberately an advisory classifier here.  BM25/BM25F finds the
-candidate rules locally; an injected transport may classify that bounded set.
-No provider call is made by default, and a missing/invalid provider always
-falls back to human review.  The result can never approve, merge, publish,
-weaken a gate, or grant credentials.
-"""
+"""Optional advisory Jev classifier; local retrieval is deterministic and failures fail closed."""
 
 from __future__ import annotations
 
@@ -1249,3 +1242,55 @@ def _fused_rule_score(
             jev_score, "Jev rule score"
         )
     return round(fused, 8), str(rule["ruleId"])
+
+
+def _valid_forgeline_context(context):
+    return context.get("schema") == "forge.jev-context.v1" and context.get(
+        "profile"
+    ) in {"requirements", "implementation", "test_evidence", "repair"}
+
+
+def review_forgeline_packet(packet, *, transport=None):
+    """Review bound ForgeLine evidence without changing deterministic gates."""
+    try:
+        contexts = [
+            e["provenance"]
+            for e in packet["evidence"]
+            if e["kind"] == "forgeline_context"
+        ]
+        if len(contexts) != 1:
+            raise JevClassificationError("one context required")
+        context = contexts[0]
+        checked = build_evidence_review_input(
+            packet, candidate_sha256=context["candidate_sha256"]
+        )["packet"]
+        if not _valid_forgeline_context(context):
+            raise JevClassificationError("invalid context")
+        manifest, material = context["source_manifest"], context["review_material"]
+        candidate = _digest(manifest)
+        if (
+            not isinstance(manifest, list)
+            or not isinstance(material, Mapping)
+            or not isinstance(context["deterministic_result"], Mapping)
+            or context["candidate_sha256"] != candidate
+            or checked["receipt_sha256"] != _digest(context)
+            or context["material_sha256"] != _digest(material)
+        ):
+            raise JevClassificationError("invalid hashes")
+    except (JevClassificationError, ValueError, TypeError, KeyError) as exc:
+        return {
+            "schema": "factory.jev-evidence-review-result.v1",
+            "status": "FORGE_CONTEXT_INVALID",
+            "claims": [],
+            "fallback_reason": type(exc).__name__,
+            "authority": "none",
+            "release_decision": False,
+        }
+    result = review_evidence(checked, candidate_sha256=candidate, transport=transport)
+    return {
+        **result,
+        "profile": context["profile"],
+        "deterministic_result": context["deterministic_result"],
+        "authority": "none",
+        "release_decision": False,
+    }
