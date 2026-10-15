@@ -275,7 +275,7 @@ explicitly registered by the caller. Their observations are experimental, not
 model certification or accuracy evidence. The source taxonomy and manifest define the same routes for
 Junie while keeping execution and identity limits visible.
 
-## Native scanner expansion — core 0.48.1 / editor 1.1.4 source preview
+## Native scanner expansion — core 0.48.2 / editor 1.2.0 source preview
 
 **Fixed:** native scanner controls require vulnerable and safe results bound to
 image, profile and source hashes. Missing evidence remains incomplete.

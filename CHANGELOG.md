@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.48.2 (candidate; publication pending)
+
+- Coordinate core 0.48.2 and editor 1.2.0 under their existing distribution IDs
+  so supported package and editor update checks can discover the new versions.
 - Extend request-to-sink analysis through resolved local helper returns and
   argument bindings for HTTP, file and SQL calls. Check upload destination
   components independently of filename sanitization; retain shadowing and
