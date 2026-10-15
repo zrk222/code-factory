@@ -103,3 +103,15 @@ unverified; fixture tests do not prove those flows.
 New-issue creation, background synchronization and Linear agent sessions remain
 follow-on work. A user's ChatGPT Linear connection is separate from CF's product
 authorization and is not distributed to other users.
+
+## Assembly process evidence (source candidate)
+
+Assembly records an unsuccessful enrollment receipt before each CLI attempt,
+then updates that same attempt with bounded exit, cleanup and stream facts.
+Output evidence hashes and counts the captured bytes; it does not copy raw
+streams into the action record. Repeated attempts have distinct receipt IDs
+and retain the shared Assembly run identity. Atomic replacement preserves the
+prior receipt if a final write fails; power-loss durability is not claimed.
+Process completion does not prove correct task output, provider/model identity,
+validated token usage or release readiness. The existing audit and review gates
+still apply. Missing process observations remain incomplete.
