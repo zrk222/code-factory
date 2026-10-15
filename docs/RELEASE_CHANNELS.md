@@ -23,12 +23,12 @@ not turn a source merge into release approval.
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
 | GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Dispatch `publish.yml` with an existing draft tag; its protected publisher attaches the verified bundle and publishes the release after PyPI | Public release URL and green workflow |
-| PyPI | Candidate: `factoryline-code-factory==0.48.1` (not published) | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| PyPI | Candidate: `factoryline-code-factory==0.48.2` (prepared, not published) | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Manually dispatch the `huggingface` environment workflow | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
-| VS Code / Open VSX | Candidate: `factoryline-vscode-1.1.4.vsix` (not published) | Upload VS Code through the Microsoft Marketplace website; use the protected publisher workflow for Open VSX | Installable VSIX and public marketplace version |
-| JetBrains | Candidate: `factoryline-intellij-1.1.4.zip` (not published) | Use the separate protected JetBrains publisher workflow after its live binary-slot and metadata gates permit the update | Compatible ZIP plus an accepted Marketplace upload receipt; public availability still requires moderation |
+| VS Code / Open VSX | Candidate: `factoryline-vscode-1.2.1.vsix` (documentation correction); 1.2.0 public on VS Marketplace | Upload VS Code through the Microsoft Marketplace website; use the protected publisher workflow for Open VSX | Installable VSIX and public marketplace version |
+| JetBrains | Candidate: `factoryline-intellij-1.2.0.zip` (prepared, not published) | Use the separate protected JetBrains publisher workflow after its live binary-slot and metadata gates permit the update | Compatible ZIP plus an accepted Marketplace upload receipt; public availability still requires moderation |
 | OpenCode | Native `code-factory-opencode` plugin 0.1.0 | Build a self-contained module and install under `.opencode/plugins/`; publish a registry package only after registry authentication and independent receipt | Project plugin loads and CF/ForgeLine lanes run or report exact limits |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
@@ -74,7 +74,7 @@ Provider read-back on 2026-10-04:
 
 These are channel counters, not unique users. VS Code 1.0.2 was published on
 2026-10-01; the publisher page read on Oct 4 showed it updated three days ago.
-Open VSX still reports 0.9.9. The 1.1.0 artifacts in this candidate are not yet
+Open VSX still reports 0.9.9. The 1.1.0 artifacts in that candidate were not yet
 published.
 
 The release pipeline never treats a queued review, draft listing, uploaded
@@ -82,7 +82,7 @@ artifact, or workflow dispatch as a completed publication. Each channel is
 reported as published, pending review, blocked, or not configured. Direct
 marketplace uploads require their own provider acceptance and approval evidence.
 
-The 0.48.1 source candidate is separate from the previously published 0.48.0.
+The 0.48.2 source candidate is separate from the previously published 0.48.1.
 Release preflight must pass strict architecture health, prospective cadence,
 source review, and protected provider gates before publication. Do not weaken
 or skip release preflight to force a provider upload.

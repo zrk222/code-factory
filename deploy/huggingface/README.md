@@ -25,7 +25,16 @@ short_description: Audit code, review evidence, and resolve defects.
 
 # Code Factory
 
-## Latest audit telemetry preview — October 8, 2026
+## Current source preview — core 0.48.2, VS Code 1.2.1, JetBrains 1.2.0
+
+The bounded security review follows values through supported local helpers to
+HTTP, file, and SQL sinks, and checks upload directories separately from
+sanitized filenames. Studio surfaces one shared next action; optional JEV
+integration remains advisory; unavailable evaluations stay incomplete. Review findings and run affected
+checks before accepting a repair. This source preview does not establish
+publication, exhaustive detection, or measured accuracy.
+
+## Graph Ops telemetry sample — October 8, 2026
 
 **Fixed:** bounded evaluator output validation across all six runtime lanes; malformed results stay incomplete. Shared imported assertion helpers and inherited test mixins are resolved by bounded static analysis.
 **Changed:** audit findings carry candidate-bound repair packets with reproduction, negative-control and separate specialty AI review requirements.

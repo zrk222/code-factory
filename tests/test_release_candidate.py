@@ -424,6 +424,7 @@ def test_vscode_cadence_exception_is_bound_to_v114_run_attempt(
         encoding="utf-8",
     )
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_ACTOR", "zrk222")
     monkeypatch.setenv("GITHUB_RUN_ID", "12345")
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
     source = {
@@ -505,13 +506,105 @@ def test_disabled_release_policy_rejects_otherwise_valid_exception(
     )
 
 
+@pytest.mark.parametrize(
+    ("channel", "version", "tag", "environment"),
+    [
+        ("core", "0.48.2", "v0.48.2", "pypi"),
+        ("vscode", "1.2.0", "vscode-v1.2.0", "openvsx"),
+        ("vscode", "1.2.0", "vscode-v1.2.0", "vscode-marketplace"),
+        ("vscode", "1.2.1", "vscode-v1.2.1", "openvsx"),
+        ("vscode", "1.2.1", "vscode-v1.2.1", "vscode-marketplace"),
+        ("jetbrains", "1.2.0", "jetbrains-v1.2.0", "jetbrains-marketplace"),
+    ],
+)
+def test_exact_current_version_opt_in_allows_disabled_policy_monthly_cap(
+    tmp_path: Path, monkeypatch, channel, version, tag, environment
+) -> None:
+    _write_exception_policy(tmp_path, False)
+    issued = datetime.now(timezone.utc)
+    path = tmp_path / "exception.json"
+    value = {
+        "schema": "factory.release-cadence-exception.v1",
+        "channel": channel,
+        "version": version,
+        "candidate_tag": tag,
+        "source_commit": "a" * 40,
+        "requesting_actor": "zrk222",
+        "reason": "Owner approved this exact current-version exception.",
+        "issued_at": issued.isoformat(),
+        "expires_at": (issued + timedelta(minutes=30)).isoformat(),
+        "workflow_run_id": "12345",
+        "workflow_run_attempt": "2",
+        "environment": environment,
+        "environment_authorized": True,
+        "publish_enabled": True,
+        "monthly_cap_exception": True,
+        "one_time_version_opt_in": version,
+    }
+    path.write_text(json.dumps(value), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_ACTOR", "zrk222")
+    monkeypatch.setenv("GITHUB_RUN_ID", "12345")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    source = {
+        "version": version if channel == "core" else None,
+        "commit": "a" * 40,
+        "platform_versions": {
+            "vscode": version if channel == "vscode" else None,
+            "intellij": version if channel == "jetbrains" else None,
+        },
+    }
+
+    validated = candidate._cadence_exception_payload(
+        tmp_path, path, source, channel, tag, {"approved_by": "zrk222"}
+    )
+    admitted, _, blocker = candidate._cadence_admission(
+        {
+            "release_train_status": "valid",
+            "available": True,
+            "admission": False,
+            "state": "rate_limited",
+            "max_releases_30d": 4,
+            "recent_count": 4,
+        },
+        validated,
+    )
+    assert admitted is True
+    assert blocker is None
+
+    monkeypatch.setenv("GITHUB_ACTOR", "other-user")
+    with pytest.raises(ValueError, match="requires owner dispatch"):
+        candidate._cadence_exception_payload(
+            tmp_path, path, source, channel, tag, {"approved_by": "zrk222"}
+        )
+    monkeypatch.setenv("GITHUB_ACTOR", "zrk222")
+    value.pop("one_time_version_opt_in")
+    path.write_text(json.dumps(value), encoding="utf-8")
+    with pytest.raises(ValueError, match="disabled by policy"):
+        candidate._cadence_exception_payload(
+            tmp_path, path, source, channel, tag, {"approved_by": "zrk222"}
+        )
+
+
 @pytest.mark.parametrize("policy_text", ["{", '{"cadence": {}}'])
 def test_malformed_release_exception_policy_fails_closed(
     tmp_path: Path, policy_text: str, monkeypatch
 ) -> None:
     (tmp_path / "release-train.json").write_text(policy_text, encoding="utf-8")
     path = tmp_path / "exception.json"
-    path.write_text("{}", encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "factory.release-cadence-exception.v1",
+                "channel": "core",
+                "version": "0.48.1",
+                "candidate_tag": "v0.48.1",
+                "source_commit": None,
+                "requesting_actor": None,
+            }
+        ),
+        encoding="utf-8",
+    )
 
     with pytest.raises(
         ValueError, match="policy is unavailable or invalid|must declare boolean"
@@ -640,7 +733,7 @@ def test_pypi_cadence_exception_rejects_other_core_version_tag_or_environment(
     monkeypatch.setenv("GITHUB_RUN_ID", "12345")
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
 
-    with pytest.raises(ValueError, match="restricted to"):
+    with pytest.raises(ValueError, match="does not match the candidate identity"):
         candidate._cadence_exception_payload(
             tmp_path,
             path,

@@ -436,7 +436,11 @@ def _openvsx_preflight_passes(workflow: str, validate: str, publish: str) -> boo
         and "require('./package.json').version\")\" = 1.1.4" in exception_gate
         and 'test "${#EXCEPTION_REASON}" -ge 12 && test "${#EXCEPTION_REASON}" -le 500'
         in exception_gate
-        and 'if [[ -n "$EXCEPTION_REASON" ]]; then' in preflight_gate
+        and (
+            'if [[ -n "$EXCEPTION_REASON" ]]; then' in preflight_gate
+            or 'if [[ -n "$EXCEPTION_REASON" || -n "$EXCEPTION_VERSION" ]]; then'
+            in preflight_gate
+        )
         and "GITHUB_RUN_ID: ${{ github.run_id }}" in preflight_gate
         and "GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}" in preflight_gate
         and "exception_args=(--cadence-exception .factory/release-cadence-exception.json)"

@@ -1,5 +1,11 @@
 # FactoryLine for IntelliJ Changelog
 
+## 1.2.0 - 2026-10-15 (release candidate; publication gated)
+
+- Align the editor candidate with Code Factory core 0.48.2 and the VS Code
+  adapter candidate 1.2.0. No provider publication or runtime behavior is
+  implied by this metadata update.
+
 ## 1.1.4 - 2026-10-10 (release candidate; publication gated)
 
 - Align the plugin candidate with Code Factory core 0.48.1 and the VS Code

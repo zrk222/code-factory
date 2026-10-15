@@ -1,9 +1,17 @@
 # FactoryLine for VS Code
 
-## VS Code 1.1.4 release candidate (not published)
+## VS Code 1.2.1
 
-This candidate targets Code Factory core 0.48.1. Marketplace publication and
-provider read-back remain separate release steps.
+This documentation-only update does not change extension runtime behavior. It
+can be used with Code Factory core 0.48.2; publishing the optional core package
+is a separate release step. Marketplace status must be confirmed from provider
+read-back.
+The bounded security review follows values through supported local helpers to
+HTTP, file, and SQL sinks, while checking upload directories separately from
+sanitized filenames. Studio presents a shared next action; optional JEV
+integration stays advisory; unavailable evaluations stay incomplete. Results still need your review
+and affected checks; this candidate does not claim exhaustive detection or
+measured accuracy.
 
 ## VS Code release 1.1.3
 
@@ -16,7 +24,7 @@ public read-back.
 **Added:** explicit package-version guidance for installing this extension.
 This metadata and documentation update does not change editor runtime behavior.
 
-## Latest audit telemetry preview — October 8, 2026
+## Graph Ops telemetry sample — October 8, 2026
 
 **Fixed:** bounded evaluator output validation across all six runtime lanes; malformed results stay incomplete. Shared imported assertion helpers and inherited test mixins are resolved by bounded static analysis.
 **Changed:** audit findings carry candidate-bound repair packets with reproduction, negative-control and separate specialty AI review requirements.
@@ -206,7 +214,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-1.1.4.vsix
+code --install-extension factoryline-vscode-1.2.1.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.
@@ -272,7 +280,7 @@ explicitly registered by the caller. Their observations are experimental, not
 model certification or accuracy evidence. The source taxonomy and manifest define the same routes for
 Junie while keeping execution and identity limits visible.
 
-## Native scanner expansion — Code Factory core 0.48.1 candidate
+## Native scanner expansion — Code Factory core 0.48.2 candidate
 
 **Fixed:** native scanner controls require vulnerable and safe results bound to
 image, profile and source hashes. Missing evidence remains incomplete.

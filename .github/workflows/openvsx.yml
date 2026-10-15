@@ -17,7 +17,12 @@ on:
         required: true
         type: string
       cadence_exception_reason:
-        description: "One-time cadence exception reason; only the explicitly approved vscode-v1.1.4+build.1 release may use this"
+        description: "Owner-approved one-time cadence exception reason for an exact approved candidate"
+        required: false
+        default: ""
+        type: string
+      cadence_exception_version:
+        description: "Type 1.2.0 or 1.2.1 to opt in to the one-time exception for that exact candidate"
         required: false
         default: ""
         type: string
@@ -132,14 +137,27 @@ jobs:
           PUBLISH: ${{ inputs.publish }}
           RELEASE_REF: ${{ inputs.release_ref }}
           EXCEPTION_REASON: ${{ inputs.cadence_exception_reason }}
+          EXCEPTION_VERSION: ${{ inputs.cadence_exception_version }}
           GITHUB_ACTOR: ${{ github.actor }}
         run: |
           set -euo pipefail
-          if [[ -n "$EXCEPTION_REASON" ]]; then
+          if [[ -n "$EXCEPTION_REASON" || -n "$EXCEPTION_VERSION" ]]; then
+            test -n "$EXCEPTION_REASON"
             test "$GITHUB_ACTOR" = zrk222
             test "$PUBLISH" = true || { echo "A cadence exception is valid only for an explicitly publishing run." >&2; exit 1; }
-            test "$RELEASE_REF" = vscode-v1.1.4+build.1 || { echo "The one-time exception is restricted to vscode-v1.1.4+build.1." >&2; exit 1; }
-            test "$(node -p "require('./package.json').version")" = 1.1.4 || { echo "The packaged VS Code version must be 1.1.4." >&2; exit 1; }
+            if [[ "$EXCEPTION_VERSION" == "1.2.0" ]]; then
+              test "$RELEASE_REF" = vscode-v1.2.0
+              test "$(node -p "require('./package.json').version")" = 1.2.0
+            elif [[ "$EXCEPTION_VERSION" == "1.2.1" ]]; then
+              test "$RELEASE_REF" = vscode-v1.2.1
+              test "$(node -p "require('./package.json').version")" = 1.2.1
+            elif [[ -z "$EXCEPTION_VERSION" ]]; then
+              test "$RELEASE_REF" = vscode-v1.1.4+build.1 || { echo "The one-time exception is restricted to vscode-v1.1.4+build.1." >&2; exit 1; }
+              test "$(node -p "require('./package.json').version")" = 1.1.4
+            else
+              echo "Only versions 1.2.0 and 1.2.1 may be explicitly opted in." >&2
+              exit 1
+            fi
             test "${#EXCEPTION_REASON}" -ge 12 && test "${#EXCEPTION_REASON}" -le 500 || { echo "The exception reason must contain 12 to 500 characters." >&2; exit 1; }
           fi
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -186,10 +204,13 @@ jobs:
           except ValueError as exc:
               raise SystemExit("release_contract escapes the workspace") from exc
           PY
+          source_args=()
+          if [[ "$RELEASE_REF" == "vscode-v1.2.0" || "$RELEASE_REF" == "vscode-v1.2.1" ]]; then source_args=(--source CHANGELOG.md); fi
           python scripts/prepare_release_contract.py \
             --root . \
             --feature "openvsx-${RELEASE_REF//+/-}" \
             --out "$RELEASE_CONTRACT_PATH" \
+            "${source_args[@]}" \
             --approved-by "$APPROVED_BY"
 
       - name: Require the sealed candidate preflight
@@ -199,6 +220,7 @@ jobs:
           RELEASE_REF: ${{ inputs.release_ref }}
           PUBLISH: ${{ inputs.publish }}
           EXCEPTION_REASON: ${{ inputs.cadence_exception_reason }}
+          EXCEPTION_VERSION: ${{ inputs.cadence_exception_version }}
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -207,7 +229,7 @@ jobs:
           [[ "$RELEASE_CONTRACT_PATH" != /* && "$RELEASE_CONTRACT_PATH" != *..* ]] || { echo "release_contract must be a workspace-relative path" >&2; exit 1; }
           test -f "$RELEASE_CONTRACT_PATH" || { echo "release contract is not present in the immutable checkout" >&2; exit 1; }
           exception_args=()
-          if [[ -n "$EXCEPTION_REASON" ]]; then
+          if [[ -n "$EXCEPTION_REASON" || -n "$EXCEPTION_VERSION" ]]; then
             test "$PUBLISH" = true
             mkdir -p .factory
             python - <<'PY'
@@ -216,11 +238,14 @@ jobs:
           from datetime import datetime, timedelta, timezone
           from pathlib import Path
           now = datetime.now(timezone.utc)
+          version_opt_in = os.environ.get("EXCEPTION_VERSION", "")
+          current = version_opt_in in {"1.2.0", "1.2.1"}
+          version = version_opt_in if current else "1.1.4"
           payload = {
               "schema": "factory.release-cadence-exception.v1",
               "monthly_cap_exception": True,
               "channel": "vscode",
-              "version": "1.1.4",
+              "version": version,
               "candidate_tag": os.environ["RELEASE_REF"],
               "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
               "requesting_actor": os.environ["GITHUB_ACTOR"],
@@ -233,6 +258,8 @@ jobs:
               "environment_authorized": True,
               "publish_enabled": True,
           }
+          if current:
+              payload["one_time_version_opt_in"] = version
           Path(".factory/release-cadence-exception.json").write_text(
               json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
           )

@@ -20,6 +20,11 @@ on:
         required: false
         default: ""
         type: string
+      cadence_exception_version:
+        description: "Type 1.2.0 to opt in to the one-time exception for this exact candidate"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   actions: read
@@ -161,10 +166,13 @@ jobs:
           APPROVED_BY: ${{ github.actor }}
         run: |
           set -euo pipefail
+          source_args=()
+          if [[ "$RELEASE_REF" == "jetbrains-v1.2.0" ]]; then source_args=(--source CHANGELOG.md); fi
           python scripts/prepare_release_contract.py \
             --root . \
             --feature "jetbrains-${RELEASE_REF}" \
             --out .factory/release-contracts/jetbrains.json \
+            "${source_args[@]}" \
             --approved-by "$APPROVED_BY"
 
       - name: Require the sealed candidate preflight
@@ -173,6 +181,7 @@ jobs:
           RELEASE_CONTRACT_PATH: .factory/release-contracts/jetbrains.json
           RELEASE_REF: ${{ inputs.release_ref }}
           EXCEPTION_REASON: ${{ inputs.cadence_exception_reason }}
+          EXCEPTION_VERSION: ${{ inputs.cadence_exception_version }}
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -180,9 +189,18 @@ jobs:
           set -euo pipefail
           test -f "$RELEASE_CONTRACT_PATH" || { echo "release contract is not present in the immutable checkout" >&2; exit 1; }
           exception_args=()
-          if [[ -n "$EXCEPTION_REASON" ]]; then
-            test "$RELEASE_REF" = jetbrains-v1.1.4
+          if [[ -n "$EXCEPTION_REASON" || -n "$EXCEPTION_VERSION" ]]; then
+            test -n "$EXCEPTION_REASON"
             test "$GITHUB_ACTOR" = zrk222
+            if [[ "$EXCEPTION_VERSION" == "1.2.0" ]]; then
+              test "$RELEASE_REF" = jetbrains-v1.2.0
+              grep -Fx 'version = "1.2.0"' editors/intellij/build.gradle.kts
+            elif [[ -z "$EXCEPTION_VERSION" ]]; then
+              test "$RELEASE_REF" = jetbrains-v1.1.4
+            else
+              echo "Only version 1.2.0 may be explicitly opted in." >&2
+              exit 1
+            fi
             python - <<'PY'
           import json, os, subprocess
           from datetime import datetime, timedelta, timezone
@@ -192,13 +210,19 @@ jobs:
           contract = json.loads(Path(os.environ["RELEASE_CONTRACT_PATH"]).read_text())
           assert contract["approved_by"] == os.environ["GITHUB_ACTOR"]
           now = datetime.now(timezone.utc)
+          current = os.environ.get("EXCEPTION_VERSION", "") == "1.2.0"
+          version = "1.2.0" if current else "1.1.4"
+          tag = "jetbrains-v1.2.0" if current else "jetbrains-v1.1.4"
           value = {
-              "schema": "factory.release-cadence-exception.v1", "channel": "jetbrains", "version": "1.1.4",
-              "candidate_tag": "jetbrains-v1.1.4", "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "schema": "factory.release-cadence-exception.v1", "channel": "jetbrains", "version": version,
+              "candidate_tag": tag, "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
               "requesting_actor": os.environ["GITHUB_ACTOR"], "environment": "jetbrains-marketplace", "environment_authorized": True,
               "publish_enabled": True, "workflow_run_id": os.environ["GITHUB_RUN_ID"], "workflow_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
               "issued_at": now.isoformat(), "expires_at": (now + timedelta(minutes=30)).isoformat(), "reason": reason
           }
+          if current:
+              value["monthly_cap_exception"] = True
+              value["one_time_version_opt_in"] = version
           Path(".factory/release-cadence-exception.json").write_text(json.dumps(value))
           PY
             exception_args=(--cadence-exception .factory/release-cadence-exception.json)

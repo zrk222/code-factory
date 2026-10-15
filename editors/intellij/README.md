@@ -1,6 +1,15 @@
 # FactoryLine for JetBrains IDEs
 
-## Latest audit telemetry preview — October 8, 2026
+## Current source preview — core 0.48.2, editor 1.2.0 (prepared, unpublished)
+
+The bounded security review follows values through supported local helpers to
+HTTP, file, and SQL sinks, and checks upload directories separately from
+sanitized filenames. Studio provides a shared next action; optional JEV
+integration stays advisory; unavailable evaluations stay incomplete. Review findings and run affected
+checks before accepting a repair; this preview does not claim exhaustive
+detection or measured accuracy.
+
+## Graph Ops telemetry sample — October 8, 2026
 
 **Fixed:** bounded evaluator output validation across all six runtime lanes; malformed results stay incomplete. Shared imported assertion helpers and inherited test mixins are resolved by bounded static analysis.
 **Changed:** audit findings carry candidate-bound repair packets with reproduction, negative-control and separate specialty AI review requirements.
@@ -275,7 +284,7 @@ explicitly registered by the caller. Their observations are experimental, not
 model certification or accuracy evidence. The source taxonomy and manifest define the same routes for
 Junie while keeping execution and identity limits visible.
 
-## Native scanner expansion — core 0.48.1 / editor 1.1.4 source preview
+## Native scanner expansion — core 0.48.2 / editor 1.2.0 source preview
 
 **Fixed:** native scanner controls require vulnerable and safe results bound to
 image, profile and source hashes. Missing evidence remains incomplete.
