@@ -19,7 +19,8 @@ test('native OSV contract binds the primary database artifact to the shipped pro
 
 const bundle = (hits = 1) => ({ artifacts: {
   'report.json': { factory_lookup_execution: { schema: 'factory.osv-lookup-execution.v1', queries: [{}] },
-    results: [{ packages: [{ vulnerabilities: Array.from({ length: hits }, () => ({ id: 'GHSA-29vq-49wr-vm6x' })) }] }] },
+    results: [{ source: { path: 'requirements.txt' }, packages: [{ package: { ecosystem: 'PyPI', name: 'werkzeug', version: '0.1' },
+      vulnerabilities: Array.from({ length: hits }, () => ({ id: 'GHSA-29vq-49wr-vm6x' })) }] }] },
   'coverage.json': { version_probe: { exit_code: 0 }, native_invocations: [{ execution: { exit_code: 1 } }],
     errors: ['NATIVE_CHALLENGES_REQUIRED'] },
 } });
@@ -43,4 +44,17 @@ test('native OSV control rejects missing or failed native and version executions
 test('native OSV control rejects a silent positive miss and a negative false finding', () => {
   assert.throws(() => validateOSVControl(bundle(0), 1), /Expected 1/);
   assert.throws(() => validateOSVControl(bundle(), 0), /Expected 0/);
+});
+
+test('native OSV control counts one affected package for reciprocal advisory aliases and preserves raw count', () => {
+  const value = bundle(0);
+  value.artifacts['report.json'].results[0].packages[0].vulnerabilities = [
+    { id: 'PYSEC-2026-2320', aliases: ['CVE-2026-27199', 'GHSA-29vq-49wr-vm6x'] },
+    { id: 'GHSA-29vq-49wr-vm6x', aliases: ['CVE-2026-27199', 'PYSEC-2026-2320'] },
+  ];
+  const result = validateOSVControl(value, 1);
+  assert.equal(result.target_findings, 1);
+  assert.equal(result.target_advisory_records, 2);
+  value.artifacts['report.json'].results.push(structuredClone(value.artifacts['report.json'].results[0]));
+  assert.throws(() => validateOSVControl(value, 1), /Expected 1/);
 });

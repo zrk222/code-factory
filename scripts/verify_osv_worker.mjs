@@ -18,7 +18,7 @@ export function createOSVContract(profile, name, entries, image) {
     manifest_sha256: digest(entries), inventory: { candidate_sha256: digest(entries), files: entries },
     lane: { engine: 'osv', mode: profile.mode, tool_version: profile.tool_version, image,
       ruleset_sha256: profile.ruleset_sha256, timeout_seconds: 90, memory_mib: 512,
-      report: 'report.json', coverage: 'coverage.json', challenge_report: 'challenges.json', languages: ['text'], rule_ids: [],
+      report: 'report.json', coverage: 'coverage.json', challenge_report: 'challenges.json', languages: ['dependency'], rule_ids: [],
       native_policy: { database_path: '/opt/factory/osv-db/osv-scanner/PyPI/all.zip',
         database_sha256: profile.ruleset_sha256, baseline_config_sha256: digest('\n'), advisory_aliases: {} } },
     obligations: [] };
@@ -33,10 +33,11 @@ export function validateOSVControl(bundle, expectedHits) {
   if (coverage?.version_probe?.exit_code !== 0 || !coverage.native_invocations?.length
       || coverage.native_invocations.some(row => ![0, 1].includes(row.execution?.exit_code)))
     throw new Error('Native OSV execution failed or is missing');
-  const hits = (report.results ?? []).flatMap(row => row.packages ?? [])
-    .flatMap(pkg => pkg.vulnerabilities ?? []).filter(v => [v.id, ...(v.aliases ?? [])].includes(target));
-  if (hits.length !== expectedHits) throw new Error(`Expected ${expectedHits} target findings, got ${hits.length}`);
-  return { target_findings: hits.length, native_queries: ledger.queries.length,
+  const records = (report.results ?? []).flatMap(row => row.packages ?? [])
+    .map(pkg => (pkg.vulnerabilities ?? []).filter(v => [v.id, ...(v.aliases ?? [])].includes(target)));
+  const hits = records.filter(matches => matches.length).length;
+  if (hits !== expectedHits) throw new Error(`Expected ${expectedHits} target findings, got ${hits}`);
+  return { target_findings: hits, target_advisory_records: records.flat().length, native_queries: ledger.queries.length,
     bundle_sha256: digest(bundle), remaining_errors: coverage.errors ?? [] };
 }
 
@@ -60,7 +61,8 @@ export function verifyOSVWorker(image, output) {
       const source = join(directory, name); mkdirSync(source);
       const entries = Object.entries(files).sort().map(([path, body]) => {
         mkdirSync(dirname(join(source, path)), { recursive: true }); writeFileSync(join(source, path), body);
-        return { path, bytes: Buffer.byteLength(body), sha256: digest(body), language: 'text' };
+        return { path, bytes: Buffer.byteLength(body), sha256: digest(body),
+          language: path.endsWith('requirements.txt') ? 'dependency' : 'configuration' };
       });
       const contract = createOSVContract(profile, name, entries, result.image_id);
       const contractPath = join(directory, `${name}.json`); writeFileSync(contractPath, JSON.stringify(contract));
