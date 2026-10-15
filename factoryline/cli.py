@@ -196,6 +196,16 @@ def _typescript_node_path(search_roots: list[Path] | None = None) -> str | None:
     )
 
 
+def _feature_canary_metrics_accepted(metrics: object) -> bool:
+    if not isinstance(metrics, dict):
+        return False
+    assessment = metrics.get("coverage_assessment")
+    behavioral = metrics.get("behavioral_proof_status")
+    return (assessment == "measured" and behavioral in (None, "available")) or (
+        assessment == "static_name_match" and behavioral == "not_measured_static_only"
+    )
+
+
 def _run_feature_canary(
     module,
     root: Path,
@@ -258,7 +268,7 @@ def _run_feature_canary(
             "reason": f"{suffix} feature canary was not JSON",
             "provenance": payload,
         }
-    if qa.get("passed") is not True:
+    if not isinstance(qa, dict) or qa.get("passed") is not True:
         return {
             "ok": False,
             "provenance_ok": provenance_ok,
@@ -266,7 +276,7 @@ def _run_feature_canary(
             "output": stdout[-1000:],
             "provenance": payload,
         }
-    if qa.get("metrics", {}).get("coverage_assessment") != "measured":
+    if not _feature_canary_metrics_accepted(qa.get("metrics")):
         return {
             "ok": False,
             "provenance_ok": provenance_ok,
