@@ -948,27 +948,36 @@ def test_dashboard_mission_decisions_use_an_in_page_rationale_form():
     assert "The scope or risk is not acceptable as written." in interaction
 
 
-def test_dashboard_decision_draft_survives_polling_and_errors():
+def test_dashboard_refresh_coalesces_clears_failures(tmp_path: Path):
+    import shutil
+    import subprocess
     from factoryline.studio import _studio_html
 
-    page = _studio_html("token")
-    approval_rows = page.split("function approvalRows(missions,refreshId)", 1)[1].split(
-        "function dashboardDecisionReasons", 1
-    )[0]
-    submit = page.split("async function submitDashboardMissionDecision()", 1)[1].split(
-        "async function decideMission(decision)", 1
-    )[0]
-    assert (
-        "dashboardDecisionDraft&&host.querySelector('.dashboard-decision-form')"
-        in approval_rows
-    )
-    assert "if(dashboardDecisionBusy||!draft||draft.uncertain)return" in submit
-    assert "dashboardDecisionBusy=true" in submit
-    assert "fetch('/api/mission-decision'" in submit
-    assert "X-Factory-Studio-Token" in submit
-    assert "showDashboardDecisionError" in submit
-    assert "catch(error)" in submit
-    assert "dashboardDecisionDraft=null;await refreshDashboard()" in submit
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node is required for the Studio JavaScript execution profile")
+    page = _studio_html("local-test")
+    source = tmp_path / "dashboard.js"
+    source.write_text(page[page.index("let dashboardMissionSnapshot=[];"):page.index("function addText(")]+page[page.index("function cancelDashboardMissionDecision()"):page.index("async function decideMission(decision)")], encoding="utf-8")
+    script = tmp_path / "dashboard-refresh.cjs"
+    script.write_text(r'''
+const A=require('node:assert/strict'),F=require('node:fs'),V=require('node:vm');
+class E{constructor(tag='div'){this.tag=tag;this.children=[];this.attrs={};this.disabled=false;this.value=''}set textContent(v){this.text=v;this.children=[]}setAttribute(k,v){this.attrs[k]=v}append(...xs){xs.forEach(x=>{x.parentElement=this;this.children.push(x)})}appendChild(x){this.append(x)}walk(){return [this,...this.children.flatMap(x=>x.walk())]}querySelectorAll(q){let ns=this.walk().slice(1),tags=q.includes(':is(')?['button','select','textarea']:q.includes('textarea')?['textarea']:q.includes('select')?['select']:q.includes('button')?['button']:[];return ns.filter(x=>tags.includes(x.tag)||q.includes('.dashboard-decision-form')&&x.className==='dashboard-decision-form'||q.includes('[role=')&&x.attrs.role==='alert')}querySelector(q){return this.querySelectorAll(q)[0]||null}}
+const root=new E(),grid=new E(),activity=new E(),list=new E();grid.className='dash-grid';list.id='activity-list';activity.append(list);grid.append(activity);root.append(grid);const approval=new E();approval.id='approval-list';grid.append(approval);for(const id of ['stat-stages','stat-first-pass','stat-runs','stat-flow','context-value-next']){let x=new E();x.id=id;root.append(x)}
+const doc={getElementById:id=>root.walk().find(x=>x.id===id)||null,createElement:t=>new E(t),querySelector:q=>q.includes('.dash-grid')?grid:root.querySelector(q),querySelectorAll:q=>approval.querySelectorAll(q)};
+let timer,calls=[],pending=[],rendered={};const ctx={document:doc,token:'local-test',mode:'dashboard',setInterval:f=>timer=f,rows:(id,x)=>rendered[id]=x,textValue:x=>x==null?'not available':String(x),fetch:(url,options)=>{calls.push({url,options});return new Promise((resolve,reject)=>pending.push({url,options,resolve,reject}))}};
+const payload=(feature='fresh-proof',extra=false)=>({meter:{summary:{stages_measured:7,flow:{}},activity:{}},savings:{},missions:[{path:'m1',id:'m1',decision:'awaiting_owner'},...(extra?[{path:'m2',id:'m2',decision:'awaiting_owner'}]:[])],products:[],slice_queue:[],proof_timeline:[{requirement_id:feature,slice_id:'s',mission_id:'m'}],receipt_comparison:{status:'pending'},packs:[],authority:{},live_activity:{available:true,status:'active',feature},recent_runs:[{feature}]});
+const take=url=>{let i=pending.findIndex(x=>x.url===url);A.notEqual(i,-1,url);return pending.splice(i,1)[0]};
+(async()=>{const api=V.runInNewContext(F.readFileSync(process.argv[2],'utf8')+'\n({refresh:()=>refreshDashboard(),sequence:()=>dashboardRefreshSequence,choose:()=>{dashboardDecisionDraft={item:dashboardMissionSnapshot[0],decision:"approved_execution",rationale:""};approvalRows(dashboardMissionSnapshot)},draft:()=>dashboardDecisionDraft,clear:()=>{dashboardDecisionDraft=null;approvalRows(dashboardMissionSnapshot)}})',ctx);V.runInNewContext('studioMemoryAutoRefresh=false',ctx);let first=api.refresh();timer();A.equal(calls.length,1);take('/api/dashboard').reject(Error('offline'));await first;A.ok(doc.getElementById('previous-run-list'));A.match(rendered['previous-run-list'][0][1],/offline/);
+let good=api.refresh();take('/api/dashboard').resolve({ok:true,json:async()=>payload()});await good;A.equal(doc.getElementById('stat-stages').text,'7');A.equal(rendered['proof-list'][0][0],'fresh-proof -> s -> m');let auto=doc.getElementById('dashboard-auto-refresh');auto.onclick({currentTarget:auto});A.equal(auto.attrs['aria-pressed'],'false');
+api.choose();let form=approval.querySelector('.dashboard-decision-form'),area=form.querySelector('textarea');area.value='draft';area.oninput();let delayed=api.refresh(),seq=api.sequence();api.draft().uncertain=true;api.draft().uncertainAfter=seq;take('/api/dashboard').resolve({ok:true,json:async()=>payload()});await delayed;A.equal(api.draft().uncertain,true);let later=api.refresh();take('/api/dashboard').resolve({ok:true,json:async()=>payload()});await later;A.equal(api.draft().uncertain,false);A.equal(api.draft().rationale,'draft');api.clear();
+api.choose();form=approval.querySelector('.dashboard-decision-form');area=form.querySelector('textarea');area.value='approved';area.oninput();let submitted=form.querySelector('button').onclick(),post=take('/api/mission-decision');A.equal(post.options.headers['X-Factory-Studio-Token'],'local-test');let read=api.refresh();take('/api/dashboard').resolve({ok:true,json:async()=>payload('after-submit',true)});await read;A.ok(approval.querySelectorAll(':is(button,select,textarea)').every(x=>x.disabled));post.resolve({ok:true,status:200,json:async()=>({})});await new Promise(setImmediate);let after=take('/api/dashboard');after.resolve({ok:true,json:async()=>payload()});await submitted;A.ok(approval.querySelectorAll(':is(button,select,textarea)').some(x=>x.tag==='button'&&!x.disabled));
+api.choose();form=approval.querySelector('.dashboard-decision-form');area=form.querySelector('textarea');area.value='retry-safe';area.oninput();submitted=form.querySelector('button').onclick();post=take('/api/mission-decision');read=api.refresh();take('/api/dashboard').reject(Error('telemetry down'));await read;post.resolve({ok:false,status:400,json:async()=>({code:'BAD',message:'definite rejection'})});await submitted;A.ok(approval.querySelectorAll(':is(button,select,textarea)').every(x=>x.disabled));A.equal(api.draft().rationale,'retry-safe');A.equal(doc.getElementById('dashboard-stop').disabled,true);A.match(rendered['proof-list'][0][1],/telemetry down/);
+console.log('STUDIO_HARNESS_COMPLETE')})().catch(e=>{console.error(e);process.exitCode=1});
+''', encoding="utf-8")
+    result = subprocess.run([node, str(script), str(source)], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().endswith('STUDIO_HARNESS_COMPLETE')
 
 
 def test_dashboard_decision_uncertainty_requires_refresh_before_retry():

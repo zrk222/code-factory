@@ -21,7 +21,7 @@ Keep every applicable audit obligation accounted for. Integrate existing modules
 | `factoryline/agentic_control.py`: `route_model` | Model-tier decision metadata. | Authorized provider dispatch, observed usage and justified escalation. |
 | `factoryline/jev_classifier.py`: `build_span_review_input` | Existing bound model/prompt/rubric and span evidence. | Calibrated decisions, correction history and reproducible operator evaluation. |
 
-Source symbols do not establish successful execution. Current local native controls and public package availability remain separate. External eight-repository accuracy adjudication is paused by the operator; this plan does not resume it. No 90% or 99.85% accuracy claim is authorized by these records.
+Source symbols do not establish successful execution. Current local native controls and public package availability remain separate. The bounded external study resumed with model-only labels; its original raw report bindings were subsequently invalidated by later scan writes. Preserve that integrity failure. No independent precision/recall estimate or 90% or 99.85% accuracy claim is established.
 
 ## 3. Architecture and data flow
 
@@ -196,6 +196,10 @@ Service output must show current scope/candidate, applicable profiles, execution
 completeness, actionable findings, native evidence references, unresolved checks,
 repair outcome and one next action. Infrastructure failures and code findings
 remain distinct and unresolved until their own verification passes. No new product
-names, guard increases or removal of detector obligations is needed. External
-eight-repository adjudication remains paused; reported counts and probe results
-are acceptance inputs, not independent precision/recall measurements.
+names, guard increases or removal of detector obligations is needed. The bounded
+external study resumed with model-only labels. Later scan writes invalidated its
+original raw report bindings; the preserved integrity-recovery receipt records
+that failure. No independent precision/recall measurement is established.
+
+Track the authorized one-time Astra audit and Luna High implementation with Astra
+Medium review in [operations simplification](operations-simplification.md).

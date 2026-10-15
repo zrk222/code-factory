@@ -756,6 +756,106 @@ def test_live_meter_snapshot_exposes_local_freshness(tmp_path):
     assert "runs observed" in live_summary_table(snapshot)
 
 
+def test_studio_meter_projects_reuse_one_request_snapshot(tmp_path, monkeypatch):
+    from factoryline.meter import overhead
+    import factoryline.studio as studio
+
+    ensure_layout(tmp_path)
+    log = MeterLog(tmp_path)
+
+    def record(module, stage, wall, tokens, ok, run, at):
+        log.record(
+            StageTiming(
+                module,
+                stage,
+                wall,
+                bool(tokens),
+                tokens,
+                tokens // 2,
+                ok,
+                feature="widget",
+                run_id=run,
+                recorded_at=at,
+            )
+        )
+
+    for row in (
+        ("spec", "requirements", 20, 10, True, "run-1", "2026-08-01T10:00:00Z"),
+        ("verify", "tests", 30, 20, False, "run-1", "2026-08-01T10:01:00Z"),
+        ("release", "verify", 40, 0, True, "run-2", "2026-08-02T10:00:00Z"),
+    ):
+        record(*row)
+    reads = 0
+    original = MeterLog.stages
+
+    def counted(self):
+        nonlocal reads
+        reads += 1
+        return original(self)
+
+    monkeypatch.setattr(MeterLog, "stages", counted)
+    expected = (
+        live_snapshot(tmp_path),
+        summarize(tmp_path),
+        overhead(tmp_path),
+        studio._receipt_comparison(tmp_path),
+        studio._recent_run_stats(tmp_path),
+    )
+    assert reads == 5
+    reads = 0
+    dashboard = studio.studio_dashboard(tmp_path)
+    assert reads == 1
+    actual_meter, expected_meter = dashboard["meter"].copy(), expected[0].copy()
+    actual_meter.pop("generated_at")
+    expected_meter.pop("generated_at")
+    assert actual_meter == expected_meter
+    assert dashboard["receipt_comparison"] == expected[3]
+    assert dashboard["recent_runs"] == expected[4]
+
+    record("deploy", "approval", 50, 0, True, "run-3", "2026-08-03T10:00:00Z")
+    next_dashboard = studio.studio_dashboard(tmp_path)
+    assert reads == 2
+    assert next_dashboard["meter"]["summary"]["stages_measured"] == 4
+    assert next_dashboard["recent_runs"][0]["run_id"] == "run-3"
+    graph = studio._StudioHandler._graph_ops_payload(object(), tmp_path)
+    assert reads == 3
+    assert graph["live_telemetry"]["recent_runs"][0]["run_id"] == "run-3"
+
+
+def test_studio_meter_snapshot_handles_empty_malformed_and_failed_reads(
+    tmp_path, monkeypatch
+):
+    import json
+    from factoryline.studio import studio_dashboard
+
+    ensure_layout(tmp_path)
+    empty = live_snapshot(tmp_path)
+    dashboard_empty = studio_dashboard(tmp_path)["meter"]
+    dashboard_empty.pop("generated_at")
+    empty.pop("generated_at")
+    assert dashboard_empty == empty
+    ledger = MeterLog(tmp_path).path
+    ledger.write_text("{broken\n", encoding="utf-8")
+    with pytest.raises(json.JSONDecodeError):
+        studio_dashboard(tmp_path)
+    with pytest.raises(json.JSONDecodeError):
+        live_snapshot(tmp_path)
+
+    reads = 0
+
+    def fail(_self):
+        nonlocal reads
+        reads += 1
+        raise OSError("meter ledger unavailable")
+
+    monkeypatch.setattr(MeterLog, "stages", fail)
+    with pytest.raises(OSError, match="meter ledger unavailable"):
+        studio_dashboard(tmp_path)
+    with pytest.raises(OSError, match="meter ledger unavailable"):
+        live_snapshot(tmp_path)
+    assert reads == 2
+
+
 def test_meter_capture_records_a_real_local_command(tmp_path, capsys):
     from factoryline.cli import main
     import sys
