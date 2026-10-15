@@ -12,6 +12,15 @@ factory scan --root .
 affected checks again. The basic scan reads eligible Python source; it does not
 run your project. Missing evidence is **INCOMPLETE**, not a clean bill of health.
 
+## Current source preview — core 0.48.2, editors 1.2.0 (prepared, unpublished)
+
+The bounded security review follows values through supported local helpers to
+HTTP, file, and SQL sinks, and checks an upload directory separately from its
+sanitized filename. Studio surfaces a shared next action; optional JEV
+integration remains advisory; unavailable evaluations stay incomplete. These changes are not a claim of
+exhaustive analysis or measured detection accuracy. Review findings, run the
+affected checks, and decide what to accept before using a repair.
+
 Want a visual workspace? Run `factory studio --root .`. Need options?
 `factory --help` shows the short path; `factory --help-all` shows all commands.
 Start with [the quick guide](docs/START_HERE.md).
@@ -30,7 +39,7 @@ Describe your idea to your coding agent and create `PRD.md`. The optional
 [beginner guide](docs/PRD_GRILL.md) helps turn it into concrete acceptance checks.
 For an existing repository, start with the scan above.
 
-## Latest audit telemetry preview — October 8, 2026
+## Graph Ops telemetry sample — October 8, 2026
 
 **Fixed:** bounded evaluator output validation across all six runtime lanes; malformed results stay incomplete. Shared imported assertion helpers and inherited test mixins are resolved by bounded static analysis.
 **Changed:** audit findings carry candidate-bound repair packets with reproduction, negative-control and separate specialty AI review requirements.

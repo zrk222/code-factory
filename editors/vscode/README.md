@@ -4,6 +4,12 @@
 
 This candidate targets Code Factory core 0.48.2. Marketplace publication and
 provider read-back remain separate release steps.
+The bounded security review follows values through supported local helpers to
+HTTP, file, and SQL sinks, while checking upload directories separately from
+sanitized filenames. Studio presents a shared next action; optional JEV
+integration stays advisory; unavailable evaluations stay incomplete. Results still need your review
+and affected checks; this candidate does not claim exhaustive detection or
+measured accuracy.
 
 ## VS Code release 1.1.3
 
@@ -16,7 +22,7 @@ public read-back.
 **Added:** explicit package-version guidance for installing this extension.
 This metadata and documentation update does not change editor runtime behavior.
 
-## Latest audit telemetry preview — October 8, 2026
+## Graph Ops telemetry sample — October 8, 2026
 
 **Fixed:** bounded evaluator output validation across all six runtime lanes; malformed results stay incomplete. Shared imported assertion helpers and inherited test mixins are resolved by bounded static analysis.
 **Changed:** audit findings carry candidate-bound repair packets with reproduction, negative-control and separate specialty AI review requirements.
