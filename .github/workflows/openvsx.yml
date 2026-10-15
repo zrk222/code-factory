@@ -17,12 +17,12 @@ on:
         required: true
         type: string
       cadence_exception_reason:
-        description: "One-time cadence exception reason; only the explicitly approved vscode-v1.1.4+build.1 release may use this"
+        description: "Owner-approved one-time cadence exception reason for an exact approved candidate"
         required: false
         default: ""
         type: string
       cadence_exception_version:
-        description: "Type 1.2.0 to opt in to the one-time exception for this exact candidate"
+        description: "Type 1.2.0 or 1.2.1 to opt in to the one-time exception for that exact candidate"
         required: false
         default: ""
         type: string
@@ -148,11 +148,14 @@ jobs:
             if [[ "$EXCEPTION_VERSION" == "1.2.0" ]]; then
               test "$RELEASE_REF" = vscode-v1.2.0
               test "$(node -p "require('./package.json').version")" = 1.2.0
+            elif [[ "$EXCEPTION_VERSION" == "1.2.1" ]]; then
+              test "$RELEASE_REF" = vscode-v1.2.1
+              test "$(node -p "require('./package.json').version")" = 1.2.1
             elif [[ -z "$EXCEPTION_VERSION" ]]; then
               test "$RELEASE_REF" = vscode-v1.1.4+build.1 || { echo "The one-time exception is restricted to vscode-v1.1.4+build.1." >&2; exit 1; }
               test "$(node -p "require('./package.json').version")" = 1.1.4
             else
-              echo "Only version 1.2.0 may be explicitly opted in." >&2
+              echo "Only versions 1.2.0 and 1.2.1 may be explicitly opted in." >&2
               exit 1
             fi
             test "${#EXCEPTION_REASON}" -ge 12 && test "${#EXCEPTION_REASON}" -le 500 || { echo "The exception reason must contain 12 to 500 characters." >&2; exit 1; }
@@ -202,7 +205,7 @@ jobs:
               raise SystemExit("release_contract escapes the workspace") from exc
           PY
           source_args=()
-          if [[ "$RELEASE_REF" == "vscode-v1.2.0" ]]; then source_args=(--source CHANGELOG.md); fi
+          if [[ "$RELEASE_REF" == "vscode-v1.2.0" || "$RELEASE_REF" == "vscode-v1.2.1" ]]; then source_args=(--source CHANGELOG.md); fi
           python scripts/prepare_release_contract.py \
             --root . \
             --feature "openvsx-${RELEASE_REF//+/-}" \
@@ -235,8 +238,9 @@ jobs:
           from datetime import datetime, timedelta, timezone
           from pathlib import Path
           now = datetime.now(timezone.utc)
-          current = os.environ.get("EXCEPTION_VERSION", "") == "1.2.0"
-          version = "1.2.0" if current else "1.1.4"
+          version_opt_in = os.environ.get("EXCEPTION_VERSION", "")
+          current = version_opt_in in {"1.2.0", "1.2.1"}
+          version = version_opt_in if current else "1.1.4"
           payload = {
               "schema": "factory.release-cadence-exception.v1",
               "monthly_cap_exception": True,

@@ -449,6 +449,8 @@ def _require_cadence_exceptions_enabled(
         ("core", "0.48.2", "v0.48.2", "pypi"),
         ("vscode", "1.2.0", "vscode-v1.2.0", "openvsx"),
         ("vscode", "1.2.0", "vscode-v1.2.0", "vscode-marketplace"),
+        ("vscode", "1.2.1", "vscode-v1.2.1", "openvsx"),
+        ("vscode", "1.2.1", "vscode-v1.2.1", "vscode-marketplace"),
         ("jetbrains", "1.2.0", "jetbrains-v1.2.0", "jetbrains-marketplace"),
     }
     expected = (
@@ -507,6 +509,8 @@ def _cadence_exception_payload(
         ("vscode", "1.1.4", "vscode-v1.1.4+build.1", "vscode-marketplace"),
         ("vscode", "1.2.0", "vscode-v1.2.0", "openvsx"),
         ("vscode", "1.2.0", "vscode-v1.2.0", "vscode-marketplace"),
+        ("vscode", "1.2.1", "vscode-v1.2.1", "openvsx"),
+        ("vscode", "1.2.1", "vscode-v1.2.1", "vscode-marketplace"),
         ("jetbrains", "1.1.4", "jetbrains-v1.1.4", "jetbrains-marketplace"),
         ("jetbrains", "1.2.0", "jetbrains-v1.2.0", "jetbrains-marketplace"),
     }
@@ -537,6 +541,8 @@ def _cadence_exception_payload(
         ("core", "0.48.2", "v0.48.2", "pypi"),
         ("vscode", "1.2.0", "vscode-v1.2.0", "openvsx"),
         ("vscode", "1.2.0", "vscode-v1.2.0", "vscode-marketplace"),
+        ("vscode", "1.2.1", "vscode-v1.2.1", "openvsx"),
+        ("vscode", "1.2.1", "vscode-v1.2.1", "vscode-marketplace"),
         ("jetbrains", "1.2.0", "jetbrains-v1.2.0", "jetbrains-marketplace"),
     }
     monthly_cap_exception = value.get("monthly_cap_exception", False)
@@ -652,6 +658,7 @@ def _cadence_admission(
             in {
                 ("core", "0.48.2", "v0.48.2"),
                 ("vscode", "1.2.0", "vscode-v1.2.0"),
+                ("vscode", "1.2.1", "vscode-v1.2.1"),
                 ("jetbrains", "1.2.0", "jetbrains-v1.2.0"),
             }
         )

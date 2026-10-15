@@ -12,7 +12,7 @@ factory scan --root .
 affected checks again. The basic scan reads eligible Python source; it does not
 run your project. Missing evidence is **INCOMPLETE**, not a clean bill of health.
 
-## Current source preview — core 0.48.2, editors 1.2.0 (prepared, unpublished)
+## Current source preview — core 0.48.2, VS Code 1.2.1, JetBrains 1.2.0
 
 The bounded security review follows values through supported local helpers to
 HTTP, file, and SQL sinks, and checks an upload directory separately from its

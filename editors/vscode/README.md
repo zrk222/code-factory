@@ -1,9 +1,11 @@
 # FactoryLine for VS Code
 
-## VS Code 1.2.0 release candidate (not published)
+## VS Code 1.2.1
 
-This candidate targets Code Factory core 0.48.2. Marketplace publication and
-provider read-back remain separate release steps.
+This documentation-only update does not change extension runtime behavior. It
+can be used with Code Factory core 0.48.2; publishing the optional core package
+is a separate release step. Marketplace status must be confirmed from provider
+read-back.
 The bounded security review follows values through supported local helpers to
 HTTP, file, and SQL sinks, while checking upload directories separately from
 sanitized filenames. Studio presents a shared next action; optional JEV
@@ -212,7 +214,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-1.2.0.vsix
+code --install-extension factoryline-vscode-1.2.1.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.

@@ -25,7 +25,7 @@ short_description: Audit code, review evidence, and resolve defects.
 
 # Code Factory
 
-## Current source preview — core 0.48.2, editors 1.2.0 (prepared, unpublished)
+## Current source preview — core 0.48.2, VS Code 1.2.1, JetBrains 1.2.0
 
 The bounded security review follows values through supported local helpers to
 HTTP, file, and SQL sinks, and checks upload directories separately from

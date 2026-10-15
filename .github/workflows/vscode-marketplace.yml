@@ -18,12 +18,12 @@ on:
         type: string
 
       cadence_exception_reason:
-        description: "Owner-approved one-time 1.1.4 cadence exception reason"
+        description: "Owner-approved one-time cadence exception reason for an exact approved candidate"
         required: false
         default: ""
         type: string
       cadence_exception_version:
-        description: "Type 1.2.0 to opt in to the one-time exception for this exact candidate"
+        description: "Type 1.2.0 or 1.2.1 to opt in to the one-time exception for that exact candidate"
         required: false
         default: ""
         type: string
@@ -193,7 +193,7 @@ jobs:
               raise SystemExit("release_contract escapes the workspace") from exc
           PY
           source_args=()
-          if [[ "$RELEASE_REF" == "vscode-v1.2.0" ]]; then source_args=(--source CHANGELOG.md); fi
+          if [[ "$RELEASE_REF" == "vscode-v1.2.0" || "$RELEASE_REF" == "vscode-v1.2.1" ]]; then source_args=(--source CHANGELOG.md); fi
           python scripts/prepare_release_contract.py \
             --root . \
             --feature "vscode-${RELEASE_REF//+/-}" \
@@ -224,10 +224,13 @@ jobs:
             if [[ "$EXCEPTION_VERSION" == "1.2.0" ]]; then
               test "$RELEASE_REF" = vscode-v1.2.0
               test "$(node -p "require('./package.json').version")" = 1.2.0
+            elif [[ "$EXCEPTION_VERSION" == "1.2.1" ]]; then
+              test "$RELEASE_REF" = vscode-v1.2.1
+              test "$(node -p "require('./package.json').version")" = 1.2.1
             elif [[ -z "$EXCEPTION_VERSION" ]]; then
               test "$RELEASE_REF" = vscode-v1.1.4+build.1
             else
-              echo "Only version 1.2.0 may be explicitly opted in." >&2
+              echo "Only versions 1.2.0 and 1.2.1 may be explicitly opted in." >&2
               exit 1
             fi
             python - <<'PY'
@@ -239,9 +242,10 @@ jobs:
           contract = json.loads(Path(os.environ["RELEASE_CONTRACT_PATH"]).read_text())
           assert contract["approved_by"] == os.environ["GITHUB_ACTOR"]
           now = datetime.now(timezone.utc)
-          current = os.environ.get("EXCEPTION_VERSION", "") == "1.2.0"
-          version = "1.2.0" if current else "1.1.4"
-          tag = "vscode-v1.2.0" if current else "vscode-v1.1.4+build.1"
+          version_opt_in = os.environ.get("EXCEPTION_VERSION", "")
+          current = version_opt_in in {"1.2.0", "1.2.1"}
+          version = version_opt_in if current else "1.1.4"
+          tag = f"vscode-v{version}" if current else "vscode-v1.1.4+build.1"
           value = {
               "schema": "factory.release-cadence-exception.v1", "channel": "vscode", "version": version,
               "monthly_cap_exception": True,

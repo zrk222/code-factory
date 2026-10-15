@@ -512,6 +512,8 @@ def test_disabled_release_policy_rejects_otherwise_valid_exception(
         ("core", "0.48.2", "v0.48.2", "pypi"),
         ("vscode", "1.2.0", "vscode-v1.2.0", "openvsx"),
         ("vscode", "1.2.0", "vscode-v1.2.0", "vscode-marketplace"),
+        ("vscode", "1.2.1", "vscode-v1.2.1", "openvsx"),
+        ("vscode", "1.2.1", "vscode-v1.2.1", "vscode-marketplace"),
         ("jetbrains", "1.2.0", "jetbrains-v1.2.0", "jetbrains-marketplace"),
     ],
 )
