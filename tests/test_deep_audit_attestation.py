@@ -89,19 +89,23 @@ def test_fresh_independent_attestation_verifies(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "issued,expires",
+    "issued_delta,expires_delta",
     [
         (
-            datetime.now(timezone.utc) + timedelta(minutes=5),
-            datetime.now(timezone.utc) + timedelta(hours=1),
+            timedelta(minutes=5),
+            timedelta(hours=1),
         ),
         (
-            datetime.now(timezone.utc) - timedelta(hours=2),
-            datetime.now(timezone.utc) + timedelta(hours=1),
+            -timedelta(hours=2),
+            timedelta(hours=1),
         ),
     ],
 )
-def test_future_or_stale_attestation_fails_closed(tmp_path, issued, expires):
+def test_future_or_stale_attestation_fails_closed(
+    tmp_path, issued_delta, expires_delta
+):
+    now = datetime.now(timezone.utc)
+    issued, expires = now + issued_delta, now + expires_delta
     receipt, receipt_path = _receipt(tmp_path)
     attestation, trust_root, _ = _signed_attestation(
         tmp_path, receipt_path, receipt, issued=issued, expires=expires
