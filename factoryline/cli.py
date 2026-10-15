@@ -325,8 +325,10 @@ def _workflow_canary(module) -> dict:
     return _forgeline_feature_canaries(module, payload, provenance_ok)
 
 
-def _home(root: Path = Path("."), as_json: bool = False) -> int:
-    """Return compact, live state for agents without requiring command discovery."""
+def _home(
+    root: Path = Path("."), as_json: bool = False, schedule: str | None = None
+) -> int:
+    """Show local code audit state and its next action."""
     modules = _lazy_import("assembly", "detect")()
     factory_root = root / ".factory"
     counts = {
@@ -347,19 +349,18 @@ def _home(root: Path = Path("."), as_json: bool = False) -> int:
         else 0,
     }
     installed = sum(module.installed for module in modules)
+    from .mission_control_status import read_daily_action
+
+    daily_action = read_daily_action(root, schedule)
+    next_command = daily_action["primary_action"]["command"]
     payload = {
         "bin": str(Path(sys.argv[0]).resolve()),
-        "description": "Five-brick spec-to-proof software factory",
+        "description": "Local code audit and next action",
         "root": str(root.resolve()),
         "bricks": {"installed": installed, "total": len(modules)},
         "proof": counts,
-        "next": [
-            "factory doctor --json",
-            "factory plan",
-            "factory init ."
-            if not factory_root.exists()
-            else "factory evidence <feature>",
-        ],
+        "daily_action": daily_action,
+        "next": [next_command] if next_command else [],
     }
     if as_json:
         print(json.dumps(payload, indent=2))
@@ -368,13 +369,14 @@ def _home(root: Path = Path("."), as_json: bool = False) -> int:
         print(f"description: {payload['description']}")
         print(f"root: {payload['root']}")
         print(f"bricks: {installed} of {len(modules)} installed")
+        print(f"action: {daily_action['primary_action']['label']}")
         print("proof:")
         for name, count in counts.items():
             print(f"  {name}: {count}")
         print("next:")
         for command in payload["next"]:
             print(f"  - {command}")
-    return 0
+    return int("INCOMPLETE" in daily_action.values())
 
 
 def _doctor_checks() -> tuple[list, list]:
@@ -523,8 +525,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="cmd")
 
-    s = sub.add_parser("home", help="show compact live factory and proof state")
+    s = sub.add_parser("home", help="show local code audit state and next action")
     s.add_argument("--root", default=".")
+    s.add_argument("--schedule", help="schedule manifest")
     s.add_argument("--json", action="store_true")
 
     s = sub.add_parser("doctor", help="show brick versions and command compatibility")
@@ -2335,7 +2338,7 @@ def _dispatch_route_group_01(a, capture_command, p):
     if a.cmd == "update":
         return __import__("factoryline.cli_update", fromlist=["run"]).run(a)
     if a.cmd == "home":
-        return _home(Path(a.root), a.json)
+        return _home(Path(a.root), a.json, a.schedule)
     if a.cmd == "doctor":
         return _doctor(a.strict, a.json)
     if a.cmd in {"architecture", "external", "journey", "efficiency"}:

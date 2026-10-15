@@ -12,6 +12,7 @@ from typing import Any
 import hashlib
 import json
 import os
+import re
 import stat
 import tempfile
 import time
@@ -28,6 +29,7 @@ from .release_integrity import release_integrity
 from .supply_chain import supply_chain_status
 from .context_efficiency import context_efficiency_status
 from .intake_parameters import intake_parameters_status
+from .runtime_audit_common import canonical_bytes, parse_json_bytes, _stat_identity
 
 
 SCHEMA = "factory.mission-control-status.v1"
@@ -49,6 +51,236 @@ AUTHORITY = {
     "credential": False,
     "connector": False,
 }
+DAILY_SCHEDULE_MAX_BYTES = 1_048_576
+
+
+def project_daily_action(
+    status: dict[str, Any], schedule: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Project one safe next action from validated status and a fresh plan."""
+    allowed_states = {member.value for member in MissionControlState}
+    if not isinstance(status, dict) or status.get("state") not in allowed_states:
+        raise ValueError("daily action requires a known Mission Control state")
+    blockers = status.get("blockers")
+    if not isinstance(blockers, dict) or any(
+        not isinstance(k, str) or type(v) is not int or v < 0
+        for k, v in blockers.items()
+    ):
+        raise ValueError("daily action requires nonnegative blocker counts")
+    plan, manifest_sha256, audit_state, counts = _daily_schedule_projection(schedule)
+    state = status["state"]
+    primary_actions = (
+        (
+            state == MissionControlState.BLOCKED.value or any(blockers.values()),
+            ("investigate_blockers", "Investigate blocked evidence before proceeding"),
+        ),
+        (
+            audit_state == "INCOMPLETE",
+            ("repair_schedule_input", "Correct the supplied schedule manifest"),
+        ),
+        (
+            audit_state == "PLAN_ONLY" and counts["BLOCK"] > 0,
+            (
+                "resolve_blocked_checks",
+                "Resolve blocked proof inputs before running checks",
+            ),
+        ),
+        (
+            audit_state == "PLAN_ONLY" and counts["RUN"] > 0,
+            ("run_required_checks", "Run the required checks in the approved workflow"),
+        ),
+        (
+            state == MissionControlState.REVIEW_REQUIRED.value,
+            ("review_evidence", "Review the current evidence before proceeding"),
+        ),
+        (
+            state == MissionControlState.EVIDENCE_MISSING.value,
+            (
+                "inspect_evidence_gaps",
+                "Inspect evidence gaps and define this task's checks",
+            ),
+        ),
+        (
+            audit_state == "PLAN_ONLY" and counts["SKIP"] > 0,
+            ("review_skipped_checks", "Review why checks were marked unaffected"),
+        ),
+        (
+            audit_state == "PLAN_ONLY",
+            ("review_reused_proofs", "Review the exact reused proof receipts"),
+        ),
+    )
+    action = next(
+        (action for matched, action in primary_actions if matched),
+        ("select_task_checks", "Select the checks for this task"),
+    )
+    return {
+        "schema": "factory.daily-action.v1",
+        "evidence_state": state,
+        "audit_state": audit_state,
+        "freshness": "PLAN_INPUTS_ONLY" if plan is not None else "UNASSESSED",
+        "execution": "NOT_RUN",
+        "candidate": None
+        if plan is None
+        else {
+            "plan_id": plan.get("plan_id"),
+            "assurance_level": plan.get("assurance_level"),
+            "manifest_sha256": manifest_sha256,
+            "changed_paths_sha256": plan.get("changed_paths_sha256"),
+            "plan_sha256": plan.get("plan_sha256"),
+        },
+        "proof_counts": counts,
+        "blockers": {key: value for key, value in blockers.items() if value},
+        "primary_action": {"id": action[0], "label": action[1], "command": None},
+        "authority": dict(AUTHORITY),
+        "claim_boundary": "A schedule is a plan only; global completeness and execution are not established.",
+    }
+
+
+def _daily_schedule_projection(schedule):
+    counts = dict.fromkeys(("RUN", "REUSE", "SKIP", "BLOCK"), 0)
+    if schedule is None:
+        return None, None, "NOT_REQUESTED", counts
+    if not isinstance(schedule, dict):
+        raise ValueError("daily schedule binding is invalid")
+    if schedule.get("state") == "INCOMPLETE":
+        return None, None, "INCOMPLETE", counts
+    plan, manifest_sha256 = schedule.get("plan"), schedule.get("manifest_sha256")
+    if not _daily_plan_header_valid(plan, manifest_sha256):
+        raise ValueError("daily schedule plan is invalid")
+    for row in plan["items"]:
+        key = row.get("disposition") if isinstance(row, dict) else None
+        if key not in counts:
+            raise ValueError("daily schedule disposition is invalid")
+        counts[key] += 1
+    reported = plan.get("counts")
+    if reported != counts or any(type(value) is not int for value in reported.values()):
+        raise ValueError("daily schedule counts mismatch")
+    if not _daily_plan_hashes_valid(plan):
+        raise ValueError("daily schedule hashes do not verify")
+    return plan, manifest_sha256, "PLAN_ONLY", counts
+
+
+def _daily_plan_header_valid(plan, manifest_sha256):
+    return (
+        isinstance(plan, dict)
+        and plan.get("schema") == "factory.incremental-plan.v1"
+        and plan.get("authority") == "none"
+        and plan.get("release_approval") is False
+        and isinstance(plan.get("items"), list)
+        and isinstance(manifest_sha256, str)
+        and re.fullmatch(r"[0-9a-f]{64}", manifest_sha256) is not None
+    )
+
+
+def _daily_plan_hashes_valid(plan):
+    plan_hash, changed_hash = plan.get("plan_sha256"), plan.get("changed_paths_sha256")
+    plan_core = {key: value for key, value in plan.items() if key != "plan_sha256"}
+    return (
+        isinstance(plan_hash, str)
+        and isinstance(changed_hash, str)
+        and re.fullmatch(r"[0-9a-f]{64}", plan_hash) is not None
+        and hashlib.sha256(canonical_bytes(plan_core)).hexdigest() == plan_hash
+        and re.fullmatch(r"[0-9a-f]{64}", changed_hash) is not None
+    )
+
+
+def incomplete_daily_action() -> dict[str, Any]:
+    """Represent a failed status read without turning missing evidence into clean."""
+    return {
+        "schema": "factory.daily-action.v1",
+        "evidence_state": "INCOMPLETE",
+        "audit_state": "INCOMPLETE",
+        "freshness": "UNASSESSED",
+        "execution": "NOT_RUN",
+        "error_code": "STATUS_READ_FAILED",
+        "candidate": None,
+        "proof_counts": dict.fromkeys(("RUN", "REUSE", "SKIP", "BLOCK"), 0),
+        "blockers": {},
+        "primary_action": {
+            "id": "inspect_status_failure",
+            "label": "Mission Control status is incomplete; inspect diagnostics",
+            "command": None,
+        },
+        "authority": dict(AUTHORITY),
+        "claim_boundary": "Status could not be read; no clean or complete result is inferred.",
+    }
+
+
+def read_daily_action(root: Path, schedule: str | None = None) -> dict[str, Any]:
+    """Keep unavailable local evidence visible without exposing exception details."""
+    try:
+        return mission_control_status(root, schedule)["daily_action"]
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return incomplete_daily_action()
+
+
+def daily_schedule_plan(root: Path, supplied_path: str | Path) -> dict[str, Any]:
+    """Load an explicitly selected, workspace-contained manifest and plan only."""
+    from .incremental_scheduler import plan_incremental, validate_schedule_manifest
+
+    try:
+        workspace = Path(root).resolve()
+        raw_path = Path(supplied_path)
+        candidate = Path(
+            os.path.abspath(
+                raw_path if raw_path.is_absolute() else workspace / raw_path
+            )
+        )
+        candidate.resolve().relative_to(workspace)
+        relative = candidate.relative_to(workspace)
+        parents = [
+            workspace.joinpath(*relative.parts[:i])
+            for i in range(1, len(relative.parts))
+        ]
+        reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        if any(
+            path.is_symlink()
+            or not path.is_dir()
+            or getattr(path.lstat(), "st_file_attributes", 0) & reparse
+            for path in parents
+        ):
+            raise ValueError("schedule path has an unsafe parent")
+        parent_identities = [_stat_identity(path.lstat()) for path in parents]
+        before = candidate.lstat()
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_size > DAILY_SCHEDULE_MAX_BYTES
+            or getattr(before, "st_file_attributes", 0) & reparse
+        ):
+            raise ValueError("schedule file is not a bounded regular file")
+        descriptor = os.open(candidate, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            opened, raw = (
+                os.fstat(stream.fileno()),
+                stream.read(DAILY_SCHEDULE_MAX_BYTES + 1),
+            )
+        after = candidate.lstat()
+
+        def identity(item):
+            return item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns
+
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or not stat.S_ISREG(after.st_mode)
+            or getattr(opened, "st_file_attributes", 0) & reparse
+            or getattr(after, "st_file_attributes", 0) & reparse
+            or identity(before) != identity(opened)
+            or identity(before) != identity(after)
+            or len(raw) > DAILY_SCHEDULE_MAX_BYTES
+            or parent_identities != [_stat_identity(path.lstat()) for path in parents]
+            or candidate.resolve() != workspace / relative
+        ):
+            raise ValueError("schedule changed while being read")
+        manifest = validate_schedule_manifest(parse_json_bytes(raw))
+        return {
+            "manifest_sha256": hashlib.sha256(canonical_bytes(manifest)).hexdigest(),
+            "plan": plan_incremental(workspace, manifest, out=None),
+        }
+    except (OSError, ValueError, RuntimeError) as exc:
+        return {
+            "state": "INCOMPLETE",
+            "error_code": getattr(exc, "code", "SCHEDULE_INPUT_INVALID"),
+        }
 
 
 def _release_workflow_integrity(root: Path) -> dict[str, Any]:
@@ -764,7 +996,9 @@ def mission_control_profile(root: Path) -> dict[str, Any]:
     }
 
 
-def mission_control_status(root: Path) -> dict[str, Any]:
+def mission_control_status(
+    root: Path, schedule_path: str | Path | None = None
+) -> dict[str, Any]:
     """Summarize local evidence gates without creating a hidden control path."""
     workspace = Path(root).resolve()
     evidence = _collect_evidence(workspace)
@@ -773,7 +1007,7 @@ def mission_control_status(root: Path) -> dict[str, Any]:
     human_required = _human_review_required(evidence, blocked)
     state = _mission_control_state(blocked, human_required)
     intake_state = evidence["intake_parameters"].get("state")
-    return {
+    result = {
         "schema": SCHEMA,
         "marker": "MISSION_CONTROL_READ_ONLY",
         "state": state,
@@ -789,6 +1023,13 @@ def mission_control_status(root: Path) -> dict[str, Any]:
             "repair code, alter Git, or perform any provider action."
         ),
     }
+    result["daily_action"] = project_daily_action(
+        result,
+        daily_schedule_plan(workspace, schedule_path)
+        if schedule_path is not None
+        else None,
+    )
+    return result
 
 
 def _mission_control_blockers(evidence: dict[str, Any]) -> dict[str, int]:

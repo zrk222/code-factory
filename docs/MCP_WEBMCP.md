@@ -58,6 +58,20 @@ Graph Ops progressively registers the following browser tools through
 11. `factory.appforge_surface_matrix_status`
 12. `factory.appforge_storefront_story_status`
 13. `factory.first_lap_status`
+14. `factory.deep_audit_status`
+15. `factory.runtime_audit_status`
+16. `factory.semantic_authority_status`
+17. `factory.saas_status`
+18. `factory.jetbrains_handshake_status`
+19. `factory.appforge_mobile_evidence_status` (registered separately)
+
+The two audit status tools read only the currently loaded page's deep-audit
+and runtime-assurance projections. They expose bounded state, finding, chain
+and lane counts, plus available receipt identities. Missing counts remain
+unavailable. Absolute receipt paths, source bodies and repair commands are excluded; no scanner, test,
+repair or provider operation runs. These source additions require an updated
+local installation and page reload; they are not yet in the immutable public
+`0.48.1` package.
 
 `factory.first_lap_status` is the recommended first discovery call for a new
 agent. It exposes only the local First Lap initialization and generated-file

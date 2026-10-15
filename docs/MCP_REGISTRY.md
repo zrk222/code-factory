@@ -19,6 +19,19 @@ October 10, 2026. The registry reports this version as its latest active entry.
 and [the published PyPI package](https://pypi.org/project/factoryline-code-factory/0.48.1/).
 Later source commits are separate from these immutable published artifacts.
 
+The current source descriptor also prepares publisher-provided discovery
+metadata for the existing stdio tools: deep-audit status, runtime assurance,
+rule search, audit taxonomy and agent context. It preserves the exact package
+pin and read-only boundary. This prepared descriptor is not evidence that the
+public registry entry changed. Registry metadata must be published as a new
+unique version through the release workflow; it must describe its actual
+published package, not a newer local candidate.
+
+Current source also adds deep-audit and runtime-assurance projections to the
+loaded Graph Ops page's WebMCP tools. See [the browser contract](MCP_WEBMCP.md).
+Those browser additions require an updated local installation; they are not
+claimed for the existing public `0.48.1` installation.
+
 The server needs a workspace root. Configure that explicit path in a client
 that supports local stdio MCP, or use the existing configuration renderer:
 

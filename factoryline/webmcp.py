@@ -122,6 +122,16 @@ WEBMCP_TOOLS: tuple[dict[str, Any], ...] = (
         "title": "Read agent and analyzer proof handshake",
         "description": "Read the latest bounded coding-agent and Qodana-or-SonarQube handshake already visible on this page. It never runs or approves an agent, analyzer, or test.",
     },
+    {
+        "name": "factory.deep_audit_status",
+        "title": "Read native audit evidence",
+        "description": "Read bounded deep-audit state, finding counts and receipt identity from the loaded page. Missing execution stays unavailable; no scanner or repair runs.",
+    },
+    {
+        "name": "factory.runtime_audit_status",
+        "title": "Read runtime audit evidence",
+        "description": "Read bounded runtime assurance state and counts from the loaded page. This is local receipt evidence, not accuracy, freshness, certification or release authority.",
+    },
 )
 
 

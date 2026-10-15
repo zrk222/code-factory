@@ -47,6 +47,76 @@ def test_graph_snapshot_keeps_unknown_context_cache_hits_unknown(
     assert snapshot["facts"]["context_efficiency_cache_hits"] is None
 
 
+def test_daily_action_validates_status_and_prioritizes_missing_evidence():
+    import pytest
+    from factoryline.mission_control_status import project_daily_action
+
+    with pytest.raises(ValueError):
+        project_daily_action({"state": "clean", "blockers": {}})
+    with pytest.raises(ValueError):
+        project_daily_action({"state": "blocked", "blockers": {"x": -1}})
+    projected = project_daily_action(
+        {"state": "evidence_missing", "blockers": {}},
+        {"state": "INCOMPLETE", "error_code": "SCHEDULE_INPUT_INVALID"},
+    )
+    assert projected["audit_state"] == "INCOMPLETE"
+    assert projected["primary_action"]["id"] == "repair_schedule_input"
+    assert projected["execution"] == "NOT_RUN"
+    assert not any(projected["authority"].values())
+
+
+def test_daily_schedule_plan_is_bounded_read_only_and_candidate_bound(
+    tmp_path, monkeypatch
+):
+    import json
+    from factoryline import incremental_scheduler
+    from factoryline.mission_control_status import (
+        daily_schedule_plan,
+        project_daily_action,
+    )
+
+    manifest = {
+        "schema": incremental_scheduler.SCHEMA,
+        "plan_id": "daily-cli",
+        "assurance_level": "isolated_worker",
+        "changed_paths": ["src/a.py"],
+        "dependency_closure": {"lint": ["src/a.py"]},
+        "gates": [
+            {"id": "lint", "depends_on": [], "side_effects": False, "proof": None}
+        ],
+    }
+    manifest_path = tmp_path / "schedule.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    calls = []
+    actual = incremental_scheduler.plan_incremental
+
+    def record(root, value, *, out=None):
+        calls.append(out)
+        return actual(root, value, out=out)
+
+    monkeypatch.setattr(incremental_scheduler, "plan_incremental", record)
+    planned = daily_schedule_plan(tmp_path, "schedule.json")
+    assert calls == [None]
+    assert planned["plan"]["counts"]["RUN"] == 1
+    result = project_daily_action(
+        {"state": "evidence_missing", "blockers": {}}, planned
+    )
+    assert result["audit_state"] == "PLAN_ONLY"
+    assert result["execution"] == "NOT_RUN"
+    assert result["primary_action"]["id"] == "run_required_checks"
+    assert result["candidate"]["manifest_sha256"] == planned["manifest_sha256"]
+    assert str(tmp_path) not in json.dumps(result)
+    assert not (tmp_path / ".factory" / "proof-plans").exists()
+    rejected = daily_schedule_plan(tmp_path, "../outside.json")
+    assert rejected["state"] == "INCOMPLETE"
+    forged = dict(planned)
+    forged["plan"] = {**planned["plan"], "plan_id": "forged"}
+    import pytest
+
+    with pytest.raises(ValueError, match="hashes"):
+        project_daily_action({"state": "supervised_only", "blockers": {}}, forged)
+
+
 def test_graph_ops_links_local_product_mission_and_valid_completion_exactly(
     tmp_path: Path,
 ):
