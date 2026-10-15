@@ -2027,41 +2027,58 @@ catch(error){{renderFailure({{code:'NETWORK_ERROR',message:String(error)}});}}fi
 </script><script src="/studio_audit.js" defer></script></body></html>"""
 
 
-def studio_audit_projection(root: Path) -> dict[str, Any]:
-    return deep_scan_projection(root)[0]
-
-
-def _current_audit(root: Path, payload: dict[str, Any], fields: set[str]) -> dict[str, Any]:
+def _current_audit(
+    root: Path, payload: dict[str, Any], fields: set[str]
+) -> dict[str, Any]:
     if set(payload) != fields:
         raise StudioRequestError("AUDIT_REQUEST_INVALID", "invalid request fields")
-    projection = studio_audit_projection(root)
-    if (payload.get("run_id") != projection.get("run_id") or
-            payload.get("expected_state_content_sha256") != projection.get("state_content_sha256")):
+    projection = deep_scan_projection(root)[0]
+    if payload.get("run_id") != projection.get("run_id") or payload.get(
+        "expected_state_content_sha256"
+    ) != projection.get("state_content_sha256"):
         raise StudioRequestError("AUDIT_STALE", "audit changed; refresh", 409)
     return projection
 
 
 def prepare_studio_repair_scope(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
-    projection = _current_audit(root, payload, {"run_id", "expected_state_content_sha256", "finding_ids"})
+    projection = _current_audit(
+        root, payload, {"run_id", "expected_state_content_sha256", "finding_ids"}
+    )
     if projection.get("observed_state") in {"RUNNING", "PAUSE_REQUESTED"}:
-        raise StudioRequestError("AUDIT_ACTIVE", "stop the audit before proposal preparation", 409)
+        raise StudioRequestError(
+            "AUDIT_ACTIVE", "stop the audit before proposal preparation", 409
+        )
     ids = payload["finding_ids"]
     if not isinstance(ids, list) or len(ids) > 20:
         raise StudioRequestError("FINDINGS_INVALID", "select at most 20 findings", 400)
     try:
-        scope = create_repair_scope(root, "Studio selected audit findings",
-                                    audit_run_id=projection["run_id"], finding_ids=ids)
-        artifacts = write_repair_scope_artifacts(scope, root, Path(root) / ".factory/repair-scopes")
+        scope = create_repair_scope(
+            root,
+            "Studio selected audit findings",
+            audit_run_id=projection["run_id"],
+            finding_ids=ids,
+        )
+        artifacts = write_repair_scope_artifacts(
+            scope, root, Path(root) / ".factory/repair-scopes"
+        )
     except (RepairSandboxError, OSError, ValueError) as exc:
         raise StudioRequestError("REPAIR_SCOPE_REJECTED", str(exc), 409) from exc
     base = Path(root).resolve()
-    paths = {key: Path(value).resolve().relative_to(base).as_posix()
-             for key, value in artifacts["paths"].items()}
-    return {"scope_id": scope["scope_id"], "finding_ids": scope["finding_ids"], "paths": paths}
+    paths = {
+        key: Path(value).resolve().relative_to(base).as_posix()
+        for key, value in artifacts["paths"].items()
+    }
+    return {
+        "scope_id": scope["scope_id"],
+        "finding_ids": scope["finding_ids"],
+        "paths": paths,
+    }
 
 
 def request_studio_audit_pause(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
-    projection = _current_audit(root, payload, {"run_id", "expected_state_content_sha256"})
+    projection = _current_audit(
+        root, payload, {"run_id", "expected_state_content_sha256"}
+    )
     if projection.get("observed_state") != "RUNNING":
         raise StudioRequestError("AUDIT_NOT_RUNNING", "audit is not running", 409)
     return pause_deep_run(root, projection["run_id"])
@@ -2165,7 +2182,9 @@ class _StudioHandler(BaseHTTPRequestHandler):
                 developer_memory_snapshot
             ),
             "/api/graph-ops": lambda: self._serve_token_json(self._graph_ops_payload),
-            "/api/studio-audit": lambda: self._serve_token_json(studio_audit_projection),
+            "/api/studio-audit": lambda: self._serve_token_json(
+                lambda root: deep_scan_projection(root)[0]
+            ),
             "/api/test-report": lambda: self._serve_token_json(read_junit_report),
             "/api/coverage-report": lambda: self._serve_token_json(
                 lambda root: read_runtime_coverage_report(root, include_files=True)

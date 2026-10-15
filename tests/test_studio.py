@@ -418,6 +418,7 @@ def test_studio_audit_http_flow_is_token_bound_and_prepares_selected_proposal(
 
     try:
         assert call("GET", "/api/studio-audit", authenticated=False)[0] == 403
+        assert call("GET", "/api/studio-audit") == (200, projection)
         assert call("GET", "/studio_audit.js")[0] == 200
         status, active = call(
             "POST",
@@ -495,7 +496,7 @@ def test_studio_audit_http_flow_is_token_bound_and_prepares_selected_proposal(
         thread.join(timeout=3)
 
 
-def test_studio_audit_projection_and_pause_preserve_bound_state(tmp_path, monkeypatch):
+def test_request_studio_audit_pause_preserves_bound_state(tmp_path, monkeypatch):
     from factoryline import studio
 
     projection = {
@@ -511,7 +512,6 @@ def test_studio_audit_projection_and_pause_preserve_bound_state(tmp_path, monkey
         return {"run_id": run_id, "state": "PAUSE_REQUESTED"}
 
     monkeypatch.setattr(studio, "pause_deep_run", pause)
-    assert studio.studio_audit_projection(tmp_path) is projection
     payload = {
         "run_id": projection["run_id"],
         "expected_state_content_sha256": projection["state_content_sha256"],
