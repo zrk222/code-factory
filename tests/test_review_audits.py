@@ -2349,6 +2349,62 @@ def test_mock_assertion_spelling_on_fake_object_is_not_an_oracle(tmp_path):
     assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
 
 
+def test_uncalled_mock_assertion_attribute_is_a_weak_oracle(tmp_path):
+    (tmp_path / "test_mock_attribute.py").write_text(
+        "from unittest.mock import Mock\n"
+        "def test_behavior():\n"
+        "    send = Mock()\n"
+        "    assert send.assert_called_once\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_WEAK_TEST_ORACLE": 1}
+
+
+def test_standalone_uncalled_mock_assertion_attribute_stays_hollow(tmp_path):
+    (tmp_path / "test_mock_attribute.py").write_text(
+        "from unittest.mock import Mock\n"
+        "def test_behavior():\n"
+        "    send = Mock()\n"
+        "    send.assert_called_once\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "class Flag:\n"
+        "    @property\n"
+        "    def assert_called_once(self):\n"
+        "        return True\n"
+        "def test_behavior():\n"
+        "    flag = Flag()\n"
+        "    assert flag.assert_called_once\n",
+        "from unittest.mock import Mock\n"
+        "class Flag:\n"
+        "    @property\n"
+        "    def assert_called_once(self):\n"
+        "        return True\n"
+        "def Mock():\n"
+        "    return Flag()\n"
+        "def test_behavior():\n"
+        "    send = Mock()\n"
+        "    assert send.assert_called_once\n",
+        "from unittest.mock import Mock\n"
+        "def test_behavior():\n"
+        "    send = Mock()\n"
+        "    send.assert_called_once = lambda: True\n"
+        "    assert send.assert_called_once\n",
+    ],
+)
+def test_uncalled_mock_assertion_attribute_requires_unmutated_mock_provenance(
+    tmp_path, source
+):
+    (tmp_path / "test_mock_attribute.py").write_text(source, encoding="utf-8")
+    assert "QUALITY_WEAK_TEST_ORACLE" not in security_scan(tmp_path)["finding_counts"]
+
+
 @pytest.mark.parametrize(
     "receiver",
     [

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Detect asserted but uncalled mock assertion-method attributes using proven
+  unittest.mock bindings; preserve real calls, custom properties and rebinding
+  controls. Consolidate existing weak-oracle predicates without new modules.
+
 - Keep ForgeLine doctor capability canaries compatible with explicitly static
   coverage reports, reject contradictory metadata, and preserve the separate
   release requirement for measured behavioral evidence.

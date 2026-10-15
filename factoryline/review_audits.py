@@ -1859,7 +1859,7 @@ def _assertion_call(
     )
 
 
-def _mock_argument_oracle(node: ast.Call, aliases: dict[str, str]) -> bool:
+def _mock_argument_oracle(node: ast.AST, aliases: dict, *, uncalled=False) -> bool:
     methods = {
         "assert_called_with",
         "assert_called_once_with",
@@ -1876,6 +1876,12 @@ def _mock_argument_oracle(node: ast.Call, aliases: dict[str, str]) -> bool:
         "assert_awaited",
         "assert_awaited_once",
     }
+    if uncalled:
+        return (
+            isinstance(node, ast.Attribute)
+            and node.attr in methods
+            and (_mock_receiver_has_provenance(node, aliases))
+        )
     if not isinstance(node.func, ast.Attribute) or node.func.attr not in methods:
         return False
     if not _mock_receiver_has_provenance(node, aliases):
@@ -1907,7 +1913,9 @@ _UNITTEST_MOCK_CONSTRUCTORS = {
 def _mock_receiver_has_provenance(assertion, aliases):
     """Trust mock assertions only for locally constructed unittest.mock values."""
     scope = getattr(assertion, "_oracle_scope", None)
-    receiver = _mock_root_name(assertion.func.value, scope, aliases)
+    receiver = _mock_root_name(
+        getattr(assertion, "func", assertion).value, scope, aliases
+    )
     if receiver is None or scope is None:
         return False
     scoped_aliases = _scope_security_aliases(aliases, scope)
@@ -1930,7 +1938,7 @@ def _mock_receiver_has_provenance(assertion, aliases):
     from .review_integrity import mock_patch_dict_slot
 
     mapping_proven = mock_patch_dict_slot(
-        assertion.func.value,
+        getattr(assertion, "func", assertion).value,
         receiver,
         assertion,
         scoped_aliases,
@@ -1968,7 +1976,7 @@ def _mock_receiver_has_provenance(assertion, aliases):
     proven = (
         proven or fixture_proven or patch_proven or context_proven or mapping_proven
     )
-    return proven and not _mock_child_was_rebound(scope, assertion, receiver, aliases)
+    return proven and not _mock_root_was_mutated(scope, receiver, assertion, aliases)
 
 
 def _scope_binds_name(scope, name):
@@ -2093,10 +2101,6 @@ def _mock_getattr_selector(selector, scope):
         and isinstance(selector.value, str)
         and not (selector.value.startswith("__") and selector.value.endswith("__"))
     )
-
-
-def _mock_child_was_rebound(scope, assertion, root, aliases):
-    return _mock_root_was_mutated(scope, root, assertion, aliases)
 
 
 def _mock_root_was_mutated(scope, root, before, aliases):
@@ -2317,14 +2321,13 @@ def _mock_self_check(node: ast.Call) -> bool:
     if scope is None:
         return False
     receiver = _name(node.func.value)
-    calls = [
-        child
+    return any(
+        _call_name(child) == receiver
         for statement in scope.body
         for child in _body_nodes(statement)
         if isinstance(child, ast.Call)
         and (child.lineno, child.col_offset) < (node.lineno, node.col_offset)
-    ]
-    return any(_call_name(child) == receiver for child in calls)
+    )
 
 
 def _click_callback_oracle(
@@ -4081,19 +4084,15 @@ def _static_type_edges(
     ]
 
 
-def _weak_assertion_call_reason(node: ast.Call, aliases: dict) -> str | None:
-    from .review_integrity import weak_assertion_call_reason
-
-    return weak_assertion_call_reason(node, aliases)
-
-
 def _weak_assertion_reason(
     node: ast.AST, aliases: dict[str, str] | None = None
 ) -> str | None:
     if isinstance(node, ast.Call):
         if _universal_type_check(node):
             return "universal object type check does not verify the expected behavior"
-        return _weak_assertion_call_reason(node, aliases or {})
+        from .review_integrity import weak_assertion_call_reason
+
+        return weak_assertion_call_reason(node, aliases or {})
     if isinstance(node, ast.Compare) and len(node.ops) == 1:
         if isinstance(node.ops[0], (ast.Eq, ast.Is)) and len(node.comparators) == 1:
             left = node.left
@@ -4116,7 +4115,9 @@ def _weak_assertion_reason(
             for value in ast.walk(operand)
         ):
             return "mock invocation state does not verify its result or arguments"
-    if isinstance(node, ast.Attribute) and node.attr in {"called", "call_count"}:
+    if getattr(node, "attr", None) in {"called", "call_count"} or (
+        _mock_argument_oracle(node, aliases or {}, uncalled=True)
+    ):
         return "mock invocation state does not verify its result or arguments"
     return None
 
