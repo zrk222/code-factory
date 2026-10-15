@@ -10,6 +10,34 @@ import factoryline.release_candidate as candidate
 from test_intake_admission import _intake
 
 
+def test_source_manifest_keeps_docs_but_excludes_raster_previews(tmp_path, monkeypatch):
+    from setuptools._distutils.filelist import FileList
+
+    names = [
+        "docs/START_HERE.md",
+        "docs/coverage.json",
+        "docs/assets/diagram.svg",
+        "docs/assets/preview.png",
+        "docs/assets/demo.gif",
+        "deploy/deep-adapters/profiles/runtime.json",
+        "deploy/deep-adapters/README.md",
+        "factoryline/data/rules.json",
+        "factoryline/builtin_packs/core/pack.yaml",
+    ]
+    for name in names:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("fixture", encoding="utf-8")
+    manifest = (Path(__file__).parents[1] / "MANIFEST.in").read_text(encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    files = FileList()
+    files.findall()
+    for line in manifest.splitlines():
+        files.process_template_line(line)
+    selected = {Path(name).as_posix() for name in files.files}
+    assert selected == set(names) - {"docs/assets/preview.png", "docs/assets/demo.gif"}
+
+
 def test_candidate_tag_must_match_package_version(tmp_path, monkeypatch):
     monkeypatch.setattr(
         candidate, "source_snapshot", lambda root: {"version": "0.46.9"}

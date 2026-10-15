@@ -6,6 +6,7 @@ include PUBLICATION_GUIDE.md
 include factory.topology.json
 include mcp/server.json
 recursive-include docs *.md *.gif *.png *.svg *.json
+recursive-exclude docs *.gif *.png
 recursive-include editors *.md *.svg
 recursive-include plugins *
 recursive-include factoryline/builtin_packs *
