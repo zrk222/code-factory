@@ -919,9 +919,7 @@ def _bound_names(statement: ast.AST) -> set[str]:
     pending = [statement]
     while pending:
         child = pending.pop()
-        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            continue
-        if isinstance(child, ast.Lambda):
+        if isinstance(child, (*_FUNCTION_NODES, ast.ClassDef, ast.Lambda)):
             continue
         pending.extend(ast.iter_child_nodes(child))
         if isinstance(child, (ast.Import, ast.ImportFrom)):
