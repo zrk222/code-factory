@@ -187,7 +187,6 @@ def _run_repair(args) -> int:
 
 
 def _execute_repair_command(args, repair_sandbox):
-    out_dir = Path(args.root) / args.out_dir if args.out_dir else None
     if args.repair_cmd == "trace":
         from .deep_audit import write_deep_audit_lineage
 
@@ -196,6 +195,7 @@ def _execute_repair_command(args, repair_sandbox):
         )
     if args.repair_cmd in {"approve", "run", "revoke", "stop"}:
         return _execute_approved_command(args, repair_sandbox)
+    out_dir = Path(args.root) / args.out_dir if args.out_dir else None
     if args.repair_cmd == "scope":
         result = repair_sandbox.create_repair_scope(
             Path(args.root),
