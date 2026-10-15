@@ -22,6 +22,113 @@ from factoryline import workflow_audit as workflow_audit_module
 from factoryline.workflow_audit import CATEGORIES, audit_workflows
 
 
+def test_implementation_scope_inventory_is_collected_once(monkeypatch):
+    from factoryline import review_integrity as module
+
+    scope = ast.parse("def subject(value, *args, **kwargs):\n    local = value\n").body[
+        0
+    ]
+    original = module._implementation_scope_nodes
+    calls = []
+
+    def nodes(value):
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(module, "_implementation_scope_nodes", nodes)
+    assert module._implementation_scope_aliases(scope, {"local": "mock.Mock"}) == {}
+    assert calls == [scope]
+    assert module._implementation_bound_names(scope, original(scope)) == {
+        "value",
+        "local",
+        "args",
+        "kwargs",
+    }
+
+
+def test_implementation_alias_cache_copies_results_and_binds_alias_inputs(monkeypatch):
+    from factoryline import review_integrity as module
+
+    tree = ast.parse("def subject():\n    dependency()\n    dependency()")
+    parents = module._implementation_parents(tree)
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]
+    original = module._implementation_scope_aliases
+    visited = []
+
+    def scope(*args):
+        visited.append(args[0])
+        return original(*args)
+
+    monkeypatch.setattr(module, "_implementation_scope_aliases", scope)
+    tree._implementation_alias_cache = {}
+    first = module._implementation_aliases_for(
+        calls[0], parents, {"dependency": "one"}, tree
+    )
+    first["dependency"] = "caller-mutation"
+    assert module._implementation_aliases_for(
+        calls[1], parents, {"dependency": "one"}, tree
+    ) == {"dependency": "one"}
+    assert len(visited) == 2
+    assert module._implementation_aliases_for(
+        calls[1], parents, {"dependency": "two"}, tree
+    ) == {"dependency": "two"}
+    assert len(visited) == 4
+
+
+def test_implementation_alias_facts_clear_after_failure_and_changed_source(monkeypatch):
+    from factoryline import review_integrity as module
+
+    source = "def subject(): return Mock()"
+    tree = ast.parse(source)
+    original = module._implementation_mock_findings
+
+    def failed(*args):
+        raise RuntimeError("interrupted analysis")
+
+    monkeypatch.setattr(module, "_implementation_mock_findings", failed)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        module.implementation_completeness_findings("app.py", tree, source)
+    assert not hasattr(tree, "_implementation_alias_cache")
+    monkeypatch.setattr(module, "_implementation_mock_findings", original)
+    before = module.implementation_completeness_findings(
+        "app.py", tree, source, {"Mock": "unittest.mock.Mock"}
+    )
+    assert not hasattr(tree, "_implementation_alias_cache")
+    source = "def subject(): return production()"
+    tree.body[0].body = ast.parse(source).body[0].body
+    after = module.implementation_completeness_findings(
+        "app.py", tree, source, {"Mock": "unittest.mock.Mock"}
+    )
+    assert before != after
+    assert not hasattr(tree, "_implementation_alias_cache")
+
+
+def test_implementation_alias_cleanup_tolerates_shared_tree_calls(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from factoryline import review_integrity as module
+
+    tree = ast.parse("value = production()")
+    barrier = Barrier(2)
+
+    def mocks(*args):
+        barrier.wait(timeout=5)
+        return []
+
+    monkeypatch.setattr(module, "_implementation_mock_findings", mocks)
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        results = list(
+            workers.map(
+                lambda _: module.implementation_completeness_findings(
+                    "app.py", tree, "value = production()"
+                ),
+                range(2),
+            )
+        )
+    assert results == [[], []]
+    assert not hasattr(tree, "_implementation_alias_cache")
+
+
 def test_tls_verification_disabled_classifies_only_supported_explicit_bypasses():
     from factoryline.review_integrity import tls_verification_disabled
 
