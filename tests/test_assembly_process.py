@@ -164,6 +164,31 @@ def test_output_overflow_cannot_pass(tmp_path, stream):
     assert len(output) < 1400
 
 
+def test_monitor_rechecks_stream_failure_at_completion(monkeypatch):
+    failed = assembly_process.threading.Event()
+
+    class _Child:
+        def poll(self):
+            failed.set()
+            return 0
+
+    class _Reader:
+        def is_alive(self):
+            return False
+
+    monkeypatch.setattr(assembly_process, "_observe_descendants", lambda *_: None)
+    reason = assembly_process._monitor(
+        _Child(),
+        object(),
+        [_Reader()],
+        failed,
+        None,
+        time.monotonic() + 10,
+    )
+
+    assert reason == "output limit exceeded or stream read failed"
+
+
 @pytest.mark.parametrize("cancel", [False, True])
 def test_deadline_and_cancellation_are_bounded(tmp_path, cancel):
     start = time.monotonic()
