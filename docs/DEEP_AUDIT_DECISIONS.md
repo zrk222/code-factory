@@ -685,3 +685,19 @@ document repository knowledge, test execution and risk-grouped changes;
 [Blitzy runtime validation](https://blitzy.com/blog/the-blitzy-sandbox-is-open-autonomous-software-development-at-no-cost)
 describes compilation and runtime validation. CF adopts explicit context,
 reproduction and verification handoffs within its existing agent workflow.
+
+## Native action accounting (source candidate)
+
+The native-run candidate enrolls the exact manifest lane set in the existing
+run event chain. Each action binds the run, candidate, manifest, lane, engine
+and family. A completed action must have one ordered start and terminal whose
+artifact hashes agree with the recorded lane result. Missing, duplicate,
+unexpected or mismatched actions leave coverage incomplete.
+
+Readback derives this accounting from the manifest and verified local events;
+it does not trust a saved coverage label. Paused, cancelled, interrupted and
+older unenrolled histories remain readable with incomplete action coverage.
+Local consistency is not signature authentication or proof of scanner accuracy.
+The separately pinned review gate still controls evidence admission. This
+packet does not enroll arbitrary CLI/model-provider calls or complete end-to-end
+trace capture; those adapters remain explicit follow-on work.

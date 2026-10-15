@@ -25,6 +25,58 @@ def test_full_local_image_id_and_repository_digest_are_immutable_pins(prefix):
     assert _validate_lane_image({"image": prefix + "sha256:" + "a" * 64}) is None
 
 
+def _rechain_action_test_events(directory, events, state, digest, write_run_json):
+    previous = None
+    for index, event in enumerate(events, 1):
+        event["sequence"], event["previous_sha256"] = index, previous
+        write_run_json(directory, f"event-{index:05d}.json", event)
+        previous = digest(event)
+    state.update(sequence=len(events), event_sha256=previous, analysis_complete=True)
+    write_run_json(directory, "state.json", state)
+
+
+def _observed_action_status(
+    module, root, directory, run_id, read_run_json, digest, write_run_json
+):
+    state = read_run_json(directory, "state.json")
+    rows = {row["action_id"]: row for row in state["lanes"]}
+    for row in rows.values():
+        row.update(state="OBSERVED", gaps=[])
+    state.update(analysis_complete=True, gaps=[])
+    events = [
+        read_run_json(directory, f"event-{index:05d}.json")
+        for index in range(1, state["sequence"] + 1)
+    ]
+    for event in events:
+        if event["kind"] == "lane_completed":
+            event["details"].update(
+                module._action_terminal(rows[event["details"]["action_id"]])
+            )
+    events[-1]["details"]["analysis_complete"] = True
+    _rechain_action_test_events(directory, events, state, digest, write_run_json)
+    return module.deep_run_status(root, run_id), state, events
+
+
+def _damage_action_test_events(damage, events, start, terminal):
+    if damage == "missing_start":
+        start["kind"] = "unrecognized"
+    elif damage == "missing_terminal":
+        terminal["kind"] = "unrecognized"
+    elif damage == "duplicate":
+        import copy
+
+        events.append(copy.deepcopy(terminal))
+    elif damage == "unknown":
+        start["details"]["action_id"] = "f" * 64
+    elif damage == "identity":
+        start["details"]["family"] = "wrong-family"
+    elif damage == "hash":
+        terminal["details"]["report_sha256"] = "0" * 64
+    else:
+        events.remove(start)
+        events.insert(events.index(terminal) + 1, start)
+
+
 @pytest.mark.parametrize(
     "image",
     [
@@ -1761,6 +1813,115 @@ def test_scan_missing_engine_is_incomplete_with_durable_progress(
     assert len(module.execution_repairs(root, result["run_id"])["coverage_tasks"]) == 7
 
 
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing_start",
+        "missing_terminal",
+        "duplicate",
+        "unknown",
+        "identity",
+        "hash",
+        "order",
+        "duplicate_result",
+        "final_details",
+    ],
+)
+def test_native_action_coverage_reconciles_events_results_and_readback(
+    tmp_path, monkeypatch, damage
+):
+    import factoryline.deep_audit as module
+    from factoryline.deep_audit_io import (
+        digest,
+        read_run_json,
+        run_directory,
+        write_run_json,
+    )
+
+    root, manifest, pin, authorization, trust, plan, _, _ = execution_fixture(tmp_path)
+    monkeypatch.setattr(
+        module,
+        "_docker_base",
+        lambda: (_ for _ in ()).throw(
+            RuntimeAuditError("E_DOCKER_UNAVAILABLE", "fixture")
+        ),
+    )
+    result = module.scan_deep_audit(
+        root,
+        manifest,
+        pin,
+        authorization=authorization,
+        trust_root=trust,
+        trust_root_sha256=plan["trust_root_sha256"],
+    )
+    assert result["action_coverage"]["state"] == "VERIFIED"
+    status = module.deep_run_status(root, result["run_id"])
+    assert status["action_coverage"] == result["action_coverage"]
+    assert status["analysis_complete"] is False
+    lineage_run, _, _ = module._lineage_run(root, result["run_id"])
+    assert lineage_run["action_coverage"] == status["action_coverage"]
+
+    directory = run_directory(root, result["run_id"])
+    if damage == "missing_start":
+        status, state, events = _observed_action_status(
+            module,
+            root,
+            directory,
+            result["run_id"],
+            read_run_json,
+            digest,
+            write_run_json,
+        )
+        assert status["analysis_complete"] is True
+        for invalid_plan in ({**plan, "lanes": []}, {**plan, "schema": "bad"}):
+            assert (
+                module._action_coverage(result, invalid_plan, [])["state"]
+                == "INCOMPLETE"
+            )
+        duplicate_plan = {**plan, "lanes": [dict(row) for row in plan["lanes"]]}
+        duplicate_plan["lanes"][1]["id"] = duplicate_plan["lanes"][0]["id"]
+        assert (
+            module._action_coverage(result, duplicate_plan, [])["state"] == "INCOMPLETE"
+        )
+        malformed = {**result, "lanes": [None]}
+        assert module._action_coverage(malformed, plan, [])["state"] == "INCOMPLETE"
+        state.pop("action_enrollment")
+        assert (
+            module._status_action_coverage(directory, state, events)["state"]
+            == "INCOMPLETE"
+        )
+
+    events = [
+        read_run_json(directory, f"event-{index:05d}.json")
+        for index in range(1, status["sequence"] + 1)
+    ]
+    start = next(item for item in events if item["kind"] == "lane_started")
+    terminal = next(item for item in events if item["kind"] == "lane_completed")
+    _damage_action_test_events(damage, events, start, terminal)
+    state = read_run_json(directory, "state.json")
+    if damage == "duplicate_result":
+        state["lanes"].append(dict(state["lanes"][0]))
+    if damage == "final_details":
+        events[-1]["details"] = None
+    else:
+        events[-1]["details"]["analysis_complete"] = True
+    _rechain_action_test_events(directory, events, state, digest, write_run_json)
+    damaged = module.deep_run_status(root, result["run_id"])
+    assert damaged["action_coverage"]["state"] == "INCOMPLETE"
+    if damage != "final_details":
+        assert any(
+            damaged["action_coverage"][key]
+            for key in (
+                "missing_starts",
+                "missing_terminals",
+                "duplicates",
+                "unexpected",
+                "mismatches",
+            )
+        )
+    assert damaged["analysis_complete"] is False
+
+
 def test_scan_never_executes_with_different_candidate(tmp_path, monkeypatch):
     import factoryline.deep_audit as module
 
@@ -2752,6 +2913,7 @@ def test_pause_stops_between_lanes_and_resume_revalidates(tmp_path, monkeypatch)
         trust_root_sha256=plan["trust_root_sha256"],
     )
     assert result["state"] == "PAUSED" and not result["analysis_complete"]
+    assert result["action_coverage"]["state"] == "INCOMPLETE"
     assert result["lanes"][0]["family"] == plan["lanes"][0]["family"]
     assert result["lanes"][0]["engine"] == plan["lanes"][0]["engine"]
     assert len(calls) == 1
