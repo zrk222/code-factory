@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Detect local async helpers used as truthy assertions, including an immediately
+  assigned coroutine result. Report unused proven mock assertion attributes even
+  beside a meaningful assertion; retain awaited, rebound and non-mock controls.
+
 - Show current audit findings in Studio and prepare sealed proposals from an
   explicit selection. Preserve selected controls during unchanged polling, reject
   stale or active-run proposals, and distinguish a pause request from a stopped
