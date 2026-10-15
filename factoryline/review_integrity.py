@@ -4653,8 +4653,6 @@ def _security_local_helper_definition(call):
             return bindings.get(name)
         if name in _security_scope_declared_names(scope, ast.Global):
             scope = _security_module_scope(scope)
-        elif name in getattr(scope, "_security_nonlocal_names", set()):
-            current, scope = scope, getattr(scope, "_security_parent_scope", None)
         else:
             current, scope = scope, getattr(scope, "_security_parent_scope", None)
     return None
