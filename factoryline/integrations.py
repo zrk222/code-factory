@@ -289,6 +289,7 @@ def _issue_target(provider: str, issue: str, site: str) -> str:
 
 class _IssueNoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
+        """Reject redirects so provider credentials cannot cross origins."""
         raise IssueIntegrationError("ISSUE_REDIRECT_REJECTED")
 
 
