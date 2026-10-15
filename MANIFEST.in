@@ -5,6 +5,7 @@ include LAUNCH_KIT.md
 include PUBLICATION_GUIDE.md
 include factory.topology.json
 include mcp/server.json
+include factoryline/studio_audit.js
 recursive-include docs *.md *.gif *.png *.svg *.json
 recursive-exclude docs *.gif *.png
 recursive-include editors *.md *.svg

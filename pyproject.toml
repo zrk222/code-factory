@@ -132,7 +132,7 @@ packages = ["factoryline", "factoryline.builtin_packs"]
 include-package-data = false
 
 [tool.setuptools.package-data]
-factoryline = ["builtin_packs/**/*.json", "builtin_packs/**/*.yaml", "data/*.json", "hosted_console.html", "graph_ops.html"]
+factoryline = ["builtin_packs/**/*.json", "builtin_packs/**/*.yaml", "data/*.json", "hosted_console.html", "graph_ops.html", "studio_audit.js"]
 
 [tool.setuptools.exclude-package-data]
 factoryline = ["**/__pycache__/*", "**/*.py[cod]"]

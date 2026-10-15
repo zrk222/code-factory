@@ -18,7 +18,8 @@ from typing import Any, Callable
 
 from .capability_packs import builtin_packs, validate_pack
 from .continuation import ContinuationError, continue_assembly, discover_features
-from .deep_audit_loop import read_junit_report
+from .deep_audit import pause_deep_run
+from .deep_audit_loop import deep_scan_projection, read_junit_report
 from .developer_memory import developer_memory_brief
 from .failure_guidance import explain_failure
 from .graph_authorization import (
@@ -40,6 +41,11 @@ from .product_missions import (
 )
 from .prd_grill import grill_prd, verify_prd_grill
 from .run_metrics import public_metrics
+from .repair_sandbox import (
+    RepairSandboxError,
+    create_repair_scope,
+    write_repair_scope_artifacts,
+)
 from .runtime_coverage import read_runtime_coverage_report
 from .savings import SavingsError, public_savings_report, record_savings_pair
 from .target_compiler import TARGETS, TargetCompileError, create_target_from_prompt
@@ -2018,7 +2024,62 @@ form.addEventListener('submit',async(event)=>{{event.preventDefault();button.dis
 const target=new FormData(form).get('target'); const body=mode==='mission'?{{action:'product-grill-start',prompt:document.getElementById('prompt').value,name:document.getElementById('name').value,mode:'deep'}}:{{action:'create',target,prompt:document.getElementById('prompt').value,name:document.getElementById('name').value,purpose:document.getElementById('purpose').value,trigger:document.getElementById('trigger').value,deployment_profile:document.getElementById('deployment-profile').value}};
 try{{if(mode==='mission'){{guidedGeneration++;const payload=await sendGuided(body);if(payload)renderGuided(payload);return;}}const response=await fetch('/api/create',{{method:'POST',headers:{{'Content-Type':'application/json','X-Factory-Studio-Token':token}},body:JSON.stringify(body)}});const payload=await response.json();if(!response.ok){{renderFailure(payload);return;}}result.textContent=`Compiled ${{payload.target_kind}}\n${{payload.out_dir}}\nDeployment: ${{payload.deployment.profile.label}}\nApproval: ${{payload.deployment.profile.approval}}\nExternal effects authorized: ${{payload.deployment.external_effects_authorized}}\nReceipt: ${{payload.receipt}}\nState: ${{payload.status}}`;}}
 catch(error){{renderFailure({{code:'NETWORK_ERROR',message:String(error)}});}}finally{{button.disabled=false;}}}});
-</script></body></html>"""
+</script><script src="/studio_audit.js" defer></script></body></html>"""
+
+
+def _audit(root: Path, payload: dict[str, Any], fields: set[str]) -> dict[str, Any]:
+    if set(payload) != fields:
+        raise StudioRequestError("AUDIT_REQUEST_INVALID", "invalid request fields")
+    projection = deep_scan_projection(root)[0]
+    if payload.get("run_id") != projection.get("run_id") or payload.get(
+        "expected_state_content_sha256"
+    ) != projection.get("state_content_sha256"):
+        raise StudioRequestError("AUDIT_STALE", "audit changed; refresh", 409)
+    return projection
+
+
+def prepare_studio_repair_scope(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """Prepare a sealed local proposal from current selected audit findings."""
+    projection = _audit(
+        root, payload, {"run_id", "expected_state_content_sha256", "finding_ids"}
+    )
+    if projection.get("observed_state") in {"RUNNING", "PAUSE_REQUESTED"}:
+        raise StudioRequestError(
+            "AUDIT_ACTIVE", "stop the audit before proposal preparation", 409
+        )
+    ids = payload["finding_ids"]
+    if not isinstance(ids, list) or len(ids) > 20:
+        raise StudioRequestError("FINDINGS_INVALID", "select at most 20 findings", 400)
+    try:
+        scope = create_repair_scope(
+            root,
+            "Studio selected audit findings",
+            audit_run_id=projection["run_id"],
+            finding_ids=ids,
+        )
+        artifacts = write_repair_scope_artifacts(
+            scope, root, Path(root) / ".factory/repair-scopes"
+        )
+    except (RepairSandboxError, OSError, ValueError) as exc:
+        raise StudioRequestError("REPAIR_SCOPE_REJECTED", str(exc), 409) from exc
+    base = Path(root).resolve()
+    paths = {
+        key: Path(value).resolve().relative_to(base).as_posix()
+        for key, value in artifacts["paths"].items()
+    }
+    return {
+        "scope_id": scope["scope_id"],
+        "finding_ids": scope["finding_ids"],
+        "paths": paths,
+    }
+
+
+def request_studio_audit_pause(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """Request runner cooperation to pause the exact current audit origin."""
+    projection = _audit(root, payload, {"run_id", "expected_state_content_sha256"})
+    if projection.get("observed_state") != "RUNNING":
+        raise StudioRequestError("AUDIT_NOT_RUNNING", "audit is not running", 409)
+    return pause_deep_run(root, projection["run_id"])
 
 
 class _StudioHandler(BaseHTTPRequestHandler):
@@ -2034,7 +2095,7 @@ class _StudioHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+            "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
         )
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
@@ -2072,6 +2133,11 @@ class _StudioHandler(BaseHTTPRequestHandler):
         self._headers(200, "text/html; charset=utf-8", len(body))
         self.wfile.write(body)
 
+    def _serve_audit_asset(self) -> None:
+        body = Path(__file__).with_name("studio_audit.js").read_bytes()
+        self._headers(200, "text/javascript; charset=utf-8", len(body))
+        self.wfile.write(body)
+
     def _serve_status(self) -> None:
         payload = dict(self.status_payload)
         payload["listener"] = {**payload["listener"], "port": self.server.server_port}
@@ -2100,6 +2166,8 @@ class _StudioHandler(BaseHTTPRequestHandler):
     def _get_route_handler(self) -> Callable[[], None] | None:
         if self.path == "/favicon.ico":
             return self._serve_favicon
+        if self.path == "/studio_audit.js":
+            return self._serve_audit_asset
         page_routes = {"/": _studio_html, "/graph-ops": graph_ops_html}
         renderer = page_routes.get(self.path.split("?", 1)[0])
         if renderer is not None:
@@ -2112,6 +2180,9 @@ class _StudioHandler(BaseHTTPRequestHandler):
                 developer_memory_snapshot
             ),
             "/api/graph-ops": lambda: self._serve_token_json(self._graph_ops_payload),
+            "/api/studio-audit": lambda: self._serve_token_json(
+                lambda root: deep_scan_projection(root)[0]
+            ),
             "/api/test-report": lambda: self._serve_token_json(read_junit_report),
             "/api/coverage-report": lambda: self._serve_token_json(
                 lambda root: read_runtime_coverage_report(root, include_files=True)
@@ -2146,6 +2217,8 @@ class _StudioHandler(BaseHTTPRequestHandler):
             "/api/graph-ops-authorize",
             "/api/graph-ops-run",
             "/api/activity/stop",
+            "/api/studio-audit/prepare",
+            "/api/studio-audit/pause",
         }
 
     def _drain_rejected_body(self, content_length: int) -> None:
@@ -2193,6 +2266,10 @@ class _StudioHandler(BaseHTTPRequestHandler):
     def _dispatch_post_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self.path == "/api/activity/stop":
             return self._stop_activity_from_studio(payload)
+        if self.path == "/api/studio-audit/prepare":
+            return prepare_studio_repair_scope(self.studio_root, payload)
+        if self.path == "/api/studio-audit/pause":
+            return request_studio_audit_pause(self.studio_root, payload)
         handlers: dict[str, Callable[[Path, dict[str, Any]], dict[str, Any]]] = {
             "/api/create": create_from_studio,
             "/api/product": create_product_mission_from_studio,
