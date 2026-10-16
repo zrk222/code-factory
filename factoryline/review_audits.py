@@ -5633,6 +5633,7 @@ def _seal_security_scan(core: dict[str, Any]) -> dict[str, Any]:
                 core.get("tenant_read_contract", {}),
                 core.get("oracle_context", {}),
                 core.get("database_context", {}),
+                include_database_context="database_context" in core,
             ),
             sort_keys=True,
             separators=(",", ":"),
