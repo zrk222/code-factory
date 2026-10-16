@@ -1295,13 +1295,113 @@ _DB_LOG_FILTER_LOCK = threading.RLock()
 _DB_EXTRACTOR_ID = "native-db-v1"
 
 
+def _oracle_source_inputs(
+    root,
+    files,
+    source_reader,
+    safe_local_file,
+    measure_hash,
+    hash_bytes,
+    runtime_error,
+    max_bytes,
+    retention_limit,
+):
+    """Read and bind a bounded oracle manifest through caller-owned safe I/O."""
+    source_bytes, bindings, manifest = {}, [], []
+    cacheable, retained_bytes, retain_source_bytes = True, 0, True
+    for path in files:
+        relative = path.relative_to(root).as_posix()
+        try:
+            if path.is_symlink():
+                manifest.append({"path": relative, "state": "symlink"})
+                cacheable = False
+                continue
+            initial = safe_local_file(root, relative).stat()
+            if initial.st_size > max_bytes:
+                manifest.append(
+                    {
+                        "path": relative,
+                        "state": "oversized",
+                        "bytes": int(initial.st_size),
+                        "mtime_ns": int(initial.st_mtime_ns),
+                    }
+                )
+                cacheable = False
+                continue
+            data = source_reader(root, relative)
+            if len(data) > max_bytes:
+                manifest.append(
+                    {"path": relative, "state": "oversized", "bytes": len(data)}
+                )
+                cacheable = False
+                continue
+            digest = measure_hash("source_hash", hash_bytes, data)
+            manifest.append(
+                {
+                    "path": relative,
+                    "state": "read",
+                    "bytes": len(data),
+                    "sha256": digest,
+                }
+            )
+            bindings.append({"path": relative, "sha256": digest, "bytes": len(data)})
+            if retain_source_bytes and retained_bytes + len(data) <= retention_limit:
+                source_bytes[path] = data
+                retained_bytes += len(data)
+            else:
+                source_bytes.clear()
+                retain_source_bytes = False
+        except (OSError, SyntaxError, UnicodeError, runtime_error):
+            manifest.append({"path": relative, "state": "unreadable"})
+            cacheable = False
+    manifest.sort(key=lambda item: item["path"])
+    return source_bytes, bindings, manifest, cacheable
+
+
+def _oracle_source_snapshots(
+    root,
+    files,
+    source_bytes,
+    source_reader,
+    measure_parse,
+    runtime_error,
+    max_bytes,
+):
+    """Parse bounded retained oracle inputs while preserving their exact byte identity."""
+    snapshots = {}
+    for path in files:
+        try:
+            data = source_bytes.get(path)
+            if data is None:
+                relative = path.relative_to(root).as_posix()
+                data = source_reader(root, relative)
+                if len(data) > max_bytes:
+                    continue
+            tree = measure_parse(ast.parse, data, root, path)
+            tree._oracle_source_lines = data.decode("utf-8").splitlines()
+            tree._oracle_source_sha256 = sha256(data).hexdigest()
+            for node in tree.body:
+                node._oracle_layout = None
+            for node in ast.walk(tree):
+                node._scan_bound_names = None
+            snapshots[path] = tree
+        except (OSError, SyntaxError, UnicodeError, runtime_error):
+            continue
+    return snapshots
+
+
 def database_structure(
     sources: dict[str, bytes],
     dialect: str = "postgres",
     snapshots: dict | None = None,
     migration_order: list[str] | None = None,
 ) -> dict:
-    """Build a bounded static projection; uncertain constructs remain explicit gaps."""
+    """Build a bounded projection; caller snapshots are ignored and gaps stay explicit."""
+    return _database_structure(sources, dialect, migration_order)
+
+
+def _database_structure(sources, dialect, migration_order, python_trees=None):
+    """Project database facts, optionally reusing only invocation-owned trees."""
     from hashlib import sha256 as _sha256
     import inspect
 
@@ -1333,7 +1433,7 @@ def database_structure(
     if cached is not None:
         return cached
     tables, operations, queries = _db_extract(
-        inputs, sqlglot, exp, dialect_key, snapshots, gaps
+        inputs, sqlglot, exp, dialect_key, python_trees, gaps
     )
     _db_migration_order_gaps(inputs, operations, normalized_order, gaps)
     _db_validate_references(tables, queries, gaps)
@@ -1468,6 +1568,9 @@ def _db_code_identity(inspect, digest_fn):
         _db_python_module_name,
         _db_python_import_module,
         _db_python_parse_modules,
+        _db_python_declarations,
+        _db_python_class_declaration,
+        _db_python_has_unimplemented_migration,
         _db_python_export_bindings,
         _db_python_local_reexports,
         _db_python_update_module_reexports,
@@ -1538,6 +1641,7 @@ def _db_code_identity(inspect, digest_fn):
         _db_rename_column,
         _db_query_wildcards,
         _db_query,
+        _database_structure,
     )
     source = "".join(inspect.getsource(fn) for fn in helpers)
     return digest_fn(
@@ -1584,9 +1688,9 @@ def _db_cache_write(key, serialized):
         _DB_CACHE_BYTES += len(serialized)
 
 
-def _db_extract(inputs, sqlglot, exp, dialect, snapshots, gaps):
+def _db_extract(inputs, sqlglot, exp, dialect, python_trees, gaps):
     tables, operations, queries = {}, [], []
-    modules, _paths, parsed_trees = _db_python_parse_modules(inputs)
+    modules, _paths, parsed_trees = _db_python_parse_modules(inputs, python_trees)
     project_exports = _db_python_project_exports(inputs, modules=modules, paths=_paths)
     for path, raw, digest, kind in inputs:
         try:
@@ -1600,7 +1704,6 @@ def _db_extract(inputs, sqlglot, exp, dialect, snapshots, gaps):
                 path,
                 text,
                 digest,
-                snapshots,
                 dialect,
                 sqlglot,
                 exp,
@@ -1644,16 +1747,19 @@ def _db_python_import_module(current, node):
     return node.module or ""
 
 
-def _db_python_parse_modules(inputs):
+def _db_python_parse_modules(inputs, python_trees=None):
+    """Parse retained DB modules, reusing only exact invocation-owned trees."""
     modules, paths, parsed_trees = {}, {}, {}
     for path, raw, _, kind in inputs:
         if kind != "python":
             continue
-        parsed_trees[path] = None
-        try:
-            tree = ast.parse(raw.decode("utf-8", errors="strict"), filename=path)
-        except (SyntaxError, UnicodeDecodeError):
-            continue
+        tree = (python_trees or {}).get(path)
+        if not isinstance(tree, ast.Module):
+            try:
+                tree = ast.parse(raw.decode("utf-8", errors="strict"), filename=path)
+            except (SyntaxError, UnicodeDecodeError):
+                parsed_trees[path] = None
+                continue
         parsed_trees[path] = tree
         module = _db_python_module_name(path)
         symbols, shadowed = _db_python_symbols(tree)
@@ -1946,7 +2052,6 @@ def _db_read_python(
     path,
     text,
     digest,
-    snapshots,
     dialect,
     sqlglot,
     exp,
@@ -1976,27 +2081,62 @@ def _db_read_python(
     metadatas = _db_python_metadata_names(tree, symbols, shadowed) | {
         name for name in project_exports.get("metadatas", ()) if name not in shadowed
     }
+    _db_python_declarations(
+        tree,
+        path,
+        digest,
+        dialect,
+        exp,
+        symbols,
+        shadowed,
+        bases,
+        metadatas,
+        tables,
+        gaps,
+    )
+    _db_python_query(
+        tree, path, digest, symbols, shadowed, dialect, sqlglot, exp, queries, gaps
+    )
+    if _db_python_has_unimplemented_migration(tree):
+        gaps.append("python_migration_unimplemented:" + path)
+
+
+def _db_python_has_unimplemented_migration(tree):
+    """Detect migration calls that remain outside the supported projection."""
+    return any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr
+        in {"create_table", "add_column", "drop_table", "create_index"}
+        for node in ast.walk(tree)
+    )
+
+
+def _db_python_class_declaration(
+    node, path, digest, dialect, exp, symbols, shadowed, bases, tables, gaps
+):
+    """Project or mark one SQLAlchemy ORM class declaration."""
+    name = _db_python_literal(node, "__tablename__")
+    inherited = any(
+        isinstance(base, ast.Name) and base.id in bases for base in node.bases
+    )
+    if name is not None and inherited:
+        _db_python_model(
+            node, name, path, digest, symbols, shadowed, dialect, exp, tables, gaps
+        )
+    elif name is not None or inherited:
+        gaps.append("unproven_orm_declaration:" + path)
+
+
+def _db_python_declarations(
+    tree, path, digest, dialect, exp, symbols, shadowed, bases, metadatas, tables, gaps
+):
+    """Project ORM and Core declarations from one retained Python module."""
     for node in tree.body:
         if isinstance(node, ast.ClassDef):
-            name = _db_python_literal(node, "__tablename__")
-            inherited = any(
-                isinstance(b, ast.Name) and b.id in bases for b in node.bases
+            _db_python_class_declaration(
+                node, path, digest, dialect, exp, symbols, shadowed, bases, tables, gaps
             )
-            if name is not None and inherited:
-                _db_python_model(
-                    node,
-                    name,
-                    path,
-                    digest,
-                    symbols,
-                    shadowed,
-                    dialect,
-                    exp,
-                    tables,
-                    gaps,
-                )
-            elif name is not None or inherited:
-                gaps.append("unproven_orm_declaration:" + path)
         elif (
             isinstance(node, (ast.Assign, ast.AnnAssign))
             and isinstance(node.value, ast.Call)
@@ -2005,17 +2145,6 @@ def _db_read_python(
             _db_python_core(
                 node.value, path, digest, symbols, shadowed, metadatas, tables, gaps
             )
-    _db_python_query(
-        tree, path, digest, symbols, shadowed, dialect, sqlglot, exp, queries, gaps
-    )
-    if any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr
-        in {"create_table", "add_column", "drop_table", "create_index"}
-        for node in ast.walk(tree)
-    ):
-        gaps.append("python_migration_unimplemented:" + path)
 
 
 def _db_python_symbols(tree):

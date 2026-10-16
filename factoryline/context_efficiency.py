@@ -39,6 +39,15 @@ def database_workspace_context(
     root: Path, python_sources: dict, read_source, python_inventory: list | None = None
 ) -> dict:
     """Capture static database context through the scanner's safe source reader."""
+    return _database_workspace_context(
+        root, python_sources, read_source, python_inventory
+    )
+
+
+def _database_workspace_context(
+    root, python_sources, read_source, python_inventory=None, oracle_snapshots=None
+):
+    """Build the JSON projection without exposing parser trees to callers."""
     from .intent_quality import database_structure
 
     paths, gaps = _database_sql_paths(root)
@@ -66,11 +75,28 @@ def database_workspace_context(
             "source_manifest": [],
         }
     else:
-        result = database_structure(
-            selected,
-            config.get("dialect", "postgres"),
-            migration_order=config.get("migration_order"),
-        )
+        if oracle_snapshots is None:
+            result = database_structure(
+                selected,
+                config.get("dialect", "postgres"),
+                migration_order=config.get("migration_order"),
+            )
+        else:
+            from .intent_quality import _database_structure
+
+            trees = {
+                path.relative_to(root).as_posix(): tree
+                for path, raw in python_sources.items()
+                if isinstance((tree := oracle_snapshots.get(path)), ast.Module)
+                and getattr(tree, "_oracle_source_sha256", None)
+                == hashlib.sha256(raw).hexdigest()
+            }
+            result = _database_structure(
+                selected,
+                config.get("dialect", "postgres"),
+                config.get("migration_order"),
+                trees,
+            )
         if "dialect" not in config:
             gaps.append("database_dialect_confirmation_required")
     result["gaps"] = sorted(set(result["gaps"] + gaps))
@@ -84,6 +110,15 @@ def database_workspace_context(
     result["graph_digest"] = _sha(result)
     result["_bindings"] = bindings
     return result
+
+
+def _database_workspace_context_from_oracle(
+    root, python_sources, read_source, python_inventory, oracle_snapshots
+):
+    """Use fresh scanner trees only during their owning synchronous invocation."""
+    return _database_workspace_context(
+        root, python_sources, read_source, python_inventory, oracle_snapshots
+    )
 
 
 def _database_sql_sources(root, paths, read_source, selected, gaps):
