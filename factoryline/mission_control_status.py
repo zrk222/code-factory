@@ -29,7 +29,7 @@ from .release_integrity import release_integrity
 from .supply_chain import supply_chain_status
 from .context_efficiency import context_efficiency_status
 from .intake_parameters import intake_parameters_status
-from .audit_action_refs import _security_scan_candidate_payload
+from .audit_action_refs import _security_scan_report_candidate_payload
 from .runtime_audit_common import (
     _stable_read_identity,
     canonical_bytes,
@@ -432,13 +432,7 @@ def _security_scan_report_error(report: Any) -> str | None:
         return "report_schema_invalid"
     if report.get("marker") != "SECURITY_AUDIT_COMPLETE":
         return "report_marker_invalid"
-    candidate_payload = _security_scan_candidate_payload(
-        report.get("sources", []),
-        report.get("tenant_read_contract", {}),
-        report.get("oracle_context", {}),
-        report.get("database_context", {}),
-        include_database_context="database_context" in report,
-    )
+    candidate_payload = _security_scan_report_candidate_payload(report)
     for field, payload, ensure_ascii in (
         ("candidate_sha256", candidate_payload, True),
         (

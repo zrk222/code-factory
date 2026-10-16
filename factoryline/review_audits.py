@@ -28,7 +28,7 @@ except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 from .audit_action_refs import (
     audit_remediation_packet,
-    _security_scan_candidate_payload,
+    _security_scan_report_candidate_payload,
     _security_scan_coverage,
     _security_scan_state,
     _security_scan_action_summary,
@@ -5628,13 +5628,7 @@ def _scan_security_sources(
 def _seal_security_scan(core: dict[str, Any]) -> dict[str, Any]:
     candidate = sha256(
         json.dumps(
-            _security_scan_candidate_payload(
-                core.get("sources", []),
-                core.get("tenant_read_contract", {}),
-                core.get("oracle_context", {}),
-                core.get("database_context", {}),
-                include_database_context="database_context" in core,
-            ),
+            _security_scan_report_candidate_payload(core),
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")

@@ -114,6 +114,17 @@ def _security_scan_candidate_payload(
     return payload
 
 
+def _security_scan_report_candidate_payload(report: dict[str, Any]) -> dict[str, Any]:
+    """Build the shared candidate payload from a sealed scan report."""
+    return _security_scan_candidate_payload(
+        report.get("sources", []),
+        report.get("tenant_read_contract", {}),
+        report.get("oracle_context", {}),
+        report.get("database_context", {}),
+        include_database_context="database_context" in report,
+    )
+
+
 _NUMBER_FIELDS = {
     "eligible_changed_paths",
     "eligible_cases",
