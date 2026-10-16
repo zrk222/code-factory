@@ -1499,6 +1499,18 @@ def _db_code_identity(inspect, digest_fn):
         _db_python_fk,
         _db_python_query,
         _db_python_scope,
+        _db_python_scope_calls,
+        _db_python_control_flow_branches,
+        _db_python_isolated_control_flow_calls,
+        _db_python_with_scope,
+        _db_python_with_bindings,
+        _db_python_invalidate_names,
+        _db_python_invalidate_nested_bindings,
+        _db_python_write_names,
+        _DBPythonWriteCollector,
+        _db_python_argument_names,
+        _db_python_import_names,
+        _db_python_target_names,
         _db_python_register_assignment,
         _db_python_connection_call,
         _db_assignment_targets,
@@ -2007,12 +2019,21 @@ def _db_read_python(
 
 
 def _db_python_symbols(tree):
-    symbols, seen = {}, {}
+    symbols, seen, import_counts = {}, {}, {}
     for node in tree.body:
         for local, qualified in _db_import_bindings(node):
             seen[local] = seen.get(local, 0) + 1
             symbols[local] = qualified
+    for node in ast.walk(tree):
+        for local in _db_python_import_names(node):
+            import_counts[local] = import_counts.get(local, 0) + 1
     bound = set()
+    if any(
+        isinstance(node, ast.ImportFrom)
+        and any(alias.name == "*" for alias in node.names)
+        for node in ast.walk(tree)
+    ):
+        bound.update(symbols)
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
             bound.add(node.id)
@@ -2021,7 +2042,9 @@ def _db_python_symbols(tree):
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             bound.add(node.name)
     return symbols, (
-        bound | {name for name, count in seen.items() if count > 1}
+        bound
+        | {name for name, count in seen.items() if count > 1}
+        | {name for name, count in import_counts.items() if count > 1}
     ) & symbols.keys()
 
 
@@ -2508,10 +2531,11 @@ def _db_python_query(
     )
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            local_names = _db_python_argument_names(node.args)
             local_connections = {
                 key: value
                 for key, value in connections.items()
-                if key not in {arg.arg for arg in node.args.args}
+                if key not in local_names
             }
             _db_python_scope(
                 node.body,
@@ -2522,7 +2546,11 @@ def _db_python_query(
                 dialect,
                 sqlglot,
                 exp,
-                dict(engines),
+                {
+                    key: value
+                    for key, value in engines.items()
+                    if key not in local_names
+                },
                 local_connections,
                 queries,
                 gaps,
@@ -2542,13 +2570,34 @@ def _db_python_scope(
     connections,
     queries,
     gaps,
+    sql_bindings=None,
 ):
-    sql_bindings = {}
+    if sql_bindings is None:
+        sql_bindings = {}
     for statement in statements:
+        if not isinstance(statement, (ast.With, ast.AsyncWith)):
+            _db_python_invalidate_nested_bindings(
+                statement, engines, connections, sql_bindings
+            )
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        destructured = (
+            isinstance(statement, ast.Assign)
+            and not all(isinstance(target, ast.Name) for target in statement.targets)
+        ) or (
+            isinstance(statement, ast.AnnAssign)
+            and not isinstance(statement.target, ast.Name)
+        )
         for name in _db_assignment_targets(statement):
+            if destructured:
+                _db_python_invalidate_names((name,), engines, connections, sql_bindings)
+                continue
             _db_python_register_assignment(
                 statement, name, symbols, shadowed, engines, connections
             )
+            if isinstance(statement, ast.AugAssign):
+                sql_bindings.pop(name, None)
+                continue
             value = statement.value
             literal = _db_python_sql_literal(value, symbols, shadowed, sql_bindings)
             if literal is not None:
@@ -2558,18 +2607,107 @@ def _db_python_scope(
                 )
             else:
                 sql_bindings.pop(name, None)
-        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        _db_python_scope_calls(
+            statement,
+            path,
+            digest,
+            symbols,
+            shadowed,
+            dialect,
+            sqlglot,
+            exp,
+            engines,
+            connections,
+            sql_bindings,
+            queries,
+            gaps,
+        )
+
+
+def _db_python_scope_calls(
+    node,
+    path,
+    digest,
+    symbols,
+    shadowed,
+    dialect,
+    sqlglot,
+    exp,
+    engines,
+    connections,
+    sql_bindings,
+    queries,
+    gaps,
+):
+    """Visit execute calls and nested manager scopes without crossing functions."""
+    pending = [node]
+    while pending:
+        current = pending.pop()
+        if isinstance(
+            current,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+        ):
+            if any(
+                isinstance(candidate, ast.Call)
+                and isinstance(candidate.func, ast.Attribute)
+                and candidate.func.attr == "execute"
+                for candidate in ast.walk(current)
+            ):
+                gaps.append("python_execute_nested_scope_unsupported:" + path)
             continue
-        calls = [
-            node
-            for node in ast.walk(statement)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "execute"
-        ]
-        for call in calls:
+        if _db_python_control_flow_branches(current) is not None:
+            _db_python_isolated_control_flow_calls(
+                current,
+                path,
+                digest,
+                symbols,
+                shadowed,
+                dialect,
+                sqlglot,
+                exp,
+                engines,
+                connections,
+                sql_bindings,
+                queries,
+                gaps,
+            )
+            continue
+        if isinstance(current, (ast.With, ast.AsyncWith)):
+            _db_python_with_scope(
+                current,
+                path,
+                digest,
+                symbols,
+                shadowed,
+                dialect,
+                sqlglot,
+                exp,
+                engines,
+                connections,
+                queries,
+                gaps,
+                sql_bindings,
+            )
+            continue
+        if isinstance(
+            current,
+            (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp),
+        ):
+            if any(
+                isinstance(candidate, ast.Call)
+                and isinstance(candidate.func, ast.Attribute)
+                and candidate.func.attr == "execute"
+                for candidate in ast.walk(current)
+            ):
+                gaps.append("python_execute_comprehension_scope_unsupported:" + path)
+            continue
+        if (
+            isinstance(current, ast.Call)
+            and isinstance(current.func, ast.Attribute)
+            and current.func.attr == "execute"
+        ):
             _db_python_execute(
-                call,
+                current,
                 path,
                 digest,
                 symbols,
@@ -2582,6 +2720,304 @@ def _db_python_scope(
                 queries,
                 gaps,
             )
+        pending.extend(reversed(list(ast.iter_child_nodes(current))))
+
+
+def _db_python_control_flow_branches(node):
+    """Group uncertain control-flow paths so their binding facts stay isolated."""
+    if isinstance(node, ast.If):
+        return [[node.test], node.body, node.orelse]
+    if isinstance(node, (ast.For, ast.AsyncFor)):
+        return [[node.iter], node.body, node.orelse]
+    if isinstance(node, ast.While):
+        return [[node.test], node.body, node.orelse]
+    if isinstance(node, (ast.Try, getattr(ast, "TryStar", ast.Try))):
+        branches = [node.body]
+        branches.extend(
+            ([handler.type] if handler.type else []) + handler.body
+            for handler in node.handlers
+        )
+        if node.orelse:
+            branches.append(node.orelse)
+        if node.finalbody:
+            branches.append(node.finalbody)
+        return branches
+    if isinstance(node, ast.Match):
+        branches = [[node.subject]]
+        branches.extend(
+            ([case.guard] if case.guard else []) + case.body for case in node.cases
+        )
+        return branches
+    return None
+
+
+def _db_python_isolated_control_flow_calls(
+    node,
+    path,
+    digest,
+    symbols,
+    shadowed,
+    dialect,
+    sqlglot,
+    exp,
+    engines,
+    connections,
+    sql_bindings,
+    queries,
+    gaps,
+):
+    """Scan each alternative with a private copy of facts that cannot escape."""
+    for branch in _db_python_control_flow_branches(node):
+        branch_engines = dict(engines)
+        branch_connections = dict(connections)
+        branch_sql = dict(sql_bindings)
+        _db_python_scope(
+            branch,
+            path,
+            digest,
+            symbols,
+            shadowed,
+            dialect,
+            sqlglot,
+            exp,
+            branch_engines,
+            branch_connections,
+            queries,
+            gaps,
+            branch_sql,
+        )
+
+
+def _db_python_with_scope(
+    statement,
+    path,
+    digest,
+    symbols,
+    shadowed,
+    dialect,
+    sqlglot,
+    exp,
+    engines,
+    connections,
+    queries,
+    gaps,
+    sql_bindings,
+):
+    """Analyze a with body using only statically proven SQLite aliases."""
+    for item in statement.items:
+        _db_python_invalidate_nested_bindings(
+            item.context_expr, engines, connections, sql_bindings
+        )
+        _db_python_scope_calls(
+            item.context_expr,
+            path,
+            digest,
+            symbols,
+            shadowed,
+            dialect,
+            sqlglot,
+            exp,
+            engines,
+            connections,
+            sql_bindings,
+            queries,
+            gaps,
+        )
+        item_bindings = _db_python_with_bindings(
+            statement, symbols, shadowed, items=(item,)
+        )
+        _db_python_invalidate_names(item_bindings, engines, connections, sql_bindings)
+        for name, driver in item_bindings.items():
+            if driver:
+                connections[name] = driver
+    _db_python_scope(
+        statement.body,
+        path,
+        digest,
+        symbols,
+        shadowed,
+        dialect,
+        sqlglot,
+        exp,
+        engines,
+        connections,
+        queries,
+        gaps,
+        sql_bindings,
+    )
+
+
+def _db_python_invalidate_names(names, engines, connections, sql_bindings):
+    """Forget tracked facts whenever a lexical name is rebound or shadowed."""
+    for name in names:
+        engines.pop(name, None)
+        connections.pop(name, None)
+        sql_bindings.pop(name, None)
+
+
+def _db_python_invalidate_nested_bindings(node, engines, connections, sql_bindings):
+    """Invalidate every same-scope write before evaluating uncertain control flow."""
+    names, wildcard = _db_python_write_names(node)
+    if wildcard:
+        names.update(engines)
+        names.update(connections)
+        names.update(sql_bindings)
+    _db_python_invalidate_names(names, engines, connections, sql_bindings)
+
+
+def _db_python_write_names(node):
+    """Collect same-scope writes while skipping nested execution scopes."""
+    collector = _DBPythonWriteCollector()
+    collector.visit(node)
+    return collector.names, collector.wildcard
+
+
+class _DBPythonWriteCollector(ast.NodeVisitor):
+    """Visit binding writes without treating nested scopes as current locals."""
+
+    def __init__(self):
+        self.names = set()
+        self.wildcard = False
+
+    def visit_Name(self, node):
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            self.names.add(node.id)
+
+    def visit_Import(self, node):
+        self.names.update(_db_python_import_names(node))
+
+    def visit_ImportFrom(self, node):
+        self.names.update(_db_python_import_names(node))
+        self.wildcard |= any(alias.name == "*" for alias in node.names)
+
+    def visit_FunctionDef(self, node):
+        self._visit_function_outer_expressions(node)
+
+    def visit_AsyncFunctionDef(self, node):
+        self._visit_function_outer_expressions(node)
+
+    def _visit_function_outer_expressions(self, node):
+        self.names.add(node.name)
+        expressions = node.decorator_list + node.args.defaults
+        expressions.extend(value for value in node.args.kw_defaults if value)
+        arguments = (
+            node.args.posonlyargs
+            + node.args.args
+            + node.args.kwonlyargs
+            + ([node.args.vararg] if node.args.vararg else [])
+            + ([node.args.kwarg] if node.args.kwarg else [])
+        )
+        expressions.extend(arg.annotation for arg in arguments if arg.annotation)
+        if node.returns:
+            expressions.append(node.returns)
+        for expression in expressions:
+            self.visit(expression)
+
+    def visit_ClassDef(self, node):
+        self.names.add(node.name)
+        expressions = node.decorator_list + node.bases
+        expressions.extend(keyword.value for keyword in node.keywords)
+        for expression in expressions:
+            self.visit(expression)
+
+    def visit_Lambda(self, node):
+        expressions = node.args.defaults + node.args.kw_defaults
+        for expression in expressions:
+            if expression:
+                self.visit(expression)
+
+    def visit_ListComp(self, node):
+        self._visit_comprehension_expressions(node)
+
+    def visit_SetComp(self, node):
+        self._visit_comprehension_expressions(node)
+
+    def visit_DictComp(self, node):
+        self._visit_comprehension_expressions(node)
+
+    def visit_GeneratorExp(self, node):
+        self._visit_comprehension_expressions(node)
+
+    def _visit_comprehension_expressions(self, node):
+        for generator in node.generators:
+            self.visit(generator.iter)
+            for condition in generator.ifs:
+                self.visit(condition)
+        expressions = (
+            (node.key, node.value) if isinstance(node, ast.DictComp) else (node.elt,)
+        )
+        for expression in expressions:
+            self.visit(expression)
+
+    def visit_ExceptHandler(self, node):
+        if node.name:
+            self.names.add(node.name)
+        self.generic_visit(node)
+
+    def visit_MatchAs(self, node):
+        if node.name:
+            self.names.add(node.name)
+        self.generic_visit(node)
+
+    def visit_MatchStar(self, node):
+        if node.name:
+            self.names.add(node.name)
+        self.generic_visit(node)
+
+    def visit_MatchMapping(self, node):
+        if node.rest:
+            self.names.add(node.rest)
+        self.generic_visit(node)
+
+
+def _db_python_argument_names(arguments):
+    """Collect all parameter names that shadow module-level connection facts."""
+    values = (
+        arguments.posonlyargs
+        + arguments.args
+        + arguments.kwonlyargs
+        + ([arguments.vararg] if arguments.vararg else [])
+        + ([arguments.kwarg] if arguments.kwarg else [])
+    )
+    return {argument.arg for argument in values}
+
+
+def _db_python_import_names(node):
+    """Return names introduced by an import for conservative symbol shadowing."""
+    if isinstance(node, ast.Import):
+        return {alias.asname or alias.name.split(".")[0] for alias in node.names}
+    if isinstance(node, ast.ImportFrom):
+        return {alias.asname or alias.name for alias in node.names if alias.name != "*"}
+    return set()
+
+
+def _db_python_with_bindings(statement, symbols, shadowed, *, items=None):
+    """Map simple with targets to drivers proven by their context expressions."""
+    bindings = {}
+    for item in statement.items if items is None else items:
+        target = item.optional_vars
+        names = _db_python_target_names(target)
+        driver = None
+        if (
+            isinstance(statement, ast.With)
+            and isinstance(target, ast.Name)
+            and _db_python_call(item.context_expr, "sqlite3.connect", symbols, shadowed)
+        ):
+            driver = "sqlite"
+        for name in names:
+            bindings[name] = driver
+    return bindings
+
+
+def _db_python_target_names(target):
+    """Return local names assigned by a with optional target."""
+    if target is None:
+        return set()
+    return {
+        node.id
+        for node in ast.walk(target)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
 
 
 def _db_python_register_assignment(
@@ -2620,12 +3056,14 @@ def _db_python_connection_call(value, method, known):
 
 def _db_assignment_targets(statement):
     if isinstance(statement, ast.Assign):
-        return [
-            target.id for target in statement.targets if isinstance(target, ast.Name)
-        ]
-    if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
-        return [statement.target.id]
-    return []
+        targets = statement.targets
+    elif isinstance(statement, (ast.AnnAssign, ast.AugAssign)):
+        targets = [statement.target]
+    else:
+        return []
+    return sorted(
+        {name for target in targets for name in _db_python_target_names(target)}
+    )
 
 
 def _db_python_execute(
