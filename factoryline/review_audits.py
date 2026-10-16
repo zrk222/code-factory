@@ -3917,15 +3917,15 @@ def _project_oracle_context(
     snapshots = contracts.bound_snapshots(root, files, source_bytes, source_bindings)
     ty_identity = config_identity["typecheck"].get("ty", {})
     ty_sources = {root / item for item in ty_identity.get("selected", [])}
+    import_views = {"resolved": {}, "bindings": 0, "characters": 0}
     contexts, edges = _build_oracle_context(
-        root, files, snapshots, typecheck_sources, ty_sources
+        root, files, snapshots, typecheck_sources, ty_sources, import_views
     )
     integrity.bind_benchmark_context(contexts, snapshots, benchmarks)
-    contracts.bind_project_contracts(root, snapshots, contexts, edges)
-    edges.extend(
-        contracts._static_type_edges(
-            root, typecheck_sources | ty_sources, config_bindings, ty_sources
-        )
+    resolved = contracts._project_import_views(import_views, snapshots)
+    contracts.bind_project_contracts(root, snapshots, contexts, edges, resolved)
+    edges += contracts._static_type_edges(
+        root, typecheck_sources | ty_sources, config_bindings, ty_sources
     )
     if cache_enabled and source_cacheable and config_cacheable:
         _oracle_context_cache_write(cache_key, contexts, edges)
@@ -3938,6 +3938,7 @@ def _build_oracle_context(
     snapshots: dict,
     typecheck_sources: set,
     ty_sources: set | None = None,
+    import_views: dict | None = None,
 ) -> tuple[dict, list]:
     fixture_sources = [
         (
@@ -3974,10 +3975,11 @@ def _build_oracle_context(
             name for name, trusted in fixtures.items() if trusted
         }
         contexts[path]["typecheck"] = path in typecheck_sources or path in (
-            ty_sources or set()
+            ty_sources or ()
         )
         contexts[path]["flask_apps"] = _flask_context_apps(path, tree, snapshots)
         imports = _oracle_imports(root, path, tree, eligible)
+        contracts._capture_project_imports(import_views, path, imports, eligible)
         contexts[path].update(
             integrity._structural_oracle_context(tree, imports, snapshots)
         )
