@@ -126,6 +126,30 @@ def test_local_completion_card_escapes_untrusted_text():
     assert "[open](" not in text
 
 
+def test_local_completion_card_markdown_shows_expected_and_observed(tmp_path):
+    from factoryline.adoption import (
+        completion_card_from_receipt,
+        _completion_card_markdown,
+    )
+
+    source, _evidence, _mission = _local_completion_fixture(tmp_path)
+    card = completion_card_from_receipt(tmp_path, source, Path("local-summary"))["card"]
+    # Rendering-only fixture; this does not establish execution of this case.
+    card["cases"] = [
+        {
+            "case_id": "render-only",
+            "expected": "expected-output",
+            "observed": "observed-output",
+            "disposition": "unverified",
+            "input_sha256": "a" * 64,
+        }
+    ]
+    markdown = _completion_card_markdown(card)
+    assert "Expected: expected-output" in markdown
+    assert "Observed: observed-output" in markdown
+    assert "Input digest: " + "a" * 64 in markdown
+
+
 def test_local_completion_card_bounds_receipt_reads(tmp_path):
     from factoryline.adoption import completion_card_from_receipt
     from factoryline.product_missions import MAX_DAILY_RECEIPT_BYTES
@@ -158,6 +182,29 @@ def test_local_completion_card_cli_uses_existing_surface(tmp_path, capsys):
     assert result["card"]["status"] == "INCOMPLETE"
     assert result["card"]["authority"]["publication"] is False
     assert not (tmp_path / ".factory" / "adoption" / "events.jsonl").exists()
+
+
+def test_local_completion_card_cli_default_is_separate_from_share(tmp_path, capsys):
+    source, _evidence, _mission = _local_completion_fixture(tmp_path)
+    assert (
+        main(
+            [
+                "proof-card",
+                str(source),
+                "--root",
+                str(tmp_path),
+                "--local-details",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert (
+        Path(result["paths"]["json"]).parent
+        == tmp_path / ".factory" / "completion-details"
+    )
+    assert not (tmp_path / ".factory" / "share").exists()
 
 
 def test_receipt_inventory_skips_stat_for_unmatched_files(tmp_path, monkeypatch):

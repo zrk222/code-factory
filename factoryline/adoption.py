@@ -539,7 +539,9 @@ def _completion_card_markdown(card: dict[str, Any]) -> str:
         "",
     ]
     lines.extend(
-        f"- {text(row['case_id'])}: {text(row['observed'])} ({text(row['disposition'])})."
+        f"- {text(row['case_id'])}: Expected: {text(row['expected'])}. "
+        f"Observed: {text(row['observed'])} ({text(row['disposition'])}). "
+        f"Input digest: {text(row['input_sha256'] or 'not established')}."
         for row in card["cases"]
     )
     if not card["cases"]:
