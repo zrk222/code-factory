@@ -23,6 +23,56 @@ from factoryline import workflow_audit as workflow_audit_module
 from factoryline.workflow_audit import CATEGORIES, audit_workflows
 
 
+@pytest.mark.parametrize(
+    ("parent_name", "parent_config"),
+    [
+        ("pyproject.toml", "[tool.ruff]\nline-length = 88\n"),
+        (
+            "pyproject.toml",
+            '[tool.ty.rules]\ninvalid-assert-type = "ignore"\n',
+        ),
+        ("ty.toml", '[rules]\ninvalid-assert-type = "ignore"\n'),
+    ],
+)
+def test_ty_nearest_project_configuration_retains_declared_type_intent(
+    tmp_path, monkeypatch, parent_name, parent_config
+):
+    from factoryline import intent_quality
+    from factoryline.review_audits import security_scan
+
+    monkeypatch.delenv("TY_CONFIG_FILE", raising=False)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "profile"))
+    monkeypatch.setattr(
+        intent_quality,
+        "_ty_global_git_configuration",
+        lambda _: ({"state": "read", "files": []}, True),
+    )
+    (tmp_path / parent_name).write_text(parent_config, encoding="utf-8")
+    root = tmp_path / "project"
+    (root / "tests").mkdir(parents=True)
+    (root / "pyproject.toml").write_text(
+        '[tool.ty.src]\ninclude = ["tests"]\n', encoding="utf-8"
+    )
+    (root / "tox.ini").write_text(
+        "[testenv]\ncommands =\n    ty check\n", encoding="utf-8"
+    )
+    (root / "tests/test_types.py").write_text(
+        "from typing import assert_type\ndef test_types():\n    assert_type(1, int)\n",
+        encoding="utf-8",
+    )
+
+    result = security_scan(root)
+
+    assert result["finding_counts"].get("QUALITY_HOLLOW_TEST", 0) == 0
+    edges = [
+        edge
+        for edge in result["oracle_context"]["resolved_edges"]
+        if edge.get("checker") == "ty"
+    ]
+    assert edges
+    assert all(edge["execution_state"] == "NOT_VERIFIED" for edge in edges)
+
+
 def _credential_source_findings(source):
     import ast
 

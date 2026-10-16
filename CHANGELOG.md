@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Treat the exact test fixture secret value `config` as test data, while keeping
+  the same production value and credentials merely containing `test` detectable.
+- Honor the nearest explicit project ty configuration instead of rejecting it
+  because a parent configuration exists. Unsupported root/user overrides remain
+  unverified, and declared type intent never claims the checker ran.
+- Compare current requested outputs with proof receipt outputs before reuse.
+  Valid outputs not yet generated route to execution; absent or changed artifacts
+  cannot establish reuse. Existing proof keys and receipt schemas remain stable.
+
 - Extend proven request-to-SQL flows to SQLite connections and cursors, psycopg,
   Django cursors and SQLAlchemy engine connections with textual queries. Preserve
   parameterized-query, lookalike and rebound-binding controls. These bounded AST

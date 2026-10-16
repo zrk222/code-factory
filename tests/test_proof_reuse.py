@@ -80,6 +80,93 @@ def test_exact_green_receipt_is_reused(tmp_path):
     assert "PROOF_RECEIPT_REUSED" in plan["items"][0]["markers"]
 
 
+def test_changed_output_declaration_does_not_reuse_receipt(tmp_path):
+    _, _, gate = _workspace(tmp_path)
+    record_proof(tmp_path, gate, elapsed_ms=1000)
+    alternate = tmp_path / "dist" / "alternate.json"
+    alternate.write_text('{"passed":true}\n', encoding="utf-8")
+    changed = {**gate, "outputs": ["dist/alternate.json"]}
+
+    plan = plan_proofs(tmp_path, _manifest(changed))
+
+    assert plan["items"][0]["disposition"] == "RUN"
+    assert plan["items"][0]["reason"] == "receipt verification failed"
+
+
+def test_output_declaration_order_and_duplicates_do_not_change_reuse(tmp_path):
+    _, _, gate = _workspace(tmp_path)
+    record_proof(tmp_path, gate, elapsed_ms=1000)
+    changed = {**gate, "outputs": ["dist/result.json", "./dist/result.json"]}
+
+    plan = plan_proofs(tmp_path, _manifest(changed))
+
+    assert plan["items"][0]["disposition"] == "REUSE"
+
+
+@pytest.mark.parametrize("outputs", [None, []])
+def test_incomplete_output_declaration_fails_closed(tmp_path, outputs):
+    _, _, gate = _workspace(tmp_path)
+    record_proof(tmp_path, gate, elapsed_ms=1000)
+    changed = {**gate}
+    if outputs is None:
+        changed.pop("outputs")
+    else:
+        changed["outputs"] = outputs
+
+    plan = plan_proofs(tmp_path, _manifest(changed))
+
+    assert plan["items"][0]["disposition"] == "BLOCK"
+    assert plan["items"][0]["reason"] == "PROOF_INPUT_INVALID"
+
+
+def test_missing_requested_output_fails_closed(tmp_path):
+    _, output, gate = _workspace(tmp_path)
+    record_proof(tmp_path, gate, elapsed_ms=1000)
+    output.unlink()
+
+    plan = plan_proofs(tmp_path, _manifest(gate))
+
+    assert plan["items"][0]["disposition"] == "RUN"
+    assert plan["items"][0]["reason"] == "receipt verification failed"
+
+
+def test_first_run_with_not_yet_created_output_routes_to_run(tmp_path):
+    _, output, gate = _workspace(tmp_path)
+    output.unlink()
+
+    plan = plan_proofs(tmp_path, _manifest(gate))
+
+    assert plan["items"][0]["disposition"] == "RUN"
+    assert plan["items"][0]["reason"] == "no exact verified green receipt"
+
+
+def test_malformed_output_declaration_fails_closed(tmp_path):
+    _, _, gate = _workspace(tmp_path)
+    record_proof(tmp_path, gate, elapsed_ms=1000)
+    changed = {**gate, "outputs": [42]}
+
+    plan = plan_proofs(tmp_path, _manifest(changed))
+
+    assert plan["items"][0]["disposition"] == "BLOCK"
+    assert plan["items"][0]["reason"] == "PROOF_INPUT_INVALID"
+
+
+def test_symlinked_requested_output_fails_closed_when_supported(tmp_path):
+    source, output, gate = _workspace(tmp_path)
+    record_proof(tmp_path, gate, elapsed_ms=1000)
+    linked_output = tmp_path / "dist" / "linked.json"
+    try:
+        linked_output.symlink_to(source)
+    except (OSError, NotImplementedError) as error:
+        pytest.skip(f"symlinks unavailable: {error}")
+    changed = {**gate, "outputs": ["dist/linked.json"]}
+
+    plan = plan_proofs(tmp_path, _manifest(changed))
+
+    assert plan["items"][0]["disposition"] == "BLOCK"
+    assert plan["items"][0]["reason"] == "PROOF_REUSE_BLOCKED"
+
+
 def test_receipt_binds_regular_file_identity(tmp_path):
     _, _, gate = _workspace(tmp_path)
     receipt = record_proof(tmp_path, gate, elapsed_ms=1000)
