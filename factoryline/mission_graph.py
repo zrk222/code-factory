@@ -440,6 +440,12 @@ def _completion_receipt(
         raise MissionGraphError(
             "MISSION_GRAPH_COMPLETION_INVALID", "; ".join(verification["errors"])
         )
+    if verification.get("complete") is not True:
+        raise MissionGraphError(
+            "MISSION_GRAPH_COMPLETION_INVALID",
+            "; ".join(verification["errors"])
+            or "completion receipt is integrity-valid but incomplete",
+        )
     if (
         receipt.get("mission", {}).get("mission_sha256") != mission["mission_sha256"]
         or receipt.get("verifier_id") != actor

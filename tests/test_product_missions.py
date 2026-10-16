@@ -4,6 +4,7 @@ from pathlib import Path
 import hashlib
 import json
 import subprocess
+import sys
 
 import pytest
 
@@ -319,6 +320,273 @@ def _validation_for(mission: dict, creator: str, verifier: str, evidence: Path) 
     }
 
 
+def _daily_verification_for(
+    mission, root, *, timeout=False, omit_candidate_artifact=False
+):
+    from factoryline.e2e_proof import public_e2e_proof_receipt, verify_e2e_proof
+
+    source = root / "candidate.py"
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    manifest_path = root / "e2e-manifest.json"
+    candidate_artifacts = [] if omit_candidate_artifact else ["candidate.py"]
+    positive_argv = (
+        [sys.executable, "-c", "import time; time.sleep(2)"]
+        if timeout
+        else [sys.executable, "-c", "pass"]
+    )
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema": "factory.e2e_proof_manifest.v1",
+                "id": "mission-verification",
+                "approval": {"state": "approved", "approved_by": "test-owner"},
+                "working_directory": ".",
+                "timeout_seconds": 1 if timeout else 10,
+                "network_egress": "not_granted",
+                "positive": {"argv": positive_argv},
+                "negative": {"argv": [sys.executable, "-c", "raise SystemExit(1)"]},
+                "artifact_paths": candidate_artifacts,
+            }
+        ),
+        encoding="utf-8",
+    )
+    receipt = verify_e2e_proof(root, manifest_path)
+    receipt_path = root / "e2e-receipt.json"
+    receipt_path.write_text(
+        json.dumps(public_e2e_proof_receipt(receipt)), encoding="utf-8"
+    )
+    source_rows = [
+        {
+            "path": "candidate.py",
+            "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        }
+    ]
+    candidate_sha = product_missions._sha_bytes(
+        product_missions._canonical(source_rows)
+    )
+    evidence = {
+        "kind": "e2e_command_pair",
+        "path": str(receipt_path),
+        "sha256": hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
+    }
+    criteria = []
+    for criterion_index, criterion in enumerate(
+        mission["completion_contract"]["criteria"]
+    ):
+        cases = []
+        for polarity, outcome in (
+            ("positive", "exit_zero"),
+            ("negative", "exit_nonzero"),
+        ):
+            cases.append(
+                {
+                    "case_id": f"case-{criterion_index}-{polarity}",
+                    "polarity": polarity,
+                    "input_paths": ["candidate.py"],
+                    "input_sha256": product_missions._sha_bytes(
+                        product_missions._canonical(source_rows)
+                    ),
+                    "expected_outcome": outcome,
+                    "observed_outcome": "unknown"
+                    if timeout and polarity == "positive"
+                    else outcome,
+                    "evidence": {**evidence, "result": polarity},
+                }
+            )
+        criteria.append({"criterion_id": criterion["id"], "cases": cases})
+    return {
+        "schema": product_missions.DAILY_VERIFICATION_SCHEMA,
+        "candidate_sha256": candidate_sha,
+        "source_manifest": source_rows,
+        "scope_closure": "declared_only",
+        "criteria": criteria,
+    }
+
+
+def _daily_oracle_verification_for(mission, root):
+    import runpy
+
+    sources = {
+        "candidate.py": b"VALUE = 1\n",
+        "tests/test_feature.py": b"def test_feature():\n    assert True\n",
+    }
+    for relative, content in sources.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    rows = [
+        {"path": path, "sha256": hashlib.sha256(content).hexdigest()}
+        for path, content in sorted(sources.items())
+    ]
+    receipt_path, trust_path = root / "oracle.json", root / "trust.json"
+    test_sha = next(row["sha256"] for row in rows if row["path"].startswith("tests/"))
+    source_sha = next(row["sha256"] for row in rows if row["path"] == "candidate.py")
+    case_ids = [
+        f"tests/test_feature.py::test_feature[{criterion['id']}-{polarity}]"
+        for criterion in mission["completion_contract"]["criteria"]
+        for polarity in ("positive", "negative")
+    ]
+    config = {
+        "status": "PASS",
+        "phase": "collection",
+        "complete": True,
+        "scope": "test_function",
+        "source_path": "tests/test_feature.py",
+        "source_sha256": test_sha,
+        "config_manifest": [],
+        "config_identity": "pytest-default",
+        "case_ids": case_ids,
+    }
+    assertions = [
+        {
+            "case_id": case_id,
+            "outcome": "PASS",
+            "failure_visible": False,
+        }
+        for case_id in case_ids
+    ]
+    mutation_assertions = [
+        {**row, "outcome": "FAIL", "failure_visible": True} for row in assertions
+    ]
+    oracle_row = {
+        "path": "tests/test_feature.py",
+        "line": 1,
+        "symbol": "test_feature",
+        "test_sha256": test_sha,
+        "baseline": {
+            "status": "PASS",
+            "phase": "call",
+            "setup_status": "PASS",
+            "teardown_status": "PASS",
+            "case_ids": case_ids,
+            "collection_catalog": config,
+            "assertion_observations": assertions,
+        },
+        "mutation": {
+            "source_path": "candidate.py",
+            "source_sha256": source_sha,
+            "mutant_sha256": "a" * 64,
+            "status": "FAIL",
+            "phase": "call",
+            "setup_status": "PASS",
+            "teardown_status": "PASS",
+            "failure_kind": "assertion",
+            "case_ids": case_ids,
+            "collection_catalog": config,
+            "assertion_observations": mutation_assertions,
+        },
+    }
+    # Use the same real v3 payload/signing helpers as runtime-attestation tests;
+    # this exercises product-mission verification without mocking the verifier.
+    runtime_fixtures = runpy.run_path(
+        str(Path(__file__).with_name("test_runtime_attestation.py"))
+    )
+    payload = runtime_fixtures["_oracle_payload_v3"]()
+    payload["source_manifest_sha256"] = product_missions._sha_bytes(
+        product_missions._canonical(rows)
+    )
+    payload["environment_sha256"] = "b" * 64
+    signed_test = payload["tests"][0]
+    signed_test["path"] = "tests/test_feature.py"
+    signed_test["line"] = 1
+    signed_test["symbol"] = "test_feature"
+    signed_test["test_sha256"] = test_sha
+    signed_test["baseline"]["collection_catalog"].update(
+        {"source_path": "tests/test_feature.py", "source_sha256": test_sha,
+         "case_ids": list(case_ids)}
+    )
+    signed_test["mutation"].update(
+        {"source_path": "candidate.py", "source_sha256": source_sha}
+    )
+    signed_test["baseline"]["case_ids"] = list(case_ids)
+    signed_test["mutation"]["case_ids"] = list(case_ids)
+    for run_name in ("baseline", "mutation"):
+        run = signed_test[run_name]
+        observation = run["assertion_observations"][0]
+        run["assertion_observations"] = [
+            {**observation, "case_id": case_id,
+             "source_path": "tests/test_feature.py", "source_sha256": test_sha}
+            for case_id in case_ids
+        ]
+        run["module_origins"] = [
+            {**origin,
+             "case_id": case_id,
+             "source_path": "tests/test_feature.py"
+             if origin["source_path"] == "tests/test_example.py"
+             else "candidate.py",
+             "source_sha256": test_sha
+             if origin["source_path"] == "tests/test_example.py"
+             else source_sha if run_name == "baseline"
+             else signed_test["mutation"]["mutant_sha256"]}
+            for origin in run["module_origins"]
+            for case_id in case_ids
+        ]
+        catalog = run["collection_catalog"]
+        catalog.update(
+            {"source_path": "tests/test_feature.py", "source_sha256": test_sha,
+             "case_ids": list(case_ids)}
+        )
+    receipt, trust, _, _ = runtime_fixtures["_signed_oracle"](
+        root, payload
+    )
+    receipt_path.write_bytes(receipt.read_bytes())
+    trust_path.write_bytes(trust.read_bytes())
+    criteria = []
+    for criterion_index, criterion in enumerate(
+        mission["completion_contract"]["criteria"]
+    ):
+        cases = []
+        for polarity in ("positive", "negative"):
+            oracle_case_id = (
+                f"tests/test_feature.py::test_feature[{criterion['id']}-{polarity}]"
+            )
+            evidence = {
+                "kind": "signed_test_oracle_v3",
+                "path": "oracle.json",
+                "sha256": hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
+                "trust_root_path": "trust.json",
+                "trust_root_sha256": hashlib.sha256(
+                    trust_path.read_bytes()
+                ).hexdigest(),
+                "environment_sha256": "b" * 64,
+                "test_path": "tests/test_feature.py",
+                "test_line": 1,
+                "test_symbol": "test_feature",
+                "oracle_case_id": oracle_case_id,
+            }
+            input_rows = [
+                row
+                for row in rows
+                if row["path"] in {"candidate.py", "tests/test_feature.py"}
+            ]
+            cases.append(
+                {
+                    "case_id": f"case-{criterion_index}-{polarity}",
+                    "polarity": polarity,
+                    "input_paths": [row["path"] for row in input_rows],
+                    "input_sha256": product_missions._sha_bytes(
+                        product_missions._canonical(input_rows)
+                    ),
+                    "expected_outcome": "baseline_assertion_pass_mutant_assertion_fail",
+                    "observed_outcome": "baseline_assertion_pass_mutant_assertion_fail",
+                    "evidence": evidence,
+                }
+            )
+        criteria.append({"criterion_id": criterion["id"], "cases": cases})
+    source_sha = product_missions._sha_bytes(product_missions._canonical(rows))
+    return (
+        {
+            "schema": product_missions.DAILY_VERIFICATION_SCHEMA,
+            "candidate_sha256": source_sha,
+            "source_manifest": rows,
+            "scope_closure": "declared_only",
+            "criteria": criteria,
+        },
+        oracle_row,
+        source_sha,
+    )
+
+
 def test_mission_completion_requires_fresh_context_and_all_evidence(tmp_path: Path):
     _graph, _slices, mission = _pipeline(tmp_path)
     assert mission["orchestration"]["context_wall"]["same_identity_allowed"] is False
@@ -344,11 +612,576 @@ def test_mission_completion_requires_fresh_context_and_all_evidence(tmp_path: Pa
     completion = close_mission(Path(mission["path"]), validation, tmp_path)
     assert completion["status"] == "completed"
     assert completion["creator_id"] != completion["verifier_id"]
-    assert verify_mission_completion(Path(completion["path"]))["valid"] is True
+    legacy_check = verify_mission_completion(Path(completion["path"]))
+    assert legacy_check["valid"] is True
+    assert legacy_check["complete"] is False
+    assert legacy_check["status"] == "legacy_claimed"
+    assert legacy_check["marker"] == "MISSION_COMPLETION_INCOMPLETE"
     evidence.write_text('{"passed": false}\n')
     check = verify_mission_completion(Path(completion["path"]))
     assert check["valid"] is False
     assert check["marker"] == "MISSION_COMPLETION_DRIFT"
+
+
+def test_daily_verification_binds_case_facts_but_keeps_behavior_incomplete(tmp_path):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    evidence = tmp_path / "test-results.json"
+    evidence.write_text('{"passed": true}\n', encoding="utf-8")
+    validation = _validation_for(mission, "worker", "verifier", evidence)
+    validation["daily_verification"] = _daily_verification_for(mission, tmp_path)
+    path = tmp_path / "daily-validation.json"
+    path.write_text(json.dumps(validation), encoding="utf-8")
+
+    completion = close_mission(Path(mission["path"]), path, tmp_path)
+    assert completion["status"] == "incomplete"
+    assert completion["daily_verification"]["status"] == "INCOMPLETE"
+    assert completion["daily_verification"]["execution_verified"] is False
+    assert completion["daily_verification"]["command_pair_receipts_verified"] is True
+    assert completion["daily_verification"]["scope_closure"] == (
+        "declared_verified_scope"
+    )
+    assert completion["daily_verification"]["scope_limitations"]
+    assert "behavioral_assertion_unverified" in completion["daily_verification"]["gaps"]
+    case = completion["daily_verification"]["criteria"][0]["cases"][0]
+    assert case["disposition"] == "command_pair_observed"
+    assert case["observed_outcome"] == "exit_zero"
+    check = verify_mission_completion(Path(completion["path"]))
+    assert check["valid"] is False
+    assert check["integrity_valid"] is True
+    assert check["complete"] is False
+    assert check["marker"] == "MISSION_COMPLETION_INCOMPLETE"
+    from factoryline.mission_graph import MissionGraphError, _completion_receipt
+
+    with pytest.raises(MissionGraphError, match="completion remains incomplete"):
+        _completion_receipt(
+            Path(completion["path"]), completion, mission, "verifier", "worker"
+        )
+
+
+def test_operator_local_mutation_capture_runs_bound_target_and_control(tmp_path, capsys):
+    from factoryline.pytest_readiness import _challenge_source_inventory, main as probe_main
+
+    _graph, _slices, mission = _pipeline(tmp_path)
+    production = tmp_path / "app.py"
+    test_file = tmp_path / "test_app.py"
+    production.write_text("def value():\n    return 1\n", encoding="utf-8")
+    test_lines = ["import app", ""]
+    selectors = []
+    for index, criterion in enumerate(mission["completion_contract"]["criteria"]):
+        target_name, control_name = f"test_target_{index}", f"test_control_{index}"
+        target_line = len(test_lines) + 2
+        test_lines.extend(
+            [f"def {target_name}():", "    assert app.value() == 1", ""]
+        )
+        control_line = len(test_lines) + 2
+        test_lines.extend(
+            [f"def {control_name}():", "    assert app.value() >= 0", ""]
+        )
+        selectors.append(
+            (criterion["id"], target_name, target_line, control_name, control_line)
+        )
+    test_file.write_text("\n".join(test_lines), encoding="utf-8")
+    original_sources = {path: (tmp_path / path).read_bytes() for path in ("app.py", "test_app.py")}
+    source_map = _challenge_source_inventory(tmp_path)
+    rows = [{"path": path, "sha256": digest} for path, digest in sorted(source_map.items())]
+    candidate_sha = product_missions._sha_bytes(product_missions._canonical(rows))
+    case_paths = ["app.py", "test_app.py"]
+    case_rows = [{"path": path, "sha256": source_map[path]} for path in case_paths]
+    case_sha = product_missions._sha_bytes(product_missions._canonical(case_rows))
+    criteria = []
+    for criterion_index, criterion in enumerate(
+        mission["completion_contract"]["criteria"]
+    ):
+        cases = []
+        for polarity, outcome in (
+            ("positive", "baseline_assertion_pass_mutant_assertion_fail"),
+            ("negative", "baseline_assertion_pass_mutant_assertion_pass"),
+        ):
+            cases.append(
+                {
+                    "case_id": f"case-{criterion_index}-{polarity}",
+                    "polarity": polarity,
+                    "input_paths": case_paths,
+                    "input_sha256": case_sha,
+                    "expected_outcome": outcome,
+                    "observed_outcome": "unknown",
+                    "evidence": {},
+                }
+            )
+        criteria.append({"criterion_id": criterion["id"], "cases": cases})
+    contract_path = tmp_path / "daily-contract.json"
+    contract_path.write_text(
+        json.dumps(
+            {
+                "schema": product_missions.DAILY_VERIFICATION_SCHEMA,
+                "candidate_sha256": candidate_sha,
+                "source_manifest": rows,
+                "scope_closure": "declared_only",
+                "criteria": criteria,
+            }
+        ),
+        encoding="utf-8",
+    )
+    captures = []
+    for index, (criterion_id, target_name, target_line, control_name, control_line) in enumerate(selectors[:1]):
+        target_case, control_case = f"case-{index}-positive", f"case-{index}-negative"
+        rc = probe_main(
+            [
+                "--root", str(tmp_path),
+                "--kind", "production-mutation",
+                "--nodeid", f"test_app.py::{target_name}",
+                "--line", str(target_line),
+                "--production-path", "app.py",
+                "--production-symbol", "value",
+                "--mutation-before", "return 1",
+                "--mutation-after", "return 0",
+                "--evidence", f".factory/local-capture/case-{index}",
+                "--mission-path", mission["path"],
+                "--daily-contract", str(contract_path),
+                "--criterion-id", criterion_id,
+                "--target-case-id", target_case,
+                "--control-nodeid", f"test_app.py::{control_name}",
+                "--control-line", str(control_line),
+                "--control-case-id", control_case,
+                "--timeout", "20",
+                "--python", sys.executable,
+            ]
+        )
+        capture = json.loads(capsys.readouterr().out)
+        assert rc == 0, capture
+        assert capture["status"] == "OBSERVED"
+        assert capture["local_execution_observed"] is True
+        assert capture["authority"] == "none"
+        assert capture["execution_budget"]["maximum_child_processes"] == 4
+        captures.append(capture)
+    assert {path: (tmp_path / path).read_bytes() for path in original_sources} == original_sources
+    updated_contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    selected_cases = {
+        case["case_id"]: case
+        for criterion in updated_contract["criteria"]
+        for case in criterion["cases"]
+    }
+    assert selected_cases["case-0-positive"]["observed_outcome"] == (
+        "baseline_assertion_pass_mutant_assertion_fail"
+    )
+    assert selected_cases["case-0-negative"]["observed_outcome"] == (
+        "baseline_assertion_pass_mutant_assertion_pass"
+    )
+
+    evidence = tmp_path / "validation-evidence.json"
+    evidence.write_text('{"passed": true}\n', encoding="utf-8")
+    validation = _validation_for(mission, "worker", "verifier", evidence)
+    validation["daily_verification"] = updated_contract
+    validation_path = tmp_path / "validation-with-capture.json"
+    validation_path.write_text(json.dumps(validation), encoding="utf-8")
+    completion = close_mission(Path(mission["path"]), validation_path, tmp_path)
+    selected_rows = {
+        case["case_id"]: case
+        for criterion in completion["daily_verification"]["criteria"]
+        for case in criterion["cases"]
+    }
+    assert selected_rows["case-0-positive"]["disposition"] == (
+        "local_mutation_target_observed"
+    )
+    assert selected_rows["case-0-negative"]["disposition"] == (
+        "local_mutation_control_observed"
+    )
+    assert completion["daily_verification"]["execution_verified"] is False
+    assert completion["daily_verification"]["status"] == "INCOMPLETE"
+    assert completion["daily_verification"]["local_execution_observed"] is False
+    unsupported_gates = {
+        "native_gate_unsupported:" + criterion["id"]
+        for criterion in mission["completion_contract"]["criteria"]
+        if criterion.get("verification_kind") == "deterministic_tool"
+        and criterion["id"].partition(":")[2]
+        not in {"unit", "requirement-mutation", "receipt-trace"}
+    }
+    assert unsupported_gates <= set(completion["daily_verification"]["gaps"])
+    verified = verify_mission_completion(Path(completion["path"]))
+    assert verified["valid"] is False
+    assert verified["integrity_valid"] is True
+    assert verified["complete"] is False
+    assert verified["marker"] == "MISSION_COMPLETION_INCOMPLETE"
+    target_capture = tmp_path / ".factory" / "local-capture" / "case-0" / "target" / "capture.json"
+    target_capture.write_bytes(target_capture.read_bytes() + b" ")
+    tampered = verify_mission_completion(Path(completion["path"]))
+    assert tampered["integrity_valid"] is False
+    assert tampered["marker"] == "MISSION_COMPLETION_DRIFT"
+
+
+def test_operator_local_mutation_capture_verifies_typed_native_gates(
+    tmp_path, capsys
+):
+    from factoryline.pytest_readiness import _challenge_source_inventory, main as probe_main
+
+    prd = tmp_path / "PRD.md"
+    prd.write_text(
+        "# Record Service\n\n"
+        "## Actors\n- Record service: serializes signal records.\n\n"
+        "## Outcomes\n- Produce a stable signal record.\n\n"
+        "## Jobs and pains\n- Job: serialize a signal record.\n\n"
+        "## Journeys and business rules\n"
+        "- Journey: serialize a record with identity, state, and trace.\n"
+        "- Business rule: record identity and trace remain stable.\n\n"
+        "## Data ownership and trust boundaries\n"
+        "- Data ownership: the service owns the serialized record.\n"
+        "- Trust boundary: record input remains within the service.\n\n"
+        "## External effects and approvals\n"
+        "- External effect: none.\n- Approval: none.\n\n"
+        "## Success events\n- record_serialized.\n\n"
+        "## Requirements\n"
+        "- REQ-RECORD: The service shall return a record with a stable identity.\n\n"
+        "## Acceptance\nScenario: Serialize a stable record\n"
+        "  Given a signal record\n  When the service serializes it\n"
+        "  Then identity, state, and trace are present\n",
+        encoding="utf-8",
+    )
+    graph = compile_product_prd(prd, tmp_path, project="record-service")
+    slices = product_missions.plan_value_slices(Path(graph["path"]), tmp_path, 1)
+    mission = create_mission(
+        Path(slices["path"]), slices["slices"][0]["id"], tmp_path, "release-owner"
+    )
+    production = tmp_path / "app.py"
+    test_file = tmp_path / "test_app.py"
+    production.write_text(
+        'def value():\n    return {"record_id": "signal-17", "state": "ready", "trace": "trace-1"}\n\n'
+        "def healthy_control():\n    return True\n",
+        encoding="utf-8",
+    )
+    assertions = {
+        "requirement:REQ-RECORD": 'assert app.value()["record_id"] == "signal-17"',
+        "acceptance:AC-001": (
+            'assert app.value() == {"record_id": "signal-17", '
+            '"state": "ready", "trace": "trace-1"}'
+        ),
+        "gate:unit": (
+            'assert isinstance(app.value(), dict) and '
+            'set(app.value()) == {"record_id", "state", "trace"} and '
+            'app.value()["record_id"] == "signal-17"'
+        ),
+        "gate:requirement-mutation": 'assert app.value()["state"] == "ready"',
+        "gate:receipt-trace": 'assert app.value()["trace"] == "trace-1"',
+    }
+    criterion_ids = [item["id"] for item in mission["completion_contract"]["criteria"]]
+    assert set(criterion_ids) == set(assertions)
+    test_lines = ["import app", ""]
+    selectors = []
+    for index, criterion in enumerate(mission["completion_contract"]["criteria"]):
+        target_name, control_name = f"test_target_{index}", f"test_control_{index}"
+        target_line = len(test_lines) + 2
+        test_lines.extend(
+            [f"def {target_name}():", f"    {assertions[criterion['id']]}", ""]
+        )
+        control_line = len(test_lines) + 2
+        test_lines.extend(
+            [f"def {control_name}():", "    assert app.healthy_control() is True", ""]
+        )
+        selectors.append(
+            (criterion["id"], target_name, target_line, control_name, control_line)
+        )
+    test_file.write_text("\n".join(test_lines), encoding="utf-8")
+    source_map = _challenge_source_inventory(tmp_path)
+    rows = [{"path": path, "sha256": digest} for path, digest in sorted(source_map.items())]
+    candidate_sha = product_missions._sha_bytes(product_missions._canonical(rows))
+    input_paths = ["app.py", "test_app.py"]
+    input_rows = [{"path": path, "sha256": source_map[path]} for path in input_paths]
+    input_sha = product_missions._sha_bytes(product_missions._canonical(input_rows))
+    contract = _local_mutation_daily_contract(
+        mission, rows, candidate_sha, input_paths, input_sha
+    )
+    contract_path = tmp_path / "daily-contract.json"
+    contract_path.write_text(json.dumps(contract), encoding="utf-8")
+
+    for index, (criterion_id, target_name, target_line, control_name, control_line) in enumerate(selectors):
+        target_case, control_case = f"{criterion_id}:positive", f"{criterion_id}:negative"
+        rc = probe_main(
+            [
+                "--root", str(tmp_path), "--kind", "production-mutation",
+                "--nodeid", f"test_app.py::{target_name}", "--line", str(target_line),
+                "--production-path", "app.py", "--production-symbol", "value",
+                "--mutation-before",
+                'return {"record_id": "signal-17", "state": "ready", "trace": "trace-1"}',
+                "--mutation-after",
+                'return {"record_id": "signal-0", "state": "broken", "trace": "trace-0"}',
+                "--evidence", f".factory/local-capture/case-{index}",
+                "--mission-path", mission["path"], "--daily-contract", str(contract_path),
+                "--criterion-id", criterion_id, "--target-case-id", target_case,
+                "--control-nodeid", f"test_app.py::{control_name}",
+                "--control-line", str(control_line), "--control-case-id", control_case,
+                "--timeout", "20", "--python", sys.executable,
+            ]
+        )
+        capture = json.loads(capsys.readouterr().out)
+        assert rc == 0, capture
+        assert capture["status"] == "OBSERVED"
+
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    validation_evidence = tmp_path / "validation-evidence.json"
+    validation_evidence.write_text('{"passed": true}\n', encoding="utf-8")
+    validation = _validation_for(mission, "worker", "verifier", validation_evidence)
+    daily_criteria = {item["criterion_id"]: item for item in contract["criteria"]}
+    for item in validation["criteria"]:
+        positive = next(
+            case for case in daily_criteria[item["id"]]["cases"]
+            if case["polarity"] == "positive"
+        )
+        receipt_path = tmp_path / positive["evidence"]["path"]
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        assert receipt["criterion_id"] == item["id"]
+        assert receipt["captures_same_candidate_and_mutation"] is True
+        item["evidence"] = [str(receipt_path)]
+    validation["daily_verification"] = contract
+    validation_path = tmp_path / "validation-with-capture.json"
+    validation_path.write_text(json.dumps(validation), encoding="utf-8")
+    completion = close_mission(Path(mission["path"]), validation_path, tmp_path)
+    check = verify_mission_completion(Path(completion["path"]))
+    assert len(selectors) == len(assertions) == 5
+    assert completion["daily_verification"]["status"] == "COMPLETE"
+    assert completion["daily_verification"]["local_execution_observed"] is True
+    assert completion["daily_verification"]["execution_verified"] is False
+    assert check["valid"] is True
+    assert check["integrity_valid"] is True
+    assert check["complete"] is True
+    assert check["marker"] == "MISSION_COMPLETION_VERIFIED"
+    gates = {
+        row["criterion_id"]: row["native_gate_observation"]
+        for row in completion["daily_verification"]["criteria"]
+        if "native_gate_observation" in row
+    }
+    assert set(gates) == {
+        "gate:unit", "gate:requirement-mutation", "gate:receipt-trace"
+    }
+    assert all(
+        row["schema"] == "factory.daily-native-gate-observation.v1"
+        and row["status"] == "OBSERVED"
+        and row["mission_sha256"] == mission["mission_sha256"]
+        and row["candidate_sha256"] == candidate_sha
+        for row in gates.values()
+    )
+    from factoryline.adoption import completion_card_from_receipt
+
+    local_card = completion_card_from_receipt(
+        tmp_path, Path(completion["path"]), Path("completion-details")
+    )["card"]
+    assert local_card["status"] == "COMPLETE"
+    assert local_card["integrity_valid"] is True
+    assert local_card["local_execution_observed"] is True
+    assert local_card["independent_execution_verified"] is False
+    assert local_card["authority"]["share"] is False
+    assert any(
+        "writable-host assumption" in limitation
+        for limitation in local_card["unexamined_scope"]
+    )
+    assert not any(
+        "signer-claimed" in limitation
+        for limitation in local_card["unexamined_scope"]
+    )
+    receipt_refs = gates["gate:unit"]["evidence"]
+    target_receipt_path = Path(
+        next(row["path"] for row in receipt_refs if row["role"] == "mission_case")
+    )
+    target_receipt = json.loads(target_receipt_path.read_text(encoding="utf-8"))
+    snapshot_path = Path(
+        next(
+            row["path"] for row in receipt_refs
+            if row["role"] == "daily_contract_snapshot"
+        )
+    )
+    pristine_snapshot = snapshot_path.read_bytes()
+    pristine_sha = hashlib.sha256(pristine_snapshot).hexdigest()
+    assert pristine_sha == target_receipt["daily_contract_sha256_before_capture"]
+    snapshot_path.write_bytes(snapshot_path.read_bytes() + b" ")
+    tampered = verify_mission_completion(Path(completion["path"]))
+    assert tampered["integrity_valid"] is False
+    assert tampered["complete"] is False
+    assert tampered["marker"] == "MISSION_COMPLETION_DRIFT"
+    assert hashlib.sha256(pristine_snapshot).hexdigest() == (
+        target_receipt["daily_contract_sha256_before_capture"]
+    )
+    snapshot_path.write_bytes(pristine_snapshot)
+    restored = verify_mission_completion(Path(completion["path"]))
+    assert restored["integrity_valid"] is True
+    assert restored["complete"] is True
+    assert restored["marker"] == "MISSION_COMPLETION_VERIFIED"
+
+
+def _local_mutation_daily_contract(mission, rows, candidate_sha, input_paths, input_sha):
+    criteria = []
+    for criterion in mission["completion_contract"]["criteria"]:
+        cases = []
+        for polarity, outcome in (
+            ("positive", "baseline_assertion_pass_mutant_assertion_fail"),
+            ("negative", "baseline_assertion_pass_mutant_assertion_pass"),
+        ):
+            cases.append(
+                {
+                    "case_id": f"{criterion['id']}:{polarity}",
+                    "polarity": polarity,
+                    "input_paths": input_paths,
+                    "input_sha256": input_sha,
+                    "expected_outcome": outcome,
+                    "observed_outcome": "unknown",
+                    "evidence": {},
+                }
+            )
+        criteria.append({"criterion_id": criterion["id"], "cases": cases})
+    return {
+        "schema": product_missions.DAILY_VERIFICATION_SCHEMA,
+        "candidate_sha256": candidate_sha,
+        "source_manifest": rows,
+        "scope_closure": "declared_only",
+        "criteria": criteria,
+    }
+
+
+def test_daily_verification_malformed_case_and_missing_negative_stay_incomplete(
+    tmp_path,
+):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    evidence = tmp_path / "test-results.json"
+    evidence.write_text('{"passed": true}\n', encoding="utf-8")
+    validation = _validation_for(mission, "worker", "verifier", evidence)
+    daily = _daily_verification_for(mission, tmp_path)
+    cases = daily["criteria"][0]["cases"]
+    cases.pop()
+    cases[0]["input_sha256"] = "bad-digest"
+    cases[0]["evidence"]["kind"] = "proof_reuse"
+    validation["daily_verification"] = daily
+    path = tmp_path / "daily-validation.json"
+    path.write_text(json.dumps(validation), encoding="utf-8")
+
+    completion = close_mission(Path(mission["path"]), path, tmp_path)
+    summary = completion["daily_verification"]
+    assert summary["status"] == "INCOMPLETE"
+    assert "required_positive_negative_cases_missing" in summary["gaps"]
+    assert "case_input_digest_mismatch" in summary["gaps"]
+    assert "execution_evidence_unsupported" in summary["gaps"]
+    assert completion["status"] == "incomplete"
+
+
+def test_daily_verification_keeps_signed_v3_claims_separate_from_execution(tmp_path):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    evidence = tmp_path / "test-results.json"
+    evidence.write_text('{"passed": true}\n', encoding="utf-8")
+    validation = _validation_for(mission, "worker", "verifier", evidence)
+    daily, _oracle_row, _source_sha = _daily_oracle_verification_for(mission, tmp_path)
+    validation["daily_verification"] = daily
+    path = tmp_path / "daily-validation.json"
+    path.write_text(json.dumps(validation), encoding="utf-8")
+
+    completion = close_mission(Path(mission["path"]), path, tmp_path)
+    assert completion["status"] == "incomplete"
+    summary = completion["daily_verification"]
+    assert summary["status"] == "INCOMPLETE"
+    assert summary["complete"] is False
+    assert summary["attestation_verified"] is True
+    assert summary["execution_verified"] is False
+    assert summary["behavioral_verification"] == "unverified"
+    assert "signer claims only" in summary["attestation_claim_boundary"]
+    assert "behavioral_assertion_unverified" in summary["gaps"]
+    assert summary["scope_limitations"]
+    cases = [case for criterion in summary["criteria"] for case in criterion["cases"]]
+    assert {case["disposition"] for case in cases} == {
+        "signer_attested_baseline_and_mutant"
+    }
+    assert all(case["application_output_observed"] is None for case in cases)
+    assert all(case["trust_root_sha256"] for case in cases)
+    assert all(case["environment_sha256"] == "b" * 64 for case in cases)
+    checked = verify_mission_completion(Path(completion["path"]))
+    assert checked["valid"] is False
+    assert checked["integrity_valid"] is True
+    assert checked["complete"] is False
+    assert checked["marker"] == "MISSION_COMPLETION_INCOMPLETE"
+    (tmp_path / "candidate.py").write_text("VALUE = 2\n", encoding="utf-8")
+    post_capture = verify_mission_completion(Path(completion["path"]))
+    assert post_capture["valid"] is False
+    assert post_capture["complete"] is False
+    assert post_capture["marker"] == "MISSION_COMPLETION_DRIFT"
+    assert any("evidence drift" in error for error in post_capture["errors"])
+
+
+def test_daily_verification_rejects_invalid_signature_after_digest_refresh(
+    tmp_path,
+):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    evidence = tmp_path / "test-results.json"
+    evidence.write_text('{"passed": true}\n', encoding="utf-8")
+    validation = _validation_for(mission, "worker", "verifier", evidence)
+    daily, _oracle_row, _source_sha = _daily_oracle_verification_for(mission, tmp_path)
+    (tmp_path / "oracle.json").write_text('{"tampered": true}', encoding="utf-8")
+    receipt_sha = hashlib.sha256((tmp_path / "oracle.json").read_bytes()).hexdigest()
+    for criterion in daily["criteria"]:
+        for case in criterion["cases"]:
+            case["evidence"]["sha256"] = receipt_sha
+    validation["daily_verification"] = daily
+    path = tmp_path / "daily-validation.json"
+    path.write_text(json.dumps(validation), encoding="utf-8")
+
+    completion = close_mission(Path(mission["path"]), path, tmp_path)
+    summary = completion["daily_verification"]
+    assert summary["status"] == "INCOMPLETE"
+    assert "execution_oracle_invalid_or_stale" in summary["gaps"]
+    assert completion["status"] == "incomplete"
+
+
+def test_daily_verification_rejects_reused_v3_case_for_positive_and_negative(tmp_path):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    evidence = tmp_path / "test-results.json"
+    evidence.write_text('{"passed": true}\n', encoding="utf-8")
+    validation = _validation_for(mission, "worker", "verifier", evidence)
+    daily, _oracle_row, _source_sha = _daily_oracle_verification_for(mission, tmp_path)
+    cases = daily["criteria"][0]["cases"]
+    cases[1]["evidence"]["oracle_case_id"] = cases[0]["evidence"]["oracle_case_id"]
+    validation["daily_verification"] = daily
+    path = tmp_path / "daily-validation.json"
+    path.write_text(json.dumps(validation), encoding="utf-8")
+
+    completion = close_mission(Path(mission["path"]), path, tmp_path)
+    assert completion["status"] == "incomplete"
+    assert "execution_oracle_case_reused" in completion["daily_verification"]["gaps"]
+
+
+def test_daily_verification_rejects_stale_candidate_and_missing_receipt_binding(
+    tmp_path,
+):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    evidence = tmp_path / "test-results.json"
+    evidence.write_text('{"passed": true}\n', encoding="utf-8")
+    validation = _validation_for(mission, "worker", "verifier", evidence)
+    daily = _daily_verification_for(mission, tmp_path, omit_candidate_artifact=True)
+    (tmp_path / "candidate.py").write_text("VALUE = 2\n", encoding="utf-8")
+    validation["daily_verification"] = daily
+    path = tmp_path / "daily-validation.json"
+    path.write_text(json.dumps(validation), encoding="utf-8")
+
+    completion = close_mission(Path(mission["path"]), path, tmp_path)
+    gaps = completion["daily_verification"]["gaps"]
+    assert "candidate_source_stale:candidate.py" in gaps
+    assert "execution_candidate_source_binding_missing" in gaps
+    assert completion["status"] == "incomplete"
+
+
+def test_daily_verification_infrastructure_failure_is_not_behavioral_evidence(
+    tmp_path,
+):
+    _graph, _slices, mission = _pipeline(tmp_path)
+    evidence = tmp_path / "test-results.json"
+    evidence.write_text('{"passed": true}\n', encoding="utf-8")
+    validation = _validation_for(mission, "worker", "verifier", evidence)
+    validation["daily_verification"] = _daily_verification_for(
+        mission, tmp_path, timeout=True
+    )
+    path = tmp_path / "daily-validation.json"
+    path.write_text(json.dumps(validation), encoding="utf-8")
+
+    completion = close_mission(Path(mission["path"]), path, tmp_path)
+    summary = completion["daily_verification"]
+    assert summary["status"] == "INCOMPLETE"
+    assert "execution_infrastructure_failure" in summary["gaps"]
+    assert "behavioral_assertion_unverified" in summary["gaps"]
+    positive = summary["criteria"][0]["cases"][0]
+    assert positive["disposition"] == "unverified"
+    assert positive["observed_outcome"] is None
 
 
 def test_browser_control_is_a_bounded_no_finish_criterion(tmp_path: Path):

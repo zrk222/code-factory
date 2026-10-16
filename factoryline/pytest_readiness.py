@@ -3885,6 +3885,13 @@ def _cli_parser():
     parser.add_argument("--checker-config")
     parser.add_argument("--production-path")
     parser.add_argument("--production-symbol")
+    parser.add_argument("--mission-path")
+    parser.add_argument("--daily-contract")
+    parser.add_argument("--criterion-id")
+    parser.add_argument("--target-case-id")
+    parser.add_argument("--control-nodeid")
+    parser.add_argument("--control-line", type=int)
+    parser.add_argument("--control-case-id")
     parser.add_argument("--python")
     parser.add_argument("--mutation-before")
     parser.add_argument("--mutation-after")
@@ -3913,6 +3920,24 @@ def _cli_selected_probe(args):
     if args.kind == "production-mutation":
         from .runtime_audit_runner import capture_local_production_mutation
 
+        mission_args = (
+            args.mission_path,
+            args.daily_contract,
+            args.criterion_id,
+            args.target_case_id,
+            args.control_nodeid,
+            args.control_line,
+            args.control_case_id,
+        )
+        mission_route = any(value is not None for value in mission_args)
+        if mission_route and not all(value is not None for value in mission_args):
+            return {
+                "schema": "factory.probe-validation.v1",
+                "status": "INVALID",
+                "kind": args.kind,
+                "reason": "Mission capture requires mission, contract, criterion, target, and control bindings as a set.",
+            }
+
         if (
             not all(
                 (
@@ -3934,6 +3959,28 @@ def _cli_selected_probe(args):
                 "reason": "Production path, symbol, exact before/after text, and evidence path are required.",
             }
         try:
+            if mission_route:
+                from .product_missions import capture_mission_local_mutation
+
+                return capture_mission_local_mutation(
+                    Path(args.mission_path),
+                    Path(args.daily_contract),
+                    Path(args.root),
+                    args.criterion_id,
+                    args.target_case_id,
+                    args.control_case_id,
+                    args.nodeid,
+                    args.line,
+                    args.control_nodeid,
+                    args.control_line,
+                    args.production_path,
+                    args.production_symbol,
+                    args.mutation_before,
+                    args.mutation_after,
+                    args.evidence,
+                    timeout_seconds=math.ceil(args.timeout),
+                    python_executable=Path(args.python) if args.python else None,
+                )
             return capture_local_production_mutation(
                 Path(args.root),
                 args.nodeid,
@@ -3946,12 +3993,12 @@ def _cli_selected_probe(args):
                 timeout_seconds=math.ceil(args.timeout),
                 python_executable=Path(args.python) if args.python else None,
             )
-        except (ValueError, OSError):
+        except (ValueError, OSError) as exc:
             return {
                 "schema": "factory.probe-validation.v1",
                 "status": "INVALID",
                 "kind": args.kind,
-                "reason": "Mutation inputs or workspace could not be validated.",
+                "reason": str(exc) or "Mutation inputs or workspace could not be validated.",
             }
     probe = {
         "assertion": probe_assertion_propagation,

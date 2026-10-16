@@ -13,7 +13,6 @@ from factoryline.mission_graph import (
     export_mission_graph,
     init_mission_graph,
     langgraph_doctor,
-    mission_graph_history,
     mission_graph_status,
     recommend_mission_route,
     verify_mission_graph,
@@ -146,7 +145,9 @@ def _approve(tmp_path: Path, mission: dict) -> Path:
     )
 
 
-def test_native_graph_resumes_through_correction_and_completion(tmp_path: Path):
+def test_native_graph_rejects_legacy_claim_as_daily_completion(tmp_path: Path):
+    import pytest
+    from factoryline.mission_graph import MissionGraphError
     mission = _pipeline(tmp_path)
     initialized = init_mission_graph(Path(mission["path"]), tmp_path)
     assert initialized["state"] == "planned"
@@ -227,22 +228,38 @@ def test_native_graph_resumes_through_correction_and_completion(tmp_path: Path):
         candidate_2,
     )
     completion = _completion(tmp_path, mission, "worker-2", "verifier-2")
-    result = apply_mission_event(
-        Path(mission["path"]),
-        tmp_path,
-        "validation_passed",
-        "verifier-2",
-        "validator",
-        "passed-2",
-        completion,
+    with pytest.raises(MissionGraphError, match="integrity-valid but incomplete"):
+        apply_mission_event(
+            Path(mission["path"]),
+            tmp_path,
+            "validation_passed",
+            "verifier-2",
+            "validator",
+            "passed-2",
+            completion,
+        )
+    assert mission_graph_status(Path(mission["path"]), tmp_path)["state"] == (
+        "independent_verification"
     )
-    assert result["state"] == "completion_receipted"
-    assert (
-        result["milestone_progress"]["passed"] == result["milestone_progress"]["total"]
+
+
+def test_completion_gate_accepts_upstream_verified_complete_receipt(tmp_path, monkeypatch):
+    import factoryline.mission_graph as mission_graph
+
+    mission = {"mission_sha256": "a" * 64}
+    receipt = {
+        "mission": {"mission_sha256": mission["mission_sha256"]},
+        "verifier_id": "reviewer",
+        "creator_id": "builder",
+    }
+    monkeypatch.setattr(
+        mission_graph,
+        "verify_mission_completion",
+        lambda _path: {"valid": True, "complete": True, "errors": []},
     )
-    assert mission_graph_status(Path(mission["path"]), tmp_path)["version"] == 6
-    assert len(mission_graph_history(Path(mission["path"]), tmp_path)["events"]) == 6
-    assert verify_mission_graph(Path(mission["path"]), tmp_path)["valid"] is True
+    mission_graph._completion_receipt(
+        tmp_path / "completion.json", receipt, mission, "reviewer", "builder"
+    )
 
 
 def test_native_graph_rejects_replay_role_confusion_and_receipt_drift(tmp_path: Path):

@@ -16,7 +16,10 @@ from typing import Any
 import hashlib
 import json
 
-from .product_missions import verify_mission_completion
+from .product_missions import (
+    mission_completion_graph_projection,
+    verify_mission_completion,
+)
 from .proof import verify_trace
 from .proof_reuse import verify_proof_receipt
 from .graph_forensics import graph_forensics, verify_graph_lineage
@@ -501,18 +504,19 @@ def _append_mission_completion(
     if completion is None or source is None:
         return
     completion_id = f"completion:{mission_id}"
-    valid = verification is not None and verification.get("valid") is True
+    facts = mission_completion_graph_projection(verification)
+    status = facts.pop("status")
     _node(
         state,
         node_id=completion_id,
         kind="completion",
         label=f"completion for {mission_id}",
         source=source,
-        status="verified" if valid else "invalid",
-        facts={"errors": verification.get("errors", []) if verification else []},
+        status=status,
+        facts=facts,
     )
     _edge(state, mission_node, completion_id, "completed_by")
-    if valid:
+    if facts["complete"]:
         project = _text(mission.get("project"), "")
         for requirement_id in mission.get("slice", {}).get("requirement_ids", []):
             req_node = requirements.get((project, str(requirement_id)))

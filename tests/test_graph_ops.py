@@ -168,7 +168,7 @@ def test_daily_schedule_stability_uses_windows_cross_api_identity(tmp_path):
     )
 
 
-def test_graph_ops_links_local_product_mission_and_valid_completion_exactly(
+def test_graph_ops_does_not_promote_legacy_claim_to_complete_evidence(
     tmp_path: Path,
 ):
     graph, slices, mission, _completion = _completed_mission(tmp_path)
@@ -210,16 +210,81 @@ def test_graph_ops_links_local_product_mission_and_valid_completion_exactly(
     project = graph["project"]
     selected_requirements = mission["slice"]["requirement_ids"]
     completion_id = f"completion:{mission['id']}"
+    completion_node = next(
+        node for node in first["nodes"] if node["id"] == completion_id
+    )
+    assert completion_node["status"] == "incomplete"
+    assert completion_node["facts"]["integrity_valid"] is True
+    assert completion_node["facts"]["complete"] is False
     for requirement_id in selected_requirements:
         assert (
             completion_id,
             f"requirement:{project}:{requirement_id}",
             "verifies",
-        ) in edges
+        ) not in edges
     for item in slices["slices"]:
         current = f"slice:{project}:{item['id']}"
         for dependency in item["depends_on"]:
             assert (f"slice:{project}:{dependency}", current, "depends_on") in edges
+
+
+def test_graph_ops_preserves_integrity_for_daily_incomplete_receipt(tmp_path, monkeypatch):
+    import factoryline.graph_ops as graph_ops
+
+    mission_path = tmp_path / "mission.json"
+    mission_path.write_text("{}", encoding="utf-8")
+    completion_path = tmp_path / "completion.json"
+    completion_path.write_text("{}", encoding="utf-8")
+    mission = {
+        "id": "daily-incomplete",
+        "project": "sample",
+        "slice": {"requirement_ids": ["REQ-1"]},
+    }
+    completion = {"status": "incomplete"}
+    monkeypatch.setattr(
+        graph_ops,
+        "_verified_mission_completion",
+        lambda *_args: (
+            completion,
+            "completion.json",
+            {
+                "valid": False,
+                "integrity_valid": True,
+                "complete": False,
+                "errors": ["completion remains incomplete"],
+            },
+        ),
+    )
+    state = {
+        "nodes": {},
+        "edges": [],
+        "edge_keys": set(),
+        "truncated": False,
+        "errors": [],
+    }
+    graph_ops._node(
+        state,
+        node_id="mission:daily-incomplete",
+        kind="mission",
+        label="daily-incomplete",
+    )
+    requirement = "requirement:sample:REQ-1"
+    graph_ops._node(state, node_id=requirement, kind="requirement", label="REQ-1")
+    graph_ops._append_mission_completion(
+        state,
+        tmp_path,
+        mission_path,
+        mission,
+        "daily-incomplete",
+        "mission:daily-incomplete",
+        {("sample", "REQ-1"): requirement},
+        set(),
+    )
+    node = state["nodes"]["completion:daily-incomplete"]
+    assert node["status"] == "incomplete"
+    assert node["facts"]["integrity_valid"] is True
+    assert node["facts"]["complete"] is False
+    assert not any(edge["relation"] == "verifies" for edge in state["edges"])
 
 
 def test_graph_ops_marks_stale_proof_and_prioritizes_rerun_without_execution(
