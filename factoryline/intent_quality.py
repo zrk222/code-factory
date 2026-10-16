@@ -2528,6 +2528,7 @@ def _db_python_query(
         connections,
         queries,
         gaps,
+        nested_scope_checks=False,
     )
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -2571,6 +2572,7 @@ def _db_python_scope(
     queries,
     gaps,
     sql_bindings=None,
+    nested_scope_checks=True,
 ):
     if sql_bindings is None:
         sql_bindings = {}
@@ -2580,21 +2582,22 @@ def _db_python_scope(
                 statement, engines, connections, sql_bindings
             )
         if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            _db_python_scope_calls(
-                statement,
-                path,
-                digest,
-                symbols,
-                shadowed,
-                dialect,
-                sqlglot,
-                exp,
-                engines,
-                connections,
-                sql_bindings,
-                queries,
-                gaps,
-            )
+            if nested_scope_checks:
+                _db_python_scope_calls(
+                    statement,
+                    path,
+                    digest,
+                    symbols,
+                    shadowed,
+                    dialect,
+                    sqlglot,
+                    exp,
+                    engines,
+                    connections,
+                    sql_bindings,
+                    queries,
+                    gaps,
+                )
             continue
         destructured = (
             isinstance(statement, ast.Assign)
