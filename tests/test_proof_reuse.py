@@ -7,6 +7,7 @@ import pytest
 from factoryline.proof_reuse import (
     ProofReuseError,
     challenge_proof_receipt,
+    evaluate_proofs,
     plan_proofs,
     proof_facts,
     proof_key,
@@ -207,6 +208,116 @@ def test_compact_plan_omits_raw_commands_and_absolute_paths(tmp_path):
     assert str(tmp_path) not in encoded
     assert "print('verified')" not in encoded
     assert persisted["schema"] == "factory.proof-plan.v1"
+
+
+def test_evaluation_batches_shared_input_and_plan_wrapper_writes_once(
+    tmp_path, monkeypatch
+):
+    _, _, first = _workspace(tmp_path)
+    second = {**first, "name": "python-lint", "command": ["python", "-m", "ruff"]}
+    stable_reads = 0
+    writes = 0
+    original_read = __import__(
+        "factoryline.proof_reuse", fromlist=["_stable_file_read"]
+    )._stable_file_read
+    original_write = __import__(
+        "factoryline.proof_reuse", fromlist=["_atomic_json"]
+    )._atomic_json
+
+    def count_read(*args, **kwargs):
+        nonlocal stable_reads
+        stable_reads += 1
+        return original_read(*args, **kwargs)
+
+    def count_write(*args, **kwargs):
+        nonlocal writes
+        writes += 1
+        return original_write(*args, **kwargs)
+
+    monkeypatch.setattr("factoryline.proof_reuse._stable_file_read", count_read)
+    monkeypatch.setattr("factoryline.proof_reuse._atomic_json", count_write)
+    request = {"schema": "factory.proof-request.v1", "gates": [first, second]}
+    evaluated = evaluate_proofs(tmp_path, request)
+    assert [item["disposition"] for item in evaluated["items"]] == ["RUN", "RUN"]
+    assert stable_reads == 1
+    assert writes == 0
+    assert not (tmp_path / ".factory" / "proof-plans").exists()
+
+    destination = tmp_path / "final-plan.json"
+    persisted = plan_proofs(tmp_path, request, out=destination)
+    assert persisted["plan"] == str(destination.resolve())
+    assert destination.is_file()
+    assert writes == 1
+
+
+def test_shared_snapshot_does_not_bypass_per_receipt_freshness_check(
+    tmp_path, monkeypatch
+):
+    source, _, first = _workspace(tmp_path)
+    second = {**first, "name": "python-lint", "command": ["python", "-m", "ruff"]}
+    record_proof(tmp_path, first, elapsed_ms=1000)
+    record_proof(tmp_path, second, elapsed_ms=1000)
+    module = __import__("factoryline.proof_reuse", fromlist=["_stable_file_read"])
+    original_read = module._stable_file_read
+    reads = 0
+
+    def mutate_after_snapshot(path, *, label):
+        nonlocal reads
+        result = original_read(path, label=label)
+        reads += 1
+        if reads == 1:
+            source.write_text(
+                "print('changed after shared snapshot')\n", encoding="utf-8"
+            )
+        return result
+
+    monkeypatch.setattr(module, "_stable_file_read", mutate_after_snapshot)
+    result = evaluate_proofs(
+        tmp_path, {"schema": "factory.proof-request.v1", "gates": [first, second]}
+    )
+    assert [item["disposition"] for item in result["items"]] == ["RUN", "RUN"]
+    assert all(
+        item["reason"] == "receipt verification failed" for item in result["items"]
+    )
+
+
+def test_malformed_gate_does_not_suppress_valid_sibling(tmp_path):
+    _, _, valid = _workspace(tmp_path)
+    invalid = {**valid, "name": 42}
+    result = evaluate_proofs(
+        tmp_path, {"schema": "factory.proof-request.v1", "gates": [invalid, valid]}
+    )
+    assert [item["disposition"] for item in result["items"]] == ["BLOCK", "RUN"]
+    assert result["items"][0]["reason"] == "PROOF_GATE_INVALID"
+
+
+def test_batch_route_exception_does_not_suppress_valid_reuse(tmp_path, monkeypatch):
+    _, _, valid = _workspace(tmp_path)
+    record_proof(tmp_path, valid, elapsed_ms=1000)
+    broken = {**valid, "name": "broken"}
+    module = __import__("factoryline.proof_reuse", fromlist=["_route_gate"])
+    original_route = module._route_gate
+
+    def fail_one(root, gate, changed, auto_savings, **kwargs):
+        if gate.get("name") == "broken":
+            raise RuntimeError("isolated evaluator failure")
+        return original_route(root, gate, changed, auto_savings, **kwargs)
+
+    monkeypatch.setattr(module, "_route_gate", fail_one)
+    result = evaluate_proofs(
+        tmp_path, {"schema": "factory.proof-request.v1", "gates": [broken, valid]}
+    )
+    assert [item["disposition"] for item in result["items"]] == ["RUN", "REUSE"]
+    assert result["items"][0]["reason"] == "PROOF_EXECUTION_REQUIRED"
+
+
+def test_shared_input_cache_is_limited_to_one_evaluation(tmp_path):
+    source, _, gate = _workspace(tmp_path)
+    request = {"schema": "factory.proof-request.v1", "gates": [gate, gate]}
+    first = evaluate_proofs(tmp_path, request)
+    source.write_text("print('next invocation')\n", encoding="utf-8")
+    second = evaluate_proofs(tmp_path, request)
+    assert first["items"][0]["proof_key"] != second["items"][0]["proof_key"]
 
 
 def test_proofs_cli_record_plan_verify_and_challenge(tmp_path, capsys):

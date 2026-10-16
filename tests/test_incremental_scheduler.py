@@ -1,5 +1,6 @@
 import pytest
 
+from factoryline.proof_reuse import evaluate_proofs, record_proof
 from factoryline.incremental_scheduler import (
     SchedulerError,
     SCHEMA,
@@ -131,3 +132,88 @@ def test_shadow_comparison_exposes_differences_without_authority():
     assert result["shadow_equivalent"] is False
     assert "lint" in result["differences"]["findings_changed"]
     assert result["release_approval"] is False
+
+
+def test_incremental_plan_batches_duplicate_proof_names_without_persistence(
+    tmp_path, monkeypatch
+):
+    import factoryline.incremental_scheduler as scheduler
+    import factoryline.proof_reuse as proof_reuse
+
+    source = tmp_path / "src" / "app.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("print('ok')\n", encoding="utf-8")
+    outputs = []
+    proofs = []
+    for index in range(2):
+        output = tmp_path / "dist" / f"result-{index}.json"
+        output.parent.mkdir(exist_ok=True)
+        output.write_text('{"passed":true}\n', encoding="utf-8")
+        outputs.append(output)
+        proof = {
+            "name": "same-proof-name",
+            "command": ["python", "-m", f"check{index}"],
+            "inputs": ["src/app.py"],
+            "outputs": [output.relative_to(tmp_path).as_posix()],
+            "relevant_paths": ["src"],
+            "safe_to_skip": False,
+            "read_only": True,
+            "toolchain": {"python": "3.11.9"},
+            "environment": {"os": "windows"},
+        }
+        record_proof(tmp_path, proof, elapsed_ms=1000)
+        proofs.append(proof)
+
+    manifest = _manifest(
+        changed_paths=["docs/readme.md"],
+        gates=[
+            {
+                "id": f"gate-{index}",
+                "depends_on": [],
+                "side_effects": False,
+                "proof": proof,
+            }
+            for index, proof in enumerate(proofs)
+        ],
+        dependency_closure={f"gate-{index}": ["src/app.py"] for index in range(2)},
+    )
+    original_evaluate = scheduler.evaluate_proofs
+    calls = []
+
+    def count_batch(*args, **kwargs):
+        calls.append(len(args[1]["gates"]))
+        return original_evaluate(*args, **kwargs)
+
+    writes = 0
+    original_atomic = proof_reuse._atomic_json
+
+    def count_atomic(*args, **kwargs):
+        nonlocal writes
+        writes += 1
+        return original_atomic(*args, **kwargs)
+
+    monkeypatch.setattr(scheduler, "evaluate_proofs", count_batch)
+    monkeypatch.setattr(proof_reuse, "_atomic_json", count_atomic)
+    monkeypatch.setattr(
+        "tempfile.TemporaryDirectory",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("temp directory")),
+    )
+    destination = tmp_path / "incremental-plan.json"
+    result = plan_incremental(tmp_path, manifest, out=destination)
+
+    assert calls == [2]
+    assert writes == 0
+    assert destination.is_file()
+    assert not (tmp_path / ".factory" / "proof-plans").exists()
+    assert [row["disposition"] for row in result["items"]] == ["REUSE", "REUSE"]
+    for row, proof in zip(result["items"], proofs, strict=True):
+        single = evaluate_proofs(
+            tmp_path,
+            {"schema": "factory.proof-request.v1", "gates": [proof]},
+            changed_paths=["docs/readme.md"],
+        )["items"][0]
+        assert row["proof"] == {
+            "proof_key": single["proof_key"],
+            "receipt_sha256": single["receipt_sha256"],
+        }
+        assert row["reason"] == single["reason"]

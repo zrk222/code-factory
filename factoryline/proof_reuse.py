@@ -22,6 +22,7 @@ RECEIPT_SCHEMA = "factory.proof-receipt.v1"
 PLAN_SCHEMA = "factory.proof-plan.v1"
 READ_CHUNK_BYTES = 1_048_576
 PAIR_NONCE_MODULUS = 1_000_000_000
+SNAPSHOT_CACHE_ENTRY_LIMIT = 512
 
 
 class ProofReuseError(ValueError):
@@ -203,7 +204,13 @@ def _relative_file(root: Path, raw: str, label: str) -> tuple[str, Path]:
     return relative.as_posix(), candidate
 
 
-def _snapshot(root: Path, paths: object, label: str) -> list[dict[str, Any]]:
+def _snapshot(
+    root: Path,
+    paths: object,
+    label: str,
+    *,
+    cache: dict[tuple[str, str], dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     if not isinstance(paths, list) or not paths:
         raise ProofReuseError(
             "PROOF_INPUT_INVALID", f"{label} must contain at least one file"
@@ -219,8 +226,14 @@ def _snapshot(root: Path, paths: object, label: str) -> list[dict[str, Any]]:
         if relative in seen:
             continue
         seen.add(relative)
-        identity, digest = _stable_file_read(candidate, label=label)
-        rows.append({"path": relative, "sha256": digest, "identity": identity})
+        key = (label, relative)
+        row = cache.get(key) if cache is not None else None
+        if row is None:
+            identity, digest = _stable_file_read(candidate, label=label)
+            row = {"path": relative, "sha256": digest, "identity": identity}
+            if cache is not None and len(cache) < SNAPSHOT_CACHE_ENTRY_LIMIT:
+                cache[key] = row
+        rows.append(dict(row))
     return sorted(rows, key=lambda item: item["path"])
 
 
@@ -240,8 +253,21 @@ def _proof_key(facts: dict[str, Any]) -> str:
     return _sha_bytes(_canonical(facts))
 
 
-def proof_facts(root: Path, gate: dict[str, Any]) -> dict[str, Any]:
+def proof_facts(
+    root: Path,
+    gate: dict[str, Any],
+) -> dict[str, Any]:
     """Return canonical proof facts without retaining raw command text."""
+    return _proof_facts(Path(root), gate)
+
+
+def _proof_facts(
+    root: Path,
+    gate: dict[str, Any],
+    *,
+    snapshot_cache: dict[tuple[str, str], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build proof facts, optionally reusing an invocation-local input snapshot."""
     if not isinstance(gate, dict):
         raise ProofReuseError("PROOF_GATE_INVALID", "gate must be an object")
     name = gate.get("name")
@@ -253,7 +279,9 @@ def proof_facts(root: Path, gate: dict[str, Any]) -> dict[str, Any]:
         "schema": RECEIPT_SCHEMA,
         "gate": name.strip(),
         "command_sha256": _command_digest(gate.get("command")),
-        "inputs": _snapshot(Path(root), gate.get("inputs"), "inputs"),
+        "inputs": _snapshot(
+            Path(root), gate.get("inputs"), "inputs", cache=snapshot_cache
+        ),
         "toolchain": _normalized_mapping(gate.get("toolchain"), "toolchain"),
         "environment": _normalized_mapping(gate.get("environment"), "environment"),
     }
@@ -525,7 +553,12 @@ def _reuse_savings(
 
 
 def _route_gate(
-    root: Path, gate: object, changed: list[str], auto_savings: bool
+    root: Path,
+    gate: object,
+    changed: list[str],
+    auto_savings: bool,
+    *,
+    snapshot_cache: dict[tuple[str, str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter_ns()
     name = gate.get("name") if isinstance(gate, dict) else None
@@ -541,7 +574,7 @@ def _route_gate(
         markers.append("PROOF_SIDE_EFFECT_REUSE_REFUSED")
         return _finish_route(item, markers, started)
     try:
-        proof = _proof_key(proof_facts(root, gate))
+        proof = _proof_key(_proof_facts(root, gate, snapshot_cache=snapshot_cache))
     except ProofReuseError as error:
         item.update(disposition="BLOCK", reason=error.code)
         markers.append("PROOF_INPUT_INTEGRITY_REQUIRED")
@@ -630,9 +663,74 @@ def plan_proofs(
     out: Path | None = None,
 ) -> dict[str, Any]:
     """Route every requested proof to RUN, REUSE, SKIP, or BLOCK."""
+    plan = evaluate_proofs(
+        root,
+        manifest,
+        changed_paths=changed_paths,
+        auto_savings=auto_savings,
+    )
+    destination = (
+        Path(out).resolve()
+        if out
+        else _plan_directory(Path(root)) / f"{plan['plan_sha256']}.json"
+    )
+    _atomic_json(destination, plan)
+    return {**plan, "plan": str(destination)}
+
+
+def _evaluate_gate_safely(
+    root: Path,
+    gate: object,
+    changed: list[str],
+    auto_savings: bool,
+    snapshot_cache: dict[tuple[str, str], dict[str, Any]],
+) -> dict[str, Any]:
+    started = time.perf_counter_ns()
+    try:
+        return _route_gate(
+            root,
+            gate,
+            changed,
+            auto_savings,
+            snapshot_cache=snapshot_cache,
+        )
+    except Exception as error:
+        name = gate.get("name") if isinstance(gate, dict) else None
+        item = {
+            "gate": name if isinstance(name, str) else "invalid",
+            "proof_key": None,
+            "receipt_sha256": None,
+            "savings": None,
+            "disposition": "RUN",
+            "reason": getattr(error, "code", "PROOF_EXECUTION_REQUIRED"),
+        }
+        return _finish_route(
+            item,
+            [
+                "PROOF_EXECUTION_REQUIRED",
+                "PROOF_PLAN_DISPOSITION_EXACT",
+                "PROOF_PUBLICATION_AUTHORITY_UNCHANGED",
+            ],
+            started,
+        )
+
+
+def evaluate_proofs(
+    root: Path,
+    manifest: dict[str, Any],
+    *,
+    changed_paths: Iterable[str] = (),
+    auto_savings: bool = False,
+) -> dict[str, Any]:
+    """Evaluate without saving the plan; auto_savings may save a separate pair."""
     gates = _validated_gates(manifest)
     changed = _normalize_changed(changed_paths)
-    items = [_route_gate(Path(root), gate, changed, auto_savings) for gate in gates]
+    root = Path(root).resolve()
+    snapshot_cache: dict[tuple[str, str], dict[str, Any]] = {}
+    items = [
+        _evaluate_gate_safely(root, gate, changed, auto_savings, snapshot_cache)
+        for gate in gates
+    ]
     counts = {
         name: sum(item["disposition"] == name for item in items)
         for name in ("RUN", "REUSE", "SKIP", "BLOCK")
@@ -658,11 +756,7 @@ def plan_proofs(
     }
     plan_sha = _sha_bytes(_canonical(core))
     plan = {**core, "plan_sha256": plan_sha}
-    destination = (
-        Path(out).resolve() if out else _plan_directory(Path(root)) / f"{plan_sha}.json"
-    )
-    _atomic_json(destination, plan)
-    return {**plan, "plan": str(destination)}
+    return {**plan, "plan_sha256": plan_sha}
 
 
 def load_manifest(path: Path) -> dict[str, Any]:
