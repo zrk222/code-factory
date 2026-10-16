@@ -5261,7 +5261,7 @@ def _security_scan_tree(
             class_helpers,
             weak_helper_names,
             context.get("click_runners", set()),
-            context.get("ty_assert_type", False),
+            context.get("typecheck", False),
             test_file_patterns,
             _pytest_inherited_method_ids(tree, context.get("pytest_inherited", set())),
             context.get("flask_apps", set()),
