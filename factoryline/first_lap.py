@@ -8,6 +8,8 @@ authority.  The module records only bounded hashes and declared facts.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical
+
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -72,16 +74,6 @@ class FirstLapError(ValueError):
         super().__init__(message)
         self.code = code
         self.message = message
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

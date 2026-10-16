@@ -10,6 +10,8 @@ store provider.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical
+
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -123,16 +125,6 @@ def _construct_unique_mapping(
 _UniqueKeyLoader.add_constructor(
     yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping
 )
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

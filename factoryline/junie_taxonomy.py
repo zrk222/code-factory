@@ -5,6 +5,8 @@ Read-only local artifacts; enabling Junie/MCP remains a JetBrains user action.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical
+
 from hashlib import sha256
 from importlib.resources import files
 import json
@@ -195,16 +197,6 @@ _STAGES: tuple[dict[str, object], ...] = (
         "outcome": "Candidate-bound local evidence; not device, provider, App Store, payment, or approval proof.",
     },
 )
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

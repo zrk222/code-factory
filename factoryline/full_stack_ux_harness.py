@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical
+
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -72,16 +74,6 @@ def _require_exact_keys(value: dict[str, Any], expected: set[str], label: str) -
             "E_UX_MANIFEST_SCHEMA",
             f"{label} keys must be exact; missing={missing}, unexpected={unexpected}",
         )
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical
+
 from datetime import datetime, timezone
 from hashlib import sha256
 import html
@@ -64,16 +66,6 @@ class ProofReviewError(ValueError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

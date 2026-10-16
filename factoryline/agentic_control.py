@@ -8,6 +8,8 @@ starts a model, edits a checkout, creates a branch, or approves a merge.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -407,16 +409,6 @@ def audit_a2a_agent_card(card: object) -> dict[str, Any]:
         "authority": {key: False for key in _AUTHORITY},
         "claim_boundary": "Validates imported Agent Card structure and internal transport/security references only; it does not fetch, authenticate, trust, authorize, or invoke the declared agent.",
     }
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

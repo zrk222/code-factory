@@ -9,6 +9,8 @@ task, or grants release authority.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical
+
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
@@ -39,16 +41,6 @@ class BlueprintError(ValueError):
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:
