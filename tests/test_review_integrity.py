@@ -2890,3 +2890,132 @@ def test_unsafe_sql_driver_helper_contracts_keep_parameterized_sql_clean():
         )
         == "psycopg"
     )
+
+
+@pytest.mark.parametrize(
+    "driver,connection",
+    [
+        ("sqlite3", "sqlite3.connect(':memory:')"),
+        ("psycopg", "psycopg.connect('postgresql://unused')"),
+    ],
+)
+def test_sql_cursor_lifecycle_methods_do_not_crash_or_become_sinks(
+    tmp_path, driver, connection
+):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        f"import {driver}\n"
+        "def lookup():\n"
+        f"    db = {connection}\n"
+        "    cursor = db.cursor()\n"
+        "    cursor.execute('SELECT 1')\n"
+        "    rows = cursor.fetchall()\n"
+        "    cursor.close()\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+
+    report = security_scan(tmp_path, cache_enabled=False)
+
+    assert report["audit_coverage"]["complete"] is True
+    assert report["finding_counts"].get("SECURITY_SQL_INJECTION", 0) == 0
+
+
+@pytest.mark.parametrize(
+    "driver,connection,method",
+    [
+        ("sqlite3", "sqlite3.connect(':memory:')", "fetchmany"),
+        ("psycopg", "psycopg.connect('postgresql://unused')", "callproc"),
+    ],
+)
+def test_tainted_non_execute_cursor_methods_are_not_sql_sinks(
+    tmp_path, driver, connection, method
+):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        f"import {driver}\n"
+        "from flask import request\n"
+        "def lookup():\n"
+        f"    db = {connection}\n"
+        "    cursor = db.cursor()\n"
+        "    value = request.args.get('id')\n"
+        f"    cursor.{method}(value)\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+
+    report = security_scan(tmp_path, cache_enabled=False)
+
+    assert report["audit_coverage"]["complete"] is True
+    assert report["finding_counts"].get("SECURITY_SQL_INJECTION", 0) == 0
+
+
+@pytest.mark.parametrize(
+    "driver,connection",
+    [
+        ("sqlite3", "sqlite3.connect(':memory:')"),
+        ("psycopg", "psycopg.connect('postgresql://unused')"),
+    ],
+)
+def test_tainted_execute_still_flags_proven_sql_cursors(tmp_path, driver, connection):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        f"import {driver}\n"
+        "from flask import request\n"
+        "def lookup():\n"
+        f"    db = {connection}\n"
+        "    cursor = db.cursor()\n"
+        "    value = request.args.get('id')\n"
+        "    cursor.execute(f'SELECT * FROM records WHERE id={value}')\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+
+    report = security_scan(tmp_path, cache_enabled=False)
+
+    assert report["finding_counts"].get("SECURITY_SQL_INJECTION") == 1
+
+
+@pytest.mark.parametrize(
+    "parameter",
+    ["engine", "engine, /", "*, engine", "*engine", "**engine"],
+)
+def test_sqlalchemy_engine_parameters_block_module_engine_provenance(
+    tmp_path, parameter
+):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        "from sqlalchemy import create_engine, text\n"
+        "from flask import request\n"
+        "engine = create_engine('sqlite://')\n"
+        f"def lookup({parameter}):\n"
+        "    value = request.args.get('id')\n"
+        "    with engine.connect() as db:\n"
+        "        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+
+    report = security_scan(tmp_path, cache_enabled=False)
+
+    assert report["audit_coverage"]["complete"] is True
+    assert report["finding_counts"].get("SECURITY_SQL_INJECTION", 0) == 0
+
+
+def test_unshadowed_outer_sqlalchemy_engine_provenance_still_flags(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        "from sqlalchemy import create_engine, text\n"
+        "from flask import request\n"
+        "engine = create_engine('sqlite://')\n"
+        "def lookup():\n"
+        "    value = request.args.get('id')\n"
+        "    with engine.connect() as db:\n"
+        "        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+
+    report = security_scan(tmp_path, cache_enabled=False)
+
+    assert report["finding_counts"].get("SECURITY_SQL_INJECTION") == 1

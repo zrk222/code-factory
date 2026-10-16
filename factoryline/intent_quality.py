@@ -764,7 +764,10 @@ def unsafe_sql_driver(
     )
     if (
         driver is None
+        and isinstance(call, ast.Call)
         and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "execute"
+        and call.args
         and proven_cursor(call.func.value)
     ):
         driver = "mysql.connector"
@@ -907,10 +910,10 @@ def _sqlalchemy_engine_bound(name, scope, before, aliases, resolve_call):
     anchor = before
     while isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
         if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if name in getattr(current, "_security_parameter_names", set()):
+                return False
             local = set(getattr(current, "_security_local_names", set()))
             if name in local:
-                if name in {argument.arg for argument in current.args.args}:
-                    return False
                 if anchor not in current.body:
                     return False
                 return _sqlalchemy_assignment_before(
