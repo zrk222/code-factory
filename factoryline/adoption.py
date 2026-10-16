@@ -9,6 +9,7 @@ commands, prompts, logs, or user identifiers.
 
 from __future__ import annotations
 
+import copy
 from datetime import datetime, timezone
 from hashlib import sha256
 from html import escape
@@ -58,6 +59,56 @@ def _canonical(value: object) -> bytes:
 
 def _sha(value: object) -> str:
     return sha256(_canonical(value)).hexdigest()
+
+
+def _project_native_worker_execution(result: dict[str, Any]) -> None:
+    """Remove only run-envelope fields from the native worker result schema."""
+    for key in (
+        "run_id",
+        "parent_run",
+        "sequence",
+        "event_sha256",
+        "updated_at",
+        "review_evidence_path",
+    ):
+        result.pop(key, None)
+    enrollment = result.get("action_enrollment")
+    if isinstance(enrollment, dict):
+        enrollment.pop("actions_sha256", None)
+        for action in enrollment.get("actions", []):
+            if isinstance(action, dict):
+                action.pop("run_id", None)
+                action.pop("action_id", None)
+    for lane in result.get("lanes", []):
+        if isinstance(lane, dict):
+            lane.pop("action_id", None)
+
+
+def _scan_identity_projection(result: dict[str, Any]) -> dict[str, Any]:
+    """Return deterministic scan content while excluding run receipt evidence."""
+    identity = copy.deepcopy(result)
+    identity.pop("scan_sha256", None)
+    identity.pop("run_receipt_sha256", None)
+    deep_audit = identity.get("deep_audit")
+    if isinstance(deep_audit, dict):
+        deep_audit.pop("telemetry", None)
+        deep_audit.pop("audit_sha256", None)
+        for lane in deep_audit.get("lanes", []):
+            if (
+                isinstance(lane, dict)
+                and lane.get("measurement_id") == "native_worker_execution"
+                and isinstance(lane.get("result"), dict)
+            ):
+                _project_native_worker_execution(lane["result"])
+        native_domains = deep_audit.get("native_domains")
+        if isinstance(native_domains, dict):
+            for domain in native_domains.get("domains", []):
+                if isinstance(domain, dict) and isinstance(domain.get("result"), dict):
+                    domain["result"].pop("run_id", None)
+            for finding in native_domains.get("findings", []):
+                if isinstance(finding, dict):
+                    finding.pop("run_id", None)
+    return identity
 
 
 def _utc(value: datetime | None = None) -> datetime:
@@ -1419,7 +1470,8 @@ def run_repo_scan(
     }
     if security_error:
         result["static_security_error"] = security_error
-    result["scan_sha256"] = _sha(result)
+    result["scan_sha256"] = _sha(_scan_identity_projection(result))
+    result["run_receipt_sha256"] = _sha(result)
     return result
 
 

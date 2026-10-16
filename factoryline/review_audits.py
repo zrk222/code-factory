@@ -29,7 +29,7 @@ except ModuleNotFoundError:  # Python 3.10
 from .audit_action_refs import audit_remediation_packet
 from .deep_audit_io import local_file
 from .runtime_audit_common import RuntimeAuditError, runtime_config_sources
-from . import review_integrity as integrity
+from . import review_integrity as integrity, intent_quality as contracts
 from .review_integrity import security_call_name as security_call_name
 
 SCHEMA = "factory.review-audit-policy.v1"
@@ -1525,7 +1525,7 @@ def _secret_literal(node: ast.Assign | ast.AnnAssign) -> str | None:
     if (
         not isinstance(value, ast.Constant)
         or not isinstance(value.value, str)
-        or len(value.value) < 8
+        or not value.value.strip()
         or _PLACEHOLDER_SECRET.match(value.value.strip())
     ):
         return None
@@ -3752,7 +3752,7 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _local_weak_assertion_helpers,
         _is_oracle_helper_name,
     )
-    helpers += tuple(
+    helpers += contracts.project_contract_helpers() + tuple(
         getattr(integrity, name)
         for name in (
             "oracle_configuration",
@@ -3910,17 +3910,17 @@ def _project_oracle_context(
     }
     bindings = source_bindings + config_bindings
     cache_key = _oracle_context_cache_key(root, manifest, config_identity)
-    cacheable = source_cacheable and config_cacheable
-    if cache_enabled and cacheable:
+    if cache_enabled and source_cacheable and config_cacheable:
         cached = _oracle_context_cache_read(cache_key)
         if cached is not None:
             contexts, edges = cached
             return contexts, bindings, edges, source_bytes
-    snapshots = _oracle_snapshots(root, files, source_bytes)
+    snapshots = contracts.bound_snapshots(root, files, source_bytes, source_bindings)
     contexts, edges = _build_oracle_context(root, files, snapshots, typecheck_sources)
     integrity.bind_benchmark_context(contexts, snapshots, benchmarks)
+    contracts.bind_project_contracts(root, snapshots, contexts, edges)
     edges.extend(_static_type_edges(root, typecheck_sources, config_bindings))
-    if cache_enabled and cacheable:
+    if cache_enabled and source_cacheable and config_cacheable:
         _oracle_context_cache_write(cache_key, contexts, edges)
     return contexts, bindings, edges, source_bytes
 
@@ -5387,7 +5387,7 @@ def _security_scan_file(
         )
     return (
         binding,
-        integrity.implementation_completeness_findings(relative, tree, data)
+        contracts.implementation_findings(relative, tree, data, oracle_context)
         + _security_scan_tree(
             workspace,
             path,

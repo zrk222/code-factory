@@ -87,7 +87,7 @@ def test_assembly_fails_closed_when_release_contract_declares_missing_ui_scope(
     assert report["halted_at"] == "prestige:score"
 
 
-def test_assembly_preserves_explicit_forge_intent_trace_in_standard_receipt(
+def test_assembly_preserves_explicit_unverified_forge_intent_status_in_standard_receipt(
     tmp_path: Path, monkeypatch
 ):
     class Module:
@@ -118,7 +118,7 @@ def test_assembly_preserves_explicit_forge_intent_trace_in_standard_receipt(
     cli_output = json.dumps(
         {
             "shipped": True,
-            "intent_traceable": True,
+            "intent_traceable": False,
             "intent_hash": "a" * 64,
             "obligations_met": "1/1",
         }
@@ -140,7 +140,7 @@ def test_assembly_preserves_explicit_forge_intent_trace_in_standard_receipt(
     payload = json.loads(receipts[0].read_text(encoding="utf-8"))
     adapter = payload["outputs"]["intent_trace"]
     assert adapter["schema"] == "factoryline.intent-trace.v1"
-    assert adapter["intent_traceable"] is True
+    assert adapter["intent_traceable"] is False
     assert adapter["shipped"] is True
     assert adapter["intent_hash"] == "a" * 64
     assert adapter["obligations"] == "1/1"

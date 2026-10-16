@@ -2340,8 +2340,7 @@ def _implementation_comment_findings(
     parents: dict[ast.AST, ast.AST],
     module_aliases: dict[str, str],
 ) -> list[dict[str, Any]]:
-    findings = []
-    excluded_lines = set()
+    findings, excluded_lines = [], set()
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
@@ -2388,6 +2387,8 @@ def _implementation_is_exempt(
     aliases: dict[str, str],
     tree: ast.Module,
 ) -> bool:
+    from .intent_quality import intentional_implementation_contract
+
     decorators = _implementation_decorator_names(node, aliases)
     exempt_decorators = {
         "abc.abstractmethod",
@@ -2401,6 +2402,7 @@ def _implementation_is_exempt(
         node.name in {"__init_subclass__", "__subclasshook__"}
         or bool(decorators & exempt_decorators)
         or _implementation_static_interface(node, parents, aliases, tree)
+        or intentional_implementation_contract(node, parents, aliases)
     )
 
 
@@ -2558,8 +2560,7 @@ def implementation_completeness_findings(
         for name, target in (aliases or {}).items()
         if isinstance(name, str) and isinstance(target, str)
     }
-    module_aliases = _implementation_imports(tree.body)
-    module_aliases.update(supplied)
+    module_aliases = {**_implementation_imports(tree.body), **supplied}
     parents = _implementation_parents(tree)
     tree._implementation_alias_cache = {}
     try:
@@ -2628,7 +2629,7 @@ _STRUCTURAL_SET_FIELDS = (
     "module_rebindings",
     "dynamic_getattr_modules",
     "source_classes",
-)
+) + ("implementation_contract_lines",)
 _STRUCTURAL_MAP_FIELDS = ("module_imports", "class_imports", "benchmark_constants")
 
 
@@ -3914,56 +3915,60 @@ def _security_function_connector_return_kind(function, aliases, helpers):
 
 
 def _security_return_kind(statement, aliases, helpers, connections, cursors):
-    if not isinstance(statement, ast.Return):
-        return ""
-    value = statement.value
-    if isinstance(value, ast.Name):
-        if value.id in connections:
-            return "connection"
-        if value.id in cursors:
-            return "cursor"
-    if _security_connector_connection(value, aliases) or _security_helper_call(
-        value, "connection", aliases, helpers
-    ):
-        return "connection"
-    return (
-        "cursor" if _security_cursor_value(value, aliases, connections, helpers) else ""
+    from .intent_quality import sql_return_kind
+
+    return sql_return_kind(
+        statement,
+        aliases,
+        helpers,
+        connections,
+        cursors,
+        _security_sql_connection_driver,
+        _security_sql_cursor_driver,
+        _security_helper_call,
     )
 
 
 def _security_track_connector_assignment(
     statement, aliases, helpers, connections, cursors
 ):
-    value = getattr(statement, "value", None)
-    if not isinstance(statement, (ast.Assign, ast.AnnAssign)) or not isinstance(
-        value, ast.AST
-    ):
-        return
-    targets = (
-        statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+    from .intent_quality import track_sql_assignment
+
+    track_sql_assignment(
+        statement,
+        aliases,
+        helpers,
+        connections,
+        cursors,
+        lambda value: _security_sql_connection_driver(value, aliases, connections),
+        lambda value: _security_sql_cursor_driver(
+            value, aliases, connections, cursors, helpers
+        ),
+        _security_helper_call,
     )
-    is_connection = _security_connector_connection(value, aliases) or (
-        _security_helper_call(value, "connection", aliases, helpers)
-    )
-    is_cursor = _security_cursor_value(value, aliases, connections, helpers)
-    for target in targets:
-        if isinstance(target, ast.Name):
-            connections.discard(target.id)
-            cursors.discard(target.id)
-            if is_connection:
-                connections.add(target.id)
-            if is_cursor:
-                cursors.add(target.id)
 
 
-def _security_cursor_value(node, aliases, connections, helpers):
-    if not isinstance(node, ast.Call) or _security_call_leaf(node) != "cursor":
-        return False
-    receiver = node.func.value if isinstance(node.func, ast.Attribute) else None
-    return (
-        _security_connector_connection(receiver, aliases)
-        or (isinstance(receiver, ast.Name) and receiver.id in connections)
-        or _security_helper_call(receiver, "connection", aliases, helpers)
+def _security_sql_connection_driver(node, aliases, connections):
+    from .intent_quality import scoped_sql_connection_driver
+
+    return scoped_sql_connection_driver(
+        node, aliases, connections, _security_scope_request_aliases, security_call_name
+    )
+
+
+def _security_sql_cursor_driver(node, aliases, connections, cursors, helpers):
+    from .intent_quality import scoped_sql_driver
+
+    return scoped_sql_driver(
+        node,
+        aliases,
+        connections,
+        cursors,
+        helpers,
+        _security_scope_request_aliases,
+        security_call_name,
+        _security_helper_call,
+        _security_call_leaf,
     )
 
 
@@ -3972,12 +3977,6 @@ def _security_helper_call(node, kind, aliases, helpers):
         return False
     name = security_call_name(node, aliases)
     return helpers.get(name) == kind and _security_call_unshadowed(node, name)
-
-
-def _security_connector_connection(node, aliases):
-    if not isinstance(node, ast.Call):
-        return False
-    return security_call_name(node, aliases) == "mysql.connector.connect"
 
 
 def _security_call_leaf(node):
@@ -4014,6 +4013,22 @@ def _security_analyze_source_sink_block(
         )
         if password_finding is not None:
             findings.append(password_finding)
+        from .intent_quality import sqlalchemy_with_findings
+
+        with_findings = sqlalchemy_with_findings(
+            statement,
+            aliases,
+            scope,
+            connection_names,
+            cursor_names,
+            security_call_name,
+            lambda statements: _security_analyze_source_sink_block(
+                relative, statements, scope, aliases, *flow, helpers
+            ),
+        )
+        if with_findings is not None:
+            findings.extend(with_findings)
+            continue
         if isinstance(statement, ast.If):
             findings.extend(
                 _security_statement_call_findings(
@@ -4050,7 +4065,7 @@ def _security_analyze_source_sink_block(
             bound = audit._bound_names(statement)
             for names in flow:
                 names.difference_update(bound)
-            _security_clear_upload_tags(requests, bound)
+            _security_clear_upload_tags(requests, bound, password_fields)
     return findings
 
 
@@ -4197,7 +4212,7 @@ def _security_source_sink_call(
             "HIGH",
             call="open",
         )
-    if _security_unsafe_sql(
+    sql_driver = _security_unsafe_sql(
         call,
         name,
         parameters,
@@ -4206,14 +4221,12 @@ def _security_source_sink_call(
         connection_names,
         cursor_names,
         helpers,
-    ):
-        return audit._security_finding(
-            "SECURITY_SQL_INJECTION",
-            relative,
-            call,
-            "Interpolated SQL reaches a proven MySQL connector cursor without parameters.",
-            "HIGH",
-            call="mysql.connector.cursor.execute",
+    )
+    if sql_driver:
+        from .intent_quality import sql_injection_finding
+
+        return sql_injection_finding(
+            audit._security_finding, relative, call, sql_driver
         )
     if _security_unsafe_request_url(call, name, requests, aliases):
         return audit._security_finding(
@@ -4227,12 +4240,17 @@ def _security_source_sink_call(
     return None
 
 
-def _security_clear_upload_tags(requests, names):
+def _security_clear_upload_tags(
+    requests, names, password_fields, statement=None, collection=False
+):
     requests.difference_update(
         item
         for item in tuple(requests)
         if isinstance(item, tuple) and len(item) == 2 and item[1] in names
     )
+    from .intent_quality import _track_credential_request_collection
+
+    _track_credential_request_collection(names, statement, password_fields, collection)
 
 
 def _security_unsafe_flask_file_save(call, aliases, requests):
@@ -4368,28 +4386,22 @@ def _security_unsafe_open(call, requests, aliases):
 def _security_unsafe_sql(
     call, name, parameters, requests, aliases, connection_names, cursor_names, helpers
 ):
-    if _security_call_leaf(call) != "execute" or not isinstance(
-        call.func, ast.Attribute
-    ):
-        return False
-    receiver = call.func.value
-    if not _security_is_proven_cursor(
-        receiver, aliases, connection_names, cursor_names, helpers
-    ):
-        return False
-    if not call.args:
-        return False
-    return _security_expr_tainted(call.args[0], requests, parameters, aliases)
+    from .intent_quality import scoped_unsafe_sql_driver
 
-
-def _security_is_proven_cursor(
-    receiver, aliases, connection_names, cursor_names, helpers
-):
-    if isinstance(receiver, ast.Name):
-        return receiver.id in cursor_names
-    if _security_cursor_value(receiver, aliases, connection_names, helpers):
-        return True
-    return _security_helper_call(receiver, "cursor", aliases, helpers)
+    return scoped_unsafe_sql_driver(
+        call,
+        requests,
+        parameters,
+        aliases,
+        connection_names,
+        cursor_names,
+        _security_scope_request_aliases,
+        security_call_name,
+        helpers,
+        _security_sql_cursor_driver,
+        _security_helper_call,
+        _security_expr_tainted,
+    )
 
 
 def _security_unsafe_request_url(call, name, tainted, aliases):
@@ -4522,28 +4534,17 @@ def _security_password_source(
         ) or _security_password_source(
             node.right, password_fields, aliases, scope, flow_statement
         )
-    return _security_password_request_value(node, aliases, scope, flow_statement)
+    from .intent_quality import credential_password_request_value
 
-
-def _security_password_request_value(node, aliases, scope=None, flow_statement=None):
-    if isinstance(node, ast.Call):
-        if (
-            not isinstance(node.func, ast.Attribute)
-            or _security_call_leaf(node) != "get"
-            or len(node.args) != 1
-            or node.keywords
-        ):
-            return False
-        request_value, key = node.func.value, node.args[0]
-    elif isinstance(node, ast.Subscript):
-        request_value, key = node.value, node.slice
-    else:
-        return False
-    if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
-        return False
-    if key.value.casefold() != "password":
-        return False
-    return _security_request_args(request_value, aliases, scope, flow_statement)
+    return credential_password_request_value(
+        node,
+        password_fields,
+        aliases,
+        scope,
+        flow_statement,
+        _security_request_args,
+        _security_django_request_parameter,
+    )
 
 
 def _security_django_request_parameter(node, aliases, scope=None, flow_statement=None):
@@ -4752,6 +4753,12 @@ def _security_flow_source_assignment(
 
     value = getattr(statement, "value", None)
     bindings = audit._bound_names(statement)
+    scope = getattr(statement, "_security_lexical_scope", None)
+    from . import intent_quality
+
+    request_collection = intent_quality._credential_request_collection(
+        value, password_fields, _security_request_args, aliases, scope, statement
+    )
     flags = (
         isinstance(value, ast.AST)
         and _security_expr_tainted(value, requests, set(), aliases),
@@ -4765,11 +4772,7 @@ def _security_flow_source_assignment(
         ),
         isinstance(value, ast.AST)
         and _security_expr_tainted(value, requests, parameters, aliases),
-        _security_connector_connection(value, aliases)
-        or _security_helper_call(value, "connection", aliases, helpers),
-        _security_cursor_expression(value, aliases, connection_names, helpers),
     )
-    scope = getattr(statement, "_security_lexical_scope", None)
     upload_object = isinstance(value, ast.AST) and (
         _security_flask_upload_expression(value, aliases, scope, statement)
         or (isinstance(value, ast.Name) and ("flask-upload", value.id) in requests)
@@ -4783,10 +4786,22 @@ def _security_flow_source_assignment(
     known = (requests, password_fields, parameters, connection_names, cursor_names)
     for names in known:
         names.difference_update(bindings)
-    _security_clear_upload_tags(requests, bindings)
-    targets = (
-        statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+    intent_quality.track_sql_assignment(
+        statement,
+        aliases,
+        helpers,
+        connection_names,
+        cursor_names,
+        lambda value: _security_sql_connection_driver(value, aliases, connection_names),
+        lambda value: _security_sql_cursor_driver(
+            value, aliases, connection_names, cursor_names, helpers
+        ),
+        _security_helper_call,
     )
+    _security_clear_upload_tags(
+        requests, bindings, password_fields, statement, request_collection
+    )
+    targets = getattr(statement, "targets", None) or [statement.target]
     for target in targets:
         if isinstance(target, ast.Name):
             for tainted, names in zip(flags, known):
@@ -4798,23 +4813,6 @@ def _security_flow_source_assignment(
                 requests.add(("upload-path", target.id))
             if safe_upload_leaf:
                 requests.add(("secure-upload-leaf", target.id))
-
-
-def _security_cursor_expression(value, aliases, connections, helpers):
-    if not isinstance(value, ast.Call):
-        return False
-    if _security_call_leaf(value) != "cursor":
-        return _security_helper_call(value, "cursor", aliases, helpers)
-    receiver = value.func.value if isinstance(value.func, ast.Attribute) else None
-    if _security_connector_connection(receiver, aliases):
-        return True
-    if _security_helper_call(receiver, "connection", aliases, helpers):
-        return True
-    if isinstance(receiver, ast.Name):
-        return receiver.id in connections
-    if isinstance(receiver, ast.Call):
-        return _security_helper_call(receiver, "connection", aliases, helpers)
-    return False
 
 
 def _security_call_unshadowed(node, name):

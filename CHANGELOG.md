@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+- Extend proven request-to-SQL flows to SQLite connections and cursors, psycopg,
+  Django cursors and SQLAlchemy engine connections with textual queries. Preserve
+  parameterized-query, lookalike and rebound-binding controls. These bounded AST
+  patterns do not establish universal framework coverage or runtime exploitability.
+- Detect nonempty short hardcoded credential assignments, including `hunter2`,
+  while retaining placeholder and test-data controls and redacting secret values.
+- Follow credential reads through Flask request-collection aliases and optional
+  `get` defaults. Preserve case-insensitive password fields, hashed comparisons
+  and ordinary dictionary controls; discard aliases after lexical rebinding.
+- Separate stable assessment identity (`scan_sha256`) from the complete run receipt
+  (`run_receipt_sha256`). Exclude known telemetry envelopes from assessment identity
+  while preserving semantic evidence and recording the full run separately.
+
+- Recognize registered Click group containers, documented default no-op hooks,
+  locally evidenced base interfaces and inert IO implementations without treating
+  every empty body as unfinished code. Keep ordinary stubs and ambiguous controls
+  visible; these source contracts do not prove runtime behavior.
+- Resolve direct imported base-method contracts from the scanner's existing
+  source snapshots. Bind contract edges and cached dispositions to all source
+  inputs; reject rebound imports, direct base use and incompatible overrides.
+  Report retained real-repository counts separately from accuracy measurements.
+
+- Require current shared SpecLine acceptance evidence before a ForgeLine result
+  can produce a traceable CF receipt. Revalidate declared checks, task receipts
+  and source/verifier identities; copied, stale or resealed mismatched evidence
+  cannot establish traceability. This is recorded-evidence integrity, not semantic
+  correctness or release authority. Add pinned three-tool compatibility CI.
+
 - Do not classify implementation declarations in a proven imported
   `typing.TYPE_CHECKING` true branch as runtime empty implementations. Preserve
   findings in runtime `else` branches and when guard names are shadowed,

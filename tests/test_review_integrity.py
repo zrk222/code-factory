@@ -3,6 +3,7 @@ import json
 import textwrap
 from pathlib import Path
 from factoryline.review_integrity import (
+    implementation_completeness_findings,
     verify_intent_diff,
     verify_receipt_freshness,
     verify_policy_pack,
@@ -20,6 +21,123 @@ from factoryline.cli import main
 from factoryline.journey_proof import JourneyProofError, _digest
 from factoryline import workflow_audit as workflow_audit_module
 from factoryline.workflow_audit import CATEGORIES, audit_workflows
+
+
+def _credential_source_findings(source):
+    import ast
+
+    from factoryline.review_audits import _security_aliases
+    from factoryline.review_integrity import security_source_sink_findings
+
+    tree = ast.parse(source)
+    nodes = list(ast.walk(tree))
+    return security_source_sink_findings(
+        "candidate.py", tree, nodes, _security_aliases(nodes)
+    )
+
+
+def test_credential_password_request_value_direct_contract():
+    from factoryline.intent_quality import credential_password_request_value
+
+    request_collection = ast.parse("request.form", mode="eval").body
+
+    def flask_source(node, *_):
+        return ast.dump(node) == ast.dump(request_collection)
+
+    def django_source(*_):
+        return False
+
+    valid = ast.parse("request.form.get('password', default='')", mode="eval").body
+    mixed_case = ast.parse("request.form.get('PASSWORD', default='')", mode="eval").body
+    unrelated_field = ast.parse(
+        "request.form.get('username', default='')", mode="eval"
+    ).body
+
+    assert credential_password_request_value(
+        valid, set(), {}, None, None, flask_source, django_source
+    )
+    assert credential_password_request_value(
+        mixed_case, set(), {}, None, None, flask_source, django_source
+    )
+    assert not credential_password_request_value(
+        unrelated_field, set(), {}, None, None, flask_source, django_source
+    )
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "request.form.get('password', '')",
+        "request.form.get('password', default='')",
+        "request.form.get('Password', default='')",
+        "request.args.get('password', '')",
+        "request.args.get('password', default='')",
+        "request.form['password']",
+        "form.get('password', '')",
+        "form.get('password', default='')",
+        "form['password']",
+    ],
+)
+def test_credential_password_sources_detect_request_defaults_and_collection_aliases(
+    expression,
+):
+    prefix = "from flask import request\ndef check():\n"
+    alias = "    form = request.form\n" if expression.startswith("form") else ""
+    findings = _credential_source_findings(
+        prefix + alias + f"    return {expression} == 'fixture-credential-never-used'\n"
+    )
+
+    assert [row["code"] for row in findings] == ["SECURITY_HARDCODED_SECRET"]
+    assert "fixture-credential-never-used" not in json.dumps(findings)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def check():\n    form = {'password': ''}\n"
+        "    return form.get('password', '') == 'fixture-credential-never-used'\n",
+        "from flask import request\ndef check():\n    form = request.form\n"
+        "    form = {}\n"
+        "    return form.get('password', '') == 'fixture-credential-never-used'\n",
+        "from flask import request\ndef check():\n    form = request.form\n"
+        "    del form\n    form = {}\n"
+        "    return form.get('password', '') == 'fixture-credential-never-used'\n",
+        "from flask import request\ndef check():\n    form = request.form\n"
+        "    import json as form\n"
+        "    return form.get('password', '') == 'fixture-credential-never-used'\n",
+        "from flask import request\ndef check():\n    request = {}\n"
+        "    return request.form.get('password', '') == 'fixture-credential-never-used'\n",
+        "from flask import request\ndef check():\n"
+        "    return request.form.get('username', '') == 'fixture-credential-never-used'\n",
+        "from flask import request\ndef check():\n"
+        "    return request.form.get(*args) == 'fixture-credential-never-used'\n",
+        "from flask import request\ndef check():\n"
+        "    return request.form.get('password', **options) == 'fixture-credential-never-used'\n",
+        "from flask import request\ndef check(user):\n"
+        "    supplied = request.form.get('password', '').encode()\n"
+        "    actual_hash = hashlib.sha256(supplied).hexdigest()\n"
+        "    return hmac.compare_digest(actual_hash, user.password_hash)\n",
+    ],
+)
+def test_credential_password_controls_remain_unflagged(source):
+    assert _credential_source_findings(source) == []
+
+
+def test_credential_request_collection_alias_chain_preserves_and_clears_provenance():
+    prefix = "from flask import request\ndef check():\n    form = request.form\n    copy = form\n"
+    detected = _credential_source_findings(
+        prefix
+        + "    return copy.get('password', '') == 'fixture-credential-never-used'\n"
+    )
+    rebound = _credential_source_findings(
+        prefix
+        + "    copy = {}\n"
+        + "    return copy.get('password', '') == 'fixture-credential-never-used'\n"
+    )
+
+    assert [row["code"] for row in detected] == ["SECURITY_HARDCODED_SECRET"]
+    assert "fixture-credential-never-used" not in json.dumps(detected)
+    assert rebound == []
 
 
 @pytest.mark.parametrize(
@@ -1984,6 +2102,7 @@ def test_structural_context_roundtrip_and_missing_defaults():
         "module_rebindings": {"range", "pytest"},
         "dynamic_getattr_modules": {"plugin"},
         "source_classes": {"Widget"},
+        "implementation_contract_lines": {10, 42},
         "module_imports": {"pytest": "pytest"},
         "class_imports": {"Base": "api.Base"},
         "benchmark_constants": {"LIMIT": 4, "__range_builtin__": True},
@@ -1996,6 +2115,7 @@ def test_structural_context_roundtrip_and_missing_defaults():
         "module_rebindings": set(),
         "dynamic_getattr_modules": set(),
         "source_classes": set(),
+        "implementation_contract_lines": set(),
         "module_imports": {},
         "class_imports": {},
         "benchmark_constants": {},
@@ -2105,3 +2225,797 @@ def test_configuration_relative_import_is_scoped_and_jinja_rhs_is_observed():
             Path.cwd(), Path.cwd() / "case.py", ast.parse(source)
         )
         assert sum(f["code"] == code for f in findings) == expected, source
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "import click\n@click.group()",
+        "import click as c\n@c.group()",
+        "from click import group\n@group()",
+    ],
+)
+def test_registered_click_group_is_a_container(declaration):
+    source = declaration + "\ndef cli(): pass\n@cli.command()\ndef child(): return 1\n"
+    assert not implementation_completeness_findings("app.py", ast.parse(source), source)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import click\n@click.command()\ndef cli(): pass",
+        "import click\n@click.group()\ndef cli(): pass",
+        "import click\n@click.group(invoke_without_command=True)\ndef cli(): pass\n@cli.command()\ndef child(): return 1",
+        "import click\n@click.group(cls=Custom)\ndef cli(): pass\n@cli.command()\ndef child(): return 1",
+        "class Fake: pass\nclick=Fake()\n@click.group()\ndef cli(): pass\n@cli.command()\ndef child(): return 1",
+        "import click\n@click.group()\ndef cli(): pass\ncli=other\n@cli.command()\ndef child(): return 1",
+        "import click\n@click.group()\ndef cli(): pass\n@cli.command()\ndef child(): pass",
+    ],
+)
+def test_unfinished_or_unverified_bodies_remain_findings(source):
+    findings = implementation_completeness_findings("app.py", ast.parse(source), source)
+    assert any(f["code"] == "QUALITY_EMPTY_IMPLEMENTATION" for f in findings)
+
+
+def test_nested_registered_group_with_help_is_a_container():
+    source = """import click
+@click.group()
+def cli(): pass
+@cli.group(help="Commands")
+def subgroup(): pass
+@subgroup.command()
+def child(): return 1
+"""
+    assert not implementation_completeness_findings("app.py", ast.parse(source), source)
+
+
+@pytest.mark.parametrize("mutation", ["click.group = fake", "cli.command = fake"])
+def test_modified_decorator_namespace_is_not_trusted(mutation):
+    source = f"""import click
+@click.group()
+def cli(): pass
+{mutation}
+@cli.command()
+def child(): return 1
+"""
+    assert implementation_completeness_findings("app.py", ast.parse(source), source)
+
+
+def symbols(source):
+    return {
+        f["facts"]["symbol"]
+        for f in implementation_completeness_findings(
+            "app.py", ast.parse(source), source
+        )
+        if f["code"] == "QUALITY_EMPTY_IMPLEMENTATION"
+    }
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '"Subclasses must override this operation."\n        raise NotImplementedError',
+        '"This must be implemented by subclasses."\n        raise NotImplementedError()',
+        '"Does nothing by default, left for overriding in subclasses."\n        pass',
+    ],
+)
+def test_explicit_extension_contract(body):
+    assert not symbols(f"class Adapter:\n    def run(self):\n        {body}\n")
+
+
+def test_local_concrete_override_evidences_base_role():
+    source = """class Decoder:
+    def decode(self, value): raise NotImplementedError
+class Identity(Decoder):
+    def decode(self, value): return value
+"""
+    assert not symbols(source)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "class Service:\n    def run(self): pass",
+        "class Service:\n    def run(self): ...",
+        "class Service:\n    def run(self): raise NotImplementedError",
+        'class Service:\n    def run(self):\n        "TODO implement payment"\n        pass',
+        'class Service:\n    def run(self):\n        "Base class for services"\n        pass',
+        "class Service:\n    def run(self): raise NotImplementedError\nclass Child(Service):\n    def run(self): pass",
+        "class Service:\n    def run(self): raise NotImplementedError\nclass Child(Service):\n    def different(self): return 1",
+        "class Service:\n    def run(self): raise NotImplementedError\nService=other\nclass Child(Service):\n    def run(self): return 1",
+        "class Service:\n    def run(self): raise NotImplementedError\nclass Child(Service):\n    def run(self): return 1\nService().run()",
+        'NotImplementedError = Custom\nclass Service:\n    def run(self):\n        "Subclasses must override"\n        raise NotImplementedError',
+        'class Service:\n    def run(self):\n        "Subclasses must override"\n        raise NotImplementedError\nService().run()',
+    ],
+)
+def test_unfinished_and_ambiguous_methods_remain(source):
+    assert "run" in symbols(source)
+
+
+def test_undocumented_concrete_child_is_not_cleared_with_base():
+    source = """class Base:
+    def run(self):
+        "Subclasses must override."
+        raise NotImplementedError
+class Child(Base):
+    def run(self): pass
+"""
+    assert symbols(source) == {"run"}
+
+
+_NULL_IO_SOURCE = """from typing import IO
+class Sink(IO[str]):
+    def readable(self): return False
+    def writable(self): return False
+    def seekable(self): return False
+    def read(self): return ""
+    def readline(self): return ""
+    def write(self, value): return 0
+    def close(self): pass
+    def flush(self): pass
+    def writelines(self, lines): pass
+    def __exit__(self, *args): pass
+"""
+
+
+def test_null_io_protocol_behavior_is_an_intentional_noop():
+    assert not symbols(_NULL_IO_SOURCE)
+
+
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        ("from typing import IO", "from local import IO"),
+        ("return False", "return True"),
+        ("return 0", "return False"),
+        ('def read(self): return ""', 'def read(self): return "TODO"'),
+        ("def writable(self): return False", "def other(self): return False"),
+        ("def close(self): pass", "def close(self): ..."),
+        (
+            "def close(self): pass",
+            "def close(self): pass\n    def __init__(self): self.resource = acquire()",
+        ),
+    ],
+)
+def test_partial_or_lookalike_io_stubs_remain(old, new):
+    assert symbols(_NULL_IO_SOURCE.replace(old, new))
+
+
+def _write_project_contract(tmp_path, implementation, declaration=None):
+    (tmp_path / "base.py").write_text(
+        declaration or "class Adapter:\n    def run(self): raise NotImplementedError\n"
+    )
+    (tmp_path / "impl.py").write_text(implementation)
+
+
+def test_native_imported_base_contract_cache_and_source_invalidation(tmp_path):
+    from factoryline.review_audits import security_scan, _oracle_context_cache_clear
+
+    _oracle_context_cache_clear()
+    _write_project_contract(
+        tmp_path,
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): return 1\n",
+    )
+    cold = security_scan(tmp_path)
+    warm = security_scan(tmp_path)
+    assert "QUALITY_EMPTY_IMPLEMENTATION" not in cold["finding_counts"]
+    assert cold["findings"] == warm["findings"]
+    assert any(
+        edge["kind"] == "implementation_contract"
+        for edge in cold["oracle_context"]["resolved_edges"]
+    )
+    (tmp_path / "impl.py").write_text(
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): pass\n"
+    )
+    changed = security_scan(tmp_path)
+    assert changed["finding_counts"]["QUALITY_EMPTY_IMPLEMENTATION"] == 2
+
+
+@pytest.mark.parametrize(
+    "implementation",
+    [
+        "from base import Adapter\nAdapter=other\nclass Concrete(Adapter):\n    def run(self): return 1\n",
+        "from base import Adapter\nclass Concrete(Adapter):\n    def other(self): return 1\n",
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): raise NotImplementedError\n",
+        "from base import Adapter\nclass Concrete(Adapter):\n    async def run(self): return 1\n",
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): return 1\nAdapter().run()\n",
+        "class Concrete(Adapter):\n    def run(self): return 1\nfrom base import Adapter\n",
+        "from base import Adapter\n@custom\nclass Concrete(Adapter):\n    def run(self): return 1\n",
+    ],
+)
+def test_native_imported_contract_ambiguity_still_flags_base(tmp_path, implementation):
+    from factoryline.review_audits import security_scan
+
+    _write_project_contract(tmp_path, implementation)
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert any(
+        f["code"] == "QUALITY_EMPTY_IMPLEMENTATION" and f["path"] == "base.py"
+        for f in result["findings"]
+    )
+
+
+def test_native_typed_ellipsis_imported_base_contract(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    _write_project_contract(
+        tmp_path,
+        "from base import Adapter as Base\nclass Concrete(Base):\n    def run(self): return 1\n",
+        "class Adapter:\n    def run(self) -> int: ...\n",
+    )
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert "QUALITY_EMPTY_IMPLEMENTATION" not in result["finding_counts"]
+
+
+def test_native_contract_rejects_late_import_rebinding(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "base.py").write_text(
+        "class Adapter:\n    def run(self): raise NotImplementedError\n"
+    )
+    (tmp_path / "other.py").write_text(
+        "class Adapter:\n    def run(self): raise NotImplementedError\n"
+    )
+    (tmp_path / "impl.py").write_text(
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): return 1\nfrom other import Adapter\n"
+    )
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert result["finding_counts"]["QUALITY_EMPTY_IMPLEMENTATION"] == 2
+
+
+def test_native_contract_rejects_conditional_base_redefinition(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    _write_project_contract(
+        tmp_path,
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): return 1\n",
+        "class Adapter:\n    def run(self): raise NotImplementedError\nif flag:\n    class Adapter:\n        def run(self): return 1\n",
+    )
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert any(
+        f["path"] == "base.py" and f["code"] == "QUALITY_EMPTY_IMPLEMENTATION"
+        for f in result["findings"]
+    )
+
+
+@pytest.mark.parametrize(
+    "consumer",
+    [
+        "from base import Adapter\nAdapter().run()\n",
+        "import base as module\nmodule.Adapter().run()\n",
+    ],
+)
+def test_native_contract_checks_direct_base_use_in_other_modules(tmp_path, consumer):
+    from factoryline.review_audits import security_scan
+
+    _write_project_contract(
+        tmp_path,
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): return 1\n",
+    )
+    (tmp_path / "consumer.py").write_text(consumer)
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert any(
+        f["code"] == "QUALITY_EMPTY_IMPLEMENTATION" and f["path"] == "base.py"
+        for f in result["findings"]
+    )
+
+
+@pytest.mark.parametrize("imported", [True, False])
+def test_control_flow_only_stub_override_never_clears_base(tmp_path, imported):
+    from factoryline.review_audits import security_scan
+
+    base = "class Adapter:\n    def run(self): raise NotImplementedError\n"
+    child = "class Concrete(Adapter):\n    def run(self):\n        if enabled:\n            raise NotImplementedError\n"
+    if imported:
+        _write_project_contract(tmp_path, "from base import Adapter\n" + child)
+        findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+        assert any(
+            f["code"] == "QUALITY_EMPTY_IMPLEMENTATION" and f["path"] == "base.py"
+            for f in findings
+        )
+    else:
+        assert "run" in symbols(base + child)
+
+
+def test_click_alias_cannot_be_borrowed_from_a_later_import():
+    source = "from fake import group\n@group()\ndef cli(): pass\nfrom click import group\n@cli.command()\ndef child(): return 1\n"
+    assert "cli" in symbols(source)
+
+
+def test_null_io_member_rebinding_is_not_trusted():
+    source = _NULL_IO_SOURCE.replace(
+        "from typing import IO", "import typing\ntyping.IO = FakeIO"
+    ).replace("IO[str]", "typing.IO[str]")
+    assert {"close", "flush", "writelines", "__exit__"} <= symbols(source)
+
+
+def _disable_source_retention(monkeypatch):
+    from factoryline import review_audits as audit
+
+    original = audit._oracle_source_inputs
+
+    def without_bytes(root, files):
+        _data, bindings, manifest, cacheable = original(root, files)
+        return {}, bindings, manifest, cacheable
+
+    monkeypatch.setattr(audit, "_oracle_source_inputs", without_bytes)
+    return audit
+
+
+def test_unretained_snapshot_rejects_transient_changed_and_restored_bytes(
+    tmp_path, monkeypatch
+):
+    audit = _disable_source_retention(monkeypatch)
+    _write_project_contract(
+        tmp_path,
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): pass\n",
+    )
+    original = audit._security_source_bytes
+    reads = 0
+
+    def transient_reader(root, relative):
+        nonlocal reads
+        data = original(root, relative)
+        if relative == "impl.py":
+            reads += 1
+            if reads == 2:
+                return data.replace(b"pass", b"return 1")
+        return data
+
+    monkeypatch.setattr(audit, "_security_source_bytes", transient_reader)
+    with pytest.raises(audit.ReviewAuditError, match="Source changed before snapshot"):
+        audit.security_scan(tmp_path, cache_enabled=False)
+    assert reads == 2
+
+
+def test_unretained_unchanged_snapshot_keeps_valid_contracts(tmp_path, monkeypatch):
+    audit = _disable_source_retention(monkeypatch)
+    _write_project_contract(
+        tmp_path,
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): return 1\n",
+    )
+    assert (
+        "QUALITY_EMPTY_IMPLEMENTATION"
+        not in audit.security_scan(tmp_path, cache_enabled=False)["finding_counts"]
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import sqlite3\nfrom flask import request\ndef lookup():\n    db = sqlite3.connect(':memory:')\n    cursor = db.cursor()\n    value = request.args.get('id')\n    cursor.execute(f'SELECT * FROM records WHERE id={value}')\n",
+        "import sqlite3\nfrom flask import request\ndef lookup():\n    db = sqlite3.connect(':memory:')\n    value = request.args.get('id')\n    db.execute(f'SELECT * FROM records WHERE id={value}')\n",
+        "import psycopg\nfrom flask import request\ndef lookup():\n    db = psycopg.connect('postgresql://unused')\n    cursor = db.cursor()\n    value = request.args.get('id')\n    cursor.execute(f'SELECT * FROM records WHERE id={value}')\n",
+        "from django.db import connection\nfrom flask import request\ndef lookup():\n    cursor = connection.cursor()\n    value = request.args.get('id')\n    cursor.execute(f'SELECT * FROM records WHERE id={value}')\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup():\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup():\n    global engine\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\ndef outer():\n    engine = create_engine('sqlite://')\n    def lookup():\n        nonlocal engine\n        value = request.args.get('id')\n        with engine.connect() as db:\n            db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+    ],
+    ids=[
+        "sqlite-cursor",
+        "sqlite-connection",
+        "psycopg-cursor",
+        "django-cursor",
+        "sqlalchemy-text",
+        "sqlalchemy-global-read",
+        "sqlalchemy-nonlocal-read",
+    ],
+)
+def test_sql_injection_finds_proven_driver_flows(tmp_path, source):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"].get("SECURITY_SQL_INJECTION") == 1
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import sqlite3\nfrom flask import request\ndef lookup():\n    db = sqlite3.connect(':memory:')\n    cursor = db.cursor()\n    value = request.args.get('id')\n    cursor.execute('SELECT * FROM records WHERE id=?', (value,))\n",
+        "import sqlite3\nfrom flask import request\ndef lookup():\n    db = sqlite3.connect(':memory:')\n    value = request.args.get('id')\n    db.execute('SELECT * FROM records WHERE id=?', (value,))\n",
+        "import psycopg\nfrom flask import request\ndef lookup():\n    db = psycopg.connect('postgresql://unused')\n    cursor = db.cursor()\n    value = request.args.get('id')\n    cursor.execute('SELECT * FROM records WHERE id=%s', (value,))\n",
+        "from django.db import connection\nfrom flask import request\ndef lookup():\n    cursor = connection.cursor()\n    value = request.args.get('id')\n    cursor.execute('SELECT * FROM records WHERE id=%s', [value])\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup():\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text('SELECT * FROM records WHERE id=:id'), {'id': value})\n",
+        "from flask import request\nclass Cursor:\n    def execute(self, query): pass\ndef lookup():\n    value = request.args.get('id')\n    cursor = Cursor()\n    cursor.execute(f'SELECT * FROM records WHERE id={value}')\n",
+        "import sqlite3\nfrom flask import request\ndef lookup():\n    db = sqlite3.connect(':memory:')\n    cursor = db.cursor()\n    cursor = object()\n    value = request.args.get('id')\n    cursor.execute(f'SELECT * FROM records WHERE id={value}')\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup():\n    engine = object()\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup(flag):\n    if flag:\n        engine = object()\n    else:\n        engine = object()\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup():\n    del engine\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup():\n    import builtins as engine\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup():\n    def engine(): pass\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup():\n    try:\n        pass\n    except Exception as engine:\n        pass\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup():\n    global engine\n    engine = object()\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\ndef outer():\n    engine = create_engine('sqlite://')\n    def lookup():\n        nonlocal engine\n        engine = object()\n        value = request.args.get('id')\n        with engine.connect() as db:\n            db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+    ],
+    ids=[
+        "sqlite-cursor-params",
+        "sqlite-connection-params",
+        "psycopg-params",
+        "django-params",
+        "sqlalchemy-bind",
+        "lookalike-execute",
+        "rebound-cursor",
+        "rebound-engine",
+        "rebound-engine-all-branches",
+        "rebound-engine-delete",
+        "rebound-engine-import-alias",
+        "rebound-engine-function-definition",
+        "rebound-engine-except-target",
+        "rebound-global-engine",
+        "rebound-nonlocal-engine",
+    ],
+)
+def test_sql_injection_preserves_parameter_and_provenance_controls(tmp_path, source):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert "SECURITY_SQL_INJECTION" not in report["finding_counts"]
+
+
+def test_sqlalchemy_unrelated_branch_preserves_engine_provenance(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        "from sqlalchemy import create_engine, text\n"
+        "from flask import request\n"
+        "engine = create_engine('sqlite://')\n"
+        "def lookup(flag):\n"
+        "    if flag:\n"
+        "        marker = object()\n"
+        "    value = request.args.get('id')\n"
+        "    with engine.connect() as db:\n"
+        "        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"].get("SECURITY_SQL_INJECTION") == 1
+
+
+def test_sqlalchemy_nested_helper_binding_preserves_outer_engine(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        "from sqlalchemy import create_engine, text\n"
+        "from flask import request\n"
+        "engine = create_engine('sqlite://')\n"
+        "def lookup():\n"
+        "    def helper():\n"
+        "        engine = object()\n"
+        "    value = request.args.get('id')\n"
+        "    with engine.connect() as db:\n"
+        "        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"].get("SECURITY_SQL_INJECTION") == 1
+
+
+def test_sql_driver_resolution_helper_contracts():
+    import ast
+
+    from factoryline.intent_quality import (
+        scoped_sql_connection_driver,
+        scoped_sql_driver,
+        sql_connection_driver,
+        sql_cursor_driver,
+        sql_injection_finding,
+        sql_return_kind,
+        sql_sink_driver,
+        sql_sink_label,
+        sql_statement_argument,
+    )
+
+    connection = ast.parse("sqlite3.connect(':memory:')").body[0].value
+    cursor = ast.parse("db.cursor()").body[0].value
+    call = ast.parse("cursor.execute(text('SELECT 1'))").body[0].value
+    connection_names = {("sql-connection", "sqlite3", "db")}
+    cursor_names = {("sql-cursor", "psycopg", "cursor")}
+
+    def resolver(node, aliases):
+        return (
+            "sqlalchemy.text"
+            if ast.unparse(node.func) == "text"
+            else ast.unparse(node.func)
+        )
+
+    assert sql_connection_driver(connection, {}, set(), {}, resolver) == "sqlite3"
+    assert (
+        sql_connection_driver(ast.Name(id="db"), {}, connection_names, {}, resolver)
+        == "sqlite3"
+    )
+    scoped_name = ast.Name(id="connection")
+    assert (
+        scoped_sql_connection_driver(
+            scoped_name,
+            {},
+            set(),
+            lambda *_: {"connection": "django.db.connection"},
+            resolver,
+        )
+        == "django"
+    )
+    assert sql_cursor_driver(cursor, {}, connection_names, {}, resolver) == "sqlite3"
+    assert (
+        scoped_sql_driver(
+            cursor,
+            {},
+            connection_names,
+            set(),
+            set(),
+            lambda *_: {},
+            resolver,
+            lambda *_: False,
+            lambda node: node.func.attr,
+        )
+        == "sqlite3"
+    )
+    assert (
+        sql_return_kind(
+            ast.Return(value=ast.Name(id="db")),
+            {},
+            set(),
+            {"db"},
+            set(),
+            lambda *_: None,
+            lambda *_: None,
+            lambda *_: False,
+        )
+        == "connection"
+    )
+    assert sql_sink_driver(call, {}, set(), cursor_names, {}, resolver) == "psycopg"
+    assert sql_statement_argument(call, "sqlalchemy", {}, resolver).value == "SELECT 1"
+    assert sql_sink_label(call, "psycopg") == "psycopg.execute"
+    finding = sql_injection_finding(
+        lambda *args, **kwargs: {"args": args, "kwargs": kwargs},
+        "app.py",
+        call,
+        "psycopg",
+    )
+    assert finding["args"][0] == "SECURITY_SQL_INJECTION"
+    assert finding["kwargs"]["call"] == "psycopg.execute"
+
+
+def test_sql_provenance_binding_helper_contracts():
+    import ast
+
+    from factoryline.intent_quality import (
+        bind_sql_provenance,
+        clear_sql_provenance,
+        track_sql_assignment,
+    )
+
+    connections = set()
+    cursors = set()
+    bind_sql_provenance(connections, cursors, "db", "sqlite3", None)
+    assert connections == {"db", ("sql-connection", "sqlite3", "db")}
+    clear_sql_provenance(connections, cursors, {"db"})
+    assert not connections and not cursors
+    assignment = ast.parse("db = sqlite3.connect(':memory:')").body[0]
+
+    def connection_driver(value):
+        return "sqlite3" if isinstance(value, ast.Call) else None
+
+    track_sql_assignment(
+        assignment,
+        {},
+        set(),
+        connections,
+        cursors,
+        connection_driver,
+        lambda _: None,
+        lambda *_: False,
+    )
+    assert ("sql-connection", "sqlite3", "db") in connections
+    rebound = ast.parse("db = object()").body[0]
+    track_sql_assignment(
+        rebound,
+        {},
+        set(),
+        connections,
+        cursors,
+        lambda _: None,
+        lambda _: None,
+        lambda *_: False,
+    )
+    assert "db" not in connections
+
+
+def test_sqlalchemy_context_helper_contracts_restore_flow_state():
+    import ast
+
+    from factoryline.intent_quality import (
+        sqlalchemy_with_connection_targets,
+        sqlalchemy_with_findings,
+    )
+
+    module = ast.parse(
+        "from sqlalchemy import create_engine\n"
+        "engine = create_engine('sqlite://')\n"
+        "with engine.connect() as db:\n"
+        "    pass\n"
+    )
+    statement = module.body[2]
+
+    def resolve_call(node, aliases):
+        if ast.unparse(node.func) == "create_engine":
+            return "sqlalchemy.create_engine"
+        return ast.unparse(node.func)
+
+    assert sqlalchemy_with_connection_targets(statement, {}, module, resolve_call) == (
+        "db",
+    )
+    connections = {"outer"}
+    cursors = {"old_cursor"}
+    result = sqlalchemy_with_findings(
+        statement,
+        {},
+        module,
+        connections,
+        cursors,
+        resolve_call,
+        lambda body: ("sql-connection", "sqlalchemy", "db") in connections,
+    )
+    assert result is True
+    assert connections == {"outer"} and cursors == {"old_cursor"}
+
+
+def test_unsafe_sql_driver_helper_contracts_keep_parameterized_sql_clean():
+    import ast
+
+    from factoryline.intent_quality import (
+        scoped_unsafe_sql_driver,
+        unsafe_sql_driver,
+    )
+
+    call = ast.parse("cursor.execute(f'SELECT {value}')").body[0].value
+    cursor_names = {"cursor", ("sql-cursor", "psycopg", "cursor")}
+    args = (call, {}, {}, {}, set(), cursor_names, {}, lambda *_: None)
+    assert unsafe_sql_driver(*args, lambda _: False, lambda *_: True) == "psycopg"
+    assert unsafe_sql_driver(*args, lambda _: False, lambda *_: False) is None
+    assert (
+        scoped_unsafe_sql_driver(
+            call,
+            {},
+            {},
+            {},
+            set(),
+            cursor_names,
+            lambda *_: {},
+            lambda *_: None,
+            set(),
+            lambda *_: None,
+            lambda *_: False,
+            lambda *_: True,
+        )
+        == "psycopg"
+    )
+
+
+@pytest.mark.parametrize(
+    "driver,connection",
+    [
+        ("sqlite3", "sqlite3.connect(':memory:')"),
+        ("psycopg", "psycopg.connect('postgresql://unused')"),
+    ],
+)
+def test_sql_cursor_lifecycle_methods_do_not_crash_or_become_sinks(
+    tmp_path, driver, connection
+):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        f"import {driver}\n"
+        "def lookup():\n"
+        f"    db = {connection}\n"
+        "    cursor = db.cursor()\n"
+        "    cursor.execute('SELECT 1')\n"
+        "    rows = cursor.fetchall()\n"
+        "    cursor.close()\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+
+    report = security_scan(tmp_path, cache_enabled=False)
+
+    assert report["audit_coverage"]["complete"] is True
+    assert report["finding_counts"].get("SECURITY_SQL_INJECTION", 0) == 0
+
+
+@pytest.mark.parametrize(
+    "driver,connection,method",
+    [
+        ("sqlite3", "sqlite3.connect(':memory:')", "fetchmany"),
+        ("psycopg", "psycopg.connect('postgresql://unused')", "callproc"),
+    ],
+)
+def test_tainted_non_execute_cursor_methods_are_not_sql_sinks(
+    tmp_path, driver, connection, method
+):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        f"import {driver}\n"
+        "from flask import request\n"
+        "def lookup():\n"
+        f"    db = {connection}\n"
+        "    cursor = db.cursor()\n"
+        "    value = request.args.get('id')\n"
+        f"    cursor.{method}(value)\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+
+    report = security_scan(tmp_path, cache_enabled=False)
+
+    assert report["audit_coverage"]["complete"] is True
+    assert report["finding_counts"].get("SECURITY_SQL_INJECTION", 0) == 0
+
+
+@pytest.mark.parametrize(
+    "driver,connection",
+    [
+        ("sqlite3", "sqlite3.connect(':memory:')"),
+        ("psycopg", "psycopg.connect('postgresql://unused')"),
+    ],
+)
+def test_tainted_execute_still_flags_proven_sql_cursors(tmp_path, driver, connection):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        f"import {driver}\n"
+        "from flask import request\n"
+        "def lookup():\n"
+        f"    db = {connection}\n"
+        "    cursor = db.cursor()\n"
+        "    value = request.args.get('id')\n"
+        "    cursor.execute(f'SELECT * FROM records WHERE id={value}')\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+
+    report = security_scan(tmp_path, cache_enabled=False)
+
+    assert report["finding_counts"].get("SECURITY_SQL_INJECTION") == 1
+
+
+@pytest.mark.parametrize(
+    "parameter",
+    ["engine", "engine, /", "*, engine", "*engine", "**engine"],
+)
+def test_sqlalchemy_engine_parameters_block_module_engine_provenance(
+    tmp_path, parameter
+):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        "from sqlalchemy import create_engine, text\n"
+        "from flask import request\n"
+        "engine = create_engine('sqlite://')\n"
+        f"def lookup({parameter}):\n"
+        "    value = request.args.get('id')\n"
+        "    with engine.connect() as db:\n"
+        "        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+
+    report = security_scan(tmp_path, cache_enabled=False)
+
+    assert report["audit_coverage"]["complete"] is True
+    assert report["finding_counts"].get("SECURITY_SQL_INJECTION", 0) == 0
+
+
+def test_unshadowed_outer_sqlalchemy_engine_provenance_still_flags(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        "from sqlalchemy import create_engine, text\n"
+        "from flask import request\n"
+        "engine = create_engine('sqlite://')\n"
+        "def lookup():\n"
+        "    value = request.args.get('id')\n"
+        "    with engine.connect() as db:\n"
+        "        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+
+    report = security_scan(tmp_path, cache_enabled=False)
+
+    assert report["finding_counts"].get("SECURITY_SQL_INJECTION") == 1
