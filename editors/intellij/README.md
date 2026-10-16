@@ -1,6 +1,6 @@
 # FactoryLine for JetBrains IDEs
 
-FactoryLine keeps local review evidence beside your code. See what changed, which evidence is available, what remains unproven, and the next review step.
+Catch AI-generated tests that could never fail — before review. FactoryLine keeps local review evidence beside your code: see what changed, which evidence is available, what remains unproven, and the next review step.
 
 ## Review the change in front of you
 
@@ -15,6 +15,8 @@ A readable receipt is not automatically trusted: it remains unassessed until a v
 In **Repair Sandbox**, select one native Change List to create a hash-bound Scope Passport. Copy its sealed **AI Agent Proof Mission** into Junie or another coding agent yourself, then bring the returned Change List back for review. Candidate patch paths can be checked against the sealed scope. Independent verification and the human decision to apply remain separate steps.
 
 Junie is supported, not required. FactoryLine provides a local guide and an optional project pack; it does not start or message Junie, read its chat, or treat an agent's completion claim as approval. Installing the pack is an explicit, conflict-safe project-file action.
+
+Use FactoryLine when you want to turn an outcome into a buildable starting point or review AI and teammate changes with evidence. Open **Graph Ops** for the local evidence path, use **PRD Grill** with `factory prd grill PRD.md --root . --mode quick` to clarify requirements, and inspect **Proof Debt** in Plan-to-Proof Review. Star Code Factory on GitHub if the workflow helps.
 
 ## Local evidence, human release decisions
 

@@ -111,10 +111,11 @@ local-first proof layer for AI-assisted code.
 
 > **Audit code. Review evidence. Resolve defects.**
 
-**First Proof is a setup demonstration within the larger audit system.** Run
-`factory first-proof --root .` to check the local setup and receive a local
-receipt; it does not assess repository code. Run `factory scan --root .` for a
-repository assessment. Neither command uploads or changes your project.
+**First Proof is one starter example within the larger audit system.** Here it
+is a local setup demonstration: run `factory first-proof --root .` to check the
+setup and receive a local receipt; it does not assess repository code. Run
+`factory scan --root .` for a repository assessment. Neither command uploads
+or changes your project.
 
 - **Individual developer or vibe coder:** learn what a real negative control
   looks like before trusting an AI-generated test.

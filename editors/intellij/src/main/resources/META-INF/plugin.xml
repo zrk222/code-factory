@@ -3,7 +3,11 @@
     <name>FactoryLine AI Proof</name>
     <vendor email="rkatz22@gmail.com" url="https://github.com/zrk222/code-factory">FactoryLine</vendor>
     <description><![CDATA[
-<p>FactoryLine brings local review evidence into your JetBrains IDE. <strong>Run First Proof</strong> is a setup demonstration that checks the local CLI; it does not assess repository code. To assess a repository, run <code>factory scan --root .</code>. Then use Proof Review to inspect the current diff or active file and see what evidence supports, what remains unproven, and the next review step.</p>
+<p><strong>Your IDE feels slow. Your AI code looks fine.</strong> FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains. Guardian Core records a bounded, in-memory IDE-health sample; it does not diagnose a cause or change IDE settings.</p>
+
+<p><strong>New in 1.2.0 — </strong>Proof Review supports the current diff or active file, and Verified Repair Sandbox seals one native Change List for a manual, supervised agent handoff.</p>
+
+<p><strong>Run First Proof</strong> is a setup demonstration that checks the local CLI; it does not assess repository code. To assess a repository, run <code>factory scan --root .</code>. Then use Proof Review to inspect the current diff or active file and see what evidence supports, what remains unproven, and the next review step. Find it at <strong>Tools | FactoryLine | Run First Proof</strong>.</p>
 
 <h3>Review the change in front of you</h3>
 <p>In Proof Review, inspect the current diff or focus on the active file. See structured findings, changed paths, unproven claims, and a fact-based next action. Open changed files safely inside the project, then copy a brief or save a local JSON, Markdown, and Mermaid handoff.</p>
@@ -13,6 +17,11 @@
 
 <h3>Junie is supported, not required</h3>
 <p>FactoryLine offers a local Junie workflow for intent, scope, evidence, challenge, and supervised handoff. It does not start or message Junie, read its chat, or treat an agent's completion claim as approval. First Proof, Proof Review, and Graph Ops can be used without an AI assistant.</p>
+
+<h3>Use FactoryLine when you want to</h3>
+<p>Turn an outcome into a buildable starting point. Review AI or teammate changes with evidence, and inspect the next local review step in Unified Graph Ops. PRD Grill clarifies a brief with <code>factory prd grill PRD.md --root . --mode quick</code>; Plan-to-Proof Review surfaces Proof Debt before a human decides what to accept.</p>
+
+<p>SaaS Reality can display local evidence for OAuth/OIDC identity, tenant authorization, checkout, webhook, entitlement, feature access, and revocation. It does not contact a provider. Optional paid features are not active in this Marketplace build.</p>
 
 <h3>Local evidence. Human release decisions.</h3>
 <p>The IDE asks before running the configured local FactoryLine command. Missing, stale, unavailable, or unverified evidence stays visible as incomplete or unassessed. The plugin does not upload project source or receipts, sign artifacts, or decide whether a release is ready.</p>

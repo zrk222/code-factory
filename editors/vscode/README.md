@@ -7,13 +7,21 @@ can be used with Code Factory core 0.48.2; publishing the optional core package
 is a separate release step. Marketplace status must be confirmed from provider
 read-back.
 
-FactoryLine Evidence keeps supported local audit lanes beside the VS Code
+Catch AI-generated tests that could never fail — before review. FactoryLine
+Evidence keeps supported local audit lanes beside the VS Code
 workspace. **Run First Proof** is a setup demonstration that checks the local
 CLI; it does not assess repository code. For a repository assessment, run
 `factory scan --root .` from the workspace, then review each result's coverage
 and evidence state before deciding what to accept. Missing or unbound evidence
 stays incomplete; these bounded checks do not claim exhaustive detection or
 measured accuracy.
+
+Use FactoryLine when you want to turn an outcome into a buildable starting
+point or review AI and teammate changes with evidence. Open **Graph Ops** for
+the local evidence path, use **PRD Grill** with
+`factory prd grill PRD.md --root . --mode quick` to clarify requirements, and
+inspect **Proof Debt** in Plan-to-Proof Review. Star Code Factory on GitHub if
+the workflow helps.
 
 ![CF Studio product mission form with fictional sample text](../../docs/assets/marketplace/cf-product-mission-20261016.jpg)
 
