@@ -3,6 +3,7 @@ import json
 import textwrap
 from pathlib import Path
 from factoryline.review_integrity import (
+    implementation_completeness_findings,
     verify_intent_diff,
     verify_receipt_freshness,
     verify_policy_pack,
@@ -2105,3 +2106,119 @@ def test_configuration_relative_import_is_scoped_and_jinja_rhs_is_observed():
             Path.cwd(), Path.cwd() / "case.py", ast.parse(source)
         )
         assert sum(f["code"] == code for f in findings) == expected, source
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "import click\n@click.group()",
+        "import click as c\n@c.group()",
+        "from click import group\n@group()",
+    ],
+)
+def test_registered_click_group_is_a_container(declaration):
+    source = declaration + "\ndef cli(): pass\n@cli.command()\ndef child(): return 1\n"
+    assert not implementation_completeness_findings("app.py", ast.parse(source), source)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import click\n@click.command()\ndef cli(): pass",
+        "import click\n@click.group()\ndef cli(): pass",
+        "import click\n@click.group(invoke_without_command=True)\ndef cli(): pass\n@cli.command()\ndef child(): return 1",
+        "import click\n@click.group(cls=Custom)\ndef cli(): pass\n@cli.command()\ndef child(): return 1",
+        "class Fake: pass\nclick=Fake()\n@click.group()\ndef cli(): pass\n@cli.command()\ndef child(): return 1",
+        "import click\n@click.group()\ndef cli(): pass\ncli=other\n@cli.command()\ndef child(): return 1",
+        "import click\n@click.group()\ndef cli(): pass\n@cli.command()\ndef child(): pass",
+    ],
+)
+def test_unfinished_or_unverified_bodies_remain_findings(source):
+    findings = implementation_completeness_findings("app.py", ast.parse(source), source)
+    assert any(f["code"] == "QUALITY_EMPTY_IMPLEMENTATION" for f in findings)
+
+
+def test_nested_registered_group_with_help_is_a_container():
+    source = """import click
+@click.group()
+def cli(): pass
+@cli.group(help="Commands")
+def subgroup(): pass
+@subgroup.command()
+def child(): return 1
+"""
+    assert not implementation_completeness_findings("app.py", ast.parse(source), source)
+
+
+@pytest.mark.parametrize("mutation", ["click.group = fake", "cli.command = fake"])
+def test_modified_decorator_namespace_is_not_trusted(mutation):
+    source = f"""import click
+@click.group()
+def cli(): pass
+{mutation}
+@cli.command()
+def child(): return 1
+"""
+    assert implementation_completeness_findings("app.py", ast.parse(source), source)
+
+
+def symbols(source):
+    return {
+        f["facts"]["symbol"]
+        for f in implementation_completeness_findings(
+            "app.py", ast.parse(source), source
+        )
+        if f["code"] == "QUALITY_EMPTY_IMPLEMENTATION"
+    }
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '"Subclasses must override this operation."\n        raise NotImplementedError',
+        '"This must be implemented by subclasses."\n        raise NotImplementedError()',
+        '"Does nothing by default, left for overriding in subclasses."\n        pass',
+    ],
+)
+def test_explicit_extension_contract(body):
+    assert not symbols(f"class Adapter:\n    def run(self):\n        {body}\n")
+
+
+def test_local_concrete_override_evidences_base_role():
+    source = """class Decoder:
+    def decode(self, value): raise NotImplementedError
+class Identity(Decoder):
+    def decode(self, value): return value
+"""
+    assert not symbols(source)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "class Service:\n    def run(self): pass",
+        "class Service:\n    def run(self): ...",
+        "class Service:\n    def run(self): raise NotImplementedError",
+        'class Service:\n    def run(self):\n        "TODO implement payment"\n        pass',
+        'class Service:\n    def run(self):\n        "Base class for services"\n        pass',
+        "class Service:\n    def run(self): raise NotImplementedError\nclass Child(Service):\n    def run(self): pass",
+        "class Service:\n    def run(self): raise NotImplementedError\nclass Child(Service):\n    def different(self): return 1",
+        "class Service:\n    def run(self): raise NotImplementedError\nService=other\nclass Child(Service):\n    def run(self): return 1",
+        "class Service:\n    def run(self): raise NotImplementedError\nclass Child(Service):\n    def run(self): return 1\nService().run()",
+        'NotImplementedError = Custom\nclass Service:\n    def run(self):\n        "Subclasses must override"\n        raise NotImplementedError',
+        'class Service:\n    def run(self):\n        "Subclasses must override"\n        raise NotImplementedError\nService().run()',
+    ],
+)
+def test_unfinished_and_ambiguous_methods_remain(source):
+    assert "run" in symbols(source)
+
+
+def test_undocumented_concrete_child_is_not_cleared_with_base():
+    source = """class Base:
+    def run(self):
+        "Subclasses must override."
+        raise NotImplementedError
+class Child(Base):
+    def run(self): pass
+"""
+    assert symbols(source) == {"run"}
