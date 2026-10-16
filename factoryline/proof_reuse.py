@@ -181,7 +181,13 @@ def _normalized_mapping(value: object, label: str) -> dict[str, str]:
     return result
 
 
-def _relative_file(root: Path, raw: str, label: str) -> tuple[str, Path]:
+def _relative_file(
+    root: Path,
+    raw: str,
+    label: str,
+    *,
+    require_file: bool = True,
+) -> tuple[str, Path]:
     if not isinstance(raw, str) or not raw.strip():
         raise ProofReuseError(
             "PROOF_INPUT_INVALID", f"{label} path must be a non-empty string"
@@ -196,7 +202,12 @@ def _relative_file(root: Path, raw: str, label: str) -> tuple[str, Path]:
         raise ProofReuseError(
             "PROOF_PATH_ESCAPE", f"{label} path escapes the workspace"
         ) from error
-    if not candidate.is_file():
+    if candidate.exists() and not candidate.is_file():
+        raise ProofReuseError(
+            "PROOF_INPUT_MISSING",
+            f"{label} path is not a regular file: {relative.as_posix()}",
+        )
+    if require_file and not candidate.is_file():
         raise ProofReuseError(
             "PROOF_INPUT_MISSING",
             f"{label} path is not a regular file: {relative.as_posix()}",
@@ -407,6 +418,27 @@ def _verify_rows(root: Path, payload: dict[str, Any], field: str) -> list[str]:
     return errors
 
 
+def _declared_output_paths(root: Path, paths: object) -> list[str]:
+    """Validate and normalize a gate's literal output paths for receipt matching."""
+    if not isinstance(paths, list) or not paths:
+        raise ProofReuseError(
+            "PROOF_INPUT_INVALID", "outputs must contain at least one file"
+        )
+    seen = set()
+    for raw in paths:
+        if not isinstance(raw, str) or not raw.strip():
+            raise ProofReuseError(
+                "PROOF_INPUT_INVALID", "outputs paths must be non-empty strings"
+            )
+        if _path_has_symlink(Path(root), raw):
+            raise ProofReuseError(
+                "PROOF_REUSE_BLOCKED", f"outputs path traverses a symlink: {raw}"
+            )
+        relative, _ = _relative_file(Path(root), raw, "outputs", require_file=False)
+        seen.add(relative)
+    return sorted(seen)
+
+
 def _verify_row(root: Path, row: dict[str, Any], field: str) -> str | None:
     try:
         raw_path = row.get("path")
@@ -451,8 +483,13 @@ def _receipt_facts(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def verify_proof_receipt(root: Path, receipt_path: Path) -> dict[str, Any]:
-    """Verify receipt integrity and all current input/output hashes."""
+def _verify_proof_receipt(
+    root: Path,
+    receipt_path: Path,
+    *,
+    expected_outputs: list[str] | None = None,
+) -> dict[str, Any]:
+    """Verify receipt integrity and, when supplied, its output declaration."""
     payload, errors = _load_receipt(receipt_path)
     if payload is None:
         return {
@@ -469,6 +506,19 @@ def verify_proof_receipt(root: Path, receipt_path: Path) -> dict[str, Any]:
         errors.append("receipt is not a green read-only proof")
     errors.extend(_verify_rows(Path(root), payload, "inputs"))
     errors.extend(_verify_rows(Path(root), payload, "outputs"))
+    if expected_outputs is not None:
+        rows = payload.get("outputs")
+        receipt_outputs = (
+            [row.get("path") for row in rows]
+            if isinstance(rows, list) and all(isinstance(row, dict) for row in rows)
+            else None
+        )
+        if (
+            receipt_outputs is None
+            or not all(isinstance(path, str) for path in receipt_outputs)
+            or sorted(set(receipt_outputs)) != expected_outputs
+        ):
+            errors.append("outputs do not match current gate declaration")
     if _proof_key(_receipt_facts(payload)) != payload.get("proof_key"):
         errors.append("proof key mismatch")
     blocked = any(error.startswith("PROOF_REUSE_BLOCKED:") for error in errors)
@@ -485,6 +535,11 @@ def verify_proof_receipt(root: Path, receipt_path: Path) -> dict[str, Any]:
         "receipt_sha256": payload.get("receipt_sha256"),
         "errors": errors,
     }
+
+
+def verify_proof_receipt(root: Path, receipt_path: Path) -> dict[str, Any]:
+    """Verify receipt integrity and all current input/output hashes."""
+    return _verify_proof_receipt(Path(root), Path(receipt_path))
 
 
 def _normalize_changed(paths: Iterable[str]) -> list[str]:
@@ -575,6 +630,7 @@ def _route_gate(
         return _finish_route(item, markers, started)
     try:
         proof = _proof_key(_proof_facts(root, gate, snapshot_cache=snapshot_cache))
+        expected_outputs = _declared_output_paths(root, gate.get("outputs"))
     except ProofReuseError as error:
         item.update(disposition="BLOCK", reason=error.code)
         markers.append("PROOF_INPUT_INTEGRITY_REQUIRED")
@@ -587,7 +643,16 @@ def _route_gate(
         )
         markers.append("PROOF_IRRELEVANT_CHANGE")
         return _finish_route(item, markers, started)
-    return _route_receipt(root, proof, relevance, auto_savings, item, markers, started)
+    return _route_receipt(
+        root,
+        proof,
+        relevance,
+        auto_savings,
+        item,
+        markers,
+        started,
+        expected_outputs=expected_outputs,
+    )
 
 
 def _route_receipt(
@@ -598,10 +663,14 @@ def _route_receipt(
     item: dict[str, Any],
     markers: list[str],
     started: int,
+    *,
+    expected_outputs: list[str],
 ) -> dict[str, Any]:
     receipt_path = _proof_directory(root) / f"{proof}.json"
     verification = (
-        verify_proof_receipt(root, receipt_path) if receipt_path.exists() else None
+        _verify_proof_receipt(root, receipt_path, expected_outputs=expected_outputs)
+        if receipt_path.exists()
+        else None
     )
     if not verification or not verification["valid"]:
         item.update(

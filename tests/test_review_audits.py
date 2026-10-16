@@ -9346,6 +9346,31 @@ def test_short_hardcoded_credentials_are_detected_without_disclosing_value(
     assert '"x"' not in findings
 
 
+def test_config_fixture_secrets_are_exempt_without_hiding_credentials(tmp_path):
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_config.py").write_text(
+        'SECRET_KEY = "config"\nclass TestConfig:\n    SECRET_KEY = "config"\n',
+        encoding="utf-8",
+    )
+    (tests / "test_credentials.py").write_text(
+        'SECRET_KEY = "real-test-credential-8f1b"\n', encoding="utf-8"
+    )
+    (tmp_path / "app.py").write_text('SECRET_KEY = "config"\n', encoding="utf-8")
+
+    result = security_scan(tmp_path, cache_enabled=False)
+
+    findings = [
+        (item["path"], item["line"])
+        for item in result["findings"]
+        if item["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert findings == [("app.py", 1), ("tests/test_credentials.py", 1)]
+    serialized = json.dumps(result["findings"])
+    assert "real-test-credential-8f1b" not in serialized
+    assert '"config"' not in serialized
+
+
 @pytest.mark.parametrize("value", ["", "   ", "changeme", "placeholder", "${PASSWORD}"])
 def test_empty_or_declared_placeholder_credentials_remain_exempt(tmp_path, value):
     (tmp_path / "app.py").write_text("PASSWORD = " + repr(value) + "\n")

@@ -988,12 +988,6 @@ def _ty_external_config_state(root):
         or (root / "ty.toml").exists()
     ):
         return {"state": "unknown", "config_override": True}
-    if any(
-        (parent / name).exists()
-        for parent in root.parents
-        for name in ("ty.toml", "pyproject.toml")
-    ):
-        return {"state": "unknown", "parent_config": True}
     return None
 
 

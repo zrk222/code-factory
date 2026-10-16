@@ -828,6 +828,7 @@ _SECRET_ASSIGNMENT = re.compile(
 _PLACEHOLDER_SECRET = re.compile(
     r"(?i)^(?:$|changeme|replace[-_ ]?me|example|placeholder|your[-_ ]|<[^>]+>|\$\{[^}]+\})$"
 )
+_TEST_SECRET_FIXTURE_VALUES = frozenset({"config"})
 _URL_QUOTING_CHARSET = frozenset("%!*'();:@&=+$,/?#[]")
 
 
@@ -1566,8 +1567,9 @@ def _literal_assignment_diagnostics(
         return []
     # Evaluate the exception at the input boundary; diagnostic builders receive
     # only symbol/location metadata, never the credential literal itself.
-    if relative.startswith("tests/") and re.search(
-        r"(?i)(?:do[-_ ]not|fake|dummy|fixture|not[-_ ]real|test)", value
+    if (
+        relative.startswith("tests/")
+        and value.strip().casefold() in _TEST_SECRET_FIXTURE_VALUES
     ):
         return []
     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
