@@ -807,6 +807,34 @@ def _selection_manifest(**overrides):
     return value
 
 
+@pytest.mark.parametrize("change", ["unchanged", "added", "deleted", "configuration"])
+def test_verify_database_context_checks_current_inventory(tmp_path, change):
+    from factoryline.context_efficiency import verify_database_context
+
+    schema = tmp_path / "schema.sql"
+    schema.write_text("CREATE TABLE users (id INT);", encoding="utf-8")
+    context = {
+        "discovery": {
+            "paths": ["schema.sql"],
+            "configuration_present": False,
+            "inventory_complete": True,
+        }
+    }
+    if change == "added":
+        (tmp_path / "added.sql").write_text(
+            "CREATE TABLE roles (id INT);", encoding="utf-8"
+        )
+    elif change == "deleted":
+        schema.unlink()
+    elif change == "configuration":
+        (tmp_path / "factory.database.json").write_text("{}", encoding="utf-8")
+    if change == "unchanged":
+        assert verify_database_context(tmp_path, context, ValueError) is None
+    else:
+        with pytest.raises(ValueError, match="inventory changed"):
+            verify_database_context(tmp_path, context, ValueError)
+
+
 def test_database_context_entities_flow_through_existing_selected_packet(tmp_path):
     schema = tmp_path / "schema.sql"
     schema.write_text("CREATE TABLE accounts (id INTEGER PRIMARY KEY);\n")

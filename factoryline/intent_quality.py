@@ -1335,22 +1335,7 @@ def database_structure(
     tables, operations, queries = _db_extract(
         inputs, sqlglot, exp, dialect_key, snapshots, gaps
     )
-    sql_paths = {path for path, _, _, kind in inputs if kind == "sql"}
-    evolving = {
-        "add_column",
-        "drop_column",
-        "rename_column",
-        "rename_table",
-        "drop_table",
-        "drop_index",
-    }
-    cross_file_order_unknown = (
-        normalized_order is None
-        and len(sql_paths) > 1
-        and any(item["op"] in evolving for item in operations)
-    )
-    if cross_file_order_unknown:
-        gaps.append("cross_file_migration_order_unknown")
+    _db_migration_order_gaps(inputs, operations, normalized_order, gaps)
     _db_validate_references(tables, queries, gaps)
     result = {
         "status": "INCOMPLETE" if gaps else "COMPLETE",
@@ -1381,6 +1366,25 @@ def database_structure(
     serialized = json.dumps(result, sort_keys=True, separators=(",", ":")).encode()
     _db_cache_write(cache_key, serialized)
     return json.loads(serialized)
+
+
+def _db_migration_order_gaps(inputs, operations, normalized_order, gaps):
+    sql_paths = {path for path, _, _, kind in inputs if kind == "sql"}
+    evolving = {
+        "add_column",
+        "drop_column",
+        "rename_column",
+        "rename_table",
+        "drop_table",
+        "drop_index",
+    }
+    cross_file_order_unknown = (
+        normalized_order is None
+        and len(sql_paths) > 1
+        and any(item["op"] in evolving for item in operations)
+    )
+    if cross_file_order_unknown:
+        gaps.append("cross_file_migration_order_unknown")
 
 
 def _db_inventory(sources, digest_fn):

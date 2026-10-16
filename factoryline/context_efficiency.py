@@ -40,7 +40,6 @@ def database_workspace_context(
 ) -> dict:
     """Capture static database context through the scanner's safe source reader."""
     from .intent_quality import database_structure
-    from .runtime_audit_common import RuntimeAuditError
 
     paths, gaps = _database_sql_paths(root)
     python_gaps = _database_python_inventory_gaps(python_inventory, python_sources)
@@ -56,27 +55,7 @@ def database_workspace_context(
     )
     config, config_binding = _database_configuration(root, read_source, gaps)
     bindings = [config_binding] if config_binding else []
-    sql_bytes = 0
-    for relative in paths:
-        try:
-            raw = read_source(root, relative)
-            if len(raw) > 1_000_000:
-                gaps.append("database_source_size_limit:" + relative)
-                continue
-            sql_bytes += len(raw)
-            if sql_bytes > 16_000_000:
-                gaps.append("database_total_source_limit")
-                break
-            selected[relative] = raw
-            bindings.append(
-                {
-                    "path": relative,
-                    "sha256": hashlib.sha256(raw).hexdigest(),
-                    "bytes": len(raw),
-                }
-            )
-        except (OSError, RuntimeAuditError):
-            gaps.append("database_source_unreadable:" + relative)
+    bindings.extend(_database_sql_sources(root, paths, read_source, selected, gaps))
     if not selected or any("limit" in gap for gap in gaps):
         result = {
             "status": "NOT_APPLICABLE",
@@ -97,7 +76,47 @@ def database_workspace_context(
     result["gaps"] = sorted(set(result["gaps"] + gaps))
     if result["gaps"]:
         result["status"] = "INCOMPLETE"
-    result["discovery"] = {
+    result["discovery"] = _database_context_discovery(
+        root, paths, gaps, python_gaps, python_inventory, selected, database_signals
+    )
+    result["configuration_sources"] = bindings
+    result.pop("graph_digest", None)
+    result["graph_digest"] = _sha(result)
+    result["_bindings"] = bindings
+    return result
+
+
+def _database_sql_sources(root, paths, read_source, selected, gaps):
+    from .runtime_audit_common import RuntimeAuditError
+
+    bindings, sql_bytes = [], 0
+    for relative in paths:
+        try:
+            raw = read_source(root, relative)
+            if len(raw) > 1_000_000:
+                gaps.append("database_source_size_limit:" + relative)
+                continue
+            sql_bytes += len(raw)
+            if sql_bytes > 16_000_000:
+                gaps.append("database_total_source_limit")
+                break
+            selected[relative] = raw
+            bindings.append(
+                {
+                    "path": relative,
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                    "bytes": len(raw),
+                }
+            )
+        except (OSError, RuntimeAuditError):
+            gaps.append("database_source_unreadable:" + relative)
+    return bindings
+
+
+def _database_context_discovery(
+    root, paths, gaps, python_gaps, python_inventory, selected, database_signals
+):
+    return {
         "sql_files": len(paths),
         "paths": paths,
         "configuration_present": (root / "factory.database.json").exists()
@@ -115,11 +134,6 @@ def database_workspace_context(
         if database_signals
         else "not_applicable",
     }
-    result["configuration_sources"] = bindings
-    result.pop("graph_digest", None)
-    result["graph_digest"] = _sha(result)
-    result["_bindings"] = bindings
-    return result
 
 
 def _database_python_inventory_gaps(python_inventory, python_sources):
