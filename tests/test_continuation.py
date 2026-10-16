@@ -299,6 +299,89 @@ def test_custom_release_contract_survives_pause_and_resume(
     outside.rmdir()
 
 
+def test_resolve_continuation_release_contract_binds_policy_and_rejects_invalid(
+    tmp_path,
+):
+    from factoryline.assembly import resolve_continuation_release_contract
+
+    contract_path, contract = _release_contract_fixture(
+        tmp_path, "feature", ["specline:strict"]
+    )
+    resolved_path, snapshot, digest = resolve_continuation_release_contract(
+        tmp_path, "feature", Path("custom/feature.json")
+    )
+    assert resolved_path == contract_path
+    assert snapshot["policy_digest"] == contract["policy_digest"]
+    assert digest == hashlib.sha256(contract_path.read_bytes()).hexdigest()
+
+    malformed_path = tmp_path / "custom" / "malformed.json"
+    malformed_path.write_text("{", encoding="utf-8")
+    with pytest.raises(ValueError):
+        resolve_continuation_release_contract(tmp_path, "other", malformed_path)
+
+
+def test_assemble_cli_returns_report_and_structured_policy_error(tmp_path, monkeypatch):
+    from factoryline.assembly import assemble_cli
+
+    contract_path, _ = _release_contract_fixture(
+        tmp_path, "feature", ["specline:strict"]
+    )
+    modules = [
+        ModuleStatus(name, name, True, "test")
+        for name in ("specline", "forgeline", "hsf", "prestige")
+    ]
+    monkeypatch.setattr("factoryline.assembly.detect", lambda: modules)
+    report = assemble_cli(
+        str(tmp_path),
+        "feature",
+        dry_run=True,
+        release_contract_path=str(contract_path),
+    )
+    assert report["dry_run"] is True
+    assert report["release_contract_path"] == str(contract_path)
+
+    malformed = assemble_cli(
+        tmp_path,
+        "feature",
+        dry_run=True,
+        release_contract_path=tmp_path / "missing.json",
+    )
+    assert malformed["schema"] == "factory.release-contract.error.v1"
+    assert malformed["code"] == "RELEASE_CONTRACT_INPUT_INVALID"
+
+
+def test_continue_cli_normalizes_inputs_and_propagates_invalid_policy(
+    tmp_path, monkeypatch
+):
+    from factoryline.continuation import continue_cli
+
+    contract_path = tmp_path / "custom" / "policy.json"
+    usage = {"tokens_in": 7}
+    expected = {"status": "waiting_for_human"}
+    observed = {}
+
+    def capture(root, feature, **kwargs):
+        observed.update(root=root, feature=feature, **kwargs)
+        return expected
+
+    monkeypatch.setattr("factoryline.continuation.continue_assembly", capture)
+    result = continue_cli(str(tmp_path), "feature", True, usage, str(contract_path))
+    assert result is expected
+    assert observed == {
+        "root": tmp_path,
+        "feature": "feature",
+        "dry_run": True,
+        "usage": usage,
+        "release_contract_path": contract_path,
+    }
+
+    monkeypatch.undo()
+    malformed_path = tmp_path / "malformed.json"
+    malformed_path.write_text("{", encoding="utf-8")
+    with pytest.raises(ValueError):
+        continue_cli(tmp_path, "feature", True, None, malformed_path)
+
+
 @pytest.mark.parametrize("change", ["missing", "stale"])
 def test_resume_rejects_missing_or_changed_release_contract_before_stages(
     tmp_path, monkeypatch, change
