@@ -867,6 +867,146 @@ def test_database_context_entities_flow_through_existing_selected_packet(tmp_pat
     assert verify_context_packet(tmp_path, packet_path)["valid"] is False
 
 
+@pytest.mark.parametrize("snapshot", [{}, {"models.py": object()}])
+def test_database_oracle_missing_or_corrupt_snapshot_falls_back_to_source(
+    tmp_path, monkeypatch, snapshot
+):
+    import ast
+
+    from factoryline import intent_quality, review_audits
+    from factoryline.context_efficiency import _database_workspace_context_from_oracle
+
+    source = (
+        b"from sqlalchemy import Column, Integer\n"
+        b"from sqlalchemy.orm import declarative_base\n"
+        b"Base = declarative_base()\n"
+        b"class Account(Base):\n"
+        b"    __tablename__ = 'accounts'\n"
+        b"    id = Column(Integer, primary_key=True)\n"
+    )
+    path = tmp_path / "models.py"
+    path.write_bytes(source)
+    calls = []
+    original_parse = ast.parse
+
+    def counted_parse(text, *args, **kwargs):
+        if kwargs.get("filename") == "models.py":
+            calls.append(text)
+        return original_parse(text, *args, **kwargs)
+
+    monkeypatch.setattr(ast, "parse", counted_parse)
+    monkeypatch.setattr(intent_quality, "_DB_CACHE", {})
+    monkeypatch.setattr(intent_quality, "_DB_CACHE_BYTES", 0)
+    result = _database_workspace_context_from_oracle(
+        tmp_path,
+        {path: source},
+        review_audits._security_source_bytes,
+        [{"path": "models.py", "state": "retained", "retained": True}],
+        snapshot,
+    )
+    assert calls == [source.decode("utf-8")]
+    assert [table["name"] for table in result["tables"]] == ["accounts"]
+
+
+def test_oracle_source_input_facade_matches_bound_helper(tmp_path):
+    from factoryline import intent_quality, review_audits
+
+    path = tmp_path / "module.py"
+    path.write_bytes(b"value = 1\n")
+    expected = intent_quality._oracle_source_inputs(
+        tmp_path,
+        [path],
+        review_audits._security_source_bytes,
+        review_audits.local_file,
+        review_audits._measure_hash,
+        review_audits.sha256,
+        review_audits.RuntimeAuditError,
+        review_audits.MAX_BYTES,
+        16 * 1024 * 1024,
+    )
+    assert review_audits._oracle_source_inputs(tmp_path, [path]) == expected
+
+
+def test_oracle_database_projection_reuses_only_fresh_owned_tree(tmp_path, monkeypatch):
+    import ast
+
+    from factoryline import intent_quality, review_audits
+    from factoryline.context_efficiency import database_workspace_context
+
+    source = (
+        b"from sqlalchemy import Column, Integer\n"
+        b"from sqlalchemy.orm import declarative_base\n"
+        b"Base = declarative_base()\n"
+        b"class Account(Base):\n"
+        b"    __tablename__ = 'accounts'\n"
+        b"    id = Column(Integer, primary_key=True)\n"
+    )
+    path = tmp_path / "models.py"
+    path.write_bytes(source)
+    files = [path]
+    calls = []
+    original_parse = ast.parse
+
+    def counted_parse(text, *args, **kwargs):
+        if kwargs.get("filename") == "models.py":
+            calls.append(text)
+        return original_parse(text, *args, **kwargs)
+
+    monkeypatch.setattr(ast, "parse", counted_parse)
+    monkeypatch.setattr(intent_quality, "_DB_CACHE", {})
+    monkeypatch.setattr(intent_quality, "_DB_CACHE_BYTES", 0)
+    review_audits._oracle_context_cache_clear()
+    inventory = []
+    projection = {}
+    cold = review_audits._project_oracle_context(
+        tmp_path,
+        files,
+        python_inventory_out=inventory,
+        database_context_out=projection,
+    )
+    assert calls == [source]
+    assert [table["name"] for table in projection["tables"]] == ["accounts"]
+
+    warm_projection = {"stale": True}
+    warm_inventory = []
+    warm = review_audits._project_oracle_context(
+        tmp_path,
+        files,
+        python_inventory_out=warm_inventory,
+        database_context_out=warm_projection,
+    )
+    assert not warm_projection
+    assert len(calls) == 1
+    monkeypatch.setattr(intent_quality, "_DB_CACHE", {})
+    monkeypatch.setattr(intent_quality, "_DB_CACHE_BYTES", 0)
+    fallback = database_workspace_context(
+        tmp_path, warm[3], review_audits._security_source_bytes, warm_inventory
+    )
+    assert calls == [source, source.decode("utf-8")]
+    assert fallback == projection
+    assert cold[3] == warm[3]
+
+    changed = source.replace(b"accounts", b"customers")
+    path.write_bytes(changed)
+    changed_projection = {}
+    review_audits._project_oracle_context(
+        tmp_path, files, database_context_out=changed_projection
+    )
+    assert calls[-1] == changed
+    assert [table["name"] for table in changed_projection["tables"]] == ["customers"]
+
+    forged = original_parse(
+        "class Forged:\n    __tablename__ = 'forged'\n", filename="models.py"
+    )
+    monkeypatch.setattr(intent_quality, "_DB_CACHE", {})
+    monkeypatch.setattr(intent_quality, "_DB_CACHE_BYTES", 0)
+    public = intent_quality.database_structure(
+        {"models.py": changed}, snapshots={"models.py": forged}
+    )
+    assert calls[-1] == changed.decode("utf-8")
+    assert [table["name"] for table in public["tables"]] == ["customers"]
+
+
 def test_database_context_structural_metadata_respects_secret_boundaries():
     from factoryline.context_efficiency import _structural_evidence
 

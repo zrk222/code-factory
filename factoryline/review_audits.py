@@ -3607,86 +3607,29 @@ def _oracle_imports(
 def _oracle_source_inputs(
     root: Path, files: list[Path]
 ) -> tuple[dict, list, list, bool]:
-    source_bytes: dict[Path, bytes] = {}
-    bindings: list[dict[str, Any]] = []
-    manifest: list[dict[str, Any]] = []
-    cacheable = True
-    retained_bytes = 0
-    retain_source_bytes = True
-    for path in files:
-        relative = path.relative_to(root).as_posix()
-        try:
-            if path.is_symlink():
-                manifest.append({"path": relative, "state": "symlink"})
-                cacheable = False
-                continue
-            initial = local_file(root, relative).stat()
-            if initial.st_size > MAX_BYTES:
-                manifest.append(
-                    {
-                        "path": relative,
-                        "state": "oversized",
-                        "bytes": int(initial.st_size),
-                        "mtime_ns": int(initial.st_mtime_ns),
-                    }
-                )
-                cacheable = False
-                continue
-            data = _security_source_bytes(root, relative)
-            if len(data) > MAX_BYTES:
-                manifest.append(
-                    {"path": relative, "state": "oversized", "bytes": len(data)}
-                )
-                cacheable = False
-                continue
-            digest = _measure_hash("source_hash", sha256, data)
-            manifest.append(
-                {
-                    "path": relative,
-                    "state": "read",
-                    "bytes": len(data),
-                    "sha256": digest,
-                }
-            )
-            bindings.append({"path": relative, "sha256": digest, "bytes": len(data)})
-            if retain_source_bytes and retained_bytes + len(data) <= 16 * 1024 * 1024:
-                source_bytes[path] = data
-                retained_bytes += len(data)
-            else:
-                source_bytes.clear()
-                retain_source_bytes = False
-        except (OSError, SyntaxError, UnicodeError, RuntimeAuditError):
-            manifest.append({"path": relative, "state": "unreadable"})
-            cacheable = False
-            continue
-    manifest.sort(key=lambda item: item["path"])
-    return source_bytes, bindings, manifest, cacheable
+    return contracts._oracle_source_inputs(
+        root,
+        files,
+        _security_source_bytes,
+        local_file,
+        _measure_hash,
+        sha256,
+        RuntimeAuditError,
+        MAX_BYTES,
+        16 * 1024 * 1024,
+    )
 
 
 def _oracle_snapshots(root: Path, files: list[Path], source_bytes: dict) -> dict:
-    snapshots = {}
-    for path in files:
-        try:
-            data = source_bytes.get(path)
-            if data is None:
-                relative = path.relative_to(root).as_posix()
-                if (
-                    path.is_symlink()
-                    or local_file(root, relative).stat().st_size > MAX_BYTES
-                ):
-                    continue
-                data = _security_source_bytes(root, relative)
-                if len(data) > MAX_BYTES:
-                    continue
-            snapshots[path] = _measure_parse(ast.parse, data, root, path)
-            snapshots[path]._oracle_source_lines = data.decode("utf-8").splitlines()
-            for node in snapshots[path].body:
-                node._oracle_layout = None
-            for node in ast.walk(snapshots[path]):
-                node._scan_bound_names = None
-        except (OSError, SyntaxError, UnicodeError, RuntimeAuditError):
-            continue
-    return snapshots
+    return contracts._oracle_source_snapshots(
+        root,
+        files,
+        source_bytes,
+        _security_source_bytes,
+        _measure_parse,
+        RuntimeAuditError,
+        MAX_BYTES,
+    )
 
 
 def _declared_typecheck_sources(
@@ -3711,6 +3654,9 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _build_oracle_context,
         contracts._static_type_edges,
         _security_source_bytes,
+        local_file,
+        _measure_parse,
+        RuntimeAuditError,
         _click_runner_fixtures,
         _scope_security_aliases,
         _module_security_aliases,
@@ -3724,7 +3670,10 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _unittest_testcase_classes,
         _class_oracle_helpers,
         _oracle_snapshots,
+        contracts._oracle_source_snapshots,
         _oracle_source_inputs,
+        contracts._oracle_source_inputs,
+        _measure_hash,
         _declared_typecheck_sources,
         contracts._declared_typecheck_sources,
         contracts._ty_sources,
@@ -3758,6 +3707,7 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _local_assertion_helpers,
         _local_weak_assertion_helpers,
         _is_oracle_helper_name,
+        _oracle_context_cache_eligible,
     )
     helpers += contracts.project_contract_helpers() + tuple(
         getattr(integrity, name)
@@ -3772,6 +3722,8 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         "root": root.resolve().as_posix(),
         "sources": manifest,
         "config": config_identity,
+        "source_limit": MAX_BYTES,
+        "source_retention_limit": 16 * 1024 * 1024,
         "python": [sys.implementation.name, *sys.version_info[:3]],
         "helpers": [id(helper) for helper in helpers],
     }
@@ -3891,6 +3843,11 @@ def _pytest_inherited_method_ids(tree, inherited_names):
     }
 
 
+def _oracle_context_cache_eligible(cache_enabled, source_cacheable, config_cacheable):
+    """Return whether both oracle input groups allow a reusable projection."""
+    return cache_enabled and source_cacheable and config_cacheable
+
+
 def _project_oracle_context(
     root: Path,
     files: list[Path],
@@ -3898,8 +3855,11 @@ def _project_oracle_context(
     cache_enabled: bool = True,
     collection_identity: dict | None = None,
     python_inventory_out: list | None = None,
+    database_context_out: dict | None = None,
 ) -> tuple[dict, list, list, dict]:
     """Resolve local imports and return retained bytes without executing repository code."""
+    if database_context_out is not None:
+        database_context_out.clear()
     source_bytes, source_bindings, manifest, source_cacheable = _oracle_source_inputs(
         root, files
     )
@@ -3930,12 +3890,22 @@ def _project_oracle_context(
     }
     bindings = source_bindings + config_bindings
     cache_key = _oracle_context_cache_key(root, manifest, config_identity)
-    if cache_enabled and source_cacheable and config_cacheable:
+    if _oracle_context_cache_eligible(
+        cache_enabled, source_cacheable, config_cacheable
+    ):
         cached = _oracle_context_cache_read(cache_key)
         if cached is not None:
             contexts, edges = cached
             return contexts, bindings, edges, source_bytes
     snapshots = contracts.bound_snapshots(root, files, source_bytes, source_bindings)
+    if database_context_out is not None:
+        from .context_efficiency import _database_workspace_context_from_oracle
+
+        database_context_out.update(
+            _database_workspace_context_from_oracle(
+                root, source_bytes, _security_source_bytes, python_inventory, snapshots
+            )
+        )
     ty_identity = config_identity["typecheck"].get("ty", {})
     ty_sources = {root / item for item in ty_identity.get("selected", [])}
     import_views = {"resolved": {}, "bindings": 0, "characters": 0}
@@ -3948,7 +3918,9 @@ def _project_oracle_context(
     edges += contracts._static_type_edges(
         root, typecheck_sources | ty_sources, config_bindings, ty_sources
     )
-    if cache_enabled and source_cacheable and config_cacheable:
+    if _oracle_context_cache_eligible(
+        cache_enabled, source_cacheable, config_cacheable
+    ):
         _oracle_context_cache_write(cache_key, contexts, edges)
     return contexts, bindings, edges, source_bytes
 
