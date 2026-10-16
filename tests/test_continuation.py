@@ -414,9 +414,10 @@ def test_changed_policy_before_lock_acquisition_is_revalidated(tmp_path, monkeyp
     real_open = assembly.os.open
     changed = False
 
-    def change_policy_before_lock(path, flags, mode=0o777, *, dir_fd=None):
+    def change_policy_before_lock(path, flags, mode=0o600, *, dir_fd=None):
         nonlocal changed
         if not changed and Path(path).name.startswith("assembly-"):
+            assert mode == 0o600
             contract_path.write_text("{}", encoding="utf-8")
             changed = True
         if dir_fd is None:

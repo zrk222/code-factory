@@ -191,6 +191,7 @@ def continue_cli(
     usage: dict[str, Any] | None,
     release_contract_path: Path | str | None,
 ) -> dict[str, Any]:
+    """Normalize CLI values and forward them to state-aware continuation."""
     return continue_assembly(
         Path(root),
         feature,
