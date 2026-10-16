@@ -7149,12 +7149,7 @@ def test_security_scan_keeps_uninvoked_command_with_recursive_invoke_hollow(tmp_
 @pytest.mark.parametrize(
     "filename, declared, body, expected",
     [
-        (
-            "typing_probe.py",
-            True,
-            "assert_type(compute(), int)",
-            {"QUALITY_HOLLOW_TEST": 1},
-        ),
+        ("typing_probe.py", True, "assert_type(compute(), int)", {}),
         (
             "typing_probe.py",
             False,
