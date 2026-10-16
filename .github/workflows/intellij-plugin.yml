@@ -19,7 +19,7 @@ jobs:
     outputs:
       intellij: ${{ steps.scope.outputs.intellij }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
       - id: scope
@@ -42,7 +42,7 @@ jobs:
     needs: changes
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         if: needs.changes.outputs.intellij == 'true'
       - name: Free runner disk for IDE verification
         if: needs.changes.outputs.intellij == 'true'
@@ -119,7 +119,7 @@ jobs:
           - DataGrip
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         if: needs.changes.outputs.intellij == 'true'
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         if: needs.changes.outputs.intellij == 'true'
