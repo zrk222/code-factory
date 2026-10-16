@@ -513,13 +513,13 @@ def _group_decorator(decorator, definitions, aliases, visiting):
     )
 
 
-def bind_project_contracts(root, snapshots, contexts, edges):
+def bind_project_contracts(root, snapshots, contexts, edges, resolved_imports=None):
     """Resolve direct local imported bases from the already hash-bound snapshots."""
     from .review_audits import _oracle_imports
 
     indexes = {path: _stable_import_index(tree) for path, tree in snapshots.items()}
     eligible = {p.resolve(): p for p in snapshots}
-    resolved = {
+    resolved = resolved_imports or {
         path: _oracle_imports(root, path, tree, eligible)
         for path, tree in snapshots.items()
     }

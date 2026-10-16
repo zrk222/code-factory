@@ -23,6 +23,7 @@ from hashlib import sha256
 import os
 from pathlib import Path
 import re
+from types import MappingProxyType
 from typing import Any
 
 try:
@@ -771,6 +772,8 @@ def project_contract_helpers():
     """Include every contract resolver in process-local cache identity."""
     return (
         bind_project_contracts,
+        _capture_project_imports,
+        _project_import_views,
         _bind_file_contracts,
         _bind_imported_base,
         _stable_import_index,
@@ -1251,3 +1254,30 @@ def _ty_assertion_provider_mutated(module, aliases):
         if module is not None
         else True
     )
+
+
+def _capture_project_imports(views, path, imports, eligible):
+    """Retain bounded, immutable maps only for the current context build."""
+    if not views:
+        return
+    views.setdefault("eligible", MappingProxyType(eligible))
+    views["bindings"] += len(imports)
+    views["characters"] += sum(
+        len(alias) + len(str(source)) + len(symbol or "")
+        for alias, (source, symbol) in imports.items()
+    )
+    if views["bindings"] > 4096 or views["characters"] > 1048576:
+        views.clear()
+        return
+    views["resolved"][path] = MappingProxyType(dict(imports))
+
+
+def _project_import_views(views, snapshots):
+    """Select a whole captured view only for the identical resolver inventory."""
+    if (
+        views
+        and views.get("eligible") == {p.resolve(): p for p in snapshots}
+        and views["resolved"].keys() == snapshots.keys()
+    ):
+        return MappingProxyType(dict(views["resolved"]))
+    return None

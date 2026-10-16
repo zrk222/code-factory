@@ -2909,6 +2909,170 @@ def test_stable_import_helpers_are_fresh_and_invocation_local(tmp_path):
     assert not bind(tmp_path / "two", invalidated=True)
 
 
+def test_invocation_import_reuse_matches_fresh_binding(tmp_path, monkeypatch):
+    from copy import deepcopy
+    from factoryline import implementation_audit as contracts, review_audits as audit
+
+    _write_project_contract(
+        tmp_path,
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): return 1\n",
+    )
+    files = sorted(tmp_path.glob("*.py"))
+    snapshots = {p: ast.parse(p.read_text()) for p in files}
+    resolver = audit._oracle_imports
+    calls = []
+
+    def observed(*args):
+        calls.append(args[1])
+        return resolver(*args)
+
+    monkeypatch.setattr(audit, "_oracle_imports", observed)
+    views = {"resolved": {}, "bindings": 0, "characters": 0}
+    contexts, edges = audit._build_oracle_context(
+        tmp_path, files, snapshots, set(), import_views=views
+    )
+    assert len(calls) == len(files)
+    legacy_contexts, legacy_edges = deepcopy(contexts), deepcopy(edges)
+    with pytest.raises(TypeError):
+        views["resolved"][tmp_path / "impl.py"]["Adapter"] = (files[0], "Fake")
+    contracts.bind_project_contracts(
+        tmp_path,
+        snapshots,
+        contexts,
+        edges,
+        audit.contracts._project_import_views(views, snapshots),
+    )
+    assert len(calls) == len(files)
+    contracts.bind_project_contracts(tmp_path, snapshots, legacy_contexts, legacy_edges)
+    assert len(calls) == 2 * len(files)
+    assert (contexts, edges) == (legacy_contexts, legacy_edges)
+    assert any(e["kind"] == "implementation_contract" for e in edges)
+
+
+@pytest.mark.parametrize("mismatch", ["unparsed", "lexical", "partial"])
+def test_invocation_import_inventory_mismatch_resolves_all(
+    tmp_path, monkeypatch, mismatch
+):
+    from factoryline import implementation_audit as contracts, review_audits as audit
+
+    _write_project_contract(
+        tmp_path,
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): return 1\n",
+    )
+    files = sorted(tmp_path.glob("*.py"))
+    snapshots = {p: ast.parse(p.read_text()) for p in files}
+    if mismatch == "unparsed":
+        # The unparsed package competes with base.py in the first resolver only.
+        package = tmp_path / "base"
+        package.mkdir()
+        omitted = package / "__init__.py"
+        omitted.write_text("class :")
+        files.append(omitted)
+    views = {"resolved": {}, "bindings": 0, "characters": 0}
+    contexts, edges = audit._build_oracle_context(
+        tmp_path, files, snapshots, set(), import_views=views
+    )
+    if mismatch == "lexical":
+        source = next(iter(views["eligible"]))
+        views["eligible"] = dict(views["eligible"])
+        views["eligible"][source] = source.parent / "unused" / ".." / source.name
+    if mismatch == "partial":
+        views["resolved"].pop(next(iter(snapshots)))
+    calls = []
+    resolver = audit._oracle_imports
+
+    def observed(*args):
+        calls.append(args[1])
+        return resolver(*args)
+
+    monkeypatch.setattr(audit, "_oracle_imports", observed)
+    contracts.bind_project_contracts(
+        tmp_path,
+        snapshots,
+        contexts,
+        edges,
+        audit.contracts._project_import_views(views, snapshots),
+    )
+    assert set(calls) == set(snapshots)
+    assert len(calls) == len(snapshots)
+    assert any(e["kind"] == "implementation_contract" for e in edges)
+
+
+@pytest.mark.parametrize("limit", ["bindings", "characters"])
+def test_invocation_import_capture_bounds_discard_entire_view(tmp_path, limit):
+    from factoryline.intent_quality import _capture_project_imports
+
+    source = tmp_path / "source.py"
+    views = {"eligible": {}, "resolved": {}, "bindings": 0, "characters": 0}
+    imported = {"Alias": (source, "Name")}
+    cost = len("Alias") + len(str(source)) + len("Name")
+    views[limit] = 4095 if limit == "bindings" else 1048576 - cost
+    _capture_project_imports(views, source, imported, {})
+    assert source in views["resolved"]
+    _capture_project_imports(views, source, imported, {})
+    assert not views
+    _capture_project_imports(views, source, {}, {})
+    assert not views
+
+
+def test_invocation_import_cold_warm_changed_scan_parity(tmp_path, monkeypatch):
+    from factoryline import review_audits as audit
+    from factoryline.review_integrity import encode_structural_context
+
+    _write_project_contract(
+        tmp_path,
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): return 1\n",
+    )
+    files = sorted(tmp_path.glob("*.py"))
+    resolver, capture = audit._oracle_imports, audit.contracts._capture_project_imports
+    calls = []
+
+    def observed(*args):
+        calls.append(args[1])
+        return resolver(*args)
+
+    monkeypatch.setattr(audit, "_oracle_imports", observed)
+    cold = audit._project_oracle_context(tmp_path, files)
+    assert len(calls) == len(files)
+    calls.clear()
+    warm = audit._project_oracle_context(tmp_path, files)
+    assert warm[1:] == cold[1:]
+    assert {
+        path: encode_structural_context(context) for path, context in warm[0].items()
+    } == {path: encode_structural_context(context) for path, context in cold[0].items()}
+    assert not calls
+    changed = tmp_path / "impl.py"
+    changed.write_text(changed.read_text().replace("return 1", "pass"))
+    current = audit._project_oracle_context(tmp_path, files)
+    assert len(calls) == len(files)
+    assert current != cold
+    monkeypatch.setattr(audit.contracts, "_capture_project_imports", lambda *args: None)
+    calls.clear()
+    fallback = audit._project_oracle_context(tmp_path, files, cache_enabled=False)
+    assert len(calls) == 2 * len(files)
+    assert fallback == current
+    monkeypatch.setattr(audit.contracts, "_capture_project_imports", capture)
+
+
+def test_invocation_import_reuse_preserves_final_source_drift(tmp_path, monkeypatch):
+    from factoryline import review_audits as audit
+
+    _write_project_contract(
+        tmp_path,
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): return 1\n",
+    )
+    binder = audit.contracts.bind_project_contracts
+
+    def mutate_after_binding(*args):
+        binder(*args)
+        source = tmp_path / "impl.py"
+        source.write_text(source.read_text().replace("return 1", "return 2"))
+
+    monkeypatch.setattr(audit.contracts, "bind_project_contracts", mutate_after_binding)
+    with pytest.raises(audit.ReviewAuditError, match="changed"):
+        audit.security_scan(tmp_path, cache_enabled=False)
+
+
 def test_unsafe_project_bases_uses_indexed_module_calls():
     import ast
     from pathlib import Path
