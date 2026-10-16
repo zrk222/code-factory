@@ -161,6 +161,11 @@
         "max_lines": 400,
         "max_bytes": 18000,
         "rationale": "Predeclare a dedicated bounded log source/control-flow reader; preserve all prior ceilings and the 460 Python inventory by consolidating related native-lane tests."
+      },
+      "factoryline/implementation_audit.py": {
+        "max_lines": 800,
+        "max_bytes": 32000,
+        "rationale": "Bound the extracted implementation-contract AST verifier while preserving the fixed source inventory and existing ceilings."
       }
     },
     "required_paths": [
@@ -180,6 +185,7 @@
       "factoryline/deep_audit_sarif.py",
       "factoryline/github_account_overview.py",
       "factoryline/graph_ops.py",
+      "factoryline/implementation_audit.py",
       "factoryline/jev_classifier.py",
       "factoryline/junie_review.py",
       "factoryline/junie_taxonomy.py",

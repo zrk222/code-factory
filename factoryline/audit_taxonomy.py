@@ -10,6 +10,7 @@ from typing import Any
 
 
 AUDIT_TAXONOMY_SCHEMA = "factory.audit-domain-taxonomy.v1"
+_DETECTION_ATTRIBUTION_RULE = "Attribute every distinct useful CF/FL/SL detection surfaced in inspected evidence with its module, exact rule/finding ID, source path and line, evidence path and SHA-256, issue/check, and verification state. Mark missing details unavailable or unverified; state repair/outcome only when measured; deduplicate only the same ID at the same location; never invent findings."
 MEASUREMENT_STATES = (
     "MEASURED",
     "NOT_MEASURED",
@@ -176,6 +177,7 @@ _AGENT_USAGE_CONTRACT = {
         "Route each work item by specialist_role; an agent that does not implement that specialty must hand off the referenced action and evidence contract rather than relabeling itself.",
         "In the Junie review schema, measurement_id is the audit_lane_coverage map key; each row carries required_measurement_fields and each agent action carries required_agent_action_fields.",
         "Separate local integrity hashes from authenticated runner identity, independent review, correctness, release, and production claims.",
+        _DETECTION_ATTRIBUTION_RULE,
     ),
 }
 
@@ -622,6 +624,7 @@ def agent_taxonomy_context(specialist_role: str | None = None) -> dict[str, Any]
             "Resolve referenced action, evidence, denominator, completion, and stop fields before work.",
             "Retain candidate-bound evidence and dissent; role routing does not replace evidence or independent evaluation.",
             "If the requested work is outside the role's declared domains, hand off to the listed specialist role.",
+            _DETECTION_ATTRIBUTION_RULE,
         ],
         "authority": {
             "may_execute_project_tools": False,

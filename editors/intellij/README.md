@@ -1,310 +1,49 @@
 # FactoryLine for JetBrains IDEs
 
-## Current source preview — core 0.48.2, editor 1.2.0 (prepared, unpublished)
+FactoryLine keeps local review evidence beside your code. See what changed, which evidence is available, what remains unproven, and the next review step.
 
-The bounded security review follows values through supported local helpers to
-HTTP, file, and SQL sinks, and checks upload directories separately from
-sanitized filenames. Studio provides a shared next action; optional JEV
-integration stays advisory; unavailable evaluations stay incomplete. Review findings and run affected
-checks before accepting a repair; this preview does not claim exhaustive
-detection or measured accuracy.
+## Review the change in front of you
 
-## Graph Ops telemetry sample — October 8, 2026
+1. Open **Tools > FactoryLine > Run First Proof** and confirm the workspace. This is a local setup demonstration, not a repository assessment.
+2. To assess the repository, run `factory scan --root .` from the project.
+3. In **Proof Review**, choose **Review Current Diff** or **Review This File**. Inspect structured findings, changed paths, unproven claims, and the suggested next action. Open a changed file, copy a handoff brief, or save a local JSON, Markdown, and Mermaid review packet.
 
-**Fixed:** bounded evaluator output validation across all six runtime lanes; malformed results stay incomplete. Shared imported assertion helpers and inherited test mixins are resolved by bounded static analysis.
-**Changed:** audit findings carry candidate-bound repair packets with reproduction, negative-control and separate specialty AI review requirements.
-**Added:** Graph Ops agent repair telemetry, evidence requirements, stop conditions and searchable individual test outcomes. Repair packets are consumed by the host agent; this view does not execute or approve repairs.
+A readable receipt is not automatically trusted: it remains unassessed until a verification path checks it. Missing, stale, unavailable, or unbound evidence stays incomplete. Proof Review analyzes local evidence; it does not run tests or decide whether a release is ready.
 
-![Graph Ops current audit and agent repair telemetry](https://raw.githubusercontent.com/zrk222/code-factory/codex/tenant-read-contract-20261007/docs/assets/marketplace/graph-ops-audit-telemetry-current.png)
+## Keep an AI repair inside scope
 
-Actual local Graph Ops capture, October 8, 2026: 415 targeted tests passed. JUnit results are local and unbound; missing runtime receipts and coverage remain explicitly incomplete. Agent repair cards show candidate bindings, required evidence and separate specialty AI review requirements.
+In **Repair Sandbox**, select one native Change List to create a hash-bound Scope Passport. Copy its sealed **AI Agent Proof Mission** into Junie or another coding agent yourself, then bring the returned Change List back for review. Candidate patch paths can be checked against the sealed scope. Independent verification and the human decision to apply remain separate steps.
 
+Junie is supported, not required. FactoryLine provides a local guide and an optional project pack; it does not start or message Junie, read its chat, or treat an agent's completion claim as approval. Installing the pack is an explicit, conflict-safe project-file action.
 
-FactoryLine for JetBrains IDEs keeps the local proof loop next to the project. It
-runs an explicit FactoryLine command, then displays the command result and the
-newest local JSON receipt in a tool window.
+## Local evidence, human release decisions
 
-**Your AI change is green. Can its test actually fail? Find out before
-review.** FactoryLine addresses that common JetBrains workflow gap by showing
-the proof path in the IDE, then opening **Graph Ops** to the next evidence gap.
-Catch AI-generated tests that could never fail — before review.
-Start with **Tools > FactoryLine > Run First Proof**, then run
-`factory mvp "Build an approval tracker" --root .`. A starter remains a
-starting state until product-specific proof exists.
-
-FactoryLine is the independent proof layer after an AI coding agent and beside
-static analysis. Junie or Copilot can plan and implement; Qodana or SonarQube can report inspections,
-coverage, and quality thresholds; FactoryLine asks a different question:
-could the test and supplied run evidence actually reject a broken result? It
-does not replace, control, or imply endorsement by either JetBrains product.
-
-**1.0.2 release preview:** open the native CF + ForgeLine tab to run five
-bounded local audit lanes. The Junie taxonomy now directs a reviewer from
-source and intent to gaps, repairs, reruns, and independent specialty AI
-review. Missing tools and unbound evidence stay visible; a local scan cannot
-approve a release.
-
-**1.0.1 release preview:** follow typed handoffs from approved intent through
-agent route, candidate, and current evidence. Graph Ops makes no-gain repair
-stops and the next supported human action visible. Junie is supported, not
-required; the IDE remains read-only and release authority remains human-owned.
-
-**New in 0.9.1:** Unified Graph Ops now fails closed on same-ID semantic
-rewrites of blocking/release Oracle rules and keeps AppForge authority receipts
-path-to-digest verifiable.
-
-**New in 0.9.8:** Junie handoffs can carry proof-coupled attribution: the
-known FactoryLine tool, changed-file rationale, workspace-local hashes,
-unknowns, and a visible credit line are checked against the taxonomy digest.
-The project pack also exposes a copy-only manifest and, when supported by the
-installed Junie build, a read-only `factoryline-proof` subagent whose tool
-allowlist is limited to file inspection and the `code-factory` MCP server. The
-card and subagent are review aids; neither grants Junie execution or release
-authority.
-
-**New in 0.9.3:** senior teams can review candidate-bound execution
-attestations, real-defect benchmark metrics, and dependency-aware incremental
-proof plans with a full-plan shadow comparison. The IDE remains a read-only
-review surface; external runners and release authority stay explicit.
-
-**First Lap:** `factory first-lap init` creates a mission, observable journeys,
-and verifier-only holdout scenarios. Critical verifiers must pass approved,
-defective, and wrong-candidate calibration plus a complete observed lifecycle;
-incidents can become permanent regression gates, and only typed transient
-provider failures may retry. The resulting activation is still supervised and
-human-owned. See [`docs/FIRST_LAP.md`](../../docs/FIRST_LAP.md).
-
-**Also in 0.9.0:** Unified Graph Ops can display a verified Agent Proof Bridge
-receipt from Eve, Junie, Grok Build, CodeRabbit, Devin, or a generic client:
-explicit DAG stages, sealed scope, source preconditions, real before/after
-artifacts, declared tool/checkpoint hashes, resume lineage, and Oracle Contract
-binding. The bridge is read-only and cannot
-execute or resume an agent, post a worklog, approve a change, apply a repair,
-merge, publish, or deploy.
-
-## What It Does
-
-- `FactoryLine: Run Spec-to-Ship Assembly` runs `factory assemble <feature> --root <project>`.
-- `FactoryLine: Continue Assembly to Next Boundary` resumes safe local stages
-  with `factory continue <feature> --root <project>`.
-- `FactoryLine: Verify Feature Receipts` runs `factory verify <feature> --root <project>`.
-- `FactoryLine: Open Local Meter` runs `factory meter --root <project> --json` after workspace confirmation.
-- `FactoryLine: Analyze Changed Proof` runs `factory risk-diff --root <project> --json`.
-- `FactoryLine: Analyze Workspace Load and Remote/WSL Preflight` runs `factory workspace inspect --root <project> --json`, measures only bounded local filesystem/path facts, and offers manual review paths. It never changes heap, caches, indexes, inspections, plugins, project files, credentials, or remote settings, and it is not an IDE performance diagnosis.
-- `FactoryLine: Open IDE Health Flight Recorder` records up to 20 in-memory aggregate local runtime samples: heap, process CPU when the bundled JVM exposes it, indexing state, and EDT dispatch delay. It does not persist samples, upload project data, identify a plugin cause, or change IDE settings.
-- `FactoryLine: Capture/Compare Index Continuity Baseline` saves an explicit `.factory/index-continuity/baseline.json` structural baseline, then names manifest, source-root, managed-directory, or path-classification drift. It does not inspect or repair a JetBrains index, invalidate caches, or predict duration.
-- `Workspace Advisor: Save local report` explicitly writes JSON, Markdown, and Mermaid under `.factory/workspace-advice`; MCP inspection never writes those artifacts.
-- `FactoryLine: Review Current Diff` runs `factory change review --root <project> --json` and shows an attention-first, structured local review of the branch delta, staged changes, unstaged changes, and non-ignored untracked files.
-- `FactoryLine: Review This File` runs the same analysis with an explicit active-editor path, so a developer can exclude unrelated local work from the review scope.
-- `FactoryLine: Save Review Handoff` writes the exact review JSON, Markdown, and Mermaid map below `.factory/change-reviews/` only after a second workspace confirmation. It is a local handoff packet, not an approval or an automatic repair.
-- `FactoryLine: Prepare Verified Repair Sandbox` selects one native Change List, seals its exact project paths and measured bytes in a local Scope Passport, then permits an explicit textual candidate-patch check. It never calls an AI runner, estimates token/credit savings, applies a patch, runs a test, or commits.
-- The Repair Sandbox can copy a sealed **AI Agent Proof Mission** for a manual agent paste, install a secret-free project Junie MCP entry, the conflict-safe Junie project-pack manifest, or GitHub Copilot proof agent, then route the returned native Change List and Qodana or SonarQube SARIF into independent Proof Review. The mission forbids silent scope expansion and weakening a failing test merely to get green. None of these actions starts AI, reads a chat, uploads source, consumes AI credits, or grants execution authority.
-
-**Use your preferred coding agent and analyzer—FactoryLine independently decides whether their green result deserves trust.**
-- `FactoryLine: Open Latest Receipt` shows the newest JSON receipt below `.factory/` or `receipts/`.
-- `FactoryLine: Check Latest Receipt Signature State` runs `factory receipt status` on that receipt. It reports signature presence or `UNSIGNED`; it does not claim signer identity.
-- `FactoryLine: Open Local Factory Studio` opens the confirmed loopback target compiler.
-- `FactoryLine: Open Product Missions` opens Studio in deterministic PRD-to-mission mode.
-- `FactoryLine: Open Unified Graph Ops` opens the bounded, read-only local evidence map.
-- **Verifier Plane (terminal workflow)** runs `factory verifier session|verify|progress`
-  to bind a worker receipt to distinct verifier evidence, deterministic checks,
-  and hard budgets. The CLI validates supplied evidence; it does not run or
-  sandbox the external verifier.
-- **PRD Grill (terminal workflow)** runs `factory prd grill PRD.md --root <project>`
-  to write a capped, source-bound clarification sheet before PRD optimization
-  or compilation. It never modifies the PRD or authorizes implementation.
-- `FactoryLine: Mission Graph & Provider Operations` initializes and inspects
-  durable graphs, verifies receipt chains, exports Mermaid, records guarded
-  events, and routes a JetBrains-selected secret-free BYOK policy.
-- `REQ-*`, `FR-*`, and `NFR-*` references receive a read-only gutter link to
-  matching local proof under `.factory`, `receipts`, `coverage`, `tests`, or `specs`.
-
-## Safety Boundary
-
-The adapter runs a command only after a feature-name prompt and explicit local-workspace confirmation.
-It invokes the configured executable directly through IntelliJ's process API:
-it does not start a shell, construct command strings, upload source code, send
-receipts over the network, or certify a release by itself.
-
-The receipt viewer is deliberately fail-closed: a readable receipt is marked
-**unassessed** until an explicit verification path establishes the claim. The
-adapter never silently signs a receipt, applies an override, or converts an
-untrusted/missing receipt into a green state.
-
-Proof Review is deliberately conservative: it displays CLI facts, orders the
-most urgent findings first, opens only changed files that remain inside the
-project, and can copy a concise handoff brief. It never edits code, runs a
-test, commits, publishes, deploys, accesses credentials, or sends project data
-over the network. A future repair flow must create an isolated candidate and
-pass independent checks before a human chooses whether to apply it.
-
-For a GitHub pull request, the same local proof facts can appear beside
-CodeRabbit or another AI reviewer through the optional
-[`factory github proof-review`](../../docs/GITHUB_PROOF_REVIEW.md) workflow.
-It is complementary: FactoryLine does not require a vendor account, ingest AI
-comments, auto-approve, merge, or treat a suggestion as verification evidence.
-
-For team-operated AI changes, run the CLI’s
-[`factory plan verify`](../../docs/PLAN_TO_PROOF_REVIEW.md) from the same
-project environment, then use its JSON/Markdown/Mermaid packet in the tool
-window or pull request. It records approved scope alignment and Proof Debt; it
-does not add an autonomous JetBrains action, execute tests, approve, merge, or
-alter IDE settings. The concise [Teams and Enterprise Operations Manual](../../docs/ENTERPRISE_TEAMS_OPERATIONS.md)
-defines roles, rollout, and boundaries.
-
-For UI-scoped work, add the optional [Prestige Design Review](../../docs/PRESTIGE_DESIGN.md)
-to the same local evidence path. It supplies a purpose-led design brief and
-review artifacts for hierarchy, responsive behavior, affordances, consistency,
-and design tokens. The adapter does not apply a design change or treat a visual
-score as production readiness.
-
-Verified Repair Sandbox is that first professional repair-control surface: it
-keeps a candidate's declared Git patch paths inside one native Change List,
-blocks stale scope bytes, and leaves a local JSON/Markdown/Mermaid handoff for
-the developer and independent verifier. It does not claim that scope control
-proves a patch correct, nor does it call or configure a repair model. See
-[`docs/REPAIR_SANDBOX.md`](../../docs/REPAIR_SANDBOX.md).
-
-Workspace Load Advisor is the parallel performance-and-remote **observation**
-surface. It makes project shape visible before a developer manually changes
-JetBrains project exclusions or evaluates a remote/WSL path setup. It measures
-neither IDE runtime behavior nor performance improvement and cannot apply a
-configuration change. See [`docs/WORKSPACE_ADVISOR.md`](../../docs/WORKSPACE_ADVISOR.md).
-
-IDE Health Flight Recorder and Index Continuity Guard add a separate runtime
-observation and structural-drift path. Their recordings are bounded local
-facts, and their review scope is never a root-cause or repair claim. See
-[`docs/IDE_HEALTH.md`](../../docs/IDE_HEALTH.md).
+The adapter invokes the configured local `factory` executable after workspace confirmation. It does not upload project source or receipts, sign artifacts, or approve, publish, or deploy a release. Use your coding agent and analyzer as usual; FactoryLine displays the local evidence returned by its supported review commands.
 
 ## Install
 
-1. Install `factoryline-code-factory==0.46.8` into the Python environment that
-   IntelliJ inherits.
-2. In your JetBrains IDE, open **Settings > Plugins > Marketplace**, search for
-   **FactoryLine**, and install the
-   [official listing](https://plugins.jetbrains.com/plugin/33009-factoryline).
-3. Restart the IDE, then use the **Tools > FactoryLine** menu or the
-   **FactoryLine** tool window.
+1. Install the Code Factory CLI in the Python environment your JetBrains IDE uses.
+2. Install **FactoryLine AI Proof** from the [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/33009-factoryline) and restart the IDE.
+3. Open the **FactoryLine** tool window or **Tools > FactoryLine**. If `factory` is not discoverable, set its absolute executable path under **Settings > Tools > FactoryLine**.
+4. Use **Run First Proof** to check local setup; run `factory scan --root .` when you want a repository assessment.
 
-For an offline installation, download a verified plugin ZIP from a matching
-FactoryLine release and use **Install Plugin from Disk...**.
+For an offline installation, use a verified plugin ZIP from a matching FactoryLine release and choose **Install Plugin from Disk...**.
 
-Set an absolute executable path under **Settings > Tools > FactoryLine** only
-when `factory` is not already discoverable on IntelliJ's PATH.
-Product Missions create only supervised, approval-required local packets and do
-not grant execute, merge, deploy, publish, connector, credential, or messaging authority.
-The gutter navigator reads bounded local evidence only and never executes a
-mission or changes an approval.
+## Local development
 
-After a successful local proof or assembly command, FactoryLine may offer an
-optional **Star Code Factory** action once per installed plugin version. It only
-opens the repository when you select it and shares no workspace data.
-
-## Local Development
+Run the plugin's scoped release gate:
 
 ```powershell
 .\gradlew.bat guardianReleaseGate
 ```
 
-The output ZIP is written to `build/distributions/`. `runIde` opens a sandboxed
-IntelliJ instance for manual inspection.
+The ZIP is written to `build/distributions/`. `runIde` opens a sandboxed IDE for manual inspection.
 
-## Scope
+## Platform and guides
 
-This is a JetBrains Platform plugin, with only the shared
-`com.intellij.modules.platform` dependency. CI verifies its ZIP against
-IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, and
-DataGrip builds from the 2025.2 baseline forward. The CI matrix verifies
-current stable builds, including an explicit DataGrip archive because archived
-2025.2 installers are not available through the verifier resolver.
+The plugin targets the IntelliJ Platform 2025.2 baseline and is verified for IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, and DataGrip.
 
-Code Factory 0.20 also includes an optional hosted GitHub PR-assurance adapter,
-a durable mission graph, and a secret-free multi-provider route selector.
-It is deployed separately from this local IDE plugin; see
-[Hosted PR assurance](../../docs/HOSTED_PR_ASSURANCE.md).
-
-`guardianReleaseGate` runs the deterministic Guardian behavior tests, packages
-the actual ZIP, verifies current-platform binary compatibility, and rejects
-missing descriptor/action metadata, light/dark icons, vendor contact, project
-URL, release notes, unsafe archive paths, and credential-shaped bundled entries.
-The protected release workflow additionally verifies the immutable ZIP across
-IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, and DataGrip.
-GitHub releases remain the current installation channel. The initial
-Marketplace upload requires a human Vendor profile and review; after that
-bootstrap, the scoped GitHub workflow publishes verified updates using a
-Marketplace publisher token. See [the Marketplace runbook](../../docs/JETBRAINS_MARKETPLACE.md).
-For a concise candidate-by-candidate map of user impact, guardrails, and
-verifiable references, see the [JetBrains reviewer summary](../../docs/JETBRAINS_REVIEWER_SUMMARY.md).
-
-### Current control surfaces
-
-Proof Review, Verified Repair Sandbox, and Workspace Load Advisor are local,
-review-first controls. They produce bounded handoffs and do not edit code,
-call a model, apply a patch, or claim IDE performance or runtime isolation.
-
-### Verifier Plane
-
-`factory verifier` keeps the worker and verifier identities distinct, locks the
-verifier bundle and evidence to SHA-256 receipts, and halts deterministic
-no-progress loops for owner review. Unified Graph Ops exposes those sessions as
-read-only `runtime-unattested` state until independently supplied evidence is
-verified. The plugin never claims to provide a runtime sandbox.
-
-### Contradiction gate
-
-`factory cdte scan` detects architecturally incompatible NFR pairs before any
-code is generated, by deterministic lookup over a decision table. No model is
-called. Analysis is tiered `measured` / `modeled` / `structural`, and a modeled
-analysis whose inputs are absent is withheld rather than estimated. Critical and
-high severity conflicts engage the fail-closed boundary and pause the line at
-`nfr_conflict`.
-
-### Habituation gate
-
-`factory habituation status` calibrates the human approval signal against each
-reviewer's own baseline and escalates: surface, second approver, fail closed.
-Blocking is refused until blind-spot re-review outcomes correct the proxy.
-Public exports carry distributions only, never per-reviewer rows.
-
-## Updated video preview
-
-[60-second CF/FL audit and repair walkthrough](https://youtu.be/covWDYhUqbM) — October 8, 2026. Silent captions, current Graph Ops captures, bounded scanner improvements and agent repair evidence requirements. The source render is in `videos/code-factory-proof-of-survival/remotion`.
-
-## Native agent-harness preview — current source candidate
-
-Status: Current source preview only; published Code Factory 0.48.1 remains unchanged. Local-wheel inclusion is not claimed.
-
-The native harness keeps incident checkpoints for recovery, binds review
-context shards to source, and compares candidate repairs without applying them.
-Budgeted Jev triage keeps unprocessed incidents visible as pending, not assessed.
-Parallel audits are opt-in and require a signed policy declaring work
-non-mutating and resource-safe; serial remains the default, and the declaration
-does not prove isolation. Optional activation experiments call only hooks
-explicitly registered by the caller. Their observations are experimental, not
-model certification or accuracy evidence. The source taxonomy and manifest define the same routes for
-Junie while keeping execution and identity limits visible.
-
-## Native scanner expansion — core 0.48.2 / editor 1.2.0 source preview
-
-**Fixed:** native scanner controls require vulnerable and safe results bound to
-image, profile and source hashes. Missing evidence remains incomplete.
-**Changed:** agents use one `factory scan --deep` overview and explicitly
-configured native workers selected for the project's languages and risks.
-JavaScript/Actions workers verify bundled compiled queries rather than rebuilding
-them, and receipt discovery skips explicit file checks for unrelated logs.
-**Added:** CodeQL JavaScript/TypeScript interprocedural analysis, GitHub Actions
-security-extended analysis, and eight Python/JavaScript/TypeScript Semgrep
-rules including local taint tracking. CodeQL controls require native flow
-evidence; Semgrep community output does not establish cross-file coverage.
-
-Code Factory is a robust code audit factory with Production/Stable package
-metadata. This source preview does not establish new marketplace publication,
-runtime verification of every repository, or measured detection accuracy.
-
-## Smaller models, stronger quality workflows
-
-CF/FL is designed to guide smaller LLMs toward frontier-like coding performance
-through deterministic workflows, independent audits and evidence-driven repair.
-Sealed task packets keep requirements, scope and acceptance checks explicit.
-This is the design objective; model parity and cost savings require a paired
-benchmark and are not established by the current attribution metric.
+- [Junie workflow](../../docs/JUNIE_FACTORYLINE.md)
+- [Verified Repair Sandbox](../../docs/REPAIR_SANDBOX.md)
+- [GitHub Proof Review](../../docs/GITHUB_PROOF_REVIEW.md)
+- [Marketplace release process](../../docs/JETBRAINS_MARKETPLACE.md)

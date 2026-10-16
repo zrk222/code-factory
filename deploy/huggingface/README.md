@@ -27,12 +27,26 @@ short_description: Audit code, review evidence, and resolve defects.
 
 ## Current source preview — core 0.48.2, VS Code 1.2.1, JetBrains 1.2.0
 
-The bounded security review follows values through supported local helpers to
-HTTP, file, and SQL sinks, and checks upload directories separately from
-sanitized filenames. Studio surfaces one shared next action; optional JEV
-integration remains advisory; unavailable evaluations stay incomplete. Review findings and run affected
-checks before accepting a repair. This source preview does not establish
-publication, exhaustive detection, or measured accuracy.
+Code Factory is a local-first code review tool. Assess a repository with
+`factory scan --root .`, inspect its source findings and evidence coverage, then
+run the relevant tests and checks before deciding what to accept. Missing or
+unavailable evidence stays incomplete. **First Proof is a local setup
+demonstration, not a repository assessment.** This Hugging Face Space is a
+static product overview; it does not scan a visitor's workspace. This source
+preview does not establish publication, exhaustive detection, or measured
+accuracy.
+
+![CF Studio product mission form with fictional sample text](../../docs/assets/marketplace/cf-product-mission-20261016.jpg)
+
+Actual Product Mission form with sample text entered through the interface. No
+interview, build, or deployment is claimed by this image.
+
+![Graph Ops security findings from a fictional Python file](../../docs/assets/marketplace/cf-audit-findings-20261016.jpg)
+
+Actual Graph Ops projection of a local scan of one fictional Python file. It
+shows two planted findings, complete source coverage for that file, and
+`INCOMPLETE` evidence; runtime lanes were not run. This is demonstration
+evidence, not a benchmark.
 
 ## Graph Ops telemetry sample — October 8, 2026
 
@@ -97,9 +111,10 @@ local-first proof layer for AI-assisted code.
 
 > **Audit code. Review evidence. Resolve defects.**
 
-**First Proof is one starter example within the larger audit system.** Run
-`factory first-proof --root .` to see a safe negative-control demonstration and
-receive a local receipt. It does not upload or change your project.
+**First Proof is a setup demonstration within the larger audit system.** Run
+`factory first-proof --root .` to check the local setup and receive a local
+receipt; it does not assess repository code. Run `factory scan --root .` for a
+repository assessment. Neither command uploads or changes your project.
 
 - **Individual developer or vibe coder:** learn what a real negative control
   looks like before trusting an AI-generated test.

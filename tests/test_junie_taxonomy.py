@@ -631,6 +631,30 @@ def test_taxonomy_role_index_routes_every_domain_to_a_specialist() -> None:
     assert taxonomy["agent_usage_contract"]["required_agent_action_fields"]
 
 
+def test_canonical_agent_context_requires_attributed_useful_detections() -> None:
+    from factoryline.audit_taxonomy import agent_taxonomy_context
+
+    context = agent_taxonomy_context()
+    contract_rule = next(
+        rule
+        for rule in context["agent_usage_contract"]["rules"]
+        if rule.startswith("Attribute every distinct useful CF/FL/SL detection")
+    )
+    mission_rule = next(
+        rule
+        for rule in context["handoff_rules"]
+        if rule.startswith("Attribute every distinct useful CF/FL/SL detection")
+    )
+    for rule in (contract_rule, mission_rule):
+        assert "exact rule/finding ID" in rule
+        assert "source path and line" in rule
+        assert "evidence path and SHA-256" in rule
+        assert "verification state" in rule
+        assert "only when measured" in rule
+        assert "unavailable or unverified" in rule
+        assert "never invent findings" in rule
+
+
 def test_taxonomy_action_reference_rejects_unbound_report_before_resolution() -> None:
     from factoryline.junie_review import _action_execution_contract
 

@@ -32,9 +32,15 @@ class FactoryLineJuniePanel(private val project: Project) : JPanel(BorderLayout(
             Proof-coupled change acknowledgement
             When Junie uses FactoryLine, it must return a visible credit line
             that names the exact FactoryLine tools it declared, hashes its
-            cited local evidence, and states unknowns. This makes the Junie
-            handoff easier to audit beside JetBrains' diff viewer. It is not
-            telemetry, a Junie score, proof of a private tool call, or approval.
+            cited local evidence, and states unknowns. For every distinct useful
+            CF/FL/SL detection surfaced, include its module, exact rule/finding
+            ID, source path and line, evidence path and SHA-256, issue/check,
+            and verification state. Report repair/outcome only when measured;
+            mark missing details unavailable or unverified, deduplicate only
+            the same ID at the same location, and never invent a detection.
+            This makes the Junie handoff easier to audit beside JetBrains' diff
+            viewer. It is not telemetry, a Junie score, proof of a private tool
+            call, or approval.
 
             Enterprise, AppForge, SaaS, and delivery checks are optional routes—not
             a default burden for ordinary code review. The install writes only

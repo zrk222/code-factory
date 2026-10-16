@@ -1334,3 +1334,28 @@ def test_log_flow_reader_has_predeclared_pinned_small_module_budget():
     guard["required_paths"].remove(name)
     guard["files"].pop(name)
     assert not file_size_guard_is_pinned(guard)
+
+
+def test_implementation_audit_budget_is_pinned_without_raising_inventory_ceilings():
+    root = Path(__file__).resolve().parents[1]
+    policy = json.loads((root / "architecture-policy.json").read_text())
+    guard = policy["file_size_guard"]
+    name = "factoryline/implementation_audit.py"
+    assert policy["budgets"]["max_python_files"] == 460
+    assert policy["budgets"]["max_core_modules"] == 129
+    assert name in guard["required_paths"]
+    assert (guard["files"][name]["max_lines"], guard["files"][name]["max_bytes"]) == (
+        800,
+        32000,
+    )
+    assert file_size_guard_is_pinned(guard)
+    module = (root / name).read_text(encoding="utf-8")
+    assert len(module.splitlines()) <= 800
+    assert len(module.encode("utf-8")) <= 32000
+    drift = json.loads(json.dumps(guard))
+    drift["files"][name]["max_bytes"] += 1
+    assert not file_size_guard_is_pinned(drift)
+    drift = json.loads(json.dumps(guard))
+    drift["required_paths"].remove(name)
+    drift["files"].pop(name)
+    assert not file_size_guard_is_pinned(drift)

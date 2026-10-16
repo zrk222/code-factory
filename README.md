@@ -1,7 +1,8 @@
 # Code Factory
 
-Review your code, find missing checks, and verify repairs using the tools you
-already know. Start with one command:
+Your agent built it. Your review service reviewed it. Code Factory helps you
+inspect what was checked, what failed, and what still needs evidence before
+you accept the change. Start with one command:
 
 ```powershell
 python -m pip install factoryline-code-factory
@@ -39,15 +40,34 @@ Describe your idea to your coding agent and create `PRD.md`. The optional
 [beginner guide](docs/PRD_GRILL.md) helps turn it into concrete acceptance checks.
 For an existing repository, start with the scan above.
 
-## Graph Ops telemetry sample — October 8, 2026
+## From an idea to a reviewable change
 
-**Fixed:** bounded evaluator output validation across all six runtime lanes; malformed results stay incomplete. Shared imported assertion helpers and inherited test mixins are resolved by bounded static analysis.
-**Changed:** audit findings carry candidate-bound repair packets with reproduction, negative-control and separate specialty AI review requirements.
-**Added:** Graph Ops agent repair telemetry, evidence requirements, stop conditions and searchable individual test outcomes. Repair packets are consumed by the host agent; this view does not execute or approve repairs.
+For a new builder, start with an idea and make the expected behavior concrete.
+For an experienced developer, start with the repository or proposed diff.
+SpecLine helps structure requirements; ForgeLine adds architecture and test-intent
+checks; Code Factory connects the findings, evidence and next action. The basic
+scan does not require those optional workflows.
 
-![Graph Ops current audit and agent repair telemetry](docs/assets/marketplace/graph-ops-audit-telemetry-current.png)
+![Actual CF Studio product-mission form with a clearly labelled fictional sample](docs/assets/marketplace/cf-product-mission-20261016.jpg)
 
-Actual local Graph Ops capture, October 8, 2026: 415 targeted tests passed. JUnit results are local and unbound; missing runtime receipts and coverage remain explicitly incomplete. Agent repair cards show candidate bindings, required evidence and separate specialty AI review requirements.
+Then inspect the findings, repair the code, and rerun the affected checks. Keep
+your coding agent and review services, including CodeRabbit, Devin or Blitzy.
+CF adds its combination of test-intent checks, optional runtime mutation
+evidence and local receipts bound to source. Review services also offer testing
+and analysis; CF's evidence helps you inspect the work alongside them.
+
+![Actual CF Studio showing two planted security findings and current source hashes](docs/assets/marketplace/cf-audit-findings-20261016.jpg)
+
+**Demonstration, October 16, 2026:** the installed local CF runtime scanned one
+fictional Python file and reported two planted security findings. Studio shows
+1/1 source files assessed and incomplete evidence. These are real sample-run
+observations, not an accuracy benchmark, a JetBrains IDE capture or a release
+approval. Unrun runtime lanes remain visible as not run.
+
+Try the free local core on your own repository. If it helps, a GitHub star makes
+it easier to discover; fork it to improve a rule or contribute a reproducible
+positive and negative example. Reports of missed issues and false alarms are
+useful contributions too.
 
 
 Code Factory + ForgeLine (CF/FL) is a robust, local-first code-audit factory.
