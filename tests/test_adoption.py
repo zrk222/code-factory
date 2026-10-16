@@ -59,8 +59,238 @@ def test_local_completion_card_keeps_legacy_claims_incomplete(tmp_path):
     assert card["source_receipt"] == source.relative_to(tmp_path).as_posix()
     assert "not a share card" in result["markdown"]
     assert "No current executed cases" in result["markdown"]
-    assert "Not established by this receipt" in result["markdown"]
+    assert (
+        "Applied-change projection: unavailable (baseline_unbound)"
+        in result["markdown"]
+    )
     assert set(result["paths"]) == {"json", "markdown"}
+    assert card["applied_changes"]["state"] == "unavailable"
+    assert card["applied_changes"]["reason"] == "baseline_unbound"
+    assert "Applied changes unavailable: baseline\\_unbound." in result["markdown"]
+
+
+def test_local_completion_card_does_not_expose_private_intent_when_invalid(tmp_path):
+    from factoryline.adoption import completion_card_from_receipt
+
+    source, evidence, _mission = _local_completion_fixture(tmp_path)
+    evidence.write_text('{"changed": true}', encoding="utf-8")
+    result = completion_card_from_receipt(tmp_path, source, Path("local-summary"))
+    card = result["card"]
+    assert card["status"] == "INVALID"
+    assert card["applied_changes"]["state"] == "unavailable"
+    assert card["applied_changes"]["reason"] == "completion_receipt_invalid"
+    assert card["applied_changes"]["rationale"] is None
+
+
+def test_applied_change_baseline_comes_from_real_mission_candidate_binding(
+    tmp_path, monkeypatch
+):
+    from factoryline import proof_worklog
+    from factoryline.proof_worklog import bound_candidate_context
+
+    helpers = runpy.run_path(str(Path(__file__).with_name("test_product_missions.py")))
+    mission, decision, _candidate, declaration = helpers["_approved_binding_inputs"](
+        tmp_path
+    )
+    binding = helpers["bind_mission_candidate"](
+        Path(mission["path"]),
+        Path(decision["path"]),
+        tmp_path,
+        owner="release-owner",
+        declaration=declaration,
+    )
+    mission_path = Path(mission["path"])
+    import hashlib
+
+    context = bound_candidate_context(
+        tmp_path,
+        mission_path,
+        mission,
+        hashlib.sha256(mission_path.read_bytes()).hexdigest(),
+    )
+
+    assert context[0] == declaration["base_commit"]
+    assert context[1] == Path(binding["workspace"])
+    assert context[2] == {"src/signal-review.py"}
+    assert context[3] == {"src/signal-review.py": None}
+    assert context[4] == binding["binding_sha256"]
+    late = mission_path.parent / "candidate-binding-zzzz.json"
+    late.write_bytes(b"x" * (1_048_577))
+    exhausted = bound_candidate_context(
+        tmp_path,
+        mission_path,
+        mission,
+        hashlib.sha256(mission_path.read_bytes()).hexdigest(),
+    )
+    assert exhausted[0] is None
+    late.write_text("{}", encoding="utf-8")
+    read_binding = proof_worklog._read_candidate_binding
+
+    def exhaust_after_first_match(path, workspace, budget):
+        if Path(path) == Path(binding["path"]):
+            return read_binding(path, workspace, budget)
+        budget["deadline"] = proof_worklog.time.monotonic() - 1
+        return {"mission": {}, "owner": "foreign-owner"}
+
+    monkeypatch.setattr(
+        proof_worklog, "_read_candidate_binding", exhaust_after_first_match
+    )
+    late_exhaustion = bound_candidate_context(
+        tmp_path,
+        mission_path,
+        mission,
+        hashlib.sha256(mission_path.read_bytes()).hexdigest(),
+        _budget={"deadline": proof_worklog.time.monotonic() + 30, "retained": 0},
+    )
+    assert late_exhaustion[0] is None
+
+    monkeypatch.setattr(proof_worklog, "_read_candidate_binding", read_binding)
+    budget = {"deadline": proof_worklog.time.monotonic() + 30, "retained": 0}
+    read_files = proof_worklog._candidate_baseline_files
+
+    def expire_after_file_validation(paths, files):
+        result = read_files(paths, files)
+        budget["deadline"] = proof_worklog.time.monotonic() - 1
+        return result
+
+    monkeypatch.setattr(
+        proof_worklog, "_candidate_baseline_files", expire_after_file_validation
+    )
+    expected = {
+        "path": str(mission_path.resolve()),
+        "file_sha256": hashlib.sha256(mission_path.read_bytes()).hexdigest(),
+        "mission_sha256": mission.get("mission_sha256"),
+    }
+    with pytest.raises(ValueError, match="resource_exhausted"):
+        proof_worklog._matching_candidate_binding(
+            Path(binding["path"]), tmp_path, expected, "release-owner", budget
+        )
+
+
+@pytest.mark.parametrize("stage_during_render", [False, True])
+def test_completion_card_renders_candidate_bytes_from_public_bound_mission(
+    tmp_path, monkeypatch, stage_during_render
+):
+    import hashlib
+    import subprocess
+
+    from factoryline.adoption import completion_card_from_receipt
+    from factoryline.e2e_proof import public_e2e_proof_receipt, verify_e2e_proof
+    from factoryline.product_missions import _canonical, _sha_bytes
+
+    helpers = runpy.run_path(str(Path(__file__).with_name("test_product_missions.py")))
+    _graph, _slices, mission = helpers["_pipeline"](tmp_path)
+    candidate, declaration = helpers["_candidate_workspace"](tmp_path)
+    source = candidate / "candidate.py"
+    source.write_text("VALUE = 0\n", encoding="utf-8")
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-C", str(candidate), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    git("add", "candidate.py")
+    git(
+        "-c",
+        "user.name=Test Owner",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "--quiet",
+        "-m",
+        "source baseline",
+    )
+    declaration["paths"] = ["candidate.py"]
+    declaration["base_commit"] = git("rev-parse", "HEAD")
+    decision = helpers["decide_mission"](
+        Path(mission["path"]),
+        tmp_path,
+        owner="release-owner",
+        decision="approved_execution",
+        rationale="Approve this bounded candidate slice.",
+    )
+    binding = helpers["bind_mission_candidate"](
+        Path(mission["path"]),
+        Path(decision["path"]),
+        tmp_path,
+        owner="release-owner",
+        declaration=declaration,
+    )
+
+    daily = helpers["_daily_verification_for"](mission, tmp_path)
+    source.write_text(
+        (tmp_path / "candidate.py").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    manifest_path = tmp_path / "e2e-manifest.json"
+    proof_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    proof_manifest["artifact_paths"] = ["candidate/candidate.py"]
+    manifest_path.write_text(json.dumps(proof_manifest), encoding="utf-8")
+    proof = verify_e2e_proof(tmp_path, manifest_path)
+    receipt_path = tmp_path / "e2e-receipt.json"
+    receipt_path.write_text(
+        json.dumps(public_e2e_proof_receipt(proof)), encoding="utf-8"
+    )
+
+    source_row = {
+        "path": "candidate/candidate.py",
+        "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+    }
+    daily["source_manifest"] = [source_row]
+    daily["candidate_sha256"] = _sha_bytes(_canonical([source_row]))
+    receipt_sha = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    for criterion in daily["criteria"]:
+        for case in criterion["cases"]:
+            case["input_paths"] = [source_row["path"]]
+            case["input_sha256"] = _sha_bytes(_canonical([source_row]))
+            case["evidence"]["sha256"] = receipt_sha
+
+    evidence = tmp_path / "test-results.json"
+    evidence.write_text('{"passed": true}\n', encoding="utf-8")
+    validation = helpers["_validation_for"](mission, "worker", "verifier", evidence)
+    validation["daily_verification"] = daily
+    validation_path = tmp_path / "validation.json"
+    validation_path.write_text(json.dumps(validation), encoding="utf-8")
+    completion = helpers["close_mission"](
+        Path(mission["path"]), validation_path, tmp_path
+    )
+
+    if stage_during_render:
+        import factoryline.adoption as adoption
+
+        render = adoption._completion_card_markdown
+
+        def stage_candidate_after_render(card):
+            markdown = render(card)
+            subprocess.run(
+                ["git", "-C", str(candidate), "add", "candidate.py"],
+                check=True,
+                capture_output=True,
+            )
+            return markdown
+
+        monkeypatch.setattr(
+            adoption, "_completion_card_markdown", stage_candidate_after_render
+        )
+        with pytest.raises(AdoptionError, match="applied-change snapshot changed"):
+            completion_card_from_receipt(
+                tmp_path, Path(completion["path"]), Path("local-summary")
+            )
+        return
+    result = completion_card_from_receipt(
+        tmp_path, Path(completion["path"]), Path("local-summary")
+    )
+    projection = result["card"]["applied_changes"]
+    assert projection["state"] == "available"
+    assert projection["baseline_oid"] == binding["declaration"]["base_commit"]
+    assert projection["binding_sha256"] == binding["binding_sha256"]
+    change = next(row for row in projection["changes"] if row["path"] == "candidate.py")
+    assert change["disposition"] == "verified_candidate_bytes", change["reason"]
+    assert change["before_sha256"] == binding["files"][0]["sha256"]
+    assert change["after_sha256"] == source_row["sha256"]
+    assert "Declared rationale:" in result["markdown"]
 
 
 def test_local_completion_card_refresh_rejects_stale_evidence(tmp_path):

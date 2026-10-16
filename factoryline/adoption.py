@@ -450,12 +450,72 @@ def _completion_card_cases(summary: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def _completion_card_facts(workspace, source, receipt, digest, verification, mission):
+def _completion_card_facts(
+    workspace,
+    source,
+    receipt,
+    digest,
+    verification,
+    mission,
+    applied_budget,
+    applied_snapshot,
+):
     intact = verification.get("integrity_valid") is True
     complete = intact and verification.get("complete") is True
     summary = verification.get("daily_verification", {}) if intact else {}
     status = "COMPLETE" if complete else "INCOMPLETE" if intact else "INVALID"
     request = mission.get("slice", {}).get("user_outcome") if intact else None
+    from .proof_worklog import applied_change_projection, bound_candidate_context
+
+    applied_changes = {
+        "state": "unavailable",
+        "reason": "completion_receipt_invalid" if not intact else "baseline_unbound",
+        "baseline_oid": None,
+        "head_oid": None,
+        "candidate_sha256": None,
+        "binding_sha256": None,
+        "changes": [],
+        "unrelated_dirty_paths": [],
+        "rationale": None,
+    }
+    if intact:
+        baseline, candidate_root, declared_paths, baseline_files, binding_sha256 = (
+            bound_candidate_context(
+                workspace,
+                Path(receipt["mission"]["path"]),
+                mission,
+                receipt["mission"]["sha256"],
+                _budget=applied_budget,
+            )
+        )
+        if baseline and candidate_root:
+            manifest = []
+            manifest_valid = True
+            for item in summary.get("source_manifest", []):
+                source_path = _workspace_path(workspace, Path(item["path"]))
+                try:
+                    relative = source_path.relative_to(candidate_root).as_posix()
+                except ValueError:
+                    manifest_valid = False
+                    break
+                if relative not in declared_paths:
+                    manifest_valid = False
+                    break
+                manifest.append({"path": relative, "sha256": item["sha256"]})
+            if manifest_valid and manifest:
+                applied_changes = applied_change_projection(
+                    candidate_root,
+                    baseline,
+                    manifest,
+                    request,
+                    candidate_sha256=summary.get("candidate_sha256"),
+                    baseline_files=baseline_files,
+                    _budget=applied_budget,
+                    _snapshot_out=applied_snapshot,
+                )
+                applied_changes["binding_sha256"] = binding_sha256
+            else:
+                applied_changes["reason"] = "candidate_manifest_does_not_match_binding"
     core = {
         "schema": "factory.completion-card.v1",
         "status": status,
@@ -480,7 +540,10 @@ def _completion_card_facts(workspace, source, receipt, digest, verification, mis
         else None,
         "cases": _completion_card_cases(summary),
         "files_checked": [item["path"] for item in summary.get("source_manifest", [])],
-        "actual_diff": "Not established by this receipt; review the candidate diff separately.",
+        "applied_changes": applied_changes,
+        "actual_diff": (
+            f"Applied-change projection: {applied_changes['state']} ({applied_changes['reason'] or 'source bytes and Git baseline checked'})."
+        ),
         "unfinished": list(
             dict.fromkeys(
                 [
@@ -558,6 +621,34 @@ def _completion_card_markdown(card: dict[str, Any]) -> str:
             lines.append(
                 "No items recorded; this does not establish complete coverage."
             )
+    projection = card.get("applied_changes", {})
+    lines.extend(["", "### Applied changes", ""])
+    if projection.get("state") != "available":
+        lines.append(
+            f"Applied changes unavailable: {text(projection.get('reason') or 'projection_unavailable')}."
+        )
+    else:
+        lines.append(f"Baseline: `{text(projection.get('baseline_oid'))}`")
+        lines.append(f"Candidate: `{text(projection.get('candidate_sha256'))}`")
+        lines.append(
+            f"Declared rationale: {text(projection.get('rationale') or 'not declared')}"
+        )
+        for change in projection.get("changes", []):
+            before = change.get("before_sha256") or "absent"
+            after = change.get("after_sha256") or "absent"
+            lines.append(
+                f"- {text(change['kind'])} `{text(change.get('old_path') or change['path'])}`"
+                + (f" → `{text(change['path'])}`" if change.get("old_path") else "")
+                + f": {text(change['disposition'])}; before {text(before)}; after {text(after)}."
+            )
+        lines.extend(
+            f"- Unrelated dirty path: `{text(path)}`"
+            for path in projection.get("unrelated_dirty_paths", [])
+        )
+        if not projection.get("changes") and not projection.get(
+            "unrelated_dirty_paths"
+        ):
+            lines.append("No Git changes were found from the explicit baseline.")
     lines.extend(
         [
             "",
@@ -578,7 +669,7 @@ def completion_card_from_receipt(
     root: Path, receipt_path: Path, out_dir: Path
 ) -> dict[str, Any]:
     """Render a fresh local mission view, separately from privacy-safe share cards."""
-    from .product_missions import MISSION_COMPLETION_SCHEMA, verify_mission_completion
+    from .product_missions import MISSION_COMPLETION_SCHEMA
 
     workspace = Path(root).resolve()
     source = _workspace_path(workspace, receipt_path)
@@ -587,6 +678,57 @@ def completion_card_from_receipt(
         raise AdoptionError(
             "E_COMPLETION_CARD_SOURCE", "a mission completion receipt is required"
         )
+    mission_path, verification, mission, mission_digest = (
+        _verified_completion_card_inputs(workspace, source, receipt, digest)
+    )
+    from .proof_worklog import _new_applied_change_budget
+
+    applied_budget = _new_applied_change_budget()
+    applied_snapshot = {}
+    card = _completion_card_facts(
+        workspace,
+        source,
+        receipt,
+        digest,
+        verification,
+        mission,
+        applied_budget,
+        applied_snapshot,
+    )
+    markdown = _completion_card_markdown(card)
+    _recheck_completion_card_projection(
+        workspace,
+        source,
+        digest,
+        mission_path,
+        mission_digest,
+        mission,
+        receipt,
+        verification,
+        card,
+        applied_snapshot,
+        applied_budget,
+    )
+    destination = _workspace_path(workspace, out_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    stem = f"completion-card-{card['card_sha256'][:12]}"
+    paths = {
+        "json": destination / f"{stem}.json",
+        "markdown": destination / f"{stem}.md",
+    }
+    _atomic_json(paths["json"], card)
+    paths["markdown"].write_text(markdown, encoding="utf-8")
+    return {
+        "card": card,
+        "markdown": markdown,
+        "paths": {key: str(path) for key, path in paths.items()},
+    }
+
+
+def _verified_completion_card_inputs(workspace, source, receipt, digest):
+    """Read mission inputs and verify source bytes stayed stable during loading."""
+    from .product_missions import verify_mission_completion
+
     try:
         mission_path = _completion_card_inputs(workspace, receipt)
         verification = verify_mission_completion(source)
@@ -606,24 +748,87 @@ def completion_card_from_receipt(
         raise AdoptionError(
             "E_COMPLETION_CARD_DRIFT", "mission changed during rendering"
         )
-    card = _completion_card_facts(
-        workspace, source, receipt, digest, verification, mission
+    return mission_path, verification, mission, mission_digest
+
+
+def _recheck_completion_card_projection(
+    workspace,
+    source,
+    digest,
+    mission_path,
+    mission_digest,
+    mission,
+    receipt,
+    verification,
+    card,
+    applied_snapshot,
+    applied_budget,
+):
+    """Recheck all candidate binding and byte facts before saving a card."""
+    from .product_missions import verify_mission_completion
+    from .proof_worklog import (
+        _verify_applied_change_snapshot,
+        bound_candidate_context,
     )
-    markdown = _completion_card_markdown(card)
-    destination = _workspace_path(workspace, out_dir)
-    destination.mkdir(parents=True, exist_ok=True)
-    stem = f"completion-card-{card['card_sha256'][:12]}"
-    paths = {
-        "json": destination / f"{stem}.json",
-        "markdown": destination / f"{stem}.md",
-    }
-    _atomic_json(paths["json"], card)
-    paths["markdown"].write_text(markdown, encoding="utf-8")
-    return {
-        "card": card,
-        "markdown": markdown,
-        "paths": {key: str(path) for key, path in paths.items()},
-    }
+
+    applied = card.get("applied_changes", {})
+    if applied.get("state") != "available":
+        return
+    (
+        baseline,
+        candidate_root,
+        _declared,
+        baseline_files,
+        binding_sha256,
+    ) = bound_candidate_context(
+        workspace,
+        mission_path,
+        mission,
+        receipt["mission"]["sha256"],
+        _budget=applied_budget,
+    )
+    if (
+        baseline != applied.get("baseline_oid")
+        or binding_sha256 != applied.get("binding_sha256")
+        or baseline_files != applied_snapshot.get("value", {}).get("baseline_files")
+    ):
+        raise AdoptionError(
+            "E_COMPLETION_CARD_DRIFT", "candidate binding changed during rendering"
+        )
+    final_verification = verify_mission_completion(source)
+    if not _completion_card_candidate_is_current(
+        source,
+        digest,
+        mission_path,
+        mission_digest,
+        final_verification,
+        applied,
+    ):
+        raise AdoptionError(
+            "E_COMPLETION_CARD_DRIFT", "candidate changed during rendering"
+        )
+    try:
+        _verify_applied_change_snapshot(
+            candidate_root, applied_snapshot["value"], applied_budget
+        )
+    except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise AdoptionError(
+            "E_COMPLETION_CARD_DRIFT",
+            "applied-change snapshot changed during rendering",
+        ) from exc
+
+
+def _completion_card_candidate_is_current(
+    source, digest, mission_path, mission_digest, verification, applied
+):
+    """Confirm receipt, mission, and candidate digest still match the card."""
+    return (
+        _completion_card_json(source)[1] == digest
+        and _completion_card_json(mission_path)[1] == mission_digest
+        and verification.get("integrity_valid")
+        and verification.get("daily_verification", {}).get("candidate_sha256")
+        == applied.get("candidate_sha256")
+    )
 
 
 def record_adoption_event(
