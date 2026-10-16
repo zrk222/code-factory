@@ -6,12 +6,34 @@ This documentation-only update does not change extension runtime behavior. It
 can be used with Code Factory core 0.48.2; publishing the optional core package
 is a separate release step. Marketplace status must be confirmed from provider
 read-back.
-The bounded security review follows values through supported local helpers to
-HTTP, file, and SQL sinks, while checking upload directories separately from
-sanitized filenames. Studio presents a shared next action; optional JEV
-integration stays advisory; unavailable evaluations stay incomplete. Results still need your review
-and affected checks; this candidate does not claim exhaustive detection or
+
+Catch AI-generated tests that could never fail — before review. FactoryLine
+Evidence keeps supported local audit lanes beside the VS Code
+workspace. **Run First Proof** is a setup demonstration that checks the local
+CLI; it does not assess repository code. For a repository assessment, run
+`factory scan --root .` from the workspace, then review each result's coverage
+and evidence state before deciding what to accept. Missing or unbound evidence
+stays incomplete; these bounded checks do not claim exhaustive detection or
 measured accuracy.
+
+Use FactoryLine when you want to turn an outcome into a buildable starting
+point or review AI and teammate changes with evidence. Open **Graph Ops** for
+the local evidence path, use **PRD Grill** with
+`factory prd grill PRD.md --root . --mode quick` to clarify requirements, and
+inspect **Proof Debt** in Plan-to-Proof Review. Star Code Factory on GitHub if
+the workflow helps.
+
+![CF Studio product mission form with fictional sample text](../../docs/assets/marketplace/cf-product-mission-20261016.jpg)
+
+Actual Product Mission form with sample text entered through the interface. No
+interview, build, or deployment is claimed by this image.
+
+![Graph Ops security findings from a fictional Python file](../../docs/assets/marketplace/cf-audit-findings-20261016.jpg)
+
+Actual Graph Ops projection of a local scan of one fictional Python file. It
+shows two planted findings, complete source coverage for that file, and
+`INCOMPLETE` evidence; runtime lanes were not run. This is demonstration
+evidence, not a benchmark.
 
 ## VS Code release 1.1.3
 
@@ -64,9 +86,9 @@ agent message. It never uploads your workspace, code, or receipts.
 
 ## The proof path, in three moves
 
-1. **Start with First Proof.** Run `factory first-proof --root .` to challenge a
-   test in a disposable sandbox. A test that still passes after its behavior is
-   removed is a review signal, not a release signal.
+1. **Check local setup.** Run `factory first-proof --root .` for a setup
+   demonstration. It does not assess repository code; use `factory scan --root .`
+   for a repository assessment.
 2. **Make the handoff inspectable.** If Junie, Copilot, CodeRabbit, Devin,
    Eve, Grok Build, or another agent supplied work, Agent Proof Bridge records
    the local before/after artifacts, sealed scope, checkpoints, and Oracle
@@ -82,12 +104,10 @@ Your choice remains explicit throughout: inspect the evidence, approve the
 next boundary, or stop and repair. A green check is useful only when you can
 see what it actually proves.
 
-**Catch AI-generated tests that could never fail — before review.** Keep the
-receipts and proof path next to the code, then open **Graph Ops** to see what is
-evidenced, blocked, or next. First run `factory first-proof --root .` to see a
-hollow negative control caught in a disposable sandbox, then open
-**FactoryLine: Open Local Factory Studio** or run
-`factory mvp "Build an approval tracker" --root .`. The
+**Review source evidence before accepting a change.** Run
+`factory scan --root .` for a repository assessment, then inspect the supported
+findings and coverage in **FactoryLine Evidence** or **Graph Ops**. Use
+`factory first-proof --root .` only as the local setup demonstration. The
 extension never calls a starter production-ready by itself.
 
 **Code Factory core 0.48.0:** the Python CLI is released separately from this
@@ -207,6 +227,7 @@ Install the Code Factory CLI first:
 ```powershell
 pip install factoryline-code-factory
 factory first-proof --root .
+factory scan --root .
 ```
 
 Build a local VSIX from this directory, then install it in VS Code:

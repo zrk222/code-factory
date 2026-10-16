@@ -1,13 +1,35 @@
 # Current product visuals
 
-This is the approved public visual set for FactoryLine 0.44 and FactoryLine AI
-Proof 0.8.19 across the current Code Factory listing,
-GitHub social preview handoff, Hugging Face product page, and explanatory
-community posts. Product surfaces use actual local product captures and the
+The current lead captures were taken on October 16, 2026 using installed local
+Code Factory `0.48.2+local.c5acb91`. They are prepared for GitHub and platform
+previews; preparation does not establish publication on each platform.
+Product surfaces use actual local product captures and the
 current FactoryLine identity asset—never
 concept art, recreated dashboards, or made-up activity counts. The operational
 proof loop is explicitly an editorial workflow diagram, never a recreated
 product interface.
+
+## Current lead captures
+
+![CF Studio product mission: a labelled fictional book-sharing example](assets/marketplace/cf-product-mission-20261016.jpg)
+
+Actual Product Mission form, with sample text entered through the interface.
+No interview, build or deployment is claimed by this image.
+
+![CF Studio security findings with source coverage and incomplete evidence](assets/marketplace/cf-audit-findings-20261016.jpg)
+
+Actual Graph Ops projection of a local scan of one fictional Python file.
+The scan reported two planted findings: a hardcoded secret pattern and SQL
+injection pattern. The screen reports 1/1 source files complete and evidence
+INCOMPLETE; runtime lanes were not run. This is demonstration evidence, not
+measured real-world accuracy or release approval.
+
+For JetBrains, describe the actual plugin's Proof Review, Change List repair
+sandbox and optional manual Junie handoff. Caption these shared Studio images
+as Studio; never present them as screenshots of a JetBrains IDE.
+
+Historical captures below remain reference material. Their dated measurements
+must not be presented as results of the current sample or current release.
 
 ## 1. FactoryLine identity
 
@@ -20,7 +42,7 @@ claim a Marketplace approval, download count, or readiness result.
 
 ![Full-page local Graph Ops dashboard showing lineage runs, a forensic finding, first semantic divergence, recovery preview, guarded actions, graph lanes, and the next action](assets/marketplace/graph-ops-forensics.png)
 
-The GitHub README leads with this actual dashboard capture. It shows a bounded
+This historical dashboard capture shows a bounded
 local result and a proposed recovery path whose execution remains locked.
 
 ### Updated audit and individual test results
@@ -29,7 +51,7 @@ local result and a proposed recovery path whose execution remains locked.
 
 Actual local Graph Ops capture, October 8, 2026: 415 targeted tests passed. JUnit results are local and unbound; missing runtime receipts and coverage remain explicitly incomplete. Agent repair cards show candidate bindings, required evidence and separate specialty AI review requirements.
 
-This current local capture shows the new labeled audit surface and individual
+This October 8 capture shows the labeled audit surface and individual
 test reporting. A missing scan or signed lane result remains marked not run;
 the JUnit report is local and has no current-candidate binding.
 
@@ -43,7 +65,7 @@ pixels are required.
 
 ![Actual FactoryLine 0.44 Graph Ops dashboard showing a waiting-for-human assembly, live telemetry, and evidence-backed next actions](assets/marketplace/factoryline-0.44-live-dashboard.png)
 
-Use for the current operations story: follow a local Assembly, see its exact
+Use for the dated operations example: follow a local Assembly, see its exact
 waiting boundary, and turn changed work into evidence-backed next actions.
 
 ## 3. Personal 60-day case study

@@ -849,3 +849,7 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-10-12 11:11] GATE code studio-journey approver=user-authorized-studio-integration reviewer=personas/reviewer.md auditor=personas/security_auditor.md
 - [2026-10-15 11:41] GATE spec forgeline-jev-review-v1 approver=human strict=True sha=685e0c92158b7925
 - [2026-10-15 11:43] GATE plan forgeline-jev-review-v1 approver=human tasks=4 sha=685e0c92158b7925
+- [2026-10-16 05:12] GATE spec borrowed-resource-contract approver=human strict=True sha=f33323343a492295
+- [2026-10-16 05:13] GATE spec borrowed-resource-contract approver=human strict=True sha=cc9768c1ccd9a343
+- [2026-10-16 05:14] GATE plan borrowed-resource-contract approver=human tasks=6 sha=17fe07a4506183bd
+- [2026-10-16 05:14] GATE spec borrowed-resource-contract approver=human strict=True sha=17fe07a4506183bd

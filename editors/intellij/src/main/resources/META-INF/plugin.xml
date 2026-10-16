@@ -3,82 +3,31 @@
     <name>FactoryLine AI Proof</name>
     <vendor email="rkatz22@gmail.com" url="https://github.com/zrk222/code-factory">FactoryLine</vendor>
     <description><![CDATA[
-      <p><b>Native audit expansion (core 0.48.2 candidate, editor 1.2.0 candidate):</b> Source-bound CodeQL Python, JavaScript/TypeScript and GitHub Actions worker profiles, plus multi-language Semgrep local taint rules. Junie guidance selects applicable workers through the unified deep audit CLI. Native execution requires signed worker configuration; status tools only read evidence. Package metadata is Production/Stable; detection accuracy and marketplace publication are separate evidence.</p>
-        <p><strong>Your AI-generated change is green. Before you review it, ask one useful question: could its test actually fail?</strong></p>
-        <p>That is the common JetBrains workflow gap FactoryLine addresses. <strong>FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains.</strong> It is a local proof layer that challenges hollow tests, makes the exact diff and its proof gap visible, and leaves the release decision with the developer—without uploading source or changing IDE settings.</p>
-        <p>Your IDE feels slow. Your AI code looks fine. FactoryLine keeps those concerns separate: Guardian records a bounded local health window, while First Proof and Graph Ops make the code-review evidence visible before more time is spent guessing.</p>
-        <p><strong>In the first minute:</strong> open <strong>Tools | FactoryLine | Run First Proof</strong>, confirm the workspace, and inspect whether the declared test can reject a broken result. Then open Graph Ops to see the next local evidence step.</p>
-        <p><strong>Tuned for Junie. Not dependent on Junie.</strong> FactoryLine gives Junie a progressive local taxonomy—intent, scope, evidence, challenge, and supervised handoff—so an agent can ask the right proof question at the right time. When Junie uses FactoryLine, its handoff can name the exact local proof tools it declared, hash the evidence it cited, and preserve its unknowns beside the diff. You do not need Junie, any AI assistant, or any external account to use FactoryLine: First Proof, Graph Ops, audit lanes, and local review work on their own.</p>
-        <p><strong>Use your preferred coding agent and analyzer—FactoryLine independently checks the evidence behind a green result.</strong> It can prepare local, reviewable facts alongside Junie, Copilot, CodeRabbit, Devin, Qodana, or SonarQube. FactoryLine does not replace, control, contact, or imply endorsement by those products.</p>
-        <p><strong>1.1.2 release preview — fixed:</strong> Marketplace metadata now aligns with Code Factory 0.48.0; the native dual-audit view exposes incomplete, unavailable, failed, and unbound local evidence with scope limits. ForgeLine runs only from an explicitly configured absolute executable path, shown in the confirmation prompt; the plugin does not resolve it through PATH.</p>
-        <p><strong>Changed:</strong> Junie's progressive taxonomy routes from intent and diff to bounded checks, actionable repair, and independent specialty AI review. The owner retains release authority.</p>
-        <p><strong>Added:</strong> a native CF + ForgeLine tab runs five explicit local audit lanes after project confirmation and states each lane's limits.</p>
-        <p><strong>New in 1.2.0 — release candidate:</strong> the adapter targets the Code Factory 0.48.2 candidate. Inspect each CF and ForgeLine observation beside its scope, evidence state, and candidate-binding limit. Provider publication is separate from this plugin.</p>
-        <p><strong>Core candidate detection fixes:</strong> bounded Python checks flag missing local assertions, constant-true assertions, and reflexive comparisons. Explicit tenant-read contracts check parameter binding, not authentication or runtime isolation. Local replay detects six defects and accepts two clean cases in the unchanged eight-case public corpus; this small regression result is not independent accuracy. These fixes require a verified core release and are not bundled into this JVM plugin.</p>
-        <p><strong>New in 1.0.1 — trace the proof path:</strong> follow a typed agent handoff from sealed intent through route and evidence, inspect no-gain repair stops, and see the current receipt provenance before human review. This update does not grant the IDE or agent release authority.</p>
-        <p><strong>New in 0.9.6 — proof-coupled Junie handoffs and First Lap:</strong> start with First Proof, bind the work to sealed intent and forbidden outcomes, challenge the implementation independently, and inspect the exact diff, Oracle Firewall rules, six deep audit lanes, session trace, and hash-bound evidence in Graph Ops. The First Lap command creates plain-language mission, end-to-end journey, and verifier-only holdout files; release-critical verifiers must pass approved/defective/wrong-candidate calibration and one human-observed intake-to-handoff lap before supervised autonomy is considered. Incidents can be promoted into permanent regression gates, and only typed transient provider failures are retryable. Junie contribution cards carry the known tool, changed-file rationale, workspace-local hashes, unknowns, and visible credit line, all checked against the current taxonomy digest. Missing, stale, reordered, duplicated, altered, or wrong-contract evidence stays blocked. IDE and A2A agents receive the same supervised playbook; scope, policy, exceptions, apply, merge, publication, and deployment remain human-owned.</p>
-        <p><strong>AppForge Mission Control:</strong> before an iOS team enters another App Review queue, it can inspect the exact candidate's local evidence story: user design input, storyboard, iPhone/iPad media, accessibility and full-stack checks, SaaS journey, and submission dossier. The tab makes missing proof visible while there is still time to fix it, which can avoid preventable rework and days-long repeat review cycles. It uses credential references rather than raw secrets and may prepare a supervised-agent packet; final TestFlight/App Review authority remains human-owned. It minimizes avoidable rejection risk; it cannot guarantee Apple approval.</p>
-        <p><strong>SaaS Reality:</strong> inspect whether OAuth/OIDC identity, tenant authorization, checkout, webhook, entitlement, feature access, and revocation agree across Clerk, Auth0, Okta, Entra, Cognito, Supabase, Firebase, or another standards-compliant provider. The native status action and Graph Ops view read hash-verified local receipts; they never contact a provider, access credentials, change billing, grant access, deploy, or approve a release.</p>
-        <p><strong>In 60 seconds:</strong> inspect an outcome, fuzzy PRD, or risky diff; challenge whether a test can actually reject the failure it claims to cover; then see the current proof gap before a human decides what may be applied.</p>
-        <p><strong>Start now:</strong> open <strong>Tools | FactoryLine | Run First Proof</strong>, confirm the workspace, then inspect the local result. Generate an MVP when you need one; a starter is never called production-ready before relevant evidence exists.</p>
-        <h3>Technical information</h3>
-        <p><strong>Runtime:</strong> local JVM plugin for the IntelliJ Platform (2025.2 / build 252 baseline), with no hosted service, source upload, API key, or background agent.</p>
-        <p><strong>Integration:</strong> the plugin exposes supervised tool-window actions and read-only local MCP facts for First Proof, Oracle Firewall, Graph Ops, six audit lanes, session traces, and hash-bound receipts. It works with Junie, Codex, Copilot, CodeRabbit, Devin, Qodana, SonarQube, Cursor, and OpenCode, but does not require, control, or impersonate any of them.</p>
-        <p><strong>Support and feedback:</strong> report reproducible issues at <a href="https://github.com/zrk222/code-factory/issues">GitHub Issues</a>; read the <a href="https://github.com/zrk222/code-factory/discussions">community forum</a> for usage questions and release discussion. These links are the authoritative support channels for this plugin.</p>
-        <h3>What this solves</h3>
-        <ul>
-            <li><strong>Passing tests that prove nothing:</strong> expose missing or stale proof before it turns into a confident-looking review green light.</li>
-            <li><strong>A clear PRD heading toward the wrong build:</strong> Intake Grill records a named, byte-bound intent, framework choice, acceptance evidence, and external-effects posture before a mission can require it.</li>
-            <li><strong>AI retries that repeat a failed idea:</strong> Proof-Delta requires a changed candidate and fresh hash-bound evidence, or makes the no-gain halt visible instead of consuming another retry.</li>
-            <li><strong>Agent trust that quietly ratchets upward:</strong> Earned Autonomy derives an expiry-bound local evidence tier and automatically demotes severe hollow-test or scope-escape findings; it never authenticates an agent or grants permission.</li>
-            <li><strong>Unclear AI or teammate diffs:</strong> review the exact local scope, see the declared proof gap, and follow one fact-derived next action.</li>
-            <li><strong>Several tasks in one working tree:</strong> review the full diff or focus only the active file, instead of mixing unrelated local changes.</li>
-            <li><strong>AI repair scope can drift or tests can be weakened to get green:</strong> copy a sealed Proof Mission into Junie or another AI coding agent, return the actual Change List to independent Proof Review, validate only a candidate patch that stays inside scope, and keep final IDE apply under human control.</li>
-            <li><strong>Large or remote workspaces feel opaque:</strong> measure local workspace shape and path-only WSL/remote context, then review generated/dependency directory signals without FactoryLine touching indexes, heap, caches, inspections, or remote settings.</li>
-            <li><strong>The IDE slows down and guesses start replacing facts:</strong> record a short local window of aggregate heap, process CPU when available, indexing state, and EDT dispatch delay; compare a structural continuity baseline before deciding whether a project-model change deserves re-analysis.</li>
-            <li><strong>Lost review context:</strong> save a hash-bound local JSON, Markdown, and Mermaid handoff packet that another developer can inspect.</li>
-            <li><strong>Automation without control:</strong> every command needs confirmation; FactoryLine does not edit, commit, publish, deploy, upload source, or make a release decision.</li>
-            <li><strong>Several plausible repairs:</strong> ProofSearch rejects failed proofs, surviving mutants, scope escapes, test weakening, and error suppression, then explains the smallest verified winner in the Graph Ops Counterfactual Arena.</li>
-        </ul>
-        <h3>Start here</h3>
-        <ol>
-            <li>Open <strong>Tools | FactoryLine | Run First Proof</strong>.</li>
-            <li>Confirm the current workspace.</li>
-            <li>Review the local setup result in the FactoryLine tool window.</li>
-            <li>Run <code>factory mvp "Build an approval tracker" --root .</code>, then open <strong>Graph Ops</strong> to inspect the next evidence step.</li>
-        </ol>
-        <h3>Know what is safe to ship</h3>
-        <ul>
-            <li><strong>Check changed code:</strong> see which proof is invalidated by your current diff.</li>
-            <li><strong>Review the exact local scope:</strong> inspect the full current diff or just the active file in a dedicated Proof Review tab, with declared findings and one fact-derived next action.</li>
-            <li><strong>Keep AI suggestions and proof distinct:</strong> use the optional GitHub Proof Review workflow beside CodeRabbit or another reviewer for one neutral, commit-bound evidence walkthrough. It does not need a vendor account, ingest AI comments, approve, or merge.</li>
-            <li><strong>Keep an agent inside agreed scope:</strong> run the local <code>factory plan verify</code> CLI contract to compare a named human-approved plan with the exact diff and surface Proof Debt. It records obligations; it does not execute tests, approve, merge, or change IDE settings.</li>
-            <li><strong>Make UI design reviewable:</strong> add the optional Prestige Design Review for a purpose-led brief and visible checks for hierarchy, responsive behavior, affordances, consistency, and declared design tokens. Its findings inform review; they do not certify accessibility, conversion, or production readiness.</li>
-            <li><strong>Leave a durable local handoff:</strong> save the hash-bound review as JSON, Markdown, and Mermaid for a teammate or a later supervised repair attempt.</li>
-            <li><strong>Use AI repair without losing team control:</strong> turn a selected Change List into a Scope Passport, bind a textual candidate patch to it, and make the separate verifier and human apply steps explicit.</li>
-            <li><strong>Investigate workspace load safely:</strong> use <strong>Workspace Advisor</strong> for a bounded local measurement and manual review paths; it is not an IDE performance diagnosis and never mutates configuration.</li>
-            <li><strong>Verify receipts:</strong> inspect local evidence before a release decision.</li>
-            <li><strong>Measure real savings:</strong> compare paired time, token, and cost data without inferred values.</li>
-            <li><strong>Run supervised workflows:</strong> assemble features, continue from safe boundaries, inspect durable mission graphs, and route secret-free BYOK policies.</li>
-            <li><strong>Follow the exact evidence path:</strong> Unified Graph Ops visualizes local requirements, slices, missions, approvals, completions, proofs, verifier sessions, gates, traces, and artifacts without executing them.</li>
-            <li><strong>Compare repairs without trusting another opinion:</strong> inspect every hash-bound candidate, exact rejection reason, mutation result, risk, changed scope, proof runtime, and measured-or-unavailable savings. Apply, merge, publish, and deploy remain locked.</li>
-            <li><strong>Keep generation and grading separate:</strong> <code>factory verifier</code> binds independent worker and verifier evidence, immutable checks, and hard budgets. It validates receipts; an external supervised runner must enforce runtime isolation.</li>
-            <li><strong>Clarify a PRD before the build compounds ambiguity:</strong> run <code>factory prd grill PRD.md --root .</code> for a capped, source-bound question sheet with answer stubs. It never rewrites the PRD or authorizes implementation.</li>
-        </ul>
-        <h3>Use FactoryLine when you want to</h3>
-        <ul>
-            <li><strong>Turn an outcome into a buildable starting point:</strong> create a contained MVP from a plain-language goal, then extend it in your normal IDE workflow.</li>
-            <li><strong>Review AI or teammate changes with evidence:</strong> connect requirements, tests, policies, and receipts before deciding what is ready to ship.</li>
-            <li><strong>Recover the next safe step after a change:</strong> identify proof that can be reused, proof invalidated by a diff, and the fact-derived action to take next.</li>
-            <li><strong>Make team automation inspectable:</strong> run supervised, local-first workflows and record paired time, token, and cost observations only when they are measured.</li>
-        </ul>
-        <h3>Local by design</h3>
-        <p>The plugin asks before running a command. It does not upload project files or receipts, store API keys, sign artifacts, or decide whether a release is ready.</p>
-        <p>Works with IntelliJ IDEA, PyCharm, WebStorm, Rider, CLion, GoLand, RustRover, and DataGrip from the 2025.2 platform baseline.</p>
-        <h3>Availability</h3>
-        <p>FactoryLine's local proof core is free and open source. Optional paid features are not active in this Marketplace build: there is no checkout, entitlement, source upload, credential storage, signing authority, or automatic release authority.</p>
-        <p><a href="https://github.com/zrk222/code-factory">Read the documentation, inspect the source, and review the license terms</a>.</p>
-    ]]></description>
+<p><strong>Your IDE feels slow. Your AI code looks fine.</strong> FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains. Guardian Core records a bounded, in-memory IDE-health sample; it does not diagnose a cause or change IDE settings.</p>
+
+<p><strong>New in 1.2.0 — </strong>Proof Review supports the current diff or active file, and Verified Repair Sandbox seals one native Change List for a manual, supervised agent handoff.</p>
+
+<p><strong>Run First Proof</strong> is a setup demonstration that checks the local CLI; it does not assess repository code. To assess a repository, run <code>factory scan --root .</code>. Then use Proof Review to inspect the current diff or active file and see what evidence supports, what remains unproven, and the next review step. Find it at <strong>Tools | FactoryLine | Run First Proof</strong>.</p>
+
+<h3>Review the change in front of you</h3>
+<p>In Proof Review, inspect the current diff or focus on the active file. See structured findings, changed paths, unproven claims, and a fact-based next action. Open changed files safely inside the project, then copy a brief or save a local JSON, Markdown, and Mermaid handoff.</p>
+
+<h3>Keep an AI repair inside scope</h3>
+<p>Choose one native Change List in the Verified Repair Sandbox. FactoryLine records its paths and bytes in a local Scope Passport. Copy the sealed Proof Mission into Junie or another coding agent yourself; bring the returned Change List back for review. Scope checks do not prove a repair is correct: independent verification and the human decision to apply remain separate.</p>
+
+<h3>Tuned for Junie. Not dependent on Junie.</h3>
+<p>FactoryLine offers a local Junie workflow for intent, scope, evidence, challenge, and supervised handoff. It does not start or message Junie, read its chat, or treat an agent's completion claim as approval. First Proof, Proof Review, and Graph Ops can be used without an AI assistant.</p>
+
+<h3>Use FactoryLine when you want to</h3>
+<p>Turn an outcome into a buildable starting point. Review AI or teammate changes with evidence, and inspect the next local review step in Unified Graph Ops. PRD Grill clarifies a brief with <code>factory prd grill PRD.md --root . --mode quick</code>; Plan-to-Proof Review surfaces Proof Debt before a human decides what to accept.</p>
+
+<p>SaaS Reality can display local evidence for OAuth/OIDC identity, tenant authorization, checkout, webhook, entitlement, feature access, and revocation. It does not contact a provider. Optional paid features are not active in this Marketplace build.</p>
+
+<h3>Local evidence. Human release decisions.</h3>
+<p>The IDE asks before running the configured local FactoryLine command. Missing, stale, unavailable, or unverified evidence stays visible as incomplete or unassessed. The plugin does not upload project source or receipts, sign artifacts, or decide whether a release is ready.</p>
+
+<p><a href="https://github.com/zrk222/code-factory">Read the documentation and inspect the source.</a></p>
+        ]]></description>
     <change-notes><![CDATA[
         <ul>
             <li>Make First Proof the front door: check whether an AI-generated test can actually fail before trusting a green result.</li>
