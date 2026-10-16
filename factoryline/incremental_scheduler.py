@@ -10,10 +10,9 @@ from collections import defaultdict, deque
 import hashlib
 import json
 from pathlib import Path, PureWindowsPath
-import tempfile
 from typing import Any
 
-from .proof_reuse import plan_proofs
+from .proof_reuse import evaluate_proofs
 from .runtime_audit_common import (
     canonical_bytes,
     exact_keys,
@@ -244,7 +243,11 @@ def _topological(gates: list[dict[str, Any]]) -> list[str]:
 
 
 def _route_gate(
-    root: Path, manifest: dict[str, Any], gate: dict[str, Any]
+    root: Path,
+    manifest: dict[str, Any],
+    gate: dict[str, Any],
+    *,
+    evaluated_proof: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     gate_id = gate["id"]
     closure = manifest["dependency_closure"].get(gate_id)
@@ -300,37 +303,51 @@ def _route_gate(
             "reason": "PROOF_ASSURANCE_MISMATCH",
             "proof": None,
         }
-    try:
-        with tempfile.TemporaryDirectory(
-            prefix="factory-schedule-", dir=str(root)
-        ) as temporary:
-            planned = plan_proofs(
+    if evaluated_proof is None:
+        try:
+            planned = evaluate_proofs(
                 root,
                 {"schema": "factory.proof-request.v1", "gates": [proof]},
                 changed_paths=manifest["changed_paths"],
-                out=Path(temporary) / "proof-plan.json",
             )
-        item = planned["items"][0]
-    except Exception as exc:
-        return {
-            "id": gate_id,
-            "depends_on": gate["depends_on"],
-            "dependency_paths": closure,
-            "disposition": "RUN",
-            "reason": getattr(exc, "code", "PROOF_EXECUTION_REQUIRED"),
-            "proof": None,
-        }
+            evaluated_proof = planned["items"][0]
+        except Exception as exc:
+            return {
+                "id": gate_id,
+                "depends_on": gate["depends_on"],
+                "dependency_paths": closure,
+                "disposition": "RUN",
+                "reason": getattr(exc, "code", "PROOF_EXECUTION_REQUIRED"),
+                "proof": None,
+            }
     return {
         "id": gate_id,
         "depends_on": gate["depends_on"],
         "dependency_paths": closure,
-        "disposition": item["disposition"],
-        "reason": item["reason"],
+        "disposition": evaluated_proof["disposition"],
+        "reason": evaluated_proof["reason"],
         "proof": {
-            "proof_key": item.get("proof_key"),
-            "receipt_sha256": item.get("receipt_sha256"),
+            "proof_key": evaluated_proof.get("proof_key"),
+            "receipt_sha256": evaluated_proof.get("receipt_sha256"),
         },
     }
+
+
+def _proof_is_batch_eligible(manifest: dict[str, Any], gate: dict[str, Any]) -> bool:
+    gate_id = gate["id"]
+    closure = manifest["dependency_closure"].get(gate_id)
+    if not closure or gate["side_effects"]:
+        return False
+    if any(
+        paths_intersect(changed_path, dependency_path)
+        for changed_path in manifest["changed_paths"]
+        for dependency_path in closure
+    ):
+        return False
+    proof = gate.get("proof")
+    return bool(
+        proof and proof.get("assurance_level") in (None, manifest["assurance_level"])
+    )
 
 
 def plan_incremental(
@@ -341,9 +358,30 @@ def plan_incremental(
     root = Path(root).resolve()
     order = _topological(contract["gates"])
     by_id = {gate["id"]: gate for gate in contract["gates"]}
+    eligible_ids = [
+        gate_id
+        for gate_id in order
+        if _proof_is_batch_eligible(contract, by_id[gate_id])
+    ]
+    proof_results: dict[str, dict[str, Any]] = {}
+    if eligible_ids:
+        batch = evaluate_proofs(
+            root,
+            {
+                "schema": "factory.proof-request.v1",
+                "gates": [by_id[gate_id]["proof"] for gate_id in eligible_ids],
+            },
+            changed_paths=contract["changed_paths"],
+        )
+        proof_results = dict(zip(eligible_ids, batch["items"], strict=True))
     items = {}
     for gate_id in order:
-        item = _route_gate(root, contract, by_id[gate_id])
+        item = _route_gate(
+            root,
+            contract,
+            by_id[gate_id],
+            evaluated_proof=proof_results.get(gate_id),
+        )
         dependency_items = [items[dep] for dep in by_id[gate_id]["depends_on"]]
         if any(dep["disposition"] == "BLOCK" for dep in dependency_items):
             item.update(
