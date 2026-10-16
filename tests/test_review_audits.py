@@ -7202,6 +7202,274 @@ def test_security_scan_recognizes_individual_declared_static_type_oracle(
         assert len(edge["sha256"]) == 64
 
 
+def _write_ty_invocation(root, command="ty check"):
+    (root / "tox.ini").write_text(
+        f"[testenv]\ncommands =\n    {command}\n", encoding="utf-8"
+    )
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        "changedir = subproject",
+        "setenv = TY_CONFIG_FILE=other.toml",
+        "passenv = TY_*",
+        "passenv = *",
+    ],
+)
+def test_ty_intent_rejects_tox_execution_context_overrides(tmp_path, override):
+    (tmp_path / "test_types.py").write_text(
+        "from typing import assert_type\ndef test_types():\n    assert_type(1, int)\n"
+    )
+    (tmp_path / "pyproject.toml").write_text('[tool.ty.src]\ninclude = ["."]\n')
+    (tmp_path / "tox.ini").write_text(f"[testenv]\n{override}\ncommands = ty check\n")
+    assert security_scan(tmp_path)["finding_counts"].get("QUALITY_HOLLOW_TEST") == 1
+
+
+@pytest.mark.parametrize(
+    ("ignore_file", "pattern"),
+    [
+        (".gitignore", "tests/"),
+        (".gitignore", "/test*"),
+        (".gitignore", "/tests*/"),
+        (".gitignore", "tests"),
+        ("tests/.gitignore", "sub/"),
+        ("tests/.gitignore", "/sub/test_types.py"),
+    ],
+)
+def test_ty_intent_respects_directory_and_nested_ignore_scope(
+    tmp_path, ignore_file, pattern
+):
+    tests = tmp_path / "tests" / "sub"
+    tests.mkdir(parents=True)
+    (tests / "test_types.py").write_text(
+        "from typing import assert_type\ndef test_types():\n    assert_type(1, int)\n"
+    )
+    (tmp_path / "pyproject.toml").write_text('[tool.ty.src]\ninclude = ["tests"]\n')
+    _write_ty_invocation(tmp_path)
+    (tmp_path / ignore_file).write_text(pattern + "\n")
+    assert security_scan(tmp_path)["finding_counts"].get("QUALITY_HOLLOW_TEST") == 1
+
+
+def test_ty_intent_rejects_mutated_assertion_provider(tmp_path):
+    (tmp_path / "test_types.py").write_text(
+        "import typing\ntyping.assert_type = lambda *args: None\n"
+        "def test_types():\n    typing.assert_type(1, int)\n"
+    )
+    (tmp_path / "pyproject.toml").write_text('[tool.ty.src]\ninclude = ["."]\n')
+    _write_ty_invocation(tmp_path)
+    assert security_scan(tmp_path)["finding_counts"].get("QUALITY_HOLLOW_TEST") == 1
+
+
+@pytest.mark.parametrize(
+    ("config", "expected_hollow"),
+    [
+        ('[tool.ty.src]\ninclude = ["tests"]\n', 0),
+        ('[tool.mypy]\nfiles = ["tests"]\n', 1),
+        ("", 1),
+    ],
+)
+def test_ty_assert_type_counts_only_as_declared_type_intent(
+    tmp_path, config, expected_hollow
+):
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_types.py").write_text(
+        "from typing import assert_type\n"
+        "def test_static_types():\n"
+        "    assert_type(1, int)\n",
+        encoding="utf-8",
+    )
+    if config:
+        (tmp_path / "pyproject.toml").write_text(config, encoding="utf-8")
+    if "tool.ty" in config:
+        _write_ty_invocation(tmp_path)
+
+    result = security_scan(tmp_path)
+
+    assert result["finding_counts"].get("QUALITY_HOLLOW_TEST", 0) == expected_hollow
+    if "tool.ty" in config:
+        edge = next(
+            item
+            for item in result["oracle_context"]["resolved_edges"]
+            if item["kind"] == "static_type_configuration" and item["checker"] == "ty"
+        )
+        assert edge["execution_state"] == "NOT_VERIFIED"
+
+
+@pytest.mark.parametrize(
+    ("imports", "call"),
+    [
+        ("from typing import assert_type", "assert_type(1, int)"),
+        ("import typing as ty", "ty.assert_type(1, int)"),
+        (
+            "from typing_extensions import assert_type as check_type",
+            "check_type(1, int)",
+        ),
+    ],
+)
+def test_ty_intent_resolves_supported_assert_type_aliases(tmp_path, imports, call):
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_types.py").write_text(
+        f"{imports}\ndef test_static_types():\n    {call}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.ty.src]\ninclude = ["tests"]\n', encoding="utf-8"
+    )
+    _write_ty_invocation(tmp_path)
+
+    result = security_scan(tmp_path)
+
+    assert result["finding_counts"].get("QUALITY_HOLLOW_TEST", 0) == 0
+
+
+@pytest.mark.parametrize(
+    ("config", "body"),
+    [
+        (
+            '[tool.ty.src]\ninclude = ["tests"]\nexclude = ["tests"]\n',
+            "assert_type(1, int)",
+        ),
+        (
+            '[tool.ty.src]\ninclude = ["tests"]\n\n[tool.ty.rules]\n'
+            'type-assertion-failure = "ignore"\n',
+            "assert_type(1, int)",
+        ),
+        (
+            '[tool.ty.src]\ninclude = ["tests"]\n',
+            "assert_type(1, int)  # ty: ignore[type-assertion-failure]",
+        ),
+        (
+            '[tool.ty.src]\ninclude = ["tests"]\n',
+            "assert_type = lambda *args: None\n    assert_type(1, int)",
+        ),
+    ],
+)
+def test_ty_intent_rejects_excluded_disabled_suppressed_or_shadowed_calls(
+    tmp_path, config, body
+):
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_types.py").write_text(
+        "from typing import assert_type\ndef test_static_types():\n    " + body + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "pyproject.toml").write_text(config, encoding="utf-8")
+    _write_ty_invocation(tmp_path)
+
+    result = security_scan(tmp_path)
+
+    assert result["finding_counts"].get("QUALITY_HOLLOW_TEST", 0) == 1
+
+
+def test_ty_intent_does_not_mask_empty_tests_or_stale_rule_cache(tmp_path):
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    source = tests / "test_types.py"
+    source.write_text(
+        "from typing import assert_type\n"
+        "def test_static_types():\n    assert_type(1, int)\n"
+        "def test_empty_runtime():\n    pass\n",
+        encoding="utf-8",
+    )
+    config = tmp_path / "pyproject.toml"
+    config.write_text('[tool.ty.src]\ninclude = ["tests"]\n', encoding="utf-8")
+    _write_ty_invocation(tmp_path)
+
+    selected = security_scan(tmp_path)
+    config.write_text(
+        '[tool.ty.src]\ninclude = ["tests"]\n\n[tool.ty.rules]\n'
+        'type-assertion-failure = "ignore"\n',
+        encoding="utf-8",
+    )
+    disabled = security_scan(tmp_path)
+
+    assert selected["finding_counts"].get("QUALITY_HOLLOW_TEST", 0) == 1
+    assert disabled["finding_counts"].get("QUALITY_HOLLOW_TEST", 0) == 2
+
+
+def test_ty_intent_fails_closed_for_config_overrides_and_unsupported_globs(
+    tmp_path, monkeypatch
+):
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_types.py").write_text(
+        "from typing import assert_type\ndef test_static_types():\n    assert_type(1, int)\n",
+        encoding="utf-8",
+    )
+    config = tmp_path / "pyproject.toml"
+    config.write_text('[tool.ty.src]\ninclude = ["tests"]\n', encoding="utf-8")
+    _write_ty_invocation(tmp_path)
+    (tmp_path / "ty.toml").write_text('[src]\ninclude = ["src"]\n', encoding="utf-8")
+
+    ty_file = security_scan(tmp_path)
+    (tmp_path / "ty.toml").unlink()
+    monkeypatch.setenv("TY_CONFIG_FILE", str(tmp_path / "external-ty.toml"))
+    env_file = security_scan(tmp_path)
+    monkeypatch.delenv("TY_CONFIG_FILE")
+    config.write_text('[tool.ty.src]\ninclude = ["**"]\n', encoding="utf-8")
+    glob_config = security_scan(tmp_path)
+
+    for result in (ty_file, env_file, glob_config):
+        assert result["finding_counts"].get("QUALITY_HOLLOW_TEST", 0) == 1
+
+
+def test_ty_ignore_files_support_simple_wildcards_and_reject_complex_globs(tmp_path):
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_types.py").write_text(
+        "from typing import assert_type\ndef test_static_types():\n"
+        "    assert_type(1, int)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.ty.src]\ninclude = ["tests"]\n', encoding="utf-8"
+    )
+    _write_ty_invocation(tmp_path)
+    ignore = tmp_path / ".gitignore"
+    ignore.write_text("*.so\n.coverage*\ncoverage*\n", encoding="utf-8")
+
+    selected = security_scan(tmp_path)
+    ignore.write_text("test_types.py\n", encoding="utf-8")
+    excluded = security_scan(tmp_path)
+    ignore.write_text("coverage*generated\n", encoding="utf-8")
+    unknown = security_scan(tmp_path)
+
+    assert selected["finding_counts"].get("QUALITY_HOLLOW_TEST", 0) == 0
+    assert excluded["finding_counts"].get("QUALITY_HOLLOW_TEST", 0) == 1
+    assert unknown["finding_counts"].get("QUALITY_HOLLOW_TEST", 0) == 1
+
+
+def test_ty_intent_requires_declared_no_target_invocation(tmp_path):
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_types.py").write_text(
+        "from typing import assert_type\ndef test_static_types():\n"
+        "    assert_type(1, int)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.ty.src]\ninclude = ["tests"]\n', encoding="utf-8"
+    )
+
+    missing = security_scan(tmp_path)
+    targeted = []
+    for command in ("ty check tests/test_types.py", "uv run ty check"):
+        _write_ty_invocation(tmp_path, command)
+        targeted.append(security_scan(tmp_path))
+    _write_ty_invocation(tmp_path)
+    declared = security_scan(tmp_path)
+
+    assert missing["finding_counts"].get("QUALITY_HOLLOW_TEST", 0) == 1
+    assert all(
+        result["finding_counts"].get("QUALITY_HOLLOW_TEST", 0) == 1
+        for result in targeted
+    )
+    assert declared["finding_counts"].get("QUALITY_HOLLOW_TEST", 0) == 0
+
+
 @pytest.mark.parametrize(
     "body, expected",
     [

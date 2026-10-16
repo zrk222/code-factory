@@ -16,9 +16,19 @@ A human still owns confirmation and an independent verifier still owns results.
 from __future__ import annotations
 
 import ast
+import configparser
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
+from hashlib import sha256
+import os
+from pathlib import Path
 import re
 from typing import Any
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 from .implementation_audit import (  # noqa: F401
     _BoundSourceBytes,
@@ -780,4 +790,470 @@ def project_contract_helpers():
         bound_snapshots,
         _BoundSourceBytes.get,
         _BoundSourceBytes.__init__,
+    )
+
+
+def _declared_typecheck_sources(
+    root,
+    files,
+    read_bytes,
+    local_file,
+    relative_path,
+    source_error,
+    max_bytes,
+    max_paths,
+):
+    """Bind supported declared type-check scopes; unknown ty inputs earn no credit."""
+    identity = {
+        "path": "pyproject.toml",
+        "state": "missing",
+        "ty": {"state": "missing"},
+    }
+    bindings = []
+    try:
+        config = local_file(root, "pyproject.toml")
+        size = config.stat().st_size
+        if size > max_bytes:
+            identity["state"] = "oversized"
+            identity["bytes"] = size
+            return set(), [], identity, False
+        data = read_bytes(root, "pyproject.toml")
+        digest = sha256(data).hexdigest()
+        identity.update(state="read", bytes=len(data), sha256=digest)
+        bindings = [{"path": "pyproject.toml", "sha256": digest, "bytes": len(data)}]
+        tools = tomllib.loads(data.decode("utf-8")).get("tool", {})
+        declared, pyright = (
+            tools.get("mypy", {}).get("files", []),
+            tools.get("pyright", {}).get("include", []),
+        )
+        if not isinstance(pyright, list):
+            return set(), bindings, identity, True
+        declared = declared + pyright if isinstance(declared, list) else declared
+        if not isinstance(declared, list) or len(declared) > max_paths:
+            return set(), bindings, identity, True
+        roots = [root / relative_path(item) for item in declared]
+        if any(not target.resolve().is_relative_to(root.resolve()) for target in roots):
+            return set(), bindings, identity, False
+        ty_sources, ty_identity, cacheable = _ty_sources(
+            root,
+            files,
+            tools.get("ty"),
+            read_bytes,
+            local_file,
+            source_error,
+            max_bytes,
+            max_paths,
+        )
+        identity["ty"] = ty_identity
+        if ty_identity.get("invocation"):
+            bindings.append(ty_identity["invocation"])
+        bindings.extend(ty_identity.get("ignore_files", []))
+        selected = {
+            path
+            for path in files
+            if (
+                path in roots
+                or not (path.name.startswith("test_") or path.name.endswith("_test.py"))
+            )
+            and any(path == target or path.is_relative_to(target) for target in roots)
+        }
+        return selected, bindings, identity, cacheable
+    except source_error as exc:
+        if getattr(exc, "code", None) == "E_SOURCE_MISSING":
+            identity["ty"] = {"state": "missing"}
+            return set(), [], identity, True
+        identity.update(state="unreadable", ty={"state": "unknown"})
+        return set(), [], identity, False
+    except (OSError, ValueError, UnicodeError, AttributeError, TypeError):
+        identity.update(state="unreadable", ty={"state": "unknown"})
+        return set(), bindings, identity, False
+
+
+def _ty_sources(
+    root, files, config, read_bytes, local_file, source_error, limit, max_paths
+):
+    if config is None:
+        return set(), {"state": "missing"}, True
+    state = {"state": "unknown"}
+    try:
+        override = _ty_external_config_state(root)
+        if override:
+            return set(), override, False
+        invocation = _ty_invocation_profile(
+            root, read_bytes, local_file, source_error, limit
+        )
+        if invocation is None:
+            return set(), state, True
+        git_identity, global_ignore_safe = _ty_global_git_configuration(limit)
+        if not global_ignore_safe:
+            return set(), {"state": "unknown", "git_config": git_identity}, False
+        scope = _ty_config_scope(root, config, max_paths)
+        if scope is None:
+            return set(), state, True
+        includes, excludes, rules, include_paths, exclude_paths = scope
+        rule_state = _ty_assertion_rules(rules)
+        if rule_state is None:
+            return set(), state, True
+        if not rule_state:
+            return set(), {"state": "disabled", "rules": rules}, True
+        ignore_identity, ignored = _ty_ignored_paths(
+            root, files, read_bytes, local_file, source_error, limit
+        )
+        if ignored is None:
+            return set(), {**state, "ignore_files": ignore_identity}, False
+        selected = _ty_selected_paths(
+            root, files, include_paths, exclude_paths, ignored
+        )
+        return (
+            selected,
+            {
+                "state": "selected",
+                "selected": sorted(
+                    path.relative_to(root).as_posix() for path in selected
+                ),
+                "include": [
+                    path.relative_to(root).as_posix() for path in include_paths
+                ],
+                "exclude": [
+                    path.relative_to(root).as_posix() for path in exclude_paths
+                ],
+                "rules": rules,
+                "invocation": invocation,
+                "ignore_files": ignore_identity,
+                "git_config": git_identity,
+            },
+            True,
+        )
+    except (OSError, ValueError, UnicodeError, TypeError, configparser.Error):
+        return set(), state, False
+
+
+def _ty_invocation_profile(root, read_bytes, local_file, source_error, limit):
+    try:
+        path = local_file(root, "tox.ini")
+        if path.stat().st_size > limit:
+            return None
+        data = read_bytes(root, "tox.ini")
+        parser = configparser.ConfigParser(interpolation=None, strict=False)
+        parser.read_string(data.decode("utf-8"))
+        if any(
+            parser.has_option(section, option)
+            for section in parser.sections()
+            for option in (
+                "changedir",
+                "setenv",
+                "commands_pre",
+                "commands_post",
+            )
+        ):
+            return None
+        if not _ty_safe_passenv(parser):
+            return None
+        commands = [
+            command.strip()
+            for section in parser.sections()
+            for command in parser.get(section, "commands", fallback="").splitlines()
+            if re.search(r"\bty\s+check\b", command)
+        ]
+        if not commands or any(command != "ty check" for command in commands):
+            return None
+        return {
+            "path": "tox.ini",
+            "sha256": sha256(data).hexdigest(),
+            "bytes": len(data),
+            "command": "ty check",
+        }
+    except source_error:
+        return None
+    except (OSError, UnicodeError, configparser.Error):
+        return None
+
+
+def _ty_safe_passenv(parser):
+    """Accept only explicitly named non-checker environment passthroughs."""
+    return all(
+        name in {"PYTEST_ADDOPTS", "FORCE_COLOR", "CI"}
+        for section in parser.sections()
+        for line in parser.get(section, "passenv", fallback="").splitlines()
+        for name in line.split()
+        if not line.lstrip().startswith("#")
+    )
+
+
+def _ty_external_config_state(root):
+    user = Path(os.environ.get("APPDATA", Path.home() / ".config")) / "ty" / "ty.toml"
+    if (
+        os.environ.get("TY_CONFIG_FILE")
+        or user.is_file()
+        or (root / "ty.toml").exists()
+    ):
+        return {"state": "unknown", "config_override": True}
+    if any(
+        (parent / name).exists()
+        for parent in root.parents
+        for name in ("ty.toml", "pyproject.toml")
+    ):
+        return {"state": "unknown", "parent_config": True}
+    return None
+
+
+def _ty_config_scope(root, config, limit):
+    if not isinstance(config, dict) or set(config) - {"src", "rules", "terminal"}:
+        return None
+    src = config.get("src")
+    if not isinstance(src, dict) or set(src) - {
+        "include",
+        "exclude",
+        "respect-ignore-files",
+    }:
+        return None
+    if src.get("respect-ignore-files", True) is not True:
+        return None
+    includes, excludes = src.get("include"), src.get("exclude", [])
+    include_paths, exclude_paths = (
+        _ty_paths(root, includes, limit),
+        _ty_paths(root, excludes, limit),
+    )
+    rules = config.get("rules", {})
+    if include_paths is None or exclude_paths is None or not include_paths:
+        return None
+    if not isinstance(rules, dict):
+        return None
+    return includes, excludes, rules, include_paths, exclude_paths
+
+
+def _ty_assertion_rules(rules):
+    known = {
+        "missing-type-argument",
+        "missing-override-decorator",
+        "type-assertion-failure",
+        "assert-type-unspellable-subtype",
+    }
+    names = ("type-assertion-failure", "assert-type-unspellable-subtype")
+    if set(rules) - known:
+        return None
+    if any(rules.get(name) == "ignore" for name in names):
+        return False
+    if any(rules.get(name) not in (None, "error", "warn") for name in names):
+        return None
+    return True
+
+
+def _ty_selected_paths(root, files, includes, excludes, ignored):
+    return {
+        path
+        for path in files
+        if any(path == target or path.is_relative_to(target) for target in includes)
+        and not any(
+            path == target or path.is_relative_to(target) for target in excludes
+        )
+        and not _ty_default_excluded(path.relative_to(root))
+        and not ignored.get(path, False)
+    }
+
+
+def _static_type_edges(root, sources, config_bindings, ty_sources=None):
+    """Describe declared static-type scopes without implying checker execution."""
+    ty_sources = ty_sources or set()
+    return [
+        {
+            "caller": path.relative_to(root).as_posix(),
+            "target": binding["path"],
+            "kind": "static_type_configuration",
+            "symbol": "type_checker.sources",
+            "strength": "declared",
+            "execution_state": "NOT_VERIFIED",
+            **({"checker": "ty"} if path in ty_sources else {}),
+            "sha256": binding["sha256"],
+        }
+        for path in sorted(sources)
+        for binding in config_bindings
+    ]
+
+
+def _ty_paths(root, values, limit):
+    if not isinstance(values, list) or len(values) > limit:
+        return None
+    result = []
+    for value in values:
+        if (
+            not isinstance(value, str)
+            or not value
+            or any(char in value for char in "*?[]!")
+        ):
+            return None
+        path = Path(value)
+        if path.is_absolute() or ".." in path.parts:
+            return None
+        target = (root / path).resolve()
+        if not target.is_relative_to(root.resolve()):
+            return None
+        result.append(target)
+    return result
+
+
+def _ty_default_excluded(path):
+    return any(
+        part
+        in {".git", ".venv", "venv", "__pycache__", "site-packages", "dist-packages"}
+        for part in path.parts
+    )
+
+
+def _ty_global_git_configuration(limit):
+    names = (
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+    )
+    if any(os.environ.get(name) for name in names):
+        return {"state": "environment_override"}, False
+    home = Path.home()
+    xdg = Path(os.environ.get("XDG_CONFIG_HOME", home / ".config"))
+    program_files = Path(os.environ.get("ProgramFiles", "C:/Program Files"))
+    paths = (
+        home / ".gitconfig",
+        xdg / "git" / "config",
+        program_files / "Git" / "etc" / "gitconfig",
+    )
+    rows = []
+    for path in dict.fromkeys(paths):
+        if not path.is_file():
+            continue
+        if path.is_symlink() or path.stat().st_size > limit:
+            return {"state": "unknown"}, False
+        data = path.read_bytes()
+        parser = configparser.RawConfigParser(strict=False, interpolation=None)
+        parser.read_string(data.decode("utf-8"))
+        if any(
+            section == "include" or section.startswith("include ")
+            for section in parser.sections()
+        ):
+            return {"state": "include"}, False
+        if parser.has_option("core", "excludesfile"):
+            return {"state": "global_ignore_configured"}, False
+        rows.append({"source": "git_config", "sha256": sha256(data).hexdigest()})
+    return {"state": "read", "files": rows}, True
+
+
+def _ty_ignored_paths(root, files, read_bytes, local_file, source_error, limit):
+    parsed, hashes, ignored = {}, {}, {}
+    for path in files:
+        ignored[path] = _ty_path_is_ignored(
+            path, root, parsed, hashes, read_bytes, local_file, source_error, limit
+        )
+        if ignored[path] is None:
+            return [], None
+    return [hashes[name] for name in sorted(hashes)], ignored
+
+
+def _ty_path_is_ignored(
+    path, root, parsed, hashes, read_bytes, local_file, source_error, limit
+):
+    relative = path.relative_to(root)
+    directories = [
+        Path(*relative.parts[:index]) for index in range(len(relative.parts))
+    ]
+    directories.append(Path(*relative.parts[:-1]))
+    for directory in directories:
+        names = [directory / name for name in (".ignore", ".gitignore")]
+        if not directory.parts:
+            names.append(Path(".git/info/exclude"))
+        for candidate in names:
+            name = candidate.as_posix()
+            if name not in parsed:
+                parsed[name] = _ty_ignore_file_patterns(
+                    root, name, read_bytes, local_file, source_error, limit, hashes
+                )
+            patterns = parsed[name]
+            if patterns is None:
+                return None
+            if _ty_matches_ignore(path.relative_to(root / directory), patterns):
+                return True
+    return False
+
+
+def _ty_ignore_file_patterns(
+    root, name, read_bytes, local_file, source_error, limit, hashes
+):
+    try:
+        path = local_file(root, name)
+        if path.stat().st_size > limit:
+            return None
+        data = read_bytes(root, name)
+    except source_error as exc:
+        return [] if getattr(exc, "code", None) == "E_SOURCE_MISSING" else None
+    except OSError:
+        return None
+    patterns = _ty_parse_ignore_lines(data)
+    if patterns is not None:
+        hashes[name] = {
+            "path": name,
+            "sha256": sha256(data).hexdigest(),
+            "bytes": len(data),
+        }
+    return patterns
+
+
+def _ty_parse_ignore_lines(data):
+    try:
+        lines = data.decode("utf-8").splitlines()
+    except UnicodeError:
+        return None
+    patterns = []
+    for line in lines:
+        pattern = line.strip()
+        if not pattern or pattern.startswith("#"):
+            continue
+        if (
+            pattern.startswith("!")
+            or "\\" in pattern
+            or any(c in pattern for c in "?[]")
+        ):
+            return None
+        value = pattern.lstrip("/").rstrip("/")
+        if not value or (
+            "*" in value
+            and not (
+                value.count("*") == 1
+                and "/" not in value
+                and (value.startswith("*.") or value.endswith("*"))
+            )
+        ):
+            return None
+        patterns.append(pattern)
+    return patterns
+
+
+def _ty_matches_ignore(relative, patterns):
+    for pattern in patterns:
+        anchored, directory = pattern.startswith("/"), pattern.endswith("/")
+        value = pattern.strip("/")
+        parts = relative.parts[:-1] if directory else relative.parts
+        if not anchored and "/" not in value:
+            matched = any(fnmatchcase(part, value) for part in parts)
+        else:
+            prefix = value.split("/")
+            matched = len(parts) >= len(prefix) and all(
+                fnmatchcase(part, expected) for part, expected in zip(parts, prefix)
+            )
+        if matched:
+            return True
+    return False
+
+
+def _ty_assertion_provider_mutated(module, aliases):
+    """Reject writes to canonical assertion-provider attributes anywhere in scope."""
+    return (
+        any(
+            isinstance(item, ast.Attribute)
+            and isinstance(item.ctx, (ast.Store, ast.Del))
+            and item.attr == "assert_type"
+            and isinstance(item.value, ast.Name)
+            and aliases.get(item.value.id) in {"typing", "typing_extensions"}
+            for item in ast.walk(module)
+        )
+        if module is not None
+        else True
     )

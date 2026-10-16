@@ -101,6 +101,7 @@ def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
                 "pytest_inherited": set(item["pytest_inherited"]),
                 "click_runners": set(item["click_runners"]),
                 "typecheck": item["typecheck"],
+                "ty_assert_type": item.get("ty_assert_type", False),
                 "flask_apps": set(item.get("flask_apps", [])),
                 "callback_invokers": item.get("callback_invokers", {}),
                 "codspeed_benchmark": item.get("codspeed_benchmark", False),
@@ -133,6 +134,7 @@ def _oracle_context_cache_write(key: str, contexts: dict, edges: list) -> None:
                 "pytest_inherited": sorted(context["pytest_inherited"]),
                 "click_runners": sorted(context["click_runners"]),
                 "typecheck": bool(context["typecheck"]),
+                "ty_assert_type": bool(context.get("ty_assert_type", False)),
                 "flask_apps": sorted(context.get("flask_apps", set())),
                 "callback_invokers": context.get("callback_invokers", {}),
                 "codspeed_benchmark": context.get("codspeed_benchmark", False),
@@ -1852,6 +1854,33 @@ def _assertion_call(
             )
         )
     )
+
+
+def _ty_assertion_helpers(node: ast.AST, aliases: dict[str, str]) -> set[str]:
+    """Recognize direct, unsuppressed calls to the canonical two-argument API."""
+    module = getattr(node, "_oracle_module", None)
+    lines = getattr(module, "_oracle_source_lines", ())
+    if contracts._ty_assertion_provider_mutated(module, aliases):
+        return set()
+    helpers = set()
+    for call in _test_oracle_body_nodes(node, aliases):
+        if not isinstance(call, ast.Call) or len(call.args) != 2 or call.keywords:
+            continue
+        if any(isinstance(arg, ast.Starred) for arg in call.args):
+            continue
+        name = _normalized_call_name(call, aliases)
+        if name not in {"typing.assert_type", "typing_extensions.assert_type"}:
+            continue
+        head = _call_name(call).split(".", 1)[0]
+        if head not in aliases or call.lineno > len(lines):
+            continue
+        comments = "\n".join(
+            line.partition("#")[2] for line in lines[call.lineno - 1 : call.end_lineno]
+        )
+        if re.search(r"\bty:\s*ignore\b", comments):
+            continue
+        helpers.add(name)
+    return helpers
 
 
 def _mock_argument_oracle(node: ast.AST, aliases: dict, *, uncalled=False) -> bool:
@@ -3645,6 +3674,7 @@ def _oracle_snapshots(root: Path, files: list[Path], source_bytes: dict) -> dict
             snapshots[path] = ast.parse(
                 data, filename=path.relative_to(root).as_posix()
             )
+            snapshots[path]._oracle_source_lines = data.decode("utf-8").splitlines()
             for node in snapshots[path].body:
                 node._oracle_layout = None
         except (OSError, SyntaxError, UnicodeError, RuntimeAuditError):
@@ -3655,76 +3685,29 @@ def _oracle_snapshots(root: Path, files: list[Path], source_bytes: dict) -> dict
 def _declared_typecheck_sources(
     root: Path, files: list[Path]
 ) -> tuple[set, list, dict, bool]:
-    """Bind explicit type-checker sources without exempting runtime assertions."""
-    config_identity: dict[str, Any] = {"path": "pyproject.toml", "state": "missing"}
-    config_binding: list[dict[str, Any]] = []
-    try:
-        config = local_file(root, "pyproject.toml")
-        if config.stat().st_size > MAX_BYTES:
-            config_identity = {
-                "path": "pyproject.toml",
-                "state": "oversized",
-                "bytes": int(config.stat().st_size),
-            }
-            return set(), [], config_identity, False
-        data = _security_source_bytes(root, "pyproject.toml")
-        if len(data) > MAX_BYTES:
-            config_identity = {
-                "path": "pyproject.toml",
-                "state": "oversized",
-                "bytes": len(data),
-            }
-            return set(), [], config_identity, False
-        config_digest = sha256(data).hexdigest()
-        config_identity = {
-            "path": "pyproject.toml",
-            "state": "read",
-            "bytes": len(data),
-            "sha256": config_digest,
-        }
-        config_binding = [
-            {"path": "pyproject.toml", "sha256": config_digest, "bytes": len(data)}
-        ]
-        tools = tomllib.loads(data.decode("utf-8")).get("tool", {})
-        declared = tools.get("mypy", {}).get("files", [])
-        pyright = tools.get("pyright", {}).get("include", [])
-        if not isinstance(pyright, list):
-            return set(), config_binding, config_identity, True
-        declared = declared + pyright if isinstance(declared, list) else declared
-        if not isinstance(declared, list) or len(declared) > MAX_PATHS:
-            return set(), config_binding, config_identity, True
-        roots = [root / _relative_path(item) for item in declared]
-        if any(not target.resolve().is_relative_to(root.resolve()) for target in roots):
-            return set(), config_binding, config_identity, False
-    except RuntimeAuditError as exc:
-        if exc.code == "E_SOURCE_MISSING":
-            return set(), [], config_identity, True
-        config_identity = {"path": "pyproject.toml", "state": "unreadable"}
-        return set(), [], config_identity, False
-    except (OSError, ValueError, UnicodeError, AttributeError):
-        config_identity = {"path": "pyproject.toml", "state": "unreadable"}
-        return set(), config_binding, config_identity, False
-    selected = {
-        path
-        for path in files
-        if (
-            path in roots
-            or not (path.name.startswith("test_") or path.name.endswith("_test.py"))
-        )
-        and any(path == target or path.is_relative_to(target) for target in roots)
-    }
-    return selected, config_binding, config_identity, True
+    """Preserve the existing selector contract through the intent-quality module."""
+    return contracts._declared_typecheck_sources(
+        root,
+        files,
+        _security_source_bytes,
+        local_file,
+        _relative_path,
+        RuntimeAuditError,
+        MAX_BYTES,
+        MAX_PATHS,
+    )
 
 
 def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict) -> str:
     helpers = (
         ast.parse,
         _build_oracle_context,
-        _static_type_edges,
+        contracts._static_type_edges,
         _security_source_bytes,
         _click_runner_fixtures,
         _scope_security_aliases,
         _module_security_aliases,
+        _ty_assertion_helpers,
         _oracle_imports,
         _oracle_import_source,
         _imported_oracle_helpers,
@@ -3736,6 +3719,23 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _oracle_snapshots,
         _oracle_source_inputs,
         _declared_typecheck_sources,
+        contracts._declared_typecheck_sources,
+        contracts._ty_sources,
+        contracts._ty_invocation_profile,
+        contracts._ty_safe_passenv,
+        contracts._ty_external_config_state,
+        contracts._ty_config_scope,
+        contracts._ty_assertion_rules,
+        contracts._ty_selected_paths,
+        contracts._ty_paths,
+        contracts._ty_default_excluded,
+        contracts._ty_assertion_provider_mutated,
+        contracts._ty_global_git_configuration,
+        contracts._ty_ignored_paths,
+        contracts._ty_path_is_ignored,
+        contracts._ty_ignore_file_patterns,
+        contracts._ty_parse_ignore_lines,
+        contracts._ty_matches_ignore,
         _source_callback_invokers,
         _source_methods_are_stable,
         _source_callback_parameters,
@@ -3916,17 +3916,29 @@ def _project_oracle_context(
             contexts, edges = cached
             return contexts, bindings, edges, source_bytes
     snapshots = contracts.bound_snapshots(root, files, source_bytes, source_bindings)
-    contexts, edges = _build_oracle_context(root, files, snapshots, typecheck_sources)
+    ty_identity = config_identity["typecheck"].get("ty", {})
+    ty_sources = {root / item for item in ty_identity.get("selected", [])}
+    contexts, edges = _build_oracle_context(
+        root, files, snapshots, typecheck_sources, ty_sources
+    )
     integrity.bind_benchmark_context(contexts, snapshots, benchmarks)
     contracts.bind_project_contracts(root, snapshots, contexts, edges)
-    edges.extend(_static_type_edges(root, typecheck_sources, config_bindings))
+    edges.extend(
+        contracts._static_type_edges(
+            root, typecheck_sources | ty_sources, config_bindings, ty_sources
+        )
+    )
     if cache_enabled and source_cacheable and config_cacheable:
         _oracle_context_cache_write(cache_key, contexts, edges)
     return contexts, bindings, edges, source_bytes
 
 
 def _build_oracle_context(
-    root: Path, files: list[Path], snapshots: dict, typecheck_sources: set
+    root: Path,
+    files: list[Path],
+    snapshots: dict,
+    typecheck_sources: set,
+    ty_sources: set | None = None,
 ) -> tuple[dict, list]:
     fixture_sources = [
         (
@@ -3962,7 +3974,10 @@ def _build_oracle_context(
         contexts[path]["click_runners"] = {
             name for name, trusted in fixtures.items() if trusted
         }
-        contexts[path]["typecheck"] = path in typecheck_sources
+        contexts[path]["typecheck"] = path in typecheck_sources or path in (
+            ty_sources or set()
+        )
+        contexts[path]["ty_assert_type"] = path in (ty_sources or set())
         contexts[path]["flask_apps"] = _flask_context_apps(path, tree, snapshots)
         imports = _oracle_imports(root, path, tree, eligible)
         contexts[path].update(
@@ -4049,23 +4064,6 @@ def _build_oracle_context(
         for caller, target, kind, symbol, strength in sorted(edges)
     ]
     return contexts, edges
-
-
-def _static_type_edges(
-    root: Path, typecheck_sources: set, config_bindings: list
-) -> list:
-    return [
-        {
-            "caller": path.relative_to(root).as_posix(),
-            "target": binding["path"],
-            "kind": "static_type_configuration",
-            "symbol": "type_checker.sources",
-            "strength": "declared",
-            "sha256": binding["sha256"],
-        }
-        for path in sorted(typecheck_sources)
-        for binding in config_bindings
-    ]
 
 
 def _weak_assertion_reason(
@@ -4815,7 +4813,7 @@ def _test_oracle_findings(
     class_helpers: dict[int, set[str]] | None = None,
     weak_helper_names: set[str] | None = None,
     click_runners: set[str] | None = None,
-    typecheck: bool = False,
+    ty_assert_type: bool = False,
     test_file_patterns: set[str] | None = None,
     inherited_pytest_methods: set[int] | None = None,
     flask_apps: set[str] | None = None,
@@ -4870,12 +4868,12 @@ def _test_oracle_findings(
             if isinstance(item, ast.AsyncFunctionDef)
         }
         is_unittest_method = id(node) in unittest_methods
+        scoped_aliases = _scope_security_aliases(aliases, node)
         helpers = helper_names | (class_helpers or {}).get(id(node), set())
         helpers |= _invoked_nested_assertion_helpers(node, aliases, helpers)
-        if typecheck:
-            helpers = helpers | {"typing.assert_type", "typing_extensions.assert_type"}
+        if ty_assert_type:
+            helpers |= _ty_assertion_helpers(node, scoped_aliases)
         hollow_helpers = helpers | (weak_helper_names or set())
-        scoped_aliases = _scope_security_aliases(aliases, node)
         if _proven_dispatch_assertion(
             node, scoped_aliases, helpers, flask_apps or set(), callback_invokers or {}
         ):
@@ -5355,6 +5353,7 @@ def _security_scan_file(
             "bytes": len(data),
         }
         tree = ast.parse(data, filename=relative)
+        tree._oracle_source_lines = data.decode("utf-8").splitlines()
     except SyntaxError as exc:
         return (
             binding,

@@ -1,0 +1,63 @@
+# Spec: type-intent-attribution
+Status: approved
+SpecFactor-target: 0.75-2.5
+
+## MUST - Functional core
+### Description
+Attribute a canonical `typing.assert_type` or `typing_extensions.assert_type` call as static type-intent evidence only when the supported checker configuration selects the test file and the assertion rule is enabled. Keep checker execution unverified without a current matching receipt.
+
+### User roles
+- Code Factory scanner operator
+- Python project maintainer
+
+### Requirements (EARS)
+- The system shall emit `TYPE_SELECTION` as `selected`, `excluded`, or `unknown` and hash-bind the configuration, ignore, rule, invocation, and source inputs used to choose the state.
+- The system shall emit `TYPE_INTENT_ATTRIBUTION` only when selection is selected, import provenance is canonical, the assertion rule is enabled, ignore state is clean, and no suppression applies.
+- The system shall reject `TYPE_CREDIT_REJECTION` when the source is excluded or ignored, the effective assertion rule is disabled, a suppression applies, or import provenance is shadowed.
+- If checker selection, configuration, invocation, ignore, rule, or binding provenance is unsupported or ambiguous, the system shall return `UNKNOWN_RETENTION` and retain the hollow-test finding.
+- The system shall record `EXECUTION_RECEIPT` as `NOT_VERIFIED` unless a current receipt matches source, checker, config, invocation, and environment, exits successfully, and reports no assertion diagnostics.
+- The system shall emit `INDEPENDENT_FINDINGS` for unrelated weak-oracle and other quality findings after type-intent attribution.
+
+### Acceptance criteria (Gherkin)
+```gherkin
+Scenario: Included bidict-style assertion is attributed as type intent
+  Given TYPE_SELECTION is selected and TYPE_INTENT_ATTRIBUTION has canonical import with enabled rule and clean ignore state
+  And no suppression applies to the assert_type call
+  When the scanner evaluates hollow-test evidence
+  Then it emits TYPE_INTENT_ATTRIBUTION and records EXECUTION_RECEIPT as NOT_VERIFIED
+  And INDEPENDENT_FINDINGS remain eligible
+
+Scenario: Unsupported or excluded checker scope preserves the finding
+  Given TYPE_SELECTION is excluded or unknown
+  When the scanner evaluates an assert_type call
+  Then it emits no type-intent evidence and returns UNKNOWN_RETENTION
+  And the hollow-test finding remains
+
+Scenario: Shadowed or disabled type assertion is not credited
+  Given TYPE_CREDIT_REJECTION applies because import provenance is shadowed, the rule is disabled, or a suppression applies
+  When the scanner evaluates the call
+  Then it rejects type-intent credit
+  And the hollow-test finding remains
+
+Scenario: Checker run status requires matching evidence
+  Given no current matching EXECUTION_RECEIPT exists
+  When the scan reports the test
+  Then checker execution remains NOT_VERIFIED
+```
+
+## SHOULD - Technical/structural
+- ADR references: none; bounded extension of existing static type configuration and test-oracle attribution.
+- Data model: `selection=selected`, `selection=excluded`, `selection=unknown`, `canonical_import=true`, `canonical_import=false`, `rule_enabled=true`, `rule_enabled=false`, `ignore_state=clean`, `ignore_state=ignored`, `suppression_state=absent`, `suppression_state=present`, `checker_receipt=current_pass`, `checker_receipt=absent_or_stale`.
+- API contract: existing scanner result/context schema only; no new module or public API.
+
+## SHOULD NOT - Implementation details
+- No blanket test-file exemption, checker execution claim, broad ty guarantee, or suppression of unrelated findings.
+- Unknown or stale config, ignore, rule, source, or binding inputs must not produce an attribution cache hit.
+
+## Decision logic (factory candidates)
+| # | if | then |
+|---|----|------|
+| 1 | `selection=selected` and `canonical_import=true` and `rule_enabled=true` and `ignore_state=clean` and `suppression_state=absent` | Emit type-intent evidence; record `NOT_VERIFIED` absent `checker_receipt=current_pass` |
+| 2 | `selection=excluded` or `ignore_state=ignored` or `rule_enabled=false` or `suppression_state=present` or `canonical_import=false` | Reject type-intent credit; emit the hollow-test finding |
+| 3 | `selection=unknown` | Emit no type-intent evidence; retain the hollow-test finding |
+| 4 | `checker_receipt=current_pass` | Record verified execution only for its matching candidate/config/checker identity |
