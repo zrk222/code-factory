@@ -2629,7 +2629,7 @@ _STRUCTURAL_SET_FIELDS = (
     "module_rebindings",
     "dynamic_getattr_modules",
     "source_classes",
-)
+) + ("implementation_contract_lines",)
 _STRUCTURAL_MAP_FIELDS = ("module_imports", "class_imports", "benchmark_constants")
 
 

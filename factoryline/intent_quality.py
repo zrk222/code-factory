@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+from hashlib import sha256
 import re
 from typing import Any
 
@@ -189,6 +190,10 @@ def _null_io_contract(node, parents, aliases):
     owner = parents.get(node)
     if not isinstance(owner, ast.ClassDef) or owner.decorator_list:
         return False
+    if node.decorator_list or not _stable_api_origin(
+        owner, parents, aliases, {"typing", "typing.IO"}
+    ):
+        return False
     if node.name not in {"close", "flush", "writelines", "__exit__"}:
         return False
     body = node.body[1:] if ast.get_docstring(node) is not None else node.body
@@ -324,23 +329,7 @@ def _local_override(owner, method, scope):
         and any(
             isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
             and function.name == method
-            and any(
-                isinstance(
-                    statement,
-                    (
-                        ast.Return,
-                        ast.Assign,
-                        ast.AnnAssign,
-                        ast.With,
-                        ast.AsyncWith,
-                        ast.For,
-                        ast.AsyncFor,
-                        ast.If,
-                        ast.Try,
-                    ),
-                )
-                for statement in function.body
-            )
+            and _concrete_contract_method(function)
             for function in child.body
         )
         for child in scope.body
@@ -354,6 +343,8 @@ def click_group_container(node, parents, aliases):
     Custom group implementations and invocation modes remain unverified.
     """
     if not node.decorator_list:
+        return False
+    if not _stable_api_origin(node, parents, aliases, {"click", "click.group"}):
         return False
     scope = parents.get(node)
     if not isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -440,3 +431,308 @@ def _group_decorator(decorator, definitions, aliases, visiting):
     return owner in definitions and _recognized_group(
         definitions[owner], definitions, aliases, visiting
     )
+
+
+def implementation_findings(relative, tree, data, context):
+    """Apply project contracts only to empty-body findings, never other rules."""
+    from .review_integrity import implementation_completeness_findings
+
+    lines = (context or {}).get("implementation_contract_lines", ())
+    return [
+        f
+        for f in implementation_completeness_findings(relative, tree, data)
+        if f["code"] != "QUALITY_EMPTY_IMPLEMENTATION" or f["line"] not in lines
+    ]
+
+
+def project_contract_helpers():
+    """Include every contract resolver in process-local cache identity."""
+    return (
+        bind_project_contracts,
+        _bind_imported_base,
+        _stable_import_contract,
+        _declared_stub_method,
+        _concrete_contract_method,
+        _shadowed_error,
+        _stable_base_contract,
+        _contract_body_nodes,
+        _placeholder_statement,
+        _unsafe_project_bases,
+        bound_snapshots,
+        _BoundSourceBytes.get,
+        _BoundSourceBytes.__init__,
+    )
+
+
+def bind_project_contracts(root, snapshots, contexts, edges):
+    """Resolve direct local imported bases from the already hash-bound snapshots."""
+    from .review_audits import _oracle_imports
+
+    eligible = {p.resolve(): p for p in snapshots}
+    resolved = {
+        path: _oracle_imports(root, path, tree, eligible)
+        for path, tree in snapshots.items()
+    }
+    blocked = _unsafe_project_bases(snapshots, resolved)
+    for path, tree in snapshots.items():
+        imports = resolved[path]
+        for child in (n for n in tree.body if isinstance(n, ast.ClassDef)):
+            if child.decorator_list:
+                continue
+            for base in child.bases:
+                if not isinstance(base, ast.Name) or base.id not in imports:
+                    continue
+                if not _stable_import_contract(tree, base.id, child.lineno):
+                    continue
+                source, symbol = imports[base.id]
+                if (
+                    symbol is not None
+                    and source in snapshots
+                    and (source, symbol) not in blocked
+                ):
+                    _bind_imported_base(
+                        root,
+                        path,
+                        child,
+                        source,
+                        symbol,
+                        snapshots[source],
+                        contexts,
+                        edges,
+                    )
+
+
+def _bind_imported_base(root, path, child, source, symbol, tree, contexts, edges):
+    bases = [n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == symbol]
+    if len(bases) != 1 or bases[0].decorator_list or _shadowed_error(tree):
+        return
+    if not _stable_base_contract(tree, bases[0]):
+        return
+    if any(
+        isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == symbol
+        for n in ast.walk(tree)
+    ):
+        return
+    if any(
+        isinstance(n, ast.Name)
+        and isinstance(n.ctx, (ast.Store, ast.Del))
+        and n.id == symbol
+        for n in ast.walk(tree)
+    ):
+        return
+    methods = {
+        n.name: n
+        for n in child.body
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    for method in bases[0].body:
+        if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        override = methods.get(method.name)
+        if not _declared_stub_method(method) or not _concrete_contract_method(override):
+            continue
+        if type(method) is not type(override):
+            continue
+        contexts[source].setdefault("implementation_contract_lines", set()).add(
+            method.lineno
+        )
+        edges.append(
+            {
+                "caller": path.relative_to(root).as_posix(),
+                "target": source.relative_to(root).as_posix(),
+                "kind": "implementation_contract",
+                "symbol": symbol + "." + method.name,
+                "strength": "declared_override",
+            }
+        )
+
+
+def _stable_import_contract(tree, local, before):
+    imports = [
+        statement.lineno
+        for statement in tree.body
+        if isinstance(statement, (ast.Import, ast.ImportFrom))
+        for alias in statement.names
+        if (alias.asname or alias.name.split(".")[0]) == local
+    ]
+    if len(imports) != 1 or imports[0] >= before:
+        return False
+    return not any(
+        (
+            isinstance(n, ast.Name)
+            and isinstance(n.ctx, (ast.Store, ast.Del))
+            and n.id == local
+        )
+        or (
+            isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and n.name == local
+        )
+        or (
+            isinstance(n, ast.Attribute)
+            and isinstance(n.ctx, (ast.Store, ast.Del))
+            and isinstance(n.value, ast.Name)
+            and n.value.id == local
+        )
+        or (
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == local
+        )
+        for n in ast.walk(tree)
+    )
+
+
+def _stable_base_contract(tree, owner):
+    return not any(
+        (
+            isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == owner.name
+            and node is not owner
+        )
+        or (
+            isinstance(node, ast.alias)
+            and (node.asname or node.name.split(".")[0]) == owner.name
+        )
+        for node in ast.walk(tree)
+    )
+
+
+def _declared_stub_method(node):
+    body = node.body[1:] if ast.get_docstring(node) is not None else node.body
+    if len(body) != 1:
+        return False
+    statement = body[0]
+    if isinstance(statement, ast.Raise):
+        error = (
+            statement.exc.func if isinstance(statement.exc, ast.Call) else statement.exc
+        )
+        return isinstance(error, ast.Name) and error.id == "NotImplementedError"
+    return (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Constant)
+        and statement.value.value is Ellipsis
+        and node.returns is not None
+    )
+
+
+def _concrete_contract_method(node):
+    if node is None or node.decorator_list:
+        return False
+    body = node.body[1:] if ast.get_docstring(node) is not None else node.body
+    if not body or _declared_stub_method(node):
+        return False
+    nodes = list(_contract_body_nodes(body))
+    if any(_placeholder_statement(n) for n in nodes):
+        return False
+    return any(
+        isinstance(n, (ast.Return, ast.Assign, ast.AnnAssign))
+        or (isinstance(n, ast.Expr) and isinstance(n.value, (ast.Call, ast.Await)))
+        for n in nodes
+    )
+
+
+def _contract_body_nodes(statements):
+    for statement in statements:
+        if isinstance(
+            statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        yield statement
+        yield from _contract_body_nodes(ast.iter_child_nodes(statement))
+
+
+def _placeholder_statement(node):
+    if isinstance(node, ast.Raise):
+        error = node.exc.func if isinstance(node.exc, ast.Call) else node.exc
+        return isinstance(error, ast.Name) and error.id == "NotImplementedError"
+    return (
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and node.value.value is Ellipsis
+    )
+
+
+def _stable_api_origin(node, parents, aliases, targets):
+    roots = {name for name, target in aliases.items() if target in targets}
+    if not roots:
+        return False
+    scopes = []
+    parent = parents.get(node)
+    while parent is not None:
+        if isinstance(
+            parent, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            scopes.append(parent)
+        parent = parents.get(parent)
+    for name in roots:
+        imports = [
+            statement
+            for scope in scopes
+            for statement in scope.body
+            if isinstance(statement, (ast.Import, ast.ImportFrom))
+            for alias in statement.names
+            if (alias.asname or alias.name.split(".")[0]) == name
+        ]
+        if len(imports) != 1 or imports[0].lineno >= node.lineno:
+            return False
+    return not any(
+        isinstance(item, ast.Attribute)
+        and isinstance(item.ctx, (ast.Store, ast.Del))
+        and ast.unparse(item).split(".")[0] in roots
+        for scope in scopes
+        for item in ast.walk(scope)
+    )
+
+
+def _unsafe_project_bases(snapshots, resolved):
+    blocked = set()
+    for path, tree in snapshots.items():
+        for local, (source, symbol) in resolved[path].items():
+            if symbol is not None:
+                if not _stable_import_contract(tree, local, float("inf")):
+                    blocked.add((source, symbol))
+                continue
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == local
+                ):
+                    blocked.add((source, node.func.attr))
+    return blocked
+
+
+class _BoundSourceBytes:
+    def __init__(self, root, data, bindings):
+        self.root, self.data = root, data
+        self.expected = {row["path"]: row["sha256"] for row in bindings}
+
+    def get(self, path):
+        from .review_audits import _security_source_bytes, ReviewAuditError, MAX_BYTES
+        from .runtime_audit_common import RuntimeAuditError
+        from .deep_audit_io import local_file
+
+        relative = path.relative_to(self.root).as_posix()
+        expected = self.expected.get(relative)
+        if expected is None:
+            raise RuntimeAuditError("Snapshot has no original source identity")
+        data = self.data.get(path)
+        if data is None:
+            if (
+                path.is_symlink()
+                or local_file(self.root, relative).stat().st_size > MAX_BYTES
+            ):
+                raise RuntimeAuditError("Snapshot exceeds source boundary")
+            data = _security_source_bytes(self.root, relative)
+        if len(data) > MAX_BYTES or sha256(data).hexdigest() != expected:
+            raise ReviewAuditError(
+                "Source changed before snapshot parsing: " + relative
+            )
+        return data
+
+
+def bound_snapshots(root, files, data, bindings):
+    from .review_audits import _oracle_snapshots
+
+    return _oracle_snapshots(root, files, _BoundSourceBytes(root, data, bindings))

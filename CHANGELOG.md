@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Recognize registered Click group containers, documented default no-op hooks,
+  locally evidenced base interfaces and inert IO implementations without treating
+  every empty body as unfinished code. Keep ordinary stubs and ambiguous controls
+  visible; these source contracts do not prove runtime behavior.
+- Resolve direct imported base-method contracts from the scanner's existing
+  source snapshots. Bind contract edges and cached dispositions to all source
+  inputs; reject rebound imports, direct base use and incompatible overrides.
+  Report retained real-repository counts separately from accuracy measurements.
+
 - Require current shared SpecLine acceptance evidence before a ForgeLine result
   can produce a traceable CF receipt. Revalidate declared checks, task receipts
   and source/verifier identities; copied, stale or resealed mismatched evidence

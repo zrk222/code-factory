@@ -2260,3 +2260,201 @@ def test_null_io_protocol_behavior_is_an_intentional_noop():
 )
 def test_partial_or_lookalike_io_stubs_remain(old, new):
     assert symbols(_NULL_IO_SOURCE.replace(old, new))
+
+
+def _write_project_contract(tmp_path, implementation, declaration=None):
+    (tmp_path / "base.py").write_text(
+        declaration or "class Adapter:\n    def run(self): raise NotImplementedError\n"
+    )
+    (tmp_path / "impl.py").write_text(implementation)
+
+
+def test_native_imported_base_contract_cache_and_source_invalidation(tmp_path):
+    from factoryline.review_audits import security_scan, _oracle_context_cache_clear
+
+    _oracle_context_cache_clear()
+    _write_project_contract(
+        tmp_path,
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): return 1\n",
+    )
+    cold = security_scan(tmp_path)
+    warm = security_scan(tmp_path)
+    assert "QUALITY_EMPTY_IMPLEMENTATION" not in cold["finding_counts"]
+    assert cold["findings"] == warm["findings"]
+    assert any(
+        edge["kind"] == "implementation_contract"
+        for edge in cold["oracle_context"]["resolved_edges"]
+    )
+    (tmp_path / "impl.py").write_text(
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): pass\n"
+    )
+    changed = security_scan(tmp_path)
+    assert changed["finding_counts"]["QUALITY_EMPTY_IMPLEMENTATION"] == 2
+
+
+@pytest.mark.parametrize(
+    "implementation",
+    [
+        "from base import Adapter\nAdapter=other\nclass Concrete(Adapter):\n    def run(self): return 1\n",
+        "from base import Adapter\nclass Concrete(Adapter):\n    def other(self): return 1\n",
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): raise NotImplementedError\n",
+        "from base import Adapter\nclass Concrete(Adapter):\n    async def run(self): return 1\n",
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): return 1\nAdapter().run()\n",
+        "class Concrete(Adapter):\n    def run(self): return 1\nfrom base import Adapter\n",
+        "from base import Adapter\n@custom\nclass Concrete(Adapter):\n    def run(self): return 1\n",
+    ],
+)
+def test_native_imported_contract_ambiguity_still_flags_base(tmp_path, implementation):
+    from factoryline.review_audits import security_scan
+
+    _write_project_contract(tmp_path, implementation)
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert any(
+        f["code"] == "QUALITY_EMPTY_IMPLEMENTATION" and f["path"] == "base.py"
+        for f in result["findings"]
+    )
+
+
+def test_native_typed_ellipsis_imported_base_contract(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    _write_project_contract(
+        tmp_path,
+        "from base import Adapter as Base\nclass Concrete(Base):\n    def run(self): return 1\n",
+        "class Adapter:\n    def run(self) -> int: ...\n",
+    )
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert "QUALITY_EMPTY_IMPLEMENTATION" not in result["finding_counts"]
+
+
+def test_native_contract_rejects_late_import_rebinding(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "base.py").write_text(
+        "class Adapter:\n    def run(self): raise NotImplementedError\n"
+    )
+    (tmp_path / "other.py").write_text(
+        "class Adapter:\n    def run(self): raise NotImplementedError\n"
+    )
+    (tmp_path / "impl.py").write_text(
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): return 1\nfrom other import Adapter\n"
+    )
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert result["finding_counts"]["QUALITY_EMPTY_IMPLEMENTATION"] == 2
+
+
+def test_native_contract_rejects_conditional_base_redefinition(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    _write_project_contract(
+        tmp_path,
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): return 1\n",
+        "class Adapter:\n    def run(self): raise NotImplementedError\nif flag:\n    class Adapter:\n        def run(self): return 1\n",
+    )
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert any(
+        f["path"] == "base.py" and f["code"] == "QUALITY_EMPTY_IMPLEMENTATION"
+        for f in result["findings"]
+    )
+
+
+@pytest.mark.parametrize(
+    "consumer",
+    [
+        "from base import Adapter\nAdapter().run()\n",
+        "import base as module\nmodule.Adapter().run()\n",
+    ],
+)
+def test_native_contract_checks_direct_base_use_in_other_modules(tmp_path, consumer):
+    from factoryline.review_audits import security_scan
+
+    _write_project_contract(
+        tmp_path,
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): return 1\n",
+    )
+    (tmp_path / "consumer.py").write_text(consumer)
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert any(
+        f["code"] == "QUALITY_EMPTY_IMPLEMENTATION" and f["path"] == "base.py"
+        for f in result["findings"]
+    )
+
+
+@pytest.mark.parametrize("imported", [True, False])
+def test_control_flow_only_stub_override_never_clears_base(tmp_path, imported):
+    from factoryline.review_audits import security_scan
+
+    base = "class Adapter:\n    def run(self): raise NotImplementedError\n"
+    child = "class Concrete(Adapter):\n    def run(self):\n        if enabled:\n            raise NotImplementedError\n"
+    if imported:
+        _write_project_contract(tmp_path, "from base import Adapter\n" + child)
+        findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+        assert any(
+            f["code"] == "QUALITY_EMPTY_IMPLEMENTATION" and f["path"] == "base.py"
+            for f in findings
+        )
+    else:
+        assert "run" in symbols(base + child)
+
+
+def test_click_alias_cannot_be_borrowed_from_a_later_import():
+    source = "from fake import group\n@group()\ndef cli(): pass\nfrom click import group\n@cli.command()\ndef child(): return 1\n"
+    assert "cli" in symbols(source)
+
+
+def test_null_io_member_rebinding_is_not_trusted():
+    source = _NULL_IO_SOURCE.replace(
+        "from typing import IO", "import typing\ntyping.IO = FakeIO"
+    ).replace("IO[str]", "typing.IO[str]")
+    assert {"close", "flush", "writelines", "__exit__"} <= symbols(source)
+
+
+def _disable_source_retention(monkeypatch):
+    from factoryline import review_audits as audit
+
+    original = audit._oracle_source_inputs
+
+    def without_bytes(root, files):
+        _data, bindings, manifest, cacheable = original(root, files)
+        return {}, bindings, manifest, cacheable
+
+    monkeypatch.setattr(audit, "_oracle_source_inputs", without_bytes)
+    return audit
+
+
+def test_unretained_snapshot_rejects_transient_changed_and_restored_bytes(
+    tmp_path, monkeypatch
+):
+    audit = _disable_source_retention(monkeypatch)
+    _write_project_contract(
+        tmp_path,
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): pass\n",
+    )
+    original = audit._security_source_bytes
+    reads = 0
+
+    def transient_reader(root, relative):
+        nonlocal reads
+        data = original(root, relative)
+        if relative == "impl.py":
+            reads += 1
+            if reads == 2:
+                return data.replace(b"pass", b"return 1")
+        return data
+
+    monkeypatch.setattr(audit, "_security_source_bytes", transient_reader)
+    with pytest.raises(audit.ReviewAuditError, match="Source changed before snapshot"):
+        audit.security_scan(tmp_path, cache_enabled=False)
+    assert reads == 2
+
+
+def test_unretained_unchanged_snapshot_keeps_valid_contracts(tmp_path, monkeypatch):
+    audit = _disable_source_retention(monkeypatch)
+    _write_project_contract(
+        tmp_path,
+        "from base import Adapter\nclass Concrete(Adapter):\n    def run(self): return 1\n",
+    )
+    assert (
+        "QUALITY_EMPTY_IMPLEMENTATION"
+        not in audit.security_scan(tmp_path, cache_enabled=False)["finding_counts"]
+    )
