@@ -2392,6 +2392,7 @@ def test_borrowed_resource_context_exit_contract(name, field, argument, document
             "_function_rebinds_module_getattr",
             "_scope_binds_name",
             "_scope_statement_binds_name",
+            "_track_import_binding",
             "_walk_scope_nodes",
         )
     )
@@ -2773,6 +2774,105 @@ def test_native_imported_base_contract_cache_and_source_invalidation(tmp_path):
     )
     changed = security_scan(tmp_path)
     assert changed["finding_counts"]["QUALITY_EMPTY_IMPLEMENTATION"] == 2
+
+
+@pytest.mark.parametrize(
+    "source,local,before,expected",
+    [
+        ("from api import Base as Local\nclass Child(Local): pass\n", "Local", 2, True),
+        ("import api as Local\nclass Child(Local): pass\n", "Local", 2, True),
+        (
+            "from api import Base as Local\nfrom api import Other as Local\n",
+            "Local",
+            3,
+            False,
+        ),
+        (
+            "from api import Base as Local\nclass Child(Local): pass\n",
+            "Local",
+            1,
+            False,
+        ),
+    ],
+)
+def test_stable_import_index_preserves_import_shape(source, local, before, expected):
+    import ast
+    from factoryline.implementation_audit import _stable_import_contract
+
+    assert _stable_import_contract(ast.parse(source), local, before) is expected
+
+
+@pytest.mark.parametrize(
+    "invalidator",
+    [
+        "Local = other",
+        "del Local",
+        "def Local(): pass",
+        "class Local: pass",
+        "Local()",
+        "Local.attribute = 1",
+        "del Local.attribute",
+        "def nested():\n    Local = other",
+    ],
+)
+def test_stable_import_index_keeps_all_ast_invalidators(invalidator):
+    import ast
+    from factoryline.implementation_audit import _stable_import_contract
+
+    tree = ast.parse(f"from api import Base as Local\n{invalidator}\n")
+    assert not _stable_import_contract(tree, "Local", 100)
+
+
+def test_stable_import_helpers_are_fresh_and_invocation_local(tmp_path):
+    import ast
+    from factoryline.implementation_audit import (
+        _stable_import_contract,
+        bind_project_contracts,
+    )
+
+    tree = ast.parse("from base import Adapter as Local\n")
+    assert _stable_import_contract(tree, "Local", 100)
+    tree.body.append(ast.parse("Local = replacement").body[0])
+    assert not _stable_import_contract(tree, "Local", 100)
+
+    def bind(root, invalidated=False):
+        base = root / "base.py"
+        implementation = root / "impl.py"
+        source = "from base import Adapter\n"
+        if invalidated:
+            source += "Adapter = replacement\n"
+        source += "class Concrete(Adapter):\n    def run(self): return 1\n"
+        snapshots = {
+            base: ast.parse(
+                "class Adapter:\n    def run(self): raise NotImplementedError\n"
+            ),
+            implementation: ast.parse(source),
+        }
+        contexts = {path: {} for path in snapshots}
+        edges = []
+        bind_project_contracts(root, snapshots, contexts, edges)
+        return edges
+
+    assert any(
+        edge["kind"] == "implementation_contract" for edge in bind(tmp_path / "one")
+    )
+    assert not bind(tmp_path / "two", invalidated=True)
+
+
+def test_unsafe_project_bases_uses_indexed_module_calls():
+    import ast
+    from pathlib import Path
+    from factoryline.implementation_audit import _unsafe_project_bases
+
+    path, imported = Path("pkg.py"), Path("base.py")
+    tree = ast.parse(
+        "import package as module\nmodule.load()\nfrom base import Adapter\n"
+    )
+    blocked = _unsafe_project_bases(
+        {path: tree},
+        {path: {"module": (imported, None), "Adapter": (imported, "Adapter")}},
+    )
+    assert blocked == {(imported, "load")}
 
 
 @pytest.mark.parametrize(
