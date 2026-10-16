@@ -1877,6 +1877,7 @@ class _DatabaseParserLogFilter(logging.Filter):
         self.thread_id = thread_id
 
     def filter(self, record):
+        """Suppress parser messages only on the thread extracting private SQL."""
         return not (
             threading.get_ident() == self.thread_id
             and record.name.startswith("sqlglot")
