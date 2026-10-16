@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical
+
 import hashlib
-import json
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
@@ -24,16 +25,6 @@ _TRACE_TOKEN = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
 
 class AuditTraceError(ValueError):
     """Raised when trace input cannot be safely and reproducibly bound."""
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
 
 
 def _digest(value: bytes) -> str:

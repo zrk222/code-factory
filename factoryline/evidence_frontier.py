@@ -13,9 +13,8 @@ from typing import Any
 import hashlib
 import json
 import re
-import tempfile
 
-from .proofsearch import verify_proofsearch_evaluation
+from .proofsearch import _write, verify_proofsearch_evaluation
 
 
 REQUEST_SCHEMA = "factory.evidence-frontier-request.v1"
@@ -81,28 +80,6 @@ def _load(path: Path) -> dict[str, Any]:
             "EVIDENCE_FRONTIER_SOURCE_INVALID", "source root must be one object"
         )
     return value
-
-
-def _write(payload: dict[str, Any], out: Path) -> None:
-    destination = Path(out)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=destination.parent,
-            prefix=f".{destination.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
-            handle.write("\n")
-            temporary = Path(handle.name)
-        temporary.replace(destination)
-    finally:
-        if temporary is not None and temporary.exists():
-            temporary.unlink()
 
 
 def _text(value: object, field: str, maximum: int = 320) -> str:

@@ -9,8 +9,9 @@ can render with its own component catalog.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical
+
 from hashlib import sha256
-import json
 import re
 from typing import Any, Iterable
 
@@ -42,16 +43,6 @@ class AguiError(ValueError):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

@@ -84,3 +84,78 @@ def test_canonical_json_preserves_supported_unicode(value: object) -> None:
     encoded = canonical_json(value)
 
     assert canonical_json(json.loads(encoded)) == encoded
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "agentic_control",
+        "agui",
+        "appforge_mobile_evidence",
+        "appforge_oracle",
+        "appforge_submission_assurance",
+        "audit_trace",
+        "blueprint",
+        "continuous_proof",
+        "first_lap",
+        "full_stack_ux_harness",
+        "full_stack_ux_spec",
+        "gauntlet",
+        "intake_grill",
+        "jetbrains_handshake",
+        "junie_review",
+        "junie_taxonomy",
+        "learning_loop",
+        "proof_review_workflow",
+        "release_contract",
+        "repair_sandbox",
+        "repo_coordination",
+        "service_boundaries",
+        "verifier_plane",
+    ],
+)
+def test_shared_canonical_preserves_bytes_errors_and_deletes_duplicate_bodies(
+    module_name,
+):
+    import ast
+    import importlib
+    import inspect
+    from factoryline import canonical_json_bytes
+
+    module = importlib.import_module("factoryline." + module_name)
+    assert module._canonical is canonical_json_bytes
+    tree = ast.parse(inspect.getsource(module))
+    assert not any(
+        isinstance(n, ast.FunctionDef) and n.name == "_canonical" for n in tree.body
+    )
+    values = [
+        None,
+        True,
+        0,
+        -0.0,
+        {"z": [1, None, False], "a": "é🧪"},
+        {"\u2028": "\u0000"},
+    ]
+    for value in values:
+        expected = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        assert module._canonical(value) == expected
+    for value in [math.nan, math.inf, -math.inf, object(), "\ud800"]:
+        try:
+            json.dumps(
+                value,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        except (ValueError, TypeError, UnicodeError) as original:
+            with pytest.raises(type(original)):
+                module._canonical(value)
+        else:
+            pytest.fail("negative control unexpectedly serialized")

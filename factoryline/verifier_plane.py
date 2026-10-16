@@ -8,6 +8,8 @@ not host isolation, network policy, credential handling, or release authority.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -43,16 +45,6 @@ class VerifierPlaneError(ValueError):
         self.code = code
         self.message = message
         self.marker = "VERIFIER_RESULT_REJECTED"
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
 
 
 def _sha_bytes(value: bytes) -> str:

@@ -8,6 +8,8 @@ local changes; signer identity still requires the enterprise receipt path.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical
+
 import hashlib
 import json
 import re
@@ -37,16 +39,6 @@ CORE_STAGE_IDS = frozenset(
     }
 )
 EXTERNAL_STAGE_IDS = frozenset({"appforge:mobile-evidence"})
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

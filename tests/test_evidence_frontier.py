@@ -262,3 +262,34 @@ def test_frontier_cli_plans_and_verifies_without_execution(tmp_path: Path, capsy
         == 0
     )
     assert json.loads(capsys.readouterr().out)["marker"] == "EVIDENCE_FRONTIER_VERIFIED"
+
+
+def test_frontier_shared_writer_preserves_atomic_replace_failure_cleanup(
+    tmp_path, monkeypatch
+):
+    import ast
+    import inspect
+    import os
+    import factoryline.evidence_frontier as frontier
+    import factoryline.proofsearch as search
+
+    assert frontier._write is search._write
+    assert not any(
+        isinstance(n, ast.FunctionDef) and n.name == "_write"
+        for n in ast.parse(inspect.getsource(frontier)).body
+    )
+    target = tmp_path / "nested" / "receipt.json"
+    frontier._write({"z": "é", "a": 1}, target)
+    before = target.read_bytes()
+    assert before == '{\n  "a": 1,\n  "z": "é"\n}\n'.replace("\n", os.linesep).encode(
+        "utf-8"
+    )
+
+    def refused_replace(self, destination):
+        raise OSError("controlled replacement failure")
+
+    monkeypatch.setattr(Path, "replace", refused_replace)
+    with pytest.raises(OSError, match="controlled replacement failure"):
+        frontier._write({"new": True}, target)
+    assert target.read_bytes() == before
+    assert list(target.parent.glob(".*.tmp")) == []

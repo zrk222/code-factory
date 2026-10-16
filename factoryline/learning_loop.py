@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical
+
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -289,16 +291,6 @@ def diagnose_forensic_rejection(packet: dict[str, Any]) -> dict[str, str]:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

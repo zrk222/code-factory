@@ -7,6 +7,8 @@ that define that evaluation.  It is local and cannot contact Apple.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical
+
 import hashlib
 import json
 import os
@@ -26,16 +28,6 @@ AUTHORITY_SCHEMA = "factory.appforge.oracle-authority.v1"
 RECEIPT_SCHEMA = "factory.appforge.oracle-authority-receipt.v1"
 MAX_BYTES = 1_048_576
 CANDIDATE_KEYS = ("bundle_identifier", "version", "build_number", "source_commit")
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

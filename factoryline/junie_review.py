@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical
+
 import hashlib
-import json
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -114,16 +115,6 @@ class JunieReviewError(ValueError):
     def __init__(self, message: str, code: str = "JUNIE_REVIEW_INPUT_REJECTED") -> None:
         super().__init__(message)
         self.code = code
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
 
 
 def _hash(value: object) -> str:

@@ -16,6 +16,7 @@ from .revenueforge import (
     AUTHORITY,
     MAX_INPUT_BYTES,
     RevenueForgeError,
+    _local,
     validate_products,
 )
 
@@ -70,27 +71,6 @@ def _canonical(value: object) -> bytes:
 
 def _sha(value: object) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
-
-
-def _local(root: Path, value: Path, *, exists: bool = True) -> Path:
-    workspace = Path(root).resolve()
-    candidate = Path(value)
-    resolved = (
-        candidate.resolve()
-        if candidate.is_absolute()
-        else (workspace / candidate).resolve()
-    )
-    try:
-        resolved.relative_to(workspace)
-    except ValueError as exc:
-        raise RevenueForgeError(
-            "REVENUEFORGE_PATH_REJECTED", "path must remain inside the workspace"
-        ) from exc
-    if exists and not resolved.is_file():
-        raise RevenueForgeError(
-            "REVENUEFORGE_INPUT_UNAVAILABLE", "input must be a regular file"
-        )
-    return resolved
 
 
 def _read_json(root: Path, value: Path) -> tuple[dict[str, Any], Path]:

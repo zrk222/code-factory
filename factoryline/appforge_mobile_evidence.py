@@ -9,6 +9,8 @@ or an explicit ``not_attempted`` release stage.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical
+
 import hashlib
 import json
 import math
@@ -77,16 +79,6 @@ STAGE_STATES = frozenset(
 )
 METRICS = ("crash_free_rate", "anr_rate", "hang_rate", "startup_ms")
 PASS = "passed"
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:
