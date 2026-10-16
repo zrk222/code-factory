@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add source-bound PostgreSQL/SQLite schema and SQLAlchemy context to static scan
+  receipts and existing context packets. Record tables, columns, constraints,
+  indexes, migration operations and supported query dependencies without executing
+  project code or reading database rows. Bind explicit migration order and parser
+  identity; preserve declaration conflicts, omitted inputs and unsupported forms
+  as gaps. Incomplete source coverage cannot produce a clean scan verdict.
+
 - Measure selected static source reads, hashing, parsing and import indexing in
   lifecycle telemetry. Aggregate short calls before rounding and report failed,
   missing or dropped measurements explicitly. Timing remains separate from scan

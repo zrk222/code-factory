@@ -26,7 +26,13 @@ try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
-from .audit_action_refs import audit_remediation_packet
+from .audit_action_refs import (
+    audit_remediation_packet,
+    _security_scan_candidate_payload,
+    _security_scan_coverage,
+    _security_scan_state,
+    _security_scan_action_summary,
+)
 from .deep_audit_io import local_file
 from .ops_telemetry import _measure_hash, _measure_parse, _measured_source_read
 from .runtime_audit_common import RuntimeAuditError, runtime_config_sources
@@ -3889,11 +3895,24 @@ def _project_oracle_context(
     *,
     cache_enabled: bool = True,
     collection_identity: dict | None = None,
+    python_inventory_out: list | None = None,
 ) -> tuple[dict, list, list, dict]:
     """Resolve local imports and return retained bytes without executing repository code."""
     source_bytes, source_bindings, manifest, source_cacheable = _oracle_source_inputs(
         root, files
     )
+    retained_paths = {path.relative_to(root).as_posix() for path in source_bytes}
+    python_inventory = [
+        {
+            "path": item["path"],
+            "state": item["state"],
+            "retained": item["path"] in retained_paths,
+        }
+        for item in manifest
+        if item["path"].lower().endswith(".py")
+    ]
+    if python_inventory_out is not None:
+        python_inventory_out.extend(python_inventory)
     (
         typecheck_sources,
         config_bindings,
@@ -5524,6 +5543,7 @@ def _scan_security_sources(
     *,
     cache_enabled: bool = True,
     test_file_patterns: set[str] | None = None,
+    database_context: dict | None = None,
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
@@ -5558,12 +5578,22 @@ def _scan_security_sources(
                 state=collection_identity["state"],
             )
         )
+    python_inventory = []
     contexts, context_bindings, oracle_edges, source_bytes = _project_oracle_context(
         workspace,
         files,
         cache_enabled=cache_enabled,
         collection_identity=collection_identity,
+        python_inventory_out=python_inventory,
     )
+    from .context_efficiency import database_workspace_context, verify_database_context
+
+    database = database_workspace_context(
+        workspace, source_bytes, _security_source_bytes, python_inventory
+    )
+    context_bindings.extend(database.pop("_bindings"))
+    if database_context is not None:
+        database_context.update(database)
     for path in files:
         scope = (scoped_reads or {}).get(path.relative_to(workspace).as_posix(), {})
         calls = tuple(sorted(set(tenant_read_calls) | set(scope.get("calls", ()))))
@@ -5583,6 +5613,7 @@ def _scan_security_sources(
         if outcome in outcomes:
             outcomes[outcome] += 1
     _verify_security_bindings(workspace, context_bindings + bindings)
+    verify_database_context(workspace, database, ReviewAuditError)
     findings.sort(
         key=lambda item: (item["path"], item["line"], item["code"], item["column"])
     )
@@ -5594,48 +5625,15 @@ def _scan_security_sources(
     return bindings, findings, counts, outcomes, oracle_edges, extra_bindings
 
 
-def _security_scan_state(files: list[Path], findings: list[dict[str, Any]]) -> str:
-    if not files:
-        return "NO_SOURCES"
-    if any(item["severity"] in {"CRITICAL", "HIGH"} for item in findings):
-        return "BLOCKED"
-    return "FINDINGS" if findings else "CLEAN"
-
-
-def _security_scan_coverage(
-    files: list[Path], outcomes: dict[str, int]
-) -> dict[str, Any]:
-    audited = outcomes["audited"]
-    attempted = len(files)
-    complete = bool(files) and attempted == audited
-    if not files:
-        measurement_state = "no_eligible_sources"
-    elif complete:
-        measurement_state = "complete"
-    else:
-        measurement_state = "incomplete"
-    return {
-        "language": "Python",
-        "files_discovered": len(files),
-        "files_attempted": attempted,
-        "files_audited": audited,
-        "audit_rate": round(audited / len(files), 4) if files else None,
-        "rate_defined": bool(files),
-        "inventory_complete": True,
-        "measurement_state": measurement_state,
-        "complete": complete,
-        "limit": MAX_SECURITY_SOURCE_FILES,
-    }
-
-
 def _seal_security_scan(core: dict[str, Any]) -> dict[str, Any]:
     candidate = sha256(
         json.dumps(
-            {
-                "sources": core.get("sources", []),
-                "tenant_read_contract": core.get("tenant_read_contract", {}),
-                "oracle_context": core.get("oracle_context", {}),
-            },
+            _security_scan_candidate_payload(
+                core.get("sources", []),
+                core.get("tenant_read_contract", {}),
+                core.get("oracle_context", {}),
+                core.get("database_context", {}),
+            ),
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
@@ -5653,16 +5651,6 @@ def _seal_security_scan(core: dict[str, Any]) -> dict[str, Any]:
     return core
 
 
-def _security_scan_action_summary(state: str) -> str:
-    if state == "NO_SOURCES":
-        return (
-            "No eligible Python sources were found; no security conclusions were drawn."
-        )
-    if state == "CLEAN":
-        return "No high-risk static security or quality patterns found."
-    return "Resolve each listed finding and rerun this deterministic scan before release review."
-
-
 def _security_scan_report(
     files: list[Path],
     findings: list[dict[str, Any]],
@@ -5673,8 +5661,10 @@ def _security_scan_report(
     tenant_read_bindings: dict[str, tuple[str, ...]],
     oracle_edges: list[dict[str, Any]],
     oracle_configuration: list[dict[str, Any]],
+    database_context: dict | None = None,
 ) -> dict[str, Any]:
-    state = _security_scan_state(files, findings)
+    audit_coverage = _security_scan_coverage(files, outcomes, MAX_SECURITY_SOURCE_FILES)
+    state = _security_scan_state(files, findings, database_context, audit_coverage)
     core: dict[str, Any] = {
         "schema": SECURITY_SCHEMA,
         "marker": "SECURITY_AUDIT_COMPLETE",
@@ -5683,7 +5673,7 @@ def _security_scan_report(
         "parse_errors": outcomes["syntax_error"],
         "unreadable_sources": outcomes["unreadable"],
         "oversized_sources": outcomes["too_large"],
-        "audit_coverage": _security_scan_coverage(files, outcomes),
+        "audit_coverage": audit_coverage,
         "tenant_read_contract": _tenant_read_contract(
             tenant_read_calls, tenant_read_bindings
         ),
@@ -5694,6 +5684,7 @@ def _security_scan_report(
             "configuration_sources": oracle_configuration,
         },
         "sources": bindings,
+        "database_context": database_context or {},
         "findings": findings,
         "finding_counts": dict(sorted(counts.items())),
         "governance": "human_controlled",
@@ -5707,7 +5698,11 @@ def _security_scan_report(
     }
     core["source_manifest_sha256"] = sha256(
         json.dumps(
-            {"sources": bindings, "oracle_context": core["oracle_context"]},
+            {
+                "sources": bindings,
+                "oracle_context": core["oracle_context"],
+                "database_context": core["database_context"],
+            },
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,
@@ -5819,7 +5814,9 @@ def _reconcile_runtime_oracles(workspace: Path, core: dict, evidence: tuple) -> 
         "unmatched_evidence_count": len(rows) - len(reconciled),
         "environment_sha256": environment_sha256,
     }
-    core["state"] = _security_scan_state(core["sources"], retained)
+    core["state"] = _security_scan_state(
+        core["sources"], retained, coverage=core.get("audit_coverage")
+    )
     core["action_summary"] = _security_scan_action_summary(core["state"])
     return _seal_security_scan(core)
 
@@ -5900,6 +5897,7 @@ def security_scan(
                 "claim_boundary": "Supplied runtime evidence was not evaluated because source coverage exceeds the scanner limit.",
             }
         return _seal_security_scan(blocked)
+    database_context = {}
     bindings, findings, counts, outcomes, oracle_edges, oracle_configuration = (
         _scan_security_sources(
             workspace,
@@ -5908,6 +5906,7 @@ def security_scan(
             tenant_read_bindings,
             tenant_read_scopes,
             cache_enabled=cache_enabled,
+            database_context=database_context,
         )
     )
     result = _security_scan_report(
@@ -5920,6 +5919,7 @@ def security_scan(
         tenant_read_bindings,
         oracle_edges,
         oracle_configuration,
+        database_context,
     )
     return (
         _reconcile_runtime_oracles(workspace, result, evidence)

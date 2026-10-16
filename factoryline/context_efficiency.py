@@ -33,6 +33,229 @@ EXPERIMENT_SCHEMA = "factory.context-efficiency-paired.v1"
 SHARD_CANDIDATE_SCHEMA = "factory.context-shard-candidate.v1"
 SHARD_REVIEW_SCHEMA = "factory.context-shard-review.v1"
 MODULE_VERSION = "1"
+
+
+def database_workspace_context(
+    root: Path, python_sources: dict, read_source, python_inventory: list | None = None
+) -> dict:
+    """Capture static database context through the scanner's safe source reader."""
+    from .intent_quality import database_structure
+    from .runtime_audit_common import RuntimeAuditError
+
+    paths, gaps = _database_sql_paths(root)
+    python_gaps = _database_python_inventory_gaps(python_inventory, python_sources)
+    gaps.extend(python_gaps)
+    database_signals = bool(paths) or any(
+        any(name in raw for name in (b"sqlalchemy", b"sqlite3", b"psycopg", b"alembic"))
+        for raw in python_sources.values()
+    )
+    selected = (
+        {path.relative_to(root).as_posix(): raw for path, raw in python_sources.items()}
+        if database_signals
+        else {}
+    )
+    config, config_binding = _database_configuration(root, read_source, gaps)
+    bindings = [config_binding] if config_binding else []
+    sql_bytes = 0
+    for relative in paths:
+        try:
+            raw = read_source(root, relative)
+            if len(raw) > 1_000_000:
+                gaps.append("database_source_size_limit:" + relative)
+                continue
+            sql_bytes += len(raw)
+            if sql_bytes > 16_000_000:
+                gaps.append("database_total_source_limit")
+                break
+            selected[relative] = raw
+            bindings.append(
+                {
+                    "path": relative,
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                    "bytes": len(raw),
+                }
+            )
+        except (OSError, RuntimeAuditError):
+            gaps.append("database_source_unreadable:" + relative)
+    if not selected or any("limit" in gap for gap in gaps):
+        result = {
+            "status": "NOT_APPLICABLE",
+            "gaps": [],
+            "tables": [],
+            "queries": [],
+            "operations": [],
+            "source_manifest": [],
+        }
+    else:
+        result = database_structure(
+            selected,
+            config.get("dialect", "postgres"),
+            migration_order=config.get("migration_order"),
+        )
+        if "dialect" not in config:
+            gaps.append("database_dialect_confirmation_required")
+    result["gaps"] = sorted(set(result["gaps"] + gaps))
+    if result["gaps"]:
+        result["status"] = "INCOMPLETE"
+    result["discovery"] = {
+        "sql_files": len(paths),
+        "paths": paths,
+        "configuration_present": (root / "factory.database.json").exists()
+        or (root / "factory.database.json").is_symlink(),
+        "inventory_complete": not any(
+            "discovery" in gap or "limit" in gap for gap in gaps
+        )
+        and not python_gaps,
+        "python_sources_complete": not python_gaps,
+        "python_sources_discovered": len(python_inventory or []),
+        "python_sources_selected": sum(
+            path.lower().endswith(".py") for path in selected
+        ),
+        "source_selection": "all_retained_python_when_database_signaled"
+        if database_signals
+        else "not_applicable",
+    }
+    result["configuration_sources"] = bindings
+    result.pop("graph_digest", None)
+    result["graph_digest"] = _sha(result)
+    result["_bindings"] = bindings
+    return result
+
+
+def _database_python_inventory_gaps(python_inventory, python_sources):
+    if python_inventory is None:
+        return ["database_python_inventory_unverified"]
+    gaps = []
+    for item in python_inventory:
+        path = item.get("path", "")
+        state = item.get("state")
+        if state != "read":
+            gaps.append(f"database_python_source_{state or 'unverified'}:{path}")
+        elif not item.get("retained"):
+            gaps.append(f"database_python_source_retention_limit:{path}")
+    return gaps
+
+
+def _database_sql_paths(root: Path) -> tuple[list[str], list[str]]:
+    ignored = {
+        ".git",
+        ".factory",
+        ".venv",
+        "venv",
+        "build",
+        "dist",
+        "tmp",
+        "vendor",
+        "site-packages",
+        "__pycache__",
+        "node_modules",
+    }
+    paths, gaps, entries = [], [], 0
+    for directory, dirs, names in os.walk(
+        root,
+        followlinks=False,
+        onerror=lambda _error: gaps.append("database_discovery_unreadable_directory"),
+    ):
+        entries += len(dirs) + len(names)
+        if entries > 50_000:
+            gaps.append("database_discovery_entry_limit")
+            break
+        dirs[:] = _database_directories(
+            directory, [name for name in sorted(dirs) if name not in ignored], gaps
+        )
+        paths.extend(
+            (Path(directory) / name).relative_to(root).as_posix()
+            for name in sorted(names)
+            if name.lower().endswith(".sql")
+        )
+        if len(paths) > 256:
+            gaps.append("database_input_limit")
+            return sorted(paths[:257]), gaps
+    return sorted(paths), gaps
+
+
+def _database_directories(directory, names, gaps):
+    allowed = []
+    for name in names:
+        try:
+            child = Path(directory) / name
+            if (
+                child.is_symlink()
+                or getattr(child.lstat(), "st_file_attributes", 0) & 0x400
+            ):
+                gaps.append("database_discovery_linked_directory")
+            else:
+                allowed.append(name)
+        except OSError:
+            gaps.append("database_discovery_unreadable_directory")
+    return allowed
+
+
+def verify_database_context(root: Path, context: dict, error_type):
+    """Reject new/deleted SQL inputs or configuration after context capture."""
+    paths, gaps = _database_sql_paths(root)
+    config = root / "factory.database.json"
+    discovery = context["discovery"]
+    if (
+        paths != discovery["paths"]
+        or bool(config.exists() or config.is_symlink())
+        != discovery["configuration_present"]
+        or (gaps and discovery["inventory_complete"])
+    ):
+        raise error_type("Database source inventory changed during scan")
+
+
+def _database_configuration(
+    root: Path, read_source, gaps: list
+) -> tuple[dict, dict | None]:
+    from .runtime_audit_common import RuntimeAuditError
+
+    name = "factory.database.json"
+    path = root / name
+    if not path.exists() and not path.is_symlink():
+        return {}, None
+    try:
+        raw = read_source(root, name)
+        binding = {
+            "path": name,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
+        }
+        if len(raw) > 16_384:
+            raise ValueError("configuration byte limit")
+        config = json.loads(raw, object_pairs_hook=_database_json_pairs)
+        if (
+            not isinstance(config, dict)
+            or not {"schema", "dialect"}
+            <= set(config)
+            <= {"schema", "dialect", "migration_order"}
+            or config["schema"] != "factory.database-context-config.v1"
+            or not isinstance(config["dialect"], str)
+            or config["dialect"] not in {"postgres", "sqlite"}
+        ):
+            raise ValueError("configuration fields")
+        order = config.get("migration_order")
+        if order is not None and (
+            not isinstance(order, list)
+            or len(order) > 256
+            or any(not isinstance(item, str) for item in order)
+        ):
+            raise ValueError("migration order fields")
+        return config, binding
+    except (OSError, RuntimeAuditError, ValueError, UnicodeError):
+        gaps.append("database_configuration_invalid")
+        return {}, locals().get("binding")
+
+
+def _database_json_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate database configuration field")
+        result[key] = value
+    return result
+
+
 MAX_SOURCES = 128
 MAX_CHANGED_PATHS = 128
 MAX_CACHE_FILES = 100
@@ -527,6 +750,8 @@ class _EvidenceVisitor(ast.NodeVisitor):
 
 
 def _structural_evidence(path: str, raw: bytes) -> dict[str, Any]:
+    if path.lower().endswith(".sql"):
+        return _database_structural_evidence(path, raw)
     if (
         not path.endswith(".py")
         or _SECRET_NAME.search(path)
@@ -562,7 +787,44 @@ def _structural_evidence(path: str, raw: bytes) -> dict[str, Any]:
         )[:256],
         "imports": sorted(visitor.imports)[:256],
         "calls": sorted(visitor.calls)[:256],
-        "identifiers": sorted(visitor.identifiers)[:512],
+        "identifiers": sorted(
+            visitor.identifiers | _database_identifier_hints(path, raw)
+        )[:512],
+    }
+
+
+def _database_identifier_hints(path: str, raw: bytes) -> set[str]:
+    if not path.lower().endswith(".sql") and b"sqlalchemy" not in raw:
+        return set()
+    from .intent_quality import database_structure
+
+    graph = database_structure({path: raw}, "postgres")
+    return {table["name"] for table in graph["tables"]}
+
+
+def _database_structural_evidence(path: str, raw: bytes) -> dict[str, Any]:
+    empty = {
+        "status": "NOT_PARSED",
+        "definitions": [],
+        "imports": [],
+        "calls": [],
+        "identifiers": [],
+    }
+    if (
+        _SECRET_NAME.search(path)
+        or any(pattern.search(raw) for pattern in _SECRET_BYTES)
+        or len(raw) > MAX_AST_SOURCE_BYTES
+    ):
+        return empty
+    from .intent_quality import database_structure
+
+    graph = database_structure({path: raw}, "postgres")
+    return {
+        **empty,
+        "status": "DATABASE_STATIC_ONLY"
+        if graph["status"] == "COMPLETE"
+        else "PARSE_LIMIT_OR_ERROR",
+        "identifiers": sorted(table["name"] for table in graph["tables"])[:512],
     }
 
 
@@ -1841,6 +2103,7 @@ def _validate_structure(value: Any) -> None:
         "NOT_PARSED",
         "PARSE_LIMIT",
         "PARSE_LIMIT_OR_ERROR",
+        "DATABASE_STATIC_ONLY",
     }:
         raise ContextEfficiencyError(
             "E_SELECTION_FIELDS", "structural evidence is malformed"

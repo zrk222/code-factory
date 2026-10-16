@@ -807,6 +807,47 @@ def _selection_manifest(**overrides):
     return value
 
 
+def test_database_context_entities_flow_through_existing_selected_packet(tmp_path):
+    schema = tmp_path / "schema.sql"
+    schema.write_text("CREATE TABLE accounts (id INTEGER PRIMARY KEY);\n")
+    (tmp_path / "models.py").write_text(
+        "from sqlalchemy import Column, Integer\n"
+        "from sqlalchemy.orm import declarative_base\n"
+        "Base = declarative_base()\n"
+        "class Account(Base):\n"
+        "    __tablename__ = 'accounts'\n"
+        "    id = Column(Integer, primary_key=True)\n"
+    )
+    manifest = _selection_manifest(
+        task="review accounts schema and model",
+        changed_paths=["schema.sql"],
+        candidates=[
+            {"path": "schema.sql", "role": "schema"},
+            {"path": "models.py", "role": "model"},
+        ],
+        required_paths=["schema.sql"],
+        required_evidence_roles=["schema", "model"],
+    )
+    packet = build_selected_context_packet(tmp_path, manifest)
+    metadata = {item["path"]: item for item in packet["selection"]["candidates"]}
+    assert metadata["schema.sql"]["structure"]["status"] == "DATABASE_STATIC_ONLY"
+    assert "accounts" in metadata["models.py"]["structure"]["identifiers"]
+    assert "models.py" in metadata["schema.sql"]["related_paths"]
+    packet_path = tmp_path / packet["cache"]["path"]
+    assert verify_context_packet(tmp_path, packet_path)["valid"] is True
+    schema.write_text(schema.read_text() + "ALTER TABLE accounts ADD email TEXT;\n")
+    assert verify_context_packet(tmp_path, packet_path)["valid"] is False
+
+
+def test_database_context_structural_metadata_respects_secret_boundaries():
+    from factoryline.context_efficiency import _structural_evidence
+
+    source = b"CREATE TABLE private_accounts (id INTEGER);"
+    result = _structural_evidence("credentials.sql", source)
+    assert result["status"] == "NOT_PARSED"
+    assert not result["identifiers"]
+
+
 def test_selection_is_explicit_ranked_progressive_and_reusable(tmp_path):
     (tmp_path / "README.md").write_text("guide", encoding="utf-8")
     (tmp_path / "factoryline").mkdir()
@@ -940,6 +981,63 @@ def test_live_source_growth_is_bounded_while_reading(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "open", growing_open)
     with pytest.raises(ContextEfficiencyError, match="E_SOURCE_BOUNDARY"):
         _stable_file(source)
+
+
+@pytest.mark.parametrize("boundary", ["per_file", "aggregate", "inventory"])
+def test_database_context_resource_limits_prevent_partial_complete_graph(
+    tmp_path, monkeypatch, boundary
+):
+    from factoryline import context_efficiency as engine
+    from factoryline import intent_quality
+
+    count = 257 if boundary == "inventory" else 17 if boundary == "aggregate" else 1
+    for index in range(count):
+        (tmp_path / f"{index:03}.sql").write_bytes(b"placeholder")
+
+    def reject_partial_parse(*args, **kwargs):
+        pytest.fail("Resource-limited inputs must not reach graph extraction")
+
+    monkeypatch.setattr(intent_quality, "database_structure", reject_partial_parse)
+    size = 1_000_001 if boundary == "per_file" else 1_000_000
+    graph = engine.database_workspace_context(
+        tmp_path, {}, lambda root, relative: b"x" * size
+    )
+    assert graph["status"] == "INCOMPLETE"
+    assert not graph["discovery"]["inventory_complete"]
+    assert any("limit" in gap for gap in graph["gaps"])
+    assert graph["tables"] == []
+    assert graph["queries"] == []
+
+
+def test_database_context_incomplete_advice_explains_missing_evidence():
+    from factoryline.audit_action_refs import _security_scan_action_summary
+
+    advice = _security_scan_action_summary("INCOMPLETE")
+    assert "coverage gaps" in advice
+    assert "could not be verified" in advice
+    assert "Resolve each listed finding" not in advice
+
+
+def test_database_context_cache_enforces_entry_byte_and_replacement_bounds(monkeypatch):
+    from factoryline import intent_quality as reader
+
+    monkeypatch.setattr(reader, "_DB_CACHE", {})
+    monkeypatch.setattr(reader, "_DB_CACHE_BYTES", 0)
+    for index in range(20):
+        reader._db_cache_write(str(index), b"{}")
+    assert len(reader._DB_CACHE) == 16
+    assert reader._DB_CACHE_BYTES == 32
+    reader._db_cache_write("0", b'{"updated":true}')
+    assert len(reader._DB_CACHE) == 16
+    assert reader._DB_CACHE_BYTES == sum(map(len, reader._DB_CACHE.values()))
+
+    reader._db_cache_write("large", b"x" * 3_999_999)
+    assert reader._DB_CACHE_BYTES <= 4_000_000
+    assert reader._DB_CACHE_BYTES == sum(map(len, reader._DB_CACHE.values()))
+    before = dict(reader._DB_CACHE)
+    reader._db_cache_write("oversized", b"x" * 4_000_001)
+    assert reader._DB_CACHE == before
+    assert reader._DB_CACHE_BYTES == sum(map(len, reader._DB_CACHE.values()))
 
 
 def test_select_context_request_returns_only_explicit_bound_sources(tmp_path):
