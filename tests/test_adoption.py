@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
+import runpy
 
 
 import pytest
@@ -25,6 +26,138 @@ from factoryline.adoption import (
     write_proof_card,
 )
 from factoryline.cli import main
+
+
+def _local_completion_fixture(root: Path):
+    from factoryline.product_missions import close_mission
+
+    helpers = runpy.run_path(str(Path(__file__).with_name("test_product_missions.py")))
+    _graph, _slices, mission = helpers["_pipeline"](root)
+    evidence = root / "legacy-evidence.json"
+    evidence.write_text('{"passed": true}', encoding="utf-8")
+    # This is legacy integrity fixture data, never execution or UI proof.
+    manifest = helpers["_validation_for"](mission, "builder", "reviewer", evidence)
+    validation = root / "validation.json"
+    validation.write_text(json.dumps(manifest), encoding="utf-8")
+    completion = close_mission(Path(mission["path"]), validation, root)
+    return Path(completion["path"]), evidence, mission
+
+
+def test_local_completion_card_keeps_legacy_claims_incomplete(tmp_path):
+    from factoryline.adoption import completion_card_from_receipt
+
+    source, _evidence, mission = _local_completion_fixture(tmp_path)
+    result = completion_card_from_receipt(tmp_path, source, Path("local-summary"))
+    card = result["card"]
+    assert card["status"] == "INCOMPLETE"
+    assert card["integrity_valid"] is True
+    assert card["local_execution_observed"] is False
+    assert card["independent_execution_verified"] is False
+    assert card["required_criteria"] == len(mission["completion_contract"]["criteria"])
+    assert card["requested_behavior"] == mission["slice"]["user_outcome"]
+    assert card["authority"]["share"] is False
+    assert card["source_receipt"] == source.relative_to(tmp_path).as_posix()
+    assert "not a share card" in result["markdown"]
+    assert "No current executed cases" in result["markdown"]
+    assert "Not established by this receipt" in result["markdown"]
+    assert set(result["paths"]) == {"json", "markdown"}
+
+
+def test_local_completion_card_refresh_rejects_stale_evidence(tmp_path):
+    from factoryline.adoption import completion_card_from_receipt
+
+    source, evidence, _mission = _local_completion_fixture(tmp_path)
+    first = completion_card_from_receipt(tmp_path, source, Path("local-summary"))
+    evidence.write_text('{"changed": true}', encoding="utf-8")
+    refreshed = completion_card_from_receipt(tmp_path, source, Path("local-summary"))
+    assert refreshed["card"]["status"] == "INVALID"
+    assert refreshed["card"]["integrity_valid"] is False
+    assert refreshed["card"]["requested_behavior"] is None
+    assert refreshed["card"]["cases"] == []
+    assert refreshed["card"]["card_sha256"] != first["card"]["card_sha256"]
+
+
+def test_local_completion_card_rejects_mission_change_during_render(
+    tmp_path, monkeypatch
+):
+    from factoryline.adoption import completion_card_from_receipt
+    from factoryline import product_missions
+
+    source, _evidence, _mission = _local_completion_fixture(tmp_path)
+    verify = product_missions.verify_mission_completion
+
+    def changing_verify(path):
+        result = verify(path)
+        assert result["integrity_valid"] is True
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+        mission_path = Path(receipt["mission"]["path"])
+        mission_path.write_bytes(mission_path.read_bytes() + b" ")
+        return result
+
+    monkeypatch.setattr(product_missions, "verify_mission_completion", changing_verify)
+    with pytest.raises(AdoptionError, match="mission changed during rendering"):
+        completion_card_from_receipt(tmp_path, source, Path("local-summary"))
+    assert not (tmp_path / "local-summary").exists()
+
+
+def test_local_completion_card_rejects_paths_and_schema_escape(tmp_path):
+    from factoryline.adoption import completion_card_from_receipt
+
+    source, _evidence, _mission = _local_completion_fixture(tmp_path)
+    with pytest.raises(AdoptionError, match="inside the workspace"):
+        completion_card_from_receipt(tmp_path, source, Path("../outside-card"))
+    receipt = json.loads(source.read_text(encoding="utf-8"))
+    receipt["mission"]["path"] = str(tmp_path.parent / "outside-mission.json")
+    source.write_text(json.dumps(receipt), encoding="utf-8")
+    with pytest.raises(AdoptionError, match="inside the workspace"):
+        completion_card_from_receipt(tmp_path, source, Path("local-summary"))
+    source.write_text('{"schema": "unrelated"}', encoding="utf-8")
+    with pytest.raises(AdoptionError, match="mission completion receipt"):
+        completion_card_from_receipt(tmp_path, source, Path("local-summary"))
+
+
+def test_local_completion_card_escapes_untrusted_text():
+    from factoryline.adoption import _completion_card_text
+
+    text = _completion_card_text(
+        "<script>alert(1)</script> [open](https://example.test)"
+    )
+    assert "<script>" not in text
+    assert "[open](" not in text
+
+
+def test_local_completion_card_bounds_receipt_reads(tmp_path):
+    from factoryline.adoption import completion_card_from_receipt
+    from factoryline.product_missions import MAX_DAILY_RECEIPT_BYTES
+
+    source = tmp_path / "oversized.json"
+    source.write_bytes(b" " * (MAX_DAILY_RECEIPT_BYTES + 1))
+    with pytest.raises(AdoptionError, match="oversized local artifact"):
+        completion_card_from_receipt(tmp_path, source, Path("local-summary"))
+    assert not (tmp_path / "local-summary").exists()
+
+
+def test_local_completion_card_cli_uses_existing_surface(tmp_path, capsys):
+    source, _evidence, _mission = _local_completion_fixture(tmp_path)
+    assert (
+        main(
+            [
+                "proof-card",
+                str(source),
+                "--root",
+                str(tmp_path),
+                "--local-details",
+                "--out-dir",
+                "local-summary",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["card"]["status"] == "INCOMPLETE"
+    assert result["card"]["authority"]["publication"] is False
+    assert not (tmp_path / ".factory" / "adoption" / "events.jsonl").exists()
 
 
 def test_receipt_inventory_skips_stat_for_unmatched_files(tmp_path, monkeypatch):

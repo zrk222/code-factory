@@ -24,6 +24,11 @@ def add_parser(sub: Any) -> None:
         help="workspace-contained Proof Card output directory",
     )
     proof_card.add_argument("--json", action="store_true")
+    proof_card.add_argument(
+        "--local-details",
+        action="store_true",
+        help="summarize a mission completion receipt locally; includes task and file details",
+    )
 
     adoption = sub.add_parser(
         "adoption",
@@ -148,6 +153,8 @@ def add_parser(sub: Any) -> None:
 
 
 def _handle_proof_card(args):
+    if getattr(args, "local_details", False):
+        return _handle_completion_card(args)
     from .adoption import (
         AdoptionError,
         proof_card_from_receipt,
@@ -188,6 +195,24 @@ def _handle_proof_card(args):
         print(
             "privacy  : no commands, paths, repository name, prompts, logs, or user identity"
         )
+    return 0
+
+
+def _handle_completion_card(args):
+    from .adoption import AdoptionError, completion_card_from_receipt
+
+    try:
+        result = completion_card_from_receipt(
+            Path(args.root), Path(args.receipt), Path(args.out_dir)
+        )
+    except (AdoptionError, OSError) as exc:
+        print(f"local completion summary failed: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(result["markdown"])
+        print(f"Saved locally: {result['paths']['markdown']}")
     return 0
 
 

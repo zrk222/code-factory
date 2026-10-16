@@ -385,6 +385,245 @@ def proof_card_from_receipt(
     return write_proof_card(receipt, _workspace_path(workspace, out_dir))
 
 
+def _completion_card_json(path: Path) -> tuple[dict[str, Any], str]:
+    from .product_missions import MAX_DAILY_RECEIPT_BYTES
+    from .runtime_audit_process import bounded_file_sha256
+
+    try:
+        digest, raw = bounded_file_sha256(
+            path, MAX_DAILY_RECEIPT_BYTES, include_bytes=True
+        )
+        value = json.loads(raw.decode("utf-8-sig"))
+    except (OSError, ValueError, UnicodeDecodeError) as exc:
+        raise AdoptionError(
+            "E_COMPLETION_CARD_SOURCE", "invalid or oversized local artifact"
+        ) from exc
+    if not isinstance(value, dict):
+        raise AdoptionError(
+            "E_COMPLETION_CARD_SOURCE", "local artifact must be a JSON object"
+        )
+    return value, digest
+
+
+def _completion_card_inputs(workspace: Path, receipt: dict[str, Any]) -> Path:
+    from .product_missions import MAX_COMPLETION_EVIDENCE
+
+    mission_path = _workspace_path(workspace, Path(receipt["mission"]["path"]))
+    _workspace_path(workspace, Path(receipt["validation"]["path"]))
+    evidence = receipt.get("evidence", [])
+    if not isinstance(evidence, list) or len(evidence) > MAX_COMPLETION_EVIDENCE:
+        raise AdoptionError("E_COMPLETION_CARD_SOURCE", "invalid evidence inventory")
+    for item in evidence:
+        _workspace_path(workspace, Path(item["path"]))
+    mission, _digest = _completion_card_json(mission_path)
+    for group in (mission.get("inputs", {}), mission.get("loop", {})):
+        for key, value in group.items():
+            if key.endswith("_path"):
+                _workspace_path(workspace, Path(value))
+    return mission_path
+
+
+def _completion_case_outcome(value: object) -> str:
+    return {
+        "baseline_assertion_pass_mutant_assertion_fail": "Original passed; deliberately broken code triggered the assertion",
+        "baseline_assertion_pass_mutant_assertion_pass": "Unrelated control passed with both original and broken code",
+    }.get(str(value), "Not established by supported execution evidence")
+
+
+def _completion_card_cases(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = []
+    for criterion in summary.get("criteria", []):
+        for case in criterion.get("cases", []):
+            rows.append(
+                {
+                    "criterion_id": criterion["criterion_id"],
+                    "case_id": case["case_id"],
+                    "polarity": case.get("polarity"),
+                    "disposition": case.get("disposition", "unverified"),
+                    "input_sha256": case.get("input_sha256"),
+                    "expected": _completion_case_outcome(
+                        case.get("expected_outcome_claim")
+                    ),
+                    "observed": _completion_case_outcome(case.get("observed_outcome")),
+                }
+            )
+    return rows
+
+
+def _completion_card_facts(workspace, source, receipt, digest, verification, mission):
+    intact = verification.get("integrity_valid") is True
+    complete = intact and verification.get("complete") is True
+    summary = verification.get("daily_verification", {}) if intact else {}
+    status = "COMPLETE" if complete else "INCOMPLETE" if intact else "INVALID"
+    request = mission.get("slice", {}).get("user_outcome") if intact else None
+    core = {
+        "schema": "factory.completion-card.v1",
+        "status": status,
+        "headline": {
+            "COMPLETE": "Declared checks recorded; human review remains",
+            "INCOMPLETE": "More evidence is needed",
+            "INVALID": "Evidence changed; refresh the checks",
+        }[status],
+        "requested_behavior": request,
+        "source_receipt": source.relative_to(workspace).as_posix(),
+        "source_receipt_sha256": digest,
+        "completion_sha256": receipt.get("completion_sha256"),
+        "candidate_sha256": summary.get("candidate_sha256"),
+        "integrity_valid": intact,
+        "local_execution_observed": summary.get("local_execution_observed") is True,
+        "independent_execution_verified": summary.get("execution_verified") is True,
+        "signer_claims_verified": summary.get("attestation_verified") is True,
+        "required_criteria": len(
+            mission.get("completion_contract", {}).get("criteria", [])
+        )
+        if intact
+        else None,
+        "cases": _completion_card_cases(summary),
+        "files_checked": [item["path"] for item in summary.get("source_manifest", [])],
+        "actual_diff": "Not established by this receipt; review the candidate diff separately.",
+        "unfinished": list(
+            dict.fromkeys(
+                [
+                    *summary.get("gaps", []),
+                    *verification.get("errors", []),
+                ]
+            )
+        ),
+        "unexamined_scope": summary.get("scope_limitations", []),
+        "human_review": [
+            "Confirm the requested behavior matches what users need.",
+            "Review the actual diff and scenarios not covered by the recorded checks.",
+            "Review deployment, permissions and live behavior before any release.",
+        ],
+        "next_action": "Review the remaining human checks before release."
+        if complete
+        else "Run the missing checks and refresh this local summary."
+        if intact
+        else "Re-run verification for the current sources, then refresh this summary.",
+        "privacy": "Local details include task text and relative paths; this is not a share card.",
+        "authority": {
+            "share": False,
+            "approval": False,
+            "merge": False,
+            "publication": False,
+            "deployment": False,
+        },
+        "scope_limit": "Current receipt evidence only; not independent correctness or production certification.",
+    }
+    return {**core, "card_sha256": _sha(core)}
+
+
+def _completion_card_text(value: object) -> str:
+    text = escape(str(value)).replace("\n", " ").replace("\r", " ")
+    for character in ("\\", "`", "[", "]", "(", ")", "*", "_", "#", "!", "|"):
+        text = text.replace(character, "\\" + character)
+    return text
+
+
+def _completion_card_markdown(card: dict[str, Any]) -> str:
+    text = _completion_card_text
+    lines = [
+        "# Local completion summary",
+        "",
+        f"## {card['headline']}",
+        "",
+        f"Status: **{card['status']}**",
+        "",
+        "### What was requested",
+        "",
+        text(
+            card["requested_behavior"] or "No current mission request is established."
+        ),
+        "",
+        "### What the checks observed",
+        "",
+    ]
+    lines.extend(
+        f"- {text(row['case_id'])}: {text(row['observed'])} ({text(row['disposition'])})."
+        for row in card["cases"]
+    )
+    if not card["cases"]:
+        lines.append("No current executed cases are established by this receipt.")
+    for title, items in (
+        ("Files checked", card["files_checked"]),
+        ("Unfinished work", card["unfinished"]),
+        ("Unexamined scope", card["unexamined_scope"]),
+        ("Human review", card["human_review"]),
+    ):
+        lines.extend(["", f"### {title}", ""])
+        lines.extend(f"- {text(item)}" for item in items)
+        if not items:
+            lines.append(
+                "No items recorded; this does not establish complete coverage."
+            )
+    lines.extend(
+        [
+            "",
+            card["actual_diff"],
+            "",
+            f"Next action: {card['next_action']}",
+            "",
+            card["privacy"],
+            "",
+            card["scope_limit"],
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def completion_card_from_receipt(
+    root: Path, receipt_path: Path, out_dir: Path
+) -> dict[str, Any]:
+    """Render a fresh local mission view, separately from privacy-safe share cards."""
+    from .product_missions import MISSION_COMPLETION_SCHEMA, verify_mission_completion
+
+    workspace = Path(root).resolve()
+    source = _workspace_path(workspace, receipt_path)
+    receipt, digest = _completion_card_json(source)
+    if receipt.get("schema") != MISSION_COMPLETION_SCHEMA:
+        raise AdoptionError(
+            "E_COMPLETION_CARD_SOURCE", "a mission completion receipt is required"
+        )
+    try:
+        mission_path = _completion_card_inputs(workspace, receipt)
+        verification = verify_mission_completion(source)
+        mission, mission_digest = _completion_card_json(mission_path)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise AdoptionError(
+            "E_COMPLETION_CARD_SOURCE", f"mission evidence cannot be read: {exc}"
+        ) from exc
+    if _completion_card_json(source)[1] != digest:
+        raise AdoptionError(
+            "E_COMPLETION_CARD_DRIFT", "completion receipt changed during rendering"
+        )
+    if (
+        verification.get("integrity_valid")
+        and mission_digest != receipt["mission"]["sha256"]
+    ):
+        raise AdoptionError(
+            "E_COMPLETION_CARD_DRIFT", "mission changed during rendering"
+        )
+    card = _completion_card_facts(
+        workspace, source, receipt, digest, verification, mission
+    )
+    markdown = _completion_card_markdown(card)
+    destination = _workspace_path(workspace, out_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    stem = f"completion-card-{card['card_sha256'][:12]}"
+    paths = {
+        "json": destination / f"{stem}.json",
+        "markdown": destination / f"{stem}.md",
+    }
+    _atomic_json(paths["json"], card)
+    paths["markdown"].write_text(markdown, encoding="utf-8")
+    return {
+        "card": card,
+        "markdown": markdown,
+        "paths": {key: str(path) for key, path in paths.items()},
+    }
+
+
 def record_adoption_event(
     root: Path,
     milestone: str,
