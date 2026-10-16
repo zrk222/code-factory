@@ -174,8 +174,74 @@ def findings_as_dict(
 # Static source contracts supplement the natural-language boundary checks.
 def intentional_implementation_contract(node, parents, aliases):
     """Recognize explicit container or locally evidenced extension contracts."""
-    return click_group_container(node, parents, aliases) or _method_contract(
-        node, parents
+    return (
+        click_group_container(node, parents, aliases)
+        or _method_contract(node, parents)
+        or _null_io_contract(node, parents, aliases)
+    )
+
+
+def _null_io_contract(node, parents, aliases):
+    """Recognize an inert IO implementation by its complete local behavior.
+
+    Neither the class name nor an isolated pass/zero return is sufficient.
+    """
+    owner = parents.get(node)
+    if not isinstance(owner, ast.ClassDef) or owner.decorator_list:
+        return False
+    if node.name not in {"close", "flush", "writelines", "__exit__"}:
+        return False
+    body = node.body[1:] if ast.get_docstring(node) is not None else node.body
+    if len(body) != 1 or not isinstance(body[0], ast.Pass):
+        return False
+    bases = [
+        base.value if isinstance(base, ast.Subscript) else base for base in owner.bases
+    ]
+    if len(bases) != 1 or not _typing_io_base(bases[0], aliases):
+        return False
+    methods = [n for n in owner.body if isinstance(n, ast.FunctionDef)]
+    names = {n.name: n for n in methods}
+    if len(names) != len(methods) or "__init__" in names:
+        return False
+    if any(
+        isinstance(n, ast.Attribute) and isinstance(n.ctx, (ast.Store, ast.Del))
+        for n in ast.walk(owner)
+    ):
+        return False
+    required = {
+        "readable": False,
+        "writable": False,
+        "seekable": False,
+        "read": "",
+        "readline": "",
+        "write": 0,
+    }
+    return all(
+        _literal_method(names.get(name), value) for name, value in required.items()
+    )
+
+
+def _typing_io_base(base, aliases):
+    if isinstance(base, ast.Name):
+        return aliases.get(base.id) == "typing.IO"
+    return (
+        isinstance(base, ast.Attribute)
+        and base.attr == "IO"
+        and isinstance(base.value, ast.Name)
+        and aliases.get(base.value.id) == "typing"
+    )
+
+
+def _literal_method(node, expected):
+    if node is None or node.decorator_list:
+        return False
+    body = node.body[1:] if ast.get_docstring(node) is not None else node.body
+    return (
+        len(body) == 1
+        and isinstance(body[0], ast.Return)
+        and isinstance(body[0].value, ast.Constant)
+        and type(body[0].value.value) is type(expected)
+        and body[0].value.value == expected
     )
 
 

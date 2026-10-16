@@ -2222,3 +2222,41 @@ class Child(Base):
     def run(self): pass
 """
     assert symbols(source) == {"run"}
+
+
+_NULL_IO_SOURCE = """from typing import IO
+class Sink(IO[str]):
+    def readable(self): return False
+    def writable(self): return False
+    def seekable(self): return False
+    def read(self): return ""
+    def readline(self): return ""
+    def write(self, value): return 0
+    def close(self): pass
+    def flush(self): pass
+    def writelines(self, lines): pass
+    def __exit__(self, *args): pass
+"""
+
+
+def test_null_io_protocol_behavior_is_an_intentional_noop():
+    assert not symbols(_NULL_IO_SOURCE)
+
+
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        ("from typing import IO", "from local import IO"),
+        ("return False", "return True"),
+        ("return 0", "return False"),
+        ('def read(self): return ""', 'def read(self): return "TODO"'),
+        ("def writable(self): return False", "def other(self): return False"),
+        ("def close(self): pass", "def close(self): ..."),
+        (
+            "def close(self): pass",
+            "def close(self): pass\n    def __init__(self): self.resource = acquire()",
+        ),
+    ],
+)
+def test_partial_or_lookalike_io_stubs_remain(old, new):
+    assert symbols(_NULL_IO_SOURCE.replace(old, new))
