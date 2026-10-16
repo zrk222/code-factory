@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import canonical_json_compat_bytes as _canonical
+
 from pathlib import Path
 from typing import Any
 import hashlib
@@ -16,12 +18,6 @@ from .revenueforge import AUTHORITY, RevenueForgeError
 
 RECEIPT_SCHEMA = "factory.appforge.surface-matrix-receipt.v1"
 MAX_BYTES = 1_048_576
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

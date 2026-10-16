@@ -7,6 +7,8 @@ separate. It never generates code, executes commands, or changes a workspace.
 
 from __future__ import annotations
 
+from . import canonical_json_compat_bytes as _canonical
+
 from itertools import combinations
 from pathlib import Path
 from typing import Any
@@ -48,12 +50,6 @@ class EvidenceFrontierError(ValueError):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
 
 
 def _digest(value: object) -> str:

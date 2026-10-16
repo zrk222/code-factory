@@ -8,8 +8,9 @@ members, licensed seats, or review approvers.
 
 from __future__ import annotations
 
+from . import canonical_json_compat_bytes as _canonical
+
 from hashlib import sha256
-import json
 from pathlib import Path
 import subprocess
 from typing import Any
@@ -29,12 +30,6 @@ _BASE_MARKERS = [
     "DEVELOPER_MEMORY_STUDIO_CACHED",
     "DEVELOPER_MEMORY_VISUAL_EXPLAINED",
 ]
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

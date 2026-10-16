@@ -8,6 +8,8 @@ egress, and process containment remain responsibilities of the selected harness.
 
 from __future__ import annotations
 
+from . import canonical_json_compat_bytes as _canonical
+
 from base64 import b64decode
 from datetime import datetime, timezone
 import hashlib
@@ -55,12 +57,6 @@ class SessionRecorderError(ValueError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import canonical_json_compat_bytes as _canonical
+
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -692,12 +694,6 @@ def _runtime_guard(
     if session["status"] != "ACTIVE":
         return session, session["status"]
     return session, None
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
 
 
 def _sha256_path(path: Path) -> str:

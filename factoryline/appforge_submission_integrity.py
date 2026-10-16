@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import canonical_json_compat_bytes as _canonical_encode
+
 import hashlib
 import json
 import os
@@ -19,9 +21,7 @@ _SET_RULES = {"iphone": 10, "ipad_13": 3}
 
 
 def _canonical(v: object) -> bytes:
-    return json.dumps(
-        v, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode()
+    return _canonical_encode(v)
 
 
 def _sha(v: object) -> str:

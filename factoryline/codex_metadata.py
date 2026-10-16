@@ -8,6 +8,8 @@ never executes commands, contacts a provider, or grants authority.
 
 from __future__ import annotations
 
+from . import canonical_json_compat_bytes as _canonical
+
 import hashlib
 import json
 import re
@@ -235,12 +237,6 @@ class MetadataAuditError(ValueError):
         super().__init__(message)
         self.code = code
         self.message = message
-
-
-def _canonical(value: Any) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
 
 
 def _sha(value: Any) -> str:

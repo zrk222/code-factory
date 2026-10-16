@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical
+
 from copy import deepcopy
 from hashlib import sha256
 from importlib.resources import files
@@ -548,16 +550,6 @@ _DOMAINS: tuple[dict[str, str], ...] = (
         "boundary": "Local tests and code inspection do not observe deployed production behavior.",
     },
 )
-
-
-def _canonical(value: Any) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
 
 
 def audit_taxonomy() -> dict[str, Any]:

@@ -8,6 +8,8 @@ generate media, reach App Store Connect, or publish anything.
 
 from __future__ import annotations
 
+from . import canonical_json_compat_bytes as _canonical
+
 import hashlib
 import json
 import os
@@ -43,12 +45,6 @@ _UNSAFE_LANE_ACTIONS = (
     "match",
     "sync_code_signing",
 )
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

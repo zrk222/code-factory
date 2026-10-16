@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import canonical_json_compat_bytes as _canonical
+
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
@@ -61,12 +63,6 @@ SENSITIVE_KEYS = {
     "signed_payload",
     "jws",
 }
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

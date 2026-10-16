@@ -9,6 +9,8 @@ provider or reading credentials.
 
 from __future__ import annotations
 
+from . import canonical_json_bytes as _canonical
+
 import hashlib
 import json
 import os
@@ -49,16 +51,6 @@ AUTHORITY = {
     "credential": False,
     "provider_call": False,
 }
-
-
-def _canonical(value: Any) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
 
 
 def _sha(value: Any) -> str:

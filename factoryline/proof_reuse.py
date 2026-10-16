@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import canonical_ascii_json_compat_bytes as _canonical
+
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -31,10 +33,6 @@ class ProofReuseError(ValueError):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
 def _sha_bytes(value: bytes) -> str:

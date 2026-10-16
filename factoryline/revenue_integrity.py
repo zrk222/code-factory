@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import canonical_json_compat_bytes as _canonical
+
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,12 +64,6 @@ EXTERNAL_AUTHORITY = {
     "winner_promotion": False,
     "price_change": False,
 }
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:
