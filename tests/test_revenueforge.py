@@ -435,3 +435,30 @@ def test_evidence_memory_requires_sealed_receipt_and_quarantines_contradictions(
     assert result["matches"] == []
     assert result["next_action"] == "human contradiction review"
     assert "quarantine contradictory decisions" in result["action_summary"]
+
+
+def test_revenue_shared_local_preserves_path_and_error_contract(tmp_path):
+    import ast
+    import inspect
+    import factoryline.revenue_evidence as evidence
+    import factoryline.revenueforge as forge
+
+    assert evidence._local is forge._local
+    assert not any(
+        isinstance(n, ast.FunctionDef) and n.name == "_local"
+        for n in ast.parse(inspect.getsource(evidence)).body
+    )
+    source = tmp_path / "input.json"
+    source.write_text("{}", encoding="utf-8")
+    assert evidence._local(tmp_path, Path("input.json")) == source.resolve()
+    assert evidence._local(tmp_path, source) == source.resolve()
+    assert (
+        evidence._local(tmp_path, Path("new.json"), exists=False)
+        == tmp_path / "new.json"
+    )
+    with pytest.raises(forge.RevenueForgeError) as missing:
+        evidence._local(tmp_path, Path("missing.json"))
+    assert missing.value.code == "REVENUEFORGE_INPUT_UNAVAILABLE"
+    with pytest.raises(forge.RevenueForgeError) as escaping:
+        evidence._local(tmp_path, Path("../outside.json"), exists=False)
+    assert escaping.value.code == "REVENUEFORGE_PATH_REJECTED"
