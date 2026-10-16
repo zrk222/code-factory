@@ -3682,6 +3682,8 @@ def _oracle_snapshots(root: Path, files: list[Path], source_bytes: dict) -> dict
             snapshots[path]._oracle_source_lines = data.decode("utf-8").splitlines()
             for node in snapshots[path].body:
                 node._oracle_layout = None
+            for node in ast.walk(snapshots[path]):
+                node._scan_bound_names = None
         except (OSError, SyntaxError, UnicodeError, RuntimeAuditError):
             continue
     return snapshots
