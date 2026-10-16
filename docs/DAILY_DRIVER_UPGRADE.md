@@ -45,10 +45,11 @@ unaffected-control and stale-snapshot checks. Browser, accessibility, responsive
 layout and live integration requirements still need their own applicable
 evidence; the UI journey remains incomplete when those checks are absent.
 
-The retained positive currently verifies within its captured execution profile.
-A fresh process with a different runtime environment rejects the receipt as
-drift. This binding must remain intact; a portable verification claim requires
-the matching declared profile and its own current read-back.
+The retained positive verifies in a fresh process under its captured execution
+profile, including pytest's injected `PYTEST_VERSION=9.0.2` and disabled plugin
+autoload. The local-details CLI also returns COMPLETE in that matching profile.
+A different environment is rejected as drift. These observations establish this
+profile only; they do not establish portable execution across environments.
 
 External review-claim normalization and full Studio/MCP delivery remain separate
 unfinished integration packets. No automatic approval or release authority is
