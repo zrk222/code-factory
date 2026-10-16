@@ -3,12 +3,94 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
 from .failure_guidance import explain_failure
+
+
+def _script_directory(current, ignored, entries, max_entries, deadline):
+    children, suffixes = [], set()
+    with os.scandir(current) as stream:
+        for entry in stream:
+            entries += 1
+            if entries > max_entries or time.monotonic() >= deadline:
+                raise ValueError("script inventory budget exhausted")
+            if entry.name.lower() in ignored:
+                continue
+            attributes = entry.stat(follow_symlinks=False)
+            if entry.is_symlink() or getattr(
+                attributes, "st_file_attributes", 0
+            ) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
+                raise ValueError("linked script inventory entry")
+            if entry.is_dir(follow_symlinks=False):
+                children.append(Path(entry.path))
+            elif entry.is_file(follow_symlinks=False):
+                suffixes.add(Path(entry.name).suffix.lower())
+    return children, suffixes, entries
+
+
+def project_script_inventory(
+    root: Path,
+    *,
+    max_entries: int = 100_000,
+    max_directories: int = 10_000,
+    max_depth: int = 64,
+    timeout: float = 5.0,
+) -> tuple[set[str], list[Path], bool]:
+    """Bound script discovery without traversing generated trees or links."""
+    ignored = {
+        ".git",
+        ".hg",
+        ".svn",
+        ".factory",
+        ".venv",
+        "venv",
+        "node_modules",
+        "vendor",
+        "build",
+        "dist",
+        "coverage",
+        ".next",
+        ".nuxt",
+        ".cache",
+        "target",
+    }
+    scripts = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"}
+    suffixes: set[str] = set()
+    roots: list[Path] = []
+    pending = [(Path(root), 0)]
+    entries = directories = 0
+    deadline = time.monotonic() + timeout
+    try:
+        while pending:
+            current, depth = pending.pop()
+            directories += 1
+            if (
+                directories > max_directories
+                or depth > max_depth
+                or time.monotonic() >= deadline
+            ):
+                return suffixes, roots, False
+            children, local_suffixes, entries = _script_directory(
+                current, ignored, entries, max_entries, deadline
+            )
+            found = local_suffixes & scripts
+            if found:
+                suffixes.update(found)
+                if len(roots) >= 128:
+                    return suffixes, roots, False
+                roots.append(current.resolve())
+            pending.extend(
+                (child, depth + 1) for child in sorted(children, reverse=True)
+            )
+    except (OSError, ValueError):
+        return suffixes, roots, False
+    return suffixes, roots, time.monotonic() < deadline
 
 
 def emit_version(as_json: bool) -> int:
