@@ -5508,6 +5508,19 @@ def _tenant_read_contract(
     }
 
 
+def _security_scan_database_context(
+    workspace, source_bytes, python_inventory, projection
+):
+    """Use a cold owned projection or parse normally when no projection was produced."""
+    if projection:
+        return projection
+    from .context_efficiency import database_workspace_context
+
+    return database_workspace_context(
+        workspace, source_bytes, _security_source_bytes, python_inventory
+    )
+
+
 def _scan_security_sources(
     workspace: Path,
     files: list[Path],
@@ -5553,17 +5566,19 @@ def _scan_security_sources(
             )
         )
     python_inventory = []
+    database_projection = {}
     contexts, context_bindings, oracle_edges, source_bytes = _project_oracle_context(
         workspace,
         files,
         cache_enabled=cache_enabled,
         collection_identity=collection_identity,
         python_inventory_out=python_inventory,
+        database_context_out=database_projection,
     )
-    from .context_efficiency import database_workspace_context, verify_database_context
+    from .context_efficiency import verify_database_context
 
-    database = database_workspace_context(
-        workspace, source_bytes, _security_source_bytes, python_inventory
+    database = _security_scan_database_context(
+        workspace, source_bytes, python_inventory, database_projection
     )
     context_bindings.extend(database.pop("_bindings"))
     if database_context is not None:

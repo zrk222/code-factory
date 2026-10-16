@@ -1007,6 +1007,78 @@ def test_oracle_database_projection_reuses_only_fresh_owned_tree(tmp_path, monke
     assert [table["name"] for table in public["tables"]] == ["customers"]
 
 
+def test_security_scan_reuses_oracle_tree_for_database_projection(
+    tmp_path, monkeypatch
+):
+    import ast
+
+    from factoryline import context_efficiency, intent_quality, review_audits
+
+    source = (
+        b"from sqlalchemy import Column, Integer\n"
+        b"from sqlalchemy.orm import declarative_base\n"
+        b"Base = declarative_base()\n"
+        b"class Account(Base):\n"
+        b"    __tablename__ = 'accounts'\n"
+        b"    id = Column(Integer, primary_key=True)\n"
+    )
+    path = tmp_path / "models.py"
+    path.write_bytes(source)
+    calls = []
+    original_parse = ast.parse
+
+    def counted_parse(text, *args, **kwargs):
+        if kwargs.get("filename") == "models.py":
+            calls.append(text)
+        return original_parse(text, *args, **kwargs)
+
+    monkeypatch.setattr(ast, "parse", counted_parse)
+    monkeypatch.setattr(intent_quality, "_DB_CACHE", {})
+    monkeypatch.setattr(intent_quality, "_DB_CACHE_BYTES", 0)
+    review_audits._oracle_context_cache_clear()
+    private_calls = []
+    public_calls = []
+    private_projection = context_efficiency._database_workspace_context_from_oracle
+    public_projection = context_efficiency.database_workspace_context
+
+    def counted_private(*args, **kwargs):
+        private_calls.append(True)
+        return private_projection(*args, **kwargs)
+
+    def counted_public(*args, **kwargs):
+        public_calls.append(True)
+        return public_projection(*args, **kwargs)
+
+    monkeypatch.setattr(
+        context_efficiency, "_database_workspace_context_from_oracle", counted_private
+    )
+    monkeypatch.setattr(
+        context_efficiency, "database_workspace_context", counted_public
+    )
+    database = {}
+    review_audits._scan_security_sources(
+        tmp_path, [path], (), {}, test_file_patterns=set(), database_context=database
+    )
+    assert calls == [source, source]
+    assert len(private_calls) == 1
+    assert not public_calls
+    assert [table["name"] for table in database["tables"]] == ["accounts"]
+
+    warm_database = {}
+    review_audits._scan_security_sources(
+        tmp_path,
+        [path],
+        (),
+        {},
+        test_file_patterns=set(),
+        database_context=warm_database,
+    )
+    assert calls == [source, source, source]
+    assert len(private_calls) == 1
+    assert len(public_calls) == 1
+    assert warm_database == database
+
+
 def test_database_context_structural_metadata_respects_secret_boundaries():
     from factoryline.context_efficiency import _structural_evidence
 
