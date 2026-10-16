@@ -22,6 +22,106 @@ from factoryline import workflow_audit as workflow_audit_module
 from factoryline.workflow_audit import CATEGORIES, audit_workflows
 
 
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (
+            "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    def operation(): ...",
+            0,
+        ),
+        ("import typing as t\nif t.TYPE_CHECKING:\n    def operation(): pass", 0),
+        (
+            "from typing import TYPE_CHECKING as TC\nif TC:\n    class API:\n        def operation(self): ...",
+            0,
+        ),
+        (
+            "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    def operation(TYPE_CHECKING): ...",
+            0,
+        ),
+        (
+            "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    if enabled:\n        def operation(): ...",
+            0,
+        ),
+        (
+            "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    pass\nelse:\n    def operation(): ...",
+            1,
+        ),
+        (
+            "from typing import TYPE_CHECKING\nif not TYPE_CHECKING:\n    def operation(): ...",
+            1,
+        ),
+        (
+            "from typing import TYPE_CHECKING\nTYPE_CHECKING = True\nif TYPE_CHECKING:\n    def operation(): ...",
+            1,
+        ),
+        (
+            "import typing\ntyping.TYPE_CHECKING = True\nif typing.TYPE_CHECKING:\n    def operation(): ...",
+            1,
+        ),
+        (
+            "from arbitrary import TYPE_CHECKING\nif TYPE_CHECKING:\n    def operation(): ...",
+            1,
+        ),
+        (
+            "from typing import TYPE_CHECKING\ndef outer(TYPE_CHECKING):\n    if TYPE_CHECKING:\n        def operation(): ...",
+            1,
+        ),
+        (
+            "from typing import TYPE_CHECKING\nclass API:\n    TYPE_CHECKING = True\n    if TYPE_CHECKING:\n        def operation(): ...",
+            1,
+        ),
+        (
+            "from typing import TYPE_CHECKING\nif TYPE_CHECKING or enabled:\n    def operation(): ...",
+            1,
+        ),
+        ("def operation():\n    raise NotImplementedError('TODO')", 1),
+    ],
+    ids=[
+        "import",
+        "module-alias",
+        "nested-class",
+        "inner-parameter",
+        "nested-if",
+        "runtime-else",
+        "negated",
+        "rebound",
+        "member-write",
+        "lookalike",
+        "outer-parameter",
+        "class-shadow",
+        "runtime-or",
+        "runtime-placeholder",
+    ],
+)
+def test_implementation_static_declaration_requires_unshadowed_runtime_false_guard(
+    source, expected
+):
+    from factoryline.review_integrity import implementation_completeness_findings
+
+    findings = implementation_completeness_findings(
+        "service.py", ast.parse(source), source
+    )
+    assert (
+        sum(item["code"] == "QUALITY_EMPTY_IMPLEMENTATION" for item in findings)
+        == expected
+    )
+
+
+def test_implementation_bound_arguments_exclude_default_lambda_parameters():
+    from factoryline.review_integrity import _implementation_bound_names
+
+    tree = ast.parse(
+        "def operation(a, /, b=lambda hidden: hidden, *args, k=1, **kwargs): pass"
+    )
+    assert _implementation_bound_names(tree.body[0]) == {
+        "a",
+        "b",
+        "args",
+        "k",
+        "kwargs",
+    }
+
+
 def test_implementation_scope_inventory_is_collected_once(monkeypatch):
     from factoryline import review_integrity as module
 

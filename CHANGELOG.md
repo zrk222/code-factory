@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Do not classify implementation declarations in a proven imported
+  `typing.TYPE_CHECKING` true branch as runtime empty implementations. Preserve
+  findings in runtime `else` branches and when guard names are shadowed,
+  rebound or explicitly overwritten. All files and other detectors still run.
+
 ## 0.48.2 (candidate; publication pending)
 
 - Coordinate core 0.48.2, VS Code 1.2.1 and JetBrains 1.2.0 under their existing distribution IDs
