@@ -855,3 +855,9 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-10-16 05:14] GATE spec borrowed-resource-contract approver=human strict=True sha=17fe07a4506183bd
 - [2026-10-16 06:32] GATE spec assembly-continue-v1 approver=human strict=True sha=120249cc80b6fca1
 - [2026-10-16 06:32] GATE plan assembly-continue-v1 approver=human tasks=18 sha=120249cc80b6fca1
+- [2026-10-16 07:28] GATE spec type-intent-attribution approver=human strict=True sha=8b894c7f3c724522
+- [2026-10-16 07:28] GATE plan type-intent-attribution approver=human tasks=1 sha=8b894c7f3c724522
+- [2026-10-16 07:29] GATE spec type-intent-attribution approver=human strict=True sha=ea231421512e0c7d
+- [2026-10-16 07:29] GATE plan type-intent-attribution approver=human tasks=1 sha=ea231421512e0c7d
+- [2026-10-16 07:37] GATE spec type-intent-attribution approver=human strict=True sha=ea231421512e0c7d
+- [2026-10-16 07:37] GATE plan type-intent-attribution approver=human tasks=1 sha=ea231421512e0c7d
