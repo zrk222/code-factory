@@ -1,7 +1,5 @@
 """AST-only implementation contracts and hash-bound project contract helpers."""
 
-from __future__ import annotations
-
 import ast
 from hashlib import sha256
 
@@ -517,28 +515,31 @@ def bind_project_contracts(root, snapshots, contexts, edges):
     """Resolve direct local imported bases from the already hash-bound snapshots."""
     from .review_audits import _oracle_imports
 
+    indexes = {path: _stable_import_index(tree) for path, tree in snapshots.items()}
     eligible = {p.resolve(): p for p in snapshots}
     resolved = {
         path: _oracle_imports(root, path, tree, eligible)
         for path, tree in snapshots.items()
     }
-    blocked = _unsafe_project_bases(snapshots, resolved)
+    blocked = _unsafe_project_bases(snapshots, resolved, indexes)
     for path, tree in snapshots.items():
+        imports, index = resolved[path], indexes[path]
         _bind_file_contracts(
-            root, path, tree, resolved[path], snapshots, contexts, edges, blocked
+            root, path, tree, imports, snapshots, contexts, edges, blocked, index
         )
 
 
 def _bind_file_contracts(
-    root, path, tree, imports, snapshots, contexts, edges, blocked
+    root, path, tree, imports, snapshots, contexts, edges, blocked, index=None
 ):
+    index = _stable_import_index(tree) if index is None else index
     for child in (n for n in tree.body if isinstance(n, ast.ClassDef)):
         if child.decorator_list:
             continue
         for base in child.bases:
             if not isinstance(base, ast.Name) or base.id not in imports:
                 continue
-            if not _stable_import_contract(tree, base.id, child.lineno):
+            if not _stable_import_contract(tree, base.id, child.lineno, index):
                 continue
             source, symbol = imports[base.id]
             if (
@@ -603,39 +604,40 @@ def _bind_imported_base(root, path, child, source, symbol, tree, contexts, edges
         )
 
 
-def _stable_import_contract(tree, local, before):
-    imports = [
-        statement.lineno
-        for statement in tree.body
-        if isinstance(statement, (ast.Import, ast.ImportFrom))
-        for alias in statement.names
-        if (alias.asname or alias.name.split(".")[0]) == local
-    ]
-    if len(imports) != 1 or imports[0] >= before:
-        return False
-    return not any(
-        (
-            isinstance(n, ast.Name)
-            and isinstance(n.ctx, (ast.Store, ast.Del))
-            and n.id == local
-        )
-        or (
-            isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-            and n.name == local
-        )
-        or (
-            isinstance(n, ast.Attribute)
-            and isinstance(n.ctx, (ast.Store, ast.Del))
-            and isinstance(n.value, ast.Name)
-            and n.value.id == local
-        )
-        or (
-            isinstance(n, ast.Call)
-            and isinstance(n.func, ast.Name)
-            and n.func.id == local
-        )
-        for n in ast.walk(tree)
-    )
+def _stable_import_index(tree):
+    imports = {}
+    for statement in tree.body:
+        if isinstance(statement, (ast.Import, ast.ImportFrom)):
+            for alias in statement.names:
+                local = alias.asname or alias.name.split(".")[0]
+                imports.setdefault(local, []).append(statement.lineno)
+    unstable, module_calls = set(), {}
+    for node in ast.walk(tree):
+        _track_import_binding(node, unstable, module_calls)
+    return imports, unstable, module_calls
+
+
+def _track_import_binding(node, unstable, module_calls):
+    if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        unstable.add(node.id)
+    elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        unstable.add(node.name)
+    elif isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        if isinstance(node.value, ast.Name):
+            unstable.add(node.value.id)
+    elif isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name):
+            unstable.add(node.func.id)
+        elif isinstance(node.func, ast.Attribute) and isinstance(
+            node.func.value, ast.Name
+        ):
+            module_calls.setdefault(node.func.value.id, set()).add(node.func.attr)
+
+
+def _stable_import_contract(tree, local, before, index=None):
+    imports, unstable, _ = _stable_import_index(tree) if index is None else index
+    lines = imports.get(local, ())
+    return len(lines) == 1 and lines[0] < before and local not in unstable
 
 
 def _stable_base_contract(tree, owner):
@@ -740,22 +742,19 @@ def _stable_api_origin(node, parents, aliases, targets):
     )
 
 
-def _unsafe_project_bases(snapshots, resolved):
+def _unsafe_project_bases(snapshots, resolved, indexes=None):
+    if indexes is None:
+        indexes = {path: _stable_import_index(tree) for path, tree in snapshots.items()}
     blocked = set()
     for path, tree in snapshots.items():
         for local, (source, symbol) in resolved[path].items():
             if symbol is not None:
-                if not _stable_import_contract(tree, local, float("inf")):
+                if not _stable_import_contract(
+                    tree, local, float("inf"), indexes[path]
+                ):
                     blocked.add((source, symbol))
                 continue
-            for node in ast.walk(tree):
-                if (
-                    isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and isinstance(node.func.value, ast.Name)
-                    and node.func.value.id == local
-                ):
-                    blocked.add((source, node.func.attr))
+            blocked.update((source, attr) for attr in indexes[path][2].get(local, ()))
     return blocked
 
 
