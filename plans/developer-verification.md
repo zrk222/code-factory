@@ -14,6 +14,15 @@ Architect verdict: PASS
 
 ## Evidence semantics
 
+## Applied-change continuation (H10)
+
+- [ ] T9 | slice=factoryline | files=factoryline/proof_worklog.py,factoryline/adoption.py | verify=`ruff check factoryline/proof_worklog.py factoryline/adoption.py` | Add the source-bound applied-change projection to private completion cards using explicit baseline and current candidate bindings. Capture add/modify/delete/rename facts, literal paths, before/after digests, unrelated edits and declared rationale. Keep unbound deletions, mixed edits and unavailable or stale Git evidence unverified; preserve independent final freshness checks, existing completion semantics and authority boundaries. Use no new module or size-cap increase.
+- [ ] T10 | slice=tests | files=tests/test_proof_worklog.py,tests/test_adoption.py | verify=`python -m pytest -q tests/test_proof_worklog.py tests/test_adoption.py -k applied_change` | Add affected controls for explicit-baseline changes, candidate-bound additions, unbound deletions, renames, dirty unrelated paths, same-file ambiguity, stale candidate or HEAD, missing/nonancestor baseline, non-Git roots, literal pathspec characters, symlinks and resource exhaustion. Assert declared rationale is quoted and never fabricated; invalid evidence must not reveal private task details or claim applied work.
+
+T9/T10 bounds: 10 seconds per Git child, 30 seconds total, 1000 paths and 8 MiB retained data. Do not regenerate completed T1–T8 execution evidence for this packet. Completed delivery remains in PR #247/#248 and their receipts; this continuation does not reopen it.
+
+## Evidence semantics (continued)
+
 - A signed v3 oracle verifies the pinned signer's statements and their source,
   environment, test, case and assertion bindings. Signature validation alone
   does not independently establish execution or mutation accuracy.
