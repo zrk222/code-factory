@@ -492,8 +492,11 @@ def _daily_oracle_verification_for(mission, root):
     signed_test["symbol"] = "test_feature"
     signed_test["test_sha256"] = test_sha
     signed_test["baseline"]["collection_catalog"].update(
-        {"source_path": "tests/test_feature.py", "source_sha256": test_sha,
-         "case_ids": list(case_ids)}
+        {
+            "source_path": "tests/test_feature.py",
+            "source_sha256": test_sha,
+            "case_ids": list(case_ids),
+        }
     )
     signed_test["mutation"].update(
         {"source_path": "candidate.py", "source_sha256": source_sha}
@@ -504,31 +507,39 @@ def _daily_oracle_verification_for(mission, root):
         run = signed_test[run_name]
         observation = run["assertion_observations"][0]
         run["assertion_observations"] = [
-            {**observation, "case_id": case_id,
-             "source_path": "tests/test_feature.py", "source_sha256": test_sha}
+            {
+                **observation,
+                "case_id": case_id,
+                "source_path": "tests/test_feature.py",
+                "source_sha256": test_sha,
+            }
             for case_id in case_ids
         ]
         run["module_origins"] = [
-            {**origin,
-             "case_id": case_id,
-             "source_path": "tests/test_feature.py"
-             if origin["source_path"] == "tests/test_example.py"
-             else "candidate.py",
-             "source_sha256": test_sha
-             if origin["source_path"] == "tests/test_example.py"
-             else source_sha if run_name == "baseline"
-             else signed_test["mutation"]["mutant_sha256"]}
+            {
+                **origin,
+                "case_id": case_id,
+                "source_path": "tests/test_feature.py"
+                if origin["source_path"] == "tests/test_example.py"
+                else "candidate.py",
+                "source_sha256": test_sha
+                if origin["source_path"] == "tests/test_example.py"
+                else source_sha
+                if run_name == "baseline"
+                else signed_test["mutation"]["mutant_sha256"],
+            }
             for origin in run["module_origins"]
             for case_id in case_ids
         ]
         catalog = run["collection_catalog"]
         catalog.update(
-            {"source_path": "tests/test_feature.py", "source_sha256": test_sha,
-             "case_ids": list(case_ids)}
+            {
+                "source_path": "tests/test_feature.py",
+                "source_sha256": test_sha,
+                "case_ids": list(case_ids),
+            }
         )
-    receipt, trust, _, _ = runtime_fixtures["_signed_oracle"](
-        root, payload
-    )
+    receipt, trust, _, _ = runtime_fixtures["_signed_oracle"](root, payload)
     receipt_path.write_bytes(receipt.read_bytes())
     trust_path.write_bytes(trust.read_bytes())
     criteria = []
@@ -658,8 +669,13 @@ def test_daily_verification_binds_case_facts_but_keeps_behavior_incomplete(tmp_p
         )
 
 
-def test_operator_local_mutation_capture_runs_bound_target_and_control(tmp_path, capsys):
-    from factoryline.pytest_readiness import _challenge_source_inventory, main as probe_main
+def test_operator_local_mutation_capture_runs_bound_target_and_control(
+    tmp_path, capsys
+):
+    from factoryline.pytest_readiness import (
+        _challenge_source_inventory,
+        main as probe_main,
+    )
 
     _graph, _slices, mission = _pipeline(tmp_path)
     production = tmp_path / "app.py"
@@ -670,20 +686,20 @@ def test_operator_local_mutation_capture_runs_bound_target_and_control(tmp_path,
     for index, criterion in enumerate(mission["completion_contract"]["criteria"]):
         target_name, control_name = f"test_target_{index}", f"test_control_{index}"
         target_line = len(test_lines) + 2
-        test_lines.extend(
-            [f"def {target_name}():", "    assert app.value() == 1", ""]
-        )
+        test_lines.extend([f"def {target_name}():", "    assert app.value() == 1", ""])
         control_line = len(test_lines) + 2
-        test_lines.extend(
-            [f"def {control_name}():", "    assert app.value() >= 0", ""]
-        )
+        test_lines.extend([f"def {control_name}():", "    assert app.value() >= 0", ""])
         selectors.append(
             (criterion["id"], target_name, target_line, control_name, control_line)
         )
     test_file.write_text("\n".join(test_lines), encoding="utf-8")
-    original_sources = {path: (tmp_path / path).read_bytes() for path in ("app.py", "test_app.py")}
+    original_sources = {
+        path: (tmp_path / path).read_bytes() for path in ("app.py", "test_app.py")
+    }
     source_map = _challenge_source_inventory(tmp_path)
-    rows = [{"path": path, "sha256": digest} for path, digest in sorted(source_map.items())]
+    rows = [
+        {"path": path, "sha256": digest} for path, digest in sorted(source_map.items())
+    ]
     candidate_sha = product_missions._sha_bytes(product_missions._canonical(rows))
     case_paths = ["app.py", "test_app.py"]
     case_rows = [{"path": path, "sha256": source_map[path]} for path in case_paths]
@@ -723,28 +739,52 @@ def test_operator_local_mutation_capture_runs_bound_target_and_control(tmp_path,
         encoding="utf-8",
     )
     captures = []
-    for index, (criterion_id, target_name, target_line, control_name, control_line) in enumerate(selectors[:1]):
+    for index, (
+        criterion_id,
+        target_name,
+        target_line,
+        control_name,
+        control_line,
+    ) in enumerate(selectors[:1]):
         target_case, control_case = f"case-{index}-positive", f"case-{index}-negative"
         rc = probe_main(
             [
-                "--root", str(tmp_path),
-                "--kind", "production-mutation",
-                "--nodeid", f"test_app.py::{target_name}",
-                "--line", str(target_line),
-                "--production-path", "app.py",
-                "--production-symbol", "value",
-                "--mutation-before", "return 1",
-                "--mutation-after", "return 0",
-                "--evidence", f".factory/local-capture/case-{index}",
-                "--mission-path", mission["path"],
-                "--daily-contract", str(contract_path),
-                "--criterion-id", criterion_id,
-                "--target-case-id", target_case,
-                "--control-nodeid", f"test_app.py::{control_name}",
-                "--control-line", str(control_line),
-                "--control-case-id", control_case,
-                "--timeout", "20",
-                "--python", sys.executable,
+                "--root",
+                str(tmp_path),
+                "--kind",
+                "production-mutation",
+                "--nodeid",
+                f"test_app.py::{target_name}",
+                "--line",
+                str(target_line),
+                "--production-path",
+                "app.py",
+                "--production-symbol",
+                "value",
+                "--mutation-before",
+                "return 1",
+                "--mutation-after",
+                "return 0",
+                "--evidence",
+                f".factory/local-capture/case-{index}",
+                "--mission-path",
+                mission["path"],
+                "--daily-contract",
+                str(contract_path),
+                "--criterion-id",
+                criterion_id,
+                "--target-case-id",
+                target_case,
+                "--control-nodeid",
+                f"test_app.py::{control_name}",
+                "--control-line",
+                str(control_line),
+                "--control-case-id",
+                control_case,
+                "--timeout",
+                "20",
+                "--python",
+                sys.executable,
             ]
         )
         capture = json.loads(capsys.readouterr().out)
@@ -754,7 +794,9 @@ def test_operator_local_mutation_capture_runs_bound_target_and_control(tmp_path,
         assert capture["authority"] == "none"
         assert capture["execution_budget"]["maximum_child_processes"] == 4
         captures.append(capture)
-    assert {path: (tmp_path / path).read_bytes() for path in original_sources} == original_sources
+    assert {
+        path: (tmp_path / path).read_bytes() for path in original_sources
+    } == original_sources
     updated_contract = json.loads(contract_path.read_text(encoding="utf-8"))
     selected_cases = {
         case["case_id"]: case
@@ -802,17 +844,20 @@ def test_operator_local_mutation_capture_runs_bound_target_and_control(tmp_path,
     assert verified["integrity_valid"] is True
     assert verified["complete"] is False
     assert verified["marker"] == "MISSION_COMPLETION_INCOMPLETE"
-    target_capture = tmp_path / ".factory" / "local-capture" / "case-0" / "target" / "capture.json"
+    target_capture = (
+        tmp_path / ".factory" / "local-capture" / "case-0" / "target" / "capture.json"
+    )
     target_capture.write_bytes(target_capture.read_bytes() + b" ")
     tampered = verify_mission_completion(Path(completion["path"]))
     assert tampered["integrity_valid"] is False
     assert tampered["marker"] == "MISSION_COMPLETION_DRIFT"
 
 
-def test_operator_local_mutation_capture_verifies_typed_native_gates(
-    tmp_path, capsys
-):
-    from factoryline.pytest_readiness import _challenge_source_inventory, main as probe_main
+def test_operator_local_mutation_capture_verifies_typed_native_gates(tmp_path, capsys):
+    from factoryline.pytest_readiness import (
+        _challenge_source_inventory,
+        main as probe_main,
+    )
 
     prd = tmp_path / "PRD.md"
     prd.write_text(
@@ -855,7 +900,7 @@ def test_operator_local_mutation_capture_verifies_typed_native_gates(
             '"state": "ready", "trace": "trace-1"}'
         ),
         "gate:unit": (
-            'assert isinstance(app.value(), dict) and '
+            "assert isinstance(app.value(), dict) and "
             'set(app.value()) == {"record_id", "state", "trace"} and '
             'app.value()["record_id"] == "signal-17"'
         ),
@@ -881,7 +926,9 @@ def test_operator_local_mutation_capture_verifies_typed_native_gates(
         )
     test_file.write_text("\n".join(test_lines), encoding="utf-8")
     source_map = _challenge_source_inventory(tmp_path)
-    rows = [{"path": path, "sha256": digest} for path, digest in sorted(source_map.items())]
+    rows = [
+        {"path": path, "sha256": digest} for path, digest in sorted(source_map.items())
+    ]
     candidate_sha = product_missions._sha_bytes(product_missions._canonical(rows))
     input_paths = ["app.py", "test_app.py"]
     input_rows = [{"path": path, "sha256": source_map[path]} for path in input_paths]
@@ -892,23 +939,55 @@ def test_operator_local_mutation_capture_verifies_typed_native_gates(
     contract_path = tmp_path / "daily-contract.json"
     contract_path.write_text(json.dumps(contract), encoding="utf-8")
 
-    for index, (criterion_id, target_name, target_line, control_name, control_line) in enumerate(selectors):
-        target_case, control_case = f"{criterion_id}:positive", f"{criterion_id}:negative"
+    for index, (
+        criterion_id,
+        target_name,
+        target_line,
+        control_name,
+        control_line,
+    ) in enumerate(selectors):
+        target_case, control_case = (
+            f"{criterion_id}:positive",
+            f"{criterion_id}:negative",
+        )
         rc = probe_main(
             [
-                "--root", str(tmp_path), "--kind", "production-mutation",
-                "--nodeid", f"test_app.py::{target_name}", "--line", str(target_line),
-                "--production-path", "app.py", "--production-symbol", "value",
+                "--root",
+                str(tmp_path),
+                "--kind",
+                "production-mutation",
+                "--nodeid",
+                f"test_app.py::{target_name}",
+                "--line",
+                str(target_line),
+                "--production-path",
+                "app.py",
+                "--production-symbol",
+                "value",
                 "--mutation-before",
                 'return {"record_id": "signal-17", "state": "ready", "trace": "trace-1"}',
                 "--mutation-after",
                 'return {"record_id": "signal-0", "state": "broken", "trace": "trace-0"}',
-                "--evidence", f".factory/local-capture/case-{index}",
-                "--mission-path", mission["path"], "--daily-contract", str(contract_path),
-                "--criterion-id", criterion_id, "--target-case-id", target_case,
-                "--control-nodeid", f"test_app.py::{control_name}",
-                "--control-line", str(control_line), "--control-case-id", control_case,
-                "--timeout", "20", "--python", sys.executable,
+                "--evidence",
+                f".factory/local-capture/case-{index}",
+                "--mission-path",
+                mission["path"],
+                "--daily-contract",
+                str(contract_path),
+                "--criterion-id",
+                criterion_id,
+                "--target-case-id",
+                target_case,
+                "--control-nodeid",
+                f"test_app.py::{control_name}",
+                "--control-line",
+                str(control_line),
+                "--control-case-id",
+                control_case,
+                "--timeout",
+                "20",
+                "--python",
+                sys.executable,
             ]
         )
         capture = json.loads(capsys.readouterr().out)
@@ -922,7 +1001,8 @@ def test_operator_local_mutation_capture_verifies_typed_native_gates(
     daily_criteria = {item["criterion_id"]: item for item in contract["criteria"]}
     for item in validation["criteria"]:
         positive = next(
-            case for case in daily_criteria[item["id"]]["cases"]
+            case
+            for case in daily_criteria[item["id"]]["cases"]
             if case["polarity"] == "positive"
         )
         receipt_path = tmp_path / positive["evidence"]["path"]
@@ -949,7 +1029,9 @@ def test_operator_local_mutation_capture_verifies_typed_native_gates(
         if "native_gate_observation" in row
     }
     assert set(gates) == {
-        "gate:unit", "gate:requirement-mutation", "gate:receipt-trace"
+        "gate:unit",
+        "gate:requirement-mutation",
+        "gate:receipt-trace",
     }
     assert all(
         row["schema"] == "factory.daily-native-gate-observation.v1"
@@ -973,8 +1055,7 @@ def test_operator_local_mutation_capture_verifies_typed_native_gates(
         for limitation in local_card["unexamined_scope"]
     )
     assert not any(
-        "signer-claimed" in limitation
-        for limitation in local_card["unexamined_scope"]
+        "signer-claimed" in limitation for limitation in local_card["unexamined_scope"]
     )
     receipt_refs = gates["gate:unit"]["evidence"]
     target_receipt_path = Path(
@@ -983,7 +1064,8 @@ def test_operator_local_mutation_capture_verifies_typed_native_gates(
     target_receipt = json.loads(target_receipt_path.read_text(encoding="utf-8"))
     snapshot_path = Path(
         next(
-            row["path"] for row in receipt_refs
+            row["path"]
+            for row in receipt_refs
             if row["role"] == "daily_contract_snapshot"
         )
     )
@@ -995,8 +1077,9 @@ def test_operator_local_mutation_capture_verifies_typed_native_gates(
     assert tampered["integrity_valid"] is False
     assert tampered["complete"] is False
     assert tampered["marker"] == "MISSION_COMPLETION_DRIFT"
-    assert hashlib.sha256(pristine_snapshot).hexdigest() == (
-        target_receipt["daily_contract_sha256_before_capture"]
+    assert (
+        hashlib.sha256(pristine_snapshot).hexdigest()
+        == (target_receipt["daily_contract_sha256_before_capture"])
     )
     snapshot_path.write_bytes(pristine_snapshot)
     restored = verify_mission_completion(Path(completion["path"]))
@@ -1005,7 +1088,9 @@ def test_operator_local_mutation_capture_verifies_typed_native_gates(
     assert restored["marker"] == "MISSION_COMPLETION_VERIFIED"
 
 
-def _local_mutation_daily_contract(mission, rows, candidate_sha, input_paths, input_sha):
+def _local_mutation_daily_contract(
+    mission, rows, candidate_sha, input_paths, input_sha
+):
     criteria = []
     for criterion in mission["completion_contract"]["criteria"]:
         cases = []

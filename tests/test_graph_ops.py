@@ -228,7 +228,9 @@ def test_graph_ops_does_not_promote_legacy_claim_to_complete_evidence(
             assert (f"slice:{project}:{dependency}", current, "depends_on") in edges
 
 
-def test_graph_ops_preserves_integrity_for_daily_incomplete_receipt(tmp_path, monkeypatch):
+def test_graph_ops_preserves_integrity_for_daily_incomplete_receipt(
+    tmp_path, monkeypatch
+):
     import factoryline.graph_ops as graph_ops
 
     mission_path = tmp_path / "mission.json"

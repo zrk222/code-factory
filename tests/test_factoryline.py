@@ -514,20 +514,24 @@ def test_forgeline_mjs_canary_receives_existing_typescript_compiler_path(
     monkeypatch.delenv("NODE_PATH", raising=False)
     monkeypatch.setattr(cli, "_cli_command", lambda _name: "forge")
     monkeypatch.setattr(
-        cli, "_typescript_node_path", lambda roots: compiler_node_path if roots == [tmp_path / "src"] else None
+        cli,
+        "_typescript_node_path",
+        lambda roots: compiler_node_path if roots == [tmp_path / "src"] else None,
     )
 
     def bounded_run(_cli, _args, _cwd, *, timeout, env):
         received.update(env=env, timeout=timeout)
         return {
             "ok": True,
-            "stdout": json.dumps({
-                "passed": True,
-                "metrics": {
-                    "coverage_assessment": "static_name_match",
-                    "behavioral_proof_status": "not_measured_static_only",
-                },
-            }).encode(),
+            "stdout": json.dumps(
+                {
+                    "passed": True,
+                    "metrics": {
+                        "coverage_assessment": "static_name_match",
+                        "behavioral_proof_status": "not_measured_static_only",
+                    },
+                }
+            ).encode(),
             "stderr": b"",
             "exit_code": 0,
             "cleanup_confirmed": True,

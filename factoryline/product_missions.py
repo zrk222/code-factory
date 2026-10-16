@@ -2651,7 +2651,11 @@ def _validated_completion_results(
 
 
 def _daily_verification_summary(
-    contract: Any, mission: dict[str, Any], root: Path, *, mission_path: Path | None = None
+    contract: Any,
+    mission: dict[str, Any],
+    root: Path,
+    *,
+    mission_path: Path | None = None,
 ) -> tuple[dict[str, Any], list[Path]]:
     if contract is _DAILY_VERIFICATION_UNSET:
         return (
@@ -2732,14 +2736,16 @@ def _daily_verification_summary(
         for case in all_cases
     )
     local_execution_observed = bool(all_cases) and all(
-        case["disposition"] in {
+        case["disposition"]
+        in {
             "local_mutation_target_observed",
             "local_mutation_control_observed",
         }
         for case in all_cases
     )
     has_local_execution = any(
-        case["disposition"] in {
+        case["disposition"]
+        in {
             "local_mutation_target_observed",
             "local_mutation_control_observed",
         }
@@ -2765,22 +2771,45 @@ def _daily_verification_summary(
             "local_execution_observed": local_execution_observed,
             "local_execution_trust_boundary": (
                 "Explicit operator-invoked local subprocess observations; persisted hashes prove currentness and binding only, not unforgeable host origin, independent attestation, or application correctness."
-            ) if local_execution_observed else None,
+            )
+            if local_execution_observed
+            else None,
             "behavioral_verification": "local_assertions_observed"
-            if local_execution_observed else "unverified",
+            if local_execution_observed
+            else "unverified",
             "attestation_claim_boundary": (
                 "Signature verification validates signer claims only; it does not establish "
                 "independent test execution, mutation application, or oracle accuracy."
-            ) if attestation_verified else None,
+            )
+            if attestation_verified
+            else None,
             "candidate_sha256_claim": candidate_claim,
             "candidate_sha256": source_digest,
             "scope_closure_claim": contract.get("scope_closure"),
             "scope_closure": "declared_verified_scope",
             "scope_limitations": [
                 "Repository-wide changed-file closure is not established.",
-                *(["Local execution was observed under the writable-host assumption; it is not independently attested."] if has_local_execution else []),
-                *(["The execution environment is signer-claimed, not independently remeasured at completion."] if has_signer_claims else []),
-                *(["The execution environment was not independently remeasured at completion."] if not has_local_execution and not has_signer_claims else []),
+                *(
+                    [
+                        "Local execution was observed under the writable-host assumption; it is not independently attested."
+                    ]
+                    if has_local_execution
+                    else []
+                ),
+                *(
+                    [
+                        "The execution environment is signer-claimed, not independently remeasured at completion."
+                    ]
+                    if has_signer_claims
+                    else []
+                ),
+                *(
+                    [
+                        "The execution environment was not independently remeasured at completion."
+                    ]
+                    if not has_local_execution and not has_signer_claims
+                    else []
+                ),
             ],
             "source_manifest": source_rows,
             "criteria": criteria_rows,
@@ -2890,8 +2919,12 @@ def capture_mission_local_mutation(
         contract, criterion_id, control_case_id, "negative", source_map
     )
     _mission_capture_inputs(
-        target_case, control_case, target_selector, control_selector,
-        production_path, source_map
+        target_case,
+        control_case,
+        target_selector,
+        control_selector,
+        production_path,
+        source_map,
     )
     evidence_dir = _local_capture_output_path(evidence_path, workspace)
     evidence_dir.mkdir(parents=True, exist_ok=False)
@@ -2901,39 +2934,71 @@ def capture_mission_local_mutation(
     from .runtime_audit_runner import capture_local_production_mutation
 
     if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 300:
-        raise ProductMissionError("LOCAL_CAPTURE_TIMEOUT", "timeout must be between 1 and 300 seconds")
+        raise ProductMissionError(
+            "LOCAL_CAPTURE_TIMEOUT", "timeout must be between 1 and 300 seconds"
+        )
     deadline = time.monotonic() + 4 * timeout_seconds
     target_timeout = timeout_seconds
 
     target = capture_local_production_mutation(
-        workspace, target_selector, target_line, production_path,
-        production_symbol, before_text, after_text,
-        str(evidence_dir / "target"), timeout_seconds=target_timeout,
+        workspace,
+        target_selector,
+        target_line,
+        production_path,
+        production_symbol,
+        before_text,
+        after_text,
+        str(evidence_dir / "target"),
+        timeout_seconds=target_timeout,
         python_executable=python_executable,
     )
     remaining = deadline - time.monotonic()
     if remaining < 2:
-        raise ProductMissionError("LOCAL_CAPTURE_TIMEOUT", "overall target/control capture budget expired")
+        raise ProductMissionError(
+            "LOCAL_CAPTURE_TIMEOUT", "overall target/control capture budget expired"
+        )
     control_timeout = min(timeout_seconds, int(remaining // 2))
     control = capture_local_production_mutation(
-        workspace, control_selector, control_line, production_path,
-        production_symbol, before_text, after_text,
-        str(evidence_dir / "control"), timeout_seconds=control_timeout,
+        workspace,
+        control_selector,
+        control_line,
+        production_path,
+        production_symbol,
+        before_text,
+        after_text,
+        str(evidence_dir / "control"),
+        timeout_seconds=control_timeout,
         python_executable=python_executable,
     )
     record_path = evidence_dir / "mission-case.json"
     receipt = _mission_capture_receipt(
-        mission, contract_file, contract, candidate_sha, criterion_id,
-        target_case, control_case, target, control, record_path, workspace,
-        mission_file, mission_sha_before, contract_sha_before,
-        contract_snapshot, contract_snapshot_sha,
-        4 * timeout_seconds, target_timeout, control_timeout,
+        mission,
+        contract_file,
+        contract,
+        candidate_sha,
+        criterion_id,
+        target_case,
+        control_case,
+        target,
+        control,
+        record_path,
+        workspace,
+        mission_file,
+        mission_sha_before,
+        contract_sha_before,
+        contract_snapshot,
+        contract_snapshot_sha,
+        4 * timeout_seconds,
+        target_timeout,
+        control_timeout,
     )
     if (
         _sha_path(mission_file) != mission_sha_before
         or _sha_path(contract_file) != contract_sha_before
     ):
-        raise ProductMissionError("DAILY_VERIFICATION_DRIFT", "inputs changed during capture")
+        raise ProductMissionError(
+            "DAILY_VERIFICATION_DRIFT", "inputs changed during capture"
+        )
     _atomic_json(record_path, receipt)
     updated = _mission_capture_contract_evidence(
         contract, target_case_id, control_case_id, record_path, workspace
@@ -2954,7 +3019,9 @@ def _local_capture_input_path(value: Path, root: Path) -> Path:
             raise ValueError("input must be a regular workspace file")
         return lexical.resolve(strict=True)
     except (OSError, RuntimeError, ValueError) as exc:
-        raise ProductMissionError("DAILY_VERIFICATION_DRIFT", "input is outside the workspace or unreadable") from exc
+        raise ProductMissionError(
+            "DAILY_VERIFICATION_DRIFT", "input is outside the workspace or unreadable"
+        ) from exc
 
 
 def _local_capture_output_path(value: str, root: Path) -> Path:
@@ -2965,17 +3032,29 @@ def _local_capture_output_path(value: str, root: Path) -> Path:
     try:
         new_output_path_inside(root, path)
     except (OSError, RuntimeError, ValueError) as exc:
-        raise ProductMissionError("DAILY_VERIFICATION_DRIFT", "evidence output must be new and contained") from exc
+        raise ProductMissionError(
+            "DAILY_VERIFICATION_DRIFT", "evidence output must be new and contained"
+        ) from exc
     return path
 
 
 def _local_capture_contract(
     contract: dict[str, Any], mission: dict[str, Any], root: Path
 ) -> tuple[dict[str, Any], dict[str, str], str]:
-    if set(contract) != {
-        "schema", "candidate_sha256", "source_manifest", "scope_closure", "criteria"
-    } or contract.get("schema") != DAILY_VERIFICATION_SCHEMA:
-        raise ProductMissionError("DAILY_VERIFICATION_DRIFT", "daily contract schema is invalid")
+    if (
+        set(contract)
+        != {
+            "schema",
+            "candidate_sha256",
+            "source_manifest",
+            "scope_closure",
+            "criteria",
+        }
+        or contract.get("schema") != DAILY_VERIFICATION_SCHEMA
+    ):
+        raise ProductMissionError(
+            "DAILY_VERIFICATION_DRIFT", "daily contract schema is invalid"
+        )
     gaps: list[str] = []
     rows, candidate_sha, _ = _daily_source_manifest(
         contract.get("source_manifest"), root, gaps
@@ -2992,14 +3071,19 @@ def _local_capture_contract(
         or len(case_ids) != len(set(case_ids))
         or gaps
     ):
-        raise ProductMissionError("DAILY_VERIFICATION_DRIFT", "daily contract is not current and complete")
+        raise ProductMissionError(
+            "DAILY_VERIFICATION_DRIFT", "daily contract is not current and complete"
+        )
     return contract, {item["path"]: item["sha256"] for item in rows}, candidate_sha
 
 
 def _local_capture_criterion_ids(criteria):
     if not isinstance(criteria, list):
         return set()
-    if any(not isinstance(item, dict) or set(item) != {"criterion_id", "cases"} for item in criteria):
+    if any(
+        not isinstance(item, dict) or set(item) != {"criterion_id", "cases"}
+        for item in criteria
+    ):
         return set()
     return {item["criterion_id"] for item in criteria}
 
@@ -3025,8 +3109,13 @@ def _local_capture_case_ids(criteria, source_map):
 
 def _local_capture_case_well_formed(case, source_map):
     fields = {
-        "case_id", "polarity", "input_paths", "input_sha256",
-        "expected_outcome", "observed_outcome", "evidence",
+        "case_id",
+        "polarity",
+        "input_paths",
+        "input_sha256",
+        "expected_outcome",
+        "observed_outcome",
+        "evidence",
     }
     if not isinstance(case, dict) or set(case) != fields:
         return False
@@ -3035,7 +3124,11 @@ def _local_capture_case_well_formed(case, source_map):
         return False
     if case.get("polarity") not in {"positive", "negative"}:
         return False
-    if not isinstance(paths, list) or not paths or any(path not in source_map for path in paths):
+    if (
+        not isinstance(paths, list)
+        or not paths
+        or any(path not in source_map for path in paths)
+    ):
         return False
     if len(paths) != len(set(paths)):
         return False
@@ -3059,11 +3152,19 @@ def _mission_capture_case(contract, criterion_id, case_id, polarity, source_map)
     }
     criterion = criteria.get(criterion_id)
     cases = criterion.get("cases") if isinstance(criterion, dict) else None
-    matches = [
-        item for item in cases if isinstance(item, dict) and item.get("case_id") == case_id
-    ] if isinstance(cases, list) else []
+    matches = (
+        [
+            item
+            for item in cases
+            if isinstance(item, dict) and item.get("case_id") == case_id
+        ]
+        if isinstance(cases, list)
+        else []
+    )
     if len(matches) != 1 or matches[0].get("polarity") != polarity:
-        raise ProductMissionError("DAILY_VERIFICATION_DRIFT", "case identity or polarity is not declared")
+        raise ProductMissionError(
+            "DAILY_VERIFICATION_DRIFT", "case identity or polarity is not declared"
+        )
     case = matches[0]
     expected_outcome = (
         "baseline_assertion_pass_mutant_assertion_fail"
@@ -3071,11 +3172,15 @@ def _mission_capture_case(contract, criterion_id, case_id, polarity, source_map)
         else "baseline_assertion_pass_mutant_assertion_pass"
     )
     paths = case.get("input_paths")
-    input_rows = [
-        {"path": path, "sha256": source_map[path]}
-        for path in paths
-        if isinstance(paths, list) and path in source_map
-    ] if isinstance(paths, list) else []
+    input_rows = (
+        [
+            {"path": path, "sha256": source_map[path]}
+            for path in paths
+            if isinstance(paths, list) and path in source_map
+        ]
+        if isinstance(paths, list)
+        else []
+    )
     if (
         not input_rows
         or len(input_rows) != len(paths)
@@ -3084,11 +3189,15 @@ def _mission_capture_case(contract, criterion_id, case_id, polarity, source_map)
         or case.get("observed_outcome") != "unknown"
         or case.get("evidence") not in ({}, None)
     ):
-        raise ProductMissionError("DAILY_VERIFICATION_DRIFT", "case inputs are stale or already captured")
+        raise ProductMissionError(
+            "DAILY_VERIFICATION_DRIFT", "case inputs are stale or already captured"
+        )
     return case
 
 
-def _mission_capture_inputs(target, control, target_selector, control_selector, production_path, source_map):
+def _mission_capture_inputs(
+    target, control, target_selector, control_selector, production_path, source_map
+):
     if (
         target_selector == control_selector
         or not isinstance(production_path, str)
@@ -3098,29 +3207,60 @@ def _mission_capture_inputs(target, control, target_selector, control_selector, 
         or production_path not in target.get("input_paths", [])
         or production_path not in control.get("input_paths", [])
     ):
-        raise ProductMissionError("DAILY_VERIFICATION_DRIFT", "target, control, and candidate inputs must be explicitly bound")
+        raise ProductMissionError(
+            "DAILY_VERIFICATION_DRIFT",
+            "target, control, and candidate inputs must be explicitly bound",
+        )
 
 
 def _mission_capture_receipt(
-    mission, contract_file, contract, candidate_sha, criterion_id,
-    target_case, control_case, target, control, record_path, root,
-    mission_file, mission_sha_before, contract_sha_before,
-    contract_snapshot, contract_snapshot_sha,
-    overall_timeout, target_timeout, control_timeout,
+    mission,
+    contract_file,
+    contract,
+    candidate_sha,
+    criterion_id,
+    target_case,
+    control_case,
+    target,
+    control,
+    record_path,
+    root,
+    mission_file,
+    mission_sha_before,
+    contract_sha_before,
+    contract_snapshot,
+    contract_snapshot_sha,
+    overall_timeout,
+    target_timeout,
+    control_timeout,
 ):
     from .runtime_audit_runner import project_local_production_mutation_v3_candidate
 
     target_path = record_path.parent / "target" / "capture.json"
     control_path = record_path.parent / "control" / "capture.json"
-    target_saved, control_saved = _read_local_capture(target_path), _read_local_capture(control_path)
+    target_saved, control_saved = (
+        _read_local_capture(target_path),
+        _read_local_capture(control_path),
+    )
     target_projection = project_local_production_mutation_v3_candidate(target_saved)
     if target_projection.get("status") != "CANDIDATE":
-        raise ProductMissionError("LOCAL_CAPTURE_INCOMPLETE", "target capture lacks a complete natural assertion failure")
-    control_status = _validate_unaffected_control_capture(control_saved, target_saved, root)
+        raise ProductMissionError(
+            "LOCAL_CAPTURE_INCOMPLETE",
+            "target capture lacks a complete natural assertion failure",
+        )
+    control_status = _validate_unaffected_control_capture(
+        control_saved, target_saved, root
+    )
     if not control_status:
-        raise ProductMissionError("LOCAL_CAPTURE_INCOMPLETE", "unaffected control did not pass under the same mutation")
+        raise ProductMissionError(
+            "LOCAL_CAPTURE_INCOMPLETE",
+            "unaffected control did not pass under the same mutation",
+        )
     if not _validate_target_local_capture(target_saved, root):
-        raise ProductMissionError("LOCAL_CAPTURE_INCOMPLETE", "target capture is stale or its natural assertion is unbound")
+        raise ProductMissionError(
+            "LOCAL_CAPTURE_INCOMPLETE",
+            "target capture is stale or its natural assertion is unbound",
+        )
     target_digest, control_digest = _sha_path(target_path), _sha_path(control_path)
     return {
         "schema": "factory.mission.local-mutation-capture.v1",
@@ -3140,14 +3280,28 @@ def _mission_capture_receipt(
         },
         "candidate_sha256": candidate_sha,
         "criterion_id": criterion_id,
-        "target_case": _mission_capture_case_binding(target_case, "positive", target_path, target_digest),
-        "control_case": _mission_capture_case_binding(control_case, "negative", control_path, control_digest),
-        "target_capture": {"path": target_path.relative_to(root).as_posix(), "sha256": target_digest},
-        "control_capture": {"path": control_path.relative_to(root).as_posix(), "sha256": control_digest},
+        "target_case": _mission_capture_case_binding(
+            target_case, "positive", target_path, target_digest
+        ),
+        "control_case": _mission_capture_case_binding(
+            control_case, "negative", control_path, control_digest
+        ),
+        "target_capture": {
+            "path": target_path.relative_to(root).as_posix(),
+            "sha256": target_digest,
+        },
+        "control_capture": {
+            "path": control_path.relative_to(root).as_posix(),
+            "sha256": control_digest,
+        },
         "source_manifest_sha256": target_saved.get("source_manifest_sha256"),
         "production_mutation": target_saved.get("production_mutation"),
-        "configuration_context_sha256": target_saved.get("configuration_context_sha256"),
-        "captures_same_candidate_and_mutation": _capture_pair_same_inputs(target_saved, control_saved),
+        "configuration_context_sha256": target_saved.get(
+            "configuration_context_sha256"
+        ),
+        "captures_same_candidate_and_mutation": _capture_pair_same_inputs(
+            target_saved, control_saved
+        ),
         "execution_budget": {
             "overall_timeout_seconds": overall_timeout,
             "target_child_timeout_seconds": target_timeout,
@@ -3164,7 +3318,8 @@ def _mission_capture_case_binding(case, polarity, path, digest):
         "input_paths": list(case["input_paths"]),
         "input_sha256": case["input_sha256"],
         "expected_outcome": "baseline_assertion_pass_mutant_assertion_fail"
-        if polarity == "positive" else "baseline_assertion_pass_mutant_assertion_pass",
+        if polarity == "positive"
+        else "baseline_assertion_pass_mutant_assertion_pass",
         "evidence_path": path.name,
         "evidence_sha256": digest,
     }
@@ -3180,14 +3335,25 @@ def _read_local_capture(path):
             raise ValueError("capture must be an object")
         return value
     except (OSError, UnicodeError, ValueError) as exc:
-        raise ProductMissionError("LOCAL_CAPTURE_INCOMPLETE", "local capture is unreadable or oversized") from exc
+        raise ProductMissionError(
+            "LOCAL_CAPTURE_INCOMPLETE", "local capture is unreadable or oversized"
+        ) from exc
 
 
 def _capture_pair_same_inputs(target, control):
-    return all(
-        target.get(key) == control.get(key)
-        for key in ("source_manifest", "source_manifest_sha256", "production_mutation", "configuration_context_sha256")
-    ) and target.get("status") == "OBSERVED" and control.get("status") == "INCOMPLETE"
+    return (
+        all(
+            target.get(key) == control.get(key)
+            for key in (
+                "source_manifest",
+                "source_manifest_sha256",
+                "production_mutation",
+                "configuration_context_sha256",
+            )
+        )
+        and target.get("status") == "OBSERVED"
+        and control.get("status") == "INCOMPLETE"
+    )
 
 
 def _validate_unaffected_control_capture(control, target, root):
@@ -3199,11 +3365,19 @@ def _validate_unaffected_control_capture(control, target, root):
         manifest = _candidate_manifest(control)
     except (AttributeError, KeyError, TypeError, ValueError):
         return False
-    selection, mutation = control.get("selection", {}), control.get("production_mutation", {})
+    selection, mutation = (
+        control.get("selection", {}),
+        control.get("production_mutation", {}),
+    )
     selector, line = selection.get("nodeid_selector"), selection.get("assertion_line")
-    if not _capture_pair_same_inputs(target, control) or not control.get("source_unchanged"):
+    if not _capture_pair_same_inputs(target, control) or not control.get(
+        "source_unchanged"
+    ):
         return False
-    if not isinstance(control.get("cleanup"), dict) or control["cleanup"].get("removed") is not True:
+    if (
+        not isinstance(control.get("cleanup"), dict)
+        or control["cleanup"].get("removed") is not True
+    ):
         return False
     if not all(
         validate_production_mutation_process(control.get(name, {}).get("process", {}))
@@ -3211,11 +3385,16 @@ def _validate_unaffected_control_capture(control, target, root):
         for name in ("baseline", "mutant")
     ):
         return False
-    observations = [control.get("baseline_observation"), control.get("mutant_observation")]
+    observations = [
+        control.get("baseline_observation"),
+        control.get("mutant_observation"),
+    ]
     return (
         all(
             isinstance(item, dict)
-            and validate_production_mutation_trial(item, selector, line, "passed", False)
+            and validate_production_mutation_trial(
+                item, selector, line, "passed", False
+            )
             and _local_capture_observation_manifest(item, manifest, mutation, name)
             for item, name in zip(observations, ("baseline", "mutant"), strict=True)
         )
@@ -3237,19 +3416,24 @@ def _validate_target_local_capture(target, root):
     selection = target.get("selection", {})
     selector, line = selection.get("nodeid_selector"), selection.get("assertion_line")
     baseline, mutant = target.get("baseline", {}), target.get("mutant", {})
-    observations = [target.get("baseline_observation"), target.get("mutant_observation")]
-    if not all((
-        target.get("status") == "OBSERVED",
-        target.get("source_unchanged") is True,
-        isinstance(target.get("cleanup"), dict),
-        target["cleanup"].get("removed") is True,
-        validate_production_mutation_process(baseline.get("process", {})),
-        baseline["process"].get("exit_code") == 0,
-        validate_production_mutation_process(mutant.get("process", {})),
-        # The observer worker exits zero after recording a natural assertion
-        # failure; the pytest outcome is carried in the bound trial record.
-        mutant["process"].get("exit_code") == 0,
-    )):
+    observations = [
+        target.get("baseline_observation"),
+        target.get("mutant_observation"),
+    ]
+    if not all(
+        (
+            target.get("status") == "OBSERVED",
+            target.get("source_unchanged") is True,
+            isinstance(target.get("cleanup"), dict),
+            target["cleanup"].get("removed") is True,
+            validate_production_mutation_process(baseline.get("process", {})),
+            baseline["process"].get("exit_code") == 0,
+            validate_production_mutation_process(mutant.get("process", {})),
+            # The observer worker exits zero after recording a natural assertion
+            # failure; the pytest outcome is carried in the bound trial record.
+            mutant["process"].get("exit_code") == 0,
+        )
+    ):
         return False
     return (
         all(
@@ -3257,7 +3441,9 @@ def _validate_target_local_capture(target, root):
             and validate_production_mutation_trial(
                 item, selector, line, outcome, visible
             )
-            and _local_capture_observation_manifest(item, manifest, target["production_mutation"], name)
+            and _local_capture_observation_manifest(
+                item, manifest, target["production_mutation"], name
+            )
             for item, name, outcome, visible in zip(
                 observations,
                 ("baseline", "mutant"),
@@ -3275,7 +3461,9 @@ def _local_capture_observation_manifest(observation, manifest, mutation, name):
     run_manifest = dict(manifest)
     if name == "mutant":
         run_manifest[mutation["path"]] = mutation["mutant_sha256"]
-    digest = _sha_bytes(json.dumps(run_manifest, sort_keys=True, separators=(",", ":")).encode())
+    digest = _sha_bytes(
+        json.dumps(run_manifest, sort_keys=True, separators=(",", ":")).encode()
+    )
     if observation.get("executed_source_manifest_sha256") != digest:
         return False
     cases = set(observation.get("collected", []))
@@ -3283,38 +3471,62 @@ def _local_capture_observation_manifest(observation, manifest, mutation, name):
     required = {(path, case) for path in required_paths for case in cases}
     rows = observation.get("executed_modules")
     found = set()
-    if not isinstance(rows, list) or observation.get("origin_status") != "BOUND" or observation.get("origin_limit_exceeded") is not False:
+    if (
+        not isinstance(rows, list)
+        or observation.get("origin_status") != "BOUND"
+        or observation.get("origin_limit_exceeded") is not False
+    ):
         return False
     for row in rows:
         if not isinstance(row, dict) or row.get("phase") != "call":
             continue
         path, case = row.get("path"), row.get("nodeid")
-        if not all((case in cases, path in manifest, row.get("origin") == path, row.get("status") == "BOUND", row.get("observation_kind") == "executed_frame", row.get("source_sha256") == run_manifest.get(path))):
+        if not all(
+            (
+                case in cases,
+                path in manifest,
+                row.get("origin") == path,
+                row.get("status") == "BOUND",
+                row.get("observation_kind") == "executed_frame",
+                row.get("source_sha256") == run_manifest.get(path),
+            )
+        ):
             return False
         found.add((path, case))
     return required <= found
 
 
 def _local_capture_current_source(capture, root, manifest):
-    from .pytest_readiness import _challenge_runtime_context, _challenge_source_binding, _challenge_source_inventory
+    from .pytest_readiness import (
+        _challenge_runtime_context,
+        _challenge_source_binding,
+        _challenge_source_inventory,
+    )
 
     try:
         return (
             _challenge_source_inventory(root) == manifest
             and capture.get("source_manifest_sha256") == _challenge_source_binding(root)
-            and capture.get("configuration_context_sha256") == _challenge_runtime_context(root)
+            and capture.get("configuration_context_sha256")
+            == _challenge_runtime_context(root)
         )
     except (OSError, RuntimeError, ValueError):
         return False
 
 
-def _mission_capture_contract_evidence(contract, target_id, control_id, record_path, root):
+def _mission_capture_contract_evidence(
+    contract, target_id, control_id, record_path, root
+):
     updated = json.loads(json.dumps(contract))
     for criterion in updated["criteria"]:
         for case in criterion["cases"]:
             if case["case_id"] in {target_id, control_id}:
                 role = "target" if case["case_id"] == target_id else "control"
-                outcome = "baseline_assertion_pass_mutant_assertion_fail" if role == "target" else "baseline_assertion_pass_mutant_assertion_pass"
+                outcome = (
+                    "baseline_assertion_pass_mutant_assertion_fail"
+                    if role == "target"
+                    else "baseline_assertion_pass_mutant_assertion_pass"
+                )
                 case["observed_outcome"] = outcome
                 case["evidence"] = {
                     "kind": "local_production_mutation",
@@ -3425,8 +3637,15 @@ def _daily_criteria(
             continue
         seen_criteria.add(criterion_id)
         case_results = _daily_cases(
-            cases, source_map, root, gaps, oracle_cache,
-            mission, criterion_id, candidate_sha, mission_path,
+            cases,
+            source_map,
+            root,
+            gaps,
+            oracle_cache,
+            mission,
+            criterion_id,
+            candidate_sha,
+            mission_path,
         )
         criterion_definition = next(
             item
@@ -3436,8 +3655,13 @@ def _daily_criteria(
         result_row = {"criterion_id": criterion_id, "cases": case_results}
         if criterion_definition.get("verification_kind") == "deterministic_tool":
             gate_observation = _daily_native_gate_observation(
-                criterion_definition, case_results, mission, candidate_sha,
-                source_map, root, gaps,
+                criterion_definition,
+                case_results,
+                mission,
+                candidate_sha,
+                source_map,
+                root,
+                gaps,
             )
             if gate_observation is not None:
                 result_row["native_gate_observation"] = gate_observation
@@ -3468,8 +3692,16 @@ def _daily_native_gate_observation(
     try:
         receipt = _load_json(path, "factory.mission.local-mutation-capture.v1")
         facts = _native_gate_receipt_facts(
-            receipt, positive, negative, criterion["id"], gate, mission, candidate_sha,
-            source_map, root, gaps,
+            receipt,
+            positive,
+            negative,
+            criterion["id"],
+            gate,
+            mission,
+            candidate_sha,
+            source_map,
+            root,
+            gaps,
         )
     except (OSError, ProductMissionError, TypeError, ValueError, KeyError):
         facts = None
@@ -3502,8 +3734,16 @@ def _native_gate_cases_share_receipt(positive, negative):
 
 
 def _native_gate_receipt_facts(
-    receipt, positive, negative, criterion_id, gate, mission, candidate_sha,
-    source_map, root, gaps,
+    receipt,
+    positive,
+    negative,
+    criterion_id,
+    gate,
+    mission,
+    candidate_sha,
+    source_map,
+    root,
+    gaps,
 ):
     expected = (
         receipt.get("status") == "OBSERVED"
@@ -3519,23 +3759,33 @@ def _native_gate_receipt_facts(
         return None
     snapshot_ref = receipt.get("daily_contract_snapshot", {})
     snapshot_path = _daily_local_evidence_path(
-        snapshot_ref.get("path"), snapshot_ref.get("sha256"),
-        root, gaps, "native_gate_contract_snapshot",
+        snapshot_ref.get("path"),
+        snapshot_ref.get("sha256"),
+        root,
+        gaps,
+        "native_gate_contract_snapshot",
     )
     capture_paths = _daily_local_capture_paths(receipt, root, gaps)
     if snapshot_path is None or not isinstance(capture_paths, list):
         return None
     target_path, control_path = capture_paths
-    target, control = _read_local_capture(target_path), _read_local_capture(control_path)
+    target, control = (
+        _read_local_capture(target_path),
+        _read_local_capture(control_path),
+    )
     if receipt.get("source_manifest_sha256") != target.get(
         "source_manifest_sha256"
-    ) or receipt.get("source_manifest_sha256") != control.get(
-        "source_manifest_sha256"
-    ):
+    ) or receipt.get("source_manifest_sha256") != control.get("source_manifest_sha256"):
         return None
     if not _native_gate_snapshot_matches(
-        receipt, snapshot_path, positive, negative, mission, candidate_sha,
-        source_map, root,
+        receipt,
+        snapshot_path,
+        positive,
+        negative,
+        mission,
+        candidate_sha,
+        source_map,
+        root,
     ):
         return None
     if gate == "unit":
@@ -3549,8 +3799,16 @@ def _native_gate_receipt_facts(
     if observed is None:
         return None
     return [
-        {"role": "mission_case", "path": str(Path(positive["execution_receipt_path"]).resolve()), "sha256": positive["execution_receipt_sha256"]},
-        {"role": "daily_contract_snapshot", "path": str(snapshot_path.resolve()), "sha256": snapshot_ref["sha256"]},
+        {
+            "role": "mission_case",
+            "path": str(Path(positive["execution_receipt_path"]).resolve()),
+            "sha256": positive["execution_receipt_sha256"],
+        },
+        {
+            "role": "daily_contract_snapshot",
+            "path": str(snapshot_path.resolve()),
+            "sha256": snapshot_ref["sha256"],
+        },
         *observed,
     ]
 
@@ -3562,7 +3820,9 @@ def _native_gate_snapshot_matches(
         snapshot, observed_sources, digest = _local_capture_contract(
             _load_json(path, DAILY_VERIFICATION_SCHEMA), mission, root
         )
-        criteria = {item["criterion_id"]: item["cases"] for item in snapshot["criteria"]}
+        criteria = {
+            item["criterion_id"]: item["cases"] for item in snapshot["criteria"]
+        }
         cases = {case["case_id"]: case for case in criteria[receipt["criterion_id"]]}
         before = receipt["daily_contract_sha256_before_capture"]
         return (
@@ -3587,7 +3847,11 @@ def _native_gate_unit_observation(target):
     observation = target.get("baseline_observation", {})
     selection = target.get("selection", {})
     reports = observation.get("reports")
-    phases = {row.get("phase"): row for row in reports if isinstance(row, dict)} if isinstance(reports, list) else {}
+    phases = (
+        {row.get("phase"): row for row in reports if isinstance(row, dict)}
+        if isinstance(reports, list)
+        else {}
+    )
     selector = selection.get("nodeid_selector")
     if (
         target.get("status") != "OBSERVED"
@@ -3595,40 +3859,58 @@ def _native_gate_unit_observation(target):
         or observation.get("collected") != [selector]
         or observation.get("collection_incomplete") is not False
         or set(phases) != {"setup", "call", "teardown"}
-        or any(row.get("outcome") != "passed" or row.get("xfail") is True for row in phases.values())
+        or any(
+            row.get("outcome") != "passed" or row.get("xfail") is True
+            for row in phases.values()
+        )
     ):
         return None
-    return [{
-        "role": "unit_pytest_baseline",
-        "path": selection["test_path"],
-        "sha256": selection["test_sha256"],
-        "selector": selector,
-    }]
+    return [
+        {
+            "role": "unit_pytest_baseline",
+            "path": selection["test_path"],
+            "sha256": selection["test_sha256"],
+            "selector": selector,
+        }
+    ]
 
 
 def _native_gate_mutation_observation(target, control):
     target_mutant = target.get("mutant_observation", {})
-    control_runs = (control.get("baseline_observation", {}), control.get("mutant_observation", {}))
+    control_runs = (
+        control.get("baseline_observation", {}),
+        control.get("mutant_observation", {}),
+    )
     reports = target_mutant.get("reports")
     failed = isinstance(reports, list) and any(
-        isinstance(row, dict) and row.get("phase") == "call"
-        and row.get("outcome") == "failed" and row.get("xfail") is False
+        isinstance(row, dict)
+        and row.get("phase") == "call"
+        and row.get("outcome") == "failed"
+        and row.get("xfail") is False
         for row in reports
     )
     if not failed or any(
         not isinstance(run.get("reports"), list)
-        or any(row.get("outcome") != "passed" for row in run["reports"] if isinstance(row, dict))
+        or any(
+            row.get("outcome") != "passed"
+            for row in run["reports"]
+            if isinstance(row, dict)
+        )
         for run in control_runs
     ):
         return None
     mutation = target.get("production_mutation", {})
-    if mutation.get("mutation_applied") is not True or mutation.get("original_sha256") == mutation.get("mutant_sha256"):
+    if mutation.get("mutation_applied") is not True or mutation.get(
+        "original_sha256"
+    ) == mutation.get("mutant_sha256"):
         return None
-    return [{
-        "role": "target_mutant_pytest",
-        "path": mutation["path"],
-        "sha256": mutation["mutant_sha256"],
-    }]
+    return [
+        {
+            "role": "target_mutant_pytest",
+            "path": mutation["path"],
+            "sha256": mutation["mutant_sha256"],
+        }
+    ]
 
 
 def _native_gate_trace_observation(
@@ -3643,7 +3925,9 @@ def _native_gate_trace_observation(
         return None
     return [
         {"role": role, "path": str(path.resolve()), "sha256": ref["sha256"]}
-        for role, path, ref in zip(("target_capture", "control_capture"), actual, refs, strict=True)
+        for role, path, ref in zip(
+            ("target_capture", "control_capture"), actual, refs, strict=True
+        )
     ]
 
 
@@ -3666,8 +3950,15 @@ def _daily_cases(
     results, ids, polarities = [], set(), set()
     for item in value:
         result, paths = _daily_case(
-            item, source_map, root, gaps, oracle_cache,
-            mission, criterion_id, candidate_sha, mission_path,
+            item,
+            source_map,
+            root,
+            gaps,
+            oracle_cache,
+            mission,
+            criterion_id,
+            candidate_sha,
+            mission_path,
         )
         if result is None:
             continue
@@ -3768,8 +4059,15 @@ def _daily_case(
         disposition = "signer_attested_baseline_and_mutant"
     elif local_evidence:
         observed, paths = _daily_local_mutation_observation(
-            evidence, item, source_map, root, gaps,
-            mission, criterion_id, candidate_sha, mission_path,
+            evidence,
+            item,
+            source_map,
+            root,
+            gaps,
+            mission,
+            criterion_id,
+            candidate_sha,
+            mission_path,
         )
         disposition = (
             "local_mutation_target_observed"
@@ -3818,7 +4116,8 @@ def _daily_case(
             if oracle_evidence
             else None,
             "application_output_observed": None
-            if oracle_evidence or local_evidence else observed,
+            if oracle_evidence or local_evidence
+            else observed,
             "disposition": disposition
             if observed is not None and expected == observed
             else "unverified",
@@ -3852,15 +4151,25 @@ def _daily_e2e_observation(
 
 
 def _daily_local_mutation_observation(
-    evidence, case, source_map, root, gaps, mission, criterion_id,
-    candidate_sha, mission_path,
+    evidence,
+    case,
+    source_map,
+    root,
+    gaps,
+    mission,
+    criterion_id,
+    candidate_sha,
+    mission_path,
 ):
     fields = {"kind", "path", "sha256", "role"}
     if not isinstance(evidence, dict) or set(evidence) != fields:
         gaps.append("execution_evidence_unsupported")
         return None, []
     path = _daily_local_evidence_path(
-        evidence.get("path"), evidence.get("sha256"), root, gaps,
+        evidence.get("path"),
+        evidence.get("sha256"),
+        root,
+        gaps,
         "local_mutation_receipt",
     )
     if path is None:
@@ -3868,17 +4177,33 @@ def _daily_local_mutation_observation(
     try:
         receipt = _load_json(path, "factory.mission.local-mutation-capture.v1")
         target_path, control_path = _daily_local_capture_paths(receipt, root, gaps)
-        target, control = _read_local_capture(target_path), _read_local_capture(control_path)
+        target, control = (
+            _read_local_capture(target_path),
+            _read_local_capture(control_path),
+        )
         _verify_local_capture_pair(
-            receipt, target, control, case, source_map, candidate_sha,
-            mission, criterion_id, mission_path, root, gaps,
+            receipt,
+            target,
+            control,
+            case,
+            source_map,
+            candidate_sha,
+            mission,
+            criterion_id,
+            mission_path,
+            root,
+            gaps,
         )
         snapshot_path = _daily_capture_contract_snapshot(
             receipt, case, criterion_id, mission, source_map, candidate_sha, root, gaps
         )
         if snapshot_path is None:
             raise ValueError("pre-capture case contract is missing or stale")
-        binding = receipt["target_case"] if evidence["role"] == "target" else receipt["control_case"]
+        binding = (
+            receipt["target_case"]
+            if evidence["role"] == "target"
+            else receipt["control_case"]
+        )
         capture_path = target_path if evidence["role"] == "target" else control_path
         expected_role = "positive" if evidence["role"] == "target" else "negative"
         if (
@@ -3893,8 +4218,13 @@ def _daily_local_mutation_observation(
         outcome = binding["expected_outcome"]
         paths = [path, target_path, control_path]
         for capture_path, capture in ((target_path, target), (control_path, control)):
-            diff_path = capture_path.parent / capture["production_mutation"]["diff_path"]
-            if not _valid_sha256(capture["production_mutation"].get("diff_sha256")) or _sha_path(diff_path) != capture["production_mutation"]["diff_sha256"]:
+            diff_path = (
+                capture_path.parent / capture["production_mutation"]["diff_path"]
+            )
+            if (
+                not _valid_sha256(capture["production_mutation"].get("diff_sha256"))
+                or _sha_path(diff_path) != capture["production_mutation"]["diff_sha256"]
+            ):
                 raise ValueError("capture diff is stale")
             paths.append(diff_path)
         paths.append(snapshot_path)
@@ -3909,8 +4239,11 @@ def _daily_capture_contract_snapshot(
 ):
     reference = receipt.get("daily_contract_snapshot", {})
     path = _daily_local_evidence_path(
-        reference.get("path"), reference.get("sha256"),
-        root, gaps, "local_capture_contract_snapshot",
+        reference.get("path"),
+        reference.get("sha256"),
+        root,
+        gaps,
+        "local_capture_contract_snapshot",
     )
     if path is None or reference.get("sha256") != receipt.get(
         "daily_contract_sha256_before_capture"
@@ -3920,21 +4253,33 @@ def _daily_capture_contract_snapshot(
         snapshot, observed_sources, observed_candidate = _local_capture_contract(
             _load_json(path, DAILY_VERIFICATION_SCHEMA), mission, root
         )
-        criteria = {item["criterion_id"]: item["cases"] for item in snapshot["criteria"]}
+        criteria = {
+            item["criterion_id"]: item["cases"] for item in snapshot["criteria"]
+        }
         saved_case = next(
-            row for row in criteria[criterion_id]
-            if row["case_id"] == case["case_id"]
+            row for row in criteria[criterion_id] if row["case_id"] == case["case_id"]
         )
-        return path if (
-            observed_sources == source_map
-            and observed_candidate == candidate_sha
-            and saved_case["polarity"] == case["polarity"]
-            and saved_case["input_paths"] == case["input_paths"]
-            and saved_case["input_sha256"] == case["input_sha256"]
-            and saved_case["observed_outcome"] == "unknown"
-            and saved_case["evidence"] == {}
-        ) else None
-    except (KeyError, OSError, ProductMissionError, StopIteration, TypeError, ValueError):
+        return (
+            path
+            if (
+                observed_sources == source_map
+                and observed_candidate == candidate_sha
+                and saved_case["polarity"] == case["polarity"]
+                and saved_case["input_paths"] == case["input_paths"]
+                and saved_case["input_sha256"] == case["input_sha256"]
+                and saved_case["observed_outcome"] == "unknown"
+                and saved_case["evidence"] == {}
+            )
+            else None
+        )
+    except (
+        KeyError,
+        OSError,
+        ProductMissionError,
+        StopIteration,
+        TypeError,
+        ValueError,
+    ):
         return None
 
 
@@ -3946,7 +4291,10 @@ def _daily_local_capture_paths(receipt, root, gaps):
             gaps.append("execution_local_capture_binding_malformed")
             return None, None
         path = _daily_local_evidence_path(
-            binding.get("path"), binding.get("sha256"), root, gaps,
+            binding.get("path"),
+            binding.get("sha256"),
+            root,
+            gaps,
             "local_mutation_capture",
         )
         if path is None:
@@ -3956,32 +4304,49 @@ def _daily_local_capture_paths(receipt, root, gaps):
 
 
 def _verify_local_capture_pair(
-    receipt, target, control, case, source_map, candidate_sha,
-    mission, criterion_id, mission_path, root, gaps,
+    receipt,
+    target,
+    control,
+    case,
+    source_map,
+    candidate_sha,
+    mission,
+    criterion_id,
+    mission_path,
+    root,
+    gaps,
 ):
     from .runtime_audit_runner import project_local_production_mutation_v3_candidate
 
     mission_file = Path(mission_path).resolve() if mission_path else None
-    mission_file_sha = _sha_path(mission_file) if mission_file and mission_file.is_file() else None
+    mission_file_sha = (
+        _sha_path(mission_file) if mission_file and mission_file.is_file() else None
+    )
     mission_bound_path = receipt.get("mission_path")
     mission_bound_file = _local_receipt_mission_path(mission_bound_path, root)
-    mission_bound_file_sha = _sha_path(mission_bound_file) if mission_bound_file else None
+    mission_bound_file_sha = (
+        _sha_path(mission_bound_file) if mission_bound_file else None
+    )
     budget = receipt.get("execution_budget")
-    if not all((
-        receipt.get("status") == "OBSERVED",
-        receipt.get("authority") == "none",
-        receipt.get("local_execution_observed") is True,
-        receipt.get("mission_id") == mission.get("id"),
-        receipt.get("mission_sha256") == mission.get("mission_sha256"),
-        receipt.get("mission_file_sha256") == mission_file_sha,
-        receipt.get("mission_file_sha256") == mission_bound_file_sha,
-        mission_bound_file == mission_file,
-        receipt.get("criterion_id") == criterion_id,
-        receipt.get("candidate_sha256") == candidate_sha,
-        receipt.get("captures_same_candidate_and_mutation") is True,
-        receipt.get("claim_boundary", "").startswith("Explicit operator-invoked local process observation"),
-        _local_capture_budget_valid(budget),
-    )):
+    if not all(
+        (
+            receipt.get("status") == "OBSERVED",
+            receipt.get("authority") == "none",
+            receipt.get("local_execution_observed") is True,
+            receipt.get("mission_id") == mission.get("id"),
+            receipt.get("mission_sha256") == mission.get("mission_sha256"),
+            receipt.get("mission_file_sha256") == mission_file_sha,
+            receipt.get("mission_file_sha256") == mission_bound_file_sha,
+            mission_bound_file == mission_file,
+            receipt.get("criterion_id") == criterion_id,
+            receipt.get("candidate_sha256") == candidate_sha,
+            receipt.get("captures_same_candidate_and_mutation") is True,
+            receipt.get("claim_boundary", "").startswith(
+                "Explicit operator-invoked local process observation"
+            ),
+            _local_capture_budget_valid(budget),
+        )
+    ):
         raise ValueError("local observation identity or trust boundary mismatch")
     source_manifest = _candidate_manifest_for_local_capture(target)
     if source_manifest != _candidate_manifest_for_local_capture(control):
@@ -3993,8 +4358,13 @@ def _verify_local_capture_pair(
         raise ValueError("target natural assertion is not observed")
     if not _validate_unaffected_control_capture(control, target, root):
         raise ValueError("unaffected control did not pass under the candidate mutation")
-    if not all(_local_capture_current_source(item, root, source_manifest) for item in (target, control)):
-        raise ValueError("capture no longer matches current source and runtime configuration")
+    if not all(
+        _local_capture_current_source(item, root, source_manifest)
+        for item in (target, control)
+    ):
+        raise ValueError(
+            "capture no longer matches current source and runtime configuration"
+        )
     mutation = target.get("production_mutation", {})
     selection = target.get("selection", {})
     if (
@@ -4029,8 +4399,9 @@ def _local_capture_budget_valid(value):
     }:
         return False
     overall = value.get("overall_timeout_seconds")
-    target, control = value.get("target_child_timeout_seconds"), value.get(
-        "control_child_timeout_seconds"
+    target, control = (
+        value.get("target_child_timeout_seconds"),
+        value.get("control_child_timeout_seconds"),
     )
     return (
         all(type(item) is int for item in (overall, target, control))
@@ -4696,7 +5067,11 @@ def mission_completion_graph_projection(
         and verification.get("complete") is True
     )
     return {
-        "status": "verified" if complete else "incomplete" if integrity_valid else "invalid",
+        "status": "verified"
+        if complete
+        else "incomplete"
+        if integrity_valid
+        else "invalid",
         "integrity_valid": integrity_valid,
         "complete": complete,
         "errors": verification.get("errors", []) if verification else [],

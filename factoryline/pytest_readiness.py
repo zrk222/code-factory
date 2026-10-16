@@ -3998,7 +3998,8 @@ def _cli_selected_probe(args):
                 "schema": "factory.probe-validation.v1",
                 "status": "INVALID",
                 "kind": args.kind,
-                "reason": str(exc) or "Mutation inputs or workspace could not be validated.",
+                "reason": str(exc)
+                or "Mutation inputs or workspace could not be validated.",
             }
     probe = {
         "assertion": probe_assertion_propagation,

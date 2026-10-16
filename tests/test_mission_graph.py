@@ -148,6 +148,7 @@ def _approve(tmp_path: Path, mission: dict) -> Path:
 def test_native_graph_rejects_legacy_claim_as_daily_completion(tmp_path: Path):
     import pytest
     from factoryline.mission_graph import MissionGraphError
+
     mission = _pipeline(tmp_path)
     initialized = init_mission_graph(Path(mission["path"]), tmp_path)
     assert initialized["state"] == "planned"
@@ -243,7 +244,9 @@ def test_native_graph_rejects_legacy_claim_as_daily_completion(tmp_path: Path):
     )
 
 
-def test_completion_gate_accepts_upstream_verified_complete_receipt(tmp_path, monkeypatch):
+def test_completion_gate_accepts_upstream_verified_complete_receipt(
+    tmp_path, monkeypatch
+):
     import factoryline.mission_graph as mission_graph
 
     mission = {"mission_sha256": "a" * 64}
