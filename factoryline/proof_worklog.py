@@ -64,54 +64,82 @@ def applied_change_projection(
         return _unavailable_projection("candidate_manifest_unavailable")
     workspace = Path(root).resolve()
     budget = _budget or _new_applied_change_budget()
-    git = _AppliedChangeGit(workspace, budget)
     try:
-        head, repo_id, entries, untracked, statuses, facts = git.inventory(baseline_oid)
-        declared_before = dict(baseline_files or {})
-        changes, unrelated, file_facts = _project_git_changes(
-            git, entries, untracked, manifest, declared_before
+        return _available_applied_change_projection(
+            workspace,
+            baseline_oid,
+            manifest,
+            candidate_manifest,
+            candidate_sha256,
+            rationale,
+            baseline_files,
+            budget,
+            _snapshot_out,
         )
-        _mark_mixed_edits(changes, unrelated, statuses, manifest)
-        for path in unrelated:
-            if path not in file_facts:
-                file_facts[path] = git.file_fact(path)
-        for path, digest in manifest.items():
-            actual = file_facts.get(path)
-            if path not in file_facts:
-                actual = git.file_fact(path)
-                file_facts[path] = actual
-            if actual != digest:
-                raise ValueError("candidate_stale")
-        snapshot = {
-            "baseline_oid": baseline_oid,
-            "head_oid": head,
-            "repository_identity_sha256": repo_id,
-            "facts": facts,
-            "manifest": manifest,
-            "file_facts": file_facts,
-            "baseline_files": declared_before,
-        }
-        _verify_applied_change_snapshot(workspace, snapshot, budget)
-        if _snapshot_out is not None:
-            _snapshot_out["value"] = snapshot
-        return {
-            "state": "available",
-            "reason": None,
-            "baseline_oid": baseline_oid,
-            "head_oid": head,
-            "candidate_sha256": candidate_sha256 or _sha(candidate_manifest),
-            "changes": changes,
-            "unrelated_dirty_paths": sorted(unrelated),
-            "rationale": rationale.strip()[:240]
-            if isinstance(rationale, str) and rationale.strip()
-            else None,
-            "repository_identity_sha256": repo_id,
-            "limits": [
-                "Git diff proves byte differences, not authorship or causal intent."
-            ],
-        }
     except (OSError, UnicodeDecodeError, ValueError, RuntimeError):
         return _unavailable_projection("projection_unavailable_or_stale")
+
+
+def _available_applied_change_projection(
+    workspace,
+    baseline_oid,
+    manifest,
+    candidate_manifest,
+    candidate_sha256,
+    rationale,
+    baseline_files,
+    budget,
+    snapshot_out,
+):
+    """Build and recheck an available projection from one bounded snapshot."""
+    git = _AppliedChangeGit(workspace, budget)
+    head, repo_id, entries, untracked, statuses, facts = git.inventory(baseline_oid)
+    declared_before = dict(baseline_files or {})
+    changes, unrelated, file_facts = _project_git_changes(
+        git, entries, untracked, manifest, declared_before
+    )
+    _mark_mixed_edits(changes, unrelated, statuses, manifest)
+    _complete_applied_file_facts(git, unrelated, file_facts, manifest)
+    snapshot = {
+        "baseline_oid": baseline_oid,
+        "head_oid": head,
+        "repository_identity_sha256": repo_id,
+        "facts": facts,
+        "manifest": manifest,
+        "file_facts": file_facts,
+        "baseline_files": declared_before,
+    }
+    _verify_applied_change_snapshot(workspace, snapshot, budget)
+    if snapshot_out is not None:
+        snapshot_out["value"] = snapshot
+    return {
+        "state": "available",
+        "reason": None,
+        "baseline_oid": baseline_oid,
+        "head_oid": head,
+        "candidate_sha256": candidate_sha256 or _sha(candidate_manifest),
+        "changes": changes,
+        "unrelated_dirty_paths": sorted(unrelated),
+        "rationale": rationale.strip()[:240]
+        if isinstance(rationale, str) and rationale.strip()
+        else None,
+        "repository_identity_sha256": repo_id,
+        "limits": [
+            "Git diff proves byte differences, not authorship or causal intent."
+        ],
+    }
+
+
+def _complete_applied_file_facts(git, unrelated, file_facts, manifest):
+    """Hash every displayed or declared file and reject stale candidate bytes."""
+    for path in unrelated:
+        if path not in file_facts:
+            file_facts[path] = git.file_fact(path)
+    for path, digest in manifest.items():
+        if path not in file_facts:
+            file_facts[path] = git.file_fact(path)
+        if file_facts[path] != digest:
+            raise ValueError("candidate_stale")
 
 
 def _new_applied_change_budget() -> dict[str, float | int]:
