@@ -323,7 +323,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           git fetch --no-tags origin "refs/tags/$RELEASE_REF"
           test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$APPROVED_COMMIT"
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: openvsx-candidate-${{ inputs.release_ref }}
           path: openvsx-candidate
