@@ -613,6 +613,84 @@ def track_sql_assignment(
         bind_sql_provenance(connections, cursors, name, driver, cursor)
 
 
+def credential_password_request_value(
+    node,
+    password_fields,
+    aliases,
+    scope,
+    flow_statement,
+    flask_collection,
+    django_request,
+):
+    """Recognize password fields read from proven Flask or Django request sources."""
+    if isinstance(node, ast.Call):
+        parts = _credential_get_source_key(node)
+    elif isinstance(node, ast.Subscript):
+        parts = node.value, node.slice
+    else:
+        return False
+    if parts is None:
+        return False
+    request_value, key = parts
+    if (
+        not isinstance(key, ast.Constant)
+        or not isinstance(key.value, str)
+        or key.value.casefold() != "password"
+    ):
+        return False
+    return _credential_request_collection(
+        request_value,
+        password_fields,
+        flask_collection,
+        aliases,
+        scope,
+        flow_statement,
+    ) or django_request(request_value, aliases, scope, flow_statement)
+
+
+def _credential_get_source_key(call):
+    if not isinstance(call.func, ast.Attribute) or call.func.attr != "get":
+        return None
+    if not 1 <= len(call.args) <= 2 or len(call.keywords) > 1:
+        return None
+    if any(keyword.arg != "default" for keyword in call.keywords):
+        return None
+    if len(call.args) == 2 and call.keywords:
+        return None
+    return call.func.value, call.args[0]
+
+
+def _credential_request_collection(
+    node, password_fields, resolve_flask_collection, aliases, scope, flow_statement
+):
+    if isinstance(node, ast.Name):
+        marker = f"request-collection:{node.id}:"
+        return any(
+            isinstance(item, str) and item.startswith(marker)
+            for item in password_fields
+        )
+    return resolve_flask_collection(node, aliases, scope, flow_statement)
+
+
+def _track_credential_request_collection(
+    bindings, statement, password_fields, collection
+):
+    password_fields.difference_update(
+        item
+        for item in tuple(password_fields)
+        if isinstance(item, str)
+        and item.startswith("request-collection:")
+        and item.split(":", 2)[1] in bindings
+    )
+    if collection:
+        targets = getattr(statement, "targets", None) or [statement.target]
+        password_fields.update(
+            f"request-collection:{target.id}:source"
+            for target in targets
+            if isinstance(target, ast.Name)
+        )
+
+
 def _sql_assignment_kinds(value, aliases, helpers, driver, cursor, helper_call):
     receiver = _sql_call_receiver(value)
     connection = bool(driver) or helper_call(value, "connection", aliases, helpers)

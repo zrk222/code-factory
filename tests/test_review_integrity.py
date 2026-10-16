@@ -23,6 +23,123 @@ from factoryline import workflow_audit as workflow_audit_module
 from factoryline.workflow_audit import CATEGORIES, audit_workflows
 
 
+def _credential_source_findings(source):
+    import ast
+
+    from factoryline.review_audits import _security_aliases
+    from factoryline.review_integrity import security_source_sink_findings
+
+    tree = ast.parse(source)
+    nodes = list(ast.walk(tree))
+    return security_source_sink_findings(
+        "candidate.py", tree, nodes, _security_aliases(nodes)
+    )
+
+
+def test_credential_password_request_value_direct_contract():
+    from factoryline.intent_quality import credential_password_request_value
+
+    request_collection = ast.parse("request.form", mode="eval").body
+
+    def flask_source(node, *_):
+        return ast.dump(node) == ast.dump(request_collection)
+
+    def django_source(*_):
+        return False
+
+    valid = ast.parse("request.form.get('password', default='')", mode="eval").body
+    mixed_case = ast.parse("request.form.get('PASSWORD', default='')", mode="eval").body
+    unrelated_field = ast.parse(
+        "request.form.get('username', default='')", mode="eval"
+    ).body
+
+    assert credential_password_request_value(
+        valid, set(), {}, None, None, flask_source, django_source
+    )
+    assert credential_password_request_value(
+        mixed_case, set(), {}, None, None, flask_source, django_source
+    )
+    assert not credential_password_request_value(
+        unrelated_field, set(), {}, None, None, flask_source, django_source
+    )
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "request.form.get('password', '')",
+        "request.form.get('password', default='')",
+        "request.form.get('Password', default='')",
+        "request.args.get('password', '')",
+        "request.args.get('password', default='')",
+        "request.form['password']",
+        "form.get('password', '')",
+        "form.get('password', default='')",
+        "form['password']",
+    ],
+)
+def test_credential_password_sources_detect_request_defaults_and_collection_aliases(
+    expression,
+):
+    prefix = "from flask import request\ndef check():\n"
+    alias = "    form = request.form\n" if expression.startswith("form") else ""
+    findings = _credential_source_findings(
+        prefix + alias + f"    return {expression} == 'fixture-credential-never-used'\n"
+    )
+
+    assert [row["code"] for row in findings] == ["SECURITY_HARDCODED_SECRET"]
+    assert "fixture-credential-never-used" not in json.dumps(findings)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def check():\n    form = {'password': ''}\n"
+        "    return form.get('password', '') == 'fixture-credential-never-used'\n",
+        "from flask import request\ndef check():\n    form = request.form\n"
+        "    form = {}\n"
+        "    return form.get('password', '') == 'fixture-credential-never-used'\n",
+        "from flask import request\ndef check():\n    form = request.form\n"
+        "    del form\n    form = {}\n"
+        "    return form.get('password', '') == 'fixture-credential-never-used'\n",
+        "from flask import request\ndef check():\n    form = request.form\n"
+        "    import json as form\n"
+        "    return form.get('password', '') == 'fixture-credential-never-used'\n",
+        "from flask import request\ndef check():\n    request = {}\n"
+        "    return request.form.get('password', '') == 'fixture-credential-never-used'\n",
+        "from flask import request\ndef check():\n"
+        "    return request.form.get('username', '') == 'fixture-credential-never-used'\n",
+        "from flask import request\ndef check():\n"
+        "    return request.form.get(*args) == 'fixture-credential-never-used'\n",
+        "from flask import request\ndef check():\n"
+        "    return request.form.get('password', **options) == 'fixture-credential-never-used'\n",
+        "from flask import request\ndef check(user):\n"
+        "    supplied = request.form.get('password', '').encode()\n"
+        "    actual_hash = hashlib.sha256(supplied).hexdigest()\n"
+        "    return hmac.compare_digest(actual_hash, user.password_hash)\n",
+    ],
+)
+def test_credential_password_controls_remain_unflagged(source):
+    assert _credential_source_findings(source) == []
+
+
+def test_credential_request_collection_alias_chain_preserves_and_clears_provenance():
+    prefix = "from flask import request\ndef check():\n    form = request.form\n    copy = form\n"
+    detected = _credential_source_findings(
+        prefix
+        + "    return copy.get('password', '') == 'fixture-credential-never-used'\n"
+    )
+    rebound = _credential_source_findings(
+        prefix
+        + "    copy = {}\n"
+        + "    return copy.get('password', '') == 'fixture-credential-never-used'\n"
+    )
+
+    assert [row["code"] for row in detected] == ["SECURITY_HARDCODED_SECRET"]
+    assert "fixture-credential-never-used" not in json.dumps(detected)
+    assert rebound == []
+
+
 @pytest.mark.parametrize(
     "source,expected",
     [

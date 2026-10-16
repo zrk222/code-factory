@@ -4065,7 +4065,7 @@ def _security_analyze_source_sink_block(
             bound = audit._bound_names(statement)
             for names in flow:
                 names.difference_update(bound)
-            _security_clear_upload_tags(requests, bound)
+            _security_clear_upload_tags(requests, bound, password_fields)
     return findings
 
 
@@ -4240,12 +4240,17 @@ def _security_source_sink_call(
     return None
 
 
-def _security_clear_upload_tags(requests, names):
+def _security_clear_upload_tags(
+    requests, names, password_fields, statement=None, collection=False
+):
     requests.difference_update(
         item
         for item in tuple(requests)
         if isinstance(item, tuple) and len(item) == 2 and item[1] in names
     )
+    from .intent_quality import _track_credential_request_collection
+
+    _track_credential_request_collection(names, statement, password_fields, collection)
 
 
 def _security_unsafe_flask_file_save(call, aliases, requests):
@@ -4529,28 +4534,17 @@ def _security_password_source(
         ) or _security_password_source(
             node.right, password_fields, aliases, scope, flow_statement
         )
-    return _security_password_request_value(node, aliases, scope, flow_statement)
+    from .intent_quality import credential_password_request_value
 
-
-def _security_password_request_value(node, aliases, scope=None, flow_statement=None):
-    if isinstance(node, ast.Call):
-        if (
-            not isinstance(node.func, ast.Attribute)
-            or _security_call_leaf(node) != "get"
-            or len(node.args) != 1
-            or node.keywords
-        ):
-            return False
-        request_value, key = node.func.value, node.args[0]
-    elif isinstance(node, ast.Subscript):
-        request_value, key = node.value, node.slice
-    else:
-        return False
-    if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
-        return False
-    if key.value.casefold() != "password":
-        return False
-    return _security_request_args(request_value, aliases, scope, flow_statement)
+    return credential_password_request_value(
+        node,
+        password_fields,
+        aliases,
+        scope,
+        flow_statement,
+        _security_request_args,
+        _security_django_request_parameter,
+    )
 
 
 def _security_django_request_parameter(node, aliases, scope=None, flow_statement=None):
@@ -4759,6 +4753,12 @@ def _security_flow_source_assignment(
 
     value = getattr(statement, "value", None)
     bindings = audit._bound_names(statement)
+    scope = getattr(statement, "_security_lexical_scope", None)
+    from . import intent_quality
+
+    request_collection = intent_quality._credential_request_collection(
+        value, password_fields, _security_request_args, aliases, scope, statement
+    )
     flags = (
         isinstance(value, ast.AST)
         and _security_expr_tainted(value, requests, set(), aliases),
@@ -4773,7 +4773,6 @@ def _security_flow_source_assignment(
         isinstance(value, ast.AST)
         and _security_expr_tainted(value, requests, parameters, aliases),
     )
-    scope = getattr(statement, "_security_lexical_scope", None)
     upload_object = isinstance(value, ast.AST) and (
         _security_flask_upload_expression(value, aliases, scope, statement)
         or (isinstance(value, ast.Name) and ("flask-upload", value.id) in requests)
@@ -4787,9 +4786,7 @@ def _security_flow_source_assignment(
     known = (requests, password_fields, parameters, connection_names, cursor_names)
     for names in known:
         names.difference_update(bindings)
-    from .intent_quality import track_sql_assignment
-
-    track_sql_assignment(
+    intent_quality.track_sql_assignment(
         statement,
         aliases,
         helpers,
@@ -4801,10 +4798,10 @@ def _security_flow_source_assignment(
         ),
         _security_helper_call,
     )
-    _security_clear_upload_tags(requests, bindings)
-    targets = (
-        statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+    _security_clear_upload_tags(
+        requests, bindings, password_fields, statement, request_collection
     )
+    targets = getattr(statement, "targets", None) or [statement.target]
     for target in targets:
         if isinstance(target, ast.Name):
             for tainted, names in zip(flags, known):

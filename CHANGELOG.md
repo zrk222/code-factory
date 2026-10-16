@@ -8,6 +8,9 @@
   patterns do not establish universal framework coverage or runtime exploitability.
 - Detect nonempty short hardcoded credential assignments, including `hunter2`,
   while retaining placeholder and test-data controls and redacting secret values.
+- Follow credential reads through Flask request-collection aliases and optional
+  `get` defaults. Preserve case-insensitive password fields, hashed comparisons
+  and ordinary dictionary controls; discard aliases after lexical rebinding.
 - Separate stable assessment identity (`scan_sha256`) from the complete run receipt
   (`run_receipt_sha256`). Exclude known telemetry envelopes from assessment identity
   while preserving semantic evidence and recording the full run separately.

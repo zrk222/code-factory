@@ -9085,3 +9085,176 @@ def test_empty_or_declared_placeholder_credentials_remain_exempt(tmp_path, value
         "SECURITY_HARDCODED_SECRET"
         not in security_scan(tmp_path, cache_enabled=False)["finding_counts"]
     )
+
+
+def test_audit_log_source_findings_direct_contract_for_unsafe_and_sanitized_values():
+    import ast
+
+    from factoryline.audit_log_flow import audit_log_source_findings
+    from factoryline.review_audits import _security_aliases
+    from factoryline.review_integrity import bind_security_call_scopes
+
+    unsafe_tree = ast.parse(
+        "import logging\ndef record():\n    value = input()\n    logging.error(value)\n"
+    )
+    unsafe_nodes = list(ast.walk(unsafe_tree))
+    bind_security_call_scopes(unsafe_tree)
+    unsafe = audit_log_source_findings(
+        "app.py", unsafe_tree, unsafe_nodes, _security_aliases(unsafe_nodes)
+    )
+    assert [finding["code"] for finding in unsafe] == ["SECURITY_LOG_INJECTION"]
+
+    safe_tree = ast.parse(
+        "import logging\ndef record():\n    value = input()\n"
+        "    logging.error(value.replace('\\r', '').replace('\\n', ''))\n"
+    )
+    safe_nodes = list(ast.walk(safe_tree))
+    bind_security_call_scopes(safe_tree)
+    safe = audit_log_source_findings(
+        "app.py", safe_tree, safe_nodes, _security_aliases(safe_nodes)
+    )
+    assert safe == []
+
+
+def test_intentional_implementation_contract_recognizes_only_registered_click_group():
+    import ast
+
+    from factoryline.intent_quality import intentional_implementation_contract
+
+    source = (
+        "import click\n"
+        "@click.group()\ndef cli():\n    pass\n"
+        "@cli.command()\ndef child():\n    return 1\n"
+    )
+    tree = ast.parse(source)
+    parents = {
+        child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+    }
+    cli = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
+    assert intentional_implementation_contract(cli, parents, {"click": "click"})
+
+    unregistered_tree = ast.parse(
+        "import click\n@cli.command()\ndef cli():\n    pass\n"
+    )
+    unregistered_parents = {
+        child: node
+        for node in ast.walk(unregistered_tree)
+        for child in ast.iter_child_nodes(node)
+    }
+    unregistered = next(
+        node for node in unregistered_tree.body if isinstance(node, ast.FunctionDef)
+    )
+    assert not intentional_implementation_contract(
+        unregistered, unregistered_parents, {"click": "click"}
+    )
+
+
+def test_click_group_container_requires_a_real_registered_child_command():
+    import ast
+
+    from factoryline.intent_quality import click_group_container
+
+    tree = ast.parse(
+        "import click\n"
+        "@click.group()\ndef cli():\n    pass\n"
+        "@cli.command()\ndef child():\n    return 1\n"
+    )
+    parents = {
+        child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+    }
+    cli = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
+    assert click_group_container(cli, parents, {"click": "click"})
+
+    bare_tree = ast.parse("import click\n@click.group()\ndef cli():\n    pass\n")
+    bare_parents = {
+        child: node
+        for node in ast.walk(bare_tree)
+        for child in ast.iter_child_nodes(node)
+    }
+    bare_cli = next(
+        node for node in bare_tree.body if isinstance(node, ast.FunctionDef)
+    )
+    assert not click_group_container(bare_cli, bare_parents, {"click": "click"})
+
+
+def test_implementation_findings_respects_only_declared_contract_lines():
+    import ast
+
+    from factoryline.intent_quality import implementation_findings
+
+    source = "def execute():\n    pass\n"
+    tree = ast.parse(source)
+    findings = implementation_findings("service.py", tree, source, {})
+    assert [finding["code"] for finding in findings] == ["QUALITY_EMPTY_IMPLEMENTATION"]
+
+    contract_findings = implementation_findings(
+        "service.py",
+        ast.parse(source),
+        source,
+        {"implementation_contract_lines": {1}},
+    )
+    assert contract_findings == []
+
+
+def test_project_contract_helpers_includes_every_resolver_used_for_cache_identity():
+    from factoryline.intent_quality import (
+        bind_project_contracts,
+        bound_snapshots,
+        project_contract_helpers,
+    )
+
+    helpers = project_contract_helpers()
+    assert bind_project_contracts in helpers
+    assert bound_snapshots in helpers
+    assert len(helpers) == len(set(helpers))
+
+
+def test_bind_project_contracts_emits_edge_for_stable_local_override(tmp_path):
+    import ast
+
+    from factoryline.intent_quality import bind_project_contracts
+
+    base = tmp_path / "base.py"
+    implementation = tmp_path / "impl.py"
+    snapshots = {
+        base: ast.parse(
+            "class Adapter:\n    def run(self):\n        raise NotImplementedError\n"
+        ),
+        implementation: ast.parse(
+            "from base import Adapter\n"
+            "class Concrete(Adapter):\n    def run(self):\n        return 1\n"
+        ),
+    }
+    contexts = {path: {} for path in snapshots}
+    edges = []
+
+    bind_project_contracts(tmp_path, snapshots, contexts, edges)
+
+    assert contexts[base]["implementation_contract_lines"] == {2}
+    assert edges == [
+        {
+            "caller": "impl.py",
+            "target": "base.py",
+            "kind": "implementation_contract",
+            "symbol": "Adapter.run",
+            "strength": "declared_override",
+        }
+    ]
+
+
+def test_bound_snapshots_parses_only_hash_matching_source_bytes(tmp_path):
+    import hashlib
+
+    import pytest
+
+    from factoryline.intent_quality import bound_snapshots
+    from factoryline.review_audits import ReviewAuditError
+
+    path = tmp_path / "source.py"
+    source = b"def value():\n    return 7\n"
+    bindings = [{"path": "source.py", "sha256": hashlib.sha256(source).hexdigest()}]
+    snapshots = bound_snapshots(tmp_path, [path], {path: source}, bindings)
+    assert snapshots[path].body[0].name == "value"
+
+    with pytest.raises(ReviewAuditError, match="Source changed"):
+        bound_snapshots(tmp_path, [path], {path: source + b"# changed\n"}, bindings)
