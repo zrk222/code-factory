@@ -101,7 +101,6 @@ def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
                 "pytest_inherited": set(item["pytest_inherited"]),
                 "click_runners": set(item["click_runners"]),
                 "typecheck": item["typecheck"],
-                "ty_assert_type": item.get("ty_assert_type", False),
                 "flask_apps": set(item.get("flask_apps", [])),
                 "callback_invokers": item.get("callback_invokers", {}),
                 "codspeed_benchmark": item.get("codspeed_benchmark", False),
@@ -134,7 +133,6 @@ def _oracle_context_cache_write(key: str, contexts: dict, edges: list) -> None:
                 "pytest_inherited": sorted(context["pytest_inherited"]),
                 "click_runners": sorted(context["click_runners"]),
                 "typecheck": bool(context["typecheck"]),
-                "ty_assert_type": bool(context.get("ty_assert_type", False)),
                 "flask_apps": sorted(context.get("flask_apps", set())),
                 "callback_invokers": context.get("callback_invokers", {}),
                 "codspeed_benchmark": context.get("codspeed_benchmark", False),
@@ -3977,7 +3975,6 @@ def _build_oracle_context(
         contexts[path]["typecheck"] = path in typecheck_sources or path in (
             ty_sources or set()
         )
-        contexts[path]["ty_assert_type"] = path in (ty_sources or set())
         contexts[path]["flask_apps"] = _flask_context_apps(path, tree, snapshots)
         imports = _oracle_imports(root, path, tree, eligible)
         contexts[path].update(
