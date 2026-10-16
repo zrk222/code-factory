@@ -44,6 +44,7 @@ def _run_cli_bounded(cli: str, args: list[str], cwd: Path, *, timeout: float, en
 
 
 _FEATURE_CANARY_FIXTURES = {
+    "py": ("def recall(id):\n    return id\n", "[id]"),
     "mjs": (
         "/** Recall a verified value. */\nexport function recall(id) { return id; }\n",
         "[id]",
@@ -118,50 +119,10 @@ def _canary_provenance(payload: dict) -> tuple[bool | None, dict | None]:
 
 
 def _project_typescript_inventory(root: Path) -> tuple[set[str], list[Path], bool]:
-    """Find TypeScript source and compiler lookup roots, excluding dependencies."""
-    ignored = {
-        ".git",
-        ".hg",
-        ".svn",
-        ".venv",
-        "venv",
-        "node_modules",
-        "vendor",
-        "build",
-        "dist",
-        "coverage",
-        ".next",
-        ".nuxt",
-        ".cache",
-        "target",
-    }
-    typescript_roots: list[Path] = []
-    tsx_roots: list[Path] = []
-    seen: set[Path] = set()
-    suffixes: set[str] = set()
-    errors: list[OSError] = []
+    """Compatibility wrapper for bounded supported-script capability discovery."""
+    from .cli_foundations import project_script_inventory
 
-    def record_error(error: OSError) -> None:
-        errors.append(error)
-
-    for current, directories, files in os.walk(
-        root, topdown=True, onerror=record_error
-    ):
-        directories[:] = [name for name in directories if name.lower() not in ignored]
-        source_suffixes = {Path(name).suffix.lower() for name in files} & {
-            ".ts",
-            ".tsx",
-        }
-        if source_suffixes:
-            suffixes.update(source_suffixes)
-            directory = Path(current).resolve()
-            if directory not in seen:
-                seen.add(directory)
-                if ".tsx" in source_suffixes and len(tsx_roots) < 128:
-                    tsx_roots.append(directory)
-                elif len(typescript_roots) < 128:
-                    typescript_roots.append(directory)
-    return suffixes, [*tsx_roots, *typescript_roots][:128], not errors
+    return project_script_inventory(root)
 
 
 def _typescript_node_path(search_roots: list[Path] | None = None) -> str | None:
@@ -219,7 +180,9 @@ def _run_feature_canary(
     target = root / "services" / f"canary.{suffix}"
     target.write_text(source, encoding="utf-8")
     (root / "services" / f"canary.test.{suffix}").write_text(
-        f"import {{ recall }} from './canary.{suffix}';\nrecall('ok');\n",
+        "from services.canary import recall\ndef test_recall():\n    assert recall('ok') == 'ok'\n"
+        if suffix == "py"
+        else f"import {{ recall }} from './canary.{suffix}';\nrecall('ok');\n",
         encoding="utf-8",
     )
     ssat = root / f"canary-{suffix}.ssat.yaml"
@@ -283,10 +246,17 @@ def _forgeline_feature_canaries(module, payload: dict, provenance_ok: bool) -> d
         return {
             "ok": False,
             "provenance_ok": provenance_ok,
-            "reason": "TypeScript source inventory could not be inspected completely",
+            "reason": "Script source inventory unreadable, linked or over its discovery budget",
             "provenance": payload,
         }
-    suffixes = ["mjs"]
+    if ts_suffixes & {".mts", ".cts"}:
+        return {
+            "ok": False,
+            "provenance_ok": provenance_ok,
+            "provenance": payload,
+            "reason": "Project contains unsupported .mts/.cts native canary sources",
+        }
+    suffixes = ["py", "mjs"] if ts_suffixes else ["py"]
     if ".ts" in ts_suffixes:
         suffixes.append("ts")
     if ".tsx" in ts_suffixes:
@@ -304,9 +274,9 @@ def _forgeline_feature_canaries(module, payload: dict, provenance_ok: bool) -> d
         "ok": True,
         "provenance_ok": provenance_ok,
         "provenance": payload,
-        "canary": "mjs-ts-and-tsx-feature-qa"
-        if suffixes == ["mjs", "ts", "tsx"]
-        else f"feature-qa:{'+'.join(suffixes)}",
+        "canary": f"feature-qa:{'+'.join(suffixes)}",
+        "tested_capabilities": suffixes,
+        "optional_not_tested": [s for s in ("mjs", "ts", "tsx") if s not in suffixes],
     }
 
 

@@ -618,8 +618,154 @@ def test_forgeline_doctor_only_runs_typescript_canaries_for_project_sources(
     )
 
     assert result["ok"] is True
-    assert [suffix for suffix, _roots in calls] == ["mjs", "tsx"]
+    assert [suffix for suffix, _roots in calls] == ["py", "mjs", "tsx"]
     assert calls[-1][1] == [tmp_path / "src"]
+
+
+def test_doctor_python_only_does_not_require_script_canary(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import factoryline.cli as cli
+
+    (tmp_path / "app.py").write_text("value = 1\n")
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / ".factory" / "generated.tsx").write_text("ignored")
+    monkeypatch.chdir(tmp_path)
+    calls = []
+    monkeypatch.setattr(cli, "_run_feature_canary", lambda *args: calls.append(args[4]))
+    result = cli._forgeline_feature_canaries(SimpleNamespace(cli="forge"), {}, True)
+    assert result["ok"] is True
+    assert calls == ["py"]
+    assert result["optional_not_tested"] == ["mjs", "ts", "tsx"]
+
+
+def test_doctor_python_canary_never_resolves_typescript(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import factoryline.cli as cli
+
+    (tmp_path / "services").mkdir()
+
+    def forbidden(*args):
+        raise AssertionError("Python canary attempted TypeScript discovery")
+
+    monkeypatch.setattr(cli, "_typescript_node_path", forbidden)
+
+    def run(_command, args, _cwd, **kwargs):
+        source = (tmp_path / "services" / "canary.py").read_text()
+        test = (tmp_path / "services" / "canary.test.py").read_text()
+        compile(source, "canary.py", "exec")
+        compile(test, "canary.test.py", "exec")
+        assert "assert recall('ok') == 'ok'" in test
+        return {
+            "ok": True,
+            "stdout": json.dumps(
+                {
+                    "passed": True,
+                    "metrics": {
+                        "coverage_assessment": "static_name_match",
+                        "behavioral_proof_status": "not_measured_static_only",
+                    },
+                }
+            ).encode(),
+            "stderr": b"",
+        }
+
+    monkeypatch.setattr(cli, "_run_cli_bounded", run)
+    assert (
+        cli._run_feature_canary(SimpleNamespace(cli="forge"), tmp_path, {}, True, "py")
+        is None
+    )
+
+
+def test_doctor_javascript_project_preserves_required_canary_failure(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+    import factoryline.cli as cli
+
+    (tmp_path / "app.js").write_text("export const value = 1;\n")
+    monkeypatch.chdir(tmp_path)
+    calls = []
+
+    def run(*args):
+        calls.append(args[4])
+        return {"ok": False, "reason": "compiler missing"} if args[4] == "mjs" else None
+
+    monkeypatch.setattr(cli, "_run_feature_canary", run)
+    result = cli._forgeline_feature_canaries(SimpleNamespace(cli="forge"), {}, True)
+    assert result["ok"] is False
+    assert result["reason"] == "compiler missing"
+    assert calls == ["py", "mjs"]
+
+
+@pytest.mark.parametrize(
+    "bounds",
+    [{"max_entries": 0}, {"max_directories": 0}, {"max_depth": 0}, {"timeout": 0}],
+)
+def test_doctor_inventory_bounds_cannot_report_complete(tmp_path, bounds):
+    from factoryline.cli_foundations import project_script_inventory
+
+    (tmp_path / "nested").mkdir()
+    (tmp_path / "nested" / "app.js").write_text("value = 1")
+    assert project_script_inventory(tmp_path, **bounds)[2] is False
+
+
+def test_doctor_inventory_rejects_unreadable_and_linked_entries(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    import factoryline.cli_foundations as foundations
+
+    def denied(*args):
+        raise PermissionError("unreadable source")
+
+    monkeypatch.setattr(foundations.os, "scandir", denied)
+    assert foundations.project_script_inventory(tmp_path)[2] is False
+    linked = SimpleNamespace(
+        name="external",
+        is_symlink=lambda: True,
+        stat=lambda **kwargs: SimpleNamespace(st_file_attributes=0),
+    )
+    monkeypatch.setattr(
+        foundations.os, "scandir", lambda *args: nullcontext(iter([linked]))
+    )
+    assert foundations.project_script_inventory(tmp_path)[2] is False
+
+
+def test_doctor_unsupported_typescript_extensions_do_not_pass(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import factoryline.cli as cli
+
+    (tmp_path / "app.mts").write_text("export const value = 1")
+    monkeypatch.chdir(tmp_path)
+    result = cli._forgeline_feature_canaries(SimpleNamespace(cli="forge"), {}, True)
+    assert result["ok"] is False
+    assert "unsupported .mts/.cts" in result["reason"]
+
+
+def test_doctor_inventory_root_limit_does_not_hide_scripts(tmp_path):
+    from factoryline.cli_foundations import project_script_inventory
+
+    for index in range(129):
+        directory = tmp_path / str(index)
+        directory.mkdir()
+        (directory / "app.ts").write_text("export const value = 1")
+    suffixes, roots, complete = project_script_inventory(tmp_path)
+    assert complete is False
+    assert ".ts" in suffixes
+    assert len(roots) == 128
+
+
+def test_doctor_inventory_final_operation_cannot_overrun_deadline(
+    tmp_path, monkeypatch
+):
+    import factoryline.cli_foundations as foundations
+
+    clock = iter([0.0, 0.0, 6.0])
+    with monkeypatch.context() as scope:
+        scope.setattr(foundations.time, "monotonic", lambda: next(clock))
+        _suffixes, _roots, complete = foundations.project_script_inventory(
+            tmp_path, timeout=5
+        )
+    assert complete is False
 
 
 def test_forgeline_typescript_resolver_searches_nested_package_roots(

@@ -590,6 +590,502 @@ def _write(path: Path, payload: dict[str, Any]) -> None:
             os.unlink(temporary)
 
 
+_EXTERNAL_REVIEW_PROVIDERS = {"coderabbit", "devin", "blitzy"}
+_EXTERNAL_CLAIM_SCHEMA = "factory.external-review-claims.input.v1"
+_EXTERNAL_REVIEW_RECEIPT_SCHEMA = "factory.external-review-claims.v1"
+
+
+def _external_claim_binding(
+    root: Path, claim: dict[str, Any], source: dict[str, str]
+) -> dict[str, Any]:
+    binding = claim.get("case_binding")
+    if claim.get("claim_type") != "declared_case_outcome" or not isinstance(
+        binding, dict
+    ):
+        return {"disposition": "unverified", "reason": "claim_type_unsupported"}
+    required = {
+        "completion_path",
+        "completion_sha256",
+        "mission_id",
+        "mission_sha256",
+        "candidate_sha256",
+        "criterion_id",
+        "case_id",
+        "polarity",
+        "observed_outcome",
+    }
+    if set(binding) != required:
+        return {"disposition": "unverified", "reason": "case_binding_malformed"}
+    try:
+        completion_sha = _digest(binding["completion_sha256"], "completion_sha256")
+        mission_sha = _digest(binding["mission_sha256"], "mission_sha256")
+        candidate_sha = _digest(binding["candidate_sha256"], "candidate_sha256")
+        completion = _inside(
+            root, binding["completion_path"], "completion_path", exists=True
+        )
+        _verify_evidence_artifact(completion, completion_sha)
+        from .product_missions import verify_mission_completion
+
+        verified = verify_mission_completion(completion)
+    except (AgentProofBridgeError, ImportError, OSError, ValueError, TypeError):
+        return {"disposition": "unverified", "reason": "native_completion_unavailable"}
+    summary = verified.get("daily_verification")
+    if not (
+        verified.get("valid") is True
+        and verified.get("integrity_valid") is True
+        and verified.get("complete") is True
+        and isinstance(summary, dict)
+        and summary.get("status") == "COMPLETE"
+        and summary.get("local_execution_observed") is True
+        and summary.get("candidate_sha256") == candidate_sha
+        and isinstance(binding.get("mission_id"), str)
+        and isinstance(binding.get("criterion_id"), str)
+        and isinstance(binding.get("case_id"), str)
+        and binding.get("polarity") in {"positive", "negative"}
+        and binding.get("observed_outcome")
+        in {
+            "baseline_assertion_pass_mutant_assertion_fail",
+            "baseline_assertion_pass_mutant_assertion_pass",
+        }
+    ):
+        return {"disposition": "unverified", "reason": "native_completion_incomplete"}
+    criterion = next(
+        (
+            row
+            for row in summary.get("criteria", [])
+            if isinstance(row, dict)
+            and row.get("criterion_id") == binding["criterion_id"]
+        ),
+        None,
+    )
+    native = criterion.get("native_gate_observation") if criterion else None
+    case = (
+        next(
+            (
+                row
+                for row in criterion.get("cases", [])
+                if isinstance(row, dict)
+                and row.get("case_id") == binding["case_id"]
+                and row.get("polarity") == binding["polarity"]
+            ),
+            None,
+        )
+        if criterion
+        else None
+    )
+    if not (
+        isinstance(native, dict)
+        and native.get("schema") == "factory.daily-native-gate-observation.v1"
+        and native.get("status") == "OBSERVED"
+        and native.get("mission_id") == binding["mission_id"]
+        and native.get("mission_sha256") == mission_sha
+        and native.get("criterion_id") == binding["criterion_id"]
+        and native.get("candidate_sha256") == candidate_sha
+        and isinstance(case, dict)
+        and case.get("execution_evidence_kind") == "local_production_mutation"
+        and case.get("disposition")
+        in {"local_mutation_target_observed", "local_mutation_control_observed"}
+        and source["path"] in case.get("input_paths", [])
+        and source["path"]
+        in {
+            row.get("path")
+            for row in summary.get("source_manifest", [])
+            if isinstance(row, dict) and row.get("sha256") == source["sha256"]
+        }
+    ):
+        return {"disposition": "unverified", "reason": "native_case_binding_mismatch"}
+    if case.get("observed_outcome") not in {
+        "baseline_assertion_pass_mutant_assertion_fail",
+        "baseline_assertion_pass_mutant_assertion_pass",
+    }:
+        return {
+            "disposition": "unverified",
+            "reason": "native_case_outcome_unavailable",
+        }
+    disposition = (
+        "reproduced"
+        if case["observed_outcome"] == binding["observed_outcome"]
+        else "contradicted"
+    )
+    return {
+        "disposition": disposition,
+        "reason": "current_native_case_outcome_match"
+        if disposition == "reproduced"
+        else "current_native_case_outcome_mismatch",
+        "completion_path": _path(binding["completion_path"], "completion_path"),
+        "completion_sha256": completion_sha,
+        "mission_id": binding["mission_id"],
+        "mission_sha256": mission_sha,
+        "candidate_sha256": candidate_sha,
+        "criterion_id": binding["criterion_id"],
+        "case_id": binding["case_id"],
+        "polarity": binding["polarity"],
+        "claimed_observed_outcome": binding["observed_outcome"],
+        "observed_outcome": case["observed_outcome"],
+    }
+
+
+def _external_predicate_identity(claim: dict[str, Any]) -> dict[str, Any] | None:
+    if claim["claim_type"] != "declared_case_outcome":
+        return None
+    binding = claim.get("case_binding")
+    if not isinstance(binding, dict):
+        return {"binding_sha256": _sha(binding)}
+    fields = (
+        "mission_id",
+        "mission_sha256",
+        "candidate_sha256",
+        "criterion_id",
+        "case_id",
+        "polarity",
+        "observed_outcome",
+    )
+    identity = {field: binding.get(field) for field in fields}
+    if all(isinstance(value, str) for value in identity.values()):
+        return identity
+    return {"binding_sha256": _sha(binding)}
+
+
+def _external_review_claim(
+    root: Path, output: Path, raw: object, index: int
+) -> dict[str, Any]:
+    fields = {
+        "external_id",
+        "source_path",
+        "source_sha256",
+        "rule",
+        "statement",
+        "claimed_disposition",
+        "claim_type",
+        "case_binding",
+        "evidence_refs",
+    }
+    required = fields - {"case_binding", "evidence_refs"}
+    claim = _exact(raw, fields, f"claims[{index}]", required=required)
+    claim["external_id"] = _identifier(
+        claim["external_id"], f"claims[{index}].external_id"
+    )
+    claim["source_path"] = _path(claim["source_path"], f"claims[{index}].source_path")
+    if (root / claim["source_path"]).resolve() == output:
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_PRIVATE_FIELD",
+            "output_path must not replace a claimed source",
+        )
+    claim["source_sha256"] = _digest(
+        claim["source_sha256"], f"claims[{index}].source_sha256"
+    )
+    for field in ("rule", "statement"):
+        value = claim[field]
+        if not isinstance(value, str) or not value.strip() or len(value) > 4096:
+            raise AgentProofBridgeError(
+                "E_AGENT_BRIDGE_SCHEMA",
+                f"claims[{index}].{field} must be nonempty text up to 4096 characters",
+            )
+    claimed = claim["claimed_disposition"]
+    if claimed is not None and (not isinstance(claimed, str) or len(claimed) > 96):
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_SCHEMA", f"claims[{index}].claimed_disposition is invalid"
+        )
+    if not isinstance(claim["claim_type"], str) or len(claim["claim_type"]) > 96:
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_SCHEMA", f"claims[{index}].claim_type is invalid"
+        )
+    refs = claim.get("evidence_refs", [])
+    if not isinstance(refs, list) or len(refs) > 16:
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_SCHEMA",
+            f"claims[{index}].evidence_refs must contain 0-16 entries",
+        )
+    claim["evidence_refs"] = [
+        {
+            "path": _path(
+                ref["path"], f"claims[{index}].evidence_refs[{ref_index}].path"
+            ),
+            "sha256": _digest(
+                ref["sha256"], f"claims[{index}].evidence_refs[{ref_index}].sha256"
+            ),
+        }
+        for ref_index, raw_ref in enumerate(refs)
+        for ref in [
+            _exact(
+                raw_ref,
+                {"path", "sha256"},
+                f"claims[{index}].evidence_refs[{ref_index}]",
+            )
+        ]
+    ]
+    source = {"path": claim["source_path"], "sha256": claim["source_sha256"]}
+    try:
+        _source_preconditions(root, [source], ["."])
+        current = True
+    except AgentProofBridgeError:
+        current = False
+    return {"claim": claim, "source": source, "current": current}
+
+
+def _external_review_occurrence(
+    root: Path, provider: str, report_path: str, report_sha: str, record: dict[str, Any]
+) -> dict[str, Any]:
+    claim, source = record["claim"], record["source"]
+    occurrence = {
+        "occurrence_id": _sha(
+            {
+                "provider": provider,
+                "report_sha256": report_sha,
+                "external_id": claim["external_id"],
+            }
+        ),
+        "provider": provider,
+        "report_path": report_path,
+        "report_sha256": report_sha,
+        "external_id": claim["external_id"],
+        "claimed_disposition": claim["claimed_disposition"],
+        "claimed_evidence_refs": claim["evidence_refs"],
+    }
+    if not record["current"]:
+        return {
+            **occurrence,
+            "disposition": "unverified",
+            "reason": "source_not_current",
+        }
+    if claim["evidence_refs"]:
+        return {
+            **occurrence,
+            "disposition": "unverified",
+            "reason": "claim_evidence_not_natively_verified",
+        }
+    return {
+        **occurrence,
+        "disposition": "unverified",
+        "reason": "external_statement_not_natively_verified",
+        "case_outcome_assessment": _external_claim_binding(root, claim, source),
+    }
+
+
+def _external_review_findings(
+    groups: dict[tuple[str, str, str, str, str], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    findings = []
+    for group in groups.values():
+        occurrences = group["occurrences"]
+        claimed = sorted(
+            {
+                row["claimed_disposition"]
+                for row in occurrences
+                if row["claimed_disposition"] is not None
+            }
+        )
+        assessments = {
+            row["case_outcome_assessment"]["disposition"]
+            for row in occurrences
+            if "case_outcome_assessment" in row
+        }
+        findings.append(
+            {
+                "finding_id": _sha(
+                    {
+                        "source": group["source"],
+                        "rule": group["rule"],
+                        "statement": group["statement"],
+                        "case_predicate": group["case_predicate"],
+                    }
+                ),
+                "source": group["source"],
+                "rule": group["rule"],
+                "statement": group["statement"],
+                "disposition": "unverified",
+                "disagreement": len(claimed) > 1,
+                "case_outcome_disagreement": len(assessments) > 1,
+                "claimed_dispositions": claimed,
+                "case_predicate": group["case_predicate"],
+                "occurrences": sorted(
+                    occurrences, key=lambda row: row["occurrence_id"]
+                ),
+            }
+        )
+    return findings
+
+
+def _case_outcome_subject(predicate: object) -> tuple[str, ...] | None:
+    fields = (
+        "mission_sha256",
+        "mission_id",
+        "candidate_sha256",
+        "criterion_id",
+        "case_id",
+        "polarity",
+    )
+    if not isinstance(predicate, dict) or not all(
+        isinstance(predicate.get(field), str) for field in fields
+    ):
+        return None
+    return tuple(predicate[field] for field in fields)
+
+
+def _mark_external_case_outcome_conflicts(
+    findings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    subjects: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+    for finding in findings:
+        subject = _case_outcome_subject(finding["case_predicate"])
+        if subject is not None:
+            subjects.setdefault(subject, []).append(finding)
+    for related in subjects.values():
+        outcomes = {row["case_predicate"]["observed_outcome"] for row in related}
+        if len(outcomes) < 2:
+            continue
+        for finding in related:
+            claimed_outcome = finding["case_predicate"]["observed_outcome"]
+            finding["case_outcome_disagreement"] = True
+            finding["case_outcome_conflicts_with"] = sorted(
+                row["finding_id"]
+                for row in related
+                if row["case_predicate"]["observed_outcome"] != claimed_outcome
+            )
+    return findings
+
+
+def _external_review_inputs(
+    root: Path, report_path: str, output_path: str
+) -> tuple[Path, Path, str, object, str, list[object]]:
+    report = _inside(root, report_path, "report_path", exists=True)
+    output = _inside(root, output_path, "output_path", exists=False)
+    if output == report:
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_PRIVATE_FIELD",
+            "output_path must not replace the source report",
+        )
+    if output.exists():
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_PRIVATE_FIELD", "output_path must be a new workspace file"
+        )
+    if report.stat().st_size > MAX_BYTES:
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_EVIDENCE_UNVERIFIED", "review report exceeds 1 MiB"
+        )
+    report_bytes = report.read_bytes()
+    report_sha = hashlib.sha256(report_bytes).hexdigest()
+    try:
+        payload = json.loads(report_bytes.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_SCHEMA", "review report must be valid UTF-8 JSON"
+        ) from exc
+    document = _exact(payload, {"schema", "provider", "claims"}, "review_report")
+    provider_label = document["provider"]
+    provider = provider_label.casefold() if isinstance(provider_label, str) else ""
+    if (
+        document["schema"] != _EXTERNAL_CLAIM_SCHEMA
+        or provider not in _EXTERNAL_REVIEW_PROVIDERS
+    ):
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_SCHEMA", "review report schema or provider is unsupported"
+        )
+    claims = document["claims"]
+    if not isinstance(claims, list) or len(claims) > MAX_ITEMS:
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_SCHEMA", f"review claims must contain 0-{MAX_ITEMS} entries"
+        )
+    return report, output, report_sha, provider_label, provider, claims
+
+
+def _collect_external_review_groups(
+    root: Path,
+    output: Path,
+    report: Path,
+    report_sha: str,
+    provider: str,
+    claims: list[object],
+) -> tuple[dict[tuple[str, str, str, str, str], dict[str, Any]], list[dict[str, str]]]:
+    groups: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+    external_ids: set[str] = set()
+    source_receipt = []
+    for index, raw in enumerate(claims):
+        record = _external_review_claim(root, output, raw, index)
+        claim, source = record["claim"], record["source"]
+        if claim["external_id"] in external_ids:
+            raise AgentProofBridgeError(
+                "E_AGENT_BRIDGE_SCHEMA", "external claim IDs must be unique per report"
+            )
+        external_ids.add(claim["external_id"])
+        predicate = _external_predicate_identity(claim)
+        fingerprint = (
+            source["path"],
+            source["sha256"],
+            claim["rule"],
+            claim["statement"],
+            _sha(predicate) if predicate is not None else "",
+        )
+        group = groups.setdefault(
+            fingerprint,
+            {
+                "source": source,
+                "rule": claim["rule"],
+                "statement": claim["statement"],
+                "case_predicate": predicate,
+                "occurrences": [],
+            },
+        )
+        group["occurrences"].append(
+            _external_review_occurrence(
+                root, provider, report.relative_to(root).as_posix(), report_sha, record
+            )
+        )
+        source_receipt.append(source)
+    return groups, source_receipt
+
+
+def _write_new_external_review_receipt(output: Path, receipt: dict[str, Any]) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    serialized = (
+        json.dumps(receipt, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    )
+    try:
+        with output.open("x", encoding="utf-8", newline="\n") as handle:
+            handle.write(serialized)
+    except FileExistsError as exc:
+        raise AgentProofBridgeError(
+            "E_AGENT_BRIDGE_PRIVATE_FIELD", "output_path must be a new workspace file"
+        ) from exc
+
+
+def import_external_review_claims(
+    report_path: str, workspace_root: Path, output_path: str
+) -> dict[str, Any]:
+    """Normalize local claim prose while keeping native case outcomes scoped."""
+    root = workspace_root.resolve()
+    report, output, report_sha, provider_label, provider, claims = (
+        _external_review_inputs(root, report_path, output_path)
+    )
+    groups, source_receipt = _collect_external_review_groups(
+        root, output, report, report_sha, provider, claims
+    )
+    findings = _mark_external_case_outcome_conflicts(_external_review_findings(groups))
+    receipt = {
+        "schema": _EXTERNAL_REVIEW_RECEIPT_SCHEMA,
+        "provider": provider,
+        "provider_label": provider_label,
+        "provider_identity": "declared label only; not authenticated",
+        "report": {
+            "path": report.relative_to(root).as_posix(),
+            "sha256": report_sha,
+        },
+        "source_provenance": sorted(
+            (
+                {"path": path, "sha256": digest}
+                for path, digest in {
+                    (item["path"], item["sha256"]) for item in source_receipt
+                }
+            ),
+            key=lambda item: (item["path"], item["sha256"]),
+        ),
+        "findings": findings,
+        "authority": "local claim normalization only; no vendor API, SARIF import, or provider identity verification",
+    }
+    _write_new_external_review_receipt(output, receipt)
+    return receipt
+
+
 def _read_receipt(root: Path, path: Path) -> tuple[dict[str, Any], Path]:
     target = _inside(root, path.as_posix(), "receipt", exists=True)
     if target.stat().st_size > MAX_BYTES:

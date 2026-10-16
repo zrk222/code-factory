@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -14,9 +15,12 @@ from factoryline.agent_proof_bridge import (
     AgentProofBridgeError,
     agent_handoff_brief,
     agent_proof_projection,
+    import_external_review_claims,
     import_agent_proof,
+    _external_predicate_identity,
     provider_template,
     verify_agent_proof,
+    _mark_external_case_outcome_conflicts,
 )
 from factoryline.graph_ops import graph_ops_snapshot
 from factoryline.oracle_firewall import capture_intent_handoff, seal_oracle_contract
@@ -582,3 +586,453 @@ def test_handoff_brief_replays_sealed_intent_for_worker_and_human_without_author
     assert brief["forbidden_outcomes"][0]["id"] == "private"
     assert brief["negative_cases"][0]["id"] == "bad-order"
     assert all(value is False for value in brief["authority"].values())
+
+
+@pytest.mark.parametrize("provider", ["CodeRabbit", "Devin", "Blitzy"])
+def test_local_review_claims_preserve_provenance_and_only_normalize_claims(
+    tmp_path: Path, provider: str
+) -> None:
+    source = tmp_path / "src" / "checkout.py"
+    source.parent.mkdir()
+    source.write_text("def checkout(): return True\n", encoding="utf-8")
+    source_sha = _digest(source.read_text(encoding="utf-8"))
+    repeated = {
+        "source_path": "src/checkout.py",
+        "source_sha256": source_sha,
+        "rule": "RISK-1",
+        "statement": "Checkout omits a required guard.",
+        "claim_type": "unsupported_prose",
+        "case_binding": None,
+        "evidence_refs": [{"path": "evidence/fake.json", "sha256": "a" * 64}],
+    }
+    report = _write(
+        tmp_path / "review.json",
+        {
+            "schema": "factory.external-review-claims.input.v1",
+            "provider": provider,
+            "claims": [
+                {
+                    **repeated,
+                    "external_id": "issue-a",
+                    "claimed_disposition": "confirmed",
+                },
+                {
+                    **repeated,
+                    "external_id": "issue-b",
+                    "claimed_disposition": "rejected",
+                },
+            ],
+        },
+    )
+    receipt = import_external_review_claims(
+        report.relative_to(tmp_path).as_posix(), tmp_path, "normalized.json"
+    )
+
+    assert receipt["provider"] == provider.casefold()
+    assert receipt["provider_label"] == provider
+    assert receipt["provider_identity"] == "declared label only; not authenticated"
+    assert (
+        receipt["report"]["sha256"] == hashlib.sha256(report.read_bytes()).hexdigest()
+    )
+    assert len(receipt["findings"]) == 1
+    finding = receipt["findings"][0]
+    assert finding["disposition"] == "unverified"
+    assert finding["disagreement"] is True
+    assert finding["claimed_dispositions"] == ["confirmed", "rejected"]
+    assert {row["external_id"] for row in finding["occurrences"]} == {
+        "issue-a",
+        "issue-b",
+    }
+    assert all(row["disposition"] == "unverified" for row in finding["occurrences"])
+    assert all(
+        row["claimed_evidence_refs"][0]["sha256"] == "a" * 64
+        for row in finding["occurrences"]
+    )
+    assert (tmp_path / "normalized.json").is_file()
+    existing = tmp_path / "preserve.json"
+    existing.write_bytes(b"existing evidence\n")
+    with pytest.raises(AgentProofBridgeError, match="new workspace file"):
+        import_external_review_claims(
+            report.relative_to(tmp_path).as_posix(),
+            tmp_path,
+            existing.relative_to(tmp_path).as_posix(),
+        )
+    assert existing.read_bytes() == b"existing evidence\n"
+
+
+def test_local_review_claims_enforce_report_and_item_limits(tmp_path: Path) -> None:
+    report = _write(
+        tmp_path / "too-many.json",
+        {
+            "schema": "factory.external-review-claims.input.v1",
+            "provider": "Blitzy",
+            "claims": [{}] * 65,
+        },
+    )
+    with pytest.raises(AgentProofBridgeError, match="0-64 entries"):
+        import_external_review_claims(
+            report.relative_to(tmp_path).as_posix(), tmp_path, "normalized.json"
+        )
+    large_report = tmp_path / "large.json"
+    large_report.write_bytes(b" " * (1_048_577))
+    with pytest.raises(AgentProofBridgeError, match="exceeds 1 MiB"):
+        import_external_review_claims("large.json", tmp_path, "normalized.json")
+
+
+def test_case_outcome_conflicts_link_only_the_same_native_case() -> None:
+    def finding(
+        finding_id: str, case_id: str, outcome: str, mission_sha256: str = "a" * 64
+    ) -> dict[str, object]:
+        return {
+            "finding_id": finding_id,
+            "case_predicate": {
+                "mission_id": "mission-1",
+                "mission_sha256": mission_sha256,
+                "candidate_sha256": "b" * 64,
+                "criterion_id": "gate:unit",
+                "case_id": case_id,
+                "polarity": "positive",
+                "observed_outcome": outcome,
+            },
+            "case_outcome_disagreement": False,
+        }
+
+    reproduced = finding(
+        "reproduced", "case-1", "baseline_assertion_pass_mutant_assertion_fail"
+    )
+    contradicted = finding(
+        "contradicted", "case-1", "baseline_assertion_pass_mutant_assertion_pass"
+    )
+    separate_case = finding(
+        "separate-case", "case-2", "baseline_assertion_pass_mutant_assertion_pass"
+    )
+    separate_revision = finding(
+        "separate-revision",
+        "case-1",
+        "baseline_assertion_pass_mutant_assertion_pass",
+        mission_sha256="c" * 64,
+    )
+    identity = _external_predicate_identity(
+        {
+            "claim_type": "declared_case_outcome",
+            "case_binding": reproduced["case_predicate"],
+        }
+    )
+
+    findings = _mark_external_case_outcome_conflicts(
+        [reproduced, contradicted, separate_case, separate_revision]
+    )
+
+    assert findings[0]["case_outcome_disagreement"] is True
+    assert findings[0]["case_outcome_conflicts_with"] == ["contradicted"]
+    assert findings[1]["case_outcome_disagreement"] is True
+    assert findings[1]["case_outcome_conflicts_with"] == ["reproduced"]
+    assert identity["mission_sha256"] == "a" * 64
+    assert all(
+        row["case_outcome_disagreement"] is False
+        and row.get("case_outcome_conflicts_with", []) == []
+        for row in findings[2:]
+    )
+
+
+def test_local_review_claim_verdict_binds_a_current_native_case(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from factoryline import product_missions
+    from factoryline.product_missions import (
+        close_mission,
+        compile_product_prd,
+        create_mission,
+    )
+    from factoryline.pytest_readiness import (
+        _challenge_source_inventory,
+        main as probe_main,
+    )
+    from test_product_missions import (
+        _local_mutation_daily_contract,
+        _validation_for,
+    )
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    prd = root / "PRD.md"
+    prd.write_text(
+        "# Record Service\n\n## Actors\n- Record service: serializes records.\n\n"
+        "## Outcomes\n- Produce a stable record.\n\n## Jobs and pains\n"
+        "- Job: serialize a record.\n\n## Journeys and business rules\n"
+        "- Journey: serialize a record with identity, state, and trace.\n"
+        "- Business rule: identity and trace remain stable.\n\n"
+        "## Data ownership and trust boundaries\n- Data ownership: service.\n"
+        "- Trust boundary: record input remains local.\n\n"
+        "## External effects and approvals\n- External effect: none.\n- Approval: none.\n\n"
+        "## Success events\n- record_serialized.\n\n## Requirements\n"
+        "- REQ-RECORD: The service shall return a record with a stable identity.\n\n"
+        "## Acceptance\nScenario: Serialize a stable record\n"
+        "  Given a signal record\n  When the service serializes it\n"
+        "  Then identity, state, and trace are present\n",
+        encoding="utf-8",
+    )
+    graph = compile_product_prd(prd, root, project="record-service")
+    slices = product_missions.plan_value_slices(Path(graph["path"]), root, 1)
+    mission = create_mission(
+        Path(slices["path"]), slices["slices"][0]["id"], root, "owner"
+    )
+    production = root / "app.py"
+    test_file = root / "test_app.py"
+    production.write_text(
+        'def value():\n    return {"record_id": "signal-17", "state": "ready", "trace": "trace-1"}\n\n'
+        "def healthy_control():\n    return True\n",
+        encoding="utf-8",
+    )
+    assertions = {
+        "requirement:REQ-RECORD": 'assert app.value()["record_id"] == "signal-17"',
+        "acceptance:AC-001": 'assert app.value() == {"record_id": "signal-17", "state": "ready", "trace": "trace-1"}',
+        "gate:unit": 'assert isinstance(app.value(), dict) and set(app.value()) == {"record_id", "state", "trace"} and app.value()["record_id"] == "signal-17"',
+        "gate:requirement-mutation": 'assert app.value()["state"] == "ready"',
+        "gate:receipt-trace": 'assert app.value()["trace"] == "trace-1"',
+    }
+    lines = ["import app", ""]
+    selectors = []
+    for index, criterion in enumerate(mission["completion_contract"]["criteria"]):
+        target_name, control_name = f"test_target_{index}", f"test_control_{index}"
+        target_line = len(lines) + 2
+        lines.extend(
+            [f"def {target_name}():", f"    {assertions[criterion['id']]}", ""]
+        )
+        control_line = len(lines) + 2
+        lines.extend([f"def {control_name}():", "    assert app.healthy_control()", ""])
+        selectors.append(
+            (criterion["id"], target_name, target_line, control_name, control_line)
+        )
+    test_file.write_text("\n".join(lines), encoding="utf-8")
+    source_map = _challenge_source_inventory(root)
+    source_rows = [
+        {"path": key, "sha256": value} for key, value in sorted(source_map.items())
+    ]
+    candidate_sha = product_missions._sha_bytes(
+        product_missions._canonical(source_rows)
+    )
+    input_paths = ["app.py", "test_app.py"]
+    input_sha = product_missions._sha_bytes(
+        product_missions._canonical(
+            [{"path": path, "sha256": source_map[path]} for path in input_paths]
+        )
+    )
+    daily = _local_mutation_daily_contract(
+        mission, source_rows, candidate_sha, input_paths, input_sha
+    )
+    daily_path = root / "daily.json"
+    daily_path.write_text(json.dumps(daily), encoding="utf-8")
+    for index, (criterion, target, target_line, control, control_line) in enumerate(
+        selectors
+    ):
+        rc = probe_main(
+            [
+                "--root",
+                str(root),
+                "--kind",
+                "production-mutation",
+                "--nodeid",
+                f"test_app.py::{target}",
+                "--line",
+                str(target_line),
+                "--production-path",
+                "app.py",
+                "--production-symbol",
+                "value",
+                "--mutation-before",
+                'return {"record_id": "signal-17", "state": "ready", "trace": "trace-1"}',
+                "--mutation-after",
+                'return {"record_id": "signal-0", "state": "broken", "trace": "trace-0"}',
+                "--evidence",
+                f".factory/local-capture/case-{index}",
+                "--mission-path",
+                mission["path"],
+                "--daily-contract",
+                str(daily_path),
+                "--criterion-id",
+                criterion,
+                "--target-case-id",
+                f"{criterion}:positive",
+                "--control-nodeid",
+                f"test_app.py::{control}",
+                "--control-line",
+                str(control_line),
+                "--control-case-id",
+                f"{criterion}:negative",
+                "--timeout",
+                "20",
+                "--python",
+                sys.executable,
+            ]
+        )
+        captured = capsys.readouterr().out
+        assert rc == 0, captured
+        assert json.loads(captured)["status"] == "OBSERVED"
+    validation_evidence = _write(root / "validation.json", {"passed": True})
+    validation = _validation_for(mission, "worker", "verifier", validation_evidence)
+    current_daily = json.loads(daily_path.read_text(encoding="utf-8"))
+    criteria_by_id = {row["criterion_id"]: row for row in current_daily["criteria"]}
+    for row in validation["criteria"]:
+        positive = next(
+            case
+            for case in criteria_by_id[row["id"]]["cases"]
+            if case["polarity"] == "positive"
+        )
+        row["evidence"] = [str(root / positive["evidence"]["path"])]
+    validation["daily_verification"] = current_daily
+    validation_path = _write(root / "validation-with-cases.json", validation)
+    completion = close_mission(Path(mission["path"]), validation_path, root)
+    completion_path = Path(completion["path"])
+    verified = product_missions.verify_mission_completion(completion_path)
+    assert verified["complete"] is True
+    case = next(
+        row
+        for row in verified["daily_verification"]["criteria"]
+        if row["criterion_id"] == "gate:unit"
+    )["cases"][0]
+    source_sha = hashlib.sha256(production.read_bytes()).hexdigest()
+    binding = {
+        "completion_path": completion_path.relative_to(root).as_posix(),
+        "completion_sha256": hashlib.sha256(completion_path.read_bytes()).hexdigest(),
+        "mission_id": mission["id"],
+        "mission_sha256": next(
+            row["native_gate_observation"]["mission_sha256"]
+            for row in verified["daily_verification"]["criteria"]
+            if row["criterion_id"] == "gate:unit"
+        ),
+        "candidate_sha256": candidate_sha,
+        "criterion_id": "gate:unit",
+        "case_id": case["case_id"],
+        "polarity": case["polarity"],
+        "observed_outcome": case["observed_outcome"],
+    }
+    claims = []
+    for external_id, statement, outcome in (
+        ("matched", "Unit case outcome is recorded.", case["observed_outcome"]),
+        (
+            "mismatched",
+            "A conflicting case outcome was reported.",
+            "baseline_assertion_pass_mutant_assertion_pass",
+        ),
+        ("stale", "A stale completion must remain unknown.", case["observed_outcome"]),
+        (
+            "arbitrary-hash",
+            "A supplied arbitrary hash is not proof.",
+            case["observed_outcome"],
+        ),
+        ("prose", "The checkout is generally safe.", None),
+        (
+            "same-prose-matched-case",
+            "The checkout is generally safe.",
+            case["observed_outcome"],
+        ),
+        (
+            "same-prose-other-case",
+            "The checkout is generally safe.",
+            case["observed_outcome"],
+        ),
+    ):
+        claims.append(
+            {
+                "external_id": external_id,
+                "source_path": "app.py",
+                "source_sha256": source_sha,
+                "rule": "RISK-CASE",
+                "statement": statement,
+                "claimed_disposition": "supported",
+                "claim_type": "declared_case_outcome"
+                if outcome is not None
+                else "prose",
+                "case_binding": {**binding, "observed_outcome": outcome}
+                if outcome is not None
+                else None,
+                "evidence_refs": (
+                    [{"path": "evidence/opaque.json", "sha256": "b" * 64}]
+                    if external_id == "arbitrary-hash"
+                    else []
+                ),
+            }
+        )
+    next(claim for claim in claims if claim["external_id"] == "same-prose-other-case")[
+        "case_binding"
+    ]["case_id"] = "different-native-case"
+    next(claim for claim in claims if claim["external_id"] == "stale")["case_binding"][
+        "completion_sha256"
+    ] = "c" * 64
+    report = _write(
+        root / "review.json",
+        {
+            "schema": "factory.external-review-claims.input.v1",
+            "provider": "Devin",
+            "claims": claims,
+        },
+    )
+    completion_bytes = completion_path.read_bytes()
+    with pytest.raises(AgentProofBridgeError, match="new workspace file"):
+        import_external_review_claims(
+            report.relative_to(root).as_posix(),
+            root,
+            completion_path.relative_to(root).as_posix(),
+        )
+    assert completion_path.read_bytes() == completion_bytes
+    assert (
+        product_missions.verify_mission_completion(completion_path)["complete"] is True
+    )
+    receipt = import_external_review_claims(
+        report.relative_to(root).as_posix(), root, "normalized.json"
+    )
+    statuses = {row["statement"]: row["disposition"] for row in receipt["findings"]}
+    assert statuses["Unit case outcome is recorded."] == "unverified"
+    assert statuses["A conflicting case outcome was reported."] == "unverified"
+    assert statuses["A stale completion must remain unknown."] == "unverified"
+    assert statuses["A supplied arbitrary hash is not proof."] == "unverified"
+    assert statuses["The checkout is generally safe."] == "unverified"
+    general = [
+        row
+        for row in receipt["findings"]
+        if row["statement"] == "The checkout is generally safe."
+    ]
+    assert len(general) == 3
+    prose_only = next(row for row in general if row["case_predicate"] is None)
+    assert prose_only["disposition"] == "unverified"
+    matched_case = next(
+        row
+        for row in general
+        if row["case_predicate"] is not None
+        and row["case_predicate"]["case_id"] == case["case_id"]
+    )
+    assert matched_case["disposition"] == "unverified"
+    assert matched_case["occurrences"][0]["disposition"] == "unverified"
+    assert (
+        matched_case["occurrences"][0]["case_outcome_assessment"]["disposition"]
+        == "reproduced"
+    )
+    assert matched_case["case_predicate"] == {
+        "mission_id": mission["id"],
+        "mission_sha256": binding["mission_sha256"],
+        "candidate_sha256": candidate_sha,
+        "criterion_id": "gate:unit",
+        "case_id": case["case_id"],
+        "polarity": case["polarity"],
+        "observed_outcome": case["observed_outcome"],
+    }
+    mismatch = next(
+        row
+        for row in receipt["findings"]
+        if row["statement"] == "A conflicting case outcome was reported."
+    )
+    assert (
+        mismatch["occurrences"][0]["case_outcome_assessment"]["disposition"]
+        == "contradicted"
+    )
+    other_case = next(
+        row
+        for row in general
+        if row["case_predicate"] is not None
+        if row["case_predicate"]["case_id"] == "different-native-case"
+    )
+    assert other_case["disagreement"] is False
+    assert other_case["occurrences"][0]["case_outcome_assessment"]["disposition"] == (
+        "unverified"
+    )
