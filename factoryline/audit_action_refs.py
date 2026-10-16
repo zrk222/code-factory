@@ -6,6 +6,7 @@ import math
 import json
 from hashlib import sha256
 from typing import Any
+from pathlib import Path
 
 from .audit_taxonomy import (
     _ACTION_REFERENCE_FIELDS,
@@ -90,6 +91,38 @@ def audit_remediation_packet(candidate_sha256: str, finding: dict[str, Any]) -> 
         "execution_authority": "host_agent_only",
         "automatic_execution": False,
     }
+
+
+def _security_scan_candidate_payload(
+    sources: Any,
+    tenant_read_contract: Any,
+    oracle_context: Any,
+    database_context: Any = None,
+    *,
+    include_database_context: bool = True,
+) -> dict[str, Any]:
+    """Return the shared candidate binding payload for a security scan."""
+    payload = {
+        "sources": sources,
+        "tenant_read_contract": tenant_read_contract,
+        "oracle_context": oracle_context,
+    }
+    if include_database_context:
+        payload["database_context"] = (
+            {} if database_context is None else database_context
+        )
+    return payload
+
+
+def _security_scan_report_candidate_payload(report: dict[str, Any]) -> dict[str, Any]:
+    """Build the shared candidate payload from a sealed scan report."""
+    return _security_scan_candidate_payload(
+        report.get("sources", []),
+        report.get("tenant_read_contract", {}),
+        report.get("oracle_context", {}),
+        report.get("database_context", {}),
+        include_database_context="database_context" in report,
+    )
 
 
 _NUMBER_FIELDS = {
@@ -319,3 +352,68 @@ def resolve_agent_action_reference(
     if field in {"completion", "stop"}:
         return _CODE_RULES[reference]
     raise ValueError(f"unsupported agent action reference field: {field}")
+
+
+def _security_scan_state(
+    files: list[Path],
+    findings: list[dict[str, Any]],
+    database_context: dict | None = None,
+    coverage: dict | None = None,
+) -> str:
+    if any(item["severity"] in {"CRITICAL", "HIGH"} for item in findings):
+        return "BLOCKED"
+    if database_context and database_context.get("status") not in {
+        "COMPLETE",
+        "NOT_APPLICABLE",
+    }:
+        return "INCOMPLETE"
+    if (
+        coverage is not None
+        and coverage.get("complete") is False
+        and coverage.get("measurement_state") != "no_eligible_sources"
+    ):
+        return "INCOMPLETE"
+    if not files:
+        return "NO_SOURCES"
+    return "FINDINGS" if findings else "CLEAN"
+
+
+def _security_scan_action_summary(state: str) -> str:
+    if state == "INCOMPLETE":
+        return (
+            "Some sources or database details could not be verified. "
+            "Review the reported coverage gaps and rerun after resolving them."
+        )
+    if state == "NO_SOURCES":
+        return (
+            "No eligible Python sources were found; no security conclusions were drawn."
+        )
+    if state == "CLEAN":
+        return "No high-risk static security or quality patterns found."
+    return "Resolve each listed finding and rerun this deterministic scan before release review."
+
+
+def _security_scan_coverage(
+    files: list[Path], outcomes: dict[str, int], limit: int
+) -> dict[str, Any]:
+    audited = outcomes["audited"]
+    attempted = len(files)
+    complete = bool(files) and attempted == audited
+    if not files:
+        measurement_state = "no_eligible_sources"
+    elif complete:
+        measurement_state = "complete"
+    else:
+        measurement_state = "incomplete"
+    return {
+        "language": "Python",
+        "files_discovered": len(files),
+        "files_attempted": attempted,
+        "files_audited": audited,
+        "audit_rate": round(audited / len(files), 4) if files else None,
+        "rate_defined": bool(files),
+        "inventory_complete": True,
+        "measurement_state": measurement_state,
+        "complete": complete,
+        "limit": limit,
+    }

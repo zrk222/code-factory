@@ -11,6 +11,8 @@ from factoryline.review_integrity import (
 )
 import hashlib
 import pytest
+
+
 from factoryline.audit_trace import build_audit_trace, verify_audit_trace
 from factoryline.junie_taxonomy import _guidance, junie_taxonomy
 from factoryline.mcp import _get_receipt
@@ -21,6 +23,497 @@ from factoryline.cli import main
 from factoryline.journey_proof import JourneyProofError, _digest
 from factoryline import workflow_audit as workflow_audit_module
 from factoryline.workflow_audit import CATEGORIES, audit_workflows
+
+
+def _database_context_project(root, dialect="sqlite"):
+    (root / "app.py").write_text("value = 1\n")
+    (root / "factory.database.json").write_text(
+        json.dumps({"schema": "factory.database-context-config.v1", "dialect": dialect})
+    )
+    source = root / "schema.sql"
+    source.write_text(
+        "CREATE TABLE accounts (id INTEGER PRIMARY KEY);\n"
+        "CREATE TABLE ledger (account_id INTEGER REFERENCES accounts(id), amount INTEGER NOT NULL);\n"
+        "CREATE INDEX ledger_account ON ledger(account_id);\n"
+        "SELECT l.amount FROM ledger AS l;\n"
+    )
+    return source
+
+
+def test_security_scan_report_seals_database_context_and_accepts_legacy_payload(
+    tmp_path,
+):
+    from factoryline.mission_control_status import (
+        _security_scan_hash,
+        _security_scan_report_error,
+        prepare_security_scan_receipt_report,
+        security_scan_pytest_collection_snapshot,
+    )
+    from factoryline.review_audits import security_scan
+
+    _database_context_project(tmp_path)
+    collection = security_scan_pytest_collection_snapshot(tmp_path)
+    report = prepare_security_scan_receipt_report(
+        tmp_path, security_scan(tmp_path), collection
+    )
+    assert report["database_context"]["status"] == "COMPLETE"
+    assert _security_scan_report_error(report) is None
+
+    modified = json.loads(json.dumps(report))
+    modified["database_context"]["graph_digest"] = "0" * 64
+    assert _security_scan_report_error(modified) == "candidate_sha256_mismatch"
+
+    legacy = json.loads(json.dumps(report))
+    legacy.pop("database_context")
+    legacy["candidate_sha256"] = _security_scan_hash(
+        {
+            key: legacy.get(key, {})
+            for key in ("sources", "tenant_read_contract", "oracle_context")
+        },
+        ensure_ascii=True,
+    )
+    legacy["audit_sha256"] = _security_scan_hash(
+        {key: value for key, value in legacy.items() if key != "audit_sha256"},
+        ensure_ascii=False,
+    )
+    assert _security_scan_report_error(legacy) is None
+
+
+@pytest.mark.parametrize("dialect", ["sqlite", "postgres"])
+def test_database_context_is_native_source_bound_and_deterministic(tmp_path, dialect):
+    from factoryline.review_audits import security_scan
+
+    schema = _database_context_project(tmp_path, dialect)
+    first = security_scan(tmp_path)
+    second = security_scan(tmp_path)
+    graph = first["database_context"]
+    assert graph["status"] == "COMPLETE", graph["gaps"]
+    assert first["audit_coverage"]["files_audited"] == 1
+    assert graph["discovery"]["sql_files"] == 1
+    assert {t["name"] for t in graph["tables"]} == {"accounts", "ledger"}
+    assert graph["queries"][0]["tables"] == ["ledger"]
+    assert first["candidate_sha256"] == second["candidate_sha256"]
+    assert graph == second["database_context"]
+    before = first["source_manifest_sha256"]
+    schema.write_text(schema.read_text().replace("amount INTEGER", "amount BIGINT"))
+    changed = security_scan(tmp_path)
+    assert changed["source_manifest_sha256"] != before
+    assert changed["database_context"]["graph_digest"] != graph["graph_digest"]
+
+
+@pytest.mark.parametrize("mutation", ["same_size", "new_file", "new_configuration"])
+def test_database_context_rejects_changed_inputs_before_receipt(
+    tmp_path, monkeypatch, mutation
+):
+    from factoryline import review_audits as audit
+
+    schema = _database_context_project(tmp_path)
+    if mutation == "new_configuration":
+        (tmp_path / "factory.database.json").unlink()
+    original = audit._security_scan_file
+
+    def change_after_capture(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if mutation == "same_size":
+            raw = schema.read_bytes()
+            changed = raw.replace(b"INTEGER", b"BIGINT ")
+            assert len(changed) == len(raw)
+            schema.write_bytes(changed)
+        elif mutation == "new_file":
+            (tmp_path / "later.sql").write_text("DROP TABLE ledger;")
+        else:
+            (tmp_path / "factory.database.json").write_text("{}")
+        return result
+
+    monkeypatch.setattr(audit, "_security_scan_file", change_after_capture)
+    with pytest.raises(audit.ReviewAuditError, match="changed"):
+        audit.security_scan(tmp_path, cache_enabled=False)
+
+
+def test_database_context_missing_dialect_and_invalid_sql_are_incomplete(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    source = _database_context_project(tmp_path)
+    (tmp_path / "factory.database.json").unlink()
+    result = security_scan(tmp_path)
+    assert result["state"] == "INCOMPLETE"
+    assert (
+        "database_dialect_confirmation_required" in result["database_context"]["gaps"]
+    )
+    source.write_text("CREATE TABLE (")
+    result = security_scan(tmp_path)
+    assert result["database_context"]["status"] == "INCOMPLETE"
+    assert any(
+        gap.startswith(("sql_", "unsupported_"))
+        for gap in result["database_context"]["gaps"]
+    )
+
+
+def test_database_context_without_database_does_not_load_parser(tmp_path, monkeypatch):
+    from factoryline import intent_quality, review_audits as audit
+
+    (tmp_path / "app.py").write_text("value = 1\n")
+
+    def forbidden():
+        raise AssertionError("SQL parser loaded without database inputs")
+
+    monkeypatch.setattr(intent_quality, "_db_load_parser", forbidden)
+    result = audit.security_scan(tmp_path)
+    assert result["state"] == "CLEAN"
+    assert result["database_context"]["status"] == "NOT_APPLICABLE"
+
+
+@pytest.mark.parametrize(
+    "order",
+    [None, ["first.sql"], ["first.sql", "first.sql"], ["first.sql", "missing.sql"]],
+)
+def test_database_context_incomplete_migration_order_never_claims_complete(
+    tmp_path, order
+):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "app.py").write_text("value = 1\n")
+    (tmp_path / "first.sql").write_text(
+        "CREATE TABLE accounts (id INTEGER PRIMARY KEY);"
+    )
+    (tmp_path / "second.sql").write_text("ALTER TABLE accounts ADD COLUMN email TEXT;")
+    config = {"schema": "factory.database-context-config.v1", "dialect": "sqlite"}
+    if order is not None:
+        config["migration_order"] = order
+    (tmp_path / "factory.database.json").write_text(json.dumps(config))
+    result = security_scan(tmp_path)
+    assert result["database_context"]["status"] == "INCOMPLETE"
+    assert result["database_context"]["gaps"]
+    assert result["state"] == "INCOMPLETE"
+
+
+def test_database_context_declared_migration_order_changes_final_schema_and_identity(
+    tmp_path,
+):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "app.py").write_text("value = 1\n")
+    (tmp_path / "z_create.sql").write_text(
+        "CREATE TABLE accounts (id INTEGER PRIMARY KEY);"
+    )
+    (tmp_path / "a_change.sql").write_text(
+        "ALTER TABLE accounts ADD COLUMN email TEXT;"
+    )
+    config = {
+        "schema": "factory.database-context-config.v1",
+        "dialect": "sqlite",
+        "migration_order": ["z_create.sql", "a_change.sql"],
+    }
+    path = tmp_path / "factory.database.json"
+    path.write_text(json.dumps(config))
+    result = security_scan(tmp_path)
+    graph = result["database_context"]
+    assert graph["status"] == "COMPLETE", graph["gaps"]
+    assert {column["name"] for column in graph["tables"][0]["columns"]} == {
+        "id",
+        "email",
+    }
+    config["migration_order"].reverse()
+    path.write_text(json.dumps(config))
+    changed = security_scan(tmp_path)
+    assert changed["database_context"]["status"] == "INCOMPLETE"
+    assert result["candidate_sha256"] != changed["candidate_sha256"]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"schema":"factory.database-context-config.v1","dialect":"sqlite","dialect":"postgres"}',
+        b'{"schema":"factory.database-context-config.v1","dialect":[]}',
+        b'{"schema":"factory.database-context-config.v1","dialect":"sqlite","migration_order":"first.sql"}',
+    ],
+)
+def test_database_context_invalid_configuration_is_explicit(tmp_path, raw):
+    from factoryline.review_audits import security_scan
+
+    _database_context_project(tmp_path)
+    (tmp_path / "factory.database.json").write_bytes(raw)
+    result = security_scan(tmp_path)
+    assert result["state"] == "INCOMPLETE"
+    assert "database_configuration_invalid" in result["database_context"]["gaps"]
+
+
+@pytest.mark.parametrize(
+    "column_type,expected", [("Integer", "COMPLETE"), ("String", "INCOMPLETE")]
+)
+def test_database_context_sql_and_orm_declarations_are_compared_not_combined(
+    column_type, expected
+):
+    from factoryline.intent_quality import database_structure
+
+    sql = b"CREATE TABLE users (id INTEGER);"
+    model = (
+        "from sqlalchemy import Column, Integer, String\n"
+        "from sqlalchemy.orm import declarative_base\n"
+        "Base = declarative_base()\n"
+        "class User(Base):\n"
+        "    __tablename__ = 'users'\n"
+        f"    id = Column({column_type})\n"
+    ).encode()
+    graph = database_structure({"schema.sql": sql, "model.py": model}, "sqlite")
+    assert graph["status"] == expected, graph["gaps"]
+    table = graph["tables"][0]
+    assert len(table["columns"]) == 1
+    assert len(table["declarations"]) == 2
+    assert table["columns"][0]["type"] == "INTEGER"
+    if expected == "INCOMPLETE":
+        assert "database_declaration_conflict:users" in graph["gaps"]
+        assert table["declarations"][1]["facts"]["columns"][0]["type"] == "VARCHAR"
+
+
+def test_database_context_duplicate_columns_do_not_establish_complete_schema():
+    from factoryline.intent_quality import database_structure
+
+    graph = database_structure(
+        {"schema.sql": b"CREATE TABLE users (id INTEGER, id TEXT);"}, "sqlite"
+    )
+    assert graph["status"] == "INCOMPLETE"
+    assert "duplicate_column_declaration:users.id" in graph["gaps"]
+
+
+def test_database_context_rejects_duplicate_declarative_table_in_one_file():
+    from factoryline.intent_quality import database_structure
+
+    source = b"""from sqlalchemy import Column, Integer, String
+from sqlalchemy.orm import declarative_base
+Base = declarative_base()
+class First(Base):
+    __tablename__ = "users"
+    id = Column(Integer)
+class Second(Base):
+    __tablename__ = "users"
+    email = Column(String)
+"""
+    graph = database_structure({"models.py": source}, "sqlite")
+    assert graph["status"] == "INCOMPLETE"
+    assert "duplicate_orm_table_declaration:users" in graph["gaps"]
+    table = graph["tables"][0]
+    assert [column["name"] for column in table["columns"]] == ["id"]
+    assert len(table["models"]) == 1
+
+
+def test_database_context_rejects_duplicate_core_table_in_one_file():
+    from factoryline.intent_quality import database_structure
+
+    source = b"""import sqlalchemy as sa
+metadata = sa.MetaData()
+first = sa.Table("users", metadata, sa.Column("id", sa.Integer))
+second = sa.Table("users", metadata, sa.Column("email", sa.String))
+"""
+    graph = database_structure({"models.py": source}, "sqlite")
+    assert graph["status"] == "INCOMPLETE"
+    assert "duplicate_orm_table_declaration:users" in graph["gaps"]
+    table = graph["tables"][0]
+    assert [column["name"] for column in table["columns"]] == ["id"]
+    assert len(table["models"]) == 1
+
+
+@pytest.mark.parametrize(
+    "state,retained,gap",
+    [
+        ("oversized", False, "database_python_source_oversized:models.py"),
+        ("unreadable", False, "database_python_source_unreadable:models.py"),
+        ("symlink", False, "database_python_source_symlink:models.py"),
+        ("read", False, "database_python_source_retention_limit:models.py"),
+    ],
+)
+def test_database_context_missing_python_inventory_fails_closed(
+    tmp_path, state, retained, gap
+):
+    from factoryline.context_efficiency import database_workspace_context
+
+    (tmp_path / "schema.sql").write_bytes(b"CREATE TABLE users (id INTEGER)")
+    (tmp_path / "factory.database.json").write_text(
+        json.dumps(
+            {"schema": "factory.database-context-config.v1", "dialect": "sqlite"}
+        ),
+        encoding="utf-8",
+    )
+    graph = database_workspace_context(
+        tmp_path,
+        {},
+        lambda root, relative: (root / relative).read_bytes(),
+        [{"path": "models.py", "state": state, "retained": retained}],
+    )
+    assert graph["status"] == "INCOMPLETE", graph["gaps"]
+    assert gap in graph["gaps"]
+    assert graph["discovery"]["python_sources_complete"] is False
+
+
+def test_database_context_without_python_inventory_is_unverified(tmp_path):
+    from factoryline.context_efficiency import database_workspace_context
+
+    (tmp_path / "schema.sql").write_bytes(b"CREATE TABLE users (id INTEGER)")
+    (tmp_path / "factory.database.json").write_text(
+        json.dumps(
+            {"schema": "factory.database-context-config.v1", "dialect": "sqlite"}
+        ),
+        encoding="utf-8",
+    )
+    graph = database_workspace_context(
+        tmp_path, {}, lambda root, relative: (root / relative).read_bytes()
+    )
+    assert graph["status"] == "INCOMPLETE"
+    assert "database_python_inventory_unverified" in graph["gaps"]
+
+
+def test_security_scan_incomplete_audit_coverage_never_reports_clean():
+    from factoryline.audit_action_refs import _security_scan_state
+
+    coverage = {"complete": False, "measurement_state": "incomplete"}
+    database = {"status": "COMPLETE"}
+    assert (
+        _security_scan_state([Path("app.py")], [], database, coverage) == "INCOMPLETE"
+    )
+    high = [{"severity": "HIGH"}]
+    assert _security_scan_state([Path("app.py")], high, database, coverage) == "BLOCKED"
+    empty = {"complete": False, "measurement_state": "no_eligible_sources"}
+    assert _security_scan_state([], [], None, empty) == "NO_SOURCES"
+
+
+def test_database_context_follows_local_reexported_orm_symbols(tmp_path):
+    from factoryline.context_efficiency import database_workspace_context
+
+    db_path = tmp_path / "app" / "db.py"
+    model_path = tmp_path / "app" / "models.py"
+    db_path.parent.mkdir()
+    db_source = b"""from sqlalchemy import Column, Integer
+from sqlalchemy.orm import declarative_base
+Base = declarative_base()
+"""
+    model_source = b"""from app.db import Base, Column, Integer
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+"""
+    (tmp_path / "factory.database.json").write_text(
+        json.dumps(
+            {"schema": "factory.database-context-config.v1", "dialect": "sqlite"}
+        ),
+        encoding="utf-8",
+    )
+    sources = {db_path: db_source, model_path: model_source}
+    inventory = [
+        {
+            "path": path.relative_to(tmp_path).as_posix(),
+            "state": "read",
+            "retained": True,
+        }
+        for path in sources
+    ]
+    graph = database_workspace_context(
+        tmp_path,
+        sources,
+        lambda root, relative: (root / relative).read_bytes(),
+        inventory,
+    )
+    assert graph["status"] == "COMPLETE", graph["gaps"]
+    assert (
+        graph["discovery"]["source_selection"]
+        == "all_retained_python_when_database_signaled"
+    )
+    user = next(table for table in graph["tables"] if table["name"] == "users")
+    assert [column["name"] for column in user["columns"]] == ["id"]
+
+
+@pytest.mark.parametrize(
+    "db_source,gap",
+    [
+        (
+            b"import sqlalchemy as sa\nBase = object()\nColumn = sa.Column\n",
+            "unproven_orm_declaration",
+        ),
+        (
+            b"import sqlalchemy as sa\nfrom sqlalchemy.orm import declarative_base\nBase = declarative_base()\nColumn = object()\n",
+            "unsupported_orm_column",
+        ),
+    ],
+)
+def test_database_context_local_reexport_rebinding_fails_closed(
+    tmp_path, db_source, gap
+):
+    from factoryline.context_efficiency import database_workspace_context
+
+    db_path = tmp_path / "app" / "db.py"
+    model_path = tmp_path / "app" / "models.py"
+    db_path.parent.mkdir()
+    model_source = b"""from app.db import Base, Column, Integer
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+"""
+    (tmp_path / "factory.database.json").write_text(
+        json.dumps(
+            {"schema": "factory.database-context-config.v1", "dialect": "sqlite"}
+        ),
+        encoding="utf-8",
+    )
+    sources = {db_path: db_source, model_path: model_source}
+    inventory = [
+        {
+            "path": path.relative_to(tmp_path).as_posix(),
+            "state": "read",
+            "retained": True,
+        }
+        for path in sources
+    ]
+    graph = database_workspace_context(
+        tmp_path,
+        sources,
+        lambda root, relative: (root / relative).read_bytes(),
+        inventory,
+    )
+    assert graph["status"] == "INCOMPLETE", graph["gaps"]
+    assert any(gap in item for item in graph["gaps"])
+
+
+def test_database_context_non_database_python_remains_not_applicable_and_lazy(
+    tmp_path, monkeypatch
+):
+    from factoryline import intent_quality
+    from factoryline.context_efficiency import database_workspace_context
+
+    path = tmp_path / "app.py"
+    source = b"def hello():\n    return 'hello'\n"
+
+    def unexpected_parser():
+        pytest.fail("Non-database sources must not load SQLGlot")
+
+    monkeypatch.setattr(intent_quality, "_db_load_parser", unexpected_parser)
+    graph = database_workspace_context(
+        tmp_path,
+        {path: source},
+        lambda root, relative: (root / relative).read_bytes(),
+        [{"path": "app.py", "state": "read", "retained": True}],
+    )
+    assert graph["status"] == "NOT_APPLICABLE"
+    assert graph["discovery"]["source_selection"] == "not_applicable"
+
+
+@pytest.mark.parametrize(
+    "query,expected",
+    [
+        ("SELECT * FROM users", [{"table": "users", "name": "*", "wildcard": True}]),
+        (
+            "SELECT u.* FROM users AS u",
+            [{"table": "users", "name": "*", "wildcard": True}],
+        ),
+        ("SELECT COUNT(*) FROM users", []),
+    ],
+)
+def test_database_context_wildcard_dependencies_are_explicit(query, expected):
+    from factoryline.intent_quality import database_structure
+
+    source = ("CREATE TABLE users (id INTEGER, email TEXT); " + query).encode()
+    graph = database_structure({"schema.sql": source}, "sqlite")
+    assert graph["status"] == "COMPLETE", graph["gaps"]
+    assert graph["queries"][0]["tables"] == ["users"]
+    assert graph["queries"][0]["columns"] == expected
 
 
 @pytest.mark.parametrize(
@@ -3716,3 +4209,419 @@ def test_import_index_failure_is_measured_without_error_text(monkeypatch):
     assert phase["incomplete"] == 1
     assert snapshot["source_attribution"]["status"] == "incomplete"
     assert "PRIVATE INDEX DETAIL" not in str(snapshot)
+
+
+def test_database_context_reader_adversarial_controls():
+    from contextlib import redirect_stderr, redirect_stdout
+    from io import StringIO
+    from factoryline import intent_quality as iq
+
+    ddl = b"""CREATE TABLE "sales"."Customer" ("id" INTEGER PRIMARY KEY);
+    CREATE TABLE "sales"."Order" (
+        "id" INTEGER PRIMARY KEY,
+        customer_id INTEGER REFERENCES "sales"."Customer"("id"),
+        label TEXT UNIQUE,
+        CONSTRAINT uq_pair UNIQUE (customer_id, label)
+    );
+    CREATE INDEX "ix_order_customer" ON "sales"."Order" (customer_id);
+    SELECT o."id" FROM "sales"."Order" AS o"""
+    graph = iq.database_structure({"schema.sql": ddl}, "postgres")
+    assert graph["status"] == "COMPLETE", graph["gaps"]
+    order = next(
+        table for table in graph["tables"] if table["name"] == '"sales"."Order"'
+    )
+    assert order["name"] == '"sales"."Order"'
+    assert order["primary_key"] == ['"id"']
+    assert order["foreign_keys"][0]["target_table"] == '"sales"."Customer"'
+    assert order["unique"] == [["customer_id", "label"], ["label"]]
+    assert order["indexes"][0]["name"] == '"ix_order_customer"'
+    assert graph["queries"][0]["tables"] == ['"sales"."Order"']
+    assert graph["queries"][0]["columns"] == [
+        {"table": '"sales"."Order"', "name": '"id"'}
+    ]
+    wildcard = iq.database_structure(
+        {
+            "wildcard.sql": b"CREATE TABLE users (id INT, name TEXT); CREATE TABLE audit (id INT); SELECT * FROM users; SELECT u.* FROM users u; SELECT * FROM users u JOIN audit a ON u.id = a.id; SELECT COUNT(*) FROM users"
+        },
+        "postgres",
+    )
+    assert wildcard["status"] == "COMPLETE", wildcard["gaps"]
+    all_columns, alias_columns, join_columns, count_columns = [
+        query["columns"] for query in wildcard["queries"]
+    ]
+    assert all_columns == [{"table": "users", "name": "*", "wildcard": True}]
+    assert alias_columns == [{"table": "users", "name": "*", "wildcard": True}]
+    assert join_columns == [
+        {"table": "audit", "name": "*", "wildcard": True},
+        {"table": "audit", "name": "id"},
+        {"table": "users", "name": "*", "wildcard": True},
+        {"table": "users", "name": "id"},
+    ]
+    assert count_columns == []
+
+    evolved = iq.database_structure(
+        {
+            "change.sql": b"CREATE TABLE x (id INT PRIMARY KEY); ALTER TABLE x ADD COLUMN y INT; ALTER TABLE x DROP COLUMN id; ALTER TABLE x RENAME COLUMN y TO z"
+        },
+        "postgres",
+    )
+    assert evolved["status"] == "COMPLETE", evolved["gaps"]
+    x_table = next(table for table in evolved["tables"] if table["name"] == "x")
+    assert [column["name"] for column in x_table["columns"]] == ["z"]
+    assert x_table["primary_key"] == []
+    assert [operation["op"] for operation in evolved["operations"]] == [
+        "create_table",
+        "add_column",
+        "drop_column",
+        "rename_column",
+    ]
+    renamed = iq.database_structure(
+        {
+            "rename.sql": b"CREATE TABLE parent (id INT PRIMARY KEY); CREATE TABLE child (parent_id INT REFERENCES parent(id)); ALTER TABLE parent RENAME COLUMN id TO parent_id; ALTER TABLE parent RENAME TO ancestor"
+        },
+        "postgres",
+    )
+    assert renamed["status"] == "COMPLETE", renamed["gaps"]
+    child = next(table for table in renamed["tables"] if table["name"] == "child")
+    assert child["foreign_keys"][0] == {
+        "columns": ["parent_id"],
+        "target_table": "ancestor",
+        "target_columns": ["parent_id"],
+    }
+    dropped = iq.database_structure(
+        {
+            "drop.sql": b"CREATE TABLE x (id INT); CREATE INDEX ix ON x (id); DROP INDEX ix; DROP TABLE x"
+        },
+        "postgres",
+    )
+    assert dropped["status"] == "COMPLETE" and dropped["tables"] == []
+    assert [operation["op"] for operation in dropped["operations"]][-2:] == [
+        "drop_index",
+        "drop_table",
+    ]
+    stale_query = iq.database_structure(
+        {"query_drop.sql": b"CREATE TABLE x (id INT); SELECT id FROM x; DROP TABLE x"},
+        "postgres",
+    )
+    assert (
+        stale_query["status"] == "INCOMPLETE"
+        and "query_table_unresolved:x" in stale_query["gaps"]
+    )
+    stale_fk = iq.database_structure(
+        {
+            "fk_drop.sql": b"CREATE TABLE p (id INT PRIMARY KEY); CREATE TABLE c (pid INT REFERENCES p(id)); DROP TABLE p"
+        },
+        "postgres",
+    )
+    assert (
+        stale_fk["status"] == "INCOMPLETE"
+        and "foreign_key_target_unresolved:p" in stale_fk["gaps"]
+    )
+    cross_file = iq.database_structure(
+        {
+            "001.sql": b"CREATE TABLE x (id INT)",
+            "002.sql": b"ALTER TABLE x ADD COLUMN y INT",
+        },
+        "postgres",
+    )
+    assert (
+        cross_file["status"] == "INCOMPLETE"
+        and "cross_file_migration_order_unknown" in cross_file["gaps"]
+    )
+    assert cross_file["schema_evolution"]["final_state"] == "INCOMPLETE"
+    ordered = iq.database_structure(
+        {
+            "schema.sql": b"CREATE TABLE x (id INT)",
+            "migration.sql": b"ALTER TABLE x ADD COLUMN y INT",
+        },
+        "postgres",
+        migration_order=["schema.sql", "migration.sql"],
+    )
+    assert ordered["status"] == "COMPLETE", ordered["gaps"]
+    assert ordered["schema_evolution"]["migration_order"] == [
+        "schema.sql",
+        "migration.sql",
+    ]
+    assert [item["op"] for item in ordered["operations"]] == [
+        "create_table",
+        "add_column",
+    ]
+    reversed_order = iq.database_structure(
+        {
+            "schema.sql": b"CREATE TABLE x (id INT)",
+            "migration.sql": b"ALTER TABLE x ADD COLUMN y INT",
+        },
+        "postgres",
+        migration_order=["migration.sql", "schema.sql"],
+    )
+    assert (
+        reversed_order["status"] == "INCOMPLETE"
+        and "alter_target_unresolved:migration.sql" in reversed_order["gaps"]
+    )
+    duplicate_order = iq.database_structure(
+        {"a.sql": b"SELECT 1", "b.sql": b"SELECT 2"}, migration_order=["a.sql", "a.sql"]
+    )
+    assert "duplicate_migration_order_path" in duplicate_order["gaps"]
+    assert (
+        "missing_migration_order_path"
+        in iq.database_structure(
+            {"a.sql": b"SELECT 1", "b.sql": b"SELECT 2"}, migration_order=["a.sql"]
+        )["gaps"]
+    )
+    assert (
+        "unknown_migration_order_path"
+        in iq.database_structure(
+            {"a.sql": b"SELECT 1"}, migration_order=["a.sql", "missing.sql"]
+        )["gaps"]
+    )
+    unsupported_alter = iq.database_structure(
+        {
+            "unsupported_alter.sql": b"CREATE TABLE x (id INT); ALTER TABLE x ADD CONSTRAINT ck CHECK (id > 0)"
+        },
+        "postgres",
+    )
+    assert (
+        unsupported_alter["status"] == "INCOMPLETE"
+        and "alter_semantics_incomplete:unsupported_alter.sql"
+        in unsupported_alter["gaps"]
+    )
+    cte = iq.database_structure(
+        {"q.sql": b"WITH t AS (SELECT id FROM x) SELECT id FROM t"}, "postgres"
+    )
+    assert any("cte_scope" in gap for gap in cte["gaps"])
+    nested = iq.database_structure(
+        {"nested.sql": b"SELECT a.id FROM a WHERE a.id IN (SELECT b.id FROM b)"},
+        "postgres",
+    )
+    assert any("nested_query_scope" in gap for gap in nested["gaps"])
+    assert nested["queries"][0]["columns"] == []
+    arbitrary = iq.database_structure(
+        {"model.py": b"class NotAnOrm:\n    __tablename__ = 'secret'\n"}, "postgres"
+    )
+    assert any("unproven_orm_declaration" in gap for gap in arbitrary["gaps"])
+    assert not arbitrary["tables"]
+    orm_source = b"""from sqlalchemy import Column, ForeignKey, Integer, String
+from sqlalchemy.orm import declarative_base
+Base = declarative_base()
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+    parent_id = Column("parent_id", Integer, ForeignKey("users.id"))
+    email = Column(String, nullable=False, unique=True, index=True)
+"""
+    orm = iq.database_structure({"orm.py": orm_source}, "postgres")
+    user = next(table for table in orm["tables"] if table["name"] == "users")
+    assert (
+        user["primary_key"] == ["id"]
+        and user["foreign_keys"][0]["target_table"] == "users"
+    )
+    assert (
+        next(col for col in user["columns"] if col["name"] == "parent_id")["type"]
+        == "INTEGER"
+    )
+    assert user["columns"][0]["source"]["kind"] == "sqlalchemy_column"
+    assert user["indexes"][0]["columns"] == ["email"]
+
+    alias_source = b"""import sqlalchemy as sa
+from sqlalchemy.orm import DeclarativeBase as Root, Mapped as M, mapped_column as mc
+from typing import Annotated
+class Base(Root):
+    pass
+class AliasModel(Base):
+    __tablename__ = "alias_models"
+    id: M[int] = mc(primary_key=True)
+    title: M[Annotated[str, mc(nullable=False, unique=True)]]
+"""
+    aliased = iq.database_structure({"alias.py": alias_source}, "postgres")
+    alias_model = next(
+        table for table in aliased["tables"] if table["name"] == "alias_models"
+    )
+    assert alias_model["columns"][0]["nullable"] is False
+    assert alias_model["unique"] == [["title"]]
+    module_alias = iq.database_structure(
+        {
+            "module_alias.py": b"""import sqlalchemy as sa
+Base = sa.orm.declarative_base()
+class Group(Base):
+    __tablename__ = "groups"
+    id = sa.Column(sa.Integer, primary_key=True)
+"""
+        },
+        "postgres",
+    )
+    assert next(table for table in module_alias["tables"] if table["name"] == "groups")[
+        "primary_key"
+    ] == ["id"]
+
+    core_source = b"""import sqlalchemy as sa
+metadata = sa.MetaData()
+accounts = sa.Table("accounts", metadata,
+    sa.Column("id", sa.Integer, primary_key=True),
+    sa.Column("parent_id", sa.Integer, sa.ForeignKey("accounts.id")))
+"""
+    core = iq.database_structure({"core.py": core_source}, "postgres")
+    account = next(table for table in core["tables"] if table["name"] == "accounts")
+    assert (
+        account["primary_key"] == ["id"]
+        and account["foreign_keys"][0]["target_table"] == "accounts"
+    )
+    assert account["models"][0]["source"]["kind"] == "sqlalchemy_core_table"
+    untrusted_metadata = iq.database_structure(
+        {
+            "bad_core.py": b"""import sqlalchemy as sa
+metadata = sa.MetaData()
+metadata = object()
+users = sa.Table("users", metadata, sa.Column("id", sa.Integer))
+"""
+        },
+        "postgres",
+    )
+    assert any("unproven_core_metadata" in gap for gap in untrusted_metadata["gaps"])
+    assert not untrusted_metadata["tables"]
+
+    shadowed = iq.database_structure(
+        {
+            "shadow.py": b"""from sqlalchemy import Column, Integer
+from sqlalchemy.orm import declarative_base
+Base = declarative_base()
+Column = object
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+"""
+        },
+        "postgres",
+    )
+    assert any("unsupported_orm_column" in gap for gap in shadowed["gaps"])
+    rebound_base = iq.database_structure(
+        {
+            "base.py": b"""from sqlalchemy import Column, Integer
+from sqlalchemy.orm import declarative_base
+Base = declarative_base()
+Base = object
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+"""
+        },
+        "postgres",
+    )
+    assert any("unproven_orm_declaration" in gap for gap in rebound_base["gaps"])
+    assert not rebound_base["tables"]
+
+    query_source = b"""import sqlalchemy as sa
+engine = sa.create_engine("postgresql://secret")
+def load():
+    connection = engine.connect()
+    query = sa.text("SELECT id FROM users")
+    return connection.execute(query)
+"""
+    pyquery = iq.database_structure(
+        {
+            "users.sql": b"CREATE TABLE users (id INT PRIMARY KEY)",
+            "query.py": query_source,
+        },
+        "postgres",
+    )
+    assert any(
+        query["source"].get("kind") == "sqlalchemy_execute"
+        for query in pyquery["queries"]
+    )
+    assert "secret" not in repr(pyquery)
+    sqlite_query = iq.database_structure(
+        {
+            "users.sql": b"CREATE TABLE users (id INT PRIMARY KEY)",
+            "sqlite.py": b"""import sqlite3 as sqlite
+def load():
+    connection = sqlite.connect("file:credential")
+    connection.execute("SELECT id FROM users")
+""",
+        },
+        "sqlite",
+    )
+    assert any(
+        query["source"].get("kind") == "sqlite_execute"
+        for query in sqlite_query["queries"]
+    )
+    psycopg_query = iq.database_structure(
+        {
+            "users.sql": b"CREATE TABLE users (id INT PRIMARY KEY)",
+            "pg.py": b"""import psycopg as pg
+def load():
+    connection = pg.connect("secret connection")
+    cursor = connection.cursor()
+    cursor.execute("SELECT id FROM users")
+""",
+        },
+        "postgres",
+    )
+    assert any(
+        query["source"].get("kind") == "psycopg_execute"
+        for query in psycopg_query["queries"]
+    )
+    assert "secret connection" not in repr(psycopg_query)
+
+    stdout, stderr = StringIO(), StringIO()
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        unsupported = iq.database_structure(
+            {"unsupported.sql": b"CREATE TABLE x (id INT) SECRET_LITERAL_987"},
+            "postgres",
+        )
+    assert unsupported["status"] == "INCOMPLETE"
+    assert "SECRET_LITERAL_987" not in stdout.getvalue() + stderr.getvalue()
+    invalid = iq.database_structure({"bad.sql": b"select \xff"}, "postgres")
+    assert "invalid_utf8:bad.sql" in invalid["gaps"]
+    malformed = iq.database_structure({"broken.sql": b"CREATE TABLE ("}, "sqlite")
+    assert malformed["status"] == "INCOMPLETE"
+    assert "sql_parse_error:broken.sql" in malformed["gaps"]
+    assert malformed["tables"] == []
+
+    parser, exp, version = iq._db_load_parser()
+    original_version = parser.__version__
+    try:
+        first = iq.database_structure({"cache.sql": b"SELECT id FROM x"}, "postgres")
+        parser.__version__ = original_version + ".probe"
+        second = iq.database_structure({"cache.sql": b"SELECT id FROM x"}, "postgres")
+        assert first["parser_identity"] != second["parser_identity"]
+    finally:
+        parser.__version__ = original_version
+    second["queries"].clear()
+    assert iq.database_structure({"cache.sql": b"SELECT id FROM x"}, "postgres")[
+        "queries"
+    ]
+
+
+def test_database_python_source_is_parsed_once_and_uses_current_bytes(monkeypatch):
+    from factoryline import intent_quality as iq
+
+    source = b"""from sqlalchemy import Column, Integer
+from sqlalchemy.orm import declarative_base
+Base = declarative_base()
+class Account(Base):
+    __tablename__ = 'accounts'
+    id = Column(Integer, primary_key=True)
+"""
+    calls = []
+    original = iq.ast.parse
+
+    def counted_parse(text, *args, **kwargs):
+        if kwargs.get("filename") == "models.py":
+            calls.append(text)
+        return original(text, *args, **kwargs)
+
+    with iq._DB_CACHE_LOCK:
+        iq._DB_CACHE.clear()
+        iq._DB_CACHE_BYTES = 0
+    monkeypatch.setattr(iq.ast, "parse", counted_parse)
+    first = iq.database_structure({"models.py": source}, "postgres")
+    assert first["status"] == "COMPLETE", first["gaps"]
+    assert calls == [source.decode("utf-8")]
+
+    calls.clear()
+    changed = source.replace(b"accounts", b"customers")
+    second = iq.database_structure(
+        {"models.py": changed}, "postgres", snapshots={"models.py": {"tables": []}}
+    )
+    assert second["status"] == "COMPLETE"
+    assert calls == [changed.decode("utf-8")]
+    assert [table["name"] for table in second["tables"]] == ["customers"]

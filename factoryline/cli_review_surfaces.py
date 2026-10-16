@@ -15,15 +15,21 @@ def add_parser(sub: Any) -> None:
         help="create a privacy-safe share card from one verified local E2E receipt",
     )
     proof_card.add_argument(
-        "receipt", help="workspace-contained factory.e2e_proof_receipt.v1 JSON path"
+        "receipt",
+        help="workspace-contained E2E receipt, or mission completion with --local-details",
     )
     proof_card.add_argument("--root", default=".")
     proof_card.add_argument(
         "--out-dir",
-        default=".factory/share",
-        help="workspace-contained Proof Card output directory",
+        default=None,
+        help="output directory (default: .factory/share; local details: .factory/completion-details)",
     )
     proof_card.add_argument("--json", action="store_true")
+    proof_card.add_argument(
+        "--local-details",
+        action="store_true",
+        help="summarize a mission completion receipt locally; includes task and file details",
+    )
 
     adoption = sub.add_parser(
         "adoption",
@@ -148,6 +154,8 @@ def add_parser(sub: Any) -> None:
 
 
 def _handle_proof_card(args):
+    if getattr(args, "local_details", False):
+        return _handle_completion_card(args)
     from .adoption import (
         AdoptionError,
         proof_card_from_receipt,
@@ -157,7 +165,7 @@ def _handle_proof_card(args):
     workspace = Path(args.root).resolve()
     try:
         result = proof_card_from_receipt(
-            workspace, Path(args.receipt), Path(args.out_dir)
+            workspace, Path(args.receipt), Path(args.out_dir or ".factory/share")
         )
         record_adoption_event(
             workspace,
@@ -188,6 +196,26 @@ def _handle_proof_card(args):
         print(
             "privacy  : no commands, paths, repository name, prompts, logs, or user identity"
         )
+    return 0
+
+
+def _handle_completion_card(args):
+    from .adoption import AdoptionError, completion_card_from_receipt
+
+    try:
+        result = completion_card_from_receipt(
+            Path(args.root),
+            Path(args.receipt),
+            Path(args.out_dir or ".factory/completion-details"),
+        )
+    except (AdoptionError, OSError) as exc:
+        print(f"local completion summary failed: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(result["markdown"])
+        print(f"Saved locally: {result['paths']['markdown']}")
     return 0
 
 

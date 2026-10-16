@@ -61,6 +61,7 @@ dependencies = [
   "cryptography>=42,<50",
   "httpx>=0.28,<1",
   "PyYAML>=6,<7",
+  "sqlglot==30.23.0",
   "tomli>=2.0; python_version < '3.11'",
 ]
 

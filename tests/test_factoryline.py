@@ -502,6 +502,95 @@ def test_forgeline_doctor_canary_accepts_only_explicit_static_metrics(
         assert result["reason"] == "tsx symbols were not measured"
 
 
+def test_forgeline_mjs_canary_receives_existing_typescript_compiler_path(
+    tmp_path, monkeypatch
+):
+    import factoryline.cli as cli
+    from types import SimpleNamespace
+
+    (tmp_path / "services").mkdir()
+    compiler_node_path = str(tmp_path / "workspace" / "node_modules")
+    received = {}
+    monkeypatch.delenv("NODE_PATH", raising=False)
+    monkeypatch.setattr(cli, "_cli_command", lambda _name: "forge")
+    monkeypatch.setattr(
+        cli,
+        "_typescript_node_path",
+        lambda roots: compiler_node_path if roots == [tmp_path / "src"] else None,
+    )
+
+    def bounded_run(_cli, _args, _cwd, *, timeout, env):
+        received.update(env=env, timeout=timeout)
+        return {
+            "ok": True,
+            "stdout": json.dumps(
+                {
+                    "passed": True,
+                    "metrics": {
+                        "coverage_assessment": "static_name_match",
+                        "behavioral_proof_status": "not_measured_static_only",
+                    },
+                }
+            ).encode(),
+            "stderr": b"",
+            "exit_code": 0,
+            "cleanup_confirmed": True,
+            "streams_closed": True,
+            "output": "",
+        }
+
+    monkeypatch.setattr(cli, "_run_cli_bounded", bounded_run)
+
+    failure = cli._run_feature_canary(
+        SimpleNamespace(cli="forge"),
+        tmp_path,
+        {"version": "0.10.8"},
+        True,
+        "mjs",
+        [tmp_path / "src"],
+    )
+
+    assert failure is None
+    assert received["env"]["NODE_PATH"] == compiler_node_path
+
+
+def test_forgeline_mjs_canary_fails_closed_without_compiler_metrics(
+    tmp_path, monkeypatch
+):
+    import factoryline.cli as cli
+    from types import SimpleNamespace
+
+    (tmp_path / "services").mkdir()
+    monkeypatch.delenv("NODE_PATH", raising=False)
+    monkeypatch.setattr(cli, "_cli_command", lambda _name: "forge")
+    monkeypatch.setattr(cli, "_typescript_node_path", lambda *_args: None)
+    qa = {
+        "passed": False,
+        "metrics": {"function_inventory_complete": False},
+        "findings": ["QA_METRICS_INCOMPLETE services/canary.mjs"],
+    }
+    monkeypatch.setattr(
+        cli,
+        "_run_cli_bounded",
+        lambda *_args, **_kwargs: {
+            "ok": False,
+            "stdout": json.dumps(qa).encode(),
+            "stderr": b"",
+            "exit_code": 1,
+            "cleanup_confirmed": True,
+            "streams_closed": True,
+            "output": "QA_METRICS_INCOMPLETE services/canary.mjs",
+        },
+    )
+
+    failure = cli._run_feature_canary(
+        SimpleNamespace(cli="forge"), tmp_path, {"version": "0.10.8"}, True, "mjs"
+    )
+
+    assert failure["reason"] == "mjs feature canary failed"
+    assert "QA_METRICS_INCOMPLETE" in failure["output"]
+
+
 def test_forgeline_doctor_only_runs_typescript_canaries_for_project_sources(
     tmp_path, monkeypatch
 ):

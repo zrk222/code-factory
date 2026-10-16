@@ -23,6 +23,9 @@ from hashlib import sha256
 import os
 from pathlib import Path
 import re
+import json
+import logging
+import threading
 from types import MappingProxyType
 from typing import Any
 
@@ -1281,3 +1284,1838 @@ def _project_import_views(views, snapshots):
     ):
         return MappingProxyType(dict(views["resolved"]))
     return None
+
+
+# Native database context is a static projection only.  Its cache stores canonical
+# JSON bytes (never parser objects or source text) so callers cannot mutate entries.
+_DB_CACHE: dict[str, bytes] = {}
+_DB_CACHE_BYTES = 0
+_DB_CACHE_LOCK = threading.RLock()
+_DB_LOG_FILTER_LOCK = threading.RLock()
+_DB_EXTRACTOR_ID = "native-db-v1"
+
+
+def database_structure(
+    sources: dict[str, bytes],
+    dialect: str = "postgres",
+    snapshots: dict | None = None,
+    migration_order: list[str] | None = None,
+) -> dict:
+    """Build a bounded static projection; uncertain constructs remain explicit gaps."""
+    from hashlib import sha256 as _sha256
+    import inspect
+
+    global _DB_CACHE_BYTES
+
+    dialect_key = {"postgresql": "postgres", "sqlite3": "sqlite"}.get(dialect, dialect)
+    if dialect_key not in {"postgres", "sqlite"}:
+        return _db_result(
+            "UNSUPPORTED", ["unsupported_dialect"], [], [], [], [], dialect_key
+        )
+    manifest, inputs, gaps, sql_count = _db_inventory(sources, _sha256)
+    inputs, order_gaps, normalized_order = _db_apply_migration_order(
+        inputs, migration_order
+    )
+    gaps.extend(order_gaps)
+    if gaps:
+        return _db_result("INCOMPLETE", gaps, manifest, [], [], [], dialect_key)
+    parser = _db_load_parser()
+    if parser is None:
+        return _db_result(
+            "UNSUPPORTED", ["parser_unavailable"], manifest, [], [], [], dialect_key
+        )
+    sqlglot, exp, parser_version = parser
+    code_identity = _db_code_identity(inspect, _sha256)
+    cache_key = _db_cache_key(
+        _sha256, dialect_key, manifest, parser_version, code_identity, normalized_order
+    )
+    cached = _db_cache_read(cache_key)
+    if cached is not None:
+        return cached
+    tables, operations, queries = _db_extract(
+        inputs, sqlglot, exp, dialect_key, snapshots, gaps
+    )
+    _db_migration_order_gaps(inputs, operations, normalized_order, gaps)
+    _db_validate_references(tables, queries, gaps)
+    result = {
+        "status": "INCOMPLETE" if gaps else "COMPLETE",
+        "schema_evolution": {
+            "mode": "declared_migration_order"
+            if normalized_order is not None
+            else "ordered_within_source_projection",
+            "migration_order": normalized_order,
+            "final_state": "INCOMPLETE" if gaps else "PROJECTED",
+        },
+        "coverage": {
+            "sql_files": sql_count,
+            "python_files": sum(k == "python" for _, _, _, k in inputs),
+        },
+        "gaps": sorted(set(gaps)),
+        "dialect": dialect_key,
+        "parser_identity": "sqlglot/" + parser_version,
+        "extractor_identity": _DB_EXTRACTOR_ID + "/" + code_identity,
+        "source_manifest": manifest,
+        "tables": [tables[k] for k in sorted(tables)],
+        "operations": operations,
+        "queries": queries,
+    }
+    canonical = json.dumps(
+        result, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode()
+    result["graph_digest"] = _sha256(canonical).hexdigest()
+    serialized = json.dumps(result, sort_keys=True, separators=(",", ":")).encode()
+    _db_cache_write(cache_key, serialized)
+    return json.loads(serialized)
+
+
+def _db_migration_order_gaps(inputs, operations, normalized_order, gaps):
+    sql_paths = {path for path, _, _, kind in inputs if kind == "sql"}
+    evolving = {
+        "add_column",
+        "drop_column",
+        "rename_column",
+        "rename_table",
+        "drop_table",
+        "drop_index",
+    }
+    cross_file_order_unknown = (
+        normalized_order is None
+        and len(sql_paths) > 1
+        and any(item["op"] in evolving for item in operations)
+    )
+    if cross_file_order_unknown:
+        gaps.append("cross_file_migration_order_unknown")
+
+
+def _db_inventory(sources, digest_fn):
+    manifest, inputs, gaps = [], [], []
+    sql_count = sql_bytes = 0
+    for path, raw in sorted(sources.items()):
+        normalized = str(path).replace("\\", "/")
+        kind = (
+            "sql"
+            if normalized.lower().endswith(".sql")
+            else "python"
+            if normalized.lower().endswith(".py")
+            else None
+        )
+        if kind is None:
+            continue
+        if not isinstance(raw, bytes):
+            gaps.append("invalid_source_bytes")
+            continue
+        digest = digest_fn(raw).hexdigest()
+        manifest.append({"path": normalized, "sha256": digest, "size": len(raw)})
+        inputs.append((normalized, raw, digest, kind))
+        if kind == "sql":
+            sql_count += 1
+            sql_bytes += len(raw)
+            if len(raw) > 1_000_000:
+                gaps.append("source_size_limit")
+    if sql_count > 256:
+        gaps.append("sql_input_limit")
+    if sql_bytes > 16_000_000:
+        gaps.append("total_source_limit")
+    return manifest, inputs, gaps, sql_count
+
+
+def _db_apply_migration_order(inputs, migration_order):
+    if migration_order is None:
+        return sorted(inputs, key=lambda item: item[3] == "python"), [], None
+    if not isinstance(migration_order, list) or any(
+        not isinstance(path, str) for path in migration_order
+    ):
+        return inputs, ["invalid_migration_order"], None
+    paths = [path.replace("\\", "/") for path in migration_order]
+    sql_paths = [path for path, _, _, kind in inputs if kind == "sql"]
+    gaps = []
+    if len(set(paths)) != len(paths):
+        gaps.append("duplicate_migration_order_path")
+    if set(paths) - set(sql_paths):
+        gaps.append("unknown_migration_order_path")
+    if set(sql_paths) - set(paths):
+        gaps.append("missing_migration_order_path")
+    if gaps:
+        return inputs, gaps, paths
+    by_path = {path: item for item in inputs if (path := item[0]) in sql_paths}
+    ordered_sql = [by_path[path] for path in paths]
+    python = sorted(
+        (item for item in inputs if item[3] == "python"), key=lambda item: item[0]
+    )
+    return ordered_sql + python, [], paths
+
+
+def _db_load_parser():
+    try:
+        import sqlglot
+        from sqlglot import exp
+    except ImportError:
+        return None
+    return sqlglot, exp, sqlglot.__version__
+
+
+def _db_code_identity(inspect, digest_fn):
+    helpers = (
+        _db_result,
+        _db_inventory,
+        _db_apply_migration_order,
+        _db_load_parser,
+        _db_code_identity,
+        _db_cache_key,
+        _db_cache_read,
+        _db_cache_write,
+        _db_extract,
+        _db_python_module_name,
+        _db_python_import_module,
+        _db_python_parse_modules,
+        _db_python_export_bindings,
+        _db_python_local_reexports,
+        _db_python_update_module_reexports,
+        _db_python_export_result,
+        _db_python_imported_bindings,
+        _db_python_project_exports,
+        _db_merge_declarations,
+        _db_declaration_facts,
+        _db_check_column_duplicates,
+        _db_validate_references,
+        _db_validate_foreign_keys,
+        _db_validate_queries,
+        _db_read_sql,
+        _db_parse_sql,
+        _DatabaseParserLogFilter,
+        _db_read_python,
+        _db_python_symbols,
+        _db_python_check_calls,
+        _db_import_bindings,
+        _db_python_call,
+        _db_python_resolve,
+        _db_python_base_names,
+        _db_python_metadata_names,
+        _db_python_model,
+        _db_python_duplicate_table,
+        _db_python_literal,
+        _db_python_column,
+        _db_python_type,
+        _db_python_fk,
+        _db_python_query,
+        _db_python_scope,
+        _db_python_register_assignment,
+        _db_python_connection_call,
+        _db_assignment_targets,
+        _db_python_execute,
+        _db_python_sql_literal,
+        _db_python_is_text_call,
+        _db_python_contains_text,
+        _db_python_core,
+        _db_python_annotated,
+        _db_python_is_mapped_annotation,
+        _db_merge_python_column,
+        _db_table_name,
+        _db_ident,
+        _db_read_statement,
+        _db_empty_table,
+        _db_valid_create_items,
+        _db_create_table,
+        _db_column_fact,
+        _db_constraint_fact,
+        _db_alter,
+        _db_alter_action,
+        _db_rename_table,
+        _db_drop_statement,
+        _db_remove_column,
+        _db_rename_column,
+        _db_query_wildcards,
+        _db_query,
+    )
+    source = "".join(inspect.getsource(fn) for fn in helpers)
+    return digest_fn(
+        (inspect.getsource(database_structure) + source).encode()
+    ).hexdigest()
+
+
+def _db_cache_key(
+    digest_fn, dialect, manifest, parser_version, code_identity, migration_order
+):
+    identity = [
+        _DB_EXTRACTOR_ID,
+        code_identity,
+        parser_version,
+        dialect,
+        manifest,
+        migration_order,
+    ]
+    return digest_fn(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _db_cache_read(key):
+    with _DB_CACHE_LOCK:
+        cached = _DB_CACHE.get(key)
+    return json.loads(cached) if cached is not None else None
+
+
+def _db_cache_write(key, serialized):
+    global _DB_CACHE_BYTES
+    if len(serialized) > 4_000_000:
+        return
+    with _DB_CACHE_LOCK:
+        prior = _DB_CACHE.pop(key, None)
+        if prior is not None:
+            _DB_CACHE_BYTES -= len(prior)
+        while _DB_CACHE and (
+            _DB_CACHE_BYTES + len(serialized) > 4_000_000 or len(_DB_CACHE) >= 16
+        ):
+            _, removed = _DB_CACHE.popitem()
+            _DB_CACHE_BYTES -= len(removed)
+        _DB_CACHE[key] = serialized
+        _DB_CACHE_BYTES += len(serialized)
+
+
+def _db_extract(inputs, sqlglot, exp, dialect, snapshots, gaps):
+    tables, operations, queries = {}, [], []
+    modules, _paths, parsed_trees = _db_python_parse_modules(inputs)
+    project_exports = _db_python_project_exports(inputs, modules=modules, paths=_paths)
+    for path, raw, digest, kind in inputs:
+        try:
+            text = raw.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            gaps.append("invalid_utf8:" + path)
+            continue
+        if kind == "python":
+            declared = {}
+            _db_read_python(
+                path,
+                text,
+                digest,
+                snapshots,
+                dialect,
+                sqlglot,
+                exp,
+                declared,
+                queries,
+                gaps,
+                project_exports.get(path),
+                parsed_tree=parsed_trees[path],
+            )
+            _db_merge_declarations(tables, declared, path, digest, gaps)
+        else:
+            _db_read_sql(
+                path,
+                text,
+                digest,
+                sqlglot,
+                exp,
+                dialect,
+                tables,
+                operations,
+                queries,
+                gaps,
+            )
+    return tables, operations, queries
+
+
+def _db_python_module_name(path):
+    parts = list(Path(path).with_suffix("").parts)
+    if parts and parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+def _db_python_import_module(current, node):
+    if node.level:
+        package = current.split(".")[:-1]
+        keep = max(0, len(package) - node.level + 1)
+        base = package[:keep]
+        suffix = node.module.split(".") if node.module else []
+        return ".".join(base + suffix)
+    return node.module or ""
+
+
+def _db_python_parse_modules(inputs):
+    modules, paths, parsed_trees = {}, {}, {}
+    for path, raw, _, kind in inputs:
+        if kind != "python":
+            continue
+        parsed_trees[path] = None
+        try:
+            tree = ast.parse(raw.decode("utf-8", errors="strict"), filename=path)
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        parsed_trees[path] = tree
+        module = _db_python_module_name(path)
+        symbols, shadowed = _db_python_symbols(tree)
+        exports = _db_python_export_bindings(tree, symbols, shadowed)
+        modules.setdefault(module, []).append((path, tree, shadowed, exports))
+        paths[path] = module
+    return modules, paths, parsed_trees
+
+
+def _db_python_export_bindings(tree, symbols, shadowed):
+    exports = {
+        name: ("symbol", value)
+        for name, value in symbols.items()
+        if name not in shadowed
+    }
+    exports.update(
+        (name, ("base", None))
+        for name in _db_python_base_names(tree, symbols, shadowed)
+    )
+    exports.update(
+        (name, ("metadata", None))
+        for name in _db_python_metadata_names(tree, symbols, shadowed)
+    )
+    return exports
+
+
+def _db_python_local_reexports(unique):
+    for _ in range(min(32, len(unique) + 1)):
+        changed = False
+        for module, (_, tree, shadowed, exports) in unique.items():
+            changed |= _db_python_update_module_reexports(
+                module, tree, shadowed, exports, unique
+            )
+        if not changed:
+            break
+
+
+def _db_python_update_module_reexports(module, tree, shadowed, exports, unique):
+    changed = False
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        provider = unique.get(_db_python_import_module(module, node))
+        if provider is None:
+            continue
+        for alias in node.names:
+            local = alias.asname or alias.name
+            value = provider[3].get(alias.name)
+            if (
+                value is not None
+                and local not in shadowed
+                and exports.get(local) != value
+            ):
+                exports[local] = value
+                changed = True
+    return changed
+
+
+def _db_python_export_result(paths, unique):
+    result = {}
+    for path, module in paths.items():
+        _, tree, shadowed, _ = unique.get(module, (None, None, set(), {}))
+        if tree is None:
+            result[path] = {}
+            continue
+        result[path] = _db_python_imported_bindings(module, tree, shadowed, unique)
+    return result
+
+
+def _db_python_imported_bindings(module, tree, shadowed, unique):
+    symbols, bases, metadatas = {}, set(), set()
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        provider = unique.get(_db_python_import_module(module, node))
+        if provider is None:
+            continue
+        for alias in node.names:
+            local = alias.asname or alias.name
+            if local in shadowed:
+                continue
+            kind, value = provider[3].get(alias.name, (None, None))
+            if kind == "symbol":
+                symbols[local] = value
+            elif kind == "base":
+                bases.add(local)
+            elif kind == "metadata":
+                metadatas.add(local)
+    return {"symbols": symbols, "bases": bases, "metadatas": metadatas}
+
+
+def _db_python_project_exports(inputs, *, modules=None, paths=None):
+    if modules is None:
+        modules, paths, _ = _db_python_parse_modules(inputs)
+    unique = {name: values[0] for name, values in modules.items() if len(values) == 1}
+    _db_python_local_reexports(unique)
+    return _db_python_export_result(paths, unique)
+
+
+def _db_declaration_facts(table):
+    """Compare structure without treating source locations as schema facts."""
+    return {
+        "columns": sorted(
+            (
+                {key: value for key, value in column.items() if key != "source"}
+                for column in table["columns"]
+            ),
+            key=lambda row: row["name"],
+        ),
+        **{
+            key: sorted(table[key], key=lambda row: json.dumps(row, sort_keys=True))
+            for key in ("primary_key", "foreign_keys", "unique", "indexes")
+        },
+    }
+
+
+def _db_merge_declarations(tables, declared, path, digest, gaps):
+    for name, table in declared.items():
+        origin = {"kind": "sqlalchemy", "path": path, "sha256": digest}
+        declaration = {"source": origin, "facts": _db_declaration_facts(table)}
+        previous = tables.get(name)
+        if previous is None:
+            table["declarations"] = [declaration]
+            tables[name] = table
+            continue
+        origins = previous.setdefault(
+            "declarations",
+            [
+                {
+                    "source": {
+                        "kind": "sql",
+                        "origins": [
+                            column.get("source") for column in previous["columns"]
+                        ],
+                    },
+                    "facts": _db_declaration_facts(previous),
+                }
+            ],
+        )
+        origins.append(declaration)
+        if _db_declaration_facts(previous) != declaration["facts"]:
+            gaps.append("database_declaration_conflict:" + name)
+        previous.setdefault("models", []).extend(table.get("models", []))
+
+
+def _db_check_column_duplicates(tables, gaps):
+    for name, table in tables.items():
+        seen = set()
+        for column in table["columns"]:
+            if column["name"] in seen:
+                gaps.append(
+                    "duplicate_column_declaration:" + name + "." + column["name"]
+                )
+            seen.add(column["name"])
+
+
+def _db_validate_references(tables, queries, gaps):
+    _db_check_column_duplicates(tables, gaps)
+    _db_validate_foreign_keys(tables, gaps)
+    _db_validate_queries(tables, queries, gaps)
+
+
+def _db_validate_foreign_keys(tables, gaps):
+    for table in tables.values():
+        for foreign_key in table["foreign_keys"]:
+            target = tables.get(foreign_key["target_table"])
+            if target is None:
+                gaps.append(
+                    "foreign_key_target_unresolved:" + str(foreign_key["target_table"])
+                )
+            else:
+                target_columns = {column["name"] for column in target["columns"]}
+                if any(
+                    column not in target_columns
+                    for column in foreign_key["target_columns"]
+                ):
+                    gaps.append(
+                        "foreign_key_target_column_unresolved:"
+                        + str(foreign_key["target_table"])
+                    )
+
+
+def _db_validate_queries(tables, queries, gaps):
+    for query in queries:
+        for table in query["tables"]:
+            if table not in tables:
+                gaps.append("query_table_unresolved:" + str(table))
+        for column in query["columns"]:
+            table = tables.get(column["table"])
+            if column.get("wildcard"):
+                continue
+            if table is not None and column["name"] not in {
+                item["name"] for item in table["columns"]
+            }:
+                gaps.append(
+                    "query_column_unresolved:"
+                    + str(column["table"])
+                    + "."
+                    + str(column["name"])
+                )
+
+
+def _db_read_sql(
+    path, text, digest, sqlglot, exp, dialect, tables, operations, queries, gaps
+):
+    try:
+        statements = _db_parse_sql(sqlglot, text, dialect)
+    except sqlglot.errors.ParseError:
+        gaps.append("sql_parse_error:" + path)
+        return
+    if len(statements) > 2000:
+        gaps.append("statement_limit:" + path)
+        return
+    for index, statement in enumerate(statements, 1):
+        if statement is not None:
+            _db_read_statement(
+                statement,
+                exp,
+                path,
+                digest,
+                index,
+                dialect,
+                tables,
+                operations,
+                queries,
+                gaps,
+            )
+
+
+class _DatabaseParserLogFilter(logging.Filter):
+    def __init__(self, thread_id):
+        super().__init__()
+        self.thread_id = thread_id
+
+    def filter(self, record):
+        """Suppress parser messages only on the thread extracting private SQL."""
+        return not (
+            threading.get_ident() == self.thread_id
+            and record.name.startswith("sqlglot")
+        )
+
+
+def _db_parse_sql(sqlglot, text, dialect):
+    thread_filter = _DatabaseParserLogFilter(threading.get_ident())
+    loggers = [logging.getLogger()]
+    loggers.extend(
+        value
+        for value in list(logging.Logger.manager.loggerDict.values())
+        if isinstance(value, logging.Logger) and value.name.startswith("sqlglot")
+    )
+    handlers = {handler for logger in loggers for handler in logger.handlers}
+    if logging.lastResort is not None:
+        handlers.add(logging.lastResort)
+    with _DB_LOG_FILTER_LOCK:
+        for handler in handlers:
+            handler.addFilter(thread_filter)
+        try:
+            return sqlglot.parse(
+                text, read=dialect, error_level=sqlglot.ErrorLevel.RAISE
+            )
+        finally:
+            for handler in handlers:
+                handler.removeFilter(thread_filter)
+
+
+def _db_result(status, gaps, manifest, tables, operations, queries, dialect):
+    from hashlib import sha256
+
+    result = {
+        "status": status,
+        "coverage": {
+            "sql_files": sum(x["path"].lower().endswith(".sql") for x in manifest),
+            "python_files": sum(x["path"].lower().endswith(".py") for x in manifest),
+        },
+        "gaps": sorted(set(gaps)),
+        "dialect": dialect,
+        "parser_identity": None,
+        "source_manifest": manifest,
+        "tables": tables,
+        "operations": operations,
+        "queries": queries,
+    }
+    result["graph_digest"] = sha256(
+        json.dumps(result, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return result
+
+
+def _db_read_python(
+    path,
+    text,
+    digest,
+    snapshots,
+    dialect,
+    sqlglot,
+    exp,
+    tables,
+    queries,
+    gaps,
+    project_exports=None,
+    parsed_tree=None,
+):
+    if parsed_tree is None:
+        gaps.append("python_parse_error:" + path)
+        return
+    tree = parsed_tree
+    symbols, shadowed = _db_python_symbols(tree)
+    project_exports = project_exports or {}
+    symbols.update(
+        {
+            name: value
+            for name, value in project_exports.get("symbols", {}).items()
+            if name not in shadowed
+        }
+    )
+    _db_python_check_calls(tree, path, symbols, shadowed, gaps)
+    bases = _db_python_base_names(tree, symbols, shadowed) | {
+        name for name in project_exports.get("bases", ()) if name not in shadowed
+    }
+    metadatas = _db_python_metadata_names(tree, symbols, shadowed) | {
+        name for name in project_exports.get("metadatas", ()) if name not in shadowed
+    }
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef):
+            name = _db_python_literal(node, "__tablename__")
+            inherited = any(
+                isinstance(b, ast.Name) and b.id in bases for b in node.bases
+            )
+            if name is not None and inherited:
+                _db_python_model(
+                    node,
+                    name,
+                    path,
+                    digest,
+                    symbols,
+                    shadowed,
+                    dialect,
+                    exp,
+                    tables,
+                    gaps,
+                )
+            elif name is not None or inherited:
+                gaps.append("unproven_orm_declaration:" + path)
+        elif (
+            isinstance(node, (ast.Assign, ast.AnnAssign))
+            and isinstance(node.value, ast.Call)
+            and _db_python_call(node.value, "sqlalchemy.Table", symbols, shadowed)
+        ):
+            _db_python_core(
+                node.value, path, digest, symbols, shadowed, metadatas, tables, gaps
+            )
+    _db_python_query(
+        tree, path, digest, symbols, shadowed, dialect, sqlglot, exp, queries, gaps
+    )
+    if any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr
+        in {"create_table", "add_column", "drop_table", "create_index"}
+        for node in ast.walk(tree)
+    ):
+        gaps.append("python_migration_unimplemented:" + path)
+
+
+def _db_python_symbols(tree):
+    symbols, seen = {}, {}
+    for node in tree.body:
+        for local, qualified in _db_import_bindings(node):
+            seen[local] = seen.get(local, 0) + 1
+            symbols[local] = qualified
+    bound = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            bound.add(node.id)
+        elif isinstance(node, ast.arg):
+            bound.add(node.arg)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(node.name)
+    return symbols, (
+        bound | {name for name, count in seen.items() if count > 1}
+    ) & symbols.keys()
+
+
+def _db_python_check_calls(tree, path, symbols, shadowed, gaps):
+    supported = {
+        "sqlalchemy.Column",
+        "sqlalchemy.Table",
+        "sqlalchemy.MetaData",
+        "sqlalchemy.ForeignKey",
+        "sqlalchemy.text",
+        "sqlalchemy.create_engine",
+        "sqlalchemy.orm.mapped_column",
+        "sqlalchemy.orm.declarative_base",
+        "sqlalchemy.ext.declarative.declarative_base",
+    }
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        resolved = _db_python_resolve(node.func, symbols, shadowed)
+        if (
+            resolved
+            and resolved.startswith("sqlalchemy")
+            and resolved not in supported
+            and _db_python_type(node.func, symbols, shadowed) is None
+        ):
+            gaps.append("unsupported_sqlalchemy_call:" + path)
+
+
+def _db_import_bindings(node):
+    if isinstance(node, ast.Import):
+        return [
+            (
+                alias.asname or alias.name.split(".")[0],
+                alias.name if alias.asname else alias.name.split(".")[0],
+            )
+            for alias in node.names
+            if alias.name in {"sqlalchemy", "sqlite3", "psycopg", "psycopg2"}
+            or alias.name.startswith("sqlalchemy.")
+        ]
+    if not isinstance(node, ast.ImportFrom) or not node.module:
+        return []
+    if node.module.startswith("sqlalchemy") or node.module in {
+        "sqlite3",
+        "psycopg",
+        "psycopg2",
+    }:
+        return [
+            (alias.asname or alias.name, node.module + "." + alias.name)
+            for alias in node.names
+        ]
+    if node.module in {"typing", "typing_extensions"}:
+        return [
+            (alias.asname or alias.name, "typing.Annotated")
+            for alias in node.names
+            if alias.name == "Annotated"
+        ]
+    return []
+
+
+def _db_python_resolve(node, symbols, shadowed):
+    if isinstance(node, ast.Name):
+        return symbols.get(node.id) if node.id not in shadowed else None
+    if isinstance(node, ast.Attribute):
+        parent = _db_python_resolve(node.value, symbols, shadowed)
+        return parent + "." + node.attr if parent else None
+    return None
+
+
+def _db_python_call(node, qualified, symbols, shadowed):
+    return (
+        isinstance(node, ast.Call)
+        and _db_python_resolve(node.func, symbols, shadowed) == qualified
+    )
+
+
+def _db_python_base_names(tree, symbols, shadowed):
+    bases = set()
+    base_functions = {
+        "sqlalchemy.orm.declarative_base",
+        "sqlalchemy.ext.declarative.declarative_base",
+    }
+    for node in tree.body:
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            value = node.value
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if not isinstance(target, ast.Name):
+                    continue
+                if (
+                    isinstance(value, ast.Call)
+                    and _db_python_resolve(value.func, symbols, shadowed)
+                    in base_functions
+                ):
+                    bases.add(target.id)
+                else:
+                    bases.discard(target.id)
+        elif isinstance(node, ast.ClassDef) and any(
+            _db_python_resolve(base, symbols, shadowed)
+            == "sqlalchemy.orm.DeclarativeBase"
+            or isinstance(base, ast.Name)
+            and base.id in bases
+            for base in node.bases
+        ):
+            bases.add(node.name)
+    return bases
+
+
+def _db_python_metadata_names(tree, symbols, shadowed):
+    names = set()
+    for node in tree.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if not isinstance(target, ast.Name) or target.id in shadowed:
+                continue
+            if isinstance(node.value, ast.Call) and _db_python_call(
+                node.value, "sqlalchemy.MetaData", symbols, shadowed
+            ):
+                names.add(target.id)
+            else:
+                names.discard(target.id)
+    return names
+
+
+def _db_python_literal(node, name):
+    for child in node.body:
+        if (
+            isinstance(child, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == name
+                for target in child.targets
+            )
+            and isinstance(child.value, ast.Constant)
+            and isinstance(child.value.value, str)
+        ):
+            return child.value.value
+        if (
+            isinstance(child, ast.AnnAssign)
+            and isinstance(child.target, ast.Name)
+            and child.target.id == name
+            and isinstance(child.value, ast.Constant)
+            and isinstance(child.value.value, str)
+        ):
+            return child.value.value
+    return None
+
+
+def _db_python_type(node, symbols, shadowed):
+    types = {
+        "Integer": "INTEGER",
+        "BigInteger": "BIGINT",
+        "SmallInteger": "SMALLINT",
+        "String": "VARCHAR",
+        "Text": "TEXT",
+        "Boolean": "BOOLEAN",
+        "Date": "DATE",
+        "DateTime": "TIMESTAMP",
+        "Time": "TIME",
+        "Numeric": "NUMERIC",
+        "Float": "FLOAT",
+        "LargeBinary": "BLOB",
+        "JSON": "JSON",
+        "Uuid": "UUID",
+    }
+    resolved = _db_python_resolve(
+        node.func if isinstance(node, ast.Call) else node, symbols, shadowed
+    )
+    if resolved is None or not resolved.startswith("sqlalchemy"):
+        return None
+    return types.get(resolved.split(".")[-1])
+
+
+def _db_python_fk(node, symbols, shadowed):
+    if (
+        not _db_python_call(node, "sqlalchemy.ForeignKey", symbols, shadowed)
+        or not node.args
+    ):
+        return None
+    value = node.args[0]
+    if (
+        not isinstance(value, ast.Constant)
+        or not isinstance(value.value, str)
+        or "." not in value.value
+    ):
+        return None
+    table, column = value.value.rsplit(".", 1)
+    return {"target_table": table, "target_columns": [column]}
+
+
+def _db_python_column(value, name, symbols, shadowed, core=False):
+    if not isinstance(value, ast.Call) or not any(
+        _db_python_call(value, func, symbols, shadowed)
+        for func in ("sqlalchemy.Column", "sqlalchemy.orm.mapped_column")
+    ):
+        return None
+    explicit_name = bool(
+        value.args
+        and isinstance(value.args[0], ast.Constant)
+        and isinstance(value.args[0].value, str)
+    )
+    type_index = 1 if core or explicit_name else 0
+    if (
+        len(value.args) <= type_index
+        or _db_python_type(value.args[type_index], symbols, shadowed) is None
+    ):
+        return None
+    options = {
+        keyword.arg: keyword.value.value
+        for keyword in value.keywords
+        if keyword.arg in {"nullable", "primary_key", "unique", "index"}
+        and isinstance(keyword.value, ast.Constant)
+        and isinstance(keyword.value.value, bool)
+    }
+    foreign_keys = [
+        _db_python_fk(arg, symbols, shadowed) for arg in value.args[type_index + 1 :]
+    ]
+    column_name = value.args[0].value if explicit_name and not core else name
+    return {
+        "name": column_name,
+        "type": _db_python_type(value.args[type_index], symbols, shadowed),
+        "nullable": options.get("nullable", not options.get("primary_key", False)),
+        "primary_key": options.get("primary_key", False),
+        "unique": options.get("unique", False),
+        "index": options.get("index", False),
+        "foreign_keys": [fk for fk in foreign_keys if fk],
+    }
+
+
+def _db_python_model(
+    node, table_name, path, digest, symbols, shadowed, dialect, exp, tables, gaps
+):
+    if _db_python_duplicate_table(tables, table_name, path):
+        gaps.append("duplicate_orm_table_declaration:" + table_name)
+        return
+    table = tables.setdefault(table_name, _db_empty_table(table_name))
+    table.setdefault("models", []).append(
+        {
+            "class": node.name,
+            "source": {
+                "path": path,
+                "sha256": digest,
+                "line": node.lineno,
+                "kind": "sqlalchemy_declarative",
+            },
+        }
+    )
+    for child in node.body:
+        if (
+            isinstance(child, ast.Assign)
+            and len(child.targets) == 1
+            and isinstance(child.targets[0], ast.Name)
+        ):
+            if child.targets[0].id == "__table_args__":
+                gaps.append("unsupported_orm_table_args:" + path)
+                continue
+            column = _db_python_column(
+                child.value, child.targets[0].id, symbols, shadowed
+            )
+            if column:
+                _db_merge_python_column(table, column, path, digest, child.lineno)
+            elif isinstance(child.value, ast.Call) and child.targets[0].id not in {
+                "__tablename__",
+                "__table_args__",
+            }:
+                gaps.append("unsupported_orm_column:" + path)
+        elif isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name):
+            column = _db_python_annotated(
+                child.annotation, child.value, child.target.id, symbols, shadowed
+            )
+            if column:
+                _db_merge_python_column(table, column, path, digest, child.lineno)
+            elif child.value or _db_python_is_mapped_annotation(
+                child.annotation, symbols, shadowed
+            ):
+                gaps.append("unsupported_orm_annotation:" + path)
+    table["columns"].sort(key=lambda column: column["name"])
+    table["primary_key"] = sorted(set(table["primary_key"]))
+    table["unique"] = sorted(
+        {
+            json.dumps(item, separators=(",", ":")): item for item in table["unique"]
+        }.values(),
+        key=lambda item: json.dumps(item),
+    )
+    table["foreign_keys"].sort(key=lambda item: json.dumps(item, sort_keys=True))
+
+
+def _db_python_annotated(annotation, value, name, symbols, shadowed):
+    base = annotation
+    metadata = None
+    mapped_type = False
+    while isinstance(base, ast.Subscript):
+        resolved = _db_python_resolve(base.value, symbols, shadowed)
+        if (
+            resolved == "typing.Annotated"
+            and isinstance(base.slice, ast.Tuple)
+            and base.slice.elts
+        ):
+            metadata = next(
+                (item for item in base.slice.elts[1:] if isinstance(item, ast.Call)),
+                None,
+            )
+            base = base.slice.elts[0]
+        else:
+            mapped_type = mapped_type or resolved == "sqlalchemy.orm.Mapped"
+            base = base.slice
+    builtins = {"int": "INTEGER", "str": "VARCHAR", "bool": "BOOLEAN", "float": "FLOAT"}
+    type_name = (
+        builtins.get(base.id)
+        if isinstance(base, ast.Name)
+        else _db_python_type(base, symbols, shadowed)
+    )
+    if type_name is None:
+        return _db_python_column(value, name, symbols, shadowed)
+    column_call = metadata or (value if isinstance(value, ast.Call) else None)
+    options = (
+        {
+            keyword.arg: keyword.value.value
+            for keyword in column_call.keywords
+            if keyword.arg in {"nullable", "primary_key", "unique", "index"}
+            and isinstance(keyword.value, ast.Constant)
+            and isinstance(keyword.value.value, bool)
+        }
+        if column_call
+        else {}
+    )
+    fks = (
+        [_db_python_fk(arg, symbols, shadowed) for arg in column_call.args]
+        if column_call
+        else []
+    )
+    default_nullable = not mapped_type and not options.get("primary_key", False)
+    return {
+        "name": name,
+        "type": type_name,
+        "nullable": options.get("nullable", default_nullable),
+        "primary_key": options.get("primary_key", False),
+        "unique": options.get("unique", False),
+        "index": options.get("index", False),
+        "foreign_keys": [fk for fk in fks if fk],
+    }
+
+
+def _db_python_is_mapped_annotation(annotation, symbols, shadowed):
+    current = annotation
+    while isinstance(current, ast.Subscript):
+        if _db_python_resolve(current.value, symbols, shadowed) in {
+            "typing.Annotated",
+            "sqlalchemy.orm.Mapped",
+        }:
+            return True
+        current = current.slice
+    return False
+
+
+def _db_merge_python_column(table, column, path, digest, line):
+    name = column["name"]
+    table["columns"].append(
+        {
+            "name": name,
+            "type": column["type"],
+            "nullable": column["nullable"],
+            "source": {
+                "path": path,
+                "sha256": digest,
+                "line": line,
+                "kind": "sqlalchemy_column",
+            },
+        }
+    )
+    if column["primary_key"]:
+        table["primary_key"].append(name)
+    if column["unique"]:
+        table["unique"].append([name])
+    if column["index"]:
+        table["indexes"].append(
+            {"name": None, "unique": column["unique"], "columns": [name]}
+        )
+    for fk in column["foreign_keys"]:
+        table["foreign_keys"].append({"columns": [name], **fk})
+
+
+def _db_python_duplicate_table(tables, name, path):
+    table = tables.get(name)
+    return bool(
+        table
+        and any(
+            model["source"]["path"] == path
+            and model["source"]["kind"]
+            in {"sqlalchemy_declarative", "sqlalchemy_core_table"}
+            for model in table.get("models", [])
+        )
+    )
+
+
+def _db_python_core(call, path, digest, symbols, shadowed, metadatas, tables, gaps):
+    if (
+        not call.args
+        or not isinstance(call.args[0], ast.Constant)
+        or not isinstance(call.args[0].value, str)
+    ):
+        gaps.append("dynamic_core_table_name:" + path)
+        return
+    if (
+        len(call.args) < 2
+        or not isinstance(call.args[1], ast.Name)
+        or call.args[1].id not in metadatas
+    ):
+        gaps.append("unproven_core_metadata:" + path)
+        return
+    schema = next(
+        (
+            kw.value.value
+            for kw in call.keywords
+            if kw.arg == "schema"
+            and isinstance(kw.value, ast.Constant)
+            and isinstance(kw.value.value, str)
+        ),
+        None,
+    )
+    if any(kw.arg != "schema" for kw in call.keywords) or any(
+        kw.arg == "schema" and schema is None for kw in call.keywords
+    ):
+        gaps.append("unsupported_core_table_options:" + path)
+        return
+    name = (schema + "." if schema else "") + call.args[0].value
+    if _db_python_duplicate_table(tables, name, path):
+        gaps.append("duplicate_orm_table_declaration:" + name)
+        return
+    table = tables.setdefault(name, _db_empty_table(name))
+    table.setdefault("models", []).append(
+        {
+            "class": name,
+            "source": {
+                "path": path,
+                "sha256": digest,
+                "line": call.lineno,
+                "kind": "sqlalchemy_core_table",
+            },
+        }
+    )
+    for arg in call.args[2:]:
+        if isinstance(arg, ast.Call) and _db_python_call(
+            arg, "sqlalchemy.Column", symbols, shadowed
+        ):
+            colname = (
+                arg.args[0].value
+                if arg.args
+                and isinstance(arg.args[0], ast.Constant)
+                and isinstance(arg.args[0].value, str)
+                else None
+            )
+            parsed = (
+                _db_python_column(arg, colname, symbols, shadowed, core=True)
+                if colname
+                else None
+            )
+            if parsed:
+                _db_merge_python_column(table, parsed, path, digest, arg.lineno)
+            else:
+                gaps.append("unsupported_core_column:" + path)
+        else:
+            gaps.append("unsupported_core_element:" + path)
+    table["columns"].sort(key=lambda column: column["name"])
+
+
+def _db_python_query(
+    tree, path, digest, symbols, shadowed, dialect, sqlglot, exp, queries, gaps
+):
+    engines, connections = {}, {}
+    _db_python_scope(
+        tree.body,
+        path,
+        digest,
+        symbols,
+        shadowed,
+        dialect,
+        sqlglot,
+        exp,
+        engines,
+        connections,
+        queries,
+        gaps,
+    )
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            local_connections = {
+                key: value
+                for key, value in connections.items()
+                if key not in {arg.arg for arg in node.args.args}
+            }
+            _db_python_scope(
+                node.body,
+                path,
+                digest,
+                symbols,
+                shadowed,
+                dialect,
+                sqlglot,
+                exp,
+                dict(engines),
+                local_connections,
+                queries,
+                gaps,
+            )
+
+
+def _db_python_scope(
+    statements,
+    path,
+    digest,
+    symbols,
+    shadowed,
+    dialect,
+    sqlglot,
+    exp,
+    engines,
+    connections,
+    queries,
+    gaps,
+):
+    sql_bindings = {}
+    for statement in statements:
+        for name in _db_assignment_targets(statement):
+            _db_python_register_assignment(
+                statement, name, symbols, shadowed, engines, connections
+            )
+            value = statement.value
+            literal = _db_python_sql_literal(value, symbols, shadowed, sql_bindings)
+            if literal is not None:
+                sql_bindings[name] = (
+                    literal,
+                    _db_python_contains_text(value, symbols, shadowed, sql_bindings),
+                )
+            else:
+                sql_bindings.pop(name, None)
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        calls = [
+            node
+            for node in ast.walk(statement)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "execute"
+        ]
+        for call in calls:
+            _db_python_execute(
+                call,
+                path,
+                digest,
+                symbols,
+                shadowed,
+                dialect,
+                sqlglot,
+                exp,
+                connections,
+                sql_bindings,
+                queries,
+                gaps,
+            )
+
+
+def _db_python_register_assignment(
+    statement, name, symbols, shadowed, engines, connections
+):
+    engines.pop(name, None)
+    connections.pop(name, None)
+    value = (
+        statement.value if isinstance(statement, (ast.Assign, ast.AnnAssign)) else None
+    )
+    if not isinstance(value, ast.Call):
+        return
+    if _db_python_call(value, "sqlalchemy.create_engine", symbols, shadowed):
+        engines[name] = "sqlalchemy"
+    elif _db_python_call(value, "sqlite3.connect", symbols, shadowed):
+        connections[name] = "sqlite"
+    elif any(
+        _db_python_call(value, driver + ".connect", symbols, shadowed)
+        for driver in ("psycopg", "psycopg2")
+    ):
+        connections[name] = "psycopg"
+    elif _db_python_connection_call(value, "connect", engines):
+        connections[name] = "sqlalchemy"
+    elif _db_python_connection_call(value, "cursor", connections):
+        connections[name] = "psycopg"
+
+
+def _db_python_connection_call(value, method, known):
+    return (
+        isinstance(value.func, ast.Attribute)
+        and value.func.attr == method
+        and isinstance(value.func.value, ast.Name)
+        and value.func.value.id in known
+    )
+
+
+def _db_assignment_targets(statement):
+    if isinstance(statement, ast.Assign):
+        return [
+            target.id for target in statement.targets if isinstance(target, ast.Name)
+        ]
+    if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+        return [statement.target.id]
+    return []
+
+
+def _db_python_execute(
+    call,
+    path,
+    digest,
+    symbols,
+    shadowed,
+    dialect,
+    sqlglot,
+    exp,
+    connections,
+    literal_texts,
+    queries,
+    gaps,
+):
+    receiver = call.func.value
+    name = receiver.id if isinstance(receiver, ast.Name) else None
+    if not call.args:
+        gaps.append("python_execute_sql_missing:" + path)
+        return
+    argument = call.args[0]
+    query_text = _db_python_sql_literal(argument, symbols, shadowed, literal_texts)
+    if name is None or name not in connections:
+        gaps.append("python_execute_receiver_unproven:" + path)
+        return
+    driver = connections[name]
+    if query_text is None or (
+        driver == "sqlalchemy"
+        and not _db_python_contains_text(argument, symbols, shadowed, literal_texts)
+    ):
+        gaps.append("python_dynamic_or_unwrapped_sql:" + path)
+        return
+    try:
+        statements = _db_parse_sql(sqlglot, query_text, dialect)
+    except sqlglot.errors.ParseError:
+        gaps.append("python_sql_parse_error:" + path)
+        return
+    for index, statement in enumerate(statements, 1):
+        if isinstance(statement, (exp.Select, exp.Insert, exp.Update, exp.Delete)):
+            location = {
+                "path": path,
+                "sha256": digest,
+                "line": call.lineno,
+                "statement": index,
+                "kind": driver + "_execute",
+            }
+            _db_query(statement, exp, dialect, location, queries, gaps)
+        else:
+            gaps.append("python_executed_non_query_unsupported:" + path)
+
+
+def _db_python_sql_literal(node, symbols, shadowed, bindings=None):
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name) and bindings and node.id in bindings:
+        return bindings[node.id][0]
+    if (
+        isinstance(node, ast.Call)
+        and _db_python_is_text_call(node, symbols, shadowed)
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    ):
+        return node.args[0].value
+    return None
+
+
+def _db_python_is_text_call(node, symbols, shadowed):
+    return _db_python_call(
+        node, "sqlalchemy.text", symbols, shadowed
+    ) or _db_python_call(node, "sqlalchemy.sql.text", symbols, shadowed)
+
+
+def _db_python_contains_text(node, symbols, shadowed, bindings=None):
+    if isinstance(node, ast.Name) and bindings and node.id in bindings:
+        return bindings[node.id][1]
+    return any(
+        isinstance(child, ast.Call)
+        and _db_python_is_text_call(child, symbols, shadowed)
+        for child in ast.walk(node)
+    )
+
+
+def _db_table_name(table, dialect):
+    if table is None:
+        return None
+    unaliased = table.copy()
+    unaliased.set("alias", None)
+    return unaliased.sql(dialect=dialect, normalize=False, pretty=False)
+
+
+def _db_ident(identifier, dialect):
+    return identifier.sql(dialect=dialect, normalize=False, pretty=False)
+
+
+def _db_read_statement(
+    statement, exp, path, digest, index, dialect, tables, operations, queries, gaps
+):
+    loc = {"path": path, "sha256": digest, "statement": index}
+    if isinstance(statement, exp.Command):
+        gaps.append("sql_command_fallback:" + path)
+    elif isinstance(statement, exp.Create):
+        if statement.kind == "INDEX" and isinstance(statement.this, exp.Index):
+            table_name = _db_table_name(statement.this.args.get("table"), dialect)
+            if table_name not in tables:
+                gaps.append("index_table_unresolved:" + str(table_name))
+            else:
+                tables[table_name]["indexes"].append(
+                    {
+                        "name": _db_ident(statement.this.this, dialect),
+                        "unique": bool(statement.this.args.get("unique")),
+                        "columns": sorted(
+                            _db_ident(c.this, dialect)
+                            for c in statement.this.find_all(exp.Column)
+                        ),
+                    }
+                )
+            operations.append(
+                {"op": "create_index", "table": table_name, "source": loc}
+            )
+        elif statement.kind == "TABLE" and isinstance(statement.this, exp.Schema):
+            _db_create_table(statement, exp, dialect, loc, tables, operations, gaps)
+        else:
+            gaps.append("unsupported_create:" + path)
+    elif isinstance(statement, exp.Alter):
+        _db_alter(statement, exp, dialect, loc, tables, operations, gaps)
+    elif isinstance(statement, exp.Drop):
+        _db_drop_statement(statement, exp, dialect, loc, tables, operations, gaps)
+    elif isinstance(statement, (exp.Select, exp.Insert, exp.Update, exp.Delete)):
+        _db_query(statement, exp, dialect, loc, queries, gaps)
+    else:
+        gaps.append("unsupported_statement:" + path)
+
+
+def _db_empty_table(name):
+    return {
+        "name": name,
+        "columns": [],
+        "primary_key": [],
+        "foreign_keys": [],
+        "unique": [],
+        "indexes": [],
+    }
+
+
+def _db_valid_create_items(table_node, items, exp, path, gaps):
+    if (
+        not isinstance(table_node, exp.Table)
+        or not isinstance(table_node.this, exp.Identifier)
+        or not table_node.this.name.strip()
+    ):
+        gaps.append("malformed_create_table:" + path)
+        return False
+    for item in items:
+        if isinstance(item, exp.ColumnDef) and (
+            not isinstance(item.this, exp.Identifier) or not item.this.name.strip()
+        ):
+            gaps.append("malformed_column_name:" + path)
+            return False
+        if isinstance(item, exp.Constraint) and not item.expressions:
+            gaps.append("malformed_table_constraint:" + path)
+            return False
+        if not isinstance(item, (exp.ColumnDef, exp.Constraint)):
+            gaps.append("unsupported_table_element:" + path)
+            return False
+    return True
+
+
+def _db_create_table(statement, exp, dialect, loc, tables, operations, gaps):
+    table_node = statement.this.this
+    items = statement.this.expressions
+    if not _db_valid_create_items(table_node, items, exp, loc["path"], gaps):
+        return
+    table_name = _db_table_name(table_node, dialect)
+    if table_name in tables:
+        if statement.args.get("exists"):
+            operations.append(
+                {"op": "create_table_if_not_exists", "table": table_name, "source": loc}
+            )
+            return
+        gaps.append("duplicate_create_table:" + loc["path"])
+        return
+    table = tables.setdefault(table_name, _db_empty_table(table_name))
+    for item in items:
+        if isinstance(item, exp.ColumnDef):
+            _db_column_fact(item, exp, dialect, table, loc, gaps)
+        elif isinstance(item, exp.Constraint):
+            for constraint in item.expressions:
+                _db_constraint_fact(constraint, exp, dialect, table, loc, gaps)
+    table["primary_key"] = sorted(set(table["primary_key"]))
+    table["unique"] = sorted(
+        {json.dumps(x, separators=(",", ":")): x for x in table["unique"]}.values(),
+        key=lambda x: json.dumps(x),
+    )
+    table["foreign_keys"].sort(key=lambda x: json.dumps(x, sort_keys=True))
+    table["columns"].sort(key=lambda x: x["name"])
+    operations.append({"op": "create_table", "table": table_name, "source": loc})
+
+
+def _db_column_fact(column, exp, dialect, table, loc, gaps):
+    if not isinstance(column.this, exp.Identifier) or not column.this.name.strip():
+        gaps.append("malformed_column_name:" + loc["path"])
+        return
+    name = _db_ident(column.this, dialect)
+    constraints = [c.args.get("kind") for c in column.constraints]
+    for constraint in constraints:
+        if isinstance(constraint, exp.PrimaryKeyColumnConstraint):
+            table["primary_key"].append(name)
+        elif isinstance(constraint, exp.UniqueColumnConstraint):
+            table["unique"].append([name])
+        elif isinstance(constraint, exp.Reference):
+            ref = constraint.this
+            table["foreign_keys"].append(
+                {
+                    "columns": [name],
+                    "target_table": _db_table_name(ref.this, dialect),
+                    "target_columns": [_db_ident(x, dialect) for x in ref.expressions],
+                }
+            )
+        elif not isinstance(
+            constraint, (exp.NotNullColumnConstraint, exp.DefaultColumnConstraint)
+        ):
+            gaps.append("unsupported_column_constraint:" + loc["path"])
+    table["columns"].append(
+        {
+            "name": name,
+            "type": column.args["kind"].sql(dialect=dialect)
+            if column.args.get("kind")
+            else None,
+            "nullable": not any(
+                isinstance(
+                    c, (exp.NotNullColumnConstraint, exp.PrimaryKeyColumnConstraint)
+                )
+                for c in constraints
+            ),
+            "source": loc,
+        }
+    )
+
+
+def _db_constraint_fact(constraint, exp, dialect, table, loc, gaps):
+    if isinstance(constraint, exp.PrimaryKey):
+        table["primary_key"].extend(
+            _db_ident(x, dialect) for x in constraint.expressions
+        )
+    elif isinstance(constraint, exp.UniqueColumnConstraint):
+        schema = constraint.this
+        table["unique"].append(
+            [_db_ident(x, dialect) for x in schema.expressions]
+            if isinstance(schema, exp.Schema)
+            else []
+        )
+    elif isinstance(constraint, exp.ForeignKey):
+        ref = constraint.args.get("reference")
+        table["foreign_keys"].append(
+            {
+                "columns": [_db_ident(x, dialect) for x in constraint.expressions],
+                "target_table": _db_table_name(ref.this, dialect) if ref else None,
+                "target_columns": [_db_ident(x, dialect) for x in ref.expressions]
+                if ref
+                else [],
+            }
+        )
+    else:
+        gaps.append("unsupported_table_constraint:" + loc["path"])
+
+
+def _db_alter(statement, exp, dialect, loc, tables, operations, gaps):
+    name = _db_table_name(statement.this, dialect)
+    table = tables.get(name)
+    actions = statement.args.get("actions") or []
+    if table is None or not actions:
+        gaps.append("alter_target_unresolved:" + loc["path"])
+        return
+    for action in actions:
+        _db_alter_action(
+            action, exp, dialect, loc, name, table, tables, operations, gaps
+        )
+
+
+def _db_alter_action(action, exp, dialect, loc, name, table, tables, operations, gaps):
+    if isinstance(action, exp.ColumnDef):
+        if not isinstance(action.this, exp.Identifier) or not action.this.name.strip():
+            gaps.append("malformed_alter_column:" + loc["path"])
+            return
+        column_name = _db_ident(action.this, dialect)
+        if any(column["name"] == column_name for column in table["columns"]):
+            gaps.append("alter_add_column_duplicate:" + loc["path"])
+            return
+        _db_column_fact(action, exp, dialect, table, loc, gaps)
+        operations.append(
+            {"op": "add_column", "table": name, "column": column_name, "source": loc}
+        )
+    elif isinstance(action, exp.Drop) and action.args.get("kind") == "COLUMN":
+        for column in action.args.get("tables") or []:
+            column_name = _db_ident(column.this, dialect)
+            if not any(item["name"] == column_name for item in table["columns"]):
+                gaps.append("alter_drop_column_unresolved:" + loc["path"])
+                continue
+            _db_remove_column(table, column_name, tables)
+            operations.append(
+                {
+                    "op": "drop_column",
+                    "table": name,
+                    "column": column_name,
+                    "source": loc,
+                }
+            )
+    elif isinstance(action, exp.RenameColumn):
+        old = _db_ident(action.this.this, dialect)
+        new = _db_ident(action.args["to"].this, dialect)
+        names = {column["name"] for column in table["columns"]}
+        if old not in names or new in names:
+            gaps.append("rename_column_target_invalid:" + loc["path"])
+            return
+        _db_rename_column(table, old, new, name, tables)
+        operations.append(
+            {
+                "op": "rename_column",
+                "table": name,
+                "from": old,
+                "to": new,
+                "source": loc,
+            }
+        )
+    elif isinstance(action, exp.AlterRename) and isinstance(action.this, exp.Table):
+        _db_rename_table(
+            name, _db_table_name(action.this, dialect), tables, operations, loc, gaps
+        )
+    else:
+        gaps.append("alter_semantics_incomplete:" + loc["path"])
+
+
+def _db_remove_column(table, name, tables):
+    table["columns"] = [column for column in table["columns"] if column["name"] != name]
+    table["primary_key"] = [column for column in table["primary_key"] if column != name]
+    table["unique"] = [columns for columns in table["unique"] if name not in columns]
+    table["foreign_keys"] = [
+        fk for fk in table["foreign_keys"] if name not in fk["columns"]
+    ]
+    table["indexes"] = [
+        index for index in table["indexes"] if name not in index["columns"]
+    ]
+
+
+def _db_rename_column(table, old, new, name, tables):
+    for column in table["columns"]:
+        if column["name"] == old:
+            column["name"] = new
+    table["primary_key"] = [
+        new if column == old else column for column in table["primary_key"]
+    ]
+    table["unique"] = [
+        [new if column == old else column for column in cols]
+        for cols in table["unique"]
+    ]
+    for fk in table["foreign_keys"]:
+        fk["columns"] = [new if column == old else column for column in fk["columns"]]
+    for index in table["indexes"]:
+        index["columns"] = [
+            new if column == old else column for column in index["columns"]
+        ]
+    for owner in tables.values():
+        for fk in owner["foreign_keys"]:
+            if fk["target_table"] == name:
+                fk["target_columns"] = [
+                    new if column == old else column for column in fk["target_columns"]
+                ]
+
+
+def _db_rename_table(old, new, tables, operations, loc, gaps):
+    if old not in tables or new in tables:
+        gaps.append("rename_table_target_invalid:" + loc["path"])
+        return
+    table = tables.pop(old)
+    table["name"] = new
+    tables[new] = table
+    for owner in tables.values():
+        for fk in owner["foreign_keys"]:
+            if fk["target_table"] == old:
+                fk["target_table"] = new
+    operations.append({"op": "rename_table", "from": old, "to": new, "source": loc})
+
+
+def _db_drop_statement(statement, exp, dialect, loc, tables, operations, gaps):
+    kind = statement.args.get("kind")
+    targets = statement.args.get("tables") or []
+    if kind == "TABLE":
+        for target in targets:
+            name = _db_table_name(target, dialect)
+            if name not in tables:
+                if not statement.args.get("exists"):
+                    gaps.append("drop_table_target_unresolved:" + loc["path"])
+            else:
+                del tables[name]
+            operations.append({"op": "drop_table", "table": name, "source": loc})
+    elif kind == "INDEX":
+        target = _db_ident(targets[0], dialect) if targets else None
+        found = False
+        for table in tables.values():
+            before = len(table["indexes"])
+            table["indexes"] = [
+                index for index in table["indexes"] if index["name"] != target
+            ]
+            found = found or len(table["indexes"]) != before
+        if not found:
+            gaps.append("drop_index_target_unresolved:" + loc["path"])
+        operations.append({"op": "drop_index", "index": target, "source": loc})
+    else:
+        gaps.append("unsupported_drop:" + loc["path"])
+
+
+def _db_query_wildcards(statement, exp, dialect, alias_map, path, gaps):
+    columns = []
+    for projection in statement.args.get("expressions") or []:
+        target = None
+        if isinstance(projection, exp.Star):
+            columns.extend(
+                {"table": table, "name": "*", "wildcard": True}
+                for table in sorted(set(alias_map.values()))
+            )
+        elif isinstance(projection, exp.Column) and isinstance(
+            projection.this, exp.Star
+        ):
+            target = alias_map.get(projection.table)
+            if target is None:
+                gaps.append("unresolved_query_qualifier:" + path)
+            else:
+                columns.append({"table": target, "name": "*", "wildcard": True})
+    return columns
+
+
+def _db_query(statement, exp, dialect, loc, queries, gaps):
+    ctes = {cte.alias_or_name for cte in statement.find_all(exp.CTE)}
+    nested = any(select is not statement for select in statement.find_all(exp.Select))
+    if ctes or nested:
+        gaps.append(
+            ("unsupported_cte_scope:" if ctes else "unsupported_nested_query_scope:")
+            + loc["path"]
+        )
+        queries.append(
+            {
+                "operation": type(statement).__name__.lower(),
+                "tables": [],
+                "columns": [],
+                "source": loc,
+            }
+        )
+        return
+    alias_map = {}
+    for table in statement.find_all(exp.Table):
+        if table.name and table.alias_or_name not in ctes:
+            relation = _db_table_name(table, dialect)
+            if (
+                table.alias_or_name in alias_map
+                and alias_map[table.alias_or_name] != relation
+            ):
+                gaps.append("ambiguous_query_alias:" + loc["path"])
+                queries.append(
+                    {
+                        "operation": type(statement).__name__.lower(),
+                        "tables": [],
+                        "columns": [],
+                        "source": loc,
+                    }
+                )
+                return
+            alias_map[table.alias_or_name] = relation
+    tables = sorted(set(alias_map.values()))
+    columns = _db_query_wildcards(statement, exp, dialect, alias_map, loc["path"], gaps)
+    for column in statement.find_all(exp.Column):
+        if not column.name or isinstance(column.this, exp.Star):
+            continue
+        if column.table:
+            target = alias_map.get(column.table)
+            if target is None:
+                gaps.append("unresolved_query_qualifier:" + loc["path"])
+                continue
+        elif len(tables) == 1:
+            target = tables[0]
+        else:
+            gaps.append("unresolved_query_column_scope:" + loc["path"])
+            continue
+        columns.append({"table": target, "name": _db_ident(column.this, dialect)})
+    queries.append(
+        {
+            "operation": type(statement).__name__.lower(),
+            "tables": tables,
+            "columns": sorted(columns, key=lambda x: (x["table"], x["name"])),
+            "source": loc,
+        }
+    )

@@ -14,6 +14,7 @@ import os
 import re
 import stat
 import tempfile
+import time
 
 from .loop_passport import (
     DESTRUCTIVE_ACTIONS,
@@ -35,6 +36,8 @@ PR_DRAFT_SCHEMA = "factory.pr_draft.v1"
 OUTCOME_SCHEMA = "factory.outcome.v1"
 MISSION_COMPLETION_SCHEMA = "factory.mission.completion.v1"
 MISSION_VALIDATION_INPUT_SCHEMA = "factory.mission.validation-input.v1"
+DAILY_VERIFICATION_SCHEMA = "factory.mission.daily-verification.v1"
+_DAILY_VERIFICATION_UNSET = object()
 MISSION_DECISION_SCHEMA = "factory.mission.decision.v1"
 CANDIDATE_BINDING_SCHEMA = "factory.mission.candidate-binding.v1"
 TASK_PACKET_SCHEMA = "factory.small_agent_task_packet.v1"
@@ -44,6 +47,9 @@ MAX_SLICE_REQUIREMENTS = 5
 MAX_NOTES = 4000
 MAX_COMPLETION_CRITERIA = 200
 MAX_COMPLETION_EVIDENCE = 100
+MAX_DAILY_SOURCE_BYTES = 1_000_000
+MAX_DAILY_TOTAL_SOURCE_BYTES = 16_000_000
+MAX_DAILY_RECEIPT_BYTES = 1_000_000
 EXECUTORS = frozenset({"manual", "codex", "copilot", "claude", "custom"})
 EVIDENCE_CLASSES = frozenset({"measured", "observed", "modeled", "unknown"})
 MISSION_DECISIONS = frozenset({"approved_execution", "deferred", "rejected"})
@@ -2644,6 +2650,2090 @@ def _validated_completion_results(
     return normalized, _evidence(Path(root), unique)
 
 
+def _daily_verification_summary(
+    contract: Any,
+    mission: dict[str, Any],
+    root: Path,
+    *,
+    mission_path: Path | None = None,
+) -> tuple[dict[str, Any], list[Path]]:
+    if contract is _DAILY_VERIFICATION_UNSET:
+        return (
+            {
+                "schema": DAILY_VERIFICATION_SCHEMA,
+                "status": "LEGACY_CLAIMED",
+                "complete": False,
+                "execution_verified": False,
+                "attestation_verified": False,
+                "command_pair_receipts_verified": False,
+                "behavioral_verification": "unverified",
+                "gaps": ["daily_verification_contract_missing"],
+                "criteria": [],
+            },
+            [],
+        )
+
+    gaps: list[str] = []
+    evidence_paths: list[Path] = []
+    if not isinstance(contract, dict):
+        return _daily_verification_incomplete("contract_malformed"), []
+    allowed = {
+        "schema",
+        "candidate_sha256",
+        "source_manifest",
+        "scope_closure",
+        "criteria",
+    }
+    if set(contract) != allowed or contract.get("schema") != DAILY_VERIFICATION_SCHEMA:
+        gaps.append("contract_malformed")
+
+    source_rows, source_digest, source_paths = _daily_source_manifest(
+        contract.get("source_manifest"), root, gaps
+    )
+    candidate_claim = contract.get("candidate_sha256")
+    if candidate_claim != source_digest:
+        gaps.append("candidate_binding_mismatch")
+    if contract.get("scope_closure") != "declared_only":
+        gaps.append("candidate_scope_closure_claim_unverified")
+    oracle_cache: dict[tuple[str, str, str, str], dict[str, Any] | None] = {}
+
+    expected_criteria = {
+        item["id"] for item in mission["completion_contract"]["criteria"]
+    }
+    criteria_rows, case_paths = _daily_criteria(
+        contract.get("criteria"),
+        expected_criteria,
+        source_rows,
+        root,
+        gaps,
+        oracle_cache,
+        mission,
+        candidate_claim,
+        mission_path,
+    )
+    receipt_gaps = (
+        "execution_evidence_",
+        "execution_infrastructure_",
+        "execution_receipt_",
+        "execution_artifact_",
+        "execution_candidate_source_",
+    )
+    receipts_verified = (
+        bool(criteria_rows)
+        and not any(gap.startswith(receipt_gaps) for gap in gaps)
+        and all(
+            case["disposition"] == "command_pair_observed"
+            for criterion in criteria_rows
+            for case in criterion["cases"]
+        )
+    )
+    all_cases = [case for criterion in criteria_rows for case in criterion["cases"]]
+    if not _daily_oracle_case_ids_unique(all_cases):
+        gaps.append("execution_oracle_case_reused")
+    execution_verified = False
+    attestation_verified = bool(all_cases) and all(
+        case["disposition"] == "signer_attested_baseline_and_mutant"
+        for case in all_cases
+    )
+    local_execution_observed = bool(all_cases) and all(
+        case["disposition"]
+        in {
+            "local_mutation_target_observed",
+            "local_mutation_control_observed",
+        }
+        for case in all_cases
+    )
+    has_local_execution = any(
+        case["disposition"]
+        in {
+            "local_mutation_target_observed",
+            "local_mutation_control_observed",
+        }
+        for case in all_cases
+    )
+    has_signer_claims = any(
+        case["disposition"] == "signer_attested_baseline_and_mutant"
+        for case in all_cases
+    )
+    if not local_execution_observed and "behavioral_assertion_unverified" not in gaps:
+        gaps.append("behavioral_assertion_unverified")
+    complete = not gaps
+    evidence_paths.extend(source_paths)
+    evidence_paths.extend(case_paths)
+    return (
+        {
+            "schema": DAILY_VERIFICATION_SCHEMA,
+            "status": "COMPLETE" if complete else "INCOMPLETE",
+            "complete": complete,
+            "execution_verified": execution_verified,
+            "attestation_verified": attestation_verified,
+            "command_pair_receipts_verified": receipts_verified,
+            "local_execution_observed": local_execution_observed,
+            "local_execution_trust_boundary": (
+                "Explicit operator-invoked local subprocess observations; persisted hashes prove currentness and binding only, not unforgeable host origin, independent attestation, or application correctness."
+            )
+            if local_execution_observed
+            else None,
+            "behavioral_verification": "local_assertions_observed"
+            if local_execution_observed
+            else "unverified",
+            "attestation_claim_boundary": (
+                "Signature verification validates signer claims only; it does not establish "
+                "independent test execution, mutation application, or oracle accuracy."
+            )
+            if attestation_verified
+            else None,
+            "candidate_sha256_claim": candidate_claim,
+            "candidate_sha256": source_digest,
+            "scope_closure_claim": contract.get("scope_closure"),
+            "scope_closure": "declared_verified_scope",
+            "scope_limitations": [
+                "Repository-wide changed-file closure is not established.",
+                *(
+                    [
+                        "Local execution was observed under the writable-host assumption; it is not independently attested."
+                    ]
+                    if has_local_execution
+                    else []
+                ),
+                *(
+                    [
+                        "The execution environment is signer-claimed, not independently remeasured at completion."
+                    ]
+                    if has_signer_claims
+                    else []
+                ),
+                *(
+                    [
+                        "The execution environment was not independently remeasured at completion."
+                    ]
+                    if not has_local_execution and not has_signer_claims
+                    else []
+                ),
+            ],
+            "source_manifest": source_rows,
+            "criteria": criteria_rows,
+            "gaps": sorted(set(gaps)),
+        },
+        evidence_paths,
+    )
+
+
+def _daily_oracle_case_ids_unique(cases: list[dict[str, Any]]) -> bool:
+    identities = [
+        (
+            case.get("execution_receipt_sha256"),
+            case.get("oracle_test_path"),
+            case.get("oracle_test_line"),
+            case.get("oracle_test_symbol"),
+            case.get("oracle_case_id"),
+        )
+        for case in cases
+        if case.get("disposition") == "signer_attested_baseline_and_mutant"
+    ]
+    return len(identities) == len(set(identities))
+
+
+def _daily_verification_incomplete(gap: str) -> dict[str, Any]:
+    return {
+        "schema": DAILY_VERIFICATION_SCHEMA,
+        "status": "INCOMPLETE",
+        "complete": False,
+        "execution_verified": False,
+        "attestation_verified": False,
+        "command_pair_receipts_verified": False,
+        "local_execution_observed": False,
+        "local_execution_trust_boundary": None,
+        "behavioral_verification": "unverified",
+        "gaps": [gap],
+        "criteria": [],
+    }
+
+
+def _daily_source_manifest(
+    value: Any, root: Path, gaps: list[str]
+) -> tuple[list[dict[str, str]], str | None, list[Path]]:
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_COMPLETION_EVIDENCE:
+        gaps.append("candidate_source_manifest_missing_or_unbounded")
+        return [], None, []
+    rows, paths = [], []
+    total_bytes = 0
+    seen = set()
+    for item in value:
+        identity = _daily_source_identity(item, gaps)
+        if identity is None:
+            continue
+        path_text, digest = identity
+        resolved = _daily_source_path(path_text, root, seen, gaps)
+        if resolved is None:
+            continue
+        normalized, path = resolved
+        row = {"path": normalized, "sha256": digest}
+        rows.append(row)
+        seen.add(normalized)
+        total_bytes = _check_daily_source_file(
+            path, normalized, digest, total_bytes, paths, gaps
+        )
+    rows.sort(key=lambda row: row["path"])
+    if len(rows) != len(value):
+        return rows, None, paths
+    return rows, _sha_bytes(_canonical(rows)), paths
+
+
+def capture_mission_local_mutation(
+    mission_path: Path,
+    daily_contract_path: Path,
+    root: Path,
+    criterion_id: str,
+    target_case_id: str,
+    control_case_id: str,
+    target_selector: str,
+    target_line: int,
+    control_selector: str,
+    control_line: int,
+    production_path: str,
+    production_symbol: str,
+    before_text: str,
+    after_text: str,
+    evidence_path: str,
+    *,
+    timeout_seconds: int = 60,
+    python_executable: Path | None = None,
+) -> dict[str, Any]:
+    """Explicitly run and bind one local mutation case and an unaffected control."""
+    workspace = Path(root).resolve(strict=True)
+    mission_file = _local_capture_input_path(mission_path, workspace)
+    contract_file = _local_capture_input_path(daily_contract_path, workspace)
+    mission = _load_mission(mission_file)
+    if not verify_mission(mission_file)["valid"]:
+        raise ProductMissionError("MISSION_INPUT_DRIFT", "mission is not current")
+    contract, source_map, candidate_sha = _local_capture_contract(
+        _load_json(contract_file, DAILY_VERIFICATION_SCHEMA), mission, workspace
+    )
+    contract_sha_before = _sha_path(contract_file)
+    mission_sha_before = _sha_path(mission_file)
+    target_case = _mission_capture_case(
+        contract, criterion_id, target_case_id, "positive", source_map
+    )
+    control_case = _mission_capture_case(
+        contract, criterion_id, control_case_id, "negative", source_map
+    )
+    _mission_capture_inputs(
+        target_case,
+        control_case,
+        target_selector,
+        control_selector,
+        production_path,
+        source_map,
+    )
+    evidence_dir = _local_capture_output_path(evidence_path, workspace)
+    evidence_dir.mkdir(parents=True, exist_ok=False)
+    contract_snapshot = evidence_dir / "daily-contract.before.json"
+    contract_snapshot.write_bytes(contract_file.read_bytes())
+    contract_snapshot_sha = _sha_path(contract_snapshot)
+    from .runtime_audit_runner import capture_local_production_mutation
+
+    if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 300:
+        raise ProductMissionError(
+            "LOCAL_CAPTURE_TIMEOUT", "timeout must be between 1 and 300 seconds"
+        )
+    deadline = time.monotonic() + 4 * timeout_seconds
+    target_timeout = timeout_seconds
+
+    target = capture_local_production_mutation(
+        workspace,
+        target_selector,
+        target_line,
+        production_path,
+        production_symbol,
+        before_text,
+        after_text,
+        str(evidence_dir / "target"),
+        timeout_seconds=target_timeout,
+        python_executable=python_executable,
+    )
+    remaining = deadline - time.monotonic()
+    if remaining < 2:
+        raise ProductMissionError(
+            "LOCAL_CAPTURE_TIMEOUT", "overall target/control capture budget expired"
+        )
+    control_timeout = min(timeout_seconds, int(remaining // 2))
+    control = capture_local_production_mutation(
+        workspace,
+        control_selector,
+        control_line,
+        production_path,
+        production_symbol,
+        before_text,
+        after_text,
+        str(evidence_dir / "control"),
+        timeout_seconds=control_timeout,
+        python_executable=python_executable,
+    )
+    record_path = evidence_dir / "mission-case.json"
+    receipt = _mission_capture_receipt(
+        mission,
+        contract_file,
+        contract,
+        candidate_sha,
+        criterion_id,
+        target_case,
+        control_case,
+        target,
+        control,
+        record_path,
+        workspace,
+        mission_file,
+        mission_sha_before,
+        contract_sha_before,
+        contract_snapshot,
+        contract_snapshot_sha,
+        4 * timeout_seconds,
+        target_timeout,
+        control_timeout,
+    )
+    if (
+        _sha_path(mission_file) != mission_sha_before
+        or _sha_path(contract_file) != contract_sha_before
+    ):
+        raise ProductMissionError(
+            "DAILY_VERIFICATION_DRIFT", "inputs changed during capture"
+        )
+    _atomic_json(record_path, receipt)
+    updated = _mission_capture_contract_evidence(
+        contract, target_case_id, control_case_id, record_path, workspace
+    )
+    _atomic_json(contract_file, updated, force=True)
+    return {**receipt, "path": str(record_path.resolve())}
+
+
+def _local_capture_input_path(value: Path, root: Path) -> Path:
+    path = Path(value)
+    path = path if path.is_absolute() else root / path
+    try:
+        lexical = Path(os.path.abspath(path))
+        lexical.relative_to(root)
+        from .runtime_audit_process import regular_target_within
+
+        if not regular_target_within(root, lexical):
+            raise ValueError("input must be a regular workspace file")
+        return lexical.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ProductMissionError(
+            "DAILY_VERIFICATION_DRIFT", "input is outside the workspace or unreadable"
+        ) from exc
+
+
+def _local_capture_output_path(value: str, root: Path) -> Path:
+    from .runtime_audit_process import new_output_path_inside
+
+    path = Path(value)
+    path = path if path.is_absolute() else root / path
+    try:
+        new_output_path_inside(root, path)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ProductMissionError(
+            "DAILY_VERIFICATION_DRIFT", "evidence output must be new and contained"
+        ) from exc
+    return path
+
+
+def _local_capture_contract(
+    contract: dict[str, Any], mission: dict[str, Any], root: Path
+) -> tuple[dict[str, Any], dict[str, str], str]:
+    if (
+        set(contract)
+        != {
+            "schema",
+            "candidate_sha256",
+            "source_manifest",
+            "scope_closure",
+            "criteria",
+        }
+        or contract.get("schema") != DAILY_VERIFICATION_SCHEMA
+    ):
+        raise ProductMissionError(
+            "DAILY_VERIFICATION_DRIFT", "daily contract schema is invalid"
+        )
+    gaps: list[str] = []
+    rows, candidate_sha, _ = _daily_source_manifest(
+        contract.get("source_manifest"), root, gaps
+    )
+    source_map = {item["path"]: item["sha256"] for item in rows}
+    expected = {item["id"] for item in mission["completion_contract"]["criteria"]}
+    criteria = contract.get("criteria")
+    actual = _local_capture_criterion_ids(criteria)
+    case_ids = _local_capture_case_ids(criteria, source_map)
+    if (
+        contract.get("candidate_sha256") != candidate_sha
+        or contract.get("scope_closure") != "declared_only"
+        or actual != expected
+        or len(case_ids) != len(set(case_ids))
+        or gaps
+    ):
+        raise ProductMissionError(
+            "DAILY_VERIFICATION_DRIFT", "daily contract is not current and complete"
+        )
+    return contract, {item["path"]: item["sha256"] for item in rows}, candidate_sha
+
+
+def _local_capture_criterion_ids(criteria):
+    if not isinstance(criteria, list):
+        return set()
+    if any(
+        not isinstance(item, dict) or set(item) != {"criterion_id", "cases"}
+        for item in criteria
+    ):
+        return set()
+    return {item["criterion_id"] for item in criteria}
+
+
+def _local_capture_case_ids(criteria, source_map):
+    if not isinstance(criteria, list):
+        return []
+    identities = []
+    for item in criteria:
+        cases = item.get("cases") if isinstance(item, dict) else None
+        if not isinstance(cases, list) or not 2 <= len(cases) <= 8:
+            return []
+        polarities = set()
+        for case in cases:
+            if not _local_capture_case_well_formed(case, source_map):
+                return []
+            polarities.add(case["polarity"])
+            identities.append(case["case_id"])
+        if polarities != {"positive", "negative"}:
+            return []
+    return identities
+
+
+def _local_capture_case_well_formed(case, source_map):
+    fields = {
+        "case_id",
+        "polarity",
+        "input_paths",
+        "input_sha256",
+        "expected_outcome",
+        "observed_outcome",
+        "evidence",
+    }
+    if not isinstance(case, dict) or set(case) != fields:
+        return False
+    paths = case.get("input_paths")
+    if not isinstance(case.get("case_id"), str) or not case["case_id"].strip():
+        return False
+    if case.get("polarity") not in {"positive", "negative"}:
+        return False
+    if (
+        not isinstance(paths, list)
+        or not paths
+        or any(path not in source_map for path in paths)
+    ):
+        return False
+    if len(paths) != len(set(paths)):
+        return False
+    rows = [{"path": path, "sha256": source_map[path]} for path in paths]
+    if case.get("input_sha256") != _sha_bytes(_canonical(rows)):
+        return False
+    evidence = case.get("evidence")
+    return evidence in ({}, None) or (
+        isinstance(evidence, dict)
+        and set(evidence) == {"kind", "path", "sha256", "role"}
+        and evidence.get("kind") == "local_production_mutation"
+        and evidence.get("role") in {"target", "control"}
+    )
+
+
+def _mission_capture_case(contract, criterion_id, case_id, polarity, source_map):
+    criteria = {
+        item.get("criterion_id"): item
+        for item in contract["criteria"]
+        if isinstance(item, dict)
+    }
+    criterion = criteria.get(criterion_id)
+    cases = criterion.get("cases") if isinstance(criterion, dict) else None
+    matches = (
+        [
+            item
+            for item in cases
+            if isinstance(item, dict) and item.get("case_id") == case_id
+        ]
+        if isinstance(cases, list)
+        else []
+    )
+    if len(matches) != 1 or matches[0].get("polarity") != polarity:
+        raise ProductMissionError(
+            "DAILY_VERIFICATION_DRIFT", "case identity or polarity is not declared"
+        )
+    case = matches[0]
+    expected_outcome = (
+        "baseline_assertion_pass_mutant_assertion_fail"
+        if polarity == "positive"
+        else "baseline_assertion_pass_mutant_assertion_pass"
+    )
+    paths = case.get("input_paths")
+    input_rows = (
+        [
+            {"path": path, "sha256": source_map[path]}
+            for path in paths
+            if isinstance(paths, list) and path in source_map
+        ]
+        if isinstance(paths, list)
+        else []
+    )
+    if (
+        not input_rows
+        or len(input_rows) != len(paths)
+        or case.get("input_sha256") != _sha_bytes(_canonical(input_rows))
+        or case.get("expected_outcome") != expected_outcome
+        or case.get("observed_outcome") != "unknown"
+        or case.get("evidence") not in ({}, None)
+    ):
+        raise ProductMissionError(
+            "DAILY_VERIFICATION_DRIFT", "case inputs are stale or already captured"
+        )
+    return case
+
+
+def _mission_capture_inputs(
+    target, control, target_selector, control_selector, production_path, source_map
+):
+    if (
+        target_selector == control_selector
+        or not isinstance(production_path, str)
+        or production_path not in source_map
+        or target_selector.split("::", 1)[0] not in target.get("input_paths", [])
+        or control_selector.split("::", 1)[0] not in control.get("input_paths", [])
+        or production_path not in target.get("input_paths", [])
+        or production_path not in control.get("input_paths", [])
+    ):
+        raise ProductMissionError(
+            "DAILY_VERIFICATION_DRIFT",
+            "target, control, and candidate inputs must be explicitly bound",
+        )
+
+
+def _mission_capture_receipt(
+    mission,
+    contract_file,
+    contract,
+    candidate_sha,
+    criterion_id,
+    target_case,
+    control_case,
+    target,
+    control,
+    record_path,
+    root,
+    mission_file,
+    mission_sha_before,
+    contract_sha_before,
+    contract_snapshot,
+    contract_snapshot_sha,
+    overall_timeout,
+    target_timeout,
+    control_timeout,
+):
+    from .runtime_audit_runner import project_local_production_mutation_v3_candidate
+
+    target_path = record_path.parent / "target" / "capture.json"
+    control_path = record_path.parent / "control" / "capture.json"
+    target_saved, control_saved = (
+        _read_local_capture(target_path),
+        _read_local_capture(control_path),
+    )
+    target_projection = project_local_production_mutation_v3_candidate(target_saved)
+    if target_projection.get("status") != "CANDIDATE":
+        raise ProductMissionError(
+            "LOCAL_CAPTURE_INCOMPLETE",
+            "target capture lacks a complete natural assertion failure",
+        )
+    control_status = _validate_unaffected_control_capture(
+        control_saved, target_saved, root
+    )
+    if not control_status:
+        raise ProductMissionError(
+            "LOCAL_CAPTURE_INCOMPLETE",
+            "unaffected control did not pass under the same mutation",
+        )
+    if not _validate_target_local_capture(target_saved, root):
+        raise ProductMissionError(
+            "LOCAL_CAPTURE_INCOMPLETE",
+            "target capture is stale or its natural assertion is unbound",
+        )
+    target_digest, control_digest = _sha_path(target_path), _sha_path(control_path)
+    return {
+        "schema": "factory.mission.local-mutation-capture.v1",
+        "status": "OBSERVED",
+        "authority": "none",
+        "local_execution_observed": True,
+        "claim_boundary": "Explicit operator-invoked local process observation under the writable-host trust assumption; unsigned and not independently attested, not proof of application correctness, and grants no merge, publish, deploy, or release authority.",
+        "mission_id": mission["id"],
+        "mission_sha256": mission["mission_sha256"],
+        "mission_path": mission_file.relative_to(root).as_posix(),
+        "mission_file_sha256": mission_sha_before,
+        "daily_contract_path": contract_file.relative_to(root).as_posix(),
+        "daily_contract_sha256_before_capture": contract_sha_before,
+        "daily_contract_snapshot": {
+            "path": contract_snapshot.relative_to(root).as_posix(),
+            "sha256": contract_snapshot_sha,
+        },
+        "candidate_sha256": candidate_sha,
+        "criterion_id": criterion_id,
+        "target_case": _mission_capture_case_binding(
+            target_case, "positive", target_path, target_digest
+        ),
+        "control_case": _mission_capture_case_binding(
+            control_case, "negative", control_path, control_digest
+        ),
+        "target_capture": {
+            "path": target_path.relative_to(root).as_posix(),
+            "sha256": target_digest,
+        },
+        "control_capture": {
+            "path": control_path.relative_to(root).as_posix(),
+            "sha256": control_digest,
+        },
+        "source_manifest_sha256": target_saved.get("source_manifest_sha256"),
+        "production_mutation": target_saved.get("production_mutation"),
+        "configuration_context_sha256": target_saved.get(
+            "configuration_context_sha256"
+        ),
+        "captures_same_candidate_and_mutation": _capture_pair_same_inputs(
+            target_saved, control_saved
+        ),
+        "execution_budget": {
+            "overall_timeout_seconds": overall_timeout,
+            "target_child_timeout_seconds": target_timeout,
+            "control_child_timeout_seconds": control_timeout,
+            "maximum_child_processes": 4,
+        },
+    }
+
+
+def _mission_capture_case_binding(case, polarity, path, digest):
+    return {
+        "case_id": case["case_id"],
+        "polarity": polarity,
+        "input_paths": list(case["input_paths"]),
+        "input_sha256": case["input_sha256"],
+        "expected_outcome": "baseline_assertion_pass_mutant_assertion_fail"
+        if polarity == "positive"
+        else "baseline_assertion_pass_mutant_assertion_pass",
+        "evidence_path": path.name,
+        "evidence_sha256": digest,
+    }
+
+
+def _read_local_capture(path):
+    try:
+        from .runtime_audit_process import bounded_file_sha256
+
+        _, data = bounded_file_sha256(path, MAX_DAILY_RECEIPT_BYTES, include_bytes=True)
+        value = json.loads(data.decode("utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError("capture must be an object")
+        return value
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise ProductMissionError(
+            "LOCAL_CAPTURE_INCOMPLETE", "local capture is unreadable or oversized"
+        ) from exc
+
+
+def _capture_pair_same_inputs(target, control):
+    return (
+        all(
+            target.get(key) == control.get(key)
+            for key in (
+                "source_manifest",
+                "source_manifest_sha256",
+                "production_mutation",
+                "configuration_context_sha256",
+            )
+        )
+        and target.get("status") == "OBSERVED"
+        and control.get("status") == "INCOMPLETE"
+    )
+
+
+def _validate_unaffected_control_capture(control, target, root):
+    from .runtime_audit_common import validate_production_mutation_trial
+    from .runtime_audit_process import validate_production_mutation_process
+    from .runtime_audit_runner import _candidate_manifest
+
+    try:
+        manifest = _candidate_manifest(control)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return False
+    selection, mutation = (
+        control.get("selection", {}),
+        control.get("production_mutation", {}),
+    )
+    selector, line = selection.get("nodeid_selector"), selection.get("assertion_line")
+    if not _capture_pair_same_inputs(target, control) or not control.get(
+        "source_unchanged"
+    ):
+        return False
+    if (
+        not isinstance(control.get("cleanup"), dict)
+        or control["cleanup"].get("removed") is not True
+    ):
+        return False
+    if not all(
+        validate_production_mutation_process(control.get(name, {}).get("process", {}))
+        and control[name]["process"].get("exit_code") == 0
+        for name in ("baseline", "mutant")
+    ):
+        return False
+    observations = [
+        control.get("baseline_observation"),
+        control.get("mutant_observation"),
+    ]
+    return (
+        all(
+            isinstance(item, dict)
+            and validate_production_mutation_trial(
+                item, selector, line, "passed", False
+            )
+            and _local_capture_observation_manifest(item, manifest, mutation, name)
+            for item, name in zip(observations, ("baseline", "mutant"), strict=True)
+        )
+        and observations[0].get("collected") == observations[1].get("collected")
+        and _local_capture_current_source(control, root, manifest)
+        and _local_capture_current_source(target, root, manifest)
+    )
+
+
+def _validate_target_local_capture(target, root):
+    from .runtime_audit_common import validate_production_mutation_trial
+    from .runtime_audit_process import validate_production_mutation_process
+    from .runtime_audit_runner import _candidate_manifest
+
+    try:
+        manifest = _candidate_manifest(target)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return False
+    selection = target.get("selection", {})
+    selector, line = selection.get("nodeid_selector"), selection.get("assertion_line")
+    baseline, mutant = target.get("baseline", {}), target.get("mutant", {})
+    observations = [
+        target.get("baseline_observation"),
+        target.get("mutant_observation"),
+    ]
+    if not all(
+        (
+            target.get("status") == "OBSERVED",
+            target.get("source_unchanged") is True,
+            isinstance(target.get("cleanup"), dict),
+            target["cleanup"].get("removed") is True,
+            validate_production_mutation_process(baseline.get("process", {})),
+            baseline["process"].get("exit_code") == 0,
+            validate_production_mutation_process(mutant.get("process", {})),
+            # The observer worker exits zero after recording a natural assertion
+            # failure; the pytest outcome is carried in the bound trial record.
+            mutant["process"].get("exit_code") == 0,
+        )
+    ):
+        return False
+    return (
+        all(
+            isinstance(item, dict)
+            and validate_production_mutation_trial(
+                item, selector, line, outcome, visible
+            )
+            and _local_capture_observation_manifest(
+                item, manifest, target["production_mutation"], name
+            )
+            for item, name, outcome, visible in zip(
+                observations,
+                ("baseline", "mutant"),
+                ("passed", "failed"),
+                (False, True),
+                strict=True,
+            )
+        )
+        and observations[0].get("collected") == observations[1].get("collected")
+        and _local_capture_current_source(target, root, manifest)
+    )
+
+
+def _local_capture_observation_manifest(observation, manifest, mutation, name):
+    run_manifest = dict(manifest)
+    if name == "mutant":
+        run_manifest[mutation["path"]] = mutation["mutant_sha256"]
+    digest = _sha_bytes(
+        json.dumps(run_manifest, sort_keys=True, separators=(",", ":")).encode()
+    )
+    if observation.get("executed_source_manifest_sha256") != digest:
+        return False
+    cases = set(observation.get("collected", []))
+    required_paths = {mutation.get("path"), *(case.split("::", 1)[0] for case in cases)}
+    required = {(path, case) for path in required_paths for case in cases}
+    rows = observation.get("executed_modules")
+    found = set()
+    if (
+        not isinstance(rows, list)
+        or observation.get("origin_status") != "BOUND"
+        or observation.get("origin_limit_exceeded") is not False
+    ):
+        return False
+    for row in rows:
+        if not isinstance(row, dict) or row.get("phase") != "call":
+            continue
+        path, case = row.get("path"), row.get("nodeid")
+        if not all(
+            (
+                case in cases,
+                path in manifest,
+                row.get("origin") == path,
+                row.get("status") == "BOUND",
+                row.get("observation_kind") == "executed_frame",
+                row.get("source_sha256") == run_manifest.get(path),
+            )
+        ):
+            return False
+        found.add((path, case))
+    return required <= found
+
+
+def _local_capture_current_source(capture, root, manifest):
+    from .pytest_readiness import (
+        _challenge_runtime_context,
+        _challenge_source_binding,
+        _challenge_source_inventory,
+    )
+
+    try:
+        return (
+            _challenge_source_inventory(root) == manifest
+            and capture.get("source_manifest_sha256") == _challenge_source_binding(root)
+            and capture.get("configuration_context_sha256")
+            == _challenge_runtime_context(root)
+        )
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _mission_capture_contract_evidence(
+    contract, target_id, control_id, record_path, root
+):
+    updated = json.loads(json.dumps(contract))
+    for criterion in updated["criteria"]:
+        for case in criterion["cases"]:
+            if case["case_id"] in {target_id, control_id}:
+                role = "target" if case["case_id"] == target_id else "control"
+                outcome = (
+                    "baseline_assertion_pass_mutant_assertion_fail"
+                    if role == "target"
+                    else "baseline_assertion_pass_mutant_assertion_pass"
+                )
+                case["observed_outcome"] = outcome
+                case["evidence"] = {
+                    "kind": "local_production_mutation",
+                    "path": record_path.relative_to(root).as_posix(),
+                    "sha256": _sha_path(record_path),
+                    "role": role,
+                }
+    return updated
+
+
+def _check_daily_source_file(
+    path: Path,
+    normalized: str,
+    digest: str,
+    total_bytes: int,
+    paths: list[Path],
+    gaps: list[str],
+) -> int:
+    try:
+        if not path.is_file():
+            gaps.append("candidate_source_stale:" + normalized)
+            return total_bytes
+        size = path.stat().st_size
+        if size > MAX_DAILY_SOURCE_BYTES:
+            gaps.append("candidate_source_size_limit:" + normalized)
+        elif total_bytes + size > MAX_DAILY_TOTAL_SOURCE_BYTES:
+            gaps.append("candidate_source_total_size_limit")
+        else:
+            total_bytes += size
+            paths.append(path)
+            if _sha_path(path) != digest:
+                gaps.append("candidate_source_stale:" + normalized)
+    except OSError:
+        gaps.append("candidate_source_unreadable:" + normalized)
+    return total_bytes
+
+
+def _daily_source_identity(item: Any, gaps: list[str]) -> tuple[str, str] | None:
+    if (
+        not isinstance(item, dict)
+        or set(item) != {"path", "sha256"}
+        or not isinstance(item.get("path"), str)
+        or not _valid_sha256(item.get("sha256"))
+    ):
+        gaps.append("candidate_source_manifest_malformed")
+        return None
+    path_text = item["path"].replace("\\", "/")
+    if not path_text or path_text.startswith("/") or ".." in path_text.split("/"):
+        gaps.append("candidate_source_path_invalid")
+        return None
+    return path_text, item["sha256"]
+
+
+def _daily_source_path(
+    path_text: str, root: Path, seen: set[str], gaps: list[str]
+) -> tuple[str, Path] | None:
+    try:
+        path = (Path(root).resolve() / path_text).resolve()
+        normalized = path.relative_to(Path(root).resolve()).as_posix()
+    except (OSError, RuntimeError, ValueError):
+        gaps.append("candidate_source_path_outside_root")
+        return None
+    if normalized in seen:
+        gaps.append("candidate_source_path_duplicate")
+        return None
+    return normalized, path
+
+
+def _valid_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _daily_criteria(
+    value: Any,
+    expected: set[str],
+    source_rows: list[dict[str, str]],
+    root: Path,
+    gaps: list[str],
+    oracle_cache: dict[tuple[str, str, str, str], dict[str, Any] | None],
+    mission: dict[str, Any],
+    candidate_sha: str | None,
+    mission_path: Path | None,
+) -> tuple[list[dict[str, Any]], list[Path]]:
+    if not isinstance(value, list) or len(value) != len(expected):
+        gaps.append("criterion_case_coverage_missing")
+        return [], []
+    source_map = {row["path"]: row["sha256"] for row in source_rows}
+    seen_criteria, results, evidence_paths = set(), [], []
+    for criterion in value:
+        if not isinstance(criterion, dict) or set(criterion) != {
+            "criterion_id",
+            "cases",
+        }:
+            gaps.append("criterion_case_record_malformed")
+            continue
+        criterion_id = criterion.get("criterion_id")
+        cases = criterion.get("cases")
+        if (
+            not isinstance(criterion_id, str)
+            or criterion_id not in expected
+            or criterion_id in seen_criteria
+        ):
+            gaps.append("criterion_case_identity_invalid")
+            continue
+        seen_criteria.add(criterion_id)
+        case_results = _daily_cases(
+            cases,
+            source_map,
+            root,
+            gaps,
+            oracle_cache,
+            mission,
+            criterion_id,
+            candidate_sha,
+            mission_path,
+        )
+        criterion_definition = next(
+            item
+            for item in mission["completion_contract"]["criteria"]
+            if item["id"] == criterion_id
+        )
+        result_row = {"criterion_id": criterion_id, "cases": case_results}
+        if criterion_definition.get("verification_kind") == "deterministic_tool":
+            gate_observation = _daily_native_gate_observation(
+                criterion_definition,
+                case_results,
+                mission,
+                candidate_sha,
+                source_map,
+                root,
+                gaps,
+            )
+            if gate_observation is not None:
+                result_row["native_gate_observation"] = gate_observation
+        results.append(result_row)
+        for case in case_results:
+            evidence_paths.extend(case.pop("_evidence_paths", []))
+    if seen_criteria != expected:
+        gaps.append("criterion_case_coverage_missing")
+    return results, evidence_paths
+
+
+def _daily_native_gate_observation(
+    criterion, cases, mission, candidate_sha, source_map, root, gaps
+):
+    gate = criterion["id"].partition(":")[2]
+    if gate not in {"unit", "requirement-mutation", "receipt-trace"}:
+        gaps.append("native_gate_unsupported:" + criterion["id"])
+        return None
+    sides = {case.get("polarity"): case for case in cases}
+    if len(cases) != 2 or set(sides) != {"positive", "negative"}:
+        gaps.append("native_gate_cases_incomplete:" + criterion["id"])
+        return None
+    positive, negative = sides["positive"], sides["negative"]
+    if not _native_gate_cases_share_receipt(positive, negative):
+        gaps.append("native_gate_receipt_mismatch:" + criterion["id"])
+        return None
+    path = Path(positive["execution_receipt_path"])
+    try:
+        receipt = _load_json(path, "factory.mission.local-mutation-capture.v1")
+        facts = _native_gate_receipt_facts(
+            receipt,
+            positive,
+            negative,
+            criterion["id"],
+            gate,
+            mission,
+            candidate_sha,
+            source_map,
+            root,
+            gaps,
+        )
+    except (OSError, ProductMissionError, TypeError, ValueError, KeyError):
+        facts = None
+    if facts is None:
+        gaps.append("native_gate_receipt_invalid:" + criterion["id"])
+        return None
+    return {
+        "schema": "factory.daily-native-gate-observation.v1",
+        "gate": gate,
+        "status": "OBSERVED",
+        "mission_id": mission["id"],
+        "mission_sha256": mission["mission_sha256"],
+        "criterion_id": criterion["id"],
+        "candidate_sha256": candidate_sha,
+        "source_manifest_sha256": receipt["source_manifest_sha256"],
+        "evidence": facts,
+        "claim_boundary": "Derived from current unsigned local pytest and mutation receipts; it proves selected local execution and receipt lineage under the writable-host trust assumption only.",
+    }
+
+
+def _native_gate_cases_share_receipt(positive, negative):
+    fields = ("execution_receipt_path", "execution_receipt_sha256")
+    return (
+        all(positive.get(key) == negative.get(key) for key in fields)
+        and positive.get("execution_evidence_kind") == "local_production_mutation"
+        and negative.get("execution_evidence_kind") == "local_production_mutation"
+        and positive.get("disposition") == "local_mutation_target_observed"
+        and negative.get("disposition") == "local_mutation_control_observed"
+    )
+
+
+def _native_gate_receipt_facts(
+    receipt,
+    positive,
+    negative,
+    criterion_id,
+    gate,
+    mission,
+    candidate_sha,
+    source_map,
+    root,
+    gaps,
+):
+    expected = (
+        receipt.get("status") == "OBSERVED"
+        and receipt.get("authority") == "none"
+        and receipt.get("mission_id") == mission["id"]
+        and receipt.get("mission_sha256") == mission["mission_sha256"]
+        and receipt.get("criterion_id") == criterion_id
+        and receipt.get("candidate_sha256") == candidate_sha
+        and receipt.get("target_case", {}).get("case_id") == positive["case_id"]
+        and receipt.get("control_case", {}).get("case_id") == negative["case_id"]
+    )
+    if not expected:
+        return None
+    snapshot_ref = receipt.get("daily_contract_snapshot", {})
+    snapshot_path = _daily_local_evidence_path(
+        snapshot_ref.get("path"),
+        snapshot_ref.get("sha256"),
+        root,
+        gaps,
+        "native_gate_contract_snapshot",
+    )
+    capture_paths = _daily_local_capture_paths(receipt, root, gaps)
+    if snapshot_path is None or not isinstance(capture_paths, list):
+        return None
+    target_path, control_path = capture_paths
+    target, control = (
+        _read_local_capture(target_path),
+        _read_local_capture(control_path),
+    )
+    if receipt.get("source_manifest_sha256") != target.get(
+        "source_manifest_sha256"
+    ) or receipt.get("source_manifest_sha256") != control.get("source_manifest_sha256"):
+        return None
+    if not _native_gate_snapshot_matches(
+        receipt,
+        snapshot_path,
+        positive,
+        negative,
+        mission,
+        candidate_sha,
+        source_map,
+        root,
+    ):
+        return None
+    if gate == "unit":
+        observed = _native_gate_unit_observation(target)
+    elif gate == "requirement-mutation":
+        observed = _native_gate_mutation_observation(target, control)
+    else:
+        observed = _native_gate_trace_observation(
+            receipt, target_path, control_path, target, control, root
+        )
+    if observed is None:
+        return None
+    return [
+        {
+            "role": "mission_case",
+            "path": str(Path(positive["execution_receipt_path"]).resolve()),
+            "sha256": positive["execution_receipt_sha256"],
+        },
+        {
+            "role": "daily_contract_snapshot",
+            "path": str(snapshot_path.resolve()),
+            "sha256": snapshot_ref["sha256"],
+        },
+        *observed,
+    ]
+
+
+def _native_gate_snapshot_matches(
+    receipt, path, positive, negative, mission, candidate_sha, source_map, root
+):
+    try:
+        snapshot, observed_sources, digest = _local_capture_contract(
+            _load_json(path, DAILY_VERIFICATION_SCHEMA), mission, root
+        )
+        criteria = {
+            item["criterion_id"]: item["cases"] for item in snapshot["criteria"]
+        }
+        cases = {case["case_id"]: case for case in criteria[receipt["criterion_id"]]}
+        before = receipt["daily_contract_sha256_before_capture"]
+        return (
+            _sha_path(path) == before
+            and digest == candidate_sha
+            and observed_sources == source_map
+            and set(cases) == {positive["case_id"], negative["case_id"]}
+            and all(
+                cases[row["case_id"]]["polarity"] == row["polarity"]
+                and cases[row["case_id"]]["input_paths"] == row["input_paths"]
+                and cases[row["case_id"]]["input_sha256"] == row["input_sha256"]
+                and cases[row["case_id"]]["observed_outcome"] == "unknown"
+                and cases[row["case_id"]]["evidence"] == {}
+                for row in (positive, negative)
+            )
+        )
+    except (KeyError, OSError, ProductMissionError, TypeError, ValueError):
+        return False
+
+
+def _native_gate_unit_observation(target):
+    observation = target.get("baseline_observation", {})
+    selection = target.get("selection", {})
+    reports = observation.get("reports")
+    phases = (
+        {row.get("phase"): row for row in reports if isinstance(row, dict)}
+        if isinstance(reports, list)
+        else {}
+    )
+    selector = selection.get("nodeid_selector")
+    if (
+        target.get("status") != "OBSERVED"
+        or target.get("baseline", {}).get("process", {}).get("exit_code") != 0
+        or observation.get("collected") != [selector]
+        or observation.get("collection_incomplete") is not False
+        or set(phases) != {"setup", "call", "teardown"}
+        or any(
+            row.get("outcome") != "passed" or row.get("xfail") is True
+            for row in phases.values()
+        )
+    ):
+        return None
+    return [
+        {
+            "role": "unit_pytest_baseline",
+            "path": selection["test_path"],
+            "sha256": selection["test_sha256"],
+            "selector": selector,
+        }
+    ]
+
+
+def _native_gate_mutation_observation(target, control):
+    target_mutant = target.get("mutant_observation", {})
+    control_runs = (
+        control.get("baseline_observation", {}),
+        control.get("mutant_observation", {}),
+    )
+    reports = target_mutant.get("reports")
+    failed = isinstance(reports, list) and any(
+        isinstance(row, dict)
+        and row.get("phase") == "call"
+        and row.get("outcome") == "failed"
+        and row.get("xfail") is False
+        for row in reports
+    )
+    if not failed or any(
+        not isinstance(run.get("reports"), list)
+        or any(
+            row.get("outcome") != "passed"
+            for row in run["reports"]
+            if isinstance(row, dict)
+        )
+        for run in control_runs
+    ):
+        return None
+    mutation = target.get("production_mutation", {})
+    if mutation.get("mutation_applied") is not True or mutation.get(
+        "original_sha256"
+    ) == mutation.get("mutant_sha256"):
+        return None
+    return [
+        {
+            "role": "target_mutant_pytest",
+            "path": mutation["path"],
+            "sha256": mutation["mutant_sha256"],
+        }
+    ]
+
+
+def _native_gate_trace_observation(
+    receipt, target_path, control_path, target, control, root
+):
+    refs = (receipt.get("target_capture", {}), receipt.get("control_capture", {}))
+    actual = (target_path, control_path)
+    if any(
+        ref.get("path") != path.relative_to(Path(root).resolve()).as_posix()
+        for ref, path in zip(refs, actual, strict=True)
+    ):
+        return None
+    return [
+        {"role": role, "path": str(path.resolve()), "sha256": ref["sha256"]}
+        for role, path, ref in zip(
+            ("target_capture", "control_capture"), actual, refs, strict=True
+        )
+    ]
+
+
+def _daily_cases(
+    value: Any,
+    source_map: dict[str, str],
+    root: Path,
+    gaps: list[str],
+    oracle_cache: dict[tuple[str, str, str, str], dict[str, Any] | None],
+    mission: dict[str, Any],
+    criterion_id: str,
+    candidate_sha: str | None,
+    mission_path: Path | None,
+) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        gaps.append("required_positive_negative_cases_missing")
+        return []
+    if not 2 <= len(value) <= 8:
+        gaps.append("required_positive_negative_cases_missing")
+    results, ids, polarities = [], set(), set()
+    for item in value:
+        result, paths = _daily_case(
+            item,
+            source_map,
+            root,
+            gaps,
+            oracle_cache,
+            mission,
+            criterion_id,
+            candidate_sha,
+            mission_path,
+        )
+        if result is None:
+            continue
+        case_id = result["case_id"]
+        if case_id in ids:
+            gaps.append("case_id_duplicate")
+        ids.add(case_id)
+        polarities.add(result["polarity"])
+        result["_evidence_paths"] = paths
+        results.append(result)
+    if polarities != {"positive", "negative"}:
+        gaps.append("required_positive_negative_cases_missing")
+    return results
+
+
+def _daily_case(
+    item: Any,
+    source_map: dict[str, str],
+    root: Path,
+    gaps: list[str],
+    oracle_cache: dict[tuple[str, str, str, str], dict[str, Any] | None],
+    mission: dict[str, Any],
+    criterion_id: str,
+    candidate_sha: str | None,
+    mission_path: Path | None,
+) -> tuple[dict[str, Any] | None, list[Path]]:
+    fields = {
+        "case_id",
+        "polarity",
+        "input_paths",
+        "input_sha256",
+        "expected_outcome",
+        "observed_outcome",
+        "evidence",
+    }
+    if not isinstance(item, dict) or set(item) != fields:
+        gaps.append("case_record_malformed")
+        return None, []
+    case_id, polarity = item.get("case_id"), item.get("polarity")
+    if (
+        not isinstance(case_id, str)
+        or not case_id.strip()
+        or len(case_id) > 96
+        or not isinstance(polarity, str)
+        or polarity not in {"positive", "negative"}
+    ):
+        gaps.append("case_identity_invalid")
+        return None, []
+    input_paths = item.get("input_paths")
+    if (
+        not isinstance(input_paths, list)
+        or not input_paths
+        or any(not isinstance(path, str) for path in input_paths)
+        or any(path not in source_map for path in input_paths)
+        or len(set(input_paths)) != len(input_paths)
+    ):
+        gaps.append("case_input_unbound")
+        input_rows = []
+    else:
+        input_rows = [
+            {"path": path, "sha256": source_map[path]} for path in input_paths
+        ]
+    input_digest = _sha_bytes(_canonical(input_rows)) if input_rows else None
+    if input_digest is None or item.get("input_sha256") != input_digest:
+        gaps.append("case_input_digest_mismatch")
+    expected = item.get("expected_outcome")
+    claimed_observed = item.get("observed_outcome")
+    evidence = item.get("evidence")
+    oracle_evidence = isinstance(evidence, dict) and evidence.get("kind") == (
+        "signed_test_oracle_v3"
+    )
+    local_evidence = isinstance(evidence, dict) and evidence.get("kind") == (
+        "local_production_mutation"
+    )
+    allowed_outcomes = (
+        {"baseline_assertion_pass_mutant_assertion_fail"}
+        if oracle_evidence
+        else {
+            "baseline_assertion_pass_mutant_assertion_fail",
+            "baseline_assertion_pass_mutant_assertion_pass",
+        }
+        if local_evidence
+        else {"exit_zero", "exit_nonzero"}
+    )
+    if (
+        not isinstance(expected, str)
+        or expected not in allowed_outcomes
+        or (
+            not isinstance(claimed_observed, str)
+            or claimed_observed not in allowed_outcomes | {"unknown"}
+        )
+    ):
+        gaps.append("case_outcome_claim_malformed")
+    if oracle_evidence:
+        observed, paths = _daily_oracle_observation(
+            evidence, item, source_map, root, gaps, oracle_cache
+        )
+        disposition = "signer_attested_baseline_and_mutant"
+    elif local_evidence:
+        observed, paths = _daily_local_mutation_observation(
+            evidence,
+            item,
+            source_map,
+            root,
+            gaps,
+            mission,
+            criterion_id,
+            candidate_sha,
+            mission_path,
+        )
+        disposition = (
+            "local_mutation_target_observed"
+            if evidence.get("role") == "target"
+            else "local_mutation_control_observed"
+        )
+    else:
+        observed, path = _daily_e2e_observation(
+            evidence, polarity, source_map, root, gaps
+        )
+        paths = [path] if path is not None else []
+        disposition = "command_pair_observed"
+    if observed is None or item.get("observed_outcome") != observed:
+        gaps.append("case_observed_outcome_unverified")
+    if expected != observed:
+        gaps.append("case_expected_outcome_mismatch")
+    return (
+        {
+            "case_id": case_id,
+            "polarity": polarity,
+            "input_paths": list(input_paths) if isinstance(input_paths, list) else [],
+            "input_sha256": input_digest,
+            "expected_outcome_claim": expected,
+            "observed_outcome_claim": claimed_observed,
+            "observed_outcome": observed,
+            "execution_receipt_path": str(paths[0]) if paths else None,
+            "execution_receipt_sha256": _sha_path(paths[0]) if paths else None,
+            "execution_evidence_kind": evidence.get("kind")
+            if isinstance(evidence, dict)
+            else None,
+            "trust_root_path": evidence.get("trust_root_path")
+            if oracle_evidence
+            else None,
+            "trust_root_sha256": evidence.get("trust_root_sha256")
+            if oracle_evidence
+            else None,
+            "environment_sha256": evidence.get("environment_sha256")
+            if oracle_evidence
+            else None,
+            "oracle_case_id": evidence.get("oracle_case_id")
+            if oracle_evidence
+            else None,
+            "oracle_test_path": evidence.get("test_path") if oracle_evidence else None,
+            "oracle_test_line": evidence.get("test_line") if oracle_evidence else None,
+            "oracle_test_symbol": evidence.get("test_symbol")
+            if oracle_evidence
+            else None,
+            "application_output_observed": None
+            if oracle_evidence or local_evidence
+            else observed,
+            "disposition": disposition
+            if observed is not None and expected == observed
+            else "unverified",
+        },
+        paths,
+    )
+
+
+def _daily_e2e_observation(
+    evidence: Any,
+    polarity: str,
+    source_map: dict[str, str],
+    root: Path,
+    gaps: list[str],
+) -> tuple[str | None, Path | None]:
+    if (
+        not isinstance(evidence, dict)
+        or set(evidence) != {"kind", "path", "sha256", "result"}
+        or evidence.get("kind") != "e2e_command_pair"
+    ):
+        gaps.append("execution_evidence_unsupported")
+        return None, None
+    receipt, path = _daily_e2e_receipt(evidence, root, gaps)
+    if receipt is None:
+        return None, path
+    _daily_e2e_artifacts(receipt, source_map, root, gaps)
+    if evidence.get("result") != polarity:
+        gaps.append("execution_result_side_mismatch")
+        return None, path
+    return _daily_e2e_command_outcome(receipt, polarity, gaps), path
+
+
+def _daily_local_mutation_observation(
+    evidence,
+    case,
+    source_map,
+    root,
+    gaps,
+    mission,
+    criterion_id,
+    candidate_sha,
+    mission_path,
+):
+    fields = {"kind", "path", "sha256", "role"}
+    if not isinstance(evidence, dict) or set(evidence) != fields:
+        gaps.append("execution_evidence_unsupported")
+        return None, []
+    path = _daily_local_evidence_path(
+        evidence.get("path"),
+        evidence.get("sha256"),
+        root,
+        gaps,
+        "local_mutation_receipt",
+    )
+    if path is None:
+        return None, []
+    try:
+        receipt = _load_json(path, "factory.mission.local-mutation-capture.v1")
+        target_path, control_path = _daily_local_capture_paths(receipt, root, gaps)
+        target, control = (
+            _read_local_capture(target_path),
+            _read_local_capture(control_path),
+        )
+        _verify_local_capture_pair(
+            receipt,
+            target,
+            control,
+            case,
+            source_map,
+            candidate_sha,
+            mission,
+            criterion_id,
+            mission_path,
+            root,
+            gaps,
+        )
+        snapshot_path = _daily_capture_contract_snapshot(
+            receipt, case, criterion_id, mission, source_map, candidate_sha, root, gaps
+        )
+        if snapshot_path is None:
+            raise ValueError("pre-capture case contract is missing or stale")
+        binding = (
+            receipt["target_case"]
+            if evidence["role"] == "target"
+            else receipt["control_case"]
+        )
+        capture_path = target_path if evidence["role"] == "target" else control_path
+        expected_role = "positive" if evidence["role"] == "target" else "negative"
+        if (
+            evidence["role"] not in {"target", "control"}
+            or binding["case_id"] != case["case_id"]
+            or binding["polarity"] != expected_role
+            or binding["input_paths"] != case["input_paths"]
+            or binding["input_sha256"] != case["input_sha256"]
+            or binding["evidence_sha256"] != _sha_path(capture_path)
+        ):
+            raise ValueError("capture case binding mismatch")
+        outcome = binding["expected_outcome"]
+        paths = [path, target_path, control_path]
+        for capture_path, capture in ((target_path, target), (control_path, control)):
+            diff_path = (
+                capture_path.parent / capture["production_mutation"]["diff_path"]
+            )
+            if (
+                not _valid_sha256(capture["production_mutation"].get("diff_sha256"))
+                or _sha_path(diff_path) != capture["production_mutation"]["diff_sha256"]
+            ):
+                raise ValueError("capture diff is stale")
+            paths.append(diff_path)
+        paths.append(snapshot_path)
+        return outcome, paths
+    except (KeyError, OSError, ProductMissionError, TypeError, ValueError):
+        gaps.append("execution_local_capture_invalid_or_stale")
+        return None, [path]
+
+
+def _daily_capture_contract_snapshot(
+    receipt, case, criterion_id, mission, source_map, candidate_sha, root, gaps
+):
+    reference = receipt.get("daily_contract_snapshot", {})
+    path = _daily_local_evidence_path(
+        reference.get("path"),
+        reference.get("sha256"),
+        root,
+        gaps,
+        "local_capture_contract_snapshot",
+    )
+    if path is None or reference.get("sha256") != receipt.get(
+        "daily_contract_sha256_before_capture"
+    ):
+        return None
+    try:
+        snapshot, observed_sources, observed_candidate = _local_capture_contract(
+            _load_json(path, DAILY_VERIFICATION_SCHEMA), mission, root
+        )
+        criteria = {
+            item["criterion_id"]: item["cases"] for item in snapshot["criteria"]
+        }
+        saved_case = next(
+            row for row in criteria[criterion_id] if row["case_id"] == case["case_id"]
+        )
+        return (
+            path
+            if (
+                observed_sources == source_map
+                and observed_candidate == candidate_sha
+                and saved_case["polarity"] == case["polarity"]
+                and saved_case["input_paths"] == case["input_paths"]
+                and saved_case["input_sha256"] == case["input_sha256"]
+                and saved_case["observed_outcome"] == "unknown"
+                and saved_case["evidence"] == {}
+            )
+            else None
+        )
+    except (
+        KeyError,
+        OSError,
+        ProductMissionError,
+        StopIteration,
+        TypeError,
+        ValueError,
+    ):
+        return None
+
+
+def _daily_local_capture_paths(receipt, root, gaps):
+    paths = []
+    for key in ("target_capture", "control_capture"):
+        binding = receipt.get(key)
+        if not isinstance(binding, dict) or set(binding) != {"path", "sha256"}:
+            gaps.append("execution_local_capture_binding_malformed")
+            return None, None
+        path = _daily_local_evidence_path(
+            binding.get("path"),
+            binding.get("sha256"),
+            root,
+            gaps,
+            "local_mutation_capture",
+        )
+        if path is None:
+            return None, None
+        paths.append(path)
+    return paths
+
+
+def _verify_local_capture_pair(
+    receipt,
+    target,
+    control,
+    case,
+    source_map,
+    candidate_sha,
+    mission,
+    criterion_id,
+    mission_path,
+    root,
+    gaps,
+):
+    from .runtime_audit_runner import project_local_production_mutation_v3_candidate
+
+    mission_file = Path(mission_path).resolve() if mission_path else None
+    mission_file_sha = (
+        _sha_path(mission_file) if mission_file and mission_file.is_file() else None
+    )
+    mission_bound_path = receipt.get("mission_path")
+    mission_bound_file = _local_receipt_mission_path(mission_bound_path, root)
+    mission_bound_file_sha = (
+        _sha_path(mission_bound_file) if mission_bound_file else None
+    )
+    budget = receipt.get("execution_budget")
+    if not all(
+        (
+            receipt.get("status") == "OBSERVED",
+            receipt.get("authority") == "none",
+            receipt.get("local_execution_observed") is True,
+            receipt.get("mission_id") == mission.get("id"),
+            receipt.get("mission_sha256") == mission.get("mission_sha256"),
+            receipt.get("mission_file_sha256") == mission_file_sha,
+            receipt.get("mission_file_sha256") == mission_bound_file_sha,
+            mission_bound_file == mission_file,
+            receipt.get("criterion_id") == criterion_id,
+            receipt.get("candidate_sha256") == candidate_sha,
+            receipt.get("captures_same_candidate_and_mutation") is True,
+            receipt.get("claim_boundary", "").startswith(
+                "Explicit operator-invoked local process observation"
+            ),
+            _local_capture_budget_valid(budget),
+        )
+    ):
+        raise ValueError("local observation identity or trust boundary mismatch")
+    source_manifest = _candidate_manifest_for_local_capture(target)
+    if source_manifest != _candidate_manifest_for_local_capture(control):
+        raise ValueError("target and control source manifests differ")
+    if any(source_manifest.get(path) != digest for path, digest in source_map.items()):
+        raise ValueError("capture source manifest differs from candidate inputs")
+    target_projection = project_local_production_mutation_v3_candidate(target)
+    if target_projection.get("status") != "CANDIDATE":
+        raise ValueError("target natural assertion is not observed")
+    if not _validate_unaffected_control_capture(control, target, root):
+        raise ValueError("unaffected control did not pass under the candidate mutation")
+    if not all(
+        _local_capture_current_source(item, root, source_manifest)
+        for item in (target, control)
+    ):
+        raise ValueError(
+            "capture no longer matches current source and runtime configuration"
+        )
+    mutation = target.get("production_mutation", {})
+    selection = target.get("selection", {})
+    if (
+        selection.get("test_path") not in case.get("input_paths", [])
+        or mutation.get("path") not in case.get("input_paths", [])
+        or mutation.get("path") not in source_map
+        or source_manifest.get(mutation.get("path")) != mutation.get("original_sha256")
+    ):
+        raise ValueError("target test or production source is not bound to this case")
+    if receipt.get("source_manifest_sha256") != target.get("source_manifest_sha256"):
+        raise ValueError("receipt source manifest binding differs")
+
+
+def _local_receipt_mission_path(value, root):
+    if not isinstance(value, str) or not value or Path(value).is_absolute():
+        return None
+    try:
+        workspace = Path(root).resolve()
+        candidate = (workspace / value).resolve(strict=True)
+        candidate.relative_to(workspace)
+        return candidate if candidate.is_file() else None
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _local_capture_budget_valid(value):
+    if not isinstance(value, dict) or set(value) != {
+        "overall_timeout_seconds",
+        "target_child_timeout_seconds",
+        "control_child_timeout_seconds",
+        "maximum_child_processes",
+    }:
+        return False
+    overall = value.get("overall_timeout_seconds")
+    target, control = (
+        value.get("target_child_timeout_seconds"),
+        value.get("control_child_timeout_seconds"),
+    )
+    return (
+        all(type(item) is int for item in (overall, target, control))
+        and 1 <= target <= 300
+        and 1 <= control <= 300
+        and max(target, control) <= overall <= 1200
+        and value.get("maximum_child_processes") == 4
+    )
+
+
+def _candidate_manifest_for_local_capture(capture):
+    from .runtime_audit_runner import _candidate_manifest
+
+    return _candidate_manifest(capture)
+
+
+def _daily_oracle_observation(
+    evidence: Any,
+    case: dict[str, Any],
+    source_map: dict[str, str],
+    root: Path,
+    gaps: list[str],
+    cache: dict[tuple[str, str, str, str], dict[str, Any] | None],
+) -> tuple[str | None, list[Path]]:
+    fields = {
+        "kind",
+        "path",
+        "sha256",
+        "trust_root_path",
+        "trust_root_sha256",
+        "environment_sha256",
+        "test_path",
+        "test_line",
+        "test_symbol",
+        "oracle_case_id",
+    }
+    if not isinstance(evidence, dict) or set(evidence) != fields:
+        gaps.append("execution_evidence_unsupported")
+        return None, []
+    receipt_path = _daily_local_evidence_path(
+        evidence.get("path"), evidence.get("sha256"), root, gaps, "oracle_receipt"
+    )
+    trust_path = _daily_local_evidence_path(
+        evidence.get("trust_root_path"),
+        evidence.get("trust_root_sha256"),
+        root,
+        gaps,
+        "oracle_trust_root",
+    )
+    if receipt_path is None or trust_path is None:
+        return None, [path for path in (receipt_path, trust_path) if path is not None]
+    environment_sha = evidence.get("environment_sha256")
+    if not _valid_sha256(environment_sha):
+        gaps.append("execution_environment_pin_invalid")
+        return None, [receipt_path, trust_path]
+    source_rows = [
+        {"path": path, "sha256": digest} for path, digest in sorted(source_map.items())
+    ]
+    source_sha = _sha_bytes(_canonical(source_rows))
+    cache_key = (
+        str(receipt_path),
+        str(trust_path),
+        evidence["trust_root_sha256"],
+        environment_sha,
+    )
+    if cache_key not in cache:
+        try:
+            from .runtime_attestation import (
+                TEST_ORACLE_VERIFICATION_SCHEMA_V3,
+                verify_signed_test_oracles,
+            )
+
+            verified = verify_signed_test_oracles(
+                receipt_path,
+                trust_path,
+                trust_root_sha256=evidence["trust_root_sha256"],
+                source_manifest_sha256=source_sha,
+                environment_sha256=environment_sha,
+            )
+            cache[cache_key] = (
+                verified
+                if verified.get("schema") == TEST_ORACLE_VERIFICATION_SCHEMA_V3
+                and verified.get("source_manifest_sha256") == source_sha
+                and verified.get("environment_sha256") == environment_sha
+                else None
+            )
+            if cache[cache_key] is None:
+                gaps.append("execution_oracle_v3_required")
+        except (OSError, TypeError, ValueError, KeyError, RuntimeError):
+            cache[cache_key] = None
+            gaps.append("execution_oracle_invalid_or_stale")
+    verified = cache[cache_key]
+    if verified is None:
+        if "execution_oracle_invalid_or_stale" not in gaps:
+            gaps.append("execution_oracle_invalid_or_stale")
+        return None, [receipt_path, trust_path]
+    row = _daily_oracle_case_row(evidence, verified, case, source_map, gaps)
+    if row is None:
+        return None, [receipt_path, trust_path]
+    return "baseline_assertion_pass_mutant_assertion_fail", [
+        receipt_path,
+        trust_path,
+    ]
+
+
+def _daily_local_evidence_path(
+    value: Any,
+    digest: Any,
+    root: Path,
+    gaps: list[str],
+    label: str,
+) -> Path | None:
+    if not isinstance(value, str) or not value.strip() or not _valid_sha256(digest):
+        gaps.append(label + "_missing_or_malformed")
+        return None
+    supplied = Path(value)
+    candidate = supplied if supplied.is_absolute() else Path(root).resolve() / supplied
+    try:
+        path = candidate.resolve()
+        path.relative_to(Path(root).resolve())
+        if not path.is_file() or path.stat().st_size > MAX_DAILY_RECEIPT_BYTES:
+            raise ValueError("evidence is missing or oversized")
+        if _sha_path(path) != digest:
+            raise ValueError("evidence digest is stale")
+    except (OSError, RuntimeError, ValueError):
+        gaps.append(label + "_invalid_or_stale")
+        return None
+    return path
+
+
+def _daily_oracle_case_row(
+    evidence: dict[str, Any],
+    verified: dict[str, Any],
+    case: dict[str, Any],
+    source_map: dict[str, str],
+    gaps: list[str],
+) -> dict[str, Any] | None:
+    test_path = evidence.get("test_path")
+    line = evidence.get("test_line")
+    symbol = evidence.get("test_symbol")
+    oracle_case_id = evidence.get("oracle_case_id")
+    rows = [
+        row
+        for row in verified.get("tests", [])
+        if isinstance(row, dict)
+        and (row.get("path"), row.get("line"), row.get("symbol"))
+        == (test_path, line, symbol)
+    ]
+    if (
+        not isinstance(test_path, str)
+        or type(line) is not int
+        or not isinstance(evidence.get("test_symbol"), str)
+        or not isinstance(oracle_case_id, str)
+        or len(rows) != 1
+    ):
+        gaps.append("execution_oracle_test_identity_unmatched")
+        return None
+    row = rows[0]
+    baseline, mutation = row.get("baseline"), row.get("mutation")
+    if not isinstance(baseline, dict) or not isinstance(mutation, dict):
+        gaps.append("execution_oracle_case_missing")
+        return None
+    catalogs = [baseline.get("collection_catalog"), mutation.get("collection_catalog")]
+    source_paths = _daily_oracle_catalog_sources(catalogs, source_map)
+    if source_paths is None or not _daily_oracle_run_matches(
+        row, baseline, mutation, test_path, oracle_case_id, source_map, catalogs
+    ):
+        gaps.append("execution_oracle_sources_or_case_unbound")
+        return None
+    source_paths.update({test_path, mutation.get("source_path")})
+    input_paths = case.get("input_paths")
+    if not isinstance(input_paths, list) or not source_paths <= set(input_paths):
+        gaps.append("execution_oracle_inputs_not_bound_to_case")
+        return None
+    return row
+
+
+def _daily_oracle_run_matches(
+    row, baseline, mutation, test_path, case_id, source_map, catalogs
+):
+    return (
+        baseline.get("status") == "PASS"
+        and mutation.get("status") == "FAIL"
+        and baseline.get("phase") == "call"
+        and mutation.get("phase") == "call"
+        and baseline.get("setup_status") == "PASS"
+        and mutation.get("setup_status") == "PASS"
+        and baseline.get("teardown_status") == "PASS"
+        and mutation.get("teardown_status") == "PASS"
+        and source_map.get(test_path) == row.get("test_sha256")
+        and source_map.get(mutation.get("source_path")) == mutation.get("source_sha256")
+        and case_id in baseline.get("case_ids", [])
+        and case_id in mutation.get("case_ids", [])
+        and mutation.get("failure_kind") == "assertion"
+        and all(isinstance(item, dict) for item in catalogs)
+        and _daily_oracle_assertions_match(baseline, mutation, case_id)
+    )
+
+
+def _daily_oracle_catalog_sources(catalogs, source_map):
+    source_paths = set()
+    for catalog in catalogs:
+        if not isinstance(catalog, dict):
+            return None
+        config = catalog.get("config_manifest")
+        if not isinstance(config, list):
+            return None
+        if catalog.get("config_identity") != (
+            "manifest" if config else "pytest-default"
+        ):
+            return None
+        for item in config:
+            if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+                return None
+            path, digest = item["path"], item.get("sha256")
+            if source_map.get(path) != digest:
+                return None
+            source_paths.add(path)
+    return source_paths
+
+
+def _daily_oracle_assertions_match(
+    baseline: dict[str, Any], mutation: dict[str, Any], case_id: str
+) -> bool:
+    baseline_rows = baseline.get("assertion_observations")
+    mutation_rows = mutation.get("assertion_observations")
+    return (
+        isinstance(baseline_rows, list)
+        and isinstance(mutation_rows, list)
+        and any(
+            isinstance(row, dict)
+            and row.get("case_id") == case_id
+            and row.get("outcome") == "PASS"
+            and row.get("failure_visible") is False
+            for row in baseline_rows
+        )
+        and any(
+            isinstance(row, dict)
+            and row.get("case_id") == case_id
+            and row.get("outcome") == "FAIL"
+            and row.get("failure_visible") is True
+            for row in mutation_rows
+        )
+    )
+
+
+def _daily_e2e_receipt(
+    evidence: dict[str, Any], root: Path, gaps: list[str]
+) -> tuple[dict[str, Any] | None, Path | None]:
+    path_text = evidence.get("path")
+    if not isinstance(path_text, str) or not path_text.strip():
+        gaps.append("execution_evidence_path_missing")
+        return None, None
+    path = Path(path_text)
+    path = path if path.is_absolute() else Path(root).resolve() / path
+    try:
+        path = path.resolve()
+        path.relative_to(Path(root).resolve())
+    except (OSError, RuntimeError, ValueError):
+        gaps.append("execution_evidence_outside_root")
+        return None, None
+    if not path.is_file() or not _valid_sha256(evidence.get("sha256")):
+        gaps.append("execution_evidence_missing_or_malformed")
+        return None, None
+    if path.stat().st_size > MAX_DAILY_RECEIPT_BYTES:
+        gaps.append("execution_evidence_size_limit")
+        return None, path
+    if _sha_path(path) != evidence["sha256"]:
+        gaps.append("execution_evidence_stale")
+        return None, None
+    try:
+        from .e2e_proof import validate_e2e_proof_receipt
+
+        receipt = validate_e2e_proof_receipt(_load_json(path))
+    except (ValueError, KeyError, TypeError, OSError, RuntimeError):
+        gaps.append("execution_evidence_invalid")
+        return None, None
+    return receipt, path
+
+
+def _daily_e2e_command_outcome(
+    receipt: dict[str, Any], polarity: str, gaps: list[str]
+) -> str | None:
+    commands = receipt.get("commands")
+    command = commands.get(polarity) if isinstance(commands, dict) else None
+    if not isinstance(command, dict) or command.get("status") != "completed":
+        gaps.append("execution_infrastructure_failure")
+        return None
+    exit_code = command.get("exit_code")
+    if isinstance(exit_code, bool) or not isinstance(exit_code, int):
+        gaps.append("execution_infrastructure_failure")
+        return None
+    if receipt.get("ok") is not True or receipt.get("run_state") != "proof_pass":
+        gaps.append("execution_receipt_not_green")
+        return None
+    return "exit_zero" if exit_code == 0 else "exit_nonzero"
+
+
+def _daily_e2e_artifacts(
+    receipt: dict[str, Any],
+    source_map: dict[str, str],
+    root: Path,
+    gaps: list[str],
+) -> None:
+    for artifact in receipt.get("artifacts", []):
+        if not isinstance(artifact, dict) or not isinstance(artifact.get("path"), str):
+            gaps.append("execution_artifact_manifest_malformed")
+            continue
+        try:
+            artifact_path = (Path(root).resolve() / artifact["path"]).resolve()
+            artifact_path.relative_to(Path(root).resolve())
+        except (OSError, RuntimeError, ValueError):
+            gaps.append("execution_artifact_outside_root")
+            continue
+        if (
+            not artifact_path.is_file()
+            or not _valid_sha256(artifact.get("sha256"))
+            or artifact_path.stat().st_size > MAX_DAILY_SOURCE_BYTES
+            or _sha_path(artifact_path) != artifact["sha256"]
+        ):
+            gaps.append("execution_artifact_stale")
+    source_artifacts = {
+        artifact.get("path"): artifact.get("sha256")
+        for artifact in receipt.get("artifacts", [])
+        if isinstance(artifact, dict) and isinstance(artifact.get("path"), str)
+    }
+    if any(
+        source_artifacts.get(source) != digest for source, digest in source_map.items()
+    ):
+        gaps.append("execution_candidate_source_binding_missing")
+
+
 def _completion_result_list(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     results = manifest.get("criteria")
     if (
@@ -2731,6 +4821,27 @@ def close_mission(
     manifest, resolved_validation = _validation_manifest(validation_path, root)
     _validate_context_wall(mission, manifest)
     results, evidence = _validated_completion_results(mission, manifest, root)
+    daily_verification, daily_evidence = _daily_verification_summary(
+        manifest.get("daily_verification", _DAILY_VERIFICATION_UNSET),
+        mission,
+        root,
+        mission_path=Path(mission_path),
+    )
+    evidence_paths = [Path(item["path"]) for item in evidence] + daily_evidence
+    evidence = _evidence(Path(root), list(dict.fromkeys(evidence_paths)))
+    if len(evidence) > MAX_COMPLETION_EVIDENCE:
+        raise ProductMissionError(
+            "NO_FINISH_CONTRACT",
+            f"completion evidence is limited to {MAX_COMPLETION_EVIDENCE} files",
+        )
+    daily_contract_present = "daily_verification" in manifest
+    if daily_verification.get("complete") is True and not _daily_evidence_is_bound(
+        daily_verification, evidence, root
+    ):
+        raise ProductMissionError(
+            "DAILY_VERIFICATION_DRIFT",
+            "daily verification evidence changed while completion was being sealed",
+        )
     core = {
         "schema": MISSION_COMPLETION_SCHEMA,
         "mission": {
@@ -2748,7 +4859,10 @@ def close_mission(
         "adapter_attestation": manifest.get("adapter_attestation"),
         "criteria": results,
         "evidence": evidence,
-        "status": "completed",
+        "status": "completed"
+        if not daily_contract_present or daily_verification.get("complete") is True
+        else "incomplete",
+        "daily_verification": daily_verification,
         "authority": {"merge": False, "publish": False, "deploy": False},
         "markers": [
             "CREATOR_VERIFIER_CONTEXT_WALL",
@@ -2766,6 +4880,48 @@ def close_mission(
     path = Path(mission_path).resolve().parent / "completion.json"
     _atomic_json(path, receipt, force=force)
     return {**receipt, "path": str(path)}
+
+
+def _daily_evidence_is_bound(
+    summary: dict[str, Any], evidence: list[dict[str, Any]], root: Path
+) -> bool:
+    actual = {item["path"]: item["sha256"] for item in evidence}
+    expected: dict[str, str] = {}
+    for source in summary.get("source_manifest", []):
+        expected[str((Path(root).resolve() / source["path"]).resolve())] = source[
+            "sha256"
+        ]
+    for criterion in summary.get("criteria", []):
+        for case in criterion.get("cases", []):
+            receipt_path, receipt_sha = (
+                case.get("execution_receipt_path"),
+                case.get("execution_receipt_sha256"),
+            )
+            if isinstance(receipt_path, str) and isinstance(receipt_sha, str):
+                expected[str(Path(receipt_path).resolve())] = receipt_sha
+            trust_path, trust_sha = (
+                case.get("trust_root_path"),
+                case.get("trust_root_sha256"),
+            )
+            if isinstance(trust_path, str) and isinstance(trust_sha, str):
+                path = Path(trust_path)
+                path = path if path.is_absolute() else Path(root).resolve() / path
+                expected[str(path.resolve())] = trust_sha
+    if not expected:
+        return False
+    return all(
+        _daily_digest_is_current(path, digest, actual)
+        for path, digest in expected.items()
+    )
+
+
+def _daily_digest_is_current(path: str, digest: str, evidence: dict[str, str]) -> bool:
+    if evidence.get(path) != digest:
+        return False
+    try:
+        return _sha_path(Path(path)) == digest
+    except OSError:
+        return False
 
 
 def _bound_file_error(item: dict[str, Any], label: str) -> str | None:
@@ -2799,20 +4955,106 @@ def _completion_errors(receipt: dict[str, Any]) -> list[str]:
     mission_path = Path(receipt["mission"]["path"])
     if mission_path.exists() and not verify_mission(mission_path)["valid"]:
         errors.append("mission no longer verifies")
+    summary = receipt.get("daily_verification")
+    if (
+        receipt.get("status") == "completed"
+        and isinstance(summary, dict)
+        and summary.get("schema") == DAILY_VERIFICATION_SCHEMA
+        and summary.get("status") != "LEGACY_CLAIMED"
+    ):
+        try:
+            mission = _load_mission(mission_path)
+            graph_path = Path(mission["inputs"]["graph_path"]).resolve()
+            workspace = graph_path.parents[3]
+            validation_path = Path(receipt["validation"]["path"])
+            manifest, resolved_validation = _validation_manifest(
+                validation_path, workspace
+            )
+            if _sha_path(resolved_validation) != receipt["validation"]["sha256"]:
+                raise ProductMissionError(
+                    "VALIDATION_DRIFT", "validation input changed during verification"
+                )
+            if "daily_verification" not in manifest:
+                raise ProductMissionError(
+                    "DAILY_VERIFICATION_DRIFT",
+                    "completed daily receipt has no daily verification contract",
+                )
+            current_summary, _ = _daily_verification_summary(
+                manifest["daily_verification"],
+                mission,
+                workspace,
+                mission_path=mission_path,
+            )
+            if _canonical(current_summary) != _canonical(summary):
+                raise ProductMissionError(
+                    "DAILY_VERIFICATION_DRIFT",
+                    "daily verification summary no longer matches its validation contract",
+                )
+            if not _daily_evidence_is_bound(
+                current_summary, receipt.get("evidence", []), workspace
+            ):
+                raise ProductMissionError(
+                    "DAILY_VERIFICATION_DRIFT",
+                    "daily verification evidence no longer matches current source bindings",
+                )
+        except (KeyError, IndexError, OSError, ProductMissionError, TypeError) as exc:
+            errors.append(f"daily verification no longer verifies: {exc}")
     return errors
+
+
+def _completion_summary(receipt: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    summary = receipt.get("daily_verification")
+    if not isinstance(summary, dict):
+        summary = _daily_verification_incomplete("legacy_completion_receipt")
+        summary["status"] = "LEGACY_CLAIMED"
+    return summary, summary.get("status") == "LEGACY_CLAIMED"
+
+
+def _completion_state(
+    receipt: dict[str, Any], summary: dict[str, Any], integrity_valid: bool
+) -> tuple[bool, bool]:
+    complete = (
+        integrity_valid
+        and receipt.get("status") == "completed"
+        and summary.get("status") == "COMPLETE"
+    )
+    legacy_claimed = summary.get("status") == "LEGACY_CLAIMED"
+    return complete, integrity_valid and (complete or legacy_claimed)
 
 
 def verify_mission_completion(completion_path: Path) -> dict[str, Any]:
     """Verify completion, validation, mission, and every evidence file hash."""
     receipt = _load_json(completion_path, MISSION_COMPLETION_SCHEMA)
     errors = _completion_errors(receipt)
+    summary, legacy_claimed = _completion_summary(receipt)
+    integrity_valid = not errors
+    complete, completion_valid = _completion_state(receipt, summary, integrity_valid)
+    if integrity_valid and not (complete or legacy_claimed):
+        errors.append(
+            "completion remains incomplete: "
+            + ", ".join(summary.get("gaps", ["daily verification incomplete"]))
+        )
+    marker = (
+        "MISSION_COMPLETION_VERIFIED"
+        if complete
+        else "MISSION_COMPLETION_INCOMPLETE"
+        if integrity_valid
+        else "MISSION_COMPLETION_DRIFT"
+    )
     result = {
         "schema": "factory.mission.completion.verification.v1",
-        "valid": not errors,
-        "status": "verified" if not errors else "invalid",
-        "marker": "MISSION_COMPLETION_VERIFIED"
-        if not errors
-        else "MISSION_COMPLETION_DRIFT",
+        "valid": completion_valid,
+        "integrity_valid": integrity_valid,
+        "complete": complete,
+        "status": "verified"
+        if complete
+        else "legacy_claimed"
+        if legacy_claimed
+        else "incomplete"
+        if integrity_valid
+        else "invalid",
+        "marker": marker,
+        "daily_verification": summary,
         "errors": errors,
         "authority": "completion verification only; no merge or deployment authority",
     }
@@ -2821,6 +5063,30 @@ def verify_mission_completion(completion_path: Path) -> dict[str, Any]:
             "MISSION_COMPLETION_DRIFT", "; ".join(errors), errors=errors
         )
     return result
+
+
+def mission_completion_graph_projection(
+    verification: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Project integrity and completion separately for read-only graph consumers."""
+    integrity_valid = (
+        verification is not None and verification.get("integrity_valid") is True
+    )
+    complete = (
+        integrity_valid
+        and verification.get("valid") is True
+        and verification.get("complete") is True
+    )
+    return {
+        "status": "verified"
+        if complete
+        else "incomplete"
+        if integrity_valid
+        else "invalid",
+        "integrity_valid": integrity_valid,
+        "complete": complete,
+        "errors": verification.get("errors", []) if verification else [],
+    }
 
 
 def _pr_markdown(draft: dict[str, Any]) -> str:

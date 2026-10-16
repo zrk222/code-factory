@@ -4653,7 +4653,15 @@ def test_security_scan_falls_back_to_secure_reads_when_bytes_are_not_retained(
     monkeypatch.setattr(module, "_oracle_source_inputs", discard_retained)
     actual = security_scan(tmp_path, cache_enabled=False)
 
-    assert actual == expected
+    assert expected["state"] == "CLEAN"
+    assert actual["state"] == "INCOMPLETE"
+    assert actual["sources"] == expected["sources"]
+    assert actual["findings"] == expected["findings"]
+    assert actual["database_context"]["status"] == "INCOMPLETE"
+    assert (
+        "database_python_source_retention_limit:app.py"
+        in actual["database_context"]["gaps"]
+    )
     assert len(reads) == 5
 
 

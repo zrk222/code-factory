@@ -4,6 +4,57 @@ Research date: 2026-10-14. Status: research and implementation priorities, not s
 
 ## Product decision
 
+### Local workflow update — October 16, 2026
+
+The following describes the current source implementation. It is separate from
+the research priorities below and does not establish public-package availability.
+
+1. Declare the requested behavior and acceptance cases before implementation.
+   Bind each case to its inputs, candidate sources and expected outcome.
+2. Capture the approved original and deliberately broken production code through
+   the existing bounded local mutation runner. Use the same selected assertion
+   and an unrelated control; collection, setup and infrastructure errors do not
+   count as successful behavioral challenges.
+3. Close the mission and verify its current evidence. Supported unit,
+   requirement-mutation and receipt-trace gates derive their observations from
+   the captured executions and their digest lineage. A generic `passed` field
+   cannot satisfy these gates. Missing or unsupported required gates keep the
+   mission incomplete.
+4. Read the local completion summary through the existing CLI:
+
+   ```text
+   factory proof-card PATH_TO_COMPLETION_JSON --root REPOSITORY --local-details
+   ```
+
+   Add `--json` for agent consumption or `--out-dir DIRECTORY` to choose a
+   workspace-contained output directory. These are local JSON and Markdown
+   details, including task text and paths. The default privacy-safe share-card
+   route remains separate.
+
+The summary shows requested behavior, checked cases, expected and observed
+outcomes, files checked, unfinished work, unexamined scope, human review and one
+next action. It re-verifies evidence on refresh; stale evidence becomes invalid,
+and a mission changed during rendering is rejected. Files checked are not an
+actual Git diff: inspect that diff separately to establish applied changes.
+
+Local captured execution assumes a writable local host and is not independent
+attestation. Signer-verified statements have a separate disposition. Neither
+establishes that the specification is sufficient or that production is correct.
+The bounded non-UI journey has retained original-pass, natural mutant-failure,
+unaffected-control and stale-snapshot checks. Browser, accessibility, responsive
+layout and live integration requirements still need their own applicable
+evidence; the UI journey remains incomplete when those checks are absent.
+
+The retained positive verifies in a fresh process under its captured execution
+profile, including pytest's injected `PYTEST_VERSION=9.0.2` and disabled plugin
+autoload. The local-details CLI also returns COMPLETE in that matching profile.
+A different environment is rejected as drift. These observations establish this
+profile only; they do not establish portable execution across environments.
+
+External review-claim normalization and full Studio/MCP delivery remain separate
+unfinished integration packets. No automatic approval or release authority is
+introduced by this workflow.
+
 Make CF the shortest reliable path from a development task to an understandable, verified change. Optimize accepted working changes, review effort and recovery time. Preserve depth across every applicable audit family while making specialized controls discoverable only when needed. Use existing modules before adding abstractions; retain the 460 Python-file cap and existing size guards.
 
 The daily experience should answer four questions: What changed? What is actually wrong? What should I do next? What evidence proves the repair? An inexperienced builder needs plain-language guided choices. An experienced engineer needs concise source locations, reproducible commands, independent observations and direct access to raw evidence.
