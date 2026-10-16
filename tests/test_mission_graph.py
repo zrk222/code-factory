@@ -13,6 +13,7 @@ from factoryline.mission_graph import (
     export_mission_graph,
     init_mission_graph,
     langgraph_doctor,
+    mission_graph_history,
     mission_graph_status,
     recommend_mission_route,
     verify_mission_graph,
@@ -131,6 +132,21 @@ def _completion(tmp_path: Path, mission: dict, creator: str, verifier: str) -> P
         encoding="utf-8",
     )
     return Path(close_mission(Path(mission["path"]), validation, tmp_path)["path"])
+
+
+def test_mission_graph_history_returns_bound_ordered_events(tmp_path: Path):
+    mission = _pipeline(tmp_path)
+    initialized = init_mission_graph(Path(mission["path"]), tmp_path)
+
+    history = mission_graph_history(Path(mission["path"]), tmp_path)
+
+    assert history["schema"] == "factory.mission.graph.history.v1"
+    assert history["mission_id"] == mission["id"]
+    assert history["state"] == initialized["state"] == "planned"
+    assert history["version"] == initialized["version"] == 0
+    assert history["events"] == []
+    assert history["chain_head"] == initialized["event_tip"]
+    assert history["marker"] == "MISSION_GRAPH_HASH_CHAIN_BOUND"
 
 
 def _approve(tmp_path: Path, mission: dict) -> Path:

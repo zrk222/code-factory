@@ -5002,22 +5002,33 @@ def _completion_errors(receipt: dict[str, Any]) -> list[str]:
     return errors
 
 
-def verify_mission_completion(completion_path: Path) -> dict[str, Any]:
-    """Verify completion, validation, mission, and every evidence file hash."""
-    receipt = _load_json(completion_path, MISSION_COMPLETION_SCHEMA)
-    errors = _completion_errors(receipt)
+def _completion_summary(receipt: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     summary = receipt.get("daily_verification")
     if not isinstance(summary, dict):
         summary = _daily_verification_incomplete("legacy_completion_receipt")
         summary["status"] = "LEGACY_CLAIMED"
-    integrity_valid = not errors
+    return summary, summary.get("status") == "LEGACY_CLAIMED"
+
+
+def _completion_state(
+    receipt: dict[str, Any], summary: dict[str, Any], integrity_valid: bool
+) -> tuple[bool, bool]:
     complete = (
         integrity_valid
         and receipt.get("status") == "completed"
         and summary.get("status") == "COMPLETE"
     )
     legacy_claimed = summary.get("status") == "LEGACY_CLAIMED"
-    completion_valid = integrity_valid and (complete or legacy_claimed)
+    return complete, integrity_valid and (complete or legacy_claimed)
+
+
+def verify_mission_completion(completion_path: Path) -> dict[str, Any]:
+    """Verify completion, validation, mission, and every evidence file hash."""
+    receipt = _load_json(completion_path, MISSION_COMPLETION_SCHEMA)
+    errors = _completion_errors(receipt)
+    summary, legacy_claimed = _completion_summary(receipt)
+    integrity_valid = not errors
+    complete, completion_valid = _completion_state(receipt, summary, integrity_valid)
     if integrity_valid and not (complete or legacy_claimed):
         errors.append(
             "completion remains incomplete: "

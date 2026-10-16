@@ -634,6 +634,60 @@ def test_mission_completion_requires_fresh_context_and_all_evidence(tmp_path: Pa
     assert check["marker"] == "MISSION_COMPLETION_DRIFT"
 
 
+def test_mission_completion_graph_projection_separates_integrity_and_completion():
+    incomplete = product_missions.mission_completion_graph_projection(
+        {
+            "valid": False,
+            "integrity_valid": True,
+            "complete": False,
+            "errors": ["completion remains incomplete"],
+        }
+    )
+    assert incomplete == {
+        "status": "incomplete",
+        "integrity_valid": True,
+        "complete": False,
+        "errors": ["completion remains incomplete"],
+    }
+    complete = product_missions.mission_completion_graph_projection(
+        {"valid": True, "integrity_valid": True, "complete": True, "errors": []}
+    )
+    assert complete["status"] == "verified"
+    assert complete["complete"] is True
+    assert (
+        product_missions.mission_completion_graph_projection(None)["status"]
+        == "invalid"
+    )
+
+
+def test_capture_mission_local_mutation_rejects_outside_mission_before_execution(
+    tmp_path: Path,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside_mission = tmp_path / "outside-mission.json"
+    outside_mission.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ProductMissionError, match="outside the workspace"):
+        product_missions.capture_mission_local_mutation(
+            outside_mission,
+            workspace / "daily-contract.json",
+            workspace,
+            "criterion",
+            "target",
+            "control",
+            "test_target",
+            1,
+            "test_control",
+            1,
+            "src/app.py",
+            "run",
+            "before",
+            "after",
+            "evidence",
+        )
+
+
 def test_daily_verification_binds_case_facts_but_keeps_behavior_incomplete(tmp_path):
     _graph, _slices, mission = _pipeline(tmp_path)
     evidence = tmp_path / "test-results.json"
