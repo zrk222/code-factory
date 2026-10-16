@@ -445,10 +445,468 @@ def implementation_findings(relative, tree, data, context):
     ]
 
 
+_SQL_CONNECTORS = {
+    "mysql.connector.connect": "mysql.connector",
+    "psycopg.connect": "psycopg",
+    "sqlite3.connect": "sqlite3",
+}
+
+
+def sql_connection_driver(node, aliases, connections, scope_aliases, resolve_call):
+    """Return a narrowly proven SQL connection driver for a call or name."""
+    if isinstance(node, ast.Call):
+        return _SQL_CONNECTORS.get(resolve_call(node, aliases))
+    if not isinstance(node, ast.Name):
+        return None
+    for binding in connections:
+        if (
+            isinstance(binding, tuple)
+            and len(binding) == 3
+            and binding[0] == "sql-connection"
+            and binding[2] == node.id
+        ):
+            return binding[1]
+    if scope_aliases.get(node.id) == "django.db.connection":
+        return "django"
+    return None
+
+
+def scoped_sql_connection_driver(
+    node, aliases, connections, scope_aliases_for, resolve_call
+):
+    """Resolve a SQL connection after applying lexical import aliases."""
+    scope = getattr(node, "_security_lexical_scope", None)
+    statement = getattr(node, "_security_flow_statement", None)
+    return sql_connection_driver(
+        node,
+        aliases,
+        connections,
+        scope_aliases_for(scope, aliases, statement),
+        resolve_call,
+    )
+
+
+def sql_cursor_driver(node, aliases, connections, scope_aliases, resolve_call):
+    """Return the proven driver for a cursor expression or tracked cursor name."""
+    if isinstance(node, ast.Name):
+        for binding in connections:
+            if (
+                isinstance(binding, tuple)
+                and len(binding) == 3
+                and binding[0] == "sql-cursor"
+                and binding[2] == node.id
+            ):
+                return binding[1]
+        return None
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        return None
+    if node.func.attr != "cursor":
+        return None
+    return sql_connection_driver(
+        node.func.value, aliases, connections, scope_aliases, resolve_call
+    )
+
+
+def scoped_sql_driver(
+    node,
+    aliases,
+    connections,
+    cursors,
+    helpers,
+    scope_aliases_for,
+    resolve_call,
+    helper_call,
+    call_leaf,
+):
+    """Resolve driver provenance for a SQL connection or cursor expression."""
+    scope = getattr(node, "_security_lexical_scope", None)
+    statement = getattr(node, "_security_flow_statement", None)
+    scoped_aliases = scope_aliases_for(scope, aliases, statement)
+    driver = sql_cursor_driver(node, aliases, cursors, scoped_aliases, resolve_call)
+    if driver is None and helper_call(node, "cursor", aliases, helpers):
+        return "mysql.connector"
+    if driver is None and isinstance(node, ast.Call) and call_leaf(node) == "cursor":
+        return sql_connection_driver(
+            node.func.value, aliases, connections, scoped_aliases, resolve_call
+        )
+    return driver
+
+
+def sql_return_kind(
+    statement,
+    aliases,
+    helpers,
+    connections,
+    cursors,
+    connection_driver,
+    cursor_driver,
+    helper_call,
+):
+    """Classify returned SQL connections and cursors using proven provenance."""
+    if not isinstance(statement, ast.Return):
+        return ""
+    value = statement.value
+    if isinstance(value, ast.Name):
+        if value.id in connections:
+            return "connection"
+        if value.id in cursors:
+            return "cursor"
+    if connection_driver(value, aliases, connections) or helper_call(
+        value, "connection", aliases, helpers
+    ):
+        return "connection"
+    return (
+        "cursor" if cursor_driver(value, aliases, connections, cursors, helpers) else ""
+    )
+
+
+def clear_sql_provenance(connection_names, cursor_names, bound_names):
+    """Remove driver tags when ordinary flow rebinds a connection or cursor."""
+    for names, tag in (
+        (connection_names, "sql-connection"),
+        (cursor_names, "sql-cursor"),
+    ):
+        names.difference_update(bound_names)
+        names.difference_update(
+            binding
+            for binding in tuple(names)
+            if isinstance(binding, tuple)
+            and len(binding) == 3
+            and binding[0] == tag
+            and binding[2] in bound_names
+        )
+
+
+def bind_sql_provenance(
+    connection_names, cursor_names, name, connection_driver, cursor_driver
+):
+    """Bind only the SQL object kinds proven by the current assignment."""
+    if connection_driver:
+        connection_names.update({name, ("sql-connection", connection_driver, name)})
+    if cursor_driver:
+        cursor_names.update({name, ("sql-cursor", cursor_driver, name)})
+
+
+def track_sql_assignment(
+    statement,
+    aliases,
+    helpers,
+    connections,
+    cursors,
+    connection_driver,
+    cursor_driver,
+    helper_call,
+):
+    """Track a straight-line SQL connection/cursor assignment with rebinds."""
+    if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+        return
+    value = getattr(statement, "value", None)
+    driver = connection_driver(value)
+    cursor = cursor_driver(value)
+    is_connection, is_cursor = _sql_assignment_kinds(
+        value, aliases, helpers, driver, cursor, helper_call
+    )
+    driver = driver or ("mysql.connector" if is_connection else None)
+    cursor = cursor or ("mysql.connector" if is_cursor else None)
+    for name in _sql_assignment_names(statement):
+        clear_sql_provenance(connections, cursors, {name})
+        bind_sql_provenance(connections, cursors, name, driver, cursor)
+
+
+def _sql_assignment_kinds(value, aliases, helpers, driver, cursor, helper_call):
+    receiver = _sql_call_receiver(value)
+    connection = bool(driver) or helper_call(value, "connection", aliases, helpers)
+    is_cursor = (
+        bool(cursor)
+        or helper_call(value, "cursor", aliases, helpers)
+        or (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Attribute)
+            and value.func.attr == "cursor"
+            and helper_call(receiver, "connection", aliases, helpers)
+        )
+    )
+    return connection, is_cursor
+
+
+def _sql_call_receiver(value):
+    if isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute):
+        return value.func.value
+    return None
+
+
+def _sql_assignment_names(statement):
+    targets = (
+        statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+    )
+    return [target.id for target in targets if isinstance(target, ast.Name)]
+
+
+def sqlalchemy_with_findings(
+    statement, aliases, scope, connections, cursors, resolve_call, analyze_body
+):
+    """Analyze only SQLAlchemy engine contexts proven from create_engine."""
+    targets = sqlalchemy_with_connection_targets(
+        statement, aliases, scope, resolve_call
+    )
+    if not targets:
+        return None
+    old_connections, old_cursors = connections.copy(), cursors.copy()
+    try:
+        for target in targets:
+            bind_sql_provenance(connections, cursors, target, "sqlalchemy", None)
+        return analyze_body(statement.body)
+    finally:
+        connections.clear()
+        connections.update(old_connections)
+        cursors.clear()
+        cursors.update(old_cursors)
+
+
+def unsafe_sql_driver(
+    call,
+    requests,
+    parameters,
+    aliases,
+    connection_names,
+    cursor_names,
+    scoped_aliases,
+    resolve_call,
+    proven_cursor,
+    is_tainted,
+):
+    """Return the proven driver only when its SQL statement is request-tainted."""
+    driver = sql_sink_driver(
+        call,
+        aliases,
+        connection_names,
+        cursor_names,
+        scoped_aliases,
+        resolve_call,
+    )
+    if (
+        driver is None
+        and isinstance(call.func, ast.Attribute)
+        and proven_cursor(call.func.value)
+    ):
+        driver = "mysql.connector"
+    if driver is None:
+        return None
+    query = sql_statement_argument(call, driver, aliases, resolve_call)
+    return driver if is_tainted(query, requests, parameters, aliases) else None
+
+
+def scoped_unsafe_sql_driver(
+    call,
+    requests,
+    parameters,
+    aliases,
+    connection_names,
+    cursor_names,
+    scope_aliases_for,
+    resolve_call,
+    helpers,
+    cursor_driver,
+    helper_call,
+    is_tainted,
+):
+    """Apply scoped aliases before resolving a request-tainted SQL sink."""
+    scope = getattr(call, "_security_lexical_scope", None)
+    statement = getattr(call, "_security_flow_statement", None)
+    return unsafe_sql_driver(
+        call,
+        requests,
+        parameters,
+        aliases,
+        connection_names,
+        cursor_names,
+        scope_aliases_for(scope, aliases, statement),
+        resolve_call,
+        lambda receiver: _proven_sql_cursor(
+            receiver,
+            aliases,
+            connection_names,
+            cursor_names,
+            helpers,
+            cursor_driver,
+            helper_call,
+        ),
+        is_tainted,
+    )
+
+
+def _proven_sql_cursor(
+    receiver,
+    aliases,
+    connection_names,
+    cursor_names,
+    helpers,
+    cursor_driver,
+    helper_call,
+):
+    if isinstance(receiver, ast.Name):
+        return receiver.id in cursor_names
+    return bool(
+        cursor_driver(receiver, aliases, connection_names, cursor_names, helpers)
+    ) or helper_call(receiver, "cursor", aliases, helpers)
+
+
+def sql_sink_driver(
+    call, aliases, connection_names, cursor_names, scope_aliases, resolve_call
+):
+    """Resolve a supported execute receiver to its proven SQL driver."""
+    if (
+        not isinstance(call, ast.Call)
+        or not isinstance(call.func, ast.Attribute)
+        or call.func.attr != "execute"
+        or not call.args
+    ):
+        return None
+    receiver = call.func.value
+    driver = sql_cursor_driver(
+        receiver, aliases, cursor_names, scope_aliases, resolve_call
+    )
+    if driver:
+        return driver
+    driver = sql_connection_driver(
+        receiver, aliases, connection_names, scope_aliases, resolve_call
+    )
+    if driver in {"sqlite3", "psycopg", "sqlalchemy"}:
+        return driver
+    if isinstance(receiver, ast.Call) and isinstance(receiver.func, ast.Attribute):
+        if receiver.func.attr == "cursor":
+            return sql_connection_driver(
+                receiver.func.value,
+                aliases,
+                connection_names,
+                scope_aliases,
+                resolve_call,
+            )
+    return None
+
+
+def sql_statement_argument(call, driver, aliases, resolve_call):
+    """Unwrap only SQLAlchemy text() around the SQL statement argument."""
+    statement = call.args[0]
+    if (
+        driver == "sqlalchemy"
+        and isinstance(statement, ast.Call)
+        and resolve_call(statement, aliases) == "sqlalchemy.text"
+        and statement.args
+    ):
+        return statement.args[0]
+    return statement
+
+
+def sqlalchemy_with_connection_targets(statement, aliases, scope, resolve_call):
+    """Return `with engine.connect() as conn` targets backed by create_engine."""
+    if not isinstance(statement, (ast.With, ast.AsyncWith)):
+        return ()
+    targets = []
+    for item in statement.items:
+        expression = item.context_expr
+        target = item.optional_vars
+        if (
+            not isinstance(expression, ast.Call)
+            or not isinstance(expression.func, ast.Attribute)
+            or expression.func.attr != "connect"
+            or not isinstance(expression.func.value, ast.Name)
+            or not isinstance(target, ast.Name)
+            or not _sqlalchemy_engine_bound(
+                expression.func.value.id, scope, statement, aliases, resolve_call
+            )
+        ):
+            continue
+        targets.append(target.id)
+    return tuple(targets)
+
+
+def _sqlalchemy_engine_bound(name, scope, before, aliases, resolve_call):
+    """Prove a straight-line create_engine assignment visible at this with."""
+    from .review_audits import _bound_names
+
+    current = scope
+    anchor = before
+    while isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            local = set(getattr(current, "_security_local_names", set()))
+            if name in local:
+                if name in {argument.arg for argument in current.args.args}:
+                    return False
+                if anchor not in current.body:
+                    return False
+                return _sqlalchemy_assignment_before(
+                    name, current.body, anchor, aliases, resolve_call
+                )
+            if anchor not in current.body or any(
+                name in _bound_names(statement)
+                for statement in current.body[: current.body.index(anchor)]
+            ):
+                return False
+            anchor = current
+        else:
+            if anchor not in current.body:
+                return False
+            return _sqlalchemy_assignment_before(
+                name, current.body, anchor, aliases, resolve_call
+            )
+        current = getattr(current, "_security_parent_scope", None)
+    return False
+
+
+def _sqlalchemy_assignment_before(name, body, stop, aliases, resolve_call):
+    from .review_audits import _bound_names
+
+    proven = False
+    for statement in body:
+        if statement is stop:
+            break
+        value = getattr(statement, "value", None)
+        targets = (
+            statement.targets
+            if isinstance(statement, ast.Assign)
+            else [statement.target]
+            if isinstance(statement, ast.AnnAssign)
+            else []
+        )
+        direct_binding = (
+            len(targets) == 1
+            and isinstance(targets[0], ast.Name)
+            and targets[0].id == name
+        )
+        if direct_binding:
+            proven = (
+                isinstance(value, ast.Call)
+                and resolve_call(value, aliases) == "sqlalchemy.create_engine"
+            )
+            continue
+        if name in _bound_names(statement):
+            proven = False
+    return proven
+
+
+def sql_sink_label(call, driver):
+    """Return descriptive, driver-specific SQL sink facts."""
+    return f"{driver}.execute"
+
+
+def sql_injection_finding(make_finding, relative, call, driver):
+    """Build a driver-specific SQL injection finding."""
+    return make_finding(
+        "SECURITY_SQL_INJECTION",
+        relative,
+        call,
+        f"Interpolated SQL reaches a proven {driver} sink without parameter binding.",
+        "HIGH",
+        call=sql_sink_label(call, driver),
+    )
+
+
 def project_contract_helpers():
     """Include every contract resolver in process-local cache identity."""
     return (
         bind_project_contracts,
+        _bind_file_contracts,
         _bind_imported_base,
         _stable_import_contract,
         _declared_stub_method,
@@ -475,31 +933,38 @@ def bind_project_contracts(root, snapshots, contexts, edges):
     }
     blocked = _unsafe_project_bases(snapshots, resolved)
     for path, tree in snapshots.items():
-        imports = resolved[path]
-        for child in (n for n in tree.body if isinstance(n, ast.ClassDef)):
-            if child.decorator_list:
+        _bind_file_contracts(
+            root, path, tree, resolved[path], snapshots, contexts, edges, blocked
+        )
+
+
+def _bind_file_contracts(
+    root, path, tree, imports, snapshots, contexts, edges, blocked
+):
+    for child in (n for n in tree.body if isinstance(n, ast.ClassDef)):
+        if child.decorator_list:
+            continue
+        for base in child.bases:
+            if not isinstance(base, ast.Name) or base.id not in imports:
                 continue
-            for base in child.bases:
-                if not isinstance(base, ast.Name) or base.id not in imports:
-                    continue
-                if not _stable_import_contract(tree, base.id, child.lineno):
-                    continue
-                source, symbol = imports[base.id]
-                if (
-                    symbol is not None
-                    and source in snapshots
-                    and (source, symbol) not in blocked
-                ):
-                    _bind_imported_base(
-                        root,
-                        path,
-                        child,
-                        source,
-                        symbol,
-                        snapshots[source],
-                        contexts,
-                        edges,
-                    )
+            if not _stable_import_contract(tree, base.id, child.lineno):
+                continue
+            source, symbol = imports[base.id]
+            if (
+                symbol is not None
+                and source in snapshots
+                and (source, symbol) not in blocked
+            ):
+                _bind_imported_base(
+                    root,
+                    path,
+                    child,
+                    source,
+                    symbol,
+                    snapshots[source],
+                    contexts,
+                    edges,
+                )
 
 
 def _bind_imported_base(root, path, child, source, symbol, tree, contexts, edges):
@@ -709,6 +1174,7 @@ class _BoundSourceBytes:
         self.expected = {row["path"]: row["sha256"] for row in bindings}
 
     def get(self, path):
+        """Read source bytes only when they match the original scan identity."""
         from .review_audits import _security_source_bytes, ReviewAuditError, MAX_BYTES
         from .runtime_audit_common import RuntimeAuditError
         from .deep_audit_io import local_file
@@ -716,14 +1182,18 @@ class _BoundSourceBytes:
         relative = path.relative_to(self.root).as_posix()
         expected = self.expected.get(relative)
         if expected is None:
-            raise RuntimeAuditError("Snapshot has no original source identity")
+            raise RuntimeAuditError(
+                "SOURCE_IDENTITY_MISSING", "Snapshot has no original source identity"
+            )
         data = self.data.get(path)
         if data is None:
             if (
                 path.is_symlink()
                 or local_file(self.root, relative).stat().st_size > MAX_BYTES
             ):
-                raise RuntimeAuditError("Snapshot exceeds source boundary")
+                raise RuntimeAuditError(
+                    "SOURCE_BOUNDARY_INVALID", "Snapshot exceeds source boundary"
+                )
             data = _security_source_bytes(self.root, relative)
         if len(data) > MAX_BYTES or sha256(data).hexdigest() != expected:
             raise ReviewAuditError(
@@ -733,6 +1203,7 @@ class _BoundSourceBytes:
 
 
 def bound_snapshots(root, files, data, bindings):
+    """Parse only byte snapshots bound to the original source manifest."""
     from .review_audits import _oracle_snapshots
 
     return _oracle_snapshots(root, files, _BoundSourceBytes(root, data, bindings))

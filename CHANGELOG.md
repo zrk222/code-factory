@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Extend proven request-to-SQL flows to SQLite connections and cursors, psycopg,
+  Django cursors and SQLAlchemy engine connections with textual queries. Preserve
+  parameterized-query, lookalike and rebound-binding controls. These bounded AST
+  patterns do not establish universal framework coverage or runtime exploitability.
+- Detect nonempty short hardcoded credential assignments, including `hunter2`,
+  while retaining placeholder and test-data controls and redacting secret values.
+- Separate stable assessment identity (`scan_sha256`) from the complete run receipt
+  (`run_receipt_sha256`). Exclude known telemetry envelopes from assessment identity
+  while preserving semantic evidence and recording the full run separately.
+
 - Recognize registered Click group containers, documented default no-op hooks,
   locally evidenced base interfaces and inert IO implementations without treating
   every empty body as unfinished code. Keep ordinary stubs and ambiguous controls

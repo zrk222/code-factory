@@ -1985,6 +1985,7 @@ def test_structural_context_roundtrip_and_missing_defaults():
         "module_rebindings": {"range", "pytest"},
         "dynamic_getattr_modules": {"plugin"},
         "source_classes": {"Widget"},
+        "implementation_contract_lines": {10, 42},
         "module_imports": {"pytest": "pytest"},
         "class_imports": {"Base": "api.Base"},
         "benchmark_constants": {"LIMIT": 4, "__range_builtin__": True},
@@ -1997,6 +1998,7 @@ def test_structural_context_roundtrip_and_missing_defaults():
         "module_rebindings": set(),
         "dynamic_getattr_modules": set(),
         "source_classes": set(),
+        "implementation_contract_lines": set(),
         "module_imports": {},
         "class_imports": {},
         "benchmark_constants": {},
@@ -2457,4 +2459,317 @@ def test_unretained_unchanged_snapshot_keeps_valid_contracts(tmp_path, monkeypat
     assert (
         "QUALITY_EMPTY_IMPLEMENTATION"
         not in audit.security_scan(tmp_path, cache_enabled=False)["finding_counts"]
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import sqlite3\nfrom flask import request\ndef lookup():\n    db = sqlite3.connect(':memory:')\n    cursor = db.cursor()\n    value = request.args.get('id')\n    cursor.execute(f'SELECT * FROM records WHERE id={value}')\n",
+        "import sqlite3\nfrom flask import request\ndef lookup():\n    db = sqlite3.connect(':memory:')\n    value = request.args.get('id')\n    db.execute(f'SELECT * FROM records WHERE id={value}')\n",
+        "import psycopg\nfrom flask import request\ndef lookup():\n    db = psycopg.connect('postgresql://unused')\n    cursor = db.cursor()\n    value = request.args.get('id')\n    cursor.execute(f'SELECT * FROM records WHERE id={value}')\n",
+        "from django.db import connection\nfrom flask import request\ndef lookup():\n    cursor = connection.cursor()\n    value = request.args.get('id')\n    cursor.execute(f'SELECT * FROM records WHERE id={value}')\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup():\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup():\n    global engine\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\ndef outer():\n    engine = create_engine('sqlite://')\n    def lookup():\n        nonlocal engine\n        value = request.args.get('id')\n        with engine.connect() as db:\n            db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+    ],
+    ids=[
+        "sqlite-cursor",
+        "sqlite-connection",
+        "psycopg-cursor",
+        "django-cursor",
+        "sqlalchemy-text",
+        "sqlalchemy-global-read",
+        "sqlalchemy-nonlocal-read",
+    ],
+)
+def test_sql_injection_finds_proven_driver_flows(tmp_path, source):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"].get("SECURITY_SQL_INJECTION") == 1
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import sqlite3\nfrom flask import request\ndef lookup():\n    db = sqlite3.connect(':memory:')\n    cursor = db.cursor()\n    value = request.args.get('id')\n    cursor.execute('SELECT * FROM records WHERE id=?', (value,))\n",
+        "import sqlite3\nfrom flask import request\ndef lookup():\n    db = sqlite3.connect(':memory:')\n    value = request.args.get('id')\n    db.execute('SELECT * FROM records WHERE id=?', (value,))\n",
+        "import psycopg\nfrom flask import request\ndef lookup():\n    db = psycopg.connect('postgresql://unused')\n    cursor = db.cursor()\n    value = request.args.get('id')\n    cursor.execute('SELECT * FROM records WHERE id=%s', (value,))\n",
+        "from django.db import connection\nfrom flask import request\ndef lookup():\n    cursor = connection.cursor()\n    value = request.args.get('id')\n    cursor.execute('SELECT * FROM records WHERE id=%s', [value])\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup():\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text('SELECT * FROM records WHERE id=:id'), {'id': value})\n",
+        "from flask import request\nclass Cursor:\n    def execute(self, query): pass\ndef lookup():\n    value = request.args.get('id')\n    cursor = Cursor()\n    cursor.execute(f'SELECT * FROM records WHERE id={value}')\n",
+        "import sqlite3\nfrom flask import request\ndef lookup():\n    db = sqlite3.connect(':memory:')\n    cursor = db.cursor()\n    cursor = object()\n    value = request.args.get('id')\n    cursor.execute(f'SELECT * FROM records WHERE id={value}')\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup():\n    engine = object()\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup(flag):\n    if flag:\n        engine = object()\n    else:\n        engine = object()\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup():\n    del engine\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup():\n    import builtins as engine\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup():\n    def engine(): pass\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup():\n    try:\n        pass\n    except Exception as engine:\n        pass\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\nengine = create_engine('sqlite://')\ndef lookup():\n    global engine\n    engine = object()\n    value = request.args.get('id')\n    with engine.connect() as db:\n        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+        "from sqlalchemy import create_engine, text\nfrom flask import request\ndef outer():\n    engine = create_engine('sqlite://')\n    def lookup():\n        nonlocal engine\n        engine = object()\n        value = request.args.get('id')\n        with engine.connect() as db:\n            db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n",
+    ],
+    ids=[
+        "sqlite-cursor-params",
+        "sqlite-connection-params",
+        "psycopg-params",
+        "django-params",
+        "sqlalchemy-bind",
+        "lookalike-execute",
+        "rebound-cursor",
+        "rebound-engine",
+        "rebound-engine-all-branches",
+        "rebound-engine-delete",
+        "rebound-engine-import-alias",
+        "rebound-engine-function-definition",
+        "rebound-engine-except-target",
+        "rebound-global-engine",
+        "rebound-nonlocal-engine",
+    ],
+)
+def test_sql_injection_preserves_parameter_and_provenance_controls(tmp_path, source):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert "SECURITY_SQL_INJECTION" not in report["finding_counts"]
+
+
+def test_sqlalchemy_unrelated_branch_preserves_engine_provenance(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        "from sqlalchemy import create_engine, text\n"
+        "from flask import request\n"
+        "engine = create_engine('sqlite://')\n"
+        "def lookup(flag):\n"
+        "    if flag:\n"
+        "        marker = object()\n"
+        "    value = request.args.get('id')\n"
+        "    with engine.connect() as db:\n"
+        "        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"].get("SECURITY_SQL_INJECTION") == 1
+
+
+def test_sqlalchemy_nested_helper_binding_preserves_outer_engine(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        "from sqlalchemy import create_engine, text\n"
+        "from flask import request\n"
+        "engine = create_engine('sqlite://')\n"
+        "def lookup():\n"
+        "    def helper():\n"
+        "        engine = object()\n"
+        "    value = request.args.get('id')\n"
+        "    with engine.connect() as db:\n"
+        "        db.execute(text(f'SELECT * FROM records WHERE id={value}'))\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"].get("SECURITY_SQL_INJECTION") == 1
+
+
+def test_sql_driver_resolution_helper_contracts():
+    import ast
+
+    from factoryline.intent_quality import (
+        scoped_sql_connection_driver,
+        scoped_sql_driver,
+        sql_connection_driver,
+        sql_cursor_driver,
+        sql_injection_finding,
+        sql_return_kind,
+        sql_sink_driver,
+        sql_sink_label,
+        sql_statement_argument,
+    )
+
+    connection = ast.parse("sqlite3.connect(':memory:')").body[0].value
+    cursor = ast.parse("db.cursor()").body[0].value
+    call = ast.parse("cursor.execute(text('SELECT 1'))").body[0].value
+    connection_names = {("sql-connection", "sqlite3", "db")}
+    cursor_names = {("sql-cursor", "psycopg", "cursor")}
+
+    def resolver(node, aliases):
+        return (
+            "sqlalchemy.text"
+            if ast.unparse(node.func) == "text"
+            else ast.unparse(node.func)
+        )
+
+    assert sql_connection_driver(connection, {}, set(), {}, resolver) == "sqlite3"
+    assert (
+        sql_connection_driver(ast.Name(id="db"), {}, connection_names, {}, resolver)
+        == "sqlite3"
+    )
+    scoped_name = ast.Name(id="connection")
+    assert (
+        scoped_sql_connection_driver(
+            scoped_name,
+            {},
+            set(),
+            lambda *_: {"connection": "django.db.connection"},
+            resolver,
+        )
+        == "django"
+    )
+    assert sql_cursor_driver(cursor, {}, connection_names, {}, resolver) == "sqlite3"
+    assert (
+        scoped_sql_driver(
+            cursor,
+            {},
+            connection_names,
+            set(),
+            set(),
+            lambda *_: {},
+            resolver,
+            lambda *_: False,
+            lambda node: node.func.attr,
+        )
+        == "sqlite3"
+    )
+    assert (
+        sql_return_kind(
+            ast.Return(value=ast.Name(id="db")),
+            {},
+            set(),
+            {"db"},
+            set(),
+            lambda *_: None,
+            lambda *_: None,
+            lambda *_: False,
+        )
+        == "connection"
+    )
+    assert sql_sink_driver(call, {}, set(), cursor_names, {}, resolver) == "psycopg"
+    assert sql_statement_argument(call, "sqlalchemy", {}, resolver).value == "SELECT 1"
+    assert sql_sink_label(call, "psycopg") == "psycopg.execute"
+    finding = sql_injection_finding(
+        lambda *args, **kwargs: {"args": args, "kwargs": kwargs},
+        "app.py",
+        call,
+        "psycopg",
+    )
+    assert finding["args"][0] == "SECURITY_SQL_INJECTION"
+    assert finding["kwargs"]["call"] == "psycopg.execute"
+
+
+def test_sql_provenance_binding_helper_contracts():
+    import ast
+
+    from factoryline.intent_quality import (
+        bind_sql_provenance,
+        clear_sql_provenance,
+        track_sql_assignment,
+    )
+
+    connections = set()
+    cursors = set()
+    bind_sql_provenance(connections, cursors, "db", "sqlite3", None)
+    assert connections == {"db", ("sql-connection", "sqlite3", "db")}
+    clear_sql_provenance(connections, cursors, {"db"})
+    assert not connections and not cursors
+    assignment = ast.parse("db = sqlite3.connect(':memory:')").body[0]
+
+    def connection_driver(value):
+        return "sqlite3" if isinstance(value, ast.Call) else None
+
+    track_sql_assignment(
+        assignment,
+        {},
+        set(),
+        connections,
+        cursors,
+        connection_driver,
+        lambda _: None,
+        lambda *_: False,
+    )
+    assert ("sql-connection", "sqlite3", "db") in connections
+    rebound = ast.parse("db = object()").body[0]
+    track_sql_assignment(
+        rebound,
+        {},
+        set(),
+        connections,
+        cursors,
+        lambda _: None,
+        lambda _: None,
+        lambda *_: False,
+    )
+    assert "db" not in connections
+
+
+def test_sqlalchemy_context_helper_contracts_restore_flow_state():
+    import ast
+
+    from factoryline.intent_quality import (
+        sqlalchemy_with_connection_targets,
+        sqlalchemy_with_findings,
+    )
+
+    module = ast.parse(
+        "from sqlalchemy import create_engine\n"
+        "engine = create_engine('sqlite://')\n"
+        "with engine.connect() as db:\n"
+        "    pass\n"
+    )
+    statement = module.body[2]
+
+    def resolve_call(node, aliases):
+        if ast.unparse(node.func) == "create_engine":
+            return "sqlalchemy.create_engine"
+        return ast.unparse(node.func)
+
+    assert sqlalchemy_with_connection_targets(statement, {}, module, resolve_call) == (
+        "db",
+    )
+    connections = {"outer"}
+    cursors = {"old_cursor"}
+    result = sqlalchemy_with_findings(
+        statement,
+        {},
+        module,
+        connections,
+        cursors,
+        resolve_call,
+        lambda body: ("sql-connection", "sqlalchemy", "db") in connections,
+    )
+    assert result is True
+    assert connections == {"outer"} and cursors == {"old_cursor"}
+
+
+def test_unsafe_sql_driver_helper_contracts_keep_parameterized_sql_clean():
+    import ast
+
+    from factoryline.intent_quality import (
+        scoped_unsafe_sql_driver,
+        unsafe_sql_driver,
+    )
+
+    call = ast.parse("cursor.execute(f'SELECT {value}')").body[0].value
+    cursor_names = {"cursor", ("sql-cursor", "psycopg", "cursor")}
+    args = (call, {}, {}, {}, set(), cursor_names, {}, lambda *_: None)
+    assert unsafe_sql_driver(*args, lambda _: False, lambda *_: True) == "psycopg"
+    assert unsafe_sql_driver(*args, lambda _: False, lambda *_: False) is None
+    assert (
+        scoped_unsafe_sql_driver(
+            call,
+            {},
+            {},
+            {},
+            set(),
+            cursor_names,
+            lambda *_: {},
+            lambda *_: None,
+            set(),
+            lambda *_: None,
+            lambda *_: False,
+            lambda *_: True,
+        )
+        == "psycopg"
     )
