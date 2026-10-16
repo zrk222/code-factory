@@ -17,6 +17,8 @@ import time
 import uuid
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
 from threading import RLock
 from typing import Any, Iterable
@@ -34,6 +36,88 @@ _LIFECYCLE_CACHE_LIMIT = 256
 _LIFECYCLE_CACHE_MAX_BYTES = 65_536
 _LIFECYCLE_RECEIPT_MAX_BYTES = 1_048_576
 _LIFECYCLE_READ_WORKERS = 8
+_PHASE_RECORD_LIMIT = 12
+_PHASE_NAMES = frozenset(
+    {
+        "entrypoint_startup",
+        "cli_parse",
+        "cli_dispatch",
+        "source_inventory",
+        "source_audit",
+        "proof_evaluation",
+        "proof_verification",
+        "child_execution",
+        "child_launch",
+        "child_wait",
+        "child_cleanup",
+        "receipt_payload",
+    }
+)
+_ACTIVE_PHASE_TELEMETRY: ContextVar["_PhaseTelemetry | None"] = ContextVar(
+    "factory_lifecycle_phase_telemetry", default=None
+)
+
+
+class _PhaseTelemetry:
+    """One bounded, invocation-local phase summary for a lifecycle receipt."""
+
+    def __init__(self, started_monotonic: float) -> None:
+        self.started_monotonic = started_monotonic
+        self._phases: dict[str, dict[str, Any]] = {}
+
+    def record(self, name: str, elapsed_ns: int, *, completed: bool) -> None:
+        if name not in _PHASE_NAMES or elapsed_ns < 0:
+            return
+        phase = self._phases.get(name)
+        if phase is None:
+            if len(self._phases) >= _PHASE_RECORD_LIMIT:
+                return
+            phase = {
+                "phase": name,
+                "elapsed_ms": 0,
+                "calls": 0,
+                "completed": 0,
+                "incomplete": 0,
+            }
+            self._phases[name] = phase
+        phase["elapsed_ms"] += round(elapsed_ns / 1_000_000)
+        phase["calls"] += 1
+        phase["completed" if completed else "incomplete"] += 1
+
+    def snapshot(self) -> dict[str, Any]:
+        phases = [self._phases[name].copy() for name in sorted(self._phases)]
+        return {
+            "phases": phases,
+            "status": "incomplete"
+            if any(item["incomplete"] for item in phases)
+            else "complete",
+        }
+
+
+@contextmanager
+def _phase_telemetry(started_monotonic: float):
+    telemetry = _PhaseTelemetry(started_monotonic)
+    token = _ACTIVE_PHASE_TELEMETRY.set(telemetry)
+    try:
+        yield telemetry
+    finally:
+        _ACTIVE_PHASE_TELEMETRY.reset(token)
+
+
+@contextmanager
+def _measure_phase(name: str):
+    telemetry = _ACTIVE_PHASE_TELEMETRY.get()
+    if telemetry is None or name not in _PHASE_NAMES:
+        yield
+        return
+    started = time.monotonic_ns()
+    try:
+        yield
+    except BaseException:
+        telemetry.record(name, time.monotonic_ns() - started, completed=False)
+        raise
+    else:
+        telemetry.record(name, time.monotonic_ns() - started, completed=True)
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
@@ -130,6 +214,10 @@ def record_lifecycle(
     error_code: str | None = None,
 ) -> Path:
     """Write one immutable, privacy-safe CLI lifecycle receipt."""
+    phase_telemetry = _ACTIVE_PHASE_TELEMETRY.get()
+    if phase_telemetry is not None:
+        started_monotonic = phase_telemetry.started_monotonic
+    payload_started = time.monotonic_ns()
     workspace = Path(root).resolve()
     started_at = datetime.now(timezone.utc)
     identity = _cached_provenance()
@@ -158,6 +246,13 @@ def record_lifecycle(
     }
     if error_code:
         payload["error_code"] = str(error_code)[:120]
+    if phase_telemetry is not None:
+        phase_telemetry.record(
+            "receipt_payload",
+            time.monotonic_ns() - payload_started,
+            completed=True,
+        )
+        payload["phase_telemetry"] = phase_telemetry.snapshot()
     payload["receipt_sha256"] = _digest(payload)
     destination = workspace / LIFECYCLE_DIR / f"{payload['run_id']}.json"
     _atomic_json(destination, payload)

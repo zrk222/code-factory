@@ -36,6 +36,19 @@ def test_non_version_commands_delegate_to_full_cli(monkeypatch):
     assert calls == [["plan"]]
 
 
+def test_full_cli_receipt_includes_outer_parse_and_dispatch_phases(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert bootstrap.main(["plan"]) == 0
+    assert "factoryline assembly pipeline" in capsys.readouterr().out
+    receipt_path = next((tmp_path / ".factory/ops/lifecycle").glob("*.json"))
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    phases = {row["phase"]: row for row in receipt["phase_telemetry"]["phases"]}
+    assert {"entrypoint_startup", "cli_parse", "cli_dispatch"} <= phases.keys()
+    assert receipt["elapsed_ms"] >= phases["entrypoint_startup"]["elapsed_ms"]
+
+
 def test_source_commit_fails_closed_when_git_status_times_out(
     tmp_path: Path, monkeypatch
 ) -> None:

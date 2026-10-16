@@ -1428,13 +1428,17 @@ def run_repo_scan(
         raise ValueError("--worker-config requires --deep")
     workspace = Path(root).resolve()
     workspace.mkdir(parents=True, exist_ok=True)
-    inventory = _workspace_inventory(workspace)
+    from .ops_telemetry import _measure_phase
+
+    with _measure_phase("source_inventory"):
+        inventory = _workspace_inventory(workspace)
     oracle_options = _validated_oracle_options(
         oracle_options, int(inventory.get("file_types", {}).get("python", 0))
     )
-    static_security, deep_audit, security_error = _scan_security_and_deep_audit(
-        workspace, inventory, deep, worker_config, oracle_options
-    )
+    with _measure_phase("source_audit"):
+        static_security, deep_audit, security_error = _scan_security_and_deep_audit(
+            workspace, inventory, deep, worker_config, oracle_options
+        )
     state, verdict = _repo_scan_state(deep_audit, static_security, deep, inventory)
     next_actions = (
         list(deep_audit["next_actions"])

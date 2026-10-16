@@ -723,40 +723,43 @@ def evaluate_proofs(
     auto_savings: bool = False,
 ) -> dict[str, Any]:
     """Evaluate without saving the plan; auto_savings may save a separate pair."""
-    gates = _validated_gates(manifest)
-    changed = _normalize_changed(changed_paths)
-    root = Path(root).resolve()
-    snapshot_cache: dict[tuple[str, str], dict[str, Any]] = {}
-    items = [
-        _evaluate_gate_safely(root, gate, changed, auto_savings, snapshot_cache)
-        for gate in gates
-    ]
-    counts = {
-        name: sum(item["disposition"] == name for item in items)
-        for name in ("RUN", "REUSE", "SKIP", "BLOCK")
-    }
-    core = {
-        "schema": PLAN_SCHEMA,
-        "marker": "PROOF_PLAN_COMPACT",
-        "markers": [
-            "PROOF_PLAN_DISPOSITION_EXACT",
-            "PROOF_PLAN_COMPACT",
-            "PROOF_PUBLICATION_AUTHORITY_UNCHANGED",
-            "RELEASE_023_SYNCHRONIZED",
-        ],
-        "manifest_sha256": _sha_bytes(_canonical(manifest)),
-        "changed_paths_sha256": _sha_bytes(_canonical(changed)),
-        "counts": counts,
-        "items": items,
-        "scope": [
-            "The plan never executes gate commands.",
-            "REUSE is limited to verified read-only validation receipts.",
-            "Publication and other external side-effect authority are unchanged.",
-        ],
-    }
-    plan_sha = _sha_bytes(_canonical(core))
-    plan = {**core, "plan_sha256": plan_sha}
-    return {**plan, "plan_sha256": plan_sha}
+    from .ops_telemetry import _measure_phase
+
+    with _measure_phase("proof_evaluation"):
+        gates = _validated_gates(manifest)
+        changed = _normalize_changed(changed_paths)
+        root = Path(root).resolve()
+        snapshot_cache: dict[tuple[str, str], dict[str, Any]] = {}
+        items = [
+            _evaluate_gate_safely(root, gate, changed, auto_savings, snapshot_cache)
+            for gate in gates
+        ]
+        counts = {
+            name: sum(item["disposition"] == name for item in items)
+            for name in ("RUN", "REUSE", "SKIP", "BLOCK")
+        }
+        core = {
+            "schema": PLAN_SCHEMA,
+            "marker": "PROOF_PLAN_COMPACT",
+            "markers": [
+                "PROOF_PLAN_DISPOSITION_EXACT",
+                "PROOF_PLAN_COMPACT",
+                "PROOF_PUBLICATION_AUTHORITY_UNCHANGED",
+                "RELEASE_023_SYNCHRONIZED",
+            ],
+            "manifest_sha256": _sha_bytes(_canonical(manifest)),
+            "changed_paths_sha256": _sha_bytes(_canonical(changed)),
+            "counts": counts,
+            "items": items,
+            "scope": [
+                "The plan never executes gate commands.",
+                "REUSE is limited to verified read-only validation receipts.",
+                "Publication and other external side-effect authority are unchanged.",
+            ],
+        }
+        plan_sha = _sha_bytes(_canonical(core))
+        plan = {**core, "plan_sha256": plan_sha}
+        return {**plan, "plan_sha256": plan_sha}
 
 
 def load_manifest(path: Path) -> dict[str, Any]:

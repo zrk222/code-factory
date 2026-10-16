@@ -28,6 +28,82 @@ def test_detailed_result_contains_cleanup_receipt(tmp_path):
     assert "proof" in result["output"]
 
 
+def test_child_phase_telemetry_preserves_detailed_result(tmp_path):
+    from factoryline.ops_telemetry import _phase_telemetry
+
+    command = ["-c", "print('phase-safe')"]
+    expected = run_cli_detailed(sys.executable, command, tmp_path)
+    with _phase_telemetry(0) as telemetry:
+        observed = run_cli_detailed(sys.executable, command, tmp_path)
+    fields = (
+        "ok",
+        "output",
+        "stdout",
+        "stderr",
+        "cleanup_confirmed",
+        "streams_closed",
+        "reason",
+        "exit_code",
+    )
+    assert {field: observed[field] for field in fields} == {
+        field: expected[field] for field in fields
+    }
+    phases = {phase["phase"]: phase for phase in telemetry.snapshot()["phases"]}
+    assert {"child_launch", "child_wait", "child_cleanup"} <= phases.keys()
+    assert all(phases[name]["completed"] == 1 for name in phases)
+    assert str(tmp_path) not in str(telemetry.snapshot())
+
+
+def test_child_wait_error_keeps_cleanup_and_hides_error_from_telemetry(
+    tmp_path, monkeypatch
+):
+    from factoryline.ops_telemetry import _phase_telemetry
+
+    def fail_wait(*args, **kwargs):
+        raise RuntimeError("PRIVATE CHILD ARGUMENT")
+
+    monkeypatch.setattr(assembly_process, "_monitor", fail_wait)
+    with _phase_telemetry(0) as telemetry:
+        with pytest.raises(RuntimeError, match="PRIVATE CHILD ARGUMENT"):
+            run_cli_detailed(
+                sys.executable, ["-c", "import time; time.sleep(30)"], tmp_path
+            )
+    phases = {phase["phase"]: phase for phase in telemetry.snapshot()["phases"]}
+    assert phases["child_wait"]["incomplete"] == 1
+    assert phases["child_cleanup"]["completed"] == 1
+    assert "PRIVATE CHILD ARGUMENT" not in str(telemetry.snapshot())
+
+
+def test_lifecycle_receipt_overhead_is_measured_outside_receipt(
+    tmp_path, capsys, monkeypatch
+):
+    from factoryline import provenance
+    from factoryline.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    started = time.perf_counter_ns()
+    expected_exit = main(["plan"])
+    baseline_elapsed_ns = time.perf_counter_ns() - started
+    expected_output = capsys.readouterr().out
+
+    started = time.perf_counter_ns()
+    observed_exit = provenance.main(["plan"])
+    observed_elapsed_ns = time.perf_counter_ns() - started
+    observed_output = capsys.readouterr().out
+
+    assert observed_exit == expected_exit == 0
+    assert observed_output == expected_output
+    assert baseline_elapsed_ns >= 0 and observed_elapsed_ns >= 0
+    receipts = list((tmp_path / ".factory" / "ops" / "lifecycle").glob("*.json"))
+    assert len(receipts) == 2
+    measured = [
+        path
+        for path in receipts
+        if "phase_telemetry" in path.read_text(encoding="utf-8")
+    ]
+    assert len(measured) == 1
+
+
 def test_detailed_timeout_keeps_cleanup_receipt_explicit(tmp_path):
     result = run_cli_detailed(
         sys.executable, ["-c", "import time; time.sleep(30)"], tmp_path, timeout=0.2

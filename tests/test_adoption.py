@@ -180,6 +180,57 @@ def test_repo_scan_identity_is_stable_and_run_receipt_binds_telemetry(tmp_path):
         assert result["deep_audit"]["audit_sha256"]
 
 
+def test_repo_scan_phase_telemetry_preserves_source_and_no_source_results(tmp_path):
+    from factoryline.ops_telemetry import _phase_telemetry
+
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    expected = run_repo_scan(tmp_path, deep=False)
+    with _phase_telemetry(0) as telemetry:
+        observed = run_repo_scan(tmp_path, deep=False)
+    assert observed["scan_sha256"] == expected["scan_sha256"]
+    phases = {phase["phase"]: phase for phase in telemetry.snapshot()["phases"]}
+    assert phases["source_inventory"]["completed"] == 1
+    assert phases["source_audit"]["completed"] == 1
+    assert str(tmp_path) not in json.dumps(telemetry.snapshot())
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with _phase_telemetry(0) as telemetry:
+        no_sources = run_repo_scan(empty, deep=False)
+    assert no_sources["static_security"]["state"] == "NO_SOURCES"
+    assert no_sources["state"] == "INCOMPLETE"
+    phases = {phase["phase"]: phase for phase in telemetry.snapshot()["phases"]}
+    assert phases["source_inventory"]["completed"] == 1
+    assert phases["source_audit"]["completed"] == 1
+
+
+def test_repo_scan_inventory_phase_error_is_re_raised_without_error_text(
+    tmp_path, monkeypatch
+):
+    from factoryline import adoption
+    from factoryline.ops_telemetry import _phase_telemetry
+
+    def fail_inventory(*args, **kwargs):
+        raise RuntimeError("PRIVATE SOURCE PATH")
+
+    monkeypatch.setattr(adoption, "_workspace_inventory", fail_inventory)
+    with _phase_telemetry(0) as telemetry:
+        with pytest.raises(RuntimeError, match="PRIVATE SOURCE PATH"):
+            run_repo_scan(tmp_path, deep=False)
+    snapshot = telemetry.snapshot()
+    assert snapshot["status"] == "incomplete"
+    assert snapshot["phases"] == [
+        {
+            "phase": "source_inventory",
+            "elapsed_ms": snapshot["phases"][0]["elapsed_ms"],
+            "calls": 1,
+            "completed": 0,
+            "incomplete": 1,
+        }
+    ]
+    assert "PRIVATE SOURCE PATH" not in json.dumps(snapshot)
+
+
 def test_repo_scan_identity_changes_when_source_finding_changes(tmp_path):
     source = tmp_path / "app.py"
     source.write_text("value = 1\n", encoding="utf-8")

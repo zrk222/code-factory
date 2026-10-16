@@ -861,3 +861,33 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-10-16 07:29] GATE plan type-intent-attribution approver=human tasks=1 sha=ea231421512e0c7d
 - [2026-10-16 07:37] GATE spec type-intent-attribution approver=human strict=True sha=ea231421512e0c7d
 - [2026-10-16 07:37] GATE plan type-intent-attribution approver=human tasks=1 sha=ea231421512e0c7d
+- [2026-10-16 09:53] GATE spec h1-phase-telemetry approver=human strict=True sha=962cd2529ff69729
+- [2026-10-16 09:53] GATE plan h1-phase-telemetry approver=human tasks=4 sha=962cd2529ff69729
+- [2026-10-16 09:54] GATE spec h1-phase-telemetry approver=human strict=True sha=46d088be95a9c165
+- [2026-10-16 09:54] GATE plan h1-phase-telemetry approver=human tasks=4 sha=46d088be95a9c165
+- [2026-10-16 09:55] GATE spec h1-phase-telemetry approver=human strict=True sha=37c3358e6e4f5fd7
+- [2026-10-16 09:55] GATE plan h1-phase-telemetry approver=human tasks=4 sha=37c3358e6e4f5fd7
+- [2026-10-16 09:56] GATE spec h1-phase-telemetry approver=human strict=True sha=37c3358e6e4f5fd7
+- [2026-10-16 09:56] GATE plan h1-phase-telemetry approver=human tasks=4 sha=37c3358e6e4f5fd7
+- [2026-10-16 09:56] PACKET h1-phase-telemetry T1 tokens=1065 sha=ffd41c12e6dba249
+- [2026-10-16 09:56] GATE plan h1-phase-telemetry approver=human tasks=4 sha=37c3358e6e4f5fd7
+- [2026-10-16 09:56] PACKET h1-phase-telemetry T1 tokens=1086 sha=24093c7c77b210ae
+- [2026-10-16 09:57] VERIFY h1-phase-telemetry T1 status=FAIL verify_pass=false
+- [2026-10-16 09:58] VERIFY h1-phase-telemetry T1 status=FAIL verify_pass=false
+- [2026-10-16 09:58] DONE h1-phase-telemetry T1 verify_pass=true receipt_seal=cac0861628baa4b7105b96cac85a5f0c99feabcaa32ea55712d4cb60ed5f2a2e
+- [2026-10-16 09:58] PACKET h1-phase-telemetry T2 tokens=1067 sha=4c162bf7698143d8
+- [2026-10-16 09:59] GATE plan h1-phase-telemetry approver=human tasks=4 sha=37c3358e6e4f5fd7
+- [2026-10-16 09:59] DONE h1-phase-telemetry T1 verify_pass=true receipt_seal=629c2ef4cb05006f44c4b561675d3edd6fdcaf3281df36e459c4dc1bc65e6b27
+- [2026-10-16 09:59] PACKET h1-phase-telemetry T2 tokens=1102 sha=f610ea6beaae9b4a
+- [2026-10-16 10:01] DONE h1-phase-telemetry T2 verify_pass=true receipt_seal=0788e2f5572f4f23fe78c7a1623e1a266f0ec7307cf4fd0a2d99d24151f025e2
+- [2026-10-16 10:01] GATE plan h1-phase-telemetry approver=human tasks=4 sha=37c3358e6e4f5fd7
+- [2026-10-16 10:04] VERIFY h1-phase-telemetry T1 status=FAIL verify_pass=false
+- [2026-10-16 10:04] DONE h1-phase-telemetry T1 verify_pass=true receipt_seal=3856b3eea0314e14824795e835c695d9e756cac758f20d5b874659cc75e21c8e
+- [2026-10-16 10:04] PACKET h1-phase-telemetry T3 tokens=1093 sha=08c2574b12da28da
+- [2026-10-16 10:08] DONE h1-phase-telemetry T3 verify_pass=true receipt_seal=4d73573305fb73e6c4bdf2ff566834c5548e527226b6780288874114b002c2bb
+- [2026-10-16 10:09] PACKET h1-phase-telemetry T4 tokens=1097 sha=4b2d720ba31edb4d
+- [2026-10-16 10:10] DONE h1-phase-telemetry T4 verify_pass=true receipt_seal=71fc9d5b7dc06213a0cc187cdfc1fc4e2da9d07774aef262ddd5c0777c7fd222
+- [2026-10-16 10:22] DONE h1-phase-telemetry T4 verify_pass=true receipt_seal=0ecd1a748836ee76fc52bd4053595c1a4a90973c0293eec311db5a7695ea5940
+- [2026-10-16 10:28] DONE h1-phase-telemetry T1 verify_pass=true receipt_seal=dfd55a9323ff60ced0e54b995057f8d8a6ef48a1340d38919ca9f335b80e2376
+- [2026-10-16 10:30] DONE h1-phase-telemetry T1 verify_pass=true receipt_seal=ffdc4291001f22236f7a4e8a9f7fe1c1435a1fa9ad4e59cea488fe80c13e61f7
+- [2026-10-16 10:31] DONE h1-phase-telemetry T2 verify_pass=true receipt_seal=bafd3fd00feb6312ba08fb0a8fb1640a70f16fc4c4982fe9d5448d56a7a27ff6

@@ -4781,13 +4781,13 @@ def _dispatch_route_group_42(a, capture_command, p):
 
 
 def _dispatch(argv=None) -> int:
-    """Parse FactoryLine commands, dispatch one handler, and return its process code."""
+    """Parse, route, and dispatch one FactoryLine command."""
+    from .ops_telemetry import _measure_phase
+
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "--version":
         return _emit_version("--json" in argv)
-    # A captured command may legitimately contain flags that belong to the
-    # child process.  Pull it out before argparse interprets those flags as
-    # FactoryLine options.  ``--`` remains optional for a natural CLI shape.
+    # Extract child flags before argparse.
     capture_command = None
     if argv[:1] == ["meter"] and "--capture" in argv:
         capture_index = argv.index("--capture")
@@ -4795,10 +4795,12 @@ def _dispatch(argv=None) -> int:
         if capture_command[:1] == ["--"]:
             capture_command = capture_command[1:]
         argv = argv[:capture_index]
-    p = _build_parser()
-    a = p.parse_args(argv)
+    with _measure_phase("cli_parse"):
+        p = _build_parser()
+        a = p.parse_args(argv)
 
-    result = _dispatch_routes(a, capture_command, p)
+    with _measure_phase("cli_dispatch"):
+        result = _dispatch_routes(a, capture_command, p)
     if result is not _UNHANDLED:
         return result
     p.print_help()
