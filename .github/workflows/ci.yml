@@ -12,6 +12,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  coordinated-acceptance:
+    name: coordinated acceptance (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: zrk222/code-factory-1-spec
+          ref: c00fef6f490ea7dff72ea3d9d699315a28c80d9e
+          path: .integration/spec
+          persist-credentials: false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: zrk222/code-factory-2-forge
+          ref: 7830ef1465a80cabfaafad69a0fbd7c1077d8226
+          path: .integration/forge
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - name: Install exact checked-out tool sources
+        run: python -m pip install -e . -e .integration/spec -e .integration/forge pytest
+      - name: Verify native handoff and stale-evidence controls
+        run: python -m pytest -q -o addopts= -o junit_family=xunit2 --junitxml=coordinated-acceptance.xml .integration/spec/tests/test_acceptance_evidence.py .integration/spec/tests/test_acceptance_mutations.py
+      - name: Reject skipped or incomplete coordinated evidence
+        run: |
+          python -c "import xml.etree.ElementTree as E; r=E.parse('coordinated-acceptance.xml'); s=list(r.iter('testsuite')); assert sum(int(x.get('tests','0')) for x in s)==19; assert not any(int(x.get(k,'0')) for x in s for k in ('skipped','failures','errors')); print('19 coordinated cases executed without skips')"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: coordinated-acceptance-${{ matrix.os }}
+          path: coordinated-acceptance.xml
+          if-no-files-found: error
+
   candidate-quality:
     runs-on: ubuntu-latest
     timeout-minutes: 15

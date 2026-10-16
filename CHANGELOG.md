@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Require current shared SpecLine acceptance evidence before a ForgeLine result
+  can produce a traceable CF receipt. Revalidate declared checks, task receipts
+  and source/verifier identities; copied, stale or resealed mismatched evidence
+  cannot establish traceability. This is recorded-evidence integrity, not semantic
+  correctness or release authority. Add pinned three-tool compatibility CI.
+
 - Do not classify implementation declarations in a proven imported
   `typing.TYPE_CHECKING` true branch as runtime empty implementations. Preserve
   findings in runtime `else` branches and when guard names are shadowed,

@@ -253,9 +253,18 @@ def _validated_forge_acceptance(root, feature, envelope, intent_hash) -> bool:
         return False
     try:
         from specline.acceptance import validate_acceptance_envelope
+
         result = validate_acceptance_envelope(root, feature, envelope)
         return result["state"] == "PASS" and result["sealed_hash"] == intent_hash
-    except (ImportError, SystemExit, ValueError, OSError, KeyError, TypeError, RuntimeError):
+    except (
+        ImportError,
+        SystemExit,
+        ValueError,
+        OSError,
+        KeyError,
+        TypeError,
+        RuntimeError,
+    ):
         return False
 
 
