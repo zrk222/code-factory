@@ -222,22 +222,6 @@ def _relative_text(root: Path, value: object, field: str) -> Path:
     return supplied
 
 
-def _risk_tags(value: object, field: str) -> list[str]:
-    if not isinstance(value, list) or not 1 <= len(value) <= len(_RISK_TAGS):
-        raise GauntletError(
-            "GAUNTLET_SOURCE_INVALID",
-            f"{field} must contain 1 through {len(_RISK_TAGS)} taxonomy tags",
-        )
-    if any(not isinstance(tag, str) or tag not in _RISK_TAGS for tag in value) or len(
-        set(value)
-    ) != len(value):
-        raise GauntletError(
-            "GAUNTLET_SOURCE_INVALID",
-            f"{field} must contain unique supported taxonomy tags",
-        )
-    return sorted(value)
-
-
 def _string_list(
     value: object, field: str, *, maximum: int, identifier: bool = False
 ) -> list[str]:

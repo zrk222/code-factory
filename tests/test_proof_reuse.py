@@ -250,6 +250,33 @@ def test_evaluation_batches_shared_input_and_plan_wrapper_writes_once(
     assert writes == 1
 
 
+def test_proof_evaluation_phase_preserves_behavior_and_records_failures(tmp_path):
+    from factoryline.ops_telemetry import _phase_telemetry
+
+    _, _, gate = _workspace(tmp_path)
+    record_proof(tmp_path, gate, elapsed_ms=1000)
+    request = _manifest(gate)
+    expected = evaluate_proofs(tmp_path, request)
+    with _phase_telemetry(0) as telemetry:
+        observed = evaluate_proofs(tmp_path, request)
+    fields = ("gate", "proof_key", "receipt_sha256", "disposition", "reason", "markers")
+    assert observed["counts"] == expected["counts"]
+    assert [
+        tuple(item.get(field) for field in fields) for item in observed["items"]
+    ] == [tuple(item.get(field) for field in fields) for item in expected["items"]]
+    phase = telemetry.snapshot()["phases"][0]
+    assert phase["phase"] == "proof_evaluation"
+    assert phase["completed"] == 1
+    assert str(tmp_path) not in json.dumps(telemetry.snapshot())
+
+    with _phase_telemetry(0) as telemetry:
+        with pytest.raises(ProofReuseError) as error:
+            evaluate_proofs(tmp_path, {"schema": "invalid", "gates": "bad"})
+    assert error.value.code == "PROOF_MANIFEST_INVALID"
+    assert telemetry.snapshot()["status"] == "incomplete"
+    assert telemetry.snapshot()["phases"][0]["incomplete"] == 1
+
+
 def test_shared_snapshot_does_not_bypass_per_receipt_freshness_check(
     tmp_path, monkeypatch
 ):

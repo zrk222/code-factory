@@ -7,6 +7,7 @@ import importlib.metadata
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from . import __version__
@@ -126,6 +127,10 @@ def main(argv=None) -> int:
         values = ["--help"]
     if values and values[0] == "--version":
         return _emit_version("--json" in values)
-    from .cli import main as cli_main
+    started = time.monotonic()
+    from .ops_telemetry import _measure_phase, _phase_telemetry
 
-    return cli_main(values)
+    with _phase_telemetry(started):
+        with _measure_phase("entrypoint_startup"):
+            from .cli import main as cli_main
+        return cli_main(values)

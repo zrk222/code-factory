@@ -2500,10 +2500,6 @@ def _typecheck_file_manifest(paths, byte_limit):
     return rows
 
 
-def _typecheck_parsed_paths(output):
-    return set(_typecheck_parsed_modules(output))
-
-
 def _typecheck_parsed_modules(output):
     modules = {}
     for line in output.splitlines():
@@ -2718,13 +2714,12 @@ def _typecheck_phase(root, source, config, shadow, cache, timeout, environment, 
     output = _typecheck_output(
         [scratch / f"{label}.stdout", scratch / f"{label}.stderr"]
     )
+    modules = _typecheck_parsed_modules(output) if output is not None else {}
     return {
         "process": facts,
         "output": output,
-        "modules": _typecheck_parsed_modules(output) if output is not None else {},
-        "paths": set(_typecheck_parsed_modules(output))
-        if output is not None
-        else set(),
+        "modules": modules,
+        "paths": set(modules),
         "diagnostics": _typecheck_diagnostics(output, source, root)
         if output is not None
         else [{"path": "UNKNOWN", "line": None, "code": "OUTPUT_LIMIT"}],

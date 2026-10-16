@@ -546,6 +546,26 @@ def _stop(child: subprocess.Popen, unit: _CleanupUnit | None = None) -> bool:
     return _await_cleanup(child, cleanup, terminate=status is not True)
 
 
+def _measure_call(name: str, operation: Callable, *args, **kwargs):
+    """Measure one existing operation without adding branches to its caller."""
+    from .ops_telemetry import _measure_phase
+
+    with _measure_phase(name):
+        return operation(*args, **kwargs)
+
+
+def _cleanup_after_wait_error(child, unit) -> None:
+    _stop(child, unit)
+    unit.close()
+
+
+def _finish_and_close(child, unit, readers, outputs, reason):
+    try:
+        return _finish_result(child, unit, readers, outputs, reason)
+    finally:
+        unit.close()
+
+
 def _monitor(child, unit, readers, failed, heartbeat, deadline: float) -> str:
     """Wait for exit and pipe EOF, checking interruption throughout."""
     while True:
@@ -587,7 +607,9 @@ def run_cli_detailed(
         raise ValueError("positive finite execution deadline required")
     if type(max_stream_bytes) is not int or max_stream_bytes <= 0:
         raise ValueError("positive execution bounds required")
-    child, unit, launch_error = _launch(cli, args, cwd, env=env)
+    child, unit, launch_error = _measure_call(
+        "child_launch", _launch, cli, args, cwd, env=env
+    )
     if child is None or unit is None:
         return {
             "ok": False,
@@ -608,17 +630,28 @@ def run_cli_detailed(
     for reader in readers:
         reader.start()
     try:
-        reason = _monitor(
-            child, unit, readers, failed, heartbeat, time.monotonic() + timeout
+        reason = _measure_call(
+            "child_wait",
+            _monitor,
+            child,
+            unit,
+            readers,
+            failed,
+            heartbeat,
+            time.monotonic() + timeout,
         )
     except BaseException:
-        _stop(child, unit)
-        unit.close()
+        _measure_call("child_cleanup", _cleanup_after_wait_error, child, unit)
         raise
-    try:
-        return _finish_result(child, unit, readers, outputs, reason)
-    finally:
-        unit.close()
+    return _measure_call(
+        "child_cleanup",
+        _finish_and_close,
+        child,
+        unit,
+        readers,
+        outputs,
+        reason,
+    )
 
 
 def run_cli(

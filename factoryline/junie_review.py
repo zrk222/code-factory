@@ -96,45 +96,6 @@ _CONFIG_LANGUAGES = frozenset(
         "properties",
     }
 )
-_GAP_MEASUREMENT_LINKS = {
-    "pattern_and_guard_path_audit": "pattern_and_guard_path_audit",
-    "security_language_coverage": "security_language_coverage",
-    "candidate_runtime_execution": "target_project_runtime_coverage",
-    "test_oracle_strength": "mutation_and_test_oracle",
-    "receipt_authenticity": "authenticated_runner_provenance",
-    "independent_specialty_review": "specialty_ai_review_and_consensus",
-    "review_consensus": "reviewer_consensus",
-    "repository_prompt_injection": "repository_instruction_injection",
-    "repository_instruction_and_injection_resistance": "repository_instruction_injection",
-    "tenant_boundary_applicability": "tenant_and_production_observability",
-    "tenant_boundary_and_production_observability": "tenant_and_production_observability",
-    "production_observability": "production_observability",
-    "dependency_and_supply_chain": "dependencies_and_configuration",
-    "configuration_and_infrastructure_policy": "configuration_and_infrastructure_policy",
-    "secrets_and_sensitive_data": "secrets",
-    "dynamic_runtime_and_fuzz": "dynamic_runtime_and_fuzz",
-    "api_and_external_service_contracts": "api_contracts",
-    "migration_and_data_integrity": "migration_integrity",
-    "performance_and_concurrency": "performance_and_concurrency",
-    "accessibility_and_platform_compatibility": "accessibility_and_platform",
-    "ci_architecture_and_artifact_provenance": "architecture_and_ci",
-    "attribution_integrity": "attribution_integrity",
-}
-_GAP_DENOMINATOR_FIELDS = {
-    "pattern_and_guard_path_audit": "candidate_path_denominator",
-    "candidate_runtime_execution": "candidate_path_denominator",
-    "dependency_and_supply_chain": "candidate_path_denominator",
-    "configuration_and_infrastructure_policy": "candidate_path_denominator",
-    "secrets_and_sensitive_data": "candidate_path_denominator",
-    "dynamic_runtime_and_fuzz": "candidate_path_denominator",
-    "api_and_external_service_contracts": "candidate_path_denominator",
-    "migration_and_data_integrity": "candidate_path_denominator",
-    "performance_and_concurrency": "candidate_path_denominator",
-    "accessibility_and_platform_compatibility": "candidate_path_denominator",
-    "ci_architecture_and_artifact_provenance": "candidate_path_denominator",
-    "repository_instruction_and_injection_resistance": "candidate_path_denominator",
-    "tenant_boundary_and_production_observability": "candidate_path_denominator",
-}
 _AUTHORITY = {
     "execution": False,
     "approval": False,
@@ -1238,60 +1199,6 @@ def _aggregate_runtime_measure(
         "total": total if valid else None,
         "coverage_percent": _percent(covered, total) if valid else None,
     }
-
-
-def _gap_measurement(gap: dict[str, Any]) -> dict[str, Any]:
-    gap_id = gap["id"]
-    denominator_field = _GAP_DENOMINATOR_FIELDS.get(gap_id)
-    denominator = gap.get(denominator_field) if denominator_field else None
-    if type(denominator) is not int:
-        denominator = None
-    if gap_id == "security_language_coverage":
-        denominator = gap.get("recognized_source_candidate_denominator")
-        if type(denominator) is not int:
-            denominator = None
-        components = {
-            "python": gap.get("python_candidate_denominator"),
-            "non_python": gap.get("non_python_candidate_denominator"),
-            "unclassified": gap.get("unclassified_candidate_denominator"),
-        }
-        denominator_state = (
-            "PARTIAL_LANGUAGE_CLASSIFICATION"
-            if components["unclassified"]
-            else "KNOWN_RECOGNIZED_SOURCE_SCOPE"
-        )
-    else:
-        components = None
-        denominator_state = (
-            gap.get("denominator_quality", "KNOWN_CHANGED_PATH_SCOPE")
-            if denominator is not None
-            else "UNKNOWN_APPLICABILITY"
-        )
-    evidence = gap.get(
-        "candidate_paths_measured", gap.get("candidate_paths_executed", 0)
-    )
-    if type(evidence) is not int:
-        evidence = 0
-    affected = gap.get("affected_paths", [])
-    result = {
-        "id": gap_id,
-        "measurement_id": _GAP_MEASUREMENT_LINKS.get(gap_id, gap_id),
-        "status": gap["status"],
-        "measurement_state": _measurement_state(str(gap["status"])),
-        "trace_state": gap["trace_state"],
-        "eligible_changed_paths": denominator,
-        "candidate_scope_paths": len(affected) if isinstance(affected, list) else None,
-        "denominator_state": denominator_state,
-        "evidence_paths": evidence,
-        "evidence_percent": _percent(evidence, denominator)
-        if denominator is not None
-        else None,
-        "action": gap["action"],
-        "denominator_requirement": gap.get("denominator_requirement"),
-    }
-    if components is not None:
-        result["component_denominators"] = components
-    return result
 
 
 def _is_test_path(path: str) -> bool:

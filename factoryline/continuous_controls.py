@@ -238,20 +238,6 @@ def _validate_control(raw: Any, inherited_kind: str, *, pack_id: str) -> dict[st
     }
 
 
-def _semantic_control(control: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: control.get(key)
-        for key in (
-            "id",
-            "forbidden_behavior",
-            "gate",
-            "test",
-            "required_evidence",
-            "severity",
-        )
-    }
-
-
 def _threshold(gate: dict[str, Any]) -> dict[str, Any] | None:
     value = gate.get("threshold")
     return (

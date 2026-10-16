@@ -79,6 +79,44 @@ def test_typecheck_run_reports_the_requested_timeout(tmp_path, monkeypatch):
     assert facts["timeout_seconds"] == 1.25
 
 
+def test_typecheck_phase_parses_checker_modules_once(tmp_path, monkeypatch):
+    from factoryline import pytest_readiness
+
+    checker_output = f"LOG: Parsing {tmp_path / 'target.py'} (target)\n"
+    calls = []
+    monkeypatch.setattr(pytest_readiness, "_typecheck_argv", lambda *args: ["checker"])
+
+    def run_checker(argv, root, timeout, environment, stdout_path, stderr_path):
+        stdout_path.write_text(checker_output, encoding="utf-8")
+        stderr_path.write_text("", encoding="utf-8")
+        return {"exit_code": 0}
+
+    monkeypatch.setattr(pytest_readiness, "_typecheck_run", run_checker)
+    parse_modules = pytest_readiness._typecheck_parsed_modules
+
+    def count_parse(output):
+        calls.append(output)
+        return parse_modules(output)
+
+    monkeypatch.setattr(pytest_readiness, "_typecheck_parsed_modules", count_parse)
+
+    phase = pytest_readiness._typecheck_phase(
+        tmp_path,
+        tmp_path / "target.py",
+        tmp_path / "mypy.ini",
+        tmp_path / "shadow.py",
+        tmp_path / "cache",
+        1.0,
+        {"TMPDIR": str(tmp_path)},
+        "phase",
+    )
+
+    expected = {tmp_path / "target.py": "target"}
+    assert len(calls) == 1
+    assert phase["modules"] == expected
+    assert phase["paths"] == set(expected)
+
+
 def _write_attribute_project(
     root, *, module_source="interface = object()\n", test_prefix=""
 ):

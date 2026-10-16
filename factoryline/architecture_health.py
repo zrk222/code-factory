@@ -184,11 +184,6 @@ def _module_classification(
     )
 
 
-def _module_domains(root: Path, relative: list[str]) -> dict[str, int]:
-    """Classify implementation modules using the reviewed boundary manifest."""
-    return _module_classification(root, relative)[0]
-
-
 def _invalid_documentation_index(markdown: list[str]) -> dict[str, Any]:
     return {"status": "invalid", "canonical_count": 0, "unmatched": markdown}
 
