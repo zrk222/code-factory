@@ -2116,12 +2116,6 @@ def _implementation_imports(nodes: list[ast.AST]) -> dict[str, str]:
                     continue
                 local = item.asname or item.name
                 target = f"{module}.{item.name}"
-                if (
-                    node.level == 0
-                    and node.module == "unittest"
-                    and item.name == "mock"
-                ):
-                    target = "unittest.mock"
                 resolved[local] = target
     return resolved
 
@@ -2160,16 +2154,11 @@ def _implementation_bound_names(scope: ast.AST, nodes=None) -> set[str]:
         node.rest for node in nodes if isinstance(node, ast.MatchMapping) and node.rest
     )
     if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-        arguments = scope.args
         names.update(
             item.arg
-            for item in [
-                *arguments.posonlyargs,
-                *arguments.args,
-                *arguments.kwonlyargs,
-            ]
+            for item in ast.iter_child_nodes(scope.args)
+            if isinstance(item, ast.arg)
         )
-        names.update(arg.arg for arg in (arguments.vararg, arguments.kwarg) if arg)
     return names
 
 
@@ -2179,19 +2168,18 @@ def _implementation_scope_aliases(
     nodes = _implementation_scope_nodes(scope)
     imports = _implementation_imports(nodes)
     bound = _implementation_bound_names(scope, nodes)
-    aliases = {name: value for name, value in inherited.items() if name not in bound}
-    aliases.update(
-        {name: value for name, value in imports.items() if name not in bound}
-    )
-    return aliases
+    return {
+        name: value
+        for name, value in {**inherited, **imports}.items()
+        if name not in bound
+    }
 
 
 def _implementation_call_name(node: ast.AST, aliases: dict[str, str]) -> str:
     if isinstance(node, ast.Name):
         return aliases.get(node.id, node.id)
     if isinstance(node, ast.Attribute):
-        value = _implementation_call_name(node.value, aliases)
-        return f"{value}.{node.attr}"
+        return f"{_implementation_call_name(node.value, aliases)}.{node.attr}"
     if isinstance(node, ast.Subscript):
         return _implementation_call_name(node.value, aliases)
     return ""
@@ -2228,9 +2216,8 @@ def _implementation_fixture_scope(
         module, _implementation_imports(module.body)
     )
     return bool(
-        _implementation_decorator_names(scope, aliases).intersection(
-            {"pytest.fixture", "_pytest.fixture"}
-        )
+        _implementation_decorator_names(scope, aliases)
+        & {"pytest.fixture", "_pytest.fixture"}
     )
 
 
@@ -2287,30 +2274,43 @@ def _implementation_is_test_function(
 def _implementation_docstring_body(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> list[ast.stmt]:
-    body = list(node.body)
-    if (
-        body
-        and isinstance(body[0], ast.Expr)
-        and isinstance(body[0].value, ast.Constant)
-    ):
-        if isinstance(body[0].value.value, str):
-            body.pop(0)
-    return body
+    start = 1 if ast.get_docstring(node, clean=False) is not None else 0
+    return list(node.body[start:])
 
 
-def _implementation_protocol_class(
-    node: ast.AST, parents: dict[ast.AST, ast.AST], aliases: dict[str, str]
+def _implementation_static_interface(
+    node: ast.AST,
+    parents: dict[ast.AST, ast.AST],
+    aliases: dict[str, str],
+    tree: ast.Module,
 ) -> bool:
-    parent = parents.get(node)
+    child, parent = node, parents.get(node)
     while parent is not None:
-        if isinstance(parent, ast.ClassDef):
-            if any(
-                _implementation_call_name(base, aliases)
-                in {"typing.Protocol", "typing_extensions.Protocol"}
-                for base in parent.bases
+        if isinstance(parent, ast.ClassDef) and any(
+            _implementation_call_name(base, aliases)
+            in {"typing.Protocol", "typing_extensions.Protocol"}
+            for base in parent.bases
+        ):
+            return True
+        if isinstance(parent, ast.If) and child in parent.body:
+            condition_aliases = _implementation_aliases_for(
+                parent.test, parents, {}, tree
+            )
+            scopes = (tree, *_implementation_scope_chain(parent.test, parents))
+            writes = any(
+                isinstance(item, ast.Attribute)
+                and item.attr == "TYPE_CHECKING"
+                and isinstance(item.ctx, (ast.Store, ast.Del))
+                for scope in scopes
+                for item in _implementation_scope_nodes(scope)
+            )
+            if (
+                not writes
+                and _implementation_call_name(parent.test, condition_aliases)
+                == "typing.TYPE_CHECKING"
             ):
                 return True
-        parent = parents.get(parent)
+        child, parent = parent, parents.get(parent)
     return False
 
 
@@ -2386,6 +2386,7 @@ def _implementation_is_exempt(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
     parents: dict[ast.AST, ast.AST],
     aliases: dict[str, str],
+    tree: ast.Module,
 ) -> bool:
     decorators = _implementation_decorator_names(node, aliases)
     exempt_decorators = {
@@ -2399,7 +2400,7 @@ def _implementation_is_exempt(
     return (
         node.name in {"__init_subclass__", "__subclasshook__"}
         or bool(decorators & exempt_decorators)
-        or _implementation_protocol_class(node, parents, aliases)
+        or _implementation_static_interface(node, parents, aliases, tree)
     )
 
 
@@ -2457,9 +2458,7 @@ def _implementation_return_finding(
     }
 
 
-def _implementation_function_nodes(
-    function: ast.FunctionDef | ast.AsyncFunctionDef,
-):
+def _implementation_function_nodes(function: ast.FunctionDef | ast.AsyncFunctionDef):
     pending = list(function.body)
     while pending:
         node = pending.pop()
@@ -2484,7 +2483,7 @@ def _implementation_function_findings(
         if _implementation_is_test_function(node, parents):
             continue
         aliases = _implementation_aliases_for(node, parents, module_aliases, tree)
-        if _implementation_is_exempt(node, parents, aliases):
+        if _implementation_is_exempt(node, parents, aliases, tree):
             continue
         body = _implementation_docstring_body(node)
         if len(body) == 1 and _implementation_stub_statement(body[0]):
