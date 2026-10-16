@@ -201,6 +201,8 @@ def _forge_intent_trace(root: Path, feature: str, output: str) -> dict | None:
     boolean fields and the corresponding Forge ship line is readable and
     consistent.  Missing fields therefore leave the legacy fail-closed path
     untouched.
+    A true traceability claim also requires current shared SpecLine acceptance
+    validation; CLI words, matching receipt text or a checksum alone cannot pass.
     """
     forge_result = _forge_ship_result(output)
     if forge_result is None:  # REQ_INTENT_ADAPTER_FAIL_CLOSED
@@ -219,6 +221,10 @@ def _forge_intent_trace(root: Path, feature: str, output: str) -> dict | None:
     intent_hash, obligations, timestamp = _forge_trace_fields(
         forge_receipt, forge_result
     )
+    if forge_result["intent_traceable"] and not _validated_forge_acceptance(
+        root, feature, forge_result.get("intent_evidence"), intent_hash
+    ):
+        return None
     return {
         "schema": "factoryline.intent-trace.v1",
         "source": "forgeline-cli",
@@ -240,6 +246,17 @@ def _forge_intent_trace(root: Path, feature: str, output: str) -> dict | None:
         },
         "execution": False,
     }
+
+
+def _validated_forge_acceptance(root, feature, envelope, intent_hash) -> bool:
+    if not isinstance(envelope, dict) or envelope.get("sealed_hash") != intent_hash:
+        return False
+    try:
+        from specline.acceptance import validate_acceptance_envelope
+        result = validate_acceptance_envelope(root, feature, envelope)
+        return result["state"] == "PASS" and result["sealed_hash"] == intent_hash
+    except (ImportError, SystemExit, ValueError, OSError, KeyError, TypeError, RuntimeError):
+        return False
 
 
 # The default pipeline: (module, cli-args-template). {f} = feature.
