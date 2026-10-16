@@ -66,6 +66,7 @@ class _PhaseTelemetry:
         self._phases: dict[str, dict[str, Any]] = {}
 
     def record(self, name: str, elapsed_ns: int, *, completed: bool) -> None:
+        """Accumulate one recognized phase without retaining operation inputs."""
         if name not in _PHASE_NAMES or elapsed_ns < 0:
             return
         phase = self._phases.get(name)
@@ -85,6 +86,7 @@ class _PhaseTelemetry:
         phase["completed" if completed else "incomplete"] += 1
 
     def snapshot(self) -> dict[str, Any]:
+        """Copy observed phase totals and report whether any measured call failed."""
         phases = [self._phases[name].copy() for name in sorted(self._phases)]
         return {
             "phases": phases,
