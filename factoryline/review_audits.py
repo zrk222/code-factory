@@ -1525,7 +1525,7 @@ def _secret_literal(node: ast.Assign | ast.AnnAssign) -> str | None:
     if (
         not isinstance(value, ast.Constant)
         or not isinstance(value.value, str)
-        or len(value.value) < 8
+        or not value.value.strip()
         or _PLACEHOLDER_SECRET.match(value.value.strip())
     ):
         return None

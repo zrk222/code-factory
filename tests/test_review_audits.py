@@ -9056,3 +9056,32 @@ def test_audit_log_source_findings_via_security_scan_input_and_request_log_injec
     assert bool(log_findings) is expected
     if expected:
         assert all(item["facts"]["cwe"] == "CWE-117" for item in log_findings)
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        'PASSWORD = "hunter2"',
+        'password: str = "x"',
+        'PASSWORD = API_KEY = "abc"',
+    ],
+)
+def test_short_hardcoded_credentials_are_detected_without_disclosing_value(
+    tmp_path, assignment
+):
+    (tmp_path / "app.py").write_text(assignment + "\n")
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert result["finding_counts"]["SECURITY_HARDCODED_SECRET"] >= 1
+    findings = json.dumps(result["findings"])
+    assert "hunter2" not in findings
+    assert '"abc"' not in findings
+    assert '"x"' not in findings
+
+
+@pytest.mark.parametrize("value", ["", "   ", "changeme", "placeholder", "${PASSWORD}"])
+def test_empty_or_declared_placeholder_credentials_remain_exempt(tmp_path, value):
+    (tmp_path / "app.py").write_text("PASSWORD = " + repr(value) + "\n")
+    assert (
+        "SECURITY_HARDCODED_SECRET"
+        not in security_scan(tmp_path, cache_enabled=False)["finding_counts"]
+    )
