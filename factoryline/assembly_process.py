@@ -547,11 +547,10 @@ def _stop(child: subprocess.Popen, unit: _CleanupUnit | None = None) -> bool:
 
 
 def _measure_call(name: str, operation: Callable, *args, **kwargs):
-    """Measure one existing operation without adding branches to its caller."""
-    from .ops_telemetry import _measure_phase
+    """Measure one existing operation through shared lifecycle telemetry."""
+    from .ops_telemetry import _measure_call as measure
 
-    with _measure_phase(name):
-        return operation(*args, **kwargs)
+    return measure(name, operation, *args, **kwargs)
 
 
 def _cleanup_after_wait_error(child, unit) -> None:

@@ -1,0 +1,11 @@
+# Plan: h1-source-attribution
+Spec: specs/h1-source-attribution.md (must be approved first)
+Architect verdict: PASS
+
+## Logical decomposition (phases)
+1. Reuse invocation-local telemetry for bounded measurements at existing source boundaries.
+2. Verify semantic parity, no-source/failure handling, bounded overflow, and metadata privacy.
+
+## Tasks (atomic — each independently shippable)
+- [x] T1 | slice=factoryline | files=factoryline/ops_telemetry.py,factoryline/review_audits.py,factoryline/implementation_audit.py,factoryline/assembly_process.py | verify=`ruff check factoryline/ops_telemetry.py factoryline/review_audits.py factoryline/implementation_audit.py factoryline/assembly_process.py` | Add bounded source-phase measurements at existing source operations using invocation-local telemetry.
+- [x] T2 | slice=factoryline | files=tests/test_ops_telemetry.py,tests/test_review_audits.py,tests/test_review_integrity.py,tests/test_assembly_process.py | verify=`pytest -q tests/test_ops_telemetry.py::test_source_phase_failure_is_bounded_and_private tests/test_ops_telemetry.py::test_source_phase_overflow_is_explicit_and_bounded tests/test_ops_telemetry.py::test_source_attribution_is_incomplete_when_observed_phase_fails tests/test_ops_telemetry.py::test_phase_elapsed_time_sums_submillisecond_calls_before_rounding tests/test_ops_telemetry.py::test_entrypoint_phase_receipt_preserves_cli_output_and_bounds_fields tests/test_review_audits.py::test_security_scan_source_phase_parity_and_dynamic_parse tests/test_review_audits.py::test_security_scan_no_sources_reports_unobserved_attribution tests/test_review_audits.py::test_security_scan_source_read_failure_preserves_finding_and_marks_incomplete tests/test_review_integrity.py::test_import_index_failure_is_measured_without_error_text tests/test_review_integrity.py::test_stable_import_index_preserves_import_shape tests/test_review_integrity.py::test_stable_import_index_keeps_all_ast_invalidators tests/test_assembly_process.py::test_child_phase_telemetry_preserves_detailed_result tests/test_assembly_process.py::test_shared_measure_call_facade_preserves_return_and_records_phase` | Verify bounded source-phase parity, no-source behavior, failures, overflow, parser callback, privacy, index behavior, and shared measurement.

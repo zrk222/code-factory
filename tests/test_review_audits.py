@@ -9551,3 +9551,70 @@ def test_bound_snapshots_parses_only_hash_matching_source_bytes(tmp_path):
 
     with pytest.raises(ReviewAuditError, match="Source changed"):
         bound_snapshots(tmp_path, [path], {path: source + b"# changed\n"}, bindings)
+
+
+def test_security_scan_source_phase_parity_and_dynamic_parse(tmp_path, monkeypatch):
+    import factoryline.review_audits as audit
+    from factoryline.ops_telemetry import _phase_telemetry
+
+    source = "value = 1\n"
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    baseline = security_scan(tmp_path, cache_enabled=False)
+    parser = audit.ast.parse
+    parsed = []
+
+    def tracked_parse(*args, **kwargs):
+        parsed.append((args, kwargs))
+        return parser(*args, **kwargs)
+
+    monkeypatch.setattr(audit.ast, "parse", tracked_parse)
+    with _phase_telemetry(0) as telemetry:
+        observed = security_scan(tmp_path, cache_enabled=False)
+
+    assert observed["audit_sha256"] == baseline["audit_sha256"]
+    assert observed["findings"] == baseline["findings"]
+    phases = {item["phase"]: item for item in telemetry.snapshot()["phases"]}
+    assert {
+        "source_read",
+        "source_hash",
+        "source_parse",
+        "source_index",
+    } <= phases.keys()
+    assert len(parsed) >= phases["source_parse"]["calls"]
+    assert telemetry.snapshot()["source_attribution"]["status"] == "complete"
+    assert str(tmp_path) not in str(telemetry.snapshot())
+
+
+def test_security_scan_no_sources_reports_unobserved_attribution(tmp_path):
+    from factoryline.ops_telemetry import _phase_telemetry
+
+    with _phase_telemetry(0) as telemetry:
+        result = security_scan(tmp_path, cache_enabled=False)
+
+    assert result["state"] == "NO_SOURCES"
+    assert telemetry.snapshot()["source_attribution"]["status"] == "not_observed"
+    assert telemetry.snapshot()["source_attribution"]["observed_phases"] == []
+
+
+def test_security_scan_source_read_failure_preserves_finding_and_marks_incomplete(
+    tmp_path, monkeypatch
+):
+    import factoryline.review_audits as audit
+    from factoryline.ops_telemetry import _phase_telemetry
+
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+
+    original_open = audit.os.open
+
+    def fail_read(path, *args, **kwargs):
+        if Path(path).name == "app.py":
+            raise OSError("PRIVATE SOURCE READ DETAIL")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(audit.os, "open", fail_read)
+    with _phase_telemetry(0) as telemetry:
+        result = security_scan(tmp_path, cache_enabled=False)
+
+    assert "SECURITY_SOURCE_UNREADABLE" in result["finding_counts"]
+    assert telemetry.snapshot()["source_attribution"]["status"] == "incomplete"
+    assert "PRIVATE SOURCE READ DETAIL" not in str(telemetry.snapshot())

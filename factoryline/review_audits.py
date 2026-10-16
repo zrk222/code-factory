@@ -28,6 +28,7 @@ except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 from .audit_action_refs import audit_remediation_packet
 from .deep_audit_io import local_file
+from .ops_telemetry import _measure_hash, _measure_parse, _measured_source_read
 from .runtime_audit_common import RuntimeAuditError, runtime_config_sources
 from . import review_integrity as integrity, intent_quality as contracts
 from .review_integrity import security_call_name as security_call_name
@@ -3632,7 +3633,7 @@ def _oracle_source_inputs(
                 )
                 cacheable = False
                 continue
-            digest = sha256(data).hexdigest()
+            digest = _measure_hash("source_hash", sha256, data)
             manifest.append(
                 {
                     "path": relative,
@@ -3671,9 +3672,7 @@ def _oracle_snapshots(root: Path, files: list[Path], source_bytes: dict) -> dict
                 data = _security_source_bytes(root, relative)
                 if len(data) > MAX_BYTES:
                     continue
-            snapshots[path] = ast.parse(
-                data, filename=path.relative_to(root).as_posix()
-            )
+            snapshots[path] = _measure_parse(ast.parse, data, root, path)
             snapshots[path]._oracle_source_lines = data.decode("utf-8").splitlines()
             for node in snapshots[path].body:
                 node._oracle_layout = None
@@ -5278,6 +5277,7 @@ def _security_scan_tree(
     return findings
 
 
+@_measured_source_read
 def _security_source_bytes(workspace: Path, relative: str) -> bytes:
     """Read a bounded regular source without following linked workspace entries."""
     path = local_file(workspace, relative)
@@ -5348,10 +5348,10 @@ def _security_scan_file(
             )
         binding = {
             "path": relative,
-            "sha256": sha256(data).hexdigest(),
+            "sha256": _measure_hash("source_hash", sha256, data),
             "bytes": len(data),
         }
-        tree = ast.parse(data, filename=relative)
+        tree = _measure_parse(ast.parse, data, workspace, path)
         tree._oracle_source_lines = data.decode("utf-8").splitlines()
     except SyntaxError as exc:
         return (
@@ -5419,7 +5419,7 @@ def _verify_security_bindings(workspace: Path, bindings: list[dict[str, Any]]) -
             ) from exc
         if (
             len(data) != binding["bytes"]
-            or sha256(data).hexdigest() != binding["sha256"]
+            or _measure_hash("source_hash", sha256, data) != binding["sha256"]
         ):
             raise ReviewAuditError(
                 f"Evidence changed during security scan: {binding['path']}"

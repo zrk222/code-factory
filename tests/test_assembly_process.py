@@ -396,3 +396,15 @@ def test_windows_resume_failure_returns_non_success(monkeypatch, tmp_path):
     assert child is None and unit is None
     assert error == "resume failed"
     assert events == ["job", "terminate", "close"]
+
+
+def test_shared_measure_call_facade_preserves_return_and_records_phase():
+    from factoryline.ops_telemetry import _phase_telemetry
+
+    with _phase_telemetry(0) as telemetry:
+        value = assembly_process._measure_call("source_parse", lambda item: item, 17)
+
+    assert value == 17
+    phases = {item["phase"]: item for item in telemetry.snapshot()["phases"]}
+    assert phases["source_parse"]["calls"] == 1
+    assert phases["source_parse"]["completed"] == 1

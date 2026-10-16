@@ -3,6 +3,8 @@
 import ast
 from hashlib import sha256
 
+from .ops_telemetry import _measured_phase
+
 
 def intentional_implementation_contract(node, parents, aliases):
     """Recognize explicit container, extension, borrowed-resource, and null-IO contracts."""
@@ -604,14 +606,14 @@ def _bind_imported_base(root, path, child, source, symbol, tree, contexts, edges
         )
 
 
+@_measured_phase("source_index")
 def _stable_import_index(tree):
-    imports = {}
+    imports, unstable, module_calls = {}, set(), {}
     for statement in tree.body:
         if isinstance(statement, (ast.Import, ast.ImportFrom)):
             for alias in statement.names:
                 local = alias.asname or alias.name.split(".")[0]
                 imports.setdefault(local, []).append(statement.lineno)
-    unstable, module_calls = set(), {}
     for node in ast.walk(tree):
         _track_import_binding(node, unstable, module_calls)
     return imports, unstable, module_calls
@@ -714,8 +716,7 @@ def _stable_api_origin(node, parents, aliases, targets):
     roots = {name for name, target in aliases.items() if target in targets}
     if not roots:
         return False
-    scopes = []
-    parent = parents.get(node)
+    scopes, parent = [], parents.get(node)
     while parent is not None:
         if isinstance(
             parent, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)

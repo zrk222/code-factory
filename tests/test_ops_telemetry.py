@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+
+import pytest
 from pathlib import Path
 
 from factoryline.cli import main
@@ -162,3 +164,80 @@ def test_lifecycle_failure_is_recorded_without_changing_exit_semantics(
     inventory = lifecycle_inventory(tmp_path)
     assert inventory["receipt_count"] == 1
     assert inventory["statuses"] == {"blocked": 1}
+
+
+@pytest.mark.parametrize(
+    "phase", ["source_read", "source_hash", "source_parse", "source_index"]
+)
+def test_source_phase_failure_is_bounded_and_private(phase):
+    import pytest
+
+    from factoryline.ops_telemetry import _measure_call, _phase_telemetry
+
+    with _phase_telemetry(0) as telemetry:
+        with pytest.raises(RuntimeError, match="PRIVATE PHASE DETAIL"):
+            _measure_call(
+                phase,
+                lambda: (_ for _ in ()).throw(RuntimeError("PRIVATE PHASE DETAIL")),
+            )
+    snapshot = telemetry.snapshot()
+    row = next(item for item in snapshot["phases"] if item["phase"] == phase)
+    assert row["incomplete"] == 1
+    assert snapshot["source_attribution"]["status"] == "incomplete"
+    assert "PRIVATE PHASE DETAIL" not in str(snapshot)
+
+
+def test_source_phase_overflow_is_explicit_and_bounded():
+    from factoryline.ops_telemetry import (
+        _PHASE_NAMES,
+        _SOURCE_PHASE_NAMES,
+        _PhaseTelemetry,
+    )
+
+    telemetry = _PhaseTelemetry(0)
+    for name in sorted(_PHASE_NAMES - _SOURCE_PHASE_NAMES):
+        telemetry.record(name, 1, completed=True)
+    for name in sorted(_SOURCE_PHASE_NAMES):
+        telemetry.record(name, 1, completed=True)
+
+    snapshot = telemetry.snapshot()
+    assert len(snapshot["phases"]) == 12
+    assert snapshot["dropped_calls"] == len(_SOURCE_PHASE_NAMES)
+    assert snapshot["dropped_phase_names"] == sorted(_SOURCE_PHASE_NAMES)
+    assert snapshot["status"] == "incomplete"
+    assert snapshot["source_attribution"]["status"] == "incomplete"
+    assert set(snapshot["source_attribution"]["missing_phases"]) == _SOURCE_PHASE_NAMES
+
+
+def test_source_attribution_is_incomplete_when_observed_phase_fails():
+    from factoryline.ops_telemetry import _measure_call, _phase_telemetry
+
+    names = ("source_read", "source_hash", "source_parse", "source_index")
+    with _phase_telemetry(0) as telemetry:
+        for name in names:
+
+            def operation():
+                if name == "source_parse":
+                    raise RuntimeError("PRIVATE FAILURE")
+                return None
+
+            try:
+                _measure_call(name, operation)
+            except RuntimeError:
+                pass
+    snapshot = telemetry.snapshot()
+    assert {phase["phase"] for phase in snapshot["phases"]} >= set(names)
+    assert snapshot["source_attribution"]["status"] == "incomplete"
+    assert "PRIVATE FAILURE" not in str(snapshot)
+
+
+def test_phase_elapsed_time_sums_submillisecond_calls_before_rounding():
+    from factoryline.ops_telemetry import _PhaseTelemetry
+
+    telemetry = _PhaseTelemetry(0)
+    for _ in range(1000):
+        telemetry.record("source_hash", 10_000, completed=True)
+
+    phase = telemetry.snapshot()["phases"][0]
+    assert phase["elapsed_ms"] == 10
+    assert phase["calls"] == 1000
