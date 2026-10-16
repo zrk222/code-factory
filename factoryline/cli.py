@@ -229,7 +229,9 @@ def _run_feature_canary(
     )
     env = os.environ.copy()
     typescript_node_path = (
-        _typescript_node_path(typescript_roots) if suffix in {"ts", "tsx"} else None
+        _typescript_node_path(typescript_roots)
+        if suffix in {"mjs", "ts", "tsx"}
+        else None
     )
     if typescript_node_path:
         env["NODE_PATH"] = os.pathsep.join(
