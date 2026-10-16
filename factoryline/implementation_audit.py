@@ -190,9 +190,7 @@ def _scope_binds_name(scope, name):
     if arguments and (
         any(
             arg.arg == name
-            for arg in arguments.posonlyargs
-            + arguments.args
-            + arguments.kwonlyargs
+            for arg in arguments.posonlyargs + arguments.args + arguments.kwonlyargs
         )
         or (arguments.vararg is not None and arguments.vararg.arg == name)
         or (arguments.kwarg is not None and arguments.kwarg.arg == name)
@@ -211,8 +209,7 @@ def _scope_statement_binds_name(statement, name):
                 return True
             continue
         if isinstance(item, (ast.Import, ast.ImportFrom)) and any(
-            (alias.asname or alias.name.split(".")[0]) == name
-            for alias in item.names
+            (alias.asname or alias.name.split(".")[0]) == name for alias in item.names
         ):
             return True
         if isinstance(item, ast.ExceptHandler) and item.name == name:
@@ -241,7 +238,9 @@ def _walk_scope_nodes(root):
     while pending:
         item = pending.pop()
         yield item
-        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+        if isinstance(
+            item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
             continue
         pending.extend(reversed(list(ast.iter_child_nodes(item))))
 
