@@ -4625,3 +4625,451 @@ class Account(Base):
     assert second["status"] == "COMPLETE"
     assert calls == [changed.decode("utf-8")]
     assert [table["name"] for table in second["tables"]] == ["customers"]
+
+
+def test_database_python_sqlite_with_bindings_are_scoped_and_source_bound():
+    from factoryline.intent_quality import database_structure
+
+    schema = b"CREATE TABLE actual_users (id INTEGER PRIMARY KEY, email TEXT);"
+    sources = {
+        "schema.sql": schema,
+        "module_alias.py": b"""import sqlite3 as dbapi
+def load(path):
+    with dbapi.connect(path) as first, dbapi.connect(path) as second:
+        first.execute("SELECT id FROM actual_users")
+        return second.execute("SELECT email FROM actual_users").fetchall()
+""",
+        "function_alias.py": b"""from sqlite3 import connect as open_db
+def load(path):
+    with open_db(path) as connection:
+        return connection.execute("SELECT id, email FROM actual_users").fetchall()
+""",
+        "nested_with.py": b"""import sqlite3
+def load(path):
+    if path:
+        with unknown_context(path):
+            pass
+        with sqlite3.connect(path) as connection:
+            return connection.execute("SELECT id FROM actual_users").fetchall()
+""",
+    }
+
+    result = database_structure(sources, "sqlite")
+
+    assert result["status"] == "COMPLETE", result["gaps"]
+    assert not any("python_execute_receiver_unproven" in gap for gap in result["gaps"])
+    assert len(result["queries"]) == 4
+    for query in result["queries"]:
+        assert query["tables"] == ["actual_users"]
+        assert query["source"]["kind"] == "sqlite_execute"
+        assert query["source"]["path"] in {
+            "module_alias.py",
+            "function_alias.py",
+            "nested_with.py",
+        }
+        assert (
+            query["source"]["sha256"]
+            == hashlib.sha256(sources[query["source"]["path"]]).hexdigest()
+        )
+    assert "SELECT id" not in repr(result)
+    assert "SELECT email" not in repr(result)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        b"""import sqlite3 as dbapi
+def load(path):
+    with unknown_context(path) as connection:
+        connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path):
+    with dbapi.connect(path) as connection:
+        connection = object()
+        connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path):
+    with dbapi.connect(path) as connection:
+        del connection
+        connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path):
+    with dbapi.connect(path) as connection:
+        def connection():
+            pass
+        connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path):
+    with dbapi.connect(path) as connection:
+        (connection := object())
+        connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path):
+    with dbapi.connect(path) as connection:
+        result = (connection := other)
+        connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path):
+    with dbapi.connect(path) as connection:
+        callback = lambda value=(connection := other): value
+        connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path):
+    with dbapi.connect(path) as connection:
+        from other import connection
+        connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path):
+    from other import dbapi
+    with dbapi.connect(path) as connection:
+        connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+from other import *
+def load(path):
+    with dbapi.connect(path) as connection:
+        connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+with dbapi.connect("users.db") as connection:
+    pass
+def load(connection, /):
+    connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+with dbapi.connect("users.db") as connection:
+    pass
+def load(*, connection):
+    connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path):
+    sql, *rest = "SELECT id FROM actual_users"
+    with dbapi.connect(path) as connection:
+        connection.execute(sql)
+""",
+        b"""import sqlite3 as dbapi
+def load(path):
+    with dbapi.connect(path) as connection:
+        connection = object()
+    connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path, enabled):
+    if enabled:
+        with dbapi.connect(path) as connection:
+            pass
+    connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path, enabled, other):
+    if enabled:
+        with dbapi.connect(path) as connection:
+            pass
+        connection = other
+        connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path, enabled):
+    if enabled:
+        with dbapi.connect(path) as connection:
+            pass
+        del connection
+        connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path, enabled):
+    if enabled:
+        with dbapi.connect(path) as connection:
+            pass
+        from other import connection
+        connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path, enabled):
+    if enabled:
+        with unknown_context(path) as connection:
+            pass
+    else:
+        with dbapi.connect(path) as connection:
+            pass
+    connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path, values):
+    for value in values:
+        with dbapi.connect(path) as connection:
+            pass
+    connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path, error):
+    try:
+        with dbapi.connect(path) as connection:
+            pass
+    except Exception:
+        pass
+    connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path, error):
+    try:
+        raise error
+    except Exception:
+        with dbapi.connect(path) as connection:
+            pass
+    connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path, error):
+    try:
+        pass
+    except Exception:
+        pass
+    else:
+        with dbapi.connect(path) as connection:
+            pass
+    connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path, error):
+    try:
+        pass
+    finally:
+        with dbapi.connect(path) as connection:
+            pass
+    connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path, subject):
+    match subject:
+        case 1:
+            with dbapi.connect(path) as connection:
+                pass
+    connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path):
+    connection = dbapi.connect(path)
+    with unknown_context(path) as connection:
+        connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path, enabled):
+    connection = dbapi.connect(path)
+    if enabled:
+        with unknown_context(path) as connection:
+            connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path, enabled):
+    with dbapi.connect(path) as connection:
+        if enabled:
+            connection = object()
+        connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path, values):
+    with dbapi.connect(path) as connection:
+        for connection in values:
+            pass
+        connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path, enabled):
+    sql = "SELECT id FROM actual_users"
+    with dbapi.connect(path) as connection:
+        if enabled:
+            connection, other = unknown_pair
+        connection.execute(sql)
+""",
+        b"""import sqlite3 as dbapi
+def load(path, enabled):
+    sql = "SELECT id FROM actual_users"
+    with dbapi.connect(path) as connection:
+        if enabled:
+            sql += " WHERE id = 1"
+        connection.execute(sql)
+""",
+        b"""import sqlite3 as dbapi
+def load(path, error):
+    with dbapi.connect(path) as connection:
+        try:
+            raise error
+        except Exception as connection:
+            pass
+        connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path, subject):
+    with dbapi.connect(path) as connection:
+        match subject:
+            case connection:
+                pass
+        connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path):
+    connection = dbapi.connect(path)
+    with unknown_context(path) as connection, wrapper(
+        connection.execute("SELECT id FROM actual_users")
+    ):
+        pass
+""",
+        b"""import sqlite3 as dbapi
+def load(path):
+    sql = "SELECT id FROM actual_users"
+    with dbapi.connect(path) as connection:
+        with unknown_context(path) as sql:
+            connection.execute(sql)
+""",
+        b"""from sqlalchemy import create_engine
+def load(path):
+    engine = create_engine(path)
+    with unknown_context(path) as engine:
+        with engine.connect() as connection:
+            connection.execute("SELECT id FROM actual_users")
+""",
+        b"""import sqlite3 as dbapi
+def load(path):
+    dbapi = object()
+    with dbapi.connect(path) as connection:
+        connection.execute("SELECT id FROM actual_users")
+""",
+    ],
+)
+def test_database_python_sqlite_with_receiver_requires_scoped_provenance(source):
+    from factoryline.intent_quality import database_structure
+
+    result = database_structure(
+        {
+            "schema.sql": b"CREATE TABLE actual_users (id INTEGER PRIMARY KEY);",
+            "query.py": source,
+        },
+        "sqlite",
+    )
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["queries"] == []
+    assert any(
+        gap in result["gaps"]
+        for gap in (
+            "python_execute_receiver_unproven:query.py",
+            "python_dynamic_or_unwrapped_sql:query.py",
+        )
+    )
+
+
+def test_database_python_sqlite_nested_execute_scope_is_an_explicit_gap():
+    from factoryline.intent_quality import database_structure
+
+    result = database_structure(
+        {
+            "schema.sql": b"CREATE TABLE actual_users (id INTEGER PRIMARY KEY);",
+            "query.py": b"""import sqlite3 as dbapi
+def load(path, enabled):
+    connection = dbapi.connect(path)
+    if enabled:
+        def nested():
+            return connection.execute("SELECT id FROM actual_users").fetchall()
+""",
+        },
+        "sqlite",
+    )
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["queries"] == []
+    assert "python_execute_nested_scope_unsupported:query.py" in result["gaps"]
+
+
+def test_database_python_sqlite_nested_class_execute_scope_is_an_explicit_gap():
+    from factoryline.intent_quality import database_structure
+
+    result = database_structure(
+        {
+            "schema.sql": b"CREATE TABLE actual_users (id INTEGER PRIMARY KEY);",
+            "query.py": b"""import sqlite3 as dbapi
+def load(path, enabled):
+    connection = dbapi.connect(path)
+    if enabled:
+        class Nested:
+            def run(self):
+                return connection.execute("SELECT id FROM actual_users").fetchall()
+""",
+        },
+        "sqlite",
+    )
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["queries"] == []
+    assert "python_execute_nested_scope_unsupported:query.py" in result["gaps"]
+
+
+def test_database_python_sqlite_with_binding_survives_context_manager_exit():
+    from factoryline.intent_quality import database_structure
+
+    result = database_structure(
+        {
+            "schema.sql": b"CREATE TABLE actual_users (id INTEGER PRIMARY KEY);",
+            "query.py": b"""import sqlite3 as dbapi
+def load(path):
+    with dbapi.connect(path) as connection:
+        pass
+    connection.execute("SELECT id FROM actual_users")
+""",
+        },
+        "sqlite",
+    )
+
+    assert result["status"] == "COMPLETE", result["gaps"]
+    assert len(result["queries"]) == 1
+    assert result["queries"][0]["tables"] == ["actual_users"]
+
+
+def test_database_python_sqlite_with_inside_if_keeps_branch_local_receiver():
+    from factoryline.intent_quality import database_structure
+
+    result = database_structure(
+        {
+            "schema.sql": b"CREATE TABLE actual_users (id INTEGER PRIMARY KEY);",
+            "query.py": b"""import sqlite3 as dbapi
+def load(path, enabled):
+    if enabled:
+        with dbapi.connect(path) as connection:
+            connection.execute("SELECT id FROM actual_users")
+""",
+        },
+        "sqlite",
+    )
+
+    assert result["status"] == "COMPLETE", result["gaps"]
+    assert len(result["queries"]) == 1
+    assert result["queries"][0]["tables"] == ["actual_users"]
+
+
+def test_database_python_sqlite_execute_in_comprehension_is_an_explicit_gap():
+    from factoryline.intent_quality import database_structure
+
+    result = database_structure(
+        {
+            "schema.sql": b"CREATE TABLE actual_users (id INTEGER PRIMARY KEY);",
+            "query.py": b"""import sqlite3 as dbapi
+def load(path, values):
+    with dbapi.connect(path) as connection:
+        return [connection.execute("SELECT id FROM actual_users") for item in values]
+""",
+        },
+        "sqlite",
+    )
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["queries"] == []
+    assert "python_execute_comprehension_scope_unsupported:query.py" in result["gaps"]
