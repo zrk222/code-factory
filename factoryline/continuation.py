@@ -112,12 +112,21 @@ def continue_assembly(
     *,
     dry_run: bool = False,
     usage: dict[str, Any] | None = None,
+    release_contract_path: Path | str | None = None,
 ) -> dict[str, Any]:
     """Run installed safe stages and return at completion, failure, or a human boundary."""
     resolved_root = Path(root).resolve()
     selected, inferred = resolve_feature(resolved_root, feature)
     started = time.monotonic()
-    report = assemble(resolved_root, selected, dry_run=dry_run)
+    if release_contract_path is None:
+        report = assemble(resolved_root, selected, dry_run=dry_run)
+    else:
+        report = assemble(
+            resolved_root,
+            selected,
+            dry_run=dry_run,
+            release_contract_path=Path(release_contract_path),
+        )
     elapsed_ms = round((time.monotonic() - started) * 1000)
     if report.get("halted_at"):
         terminal = "halted"
@@ -173,3 +182,21 @@ def continue_assembly(
         result["receipt"] = str(receipt)
         result["markers"].append("ASSEMBLY_RUN_RECEIPTED")
     return result
+
+
+def continue_cli(
+    root: Path | str,
+    feature: str | None,
+    dry_run: bool,
+    usage: dict[str, Any] | None,
+    release_contract_path: Path | str | None,
+) -> dict[str, Any]:
+    return continue_assembly(
+        Path(root),
+        feature,
+        dry_run=dry_run,
+        usage=usage,
+        release_contract_path=Path(release_contract_path)
+        if release_contract_path
+        else None,
+    )

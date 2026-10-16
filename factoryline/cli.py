@@ -832,6 +832,7 @@ def _build_parser() -> argparse.ArgumentParser:
     s.add_argument("--root", default=".")
     s.add_argument("--dry-run", action="store_true")
     s.add_argument("--usage-json", help="exact measured usage JSON file")
+    s.add_argument("--release-contract")
     s.add_argument("--json", action="store_true")
 
     s = sub.add_parser("metrics", help="export privacy-safe Assembly run metrics")
@@ -3120,14 +3121,12 @@ def _dispatch_route_group_15(a, capture_command, p):
 
 def _dispatch_route_group_16(a, capture_command, p):
     if a.cmd == "assemble":
-        report = _lazy_import("assembly", "assemble")(
-            Path(a.root),
-            a.feature,
-            dry_run=a.dry_run,
-            release_contract_path=Path(a.release_contract)
-            if a.release_contract
-            else None,
+        report = _lazy_import("assembly", "assemble_cli")(
+            a.root, a.feature, a.dry_run, a.release_contract
         )
+        if report.get("schema") == "factory.release-contract.error.v1":
+            print(json.dumps(report, indent=2), file=sys.stderr)
+            return 2
         print(json.dumps(report, indent=2))
         return 0 if "halted_at" not in report else 1
     return _UNHANDLED
@@ -3182,8 +3181,8 @@ def _dispatch_route_group_17(a, capture_command, p):
             if a.usage_json
             else None
         )
-        report = _lazy_import("continuation", "continue_assembly")(
-            Path(a.root), a.feature, dry_run=a.dry_run, usage=usage
+        report = _lazy_import("continuation", "continue_cli")(
+            a.root, a.feature, a.dry_run, usage, a.release_contract
         )
     except (
         _lazy_import("continuation", "ContinuationError"),
