@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import canonical_json_compat_bytes as _canonical
+
 from datetime import datetime, timezone
 from hashlib import sha256
 from importlib.resources import files
@@ -113,12 +115,6 @@ _QUESTION_SPECS = {
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
 
 
 def _sha(value: bytes) -> str:

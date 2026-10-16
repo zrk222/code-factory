@@ -7,6 +7,8 @@ tamper-evident, then leaves actual test execution to the approved E2E gate.
 
 from __future__ import annotations
 
+from . import canonical_json_compat_bytes as _canonical
+
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -36,12 +38,6 @@ class CounterexampleError(ValueError):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

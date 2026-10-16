@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import canonical_json_compat_bytes as _canonical
+
 from datetime import datetime
 import hashlib
 import json
@@ -28,12 +30,6 @@ HIGH_RISK_CLAIM = re.compile(
     r"\b(?:guarantee(?:d)?|apple\s+approved|never\s+reject(?:ed)?|save\s+(?:\d+|many)\s+(?:hours?|days?)|\d+\s*%)\b",
     re.IGNORECASE,
 )
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

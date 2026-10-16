@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import canonical_json_compat_bytes as _canonical
+
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
@@ -457,12 +459,6 @@ def check_repository_scope(
             "Trusted enforcement requires the checker and policy to come from the protected base revision.",
         ],
     }
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

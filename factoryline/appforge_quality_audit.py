@@ -8,6 +8,8 @@ and runtime lane. Unknown or not-applicable-without-review blocks the receipt.
 
 from __future__ import annotations
 
+from . import canonical_json_compat_bytes as _canonical
+
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -50,12 +52,6 @@ STACK_CHECKS = (
     "dependency_and_secret_scan",
 )
 CONDITIONAL_CHECKS = ("purchase_and_restore",)
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

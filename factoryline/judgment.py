@@ -8,6 +8,8 @@ Safety Case only describes supplied, hash-bound evidence declarations.
 
 from __future__ import annotations
 
+from . import canonical_ascii_json_compat_bytes as _canonical
+
 from datetime import date, datetime, timezone
 import hashlib
 import json
@@ -77,12 +79,6 @@ class JudgmentError(ValueError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

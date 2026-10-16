@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import canonical_ascii_json_compat_bytes as _canonical
+
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -66,12 +68,6 @@ class MigrationError(ValueError):
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode("utf-8")
 
 
 def _sha_bytes(value: bytes) -> str:

@@ -7,6 +7,8 @@ proof-trace receipts so a user can inspect the smallest fact-derived next step.
 
 from __future__ import annotations
 
+from . import canonical_json_compat_bytes as _canonical
+
 from collections import Counter
 from importlib import resources
 from pathlib import Path
@@ -75,12 +77,6 @@ _AUTHORITY = {
     "credential": False,
     "connector": False,
 }
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

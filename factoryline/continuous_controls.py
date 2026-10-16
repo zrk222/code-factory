@@ -7,6 +7,8 @@ so a reviewer can reproduce every digest locally.
 
 from __future__ import annotations
 
+from . import canonical_json_compat_bytes as _canonical
+
 import hashlib
 import json
 import re
@@ -39,12 +41,6 @@ class ControlsError(ValueError):
         super().__init__(message)
         self.code = code
         self.details = details
-
-
-def _canonical(value: Any) -> bytes:
-    return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
 
 
 def _sha(value: Any) -> str:

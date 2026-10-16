@@ -10,6 +10,8 @@ Oracle intent contract and named human supervision.
 
 from __future__ import annotations
 
+from . import canonical_json_compat_bytes as _canonical
+
 import hashlib
 import json
 import os
@@ -30,12 +32,6 @@ MAX_BYTES = 1_048_576
 MAX_CAPTURE_BYTES = 25 * 1_048_576
 CANDIDATE_KEYS = ("bundle_identifier", "version", "build_number", "source_commit")
 ALLOWED_TRANSPORTS = frozenset({"manual_physical_device", "phone_harness"})
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

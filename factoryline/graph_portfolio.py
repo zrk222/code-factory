@@ -7,8 +7,9 @@ Exact proof reuse remains the separate proof-reuse gate.
 
 from __future__ import annotations
 
+from . import canonical_ascii_json_compat_bytes as _canonical
+
 import hashlib
-import json
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
@@ -38,12 +39,6 @@ class _CycleState:
     stack: list[str] = field(default_factory=list)
     on_stack: set[str] = field(default_factory=set)
     components: list[list[str]] = field(default_factory=list)
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode("utf-8")
 
 
 def _sha(value: object) -> str:

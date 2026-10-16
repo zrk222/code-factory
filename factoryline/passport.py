@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import canonical_ascii_json_compat_bytes as _canonical_encode
+
 from datetime import datetime, timezone
 from pathlib import Path
 import hashlib
@@ -12,7 +14,7 @@ from .protocol import CHALLENGE_SCHEMA, PASSPORT_SCHEMA
 
 
 def _canonical(payload: object) -> bytes:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _canonical_encode(payload)
 
 
 def _sha256(path: Path) -> str:

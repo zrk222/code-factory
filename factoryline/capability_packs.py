@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import canonical_ascii_json_compat_bytes as _canonical
+
 from copy import deepcopy
 from hashlib import sha256
 import json
@@ -51,12 +53,6 @@ class CapabilityPackError(ValueError):
         self.message = message
         self.markers = list(markers or [])
         self.guidance = explain_failure(code, message)
-
-
-def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode("utf-8")
 
 
 def _load_json(path: Path) -> dict[str, Any]:
