@@ -36,12 +36,12 @@ static product overview; it does not scan a visitor's workspace. This source
 preview does not establish publication, exhaustive detection, or measured
 accuracy.
 
-![CF Studio product mission form with fictional sample text](../../docs/assets/marketplace/cf-product-mission-20261016.jpg)
+![CF Studio product mission form with fictional sample text](https://raw.githubusercontent.com/zrk222/code-factory/d1f2a21cde1f00856c0329e913a1071aca256300/docs/assets/marketplace/cf-product-mission-20261016.jpg)
 
 Actual Product Mission form with sample text entered through the interface. No
 interview, build, or deployment is claimed by this image.
 
-![Graph Ops security findings from a fictional Python file](../../docs/assets/marketplace/cf-audit-findings-20261016.jpg)
+![Graph Ops security findings from a fictional Python file](https://raw.githubusercontent.com/zrk222/code-factory/d1f2a21cde1f00856c0329e913a1071aca256300/docs/assets/marketplace/cf-audit-findings-20261016.jpg)
 
 Actual Graph Ops projection of a local scan of one fictional Python file. It
 shows two planted findings, complete source coverage for that file, and
