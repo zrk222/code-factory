@@ -186,6 +186,16 @@ def _borrowed_getattr_is_builtin(method, owner, parents):
 
 
 def _scope_binds_name(scope, name):
+    if (
+        isinstance(scope, ast.Module)
+        and name == "getattr"
+        and any(
+            _function_rebinds_module_getattr(item)
+            for item in ast.walk(scope)
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        )
+    ):
+        return True
     arguments = getattr(scope, "args", None)
     if arguments and (
         any(
@@ -209,15 +219,14 @@ def _scope_statement_binds_name(statement, name):
                 return True
             continue
         if isinstance(item, (ast.Import, ast.ImportFrom)) and any(
-            (alias.asname or alias.name.split(".")[0]) == name for alias in item.names
+            (alias.asname or alias.name.split(".")[0]) == name
+            or alias.name == "*"
+            and name == "getattr"
+            for alias in item.names
         ):
             return True
-        if isinstance(item, ast.ExceptHandler) and item.name == name:
-            return True
         if (
-            isinstance(item, ast.MatchAs)
-            and item.name == name
-            or isinstance(item, ast.MatchStar)
+            isinstance(item, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar))
             and item.name == name
             or isinstance(item, ast.MatchMapping)
             and item.rest == name
@@ -230,6 +239,14 @@ def _scope_statement_binds_name(statement, name):
         ):
             return True
     return False
+
+
+def _function_rebinds_module_getattr(function):
+    return any(
+        isinstance(item, ast.Global) and "getattr" in item.names
+        for statement in function.body
+        for item in _walk_scope_nodes(statement)
+    ) and _scope_binds_name(function, "getattr")
 
 
 def _walk_scope_nodes(root):

@@ -2381,6 +2381,44 @@ def test_borrowed_resource_context_exit_contract(name, field, argument, document
         for node in ast.walk(tree)
         if isinstance(node, ast.FunctionDef) and node.name == "__exit__"
     )
+    from factoryline import intent_quality
+
+    assert intent_quality.intentional_implementation_contract(exit_method, parents, {})
+    assert "__exit__" not in symbols(source)
+    helpers = intent_quality.project_contract_helpers()
+    assert all(
+        getattr(intent_quality, name) in helpers
+        for name in (
+            "_function_rebinds_module_getattr",
+            "_scope_binds_name",
+            "_scope_statement_binds_name",
+            "_walk_scope_nodes",
+        )
+    )
+
+
+def test_borrowed_resource_allows_global_getattr_read_without_rebinding():
+    source = '''def read_getattr():
+    global getattr
+    return getattr
+class Proxy:
+    """Borrowed resource remains open after context exit and is not closed."""
+    def __init__(self, resource): self._resource = resource
+    def __getattr__(self, name): return getattr(self._resource, name)
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+'''
+    tree = ast.parse(source)
+    parents = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    exit_method = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "__exit__"
+    )
     from factoryline.intent_quality import intentional_implementation_contract
 
     assert intentional_implementation_contract(exit_method, parents, {})
@@ -2617,6 +2655,34 @@ class Proxy:
     def __exit__(self, *args): pass
 ''',
         '''getattr = replacement
+class Proxy:
+    """Borrowed resource remains open after context exit and is not closed."""
+    def __init__(self, resource): self._resource = resource
+    def __getattr__(self, name): return getattr(self._resource, name)
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+''',
+        '''from provider import *
+class Proxy:
+    """Borrowed resource remains open after context exit and is not closed."""
+    def __init__(self, resource): self._resource = resource
+    def __getattr__(self, name): return getattr(self._resource, name)
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+''',
+        '''def replace_getattr():
+    global getattr
+    getattr = replacement
+class Proxy:
+    """Borrowed resource remains open after context exit and is not closed."""
+    def __init__(self, resource): self._resource = resource
+    def __getattr__(self, name): return getattr(self._resource, name)
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+''',
+        '''def replace_getattr():
+    global getattr
+    from provider import replacement as getattr
 class Proxy:
     """Borrowed resource remains open after context exit and is not closed."""
     def __init__(self, resource): self._resource = resource
