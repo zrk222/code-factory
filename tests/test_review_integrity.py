@@ -5073,3 +5073,42 @@ def load(path, values):
     assert result["status"] == "INCOMPLETE"
     assert result["queries"] == []
     assert "python_execute_comprehension_scope_unsupported:query.py" in result["gaps"]
+
+
+def test_oracle_snapshot_enables_fresh_bound_name_cache(monkeypatch, tmp_path):
+    import ast
+    import factoryline.review_audits as module
+
+    path = tmp_path / "helper.py"
+    first_tree = module._oracle_snapshots(
+        tmp_path, [path], {path: b"values = [x for x in source]"}
+    )[path]
+    assert all(node._scan_bound_names is None for node in ast.walk(first_tree))
+    original_walk = module._iter_ast_nodes
+    walks = []
+
+    def counted_walk(node):
+        walks.append(node)
+        yield from original_walk(node)
+
+    monkeypatch.setattr(module, "_iter_ast_nodes", counted_walk)
+    statement = first_tree.body[0]
+    first = module._bound_names(statement)
+    first_walk_count = len(walks)
+    first.add("caller_only")
+    second = module._bound_names(statement)
+    assert second == {"values"}
+    assert second is not first
+    assert first_walk_count > 0
+    assert len(walks) == first_walk_count
+
+    changed_tree = module._oracle_snapshots(
+        tmp_path, [path], {path: b"values = [x for x in source]\nchanged = 1"}
+    )[path]
+    assert module._bound_names(changed_tree.body[1]) == {"changed"}
+
+    raw = ast.parse("values = [x for x in source]")
+    raw_statement = raw.body[0]
+    assert not hasattr(raw_statement, "_scan_bound_names")
+    raw_statement.targets.append(ast.Name(id="changed", ctx=ast.Store()))
+    assert module._bound_names(raw_statement) == {"values", "changed"}
