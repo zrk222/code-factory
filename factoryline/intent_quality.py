@@ -2580,6 +2580,21 @@ def _db_python_scope(
                 statement, engines, connections, sql_bindings
             )
         if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            _db_python_scope_calls(
+                statement,
+                path,
+                digest,
+                symbols,
+                shadowed,
+                dialect,
+                sqlglot,
+                exp,
+                engines,
+                connections,
+                sql_bindings,
+                queries,
+                gaps,
+            )
             continue
         destructured = (
             isinstance(statement, ast.Assign)
@@ -2880,20 +2895,25 @@ class _DBPythonWriteCollector(ast.NodeVisitor):
         self.wildcard = False
 
     def visit_Name(self, node):
+        """Record names written or deleted in this lexical scope."""
         if isinstance(node.ctx, (ast.Store, ast.Del)):
             self.names.add(node.id)
 
     def visit_Import(self, node):
+        """Record local names introduced by a plain import statement."""
         self.names.update(_db_python_import_names(node))
 
     def visit_ImportFrom(self, node):
+        """Record imported names and whether a wildcard obscures bindings."""
         self.names.update(_db_python_import_names(node))
         self.wildcard |= any(alias.name == "*" for alias in node.names)
 
     def visit_FunctionDef(self, node):
+        """Inspect a function name and expressions evaluated in its outer scope."""
         self._visit_function_outer_expressions(node)
 
     def visit_AsyncFunctionDef(self, node):
+        """Inspect an async function name and outer-scope expressions."""
         self._visit_function_outer_expressions(node)
 
     def _visit_function_outer_expressions(self, node):
@@ -2914,6 +2934,7 @@ class _DBPythonWriteCollector(ast.NodeVisitor):
             self.visit(expression)
 
     def visit_ClassDef(self, node):
+        """Inspect a class name, decorators, bases, and keyword expressions."""
         self.names.add(node.name)
         expressions = node.decorator_list + node.bases
         expressions.extend(keyword.value for keyword in node.keywords)
@@ -2921,21 +2942,26 @@ class _DBPythonWriteCollector(ast.NodeVisitor):
             self.visit(expression)
 
     def visit_Lambda(self, node):
+        """Inspect only lambda defaults evaluated in the surrounding scope."""
         expressions = node.args.defaults + node.args.kw_defaults
         for expression in expressions:
             if expression:
                 self.visit(expression)
 
     def visit_ListComp(self, node):
+        """Inspect list-comprehension expressions evaluated in this scope."""
         self._visit_comprehension_expressions(node)
 
     def visit_SetComp(self, node):
+        """Inspect set-comprehension expressions evaluated in this scope."""
         self._visit_comprehension_expressions(node)
 
     def visit_DictComp(self, node):
+        """Inspect dict-comprehension expressions evaluated in this scope."""
         self._visit_comprehension_expressions(node)
 
     def visit_GeneratorExp(self, node):
+        """Inspect generator expressions evaluated in this scope."""
         self._visit_comprehension_expressions(node)
 
     def _visit_comprehension_expressions(self, node):
@@ -2950,21 +2976,25 @@ class _DBPythonWriteCollector(ast.NodeVisitor):
             self.visit(expression)
 
     def visit_ExceptHandler(self, node):
+        """Record the exception target and inspect the handler's bound names."""
         if node.name:
             self.names.add(node.name)
         self.generic_visit(node)
 
     def visit_MatchAs(self, node):
+        """Record a name captured by a structural pattern."""
         if node.name:
             self.names.add(node.name)
         self.generic_visit(node)
 
     def visit_MatchStar(self, node):
+        """Record a name captured by a starred structural pattern."""
         if node.name:
             self.names.add(node.name)
         self.generic_visit(node)
 
     def visit_MatchMapping(self, node):
+        """Record the rest name captured by a mapping pattern."""
         if node.rest:
             self.names.add(node.rest)
         self.generic_visit(node)

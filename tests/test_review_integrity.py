@@ -4990,6 +4990,29 @@ def load(path, enabled):
     assert "python_execute_nested_scope_unsupported:query.py" in result["gaps"]
 
 
+def test_database_python_sqlite_nested_class_execute_scope_is_an_explicit_gap():
+    from factoryline.intent_quality import database_structure
+
+    result = database_structure(
+        {
+            "schema.sql": b"CREATE TABLE actual_users (id INTEGER PRIMARY KEY);",
+            "query.py": b"""import sqlite3 as dbapi
+def load(path, enabled):
+    connection = dbapi.connect(path)
+    if enabled:
+        class Nested:
+            def run(self):
+                return connection.execute("SELECT id FROM actual_users").fetchall()
+""",
+        },
+        "sqlite",
+    )
+
+    assert result["status"] == "INCOMPLETE"
+    assert result["queries"] == []
+    assert "python_execute_nested_scope_unsupported:query.py" in result["gaps"]
+
+
 def test_database_python_sqlite_with_binding_survives_context_manager_exit():
     from factoryline.intent_quality import database_structure
 
