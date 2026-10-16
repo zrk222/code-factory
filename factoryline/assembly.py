@@ -10,6 +10,7 @@ from __future__ import annotations
 import shutil
 import json
 import hashlib
+import os
 import re
 import uuid
 from dataclasses import dataclass
@@ -328,10 +329,292 @@ def _ssat_contract(root: Path, feature: str) -> Path:
 
 MAX_RECEIPT_BYTES = 1_048_576
 MAX_RECEIPT_FILES = 1_000
+_RELEASE_CHECKPOINT_SCHEMA = "factory.assembly-release-checkpoint.v1"
+_RELEASE_CHECKPOINT_STAGE = "continuation-release-checkpoint"
+
+
+def _bounded_json(path: Path) -> tuple[Any, bytes]:
+    with Path(path).open("rb") as stream:
+        raw = stream.read(MAX_RECEIPT_BYTES + 1)
+    if len(raw) > MAX_RECEIPT_BYTES:
+        raise ValueError("input exceeds the supported size")
+    return json.loads(raw.decode("utf-8-sig")), raw
+
+
+def _release_contract_path_ref(root: Path, path: Path) -> dict[str, str]:
+    """Represent a release-contract path without making workspace paths absolute."""
+    workspace = Path(root).resolve()
+    absolute = Path(os.path.abspath(path if path.is_absolute() else workspace / path))
+    try:
+        relative = absolute.relative_to(workspace)
+    except ValueError:
+        return {"kind": "absolute", "value": str(absolute)}
+    return {"kind": "workspace_relative", "value": relative.as_posix()}
+
+
+def _release_contract_path_from_ref(root: Path, reference: object) -> Path:
+    if not isinstance(reference, dict) or set(reference) != {"kind", "value"}:
+        raise ValueError("continuation release checkpoint is invalid")
+    kind, value = reference.get("kind"), reference.get("value")
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise ValueError("continuation release checkpoint is invalid")
+    if kind == "workspace_relative":
+        candidate = Path(root).resolve() / value
+        absolute = Path(os.path.abspath(candidate))
+        try:
+            absolute.relative_to(Path(root).resolve())
+        except ValueError as exc:
+            raise ValueError("continuation release checkpoint is invalid") from exc
+        return absolute
+    if kind == "absolute" and Path(value).is_absolute():
+        return Path(os.path.abspath(value))
+    raise ValueError("continuation release checkpoint is invalid")
+
+
+def _validate_release_contract_value(
+    root: Path, feature: str, value: object
+) -> dict[str, Any]:
+    """Validate policy shape and its Oracle/evidence bindings before assembly."""
+    from . import release_contract
+
+    declared, issue = release_contract._contract_fields(value, feature, set())
+    if issue or declared is None:
+        raise ValueError("release contract is malformed or bound to another feature")
+    try:
+        release_contract._validate_candidate(value.get("candidate"))
+        binding, issue = release_contract._oracle_binding(Path(root).resolve(), value)
+        if issue or binding is None:
+            raise ValueError("release contract Oracle binding is stale or invalid")
+        _, issue = release_contract._external_evidence(
+            Path(root).resolve(), declared, value.get("evidence", {})
+        )
+        if issue:
+            raise ValueError("release contract evidence binding is stale or invalid")
+    except (OSError, UnicodeDecodeError, TypeError, ValueError) as exc:
+        if str(exc).startswith("release contract "):
+            raise
+        raise ValueError("release contract binding is stale or invalid") from exc
+    return value
+
+
+def _read_release_contract(
+    root: Path, feature: str, path: Path
+) -> tuple[dict[str, Any], str]:
+    try:
+        value, raw = _bounded_json(path)
+        snapshot = _validate_release_contract_value(root, feature, value)
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        if str(exc).startswith("release contract "):
+            raise
+        raise ValueError("release contract is missing, malformed, or invalid") from exc
+    return snapshot, hashlib.sha256(raw).hexdigest()
+
+
+def _release_checkpoint_paths(directory: Path, prefix: str) -> list[Path]:
+    try:
+        paths = []
+        with os.scandir(directory) as entries:
+            for inspected, entry in enumerate(entries, start=1):
+                if inspected > MAX_RECEIPT_FILES:
+                    raise ValueError(
+                        "continuation release checkpoint inventory is too large"
+                    )
+                if entry.name.startswith(prefix) and entry.name.endswith(".json"):
+                    paths.append(Path(entry.path))
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        raise ValueError("continuation release checkpoint is unavailable") from exc
+    return paths
+
+
+def _read_release_checkpoint_record(path: Path, feature: str) -> dict[str, Any]:
+    try:
+        payload, _ = _bounded_json(path)
+        receipt = Receipt.from_dict(payload)
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise ValueError("continuation release checkpoint is malformed") from exc
+    checkpoint = receipt.inputs.get("checkpoint")
+    if not _valid_release_checkpoint(receipt, checkpoint, feature):
+        raise ValueError("continuation release checkpoint is invalid")
+    return checkpoint
+
+
+def _valid_release_checkpoint(
+    receipt: Receipt, checkpoint: object, feature: str
+) -> bool:
+    return (
+        receipt.module == "factoryline"
+        and receipt.stage == _RELEASE_CHECKPOINT_STAGE
+        and receipt.feature == feature
+        and receipt.ok is True
+        and isinstance(checkpoint, dict)
+        and checkpoint.get("schema") == _RELEASE_CHECKPOINT_SCHEMA
+        and type(checkpoint.get("revision")) is int
+        and checkpoint["revision"] >= 1
+        and checkpoint.get("state") in {"waiting_for_human", "terminal"}
+    )
+
+
+def _validate_release_checkpoint_history(records: list[dict[str, Any]]) -> None:
+    revisions = [record["revision"] for record in records]
+    if len(revisions) != len(set(revisions)):
+        raise ValueError("continuation release checkpoint history is ambiguous")
+    if revisions and sorted(revisions) != list(range(1, len(revisions) + 1)):
+        raise ValueError("continuation release checkpoint history is incomplete")
+
+
+def _release_checkpoint_records(root: Path, feature: str) -> list[dict[str, Any]]:
+    """Read a bounded checkpoint inventory and fail closed on ambiguity."""
+    directory = Path(root) / "receipts"
+    prefix = f"factoryline-{feature}-{_RELEASE_CHECKPOINT_STAGE}-"
+    try:
+        paths = _release_checkpoint_paths(directory, prefix)
+    except FileNotFoundError:
+        return []
+    records = [_read_release_checkpoint_record(path, feature) for path in paths]
+    _validate_release_checkpoint_history(records)
+    return records
+
+
+def _load_release_checkpoint(root: Path, feature: str) -> dict[str, Any] | None:
+    records = _release_checkpoint_records(root, feature)
+    if not records:
+        return None
+    latest = max(records, key=lambda record: record["revision"])
+    return latest if latest["state"] == "waiting_for_human" else None
+
+
+def _resolve_checkpointed_release_contract(
+    workspace: Path,
+    feature: str,
+    requested_path: Path | None,
+    checkpoint: dict[str, Any],
+) -> tuple[Path, dict[str, Any], str]:
+    policy_ref = checkpoint.get("policy_path")
+    policy_path = _release_contract_path_from_ref(workspace, policy_ref)
+    if (
+        requested_path is not None
+        and _release_contract_path_ref(workspace, Path(requested_path)) != policy_ref
+    ):
+        raise ValueError("resume release contract path differs from the paused run")
+    expected_hash = checkpoint.get("policy_sha256")
+    if not isinstance(expected_hash, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", expected_hash
+    ):
+        raise ValueError("continuation release checkpoint is invalid")
+    try:
+        snapshot, actual_hash = _read_release_contract(workspace, feature, policy_path)
+    except ValueError as exc:
+        raise ValueError("resume release contract is missing or invalid") from exc
+    if actual_hash != expected_hash or snapshot.get("policy_digest") != checkpoint.get(
+        "policy_digest"
+    ):
+        raise ValueError("resume release contract is missing or has changed")
+    return policy_path, snapshot, actual_hash
+
+
+def _resolve_requested_release_contract(
+    workspace: Path, feature: str, requested_path: Path | None
+) -> tuple[Path | None, dict[str, Any] | None, str | None]:
+    implicit_default = requested_path is None
+    if implicit_default:
+        candidate = workspace / ".factory" / "release-contracts" / f"{feature}.json"
+        if not candidate.exists():
+            return None, None, None
+        requested_path = candidate
+    policy_path = Path(requested_path)
+    if not policy_path.is_absolute():
+        policy_path = workspace / policy_path
+    policy_path = Path(os.path.abspath(policy_path))
+    try:
+        snapshot, policy_sha256 = _read_release_contract(
+            workspace, feature, policy_path
+        )
+    except ValueError:
+        if implicit_default:
+            return None, None, None
+        raise
+    return policy_path, snapshot, policy_sha256
+
+
+def resolve_continuation_release_contract(
+    root: Path, feature: str, requested_path: Path | None
+) -> tuple[Path | None, dict[str, Any] | None, str | None]:
+    """Resolve and hash-bind the policy that a paused continuation must reuse."""
+    workspace = Path(root).resolve()
+    checkpoint = _load_release_checkpoint(workspace, feature)
+    if checkpoint is None:
+        return _resolve_requested_release_contract(workspace, feature, requested_path)
+    return _resolve_checkpointed_release_contract(
+        workspace, feature, requested_path, checkpoint
+    )
+
+
+def _write_release_checkpoint(
+    root: Path,
+    feature: str,
+    run_id: str,
+    policy_path: Path,
+    snapshot: dict[str, Any],
+    policy_sha256: str,
+    report: dict,
+    *,
+    dry_run: bool,
+) -> None:
+    if dry_run:
+        return
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", feature):
+        raise ValueError("feature is invalid for a release-contract checkpoint")
+    records = _release_checkpoint_records(root, feature)
+    if not report.get("paused_at") and not report.get("halted_at") and not records:
+        return
+    latest_revision = max((record["revision"] for record in records), default=0)
+    reference = _release_contract_path_ref(root, policy_path)
+    checkpoint = {
+        "schema": _RELEASE_CHECKPOINT_SCHEMA,
+        "revision": latest_revision + 1,
+        "state": "waiting_for_human"
+        if report.get("paused_at") or report.get("halted_at")
+        else "terminal",
+        "run_id": run_id,
+        "policy_path": reference,
+        "policy_sha256": policy_sha256,
+        "policy_digest": snapshot["policy_digest"],
+        "oracle_contract_sha256": snapshot["oracle_contract_sha256"],
+        "required_stages": list(snapshot["required_stages"]),
+    }
+    Receipt(
+        module="factoryline",
+        stage=_RELEASE_CHECKPOINT_STAGE,
+        feature=feature,
+        ok=True,
+        inputs={"checkpoint": checkpoint},
+        outputs={
+            "paused_at": report.get("paused_at"),
+            "halted_at": report.get("halted_at"),
+        },
+    ).write(root)
 
 
 def _release_contract_requires(
-    root: Path, feature: str, stage: str, path: Path | None = None
+    root: Path,
+    feature: str,
+    stage: str,
+    path: Path | None = None,
+    contract_value: dict[str, Any] | None = None,
 ) -> bool:
     """Detect a declared required stage without granting the file authority.
 
@@ -339,6 +622,8 @@ def _release_contract_requires(
     contract.  Assembly uses this bounded hint only to avoid skipping a gate a
     release owner explicitly listed because an agent omitted its input file.
     """
+    if contract_value is not None:
+        return stage in contract_value.get("required_stages", [])
     path = path or root / ".factory" / "release-contracts" / f"{feature}.json"
     try:
         if path.stat().st_size > MAX_RECEIPT_BYTES:
@@ -351,9 +636,17 @@ def _release_contract_requires(
 
 
 def _release_contract_binding(
-    root: Path, feature: str, path: Path | None
+    root: Path,
+    feature: str,
+    path: Path | None,
+    contract_value: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """Carry exact Oracle/policy digests into newly written stage receipts."""
+    if contract_value is not None:
+        return {
+            "oracle_contract_sha256": contract_value["oracle_contract_sha256"],
+            "release_contract_policy_digest": contract_value["policy_digest"],
+        }
     source = path or root / ".factory" / "release-contracts" / f"{feature}.json"
     try:
         if source.stat().st_size > MAX_RECEIPT_BYTES:
@@ -525,6 +818,7 @@ def _plan_assembly_stage(
     args_tmpl: list[str],
     installed: dict[str, ModuleStatus],
     release_contract_path: Path | None,
+    release_contract_value: dict[str, Any] | None,
 ) -> _AssemblyStage:
     """Resolve one chain command, its exact receipt name, and contract scope."""
     cli = MODULES[module]["cli"]
@@ -539,7 +833,9 @@ def _plan_assembly_stage(
         args,
         name,
         stage_id,
-        _release_contract_requires(root, feature, stage_id, release_contract_path),
+        _release_contract_requires(
+            root, feature, stage_id, release_contract_path, release_contract_value
+        ),
         installed[module].installed,
     )
 
@@ -1006,46 +1302,111 @@ def _assembly_stage_halts(
     )
 
 
-def assemble(
+def _assembly_release_policy(
     root: Path,
     feature: str,
-    chain=None,
-    dry_run: bool = False,
-    release_contract_path: Path | None = None,
+    release_contract_path: Path | None,
+    release_contract_snapshot: dict[str, Any] | None,
+    release_contract_sha256: str | None,
+) -> tuple[Path | None, dict[str, Any] | None, str | None]:
+    selected = release_contract_path
+    if selected is None:
+        default = root / ".factory" / "release-contracts" / f"{feature}.json"
+        selected = default if default.exists() else None
+    elif not selected.is_absolute():
+        selected = root / selected
+    if selected is not None:
+        selected = Path(os.path.abspath(selected))
+    if release_contract_snapshot is not None:
+        snapshot = _validate_release_contract_value(
+            root, feature, release_contract_snapshot
+        )
+        if not isinstance(release_contract_sha256, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", release_contract_sha256
+        ):
+            raise ValueError("continuation release contract binding is invalid")
+        return selected, snapshot, release_contract_sha256
+    if selected is None:
+        return None, None, None
+    try:
+        snapshot, digest = _read_release_contract(root, feature, selected)
+    except ValueError:
+        if release_contract_path is not None:
+            raise
+        return selected, None, None
+    return selected, snapshot, digest
+
+
+def _persist_assembly_checkpoint(
+    root: Path,
+    feature: str,
+    run_id: str,
+    contract_path: Path | None,
+    contract_snapshot: dict[str, Any] | None,
+    contract_sha256: str | None,
+    report: dict,
+    dry_run: bool,
+) -> None:
+    if contract_path is not None and contract_snapshot is not None:
+        _write_release_checkpoint(
+            root,
+            feature,
+            run_id,
+            contract_path,
+            contract_snapshot,
+            contract_sha256,
+            report,
+            dry_run=dry_run,
+        )
+
+
+def _run_assembly_pipeline(
+    root: Path,
+    feature: str,
+    chain: list,
+    dry_run: bool,
+    installed: dict[str, ModuleStatus],
+    selected_contract_path: Path | None,
+    policy_snapshot: dict[str, Any] | None,
+    release_binding: dict,
+    meterlog: MeterLog | None,
+    run_id: str,
+    report: dict,
+    activity: LiveActivity,
+    policy_sha256: str | None,
 ) -> dict:
-    """Run the assembly line for a feature. Returns a per-stage report.
-    Missing modules are skipped with a clear note (Lego stud left open)."""
-    root = Path(root)
-    ensure_layout(root)
-    chain = chain or DEFAULT_CHAIN
-    installed = {m.name: m for m in detect()}
-    meterlog = MeterLog(root)
-    run_id = uuid.uuid4().hex
-    report = {
-        "feature": feature,
-        "root": str(root),
-        "run_id": run_id,
-        "stages": [],
-        "dry_run": dry_run,
-    }
-    if release_contract_path is not None:
-        report["release_contract_path"] = str(Path(release_contract_path))
-    release_binding = _release_contract_binding(root, feature, release_contract_path)
-    activity = LiveActivity(root, run_id, feature, len(chain))
-    activity.start()
+    def persist() -> None:
+        _persist_assembly_checkpoint(
+            root,
+            feature,
+            run_id,
+            selected_contract_path,
+            policy_snapshot,
+            policy_sha256,
+            report,
+            dry_run,
+        )
 
     if not _assembly_agent_contract(root, report, activity):
+        persist()
         return report
     if _assembly_spec_bootstrap(
         root, feature, dry_run, installed, release_binding, report, activity
     ):
+        persist()
         return report
     if _assembly_cdte_gate(root, feature, dry_run, report, activity):
+        persist()
         return report
-
     for module, args_tmpl in chain:
         stage = _plan_assembly_stage(
-            root, feature, module, args_tmpl, installed, release_contract_path
+            root,
+            feature,
+            module,
+            args_tmpl,
+            installed,
+            selected_contract_path,
+            policy_snapshot,
         )
         if _assembly_stage_halts(
             root,
@@ -1061,7 +1422,214 @@ def assemble(
             break
     report["rollup"] = rollup_attributions(report["stages"])
     _finish_activity(report, activity)
+    persist()
     return report
+
+
+def _assemble_unlocked(
+    root: Path,
+    feature: str,
+    chain=None,
+    dry_run: bool = False,
+    release_contract_path: Path | None = None,
+    release_contract_snapshot: dict[str, Any] | None = None,
+    release_contract_sha256: str | None = None,
+) -> dict:
+    """Run the assembly line for a feature. Returns a per-stage report.
+    Missing modules are skipped with a clear note (Lego stud left open)."""
+    root = Path(root).resolve()
+    selected_contract_path, policy_snapshot, policy_sha256 = _assembly_release_policy(
+        root,
+        feature,
+        release_contract_path,
+        release_contract_snapshot,
+        release_contract_sha256,
+    )
+    if not dry_run:
+        ensure_layout(root)
+    chain = chain or DEFAULT_CHAIN
+    installed = {m.name: m for m in detect()}
+    meterlog = None if dry_run else MeterLog(root)
+    run_id = uuid.uuid4().hex
+    report = {
+        "feature": feature,
+        "root": str(root),
+        "run_id": run_id,
+        "stages": [],
+        "dry_run": dry_run,
+    }
+    release_binding = _release_contract_binding(
+        root, feature, selected_contract_path, policy_snapshot
+    )
+    activity = LiveActivity(root, run_id, feature, len(chain))
+    if not dry_run:
+        activity.start()
+
+    return _run_assembly_pipeline(
+        root,
+        feature,
+        chain,
+        dry_run,
+        installed,
+        selected_contract_path,
+        policy_snapshot,
+        release_binding,
+        meterlog,
+        run_id,
+        report,
+        activity,
+        policy_sha256,
+    )
+
+
+def _assemble_dry_run(
+    workspace: Path,
+    feature: str,
+    chain,
+    release_contract_path: Path | None,
+) -> dict:
+    _release_checkpoint_records(workspace, feature)
+    resolved_path, snapshot, digest = resolve_continuation_release_contract(
+        workspace, feature, release_contract_path
+    )
+    report = _assemble_unlocked(
+        workspace,
+        feature,
+        chain=chain,
+        dry_run=True,
+        release_contract_path=resolved_path,
+        release_contract_snapshot=snapshot,
+        release_contract_sha256=digest,
+    )
+    if release_contract_path is not None:
+        report["release_contract_path"] = str(Path(release_contract_path))
+    return report
+
+
+def _assemble_locked_state(
+    workspace: Path,
+    feature: str,
+    chain,
+    release_contract_path: Path | None,
+    release_contract_snapshot: dict[str, Any] | None,
+    release_contract_sha256: str | None,
+) -> dict:
+    records = _release_checkpoint_records(workspace, feature)
+    resolved_path, snapshot, digest = resolve_continuation_release_contract(
+        workspace, feature, release_contract_path
+    )
+    if release_contract_snapshot is not None and (
+        snapshot != release_contract_snapshot or digest != release_contract_sha256
+    ):
+        raise ValueError("continuation release contract binding changed")
+    if records != _release_checkpoint_records(workspace, feature):
+        raise ValueError("continuation release checkpoint changed during resolution")
+    report = _assemble_unlocked(
+        workspace,
+        feature,
+        chain=chain,
+        release_contract_path=resolved_path,
+        release_contract_snapshot=snapshot,
+        release_contract_sha256=digest,
+    )
+    if release_contract_path is not None:
+        report["release_contract_path"] = str(Path(release_contract_path))
+    return report
+
+
+def _remove_assembly_lock(lock_path: Path, descriptor: int) -> None:
+    try:
+        os.close(descriptor)
+    except OSError:
+        pass
+    try:
+        lock_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _assemble_with_lock(
+    workspace: Path,
+    feature: str,
+    chain,
+    release_contract_path: Path | None,
+    release_contract_snapshot: dict[str, Any] | None,
+    release_contract_sha256: str | None,
+) -> dict:
+    lock_directory = workspace / ".factory"
+    lock_directory.mkdir(parents=True, exist_ok=True)
+    feature_digest = hashlib.sha256(feature.encode("utf-8")).hexdigest()
+    lock_path = lock_directory / f"assembly-{feature_digest}.lock"
+    try:
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError as exc:
+        raise ValueError(
+            "release-contract assembly is already active for this feature"
+        ) from exc
+    try:
+        os.write(descriptor, str(os.getpid()).encode("ascii"))
+        os.close(descriptor)
+        return _assemble_locked_state(
+            workspace,
+            feature,
+            chain,
+            release_contract_path,
+            release_contract_snapshot,
+            release_contract_sha256,
+        )
+    finally:
+        _remove_assembly_lock(lock_path, descriptor)
+
+
+def assemble(
+    root: Path,
+    feature: str,
+    chain=None,
+    dry_run: bool = False,
+    release_contract_path: Path | None = None,
+    release_contract_snapshot: dict[str, Any] | None = None,
+    release_contract_sha256: str | None = None,
+) -> dict:
+    """Serialize runs and resolve release policy state under the feature lock."""
+    workspace = Path(root).resolve()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", feature):
+        if release_contract_path is not None or release_contract_snapshot is not None:
+            raise ValueError("feature is invalid for a release-contract checkpoint")
+        return _assemble_unlocked(workspace, feature, chain=chain, dry_run=dry_run)
+    if dry_run:
+        return _assemble_dry_run(workspace, feature, chain, release_contract_path)
+    return _assemble_with_lock(
+        workspace,
+        feature,
+        chain,
+        release_contract_path,
+        release_contract_snapshot,
+        release_contract_sha256,
+    )
+
+
+def assemble_cli(
+    root: Path | str,
+    feature: str,
+    dry_run: bool = False,
+    release_contract_path: Path | str | None = None,
+) -> dict:
+    """Convert CLI arguments into a structured, path-free assembly error."""
+    try:
+        return assemble(
+            Path(root),
+            feature,
+            dry_run=dry_run,
+            release_contract_path=Path(release_contract_path)
+            if release_contract_path
+            else None,
+        )
+    except ValueError as exc:
+        return {
+            "schema": "factory.release-contract.error.v1",
+            "code": "RELEASE_CONTRACT_INPUT_INVALID",
+            "message": str(exc),
+        }
 
 
 def rollup_receipts(root: Path, feature: str) -> dict:
