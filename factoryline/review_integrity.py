@@ -2340,8 +2340,7 @@ def _implementation_comment_findings(
     parents: dict[ast.AST, ast.AST],
     module_aliases: dict[str, str],
 ) -> list[dict[str, Any]]:
-    findings = []
-    excluded_lines = set()
+    findings, excluded_lines = [], set()
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
@@ -2388,6 +2387,8 @@ def _implementation_is_exempt(
     aliases: dict[str, str],
     tree: ast.Module,
 ) -> bool:
+    from .implementation_contracts import click_group_container
+
     decorators = _implementation_decorator_names(node, aliases)
     exempt_decorators = {
         "abc.abstractmethod",
@@ -2401,6 +2402,7 @@ def _implementation_is_exempt(
         node.name in {"__init_subclass__", "__subclasshook__"}
         or bool(decorators & exempt_decorators)
         or _implementation_static_interface(node, parents, aliases, tree)
+        or click_group_container(node, parents, aliases)
     )
 
 
@@ -2558,8 +2560,7 @@ def implementation_completeness_findings(
         for name, target in (aliases or {}).items()
         if isinstance(name, str) and isinstance(target, str)
     }
-    module_aliases = _implementation_imports(tree.body)
-    module_aliases.update(supplied)
+    module_aliases = {**_implementation_imports(tree.body), **supplied}
     parents = _implementation_parents(tree)
     tree._implementation_alias_cache = {}
     try:
